@@ -1,140 +1,29 @@
-use reqwest;
-use select::document::Document;
-use select::predicate::Name;
-use thiserror::Error;
+mod commands;
+mod errors;
+mod fetch;
+mod rate_limiter;
 
-#[derive(Debug, Error)]
-enum FetchError {
-    #[error("HTTP request failed with status: {0}")]
-    Http(reqwest::StatusCode),
-    #[error(transparent)]
-    Reqwest(#[from] reqwest::Error),
-}
+use commands::handle_message;
+use rate_limiter::RateLimiter;
+use teloxide::prelude::*;
+use tokio::time::Duration;
 
-async fn fetch_song_metadata(url: &str) -> Result<(String, String), FetchError> {
-    let resp = reqwest::get(url).await?;
-
-    if !resp.status().is_success() {
-        return Err(FetchError::Http(resp.status()));
-    }
-
-    let resp_text = resp.text().await?;
-    let document = Document::from(resp_text.as_str());
-
-    let title = document.find(Name("title")).next().map(|n| n.text()).unwrap_or_default();
-
-    let artist = document.find(Name("meta"))
-        .filter(|n| n.attr("property").map(|v| v == "og:artist").unwrap_or(false))
-        .next()
-        .and_then(|n| n.attr("content"))
-        .unwrap_or_default()
-        .to_string();
-
-    Ok((title, artist))
-}
+const RATE_LIMIT_DURATION: Duration = Duration::from_secs(30); // Set rate limit duration
 
 #[tokio::main]
 async fn main() {
-    println!("Hello, world!");
-}
+    pretty_env_logger::init();
+    log::info!("Starting throw dice bot...");
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
+    let bot = Bot::from_env().auto_send();
+    let rate_limiter = RateLimiter::new(RATE_LIMIT_DURATION);
+    let rate_limiter = rate_limiter.clone();
 
-    #[tokio::test]
-    async fn test_fetch_song_metadata_success() {
-        let mock_server = MockServer::start().await;
-
-        let response_body = r#"
-        <html>
-            <head>
-                <title>Test Song</title>
-                <meta property="og:artist" content="Test Artist">
-            </head>
-        </html>"#;
-        let response = ResponseTemplate::new(200).set_body_string(response_body);
-
-        Mock::given(method("GET"))
-            .and(path("/test"))
-            .respond_with(response)
-            .mount(&mock_server)
-            .await;
-
-        let url = format!("{}/test", &mock_server.uri());
-        let (title, artist) = fetch_song_metadata(&url).await.unwrap();
-
-        assert_eq!(title, "Test Song");
-        assert_eq!(artist, "Test Artist");
-    }
-
-    #[tokio::test]
-    async fn test_fetch_song_metadata_no_artist() {
-        let mock_server = MockServer::start().await;
-
-        let response_body = r#"
-        <html>
-            <head>
-                <title>Test Song</title>
-            </head>
-        </html>"#;
-        let response = ResponseTemplate::new(200).set_body_string(response_body);
-
-        Mock::given(method("GET"))
-            .and(path("/test_no_artist"))
-            .respond_with(response)
-            .mount(&mock_server)
-            .await;
-
-        let url = format!("{}/test_no_artist", &mock_server.uri());
-        let (title, artist) = fetch_song_metadata(&url).await.unwrap();
-
-        assert_eq!(title, "Test Song");
-        assert_eq!(artist, "");
-    }
-
-    #[tokio::test]
-    async fn test_fetch_song_metadata_no_title() {
-        let mock_server = MockServer::start().await;
-
-        let response_body = r#"
-        <html>
-            <head>
-                <meta property="og:artist" content="Test Artist">
-            </head>
-        </html>"#;
-        let response = ResponseTemplate::new(200).set_body_string(response_body);
-
-        Mock::given(method("GET"))
-            .and(path("/test_no_title"))
-            .respond_with(response)
-            .mount(&mock_server)
-            .await;
-
-        let url = format!("{}/test_no_title", &mock_server.uri());
-        let (title, artist) = fetch_song_metadata(&url).await.unwrap();
-
-        assert_eq!(title, "");
-        assert_eq!(artist, "Test Artist");
-    }
-
-    #[tokio::test]
-    async fn test_fetch_song_metadata_error() {
-        let mock_server = MockServer::start().await;
-
-        let response = ResponseTemplate::new(404);
-
-        Mock::given(method("GET"))
-            .and(path("/test_error"))
-            .respond_with(response)
-            .mount(&mock_server)
-            .await;
-
-        let url = format!("{}/test_error", &mock_server.uri());
-        let result = fetch_song_metadata(&url).await;
-
-        assert!(result.is_err());
-    }
+    teloxide::repl(bot, move |bot: AutoSend<Bot>, msg: Message| {
+        let rate_limiter = rate_limiter.clone();
+        async move {
+            handle_message(bot, msg, &rate_limiter).await
+        }
+    })
+    .await;
 }
