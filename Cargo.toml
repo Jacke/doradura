@@ -17,3 +17,5 @@ rand = "0.8"
 reqwest = "0.11"  # For making HTTP requests
 select = "0.5"    # For parsing HTML
 shell-escape = "0.1.5"
+wiremock = "0.4"
+thiserror = "1.0"
