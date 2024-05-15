@@ -1,7 +1,29 @@
 use reqwest;
 use select::document::Document;
 use select::predicate::Name;
-use crate::errors::FetchError;
+
+// src/fetch.rs
+use reqwest::Url;
+use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
+use std::error::Error;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum FetchError {
+    #[error("HTTP request failed with status: {0}")]
+    Http(reqwest::StatusCode),
+    #[error(transparent)]
+    Reqwest(#[from] reqwest::Error),
+}
+
+
+pub async fn fetch_url_to_file(url: &Url, file: &mut File) -> Result<(), Box<dyn Error + Send + Sync>> {
+    let response = reqwest::get(url.as_str()).await?;
+    let bytes = response.bytes().await?;
+    file.write_all(&bytes).await?;
+    Ok(())
+}
 
 pub async fn fetch_song_metadata(url: &str) -> Result<(String, String), FetchError> {
     let resp = reqwest::get(url).await?;

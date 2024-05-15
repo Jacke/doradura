@@ -19,3 +19,5 @@ select = "0.5"    # For parsing HTML
 shell-escape = "0.1.5"
 wiremock = "0.4"
 thiserror = "1.0"
+anyhow = "1.0.66"
+async-trait = "0.1.50"

@@ -1,28 +1,28 @@
+// src/main.rs
+use std::sync::Arc;
+use teloxide::prelude::*;
+use std::time::Duration;
+
 mod commands;
-mod errors;
 mod fetch;
 mod rate_limiter;
+mod utils;
 
-use commands::handle_message;
-use rate_limiter::RateLimiter;
-use teloxide::prelude::*;
-use tokio::time::Duration;
 
-const RATE_LIMIT_DURATION: Duration = Duration::from_secs(30); // Set rate limit duration
+use crate::commands::handle_message;
+use crate::rate_limiter::RateLimiter;
 
 #[tokio::main]
 async fn main() {
-    pretty_env_logger::init();
-    log::info!("Starting throw dice bot...");
+    let bot = Bot::from_env();
 
-    let bot = Bot::from_env().auto_send();
-    let rate_limiter = RateLimiter::new(RATE_LIMIT_DURATION);
-    let rate_limiter = rate_limiter.clone();
+    let rate_limiter = Arc::new(RateLimiter::new(Duration::from_secs(30)));
 
-    teloxide::repl(bot, move |bot: AutoSend<Bot>, msg: Message| {
-        let rate_limiter = rate_limiter.clone();
+    teloxide::repl(bot, move |bot: Bot, msg: Message| {
+        let rate_limiter = Arc::clone(&rate_limiter);
         async move {
-            handle_message(bot, msg, &rate_limiter).await
+            handle_message(bot, msg, rate_limiter).await?;
+            respond(())
         }
     })
     .await;
