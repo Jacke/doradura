@@ -48,6 +48,7 @@ async fn download_and_send_audio(bot: Bot, msg: Message, url: Url, rate_limiter:
             let mut child = Command::new("youtube-dl")
                 .arg("-o")
                 .arg(&download_path)
+                .arg("--verbose")
                 .arg("--extract-audio")
                 .arg("--audio-format")
                 .arg("mp3")
