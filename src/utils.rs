@@ -1,11 +1,9 @@
 // src/utils.rs
-use std::path::Path;
 use std::error::Error;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use url::Url;
 use crate::fetch::fetch_url_to_file;
-use async_trait::async_trait;
 
 pub fn escape_filename(filename: &str) -> String {
     filename.replace("/", "_")
