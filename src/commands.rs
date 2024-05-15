@@ -43,7 +43,7 @@ async fn download_and_send_audio(bot: Bot, msg: Message, url: Url, rate_limiter:
                 .map_err(|e| CommandError::FetchMetadata(anyhow!("Failed to fetch song metadata: {}", e)))?;
             let file_name = generate_file_name(&title, &artist);
             let safe_filename = escape_filename(&file_name);
-            let full_path = format!("/Users/stasobolev/downloads/{}", safe_filename);
+            let full_path = format!("~/downloads/{}", safe_filename);
             let download_path = shellexpand::tilde(&full_path).into_owned();
             let mut child = Command::new("youtube-dl")
                 .arg("-o")
