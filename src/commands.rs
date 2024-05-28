@@ -124,7 +124,22 @@ pub async fn handle_message(bot: Bot, msg: Message, rate_limiter: Arc<RateLimite
             return Ok(());
         }
         if text.contains("youtube.com") || text.contains("youtu.be") || text.contains("soundcloud.com") {
-            let url = Url::parse(text).unwrap_or_else(|_| Url::parse("").unwrap());
+            let mut url = Url::parse(text).unwrap_or_else(|_| Url::parse("").unwrap());
+
+            // Remove the &list parameter if it exists
+            if url.query_pairs().any(|(key, _)| key == "list") {
+                let preserved_params: Vec<(String, String)> = url.query_pairs()
+                    .filter(|(key, _)| key != "list")
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect();
+                
+                url.query_pairs_mut().clear();
+                
+                for (key, value) in preserved_params {
+                    url.query_pairs_mut().append_pair(&key, &value);
+                }
+            }
+
             if handle_rate_limit(&bot, &msg, &rate_limiter).await? {
                 download_and_send_audio(bot, msg, url, rate_limiter).await?;
             }

@@ -25,6 +25,8 @@ enum Command {
     Help,
     #[command(description = "показывает главное меню")]
     Start,
+    #[command(description = "показывает настройки")]
+    Settings,
 }
 
 #[tokio::main]
@@ -38,6 +40,7 @@ async fn main() -> Result<()> {
     bot.set_my_commands(vec![
         BotCommand::new("start", "показывает главное меню"),
         BotCommand::new("help", "расскажу что я могу, помимо вкусного чая"),
+        BotCommand::new("settings", "твои настройки"),
     ])
     .await?;
 
@@ -52,19 +55,25 @@ async fn main() -> Result<()> {
                 .endpoint(|bot: Bot, msg: Message, cmd: Command| async move {
                     match cmd {
                         Command::Start => {
-                            let keyboard = make_menu();
+                            // let keyboard = make_menu();
                             bot.send_message(msg.chat.id, "Приветик! Я Дора ❤️‍🔥. Я делаю чай и скачиваю треки. Используй /help чтобы получить полную инфу.")
                                 .parse_mode(ParseMode::MarkdownV2)
-                                .reply_markup(keyboard)
+                                // .reply_markup(keyboard)
                                 .await?;
                         }
                         Command::Help => {
-                            let keyboard = make_menu();
+                            // let keyboard = make_menu();
                             bot.send_message(msg.chat.id, Command::descriptions().to_string())
                                 .parse_mode(ParseMode::MarkdownV2)
-                                .reply_markup(keyboard)
+                                // .reply_markup(keyboard)
                                 .await?;
                         }
+                        Command::Settings => {
+                            bot.send_message(msg.chat.id, "Ты можешь качать трек, каждые 30 секунд!")
+                                .parse_mode(ParseMode::MarkdownV2)
+                                // .reply_markup(keyboard)
+                                .await?;
+                        }                        
                     }
                     respond(())
                 })
