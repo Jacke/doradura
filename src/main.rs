@@ -1,3 +1,4 @@
+use std::fs::read_to_string;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{KeyboardButton, KeyboardMarkup, ParseMode, Message, BotCommand};
@@ -14,7 +15,7 @@ mod fetch;
 mod rate_limiter;
 mod utils;
 
-use db::get_connection;
+use db::{get_connection, create_user, get_user, update_user_plan, log_request};
 use crate::commands::{handle_message, download_and_send_audio, handle_rate_limit};
 use crate::rate_limiter::RateLimiter;
 
@@ -44,7 +45,11 @@ async fn main() -> Result<()> {
     ])
     .await?;
 
-    let conn = get_connection()?; // Ensure this line uses the `?` operator correctly
+    // Read and apply the migration.sql file
+    let migration_sql = read_to_string("migration.sql")?;
+    let conn = get_connection()?;
+    conn.execute_batch(&migration_sql)?;
+
     let rate_limiter = Arc::new(RateLimiter::new(Duration::from_secs(30)));
 
     // Create a dispatcher to handle both commands and plain messages
@@ -55,23 +60,18 @@ async fn main() -> Result<()> {
                 .endpoint(|bot: Bot, msg: Message, cmd: Command| async move {
                     match cmd {
                         Command::Start => {
-                            // let keyboard = make_menu();
                             bot.send_message(msg.chat.id, "Приветик! Я Дора ❤️‍🔥. Я делаю чай и скачиваю треки. Используй /help чтобы получить полную инфу.")
                                 .parse_mode(ParseMode::MarkdownV2)
-                                // .reply_markup(keyboard)
                                 .await?;
                         }
                         Command::Help => {
-                            // let keyboard = make_menu();
                             bot.send_message(msg.chat.id, Command::descriptions().to_string())
                                 .parse_mode(ParseMode::MarkdownV2)
-                                // .reply_markup(keyboard)
                                 .await?;
                         }
                         Command::Settings => {
                             bot.send_message(msg.chat.id, "Ты можешь качать трек, каждые 30 секунд!")
                                 .parse_mode(ParseMode::MarkdownV2)
-                                // .reply_markup(keyboard)
                                 .await?;
                         }                        
                     }
@@ -83,20 +83,31 @@ async fn main() -> Result<()> {
             move |bot: Bot, msg: Message| {
                 let rate_limiter = Arc::clone(&rate_limiter);
                 async move {
-                    if let Err(err) = handle_message(bot, msg, rate_limiter).await {
+                    if let Err(err) = handle_message(bot, msg.clone(), rate_limiter).await {
                         log::error!("Error handling message: {:?}", err);
                     }
+
+                    // Log request and manage user
+                    let conn = get_connection().unwrap();
+                    let chat_id = msg.chat.id.0; // Extract i64 from ChatId
+                    if let Some(user) = get_user(&conn, chat_id).unwrap() {
+                        log_request(&conn, user.telegram_id(), &msg.text().unwrap()).unwrap();
+                    } else {
+                        create_user(&conn, chat_id, msg.from().and_then(|u| u.username.clone())).unwrap();
+                        log_request(&conn, chat_id, &msg.text().unwrap()).unwrap();
+                    }
+
                     respond(())
                 }
             }
         }));
 
-        let mut dispatcher = Dispatcher::builder(bot.clone(), handler)
+    let mut dispatcher = Dispatcher::builder(bot.clone(), handler)
         .default_handler(|_| async {})
         .build();
 
-        // Start the dispatcher
-        dispatcher.dispatch().await;
+    // Start the dispatcher
+    dispatcher.dispatch().await;
 
     tokio::select! {
         _ = signal::ctrl_c() => {
