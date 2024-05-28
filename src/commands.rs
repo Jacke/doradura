@@ -60,7 +60,7 @@ pub async fn download_and_send_audio(bot: Bot, msg: Message, url: Url, rate_limi
                 .arg("--add-metadata")
                 .arg("--embed-thumbnail")
                 .arg("--no-playlist")
-                .arg(url.as_str());
+                .arg(url.as_str())
                 .spawn()
                 .expect("Failed to start youtube-dl process");
             let _ = child.wait().expect("youtube-dl process failed");
