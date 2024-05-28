@@ -92,6 +92,9 @@ fn generate_file_name(title: &str, artist: &str) -> String {
 
 pub async fn handle_message(bot: Bot, msg: Message, rate_limiter: Arc<RateLimiter>) -> ResponseResult<()> {
     if let Some(text) = msg.text() {
+        if text.starts_with("/start") || text.starts_with("/help") {
+            return Ok(());
+        }
         if text.contains("youtube.com") || text.contains("youtu.be") || text.contains("soundcloud.com") {
             let url = Url::parse(text).unwrap_or_else(|_| Url::parse("").unwrap());
             if handle_rate_limit(&bot, &msg, &rate_limiter).await? {
