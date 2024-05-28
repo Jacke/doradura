@@ -1,0 +1,4 @@
+[env]
+C_INCLUDE_PATH = "$(brew --prefix ffmpeg)/include"
+PKG_CONFIG_PATH = "$(brew --prefix ffmpeg)/lib/pkgconfig"
+
