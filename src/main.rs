@@ -1,13 +1,14 @@
 use std::fs::read_to_string;
 use std::sync::Arc;
+use std::hash::Hash;
 use teloxide::prelude::*;
 use teloxide::types::{KeyboardButton, KeyboardMarkup, ParseMode, Message, BotCommand};
 use teloxide::utils::command::BotCommands;
-use teloxide::dispatching::{UpdateFilterExt, Dispatcher};
-use url::Url;
+use teloxide::dispatching::{UpdateFilterExt, Dispatcher, DefaultKey};
 use std::time::Duration;
 use anyhow::Result;
 use tokio::signal;
+use dptree::di::DependencyMap;
 
 mod commands;
 mod db;
@@ -15,8 +16,8 @@ mod fetch;
 mod rate_limiter;
 mod utils;
 
-use db::{get_connection, create_user, get_user, update_user_plan, log_request};
-use crate::commands::{handle_message, download_and_send_audio, handle_rate_limit};
+use db::{get_connection, create_user, get_user, log_request};
+use crate::commands::handle_message;
 use crate::rate_limiter::RateLimiter;
 
 #[derive(BotCommands, Clone)]
@@ -36,7 +37,10 @@ async fn main() -> Result<()> {
     log::info!("Starting bot...");
 
     let bot = Bot::from_env();
-    
+
+    let mut retry_count = 0;
+    let max_retries = 5;
+
     // Set the list of bot commands
     bot.set_my_commands(vec![
         BotCommand::new("start", "показывает главное меню"),
@@ -73,7 +77,7 @@ async fn main() -> Result<()> {
                             bot.send_message(msg.chat.id, "Ты можешь качать трек, каждые 30 секунд!")
                                 .parse_mode(ParseMode::MarkdownV2)
                                 .await?;
-                        }                        
+                        }
                     }
                     respond(())
                 })
@@ -102,12 +106,26 @@ async fn main() -> Result<()> {
             }
         }));
 
-    let mut dispatcher = Dispatcher::builder(bot.clone(), handler)
-        .default_handler(|_| async {})
-        .build();
+    // Run the dispatcher with retry logic
+    loop {
+        let mut dispatcher = Dispatcher::builder(bot.clone(), handler.clone())
+            .dependencies(DependencyMap::new())
+            .default_handler(|_| async {})
+            .build();
 
-    // Start the dispatcher
-    dispatcher.dispatch().await;
+        if let Err(err) = run_dispatcher(&mut dispatcher).await {
+            log::error!("Dispatcher error: {:?}", err);
+            if retry_count < max_retries {
+                retry_count += 1;
+                exponential_backoff(retry_count).await;
+            } else {
+                log::error!("Max retries reached. Exiting...");
+                break;
+            }
+        } else {
+            retry_count = 0; // Reset retry count on success
+        }
+    }
 
     tokio::select! {
         _ = signal::ctrl_c() => {
@@ -116,6 +134,23 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn run_dispatcher<R, E, K>(dispatcher: &mut Dispatcher<R, E, K>) -> Result<(), ()>
+where
+    R: Requester + Clone + Send + Sync + 'static,
+    R::GetUpdates: Send,
+    R::SendMessage: Send,
+    E: std::error::Error + Send + Sync + 'static,
+    K: Eq + Hash + Clone + Send + Sync + 'static,
+{
+    dispatcher.dispatch().await;
+    Ok(())
+}
+
+async fn exponential_backoff(retry_count: u32) {
+    let delay = Duration::from_secs(2u64.pow(retry_count));
+    tokio::time::sleep(delay).await;
 }
 
 fn make_menu() -> KeyboardMarkup {
