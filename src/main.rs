@@ -9,6 +9,7 @@ use std::time::Duration;
 use anyhow::Result;
 use tokio::signal;
 use dptree::di::DependencyMap;
+use reqwest::ClientBuilder;
 
 mod commands;
 mod db;
@@ -36,7 +37,11 @@ async fn main() -> Result<()> {
     pretty_env_logger::init();
     log::info!("Starting bot...");
 
-    let bot = Bot::from_env();
+    let bot = Bot::from_env_with_client(
+        ClientBuilder::new()
+            .timeout(Duration::from_secs(10)) // Set request timeout to 10 seconds
+            .build()?,
+    );
 
     let mut retry_count = 0;
     let max_retries = 5;
