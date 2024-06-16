@@ -91,7 +91,7 @@ pub async fn download_and_send_audio(bot: Bot, msg: Message, url: Url, rate_limi
                 .duration(duration)
                 .await
                 .map_err(|e| CommandError::Download(anyhow!("Failed to send audio file: {}", e)))?;
-            
+                
             tokio::time::sleep(Duration::from_secs(600)).await;
             std::fs::remove_file(&download_path).expect("Failed to delete file");
 
@@ -107,6 +107,54 @@ pub async fn download_and_send_audio(bot: Bot, msg: Message, url: Url, rate_limi
     });
 
     bot.send_message(msg.chat.id, "Я Дора, попробую скачать тебе трек! ❤️‍🔥 Терпение!").await?;
+    Ok(())
+}
+
+pub async fn download_and_send_video(bot: Bot, msg: Message, url: Url, rate_limiter: Arc<RateLimiter>) -> ResponseResult<()> {
+    let bot_clone = bot.clone();
+    let chat_id = msg.chat.id;
+    let rate_limiter = Arc::clone(&rate_limiter);
+
+    tokio::spawn(async move {
+        let result: Result<(), CommandError> = async {
+            let file_name = "video.mp4"; // You can generate a better name based on metadata if needed
+            let safe_filename = escape_filename(&file_name);
+            let full_path = format!("~/downloads/{}", safe_filename);
+            let download_path = shellexpand::tilde(&full_path).into_owned();
+            
+            let mut child = Command::new("youtube-dl")
+                .arg("-o")
+                .arg(&download_path)
+                .arg("--verbose")
+                .arg("--format")
+                .arg("best")
+                .arg(url.as_str())
+                .spawn()
+                .expect("Failed to start youtube-dl process");
+            let _ = child.wait().expect("youtube-dl process failed");
+
+            println!("download_path {:?}", download_path);
+
+            bot_clone
+                .send_video(chat_id, InputFile::file(&download_path))
+                .await
+                .map_err(|e| CommandError::Download(anyhow!("Failed to send video file: {}", e)))?;
+                
+            tokio::time::sleep(Duration::from_secs(600)).await;
+            std::fs::remove_file(&download_path).expect("Failed to delete file");
+
+            Ok(())
+        }.await;
+
+        if let Err(e) = result {
+            bot_clone
+                .send_message(chat_id, format!("An error occurred: {}", e))
+                .await
+                .unwrap();
+        }
+    });
+
+    bot.send_message(msg.chat.id, "Я Дора, попробую скачать тебе видео! 🎥 Терпение!").await?;
     Ok(())
 }
 
@@ -128,7 +176,7 @@ pub async fn handle_message(bot: Bot, msg: Message, rate_limiter: Arc<RateLimite
         if text.starts_with("/start") || text.starts_with("/help") {
             return Ok(());
         }
-        if text.contains("youtube.com") || text.contains("youtu.be") || text.contains("soundcloud.com") {
+        if text.contains("youtube.com") || text.contains("youtu.be") || text.contains("soundcloud.com") || text.contains("soundcloud.com") {
             let mut url = Url::parse(text).unwrap_or_else(|_| Url::parse("").unwrap());
 
             // Remove the &list parameter if it exists
@@ -146,10 +194,14 @@ pub async fn handle_message(bot: Bot, msg: Message, rate_limiter: Arc<RateLimite
             }
 
             if handle_rate_limit(&bot, &msg, &rate_limiter).await? {
-                download_and_send_audio(bot, msg, url, rate_limiter).await?;
+                if text.starts_with("video ") {
+                    download_and_send_video(bot, msg, url, rate_limiter).await?;
+                } else {
+                    download_and_send_audio(bot, msg, url, rate_limiter).await?;
+                }
             }
         } else {
-            bot.send_message(msg.chat.id, "Извини, я не нашла ссылки на YouTube или SoundCloud. Пожалуйста, пришли мне ссылку на трек, который ты хочешь скачать.").await?;
+            bot.send_message(msg.chat.id, "Извини, я не нашла ссылки на YouTube или SoundCloud. Пожалуйста, пришли мне ссылку на трек или видео, который ты хочешь скачать.").await?;
         }
     }
     Ok(())
