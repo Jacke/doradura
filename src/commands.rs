@@ -176,33 +176,39 @@ pub async fn handle_message(bot: Bot, msg: Message, rate_limiter: Arc<RateLimite
         if text.starts_with("/start") || text.starts_with("/help") {
             return Ok(());
         }
-        if text.contains("youtube.com") || text.contains("youtu.be") || text.contains("soundcloud.com") || text.contains("soundcloud.com") {
-            let mut url = Url::parse(text).unwrap_or_else(|_| Url::parse("").unwrap());
-
-            // Remove the &list parameter if it exists
-            if url.query_pairs().any(|(key, _)| key == "list") {
-                let preserved_params: Vec<(String, String)> = url.query_pairs()
-                    .filter(|(key, _)| key != "list")
-                    .map(|(key, value)| (key.to_string(), value.to_string()))
-                    .collect();
-                
-                url.query_pairs_mut().clear();
-                
-                for (key, value) in preserved_params {
-                    url.query_pairs_mut().append_pair(&key, &value);
-                }
+        let is_video = text.starts_with("video ");
+        let url_text = if is_video { &text[6..] } else { text };
+        let mut url = match Url::parse(url_text) {
+            Ok(parsed_url) => parsed_url,
+            Err(_) => {
+                bot.send_message(msg.chat.id, "Извини, я не смогла распознать ссылку. Пожалуйста, пришли мне корректную ссылку на YouTube или SoundCloud.").await?;
+                return Ok(());
             }
+        };
 
-            if handle_rate_limit(&bot, &msg, &rate_limiter).await? {
-                if text.starts_with("video ") {
-                    download_and_send_video(bot, msg, url, rate_limiter).await?;
-                } else {
-                    download_and_send_audio(bot, msg, url, rate_limiter).await?;
-                }
+        // Remove the &list parameter if it exists
+        if url.query_pairs().any(|(key, _)| key == "list") {
+            let preserved_params: Vec<(String, String)> = url.query_pairs()
+                .filter(|(key, _)| key != "list")
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect();
+            
+            url.query_pairs_mut().clear();
+            
+            for (key, value) in preserved_params {
+                url.query_pairs_mut().append_pair(&key, &value);
             }
-        } else {
-            bot.send_message(msg.chat.id, "Извини, я не нашла ссылки на YouTube или SoundCloud. Пожалуйста, пришли мне ссылку на трек или видео, который ты хочешь скачать.").await?;
         }
+
+        if handle_rate_limit(&bot, &msg, &rate_limiter).await? {
+            if is_video {
+                download_and_send_video(bot, msg, url, rate_limiter).await?;
+            } else {
+                download_and_send_audio(bot, msg, url, rate_limiter).await?;
+            }
+        }
+    } else {
+        bot.send_message(msg.chat.id, "Извини, я не нашла ссылки на YouTube или SoundCloud. Пожалуйста, пришли мне ссылку на трек или видео, который ты хочешь скачать.").await?;
     }
     Ok(())
 }
