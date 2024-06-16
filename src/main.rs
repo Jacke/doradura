@@ -10,6 +10,7 @@ use anyhow::Result;
 use tokio::signal;
 use dptree::di::DependencyMap;
 use reqwest::ClientBuilder;
+use tokio::time::sleep;
 
 mod commands;
 mod db;
@@ -39,7 +40,7 @@ async fn main() -> Result<()> {
 
     let bot = Bot::from_env_with_client(
         ClientBuilder::new()
-            .timeout(Duration::from_secs(10)) // Set request timeout to 10 seconds
+            .timeout(Duration::from_secs(30)) // Increase request timeout to 30 seconds
             .build()?,
     );
 
@@ -129,6 +130,11 @@ async fn main() -> Result<()> {
             }
         } else {
             retry_count = 0; // Reset retry count on success
+        }
+
+        // Add a delay between retries to avoid overwhelming the API
+        if retry_count > 0 {
+            sleep(Duration::from_secs(5)).await;
         }
     }
 
