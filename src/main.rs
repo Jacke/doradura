@@ -36,6 +36,21 @@ enum Command {
 #[tokio::main]
 async fn main() -> Result<()> {
     pretty_env_logger::init();
+    // Initialize simplelog for file logging
+    CombinedLogger::init(vec![
+        TermLogger::new(
+            LevelFilter::Error,
+            Config::default(),
+            TerminalMode::Mixed,
+            ColorChoice::Auto,
+        ),
+        WriteLogger::new(
+            LevelFilter::Error,
+            Config::default(),
+            File::create("app.log").unwrap(),
+        ),
+    ])
+    .unwrap();    
     log::info!("Starting bot...");
 
     let bot = Bot::from_env_with_client(
