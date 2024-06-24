@@ -10,6 +10,8 @@ use thiserror::Error;
 use anyhow::{Error, anyhow};
 use std::process::Command;
 // use ffmpeg_next as ffmpeg;
+use reqwest::Client;
+use crate::get_updates_with_retry;
 
 #[derive(Error, Debug)]
 enum CommandError {
@@ -38,8 +40,20 @@ pub async fn download_and_send_audio(bot: Bot, msg: Message, url: Url, rate_limi
     let chat_id = msg.chat.id;
     let rate_limiter = Arc::clone(&rate_limiter);
 
+    // Create a custom reqwest::Client with a longer timeout
+    // let client = Client::builder()
+    //     .timeout(Duration::from_secs(60)) // Set timeout to 60 seconds
+    //     .build()
+    //     .expect("Failed to create reqwest client");
+
     tokio::spawn(async move {
         let result: Result<(), CommandError> = async {
+            // let client = Client::new();
+            // let url_str = format!("https://api.telegram.org/token:redacted/GetUpdates");
+            // let updates = get_updates_with_retry(&client, &url_str).await.map_err(|e| {
+                // CommandError::Network(anyhow!("Failed to get updates: {}", e))
+            // })?;
+
             let (title, artist) = fetch_song_metadata(&url.as_str())
                 .await
                 .map_err(|e| CommandError::FetchMetadata(anyhow!("Failed to fetch song metadata: {}", e)))?;
@@ -69,20 +83,16 @@ pub async fn download_and_send_audio(bot: Bot, msg: Message, url: Url, rate_limi
 
             println!("download_path {:?}", download_path);
 
-            // // Use ffmpeg to get the duration of the audio file
-            // ffmpeg::init().expect("Failed to initialize ffmpeg");
-            // let mut format_context = ffmpeg::format::input(&download_path).expect("Failed to open file with ffmpeg");
-            // let duration = format_context.duration() as i32 / 1000; // Convert to seconds
             // Use ffprobe to get the duration of the audio file
             let output = Command::new("ffprobe")
-            .args(&[
-                "-v", "error",
-                "-show_entries", "format=duration",
-                "-of", "default=noprint_wrappers=1:nokey=1",
-                &download_path,
-            ])
-            .output()
-            .expect("Failed to execute ffprobe");
+                .args(&[
+                    "-v", "error",
+                    "-show_entries", "format=duration",
+                    "-of", "default=noprint_wrappers=1:nokey=1",
+                    &download_path,
+                ])
+                .output()
+                .expect("Failed to execute ffprobe");
             let duration_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let duration: u32 = duration_str.parse::<f32>().unwrap_or(0.0).round() as u32;
 

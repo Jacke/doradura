@@ -15,6 +15,10 @@ use log::{error, warn, info, debug, trace};
 use pretty_env_logger;
 use simplelog::*;
 use std::fs::File;
+use reqwest::Client;
+use reqwest::Error as ReqwestError;
+use tokio_retry::strategy::ExponentialBackoff;
+use tokio_retry::Retry;
 
 mod commands;
 mod db;
@@ -197,4 +201,21 @@ fn make_menu() -> KeyboardMarkup {
     KeyboardMarkup::new(buttons)
         .resize_keyboard(true)
         .one_time_keyboard(false)
+}
+
+async fn get_updates_with_retry(client: &Client, url: &str) -> Result<String, ReqwestError> {
+    let retry_strategy = ExponentialBackoff::from_millis(100).take(5);
+
+    let response = Retry::spawn(retry_strategy, || async {
+        client
+            .get(url)
+            .timeout(Duration::from_secs(10)) // Set a timeout for the request
+            .send()
+            .await?
+            .text()
+            .await
+    })
+    .await?;
+
+    Ok(response)
 }
