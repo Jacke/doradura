@@ -31,4 +31,9 @@ impl DownloadQueue {
         println!("get_task queue: {:?}", queue);
         queue.pop_front()
     }
+
+    pub fn size(&self) -> usize {
+        let queue = self.queue.lock().unwrap();
+        queue.len()
+    }
 }
