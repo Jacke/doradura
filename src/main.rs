@@ -2,41 +2,47 @@ use std::fs::read_to_string;
 use std::sync::Arc;
 use std::hash::Hash;
 use teloxide::prelude::*;
-use teloxide::types::{KeyboardButton, KeyboardMarkup, ParseMode, Message, BotCommand};
+use teloxide::types::{KeyboardButton, KeyboardMarkup, ParseMode, Message, BotCommand, Chat, ChatId, MessageId, User, ChatKind, ChatPrivate, MessageKind};
+use teloxide::types::{UserId, MediaKind};
+use teloxide::types::MessageCommon;
+use teloxide::types::MediaText;
 use teloxide::utils::command::BotCommands;
-use teloxide::dispatching::{UpdateFilterExt, Dispatcher, DefaultKey};
+use teloxide::dispatching::{UpdateFilterExt, Dispatcher};
 use std::time::Duration;
 use anyhow::Result;
 use tokio::signal;
 use dptree::di::DependencyMap;
 use reqwest::ClientBuilder;
-use tokio::time::sleep;
-use log::{error, warn, info, debug, trace};
-use pretty_env_logger;
+use tokio::time::{sleep, interval};
 use simplelog::*;
 use std::fs::File;
 use reqwest::Client;
 use reqwest::Error as ReqwestError;
 use tokio_retry::strategy::ExponentialBackoff;
 use tokio_retry::Retry;
+use chrono::Utc;
 
 mod commands;
 mod db;
+mod downloader;
 mod fetch;
 mod rate_limiter;
 mod utils;
+mod queue;
 
 use db::{get_connection, create_user, get_user, log_request};
 use crate::commands::handle_message;
 use crate::rate_limiter::RateLimiter;
+use crate::queue::{DownloadQueue, DownloadTask};
+use crate::downloader::{download_and_send_audio, download_and_send_video};
 
-#[derive(BotCommands, Clone)]
-#[command(description = "Мои команды:")]
+#[derive(BotCommands, Clone, Debug)]
+#[command(rename_rule = "lowercase", description = "Я умею:")]
 enum Command {
-    #[command(description = "показывает это сообщение")]
-    Help,
     #[command(description = "показывает главное меню")]
     Start,
+    #[command(description = "показывает это сообщение")]
+    Help,
     #[command(description = "показывает настройки")]
     Settings,
 }
@@ -58,7 +64,7 @@ async fn main() -> Result<()> {
         ),
     ])
     .unwrap();
-    
+
     log::info!("Starting bot...");
 
     let bot = Bot::from_env_with_client(
@@ -84,6 +90,10 @@ async fn main() -> Result<()> {
     conn.execute_batch(&migration_sql)?;
 
     let rate_limiter = Arc::new(RateLimiter::new(Duration::from_secs(30)));
+    let download_queue = Arc::new(DownloadQueue::new());
+
+    // Start the queue processing
+    tokio::spawn(process_queue(bot.clone(), Arc::clone(&download_queue), Arc::clone(&rate_limiter)));
 
     // Create a dispatcher to handle both commands and plain messages
     let handler = dptree::entry()
@@ -91,9 +101,11 @@ async fn main() -> Result<()> {
             dptree::entry()
                 .filter_command::<Command>()
                 .endpoint(|bot: Bot, msg: Message, cmd: Command| async move {
+                    println!("cmd {:?}", cmd);
                     match cmd {
                         Command::Start => {
-                            bot.send_message(msg.chat.id, "Приветик! Я Дора ❤️‍🔥. Я делаю чай и скачиваю треки. Используй /help чтобы получить полную инфу.")
+                            let message = "Приветик\\! Я Дора ❤️‍🔥\\. Я делаю чай и скачиваю треки и видео\\. Используй /help чтобы получить полную инфу\\.".to_string();
+                            bot.send_message(msg.chat.id, message)
                                 .parse_mode(ParseMode::MarkdownV2)
                                 .await?;
                         }
@@ -103,7 +115,7 @@ async fn main() -> Result<()> {
                                 .await?;
                         }
                         Command::Settings => {
-                            bot.send_message(msg.chat.id, "Ты можешь качать трек, каждые 30 секунд!")
+                            bot.send_message(msg.chat.id, "Ты можешь качать каждые 30 секунд\\! Дополнительные возможности на подходе")
                                 .parse_mode(ParseMode::MarkdownV2)
                                 .await?;
                         }
@@ -113,10 +125,12 @@ async fn main() -> Result<()> {
         ))
         .branch(Update::filter_message().endpoint({
             let rate_limiter = Arc::clone(&rate_limiter);
+            let download_queue = Arc::clone(&download_queue);
             move |bot: Bot, msg: Message| {
                 let rate_limiter = Arc::clone(&rate_limiter);
+                let download_queue = Arc::clone(&download_queue);
                 async move {
-                    if let Err(err) = handle_message(bot, msg.clone(), rate_limiter).await {
+                    if let Err(err) = handle_message(bot.clone(), msg.clone(), download_queue.clone(), rate_limiter.clone()).await {
                         log::error!("Error handling message: {:?}", err);
                     }
 
@@ -130,6 +144,13 @@ async fn main() -> Result<()> {
                         log_request(&conn, chat_id, &msg.text().unwrap()).unwrap();
                     }
 
+                    // Add download task to the queue
+                    download_queue.add_task(DownloadTask {
+                        url: msg.text().unwrap().to_string(), // Adjust as per your message parsing logic
+                        chat_id: msg.chat.id,
+                        is_video: false, // Adjust as per your message parsing logic
+                    });
+
                     respond(())
                 }
             }
@@ -139,7 +160,6 @@ async fn main() -> Result<()> {
     loop {
         let mut dispatcher = Dispatcher::builder(bot.clone(), handler.clone())
             .dependencies(DependencyMap::new())
-            .default_handler(|_| async {})
             .build();
 
         if let Err(err) = run_dispatcher(&mut dispatcher).await {
@@ -218,4 +238,166 @@ async fn get_updates_with_retry(client: &Client, url: &str) -> Result<String, Re
     .await?;
 
     Ok(response)
+}
+
+async fn process_queue(bot: Bot, queue: Arc<DownloadQueue>, rate_limiter: Arc<rate_limiter::RateLimiter>) {
+    let mut interval = interval(Duration::from_secs(1));
+
+    loop {
+        interval.tick().await;
+
+        if let Some(task) = queue.get_task() {
+            let bot = bot.clone();
+            let rate_limiter = Arc::clone(&rate_limiter);
+            
+            tokio::spawn(async move {
+                let url = url::Url::parse(&task.url).expect("Invalid URL");
+                if task.is_video {
+                    if let Err(e) = download_and_send_video(bot.clone(), create_dummy_message(task.chat_id), url, rate_limiter).await {
+                        eprintln!("Failed to process video task: {:?}", e);
+                    }
+                } else {
+                    if let Err(e) = download_and_send_audio(bot.clone(), create_dummy_message(task.chat_id), url, rate_limiter).await {
+                        eprintln!("Failed to process audio task: {:?}", e);
+                    }
+                }
+            });
+        }
+    }
+}
+
+fn create_dummy_message(chat_id: ChatId) -> Message {
+    Message {
+        id: MessageId(1),
+        date: Utc::now(),
+        chat: Chat {
+            id: chat_id,
+            kind: ChatKind::Private(ChatPrivate {
+                username: None,
+                first_name: None,
+                last_name: None,
+                bio: None,
+                has_private_forwards: None,
+                has_restricted_voice_and_video_messages: None,
+                emoji_status_custom_emoji_id: None,
+            }),
+            has_hidden_members: false,
+            has_aggressive_anti_spam_enabled: false,
+            message_auto_delete_time: None,
+            photo: None,
+            pinned_message: None,
+        },
+        kind: MessageKind::Common(MessageCommon {
+            from: Some(User {
+                id: UserId(chat_id.0 as u64),
+                is_bot: false,
+                first_name: "First".to_string(),
+                last_name: None,
+                username: Some("username".to_string()),
+                language_code: None,
+                is_premium: false,
+                added_to_attachment_menu: false,
+            }),
+            sender_chat: None,
+            author_signature: None,
+            forward: None,
+            reply_to_message: None,
+            edit_date: None,
+            media_kind: MediaKind::Text(MediaText {
+                text: "Dummy text".to_string(),
+                entities: vec![],
+            }),
+            reply_markup: None,
+            is_topic_message: false,
+            is_automatic_forward: false,
+            has_protected_content: false,
+        }),
+        via_bot: None,
+        thread_id: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    pub use crate::queue::DownloadQueue;
+    pub use crate::queue::DownloadTask;
+
+    #[test]
+    fn test_adding_and_retrieving_task() {
+        let queue = DownloadQueue::new();
+        let task = DownloadTask {
+            url: "http://example.com/video.mp4".to_string(),
+            chat_id: ChatId(123456789),
+            is_video: true,
+        };
+
+        // Test adding a task to the queue
+        queue.add_task(task.clone());
+        assert_eq!(queue.queue.lock().unwrap().len(), 1);
+
+        // Test retrieving a task from the queue
+        let retrieved_task = queue.get_task().unwrap();
+        assert_eq!(retrieved_task.url, "http://example.com/video.mp4");
+        assert_eq!(retrieved_task.chat_id, ChatId(123456789));
+        assert_eq!(retrieved_task.is_video, true);
+    }
+
+    #[test]
+    fn test_queue_empty_after_retrieval() {
+        let queue = DownloadQueue::new();
+        let task = DownloadTask {
+            url: "http://example.com/audio.mp3".to_string(),
+            chat_id: ChatId(987654321),
+            is_video: false,
+        };
+
+        queue.add_task(task);
+        assert_eq!(queue.queue.lock().unwrap().len(), 1);
+
+        // After retrieving, the queue should be empty
+        let _retrieved_task = queue.get_task().unwrap();
+        assert!(queue.queue.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_multiple_tasks_handling() {
+        let queue = DownloadQueue::new();
+        let task1 = DownloadTask {
+            url: "http://example.com/first.mp4".to_string(),
+            chat_id: ChatId(111111111),
+            is_video: true,
+        };
+        let task2 = DownloadTask {
+            url: "http://example.com/second.mp3".to_string(),
+            chat_id: ChatId(222222222),
+            is_video: false,
+        };
+
+        queue.add_task(task1);
+        queue.add_task(task2);
+
+        // Check the count after adding tasks
+        assert_eq!(queue.queue.lock().unwrap().len(), 2);
+
+        // Retrieve tasks and check the order and properties
+        let first_retrieved_task = queue.get_task().unwrap();
+        assert_eq!(first_retrieved_task.url, "http://example.com/first.mp4");
+        assert_eq!(first_retrieved_task.chat_id, ChatId(111111111));
+        assert_eq!(first_retrieved_task.is_video, true);
+
+        let second_retrieved_task = queue.get_task().unwrap();
+        assert_eq!(second_retrieved_task.url, "http://example.com/second.mp3");
+        assert_eq!(second_retrieved_task.chat_id, ChatId(222222222));
+        assert_eq!(second_retrieved_task.is_video, false);
+
+        // After retrieving all tasks, the queue should be empty
+        assert!(queue.queue.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_queue_empty_initially() {
+        let queue = DownloadQueue::new();
+        assert!(queue.queue.lock().unwrap().is_empty());
+    }
 }
