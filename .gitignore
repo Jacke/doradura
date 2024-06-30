@@ -1,2 +1,4 @@
 /target
 TMP/
+app.log
+database.sqlite
