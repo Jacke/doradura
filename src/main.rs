@@ -45,6 +45,8 @@ enum Command {
     Help,
     #[command(description = "показывает настройки")]
     Settings,
+    #[command(description = "показывает активные скачивания")]
+    Tasks,    
 }
 
 #[tokio::main]
@@ -81,6 +83,7 @@ async fn main() -> Result<()> {
         BotCommand::new("start", "показывает главное меню"),
         BotCommand::new("help", "расскажу что я могу, помимо вкусного чая"),
         BotCommand::new("settings", "твои настройки"),
+        BotCommand::new("tasks", "активные скачивания"),
     ])
     .await?;
 
@@ -119,6 +122,11 @@ async fn main() -> Result<()> {
                                 .parse_mode(ParseMode::MarkdownV2)
                                 .await?;
                         }
+                        Command::Tasks => {
+                            bot.send_message(msg.chat.id, "Твои загрузки:")
+                                .parse_mode(ParseMode::MarkdownV2)
+                                .await?;
+                        }                        
                     }
                     respond(())
                 })
@@ -143,14 +151,14 @@ async fn main() -> Result<()> {
                         create_user(&conn, chat_id, msg.from().and_then(|u| u.username.clone())).unwrap();
                         log_request(&conn, chat_id, &msg.text().unwrap()).unwrap();
                     }
-
+/*
                     // Add download task to the queue
                     download_queue.add_task(DownloadTask {
                         url: msg.text().unwrap().to_string(), // Adjust as per your message parsing logic
                         chat_id: msg.chat.id,
                         is_video: false, // Adjust as per your message parsing logic
                     });
-
+ */
                     respond(())
                 }
             }
