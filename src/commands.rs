@@ -68,11 +68,13 @@ pub async fn handle_message(bot: Bot, msg: Message, download_queue: Arc<Download
 
         if handle_rate_limit(&bot, &msg, &rate_limiter).await? {
             if is_video {
+                println!("handle_rate_limit is_video add_task");
                 let task = DownloadTask { url: url.to_string(), chat_id: msg.chat.id, is_video: true };
                 download_queue.add_task(task);
                 bot.send_message(msg.chat.id, "Я Дора, попробую скачать тебе видео! 🎥 Терпение!").await?;
             } else {
                 let task = DownloadTask { url: url.to_string(), chat_id: msg.chat.id, is_video: false };
+                println!("handle_rate_limit not video add_task");
                 download_queue.add_task(task);
                 bot.send_message(msg.chat.id, "Я Дора, попробую скачать тебе трек! ❤️‍🔥 Терпение!").await?;
             }            
