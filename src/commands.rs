@@ -42,7 +42,7 @@ pub async fn handle_message(bot: Bot, msg: Message, download_queue: Arc<Download
         if text.starts_with("/start") || text.starts_with("/help") {
             return Ok(());
         }
-        let is_video = text.starts_with("video ");
+        let is_video = text.to_lowercase().starts_with("video ");
         let url_text = if is_video { &text[6..] } else { text };
         let mut url = match Url::parse(url_text) {
             Ok(parsed_url) => parsed_url,
