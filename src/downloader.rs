@@ -67,6 +67,11 @@ pub async fn download_and_send_audio(bot: Bot, msg: Message, url: Url, rate_limi
                 .expect("Failed to execute ffprobe");
             let duration_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let duration: u32 = duration_str.parse::<f32>().unwrap_or(0.0).round() as u32;
+            // Calculate and print the elapsed time
+            let current_time = Utc::now();
+            let elapsed_time = current_time.signed_duration_since(created_timestamp);
+            println!("Elapsed time for audio download: {:?}", elapsed_time);
+
 
             bot_clone
                 .send_audio(chat_id, InputFile::file(&download_path))
@@ -76,11 +81,6 @@ pub async fn download_and_send_audio(bot: Bot, msg: Message, url: Url, rate_limi
                 
             tokio::time::sleep(Duration::from_secs(600)).await;
             std::fs::remove_file(&download_path).expect("Failed to delete file");
-
-            // Calculate and print the elapsed time
-            let current_time = Utc::now();
-            let elapsed_time = current_time.signed_duration_since(created_timestamp);
-            println!("Elapsed time for audio download: {:?}", elapsed_time);
 
             Ok(())
         }.await;
@@ -119,7 +119,12 @@ pub async fn download_and_send_video(bot: Bot, msg: Message, url: Url, rate_limi
             let _ = child.wait().expect("youtube-dl process failed");
 
             println!("download_path {:?}", download_path);
+            // Calculate and print the elapsed time
+            let current_time = Utc::now();
+            let elapsed_time = current_time.signed_duration_since(created_timestamp);
+            println!("Elapsed time for video download: {:?}", elapsed_time);
 
+            
             bot_clone
                 .send_video(chat_id, InputFile::file(&download_path))
                 .await
@@ -127,11 +132,6 @@ pub async fn download_and_send_video(bot: Bot, msg: Message, url: Url, rate_limi
                 
             tokio::time::sleep(Duration::from_secs(600)).await;
             std::fs::remove_file(&download_path).expect("Failed to delete file");
-
-            // Calculate and print the elapsed time
-            let current_time = Utc::now();
-            let elapsed_time = current_time.signed_duration_since(created_timestamp);
-            println!("Elapsed time for video download: {:?}", elapsed_time);
 
             Ok(())
         }.await;
