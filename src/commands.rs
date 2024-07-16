@@ -1,3 +1,4 @@
+use regex::Regex;
 use teloxide::prelude::*;
 use teloxide::types::InputFile;
 use crate::rate_limiter::RateLimiter;
@@ -42,42 +43,49 @@ pub async fn handle_message(bot: Bot, msg: Message, download_queue: Arc<Download
         if text.starts_with("/start") || text.starts_with("/help") {
             return Ok(());
         }
-        let is_video = text.to_lowercase().starts_with("video ");
-        let url_text = if is_video { &text[6..] } else { text };
-        let mut url = match Url::parse(url_text) {
-            Ok(parsed_url) => parsed_url,
-            Err(_) => {
-                bot.send_message(msg.chat.id, "Извини, я не смогла распознать ссылку. Пожалуйста, пришли мне корректную ссылку на YouTube или SoundCloud.").await?;
-                return Ok(());
-            }
-        };
+        
+        let re = Regex::new(r"https?://[^\s]+").unwrap();
+        if let Some(url_match) = re.find(text) {
+            let url_text = url_match.as_str();
+            let mut url = match Url::parse(url_text) {
+                Ok(parsed_url) => parsed_url,
+                Err(_) => {
+                    bot.send_message(msg.chat.id, "Извини, я не смогла распознать ссылку. Пожалуйста, пришли мне корректную ссылку на YouTube или SoundCloud.").await?;
+                    return Ok(());
+                }
+            };
 
-        // Remove the &list parameter if it exists
-        if url.query_pairs().any(|(key, _)| key == "list") {
-            let preserved_params: Vec<(String, String)> = url.query_pairs()
-                .filter(|(key, _)| key != "list")
-                .map(|(key, value)| (key.to_string(), value.to_string()))
-                .collect();
-            
-            url.query_pairs_mut().clear();
-            
-            for (key, value) in preserved_params {
-                url.query_pairs_mut().append_pair(&key, &value);
+            // Remove the &list parameter if it exists
+            if url.query_pairs().any(|(key, _)| key == "list") {
+                let preserved_params: Vec<(String, String)> = url.query_pairs()
+                    .filter(|(key, _)| key != "list")
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect();
+                
+                url.query_pairs_mut().clear();
+                
+                for (key, value) in preserved_params {
+                    url.query_pairs_mut().append_pair(&key, &value);
+                }
             }
-        }
 
-        if handle_rate_limit(&bot, &msg, &rate_limiter).await? {
-            if is_video {
-                println!("handle_rate_limit is_video add_task");
-                let task = DownloadTask { url: url.to_string(), chat_id: msg.chat.id, is_video: true };
-                download_queue.add_task(task);
-                bot.send_message(msg.chat.id, "Я Дора, попробую скачать тебе видео! 🎥 Терпение!").await?;
-            } else {
-                let task = DownloadTask { url: url.to_string(), chat_id: msg.chat.id, is_video: false };
-                println!("handle_rate_limit not video add_task");
-                download_queue.add_task(task);
-                bot.send_message(msg.chat.id, "Я Дора, попробую скачать тебе трек! ❤️‍🔥 Терпение!").await?;
-            }            
+            let is_video = text.to_lowercase().contains("video ");
+
+            if handle_rate_limit(&bot, &msg, &rate_limiter).await? {
+                if is_video {
+                    println!("handle_rate_limit fun is_video add_task");
+                    let task = DownloadTask { url: url.to_string(), chat_id: msg.chat.id, is_video: true };
+                    download_queue.add_task(task);
+                    bot.send_message(msg.chat.id, "Я Дора, попробую скачать тебе видео! 🎥 Терпение!").await?;
+                } else {
+                    let task = DownloadTask { url: url.to_string(), chat_id: msg.chat.id, is_video: false };
+                    println!("handle_rate_limit fun not video add_task");
+                    download_queue.add_task(task);
+                    bot.send_message(msg.chat.id, "Я Дора, попробую скачать тебе трек! ❤️‍🔥 Терпение!").await?;
+                }            
+            }
+        } else {
+            bot.send_message(msg.chat.id, "Извини, я не нашла ссылки на YouTube или SoundCloud. Пожалуйста, пришли мне ссылку на трек или видео, который ты хочешь скачать.").await?;
         }
     } else {
         bot.send_message(msg.chat.id, "Извини, я не нашла ссылки на YouTube или SoundCloud. Пожалуйста, пришли мне ссылку на трек или видео, который ты хочешь скачать.").await?;
