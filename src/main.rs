@@ -261,11 +261,11 @@ async fn process_queue(bot: Bot, queue: Arc<DownloadQueue>, rate_limiter: Arc<ra
             tokio::spawn(async move {
                 let url = url::Url::parse(&task.url).expect("Invalid URL");
                 if task.is_video {
-                    if let Err(e) = download_and_send_video(bot.clone(), create_dummy_message(task.chat_id), url, rate_limiter).await {
+                    if let Err(e) = download_and_send_video(bot.clone(), create_dummy_message(task.chat_id), url, rate_limiter, Utc::now()).await {
                         eprintln!("Failed to process video task: {:?}", e);
                     }
                 } else {
-                    if let Err(e) = download_and_send_audio(bot.clone(), create_dummy_message(task.chat_id), url, rate_limiter).await {
+                    if let Err(e) = download_and_send_audio(bot.clone(), create_dummy_message(task.chat_id), url, rate_limiter, Utc::now()).await {
                         eprintln!("Failed to process audio task: {:?}", e);
                     }
                 }

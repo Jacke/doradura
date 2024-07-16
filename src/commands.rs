@@ -14,6 +14,7 @@ use std::process::Command;
 use reqwest::Client;
 use crate::get_updates_with_retry;
 use crate::queue::{DownloadTask, DownloadQueue};
+use chrono::{DateTime, Utc};
 
 #[derive(Error, Debug)]
 enum CommandError {
@@ -70,15 +71,16 @@ pub async fn handle_message(bot: Bot, msg: Message, download_queue: Arc<Download
             }
 
             let is_video = text.to_lowercase().contains("video ");
+            let created_timestamp = Utc::now();
 
             if handle_rate_limit(&bot, &msg, &rate_limiter).await? {
                 if is_video {
                     println!("handle_rate_limit fun is_video add_task");
-                    let task = DownloadTask { url: url.to_string(), chat_id: msg.chat.id, is_video: true };
+                    let task = DownloadTask { url: url.to_string(), chat_id: msg.chat.id, is_video: true, created_timestamp };
                     download_queue.add_task(task);
                     bot.send_message(msg.chat.id, "Я Дора, попробую скачать тебе видео! 🎥 Терпение!").await?;
                 } else {
-                    let task = DownloadTask { url: url.to_string(), chat_id: msg.chat.id, is_video: false };
+                    let task = DownloadTask { url: url.to_string(), chat_id: msg.chat.id, is_video: false, created_timestamp };
                     println!("handle_rate_limit fun not video add_task");
                     download_queue.add_task(task);
                     bot.send_message(msg.chat.id, "Я Дора, попробую скачать тебе трек! ❤️‍🔥 Терпение!").await?;
