@@ -1,12 +1,14 @@
 use std::sync::Mutex;
 use std::collections::VecDeque;
 use teloxide::types::ChatId;
+use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone)]
 pub struct DownloadTask {
     pub url: String,
     pub chat_id: ChatId,
     pub is_video: bool,
+    pub created_timestamp: DateTime<Utc>,
 }
 
 pub struct DownloadQueue {

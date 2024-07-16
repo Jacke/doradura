@@ -9,6 +9,7 @@ use url::Url;
 use thiserror::Error;
 use anyhow::{Error, anyhow};
 use std::process::Command;
+use chrono::{DateTime, Utc, Duration as ChronoDuration};
 
 #[derive(Error, Debug)]
 pub enum CommandError {
@@ -18,7 +19,7 @@ pub enum CommandError {
     Download(Error),
 }
 
-pub async fn download_and_send_audio(bot: Bot, msg: Message, url: Url, rate_limiter: Arc<RateLimiter>) -> ResponseResult<()> {
+pub async fn download_and_send_audio(bot: Bot, msg: Message, url: Url, rate_limiter: Arc<RateLimiter>, created_timestamp: DateTime<Utc>) -> ResponseResult<()> {
     let bot_clone = bot.clone();
     let chat_id = msg.chat.id;
     let _rate_limiter = Arc::clone(&rate_limiter);
@@ -76,6 +77,11 @@ pub async fn download_and_send_audio(bot: Bot, msg: Message, url: Url, rate_limi
             tokio::time::sleep(Duration::from_secs(600)).await;
             std::fs::remove_file(&download_path).expect("Failed to delete file");
 
+            // Calculate and print the elapsed time
+            let current_time = Utc::now();
+            let elapsed_time = current_time.signed_duration_since(created_timestamp);
+            println!("Elapsed time for audio download: {:?}", elapsed_time);
+
             Ok(())
         }.await;
 
@@ -89,7 +95,7 @@ pub async fn download_and_send_audio(bot: Bot, msg: Message, url: Url, rate_limi
     Ok(())
 }
 
-pub async fn download_and_send_video(bot: Bot, msg: Message, url: Url, rate_limiter: Arc<RateLimiter>) -> ResponseResult<()> {
+pub async fn download_and_send_video(bot: Bot, msg: Message, url: Url, rate_limiter: Arc<RateLimiter>, created_timestamp: DateTime<Utc>) -> ResponseResult<()> {
     let bot_clone = bot.clone();
     let chat_id = msg.chat.id;
     let _rate_limiter = Arc::clone(&rate_limiter);
@@ -121,6 +127,11 @@ pub async fn download_and_send_video(bot: Bot, msg: Message, url: Url, rate_limi
                 
             tokio::time::sleep(Duration::from_secs(600)).await;
             std::fs::remove_file(&download_path).expect("Failed to delete file");
+
+            // Calculate and print the elapsed time
+            let current_time = Utc::now();
+            let elapsed_time = current_time.signed_duration_since(created_timestamp);
+            println!("Elapsed time for video download: {:?}", elapsed_time);
 
             Ok(())
         }.await;
