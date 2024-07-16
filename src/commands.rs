@@ -1,28 +1,10 @@
 use regex::Regex;
 use teloxide::prelude::*;
-use teloxide::types::InputFile;
 use crate::rate_limiter::RateLimiter;
-use crate::fetch::fetch_song_metadata;
-use crate::utils::escape_filename;
 use std::sync::Arc;
-use std::time::Duration;
 use url::Url;
-use thiserror::Error;
-use anyhow::{Error, anyhow};
-use std::process::Command;
-// use ffmpeg_next as ffmpeg;
-use reqwest::Client;
-use crate::get_updates_with_retry;
 use crate::queue::{DownloadTask, DownloadQueue};
-use chrono::{DateTime, Utc};
-
-#[derive(Error, Debug)]
-enum CommandError {
-    #[error("Failed to fetch song metadata")]
-    FetchMetadata(#[from] Error),
-    #[error("Failed to download file")]
-    Download(Error),
-}
+use chrono::Utc;
 
 pub async fn handle_rate_limit(bot: &Bot, msg: &Message, rate_limiter: &RateLimiter) -> ResponseResult<bool> {
     if rate_limiter.is_rate_limited(msg.chat.id).await {

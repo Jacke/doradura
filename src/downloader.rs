@@ -9,7 +9,7 @@ use url::Url;
 use thiserror::Error;
 use anyhow::{Error, anyhow};
 use std::process::Command;
-use chrono::{DateTime, Utc, Duration as ChronoDuration};
+use chrono::{DateTime, Utc};
 
 #[derive(Error, Debug)]
 pub enum CommandError {
@@ -50,8 +50,8 @@ pub async fn download_and_send_audio(bot: Bot, msg: Message, url: Url, rate_limi
                 .arg("-acodec libmp3lame -b:a 320k") // Set audio codec to libmp3lame and bitrate to 320 kbps 
                 .arg(url.as_str())
                 .spawn()
-                .expect("Failed to start youtube-dl process");
-            let _ = child.wait().expect("youtube-dl process failed");
+                .map_err(|e| CommandError::Download(anyhow!("Failed to start youtube-dl process: {}", e)))?;
+            let _ = child.wait().map_err(|e| CommandError::Download(anyhow!("youtube-dl process failed: {}", e)))?;
 
             println!("download_path {:?}", download_path);
 
@@ -64,14 +64,14 @@ pub async fn download_and_send_audio(bot: Bot, msg: Message, url: Url, rate_limi
                     &download_path,
                 ])
                 .output()
-                .expect("Failed to execute ffprobe");
+                .map_err(|e| CommandError::Download(anyhow!("Failed to execute ffprobe: {}", e)))?;
             let duration_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
             let duration: u32 = duration_str.parse::<f32>().unwrap_or(0.0).round() as u32;
+
             // Calculate and print the elapsed time
             let current_time = Utc::now();
             let elapsed_time = current_time.signed_duration_since(created_timestamp);
             println!("Elapsed time for audio download: {:?}", elapsed_time);
-
 
             bot_clone
                 .send_audio(chat_id, InputFile::file(&download_path))
@@ -80,7 +80,7 @@ pub async fn download_and_send_audio(bot: Bot, msg: Message, url: Url, rate_limi
                 .map_err(|e| CommandError::Download(anyhow!("Failed to send audio file: {}", e)))?;
                 
             tokio::time::sleep(Duration::from_secs(600)).await;
-            std::fs::remove_file(&download_path).expect("Failed to delete file");
+            std::fs::remove_file(&download_path).map_err(|e| CommandError::Download(anyhow!("Failed to delete file: {}", e)))?;
 
             Ok(())
         }.await;
@@ -124,7 +124,7 @@ pub async fn download_and_send_video(bot: Bot, msg: Message, url: Url, rate_limi
             let elapsed_time = current_time.signed_duration_since(created_timestamp);
             println!("Elapsed time for video download: {:?}", elapsed_time);
 
-            
+
             bot_clone
                 .send_video(chat_id, InputFile::file(&download_path))
                 .await

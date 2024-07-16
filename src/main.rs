@@ -2,7 +2,7 @@ use std::fs::read_to_string;
 use std::sync::Arc;
 use std::hash::Hash;
 use teloxide::prelude::*;
-use teloxide::types::{KeyboardButton, KeyboardMarkup, ParseMode, Message, BotCommand, Chat, ChatId, MessageId, User, ChatKind, ChatPrivate, MessageKind};
+use teloxide::types::{ParseMode, Message, BotCommand, Chat, ChatId, MessageId, User, ChatKind, ChatPrivate, MessageKind};
 use teloxide::types::{UserId, MediaKind};
 use teloxide::types::MessageCommon;
 use teloxide::types::MediaText;
@@ -16,10 +16,6 @@ use reqwest::ClientBuilder;
 use tokio::time::{sleep, interval};
 use simplelog::*;
 use std::fs::File;
-use reqwest::Client;
-use reqwest::Error as ReqwestError;
-use tokio_retry::strategy::ExponentialBackoff;
-use tokio_retry::Retry;
 use chrono::Utc;
 
 mod commands;
@@ -33,7 +29,7 @@ mod queue;
 use db::{get_connection, create_user, get_user, log_request};
 use crate::commands::handle_message;
 use crate::rate_limiter::RateLimiter;
-use crate::queue::{DownloadQueue, DownloadTask};
+use crate::queue::DownloadQueue;
 use crate::downloader::{download_and_send_audio, download_and_send_video};
 
 #[derive(BotCommands, Clone, Debug)]
@@ -215,6 +211,7 @@ async fn exponential_backoff(retry_count: u32) {
     tokio::time::sleep(delay).await;
 }
 
+/*
 fn make_menu() -> KeyboardMarkup {
     let buttons = vec![
         vec![
@@ -247,6 +244,7 @@ async fn get_updates_with_retry(client: &Client, url: &str) -> Result<String, Re
 
     Ok(response)
 }
+ */
 
 async fn process_queue(bot: Bot, queue: Arc<DownloadQueue>, rate_limiter: Arc<rate_limiter::RateLimiter>) {
     let mut interval = interval(Duration::from_secs(1));
