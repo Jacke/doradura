@@ -102,7 +102,10 @@ pub async fn download_and_send_video(bot: Bot, msg: Message, url: Url, rate_limi
 
     tokio::spawn(async move {
         let result: Result<(), CommandError> = async {
-            let file_name = "video.mp4"; // You can generate a better name based on metadata if needed
+            let (title, artist) = fetch_song_metadata(&url.as_str())
+                .await
+                .map_err(|e| CommandError::FetchMetadata(anyhow!("Failed to fetch song metadata: {}", e)))?;
+            let file_name = generate_file_name(&title, &artist);
             let safe_filename = escape_filename(&file_name);
             let full_path = format!("~/downloads/{}", safe_filename);
             let download_path = shellexpand::tilde(&full_path).into_owned();
@@ -128,7 +131,7 @@ pub async fn download_and_send_video(bot: Bot, msg: Message, url: Url, rate_limi
             bot_clone
                 .send_video(chat_id, InputFile::file(&download_path))
                 .await
-                .map_err(|e| CommandError::Download(anyhow!("Failed to send video file: {}", e)))?;
+                .map_err(|e| CommandError::Download(anyhow!("У меня не получилось отправить тебе видео 🥲 попробуй как-нибудь позже, вот что мне показывает: {}", e)))?;
                 
             tokio::time::sleep(Duration::from_secs(600)).await;
             std::fs::remove_file(&download_path).expect("Failed to delete file");
