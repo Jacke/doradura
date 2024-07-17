@@ -30,7 +30,9 @@ impl DownloadQueue {
 
     pub fn get_task(&self) -> Option<DownloadTask> {
         let mut queue = self.queue.lock().unwrap();
-        println!("get_task queue: {:?}", queue);
+        if queue.len() != 0 {
+            println!("get_task queue: {:?}", queue);
+        }
         queue.pop_front()
     }
 
