@@ -251,7 +251,6 @@ async fn process_queue(bot: Bot, queue: Arc<DownloadQueue>, rate_limiter: Arc<ra
 
     loop {
         interval.tick().await;
-        println!("queue tick with size: {:?}", queue.size());
         if let Some(task) = queue.get_task() {
             let bot = bot.clone();
             let rate_limiter = Arc::clone(&rate_limiter);
