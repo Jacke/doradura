@@ -42,4 +42,9 @@ impl RateLimiter {
         let mut limits = self.limits.lock().await;
         limits.insert(chat_id, Instant::now() + self.duration);
     }
+
+    pub async fn remove_rate_limit(&self, chat_id: ChatId) {
+        let mut limits = self.limits.lock().await;
+        limits.remove(&chat_id);
+    }
 }
