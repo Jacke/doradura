@@ -40,4 +40,13 @@ impl DownloadQueue {
         let queue = self.queue.lock().unwrap();
         queue.len()
     }
+
+    pub fn filter_tasks_by_chat_id(&self, chat_id: ChatId) -> Vec<DownloadTask> {
+        let queue = self.queue.lock().unwrap();
+        queue
+            .iter()
+            .filter(|task| task.chat_id == chat_id)
+            .cloned()
+            .collect()
+    }    
 }

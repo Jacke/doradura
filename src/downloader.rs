@@ -72,7 +72,8 @@ pub async fn download_and_send_audio(bot: Bot, msg: Message, url: Url, rate_limi
             let current_time = Utc::now();
             let elapsed_time = current_time.signed_duration_since(created_timestamp);
             println!("Elapsed time for audio download: {:?}", elapsed_time);
-
+            println!("Audo has been downloaded path: {:?} duration: {:?}", download_path, duration_str); 
+            
             bot_clone
                 .send_audio(chat_id, InputFile::file(&download_path))
                 .duration(duration)
@@ -86,8 +87,9 @@ pub async fn download_and_send_audio(bot: Bot, msg: Message, url: Url, rate_limi
         }.await;
 
         if let Err(e) = result {
+            println!("An error occurred: {:?}", e);
             bot_clone
-                .send_message(chat_id, format!("An error occurred: {}", e))
+                .send_message(chat_id, format!("An error occurred: {}", e.to_string()))
                 .await
                 .unwrap();
         }
@@ -104,7 +106,7 @@ pub async fn download_and_send_video(bot: Bot, msg: Message, url: Url, rate_limi
         let result: Result<(), CommandError> = async {
             let (title, artist) = fetch_song_metadata(&url.as_str())
                 .await
-                .map_err(|e| CommandError::FetchMetadata(anyhow!("Failed to fetch song metadata: {}", e)))?;
+                .map_err(|e| CommandError::FetchMetadata(anyhow!("Failed to fetch video metadata: {}", e)))?;
             let file_name = generate_file_name(&title, &artist);
             let safe_filename = escape_filename(&file_name);
             let full_path = format!("~/downloads/{}", safe_filename);

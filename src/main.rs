@@ -16,7 +16,7 @@ use reqwest::ClientBuilder;
 use tokio::time::{sleep, interval};
 use simplelog::*;
 use std::fs::File;
-use chrono::Utc;
+use chrono::{DateTime, Utc, NaiveDateTime, TimeZone, Local};
 
 mod commands;
 mod db;
@@ -45,8 +45,17 @@ enum Command {
     Tasks,    
 }
 
+extern "C" {
+    fn foo();
+    fn bar();
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    unsafe {
+        foo();
+        bar();
+    }
     // Initialize simplelog for both console and file logging
     CombinedLogger::init(vec![
         TermLogger::new(
@@ -101,6 +110,7 @@ async fn main() -> Result<()> {
                 .filter_command::<Command>()
                 .endpoint(|bot: Bot, msg: Message, cmd: Command| async move {
                     println!("cmd {:?}", cmd);
+                    // let tasks = download_queue.filter_tasks_by_chat_id(msg.chat.id);
                     match cmd {
                         Command::Start => {
                             let message = "Приветик\\! Я Дора ❤️‍🔥\\. Я делаю чай и скачиваю треки и видео\\. Используй /help чтобы получить полную инфу\\.".to_string();
@@ -118,11 +128,12 @@ async fn main() -> Result<()> {
                                 .parse_mode(ParseMode::MarkdownV2)
                                 .await?;
                         }
-                        Command::Tasks => {
-                            bot.send_message(msg.chat.id, "Твои загрузки:")
+                        Command::Tasks => { 
+                            // let tasks = download_queue.filter_tasks_by_chat_id(msg.chat.id);
+                            bot.send_message(msg.chat.id, "У вас нет активных загрузок")
                                 .parse_mode(ParseMode::MarkdownV2)
                                 .await?;
-                        }                        
+                        }
                     }
                     respond(())
                 })
@@ -147,14 +158,6 @@ async fn main() -> Result<()> {
                         create_user(&conn, chat_id, msg.from().and_then(|u| u.username.clone())).unwrap();
                         log_request(&conn, chat_id, &msg.text().unwrap()).unwrap();
                     }
-/*
-                    // Add download task to the queue
-                    download_queue.add_task(DownloadTask {
-                        url: msg.text().unwrap().to_string(), // Adjust as per your message parsing logic
-                        chat_id: msg.chat.id,
-                        is_video: false, // Adjust as per your message parsing logic
-                    });
- */
                     respond(())
                 }
             }
@@ -320,6 +323,12 @@ fn create_dummy_message(chat_id: ChatId) -> Message {
         via_bot: None,
         thread_id: None,
     }
+}
+
+fn format_datetime(datetime: DateTime<Utc>) -> String {
+    // Convert to local time for better readability
+    let local_datetime = datetime.with_timezone(&Local);
+    local_datetime.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
 #[cfg(test)]
