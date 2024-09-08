@@ -345,6 +345,7 @@ mod tests {
             url: "http://example.com/video.mp4".to_string(),
             chat_id: ChatId(123456789),
             is_video: true,
+            created_timestamp: Utc::now(),
         };
 
         // Test adding a task to the queue
@@ -365,6 +366,7 @@ mod tests {
             url: "http://example.com/audio.mp3".to_string(),
             chat_id: ChatId(987654321),
             is_video: false,
+            created_timestamp: Utc::now(),
         };
 
         queue.add_task(task);
@@ -382,11 +384,13 @@ mod tests {
             url: "http://example.com/first.mp4".to_string(),
             chat_id: ChatId(111111111),
             is_video: true,
+            created_timestamp: Utc::now(),
         };
         let task2 = DownloadTask {
             url: "http://example.com/second.mp3".to_string(),
             chat_id: ChatId(222222222),
             is_video: false,
+            created_timestamp: Utc::now(),
         };
 
         queue.add_task(task1);
