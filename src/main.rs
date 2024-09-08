@@ -76,7 +76,7 @@ async fn main() -> Result<()> {
 
     let bot = Bot::from_env_with_client(
         ClientBuilder::new()
-            .timeout(Duration::from_secs(30)) // Increase request timeout to 30 seconds
+            .timeout(Duration::from_secs(300)) // Increase request timeout to 30 seconds
             .build()?,
     );
 
@@ -255,6 +255,7 @@ async fn process_queue(bot: Bot, queue: Arc<DownloadQueue>, rate_limiter: Arc<ra
     loop {
         interval.tick().await;
         if let Some(task) = queue.get_task() {
+            println!("got task {:?}", task);
             let bot = bot.clone();
             let rate_limiter = Arc::clone(&rate_limiter);
             

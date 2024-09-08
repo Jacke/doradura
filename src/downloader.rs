@@ -72,13 +72,24 @@ pub async fn download_and_send_audio(bot: Bot, msg: Message, url: Url, rate_limi
             let current_time = Utc::now();
             let elapsed_time = current_time.signed_duration_since(created_timestamp);
             println!("Elapsed time for audio download: {:?}", elapsed_time);
-            println!("Audo has been downloaded path: {:?} duration: {:?}", download_path, duration_str); 
+            println!("Audio has been downloaded path: {:?} duration: {:?}", download_path, duration_str); 
             
             bot_clone
                 .send_audio(chat_id, InputFile::file(&download_path))
                 .duration(duration)
                 .await
                 .map_err(|e| CommandError::Download(anyhow!("Failed to send audio file: {}", e)))?;
+            
+            bot_clone
+                .send_audio(chat_id, InputFile::file(&download_path))
+                .duration(duration)
+                .await
+                .map_err(|e| CommandError::Download(anyhow!("Failed to send audio file: {}", e)))?;
+
+                match send_audio_with_retry(&bot, chat_id, &download_path, duration).await {
+                    Ok(_) => log::info!("Audio sent successfully."),
+                    Err(e) => log::error!("Error sending audio: {}", e),
+                }      
                 
             tokio::time::sleep(Duration::from_secs(600)).await;
             std::fs::remove_file(&download_path).map_err(|e| CommandError::Download(anyhow!("Failed to delete file: {}", e)))?;
@@ -95,6 +106,27 @@ pub async fn download_and_send_audio(bot: Bot, msg: Message, url: Url, rate_limi
         }
     });
     Ok(())
+}
+
+async fn send_audio_with_retry(bot: &Bot, chat_id: ChatId, download_path: &str, duration: u32) -> Result<(), CommandError> {
+    let mut attempts = 0;
+    let max_attempts = 3;
+
+    loop {
+        let response = bot.send_audio(chat_id, InputFile::file(download_path))
+            .duration(duration)
+            .await;  // Manually await each call
+
+        match response {
+            Ok(_) => return Ok(()),
+            Err(e) if attempts < max_attempts => {
+                log::warn!("Attempt {} failed, error: {}. Retrying...", attempts + 1, e);
+                attempts += 1;
+                tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
+            },
+            Err(e) => return Err(CommandError::Download(anyhow!("Failed to send audio file: {}", e.to_string()))),
+        }
+    }
 }
 
 pub async fn download_and_send_video(bot: Bot, msg: Message, url: Url, rate_limiter: Arc<RateLimiter>, created_timestamp: DateTime<Utc>) -> ResponseResult<()> {
