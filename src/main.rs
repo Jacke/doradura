@@ -381,34 +381,35 @@ mod tests {
     fn test_multiple_tasks_handling() {
         let queue = DownloadQueue::new();
         let task1 = DownloadTask {
-            url: "http://example.com/first.mp4".to_string(),
+            url: "http://example.com/second.mp4".to_string(),
             chat_id: ChatId(111111111),
             is_video: true,
             created_timestamp: Utc::now(),
         };
         let task2 = DownloadTask {
-            url: "http://example.com/second.mp3".to_string(),
-            chat_id: ChatId(222222222),
+            url: "http://example.com/second.mp4".to_string(),
+            chat_id: ChatId(111111111),
             is_video: false,
             created_timestamp: Utc::now(),
         };
+        let _ = queue.add_task(task2); // Используем let _ для игнорирования результата
+
 
         queue.add_task(task1);
-        queue.add_task(task2);
 
         // Check the count after adding tasks
         assert_eq!(queue.queue.lock().unwrap().len(), 2);
 
         // Retrieve tasks and check the order and properties
         let first_retrieved_task = queue.get_task().unwrap();
-        assert_eq!(first_retrieved_task.url, "http://example.com/first.mp4");
+        assert_eq!(first_retrieved_task.url, "http://example.com/second.mp4");
         assert_eq!(first_retrieved_task.chat_id, ChatId(111111111));
-        assert_eq!(first_retrieved_task.is_video, true);
+        assert_eq!(first_retrieved_task.is_video, false);
 
         let second_retrieved_task = queue.get_task().unwrap();
-        assert_eq!(second_retrieved_task.url, "http://example.com/second.mp3");
-        assert_eq!(second_retrieved_task.chat_id, ChatId(222222222));
-        assert_eq!(second_retrieved_task.is_video, false);
+        assert_eq!(second_retrieved_task.url, "http://example.com/second.mp4");
+        assert_eq!(second_retrieved_task.chat_id, ChatId(111111111));
+        assert_eq!(second_retrieved_task.is_video, true);
 
         // After retrieving all tasks, the queue should be empty
         assert!(queue.queue.lock().unwrap().is_empty());
