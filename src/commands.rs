@@ -4,7 +4,6 @@ use crate::rate_limiter::RateLimiter;
 use std::sync::Arc;
 use url::Url;
 use crate::queue::{DownloadTask, DownloadQueue};
-use chrono::Utc;
 
 pub async fn handle_rate_limit(bot: &Bot, msg: &Message, rate_limiter: &RateLimiter) -> ResponseResult<bool> {
     if rate_limiter.is_rate_limited(msg.chat.id).await {
@@ -53,20 +52,19 @@ pub async fn handle_message(bot: Bot, msg: Message, download_queue: Arc<Download
             }
 
             let is_video = text.to_lowercase().contains("video ");
-            let created_timestamp = Utc::now();
 
             if handle_rate_limit(&bot, &msg, &rate_limiter).await? {
                 if is_video {
                     println!("handle_rate_limit fun is_video add_task");
-                    let task = DownloadTask { url: url.to_string(), chat_id: msg.chat.id, is_video: true, created_timestamp };
-                    download_queue.add_task(task);
+                    let task = DownloadTask::new(url.to_string(), msg.chat.id, true);
+                    download_queue.add_task(task).await;
                     bot.send_message(msg.chat.id, "Я Дора, попробую скачать тебе видео! 🎥 Терпение!").await?;
                 } else {
-                    let task = DownloadTask { url: url.to_string(), chat_id: msg.chat.id, is_video: false, created_timestamp };
+                    let task = DownloadTask::new(url.to_string(), msg.chat.id, false);
                     println!("handle_rate_limit fun not video add_task");
-                    download_queue.add_task(task);
+                    download_queue.add_task(task).await;
                     bot.send_message(msg.chat.id, "Я Дора, попробую скачать тебе трек! ❤️‍🔥 Терпение!").await?;
-                }            
+                }
             }
         } else {
             bot.send_message(msg.chat.id, "Извини, я не нашла ссылки на YouTube или SoundCloud. Пожалуйста, пришли мне ссылку на трек или видео, который ты хочешь скачать.").await?;
