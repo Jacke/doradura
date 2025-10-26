@@ -27,6 +27,7 @@ rusqlite = "0.31.0"
 tokio-retry = "0.3"
 regex = "1.10.5"
 cc = "1.1.6"
+dotenvy = "0.15"
 
 [build-dependencies]
 cc = "1.1.6"
