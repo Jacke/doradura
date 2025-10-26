@@ -1,4 +1,7 @@
+.DS_Store
 /target
 TMP/
 app.log
 database.sqlite
+# Local env
+.env
