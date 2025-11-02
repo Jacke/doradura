@@ -10,6 +10,29 @@ use std::sync::Arc;
 use url::Url;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 
+/// Экранирует специальные символы для MarkdownV2
+fn escape_markdown(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('_', "\\_")
+        .replace('*', "\\*")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
+        .replace('(', "\\(")
+        .replace(')', "\\)")
+        .replace('~', "\\~")
+        .replace('`', "\\`")
+        .replace('>', "\\>")
+        .replace('#', "\\#")
+        .replace('+', "\\+")
+        .replace('-', "\\-")
+        .replace('=', "\\=")
+        .replace('|', "\\|")
+        .replace('{', "\\{")
+        .replace('}', "\\}")
+        .replace('.', "\\.")
+        .replace('!', "\\!")
+}
+
 /// Показывает главное меню настроек режима загрузки.
 /// 
 /// Отображает меню с инлайн-кнопками для выбора типа загрузки и просмотра доступных сервисов.
@@ -133,14 +156,15 @@ pub async fn show_download_type_menu(bot: &Bot, chat_id: ChatId, message_id: Mes
         )],
     ]);
     
-    bot.edit_message_text(chat_id, message_id, "Выбери формат для скачивания\\:\n\n*Текущий формат\\: " 
-        .to_string() + match current_format.as_str() {
-            "mp3" => "🎵 MP3",
-            "mp4" => "🎬 MP4",
-            "srt" => "📝 SRT",
-            "txt" => "📄 TXT",
-            _ => "🎵 MP3",
-        } + "*")
+    let format_display = match current_format.as_str() {
+        "mp3" => "🎵 MP3",
+        "mp4" => "🎬 MP4",
+        "srt" => "📝 SRT",
+        "txt" => "📄 TXT",
+        _ => "🎵 MP3",
+    };
+    let escaped_format = escape_markdown(format_display);
+    bot.edit_message_text(chat_id, message_id, format!("Выбери формат для скачивания\\:\n\n*Текущий формат\\: {}*", escaped_format))
         .parse_mode(teloxide::types::ParseMode::MarkdownV2)
         .reply_markup(keyboard)
         .await?;
@@ -205,7 +229,8 @@ pub async fn show_video_quality_menu(bot: &Bot, chat_id: ChatId, message_id: Mes
         _ => "🎬 Best (Авто)",
     };
     
-    bot.edit_message_text(chat_id, message_id, format!("Выбери качество видео\\:\n\n*Текущее качество\\: {}*", quality_display))
+    let escaped_quality = escape_markdown(quality_display);
+    bot.edit_message_text(chat_id, message_id, format!("Выбери качество видео\\:\n\n*Текущее качество\\: {}*", escaped_quality))
         .parse_mode(teloxide::types::ParseMode::MarkdownV2)
         .reply_markup(keyboard)
         .await?;
@@ -258,7 +283,8 @@ pub async fn show_audio_bitrate_menu(bot: &Bot, chat_id: ChatId, message_id: Mes
         )],
     ]);
     
-    bot.edit_message_text(chat_id, message_id, format!("Выбери битрейт для аудио\\:\n\n*Текущий битрейт\\: {}*", current_bitrate))
+    let escaped_bitrate = escape_markdown(&current_bitrate);
+    bot.edit_message_text(chat_id, message_id, format!("Выбери битрейт для аудио\\:\n\n*Текущий битрейт\\: {}*", escaped_bitrate))
         .parse_mode(teloxide::types::ParseMode::MarkdownV2)
         .reply_markup(keyboard)
         .await?;
@@ -307,7 +333,7 @@ pub async fn show_services_menu(bot: &Bot, chat_id: ChatId, message_id: MessageI
         • MP4 \\(Клипы\\)\n\n\
         🎧 *Spotify*\n\
         • MP3 \\(Аудио\\)\n\n\
-        И многие другие сервисы, поддерживаемые yt\\-dlp\\!\n\n\
+        И многие другие сервисы, которые я поддерживаю\\!\n\n\
         Просто отправь мне ссылку на трек или видео\\! ❤️‍🔥";
     
     bot.edit_message_text(chat_id, message_id, text)
