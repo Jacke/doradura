@@ -6,6 +6,7 @@ use crate::queue::{DownloadTask, DownloadQueue};
 use crate::rate_limiter::RateLimiter;
 use crate::history::handle_history_callback;
 use crate::export::handle_export;
+use crate::subscription::show_subscription_info;
 use std::sync::Arc;
 use url::Url;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -101,6 +102,10 @@ pub async fn show_main_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) ->
         vec![InlineKeyboardButton::callback(
             "🌐 Доступные сервисы".to_string(),
             "mode:services"
+        )],
+        vec![InlineKeyboardButton::callback(
+            "💳 Моя подписка".to_string(),
+            "mode:subscription"
         )],
     ]);
     
@@ -397,6 +402,10 @@ async fn edit_main_menu(bot: &Bot, chat_id: ChatId, message_id: MessageId, db_po
         vec![InlineKeyboardButton::callback(
             "🌐 Доступные сервисы".to_string(),
             "mode:services"
+        )],
+        vec![InlineKeyboardButton::callback(
+            "💳 Моя подписка".to_string(),
+            "mode:subscription"
         )],
     ]);
     
