@@ -5,7 +5,9 @@ CREATE TABLE IF NOT EXISTS users (
     username TEXT,
     plan TEXT DEFAULT 'free',
     download_format TEXT DEFAULT 'mp3',
-    download_subtitles INTEGER DEFAULT 0
+    download_subtitles INTEGER DEFAULT 0,
+    video_quality TEXT DEFAULT 'best',
+    audio_bitrate TEXT DEFAULT '320k'
 );
 
 -- Add missing columns to existing users table (if they don't exist)

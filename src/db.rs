@@ -14,6 +14,10 @@ pub struct User {
     pub download_format: String,
     /// Флаг загрузки субтитров (0 - отключено, 1 - включено)
     pub download_subtitles: i32,
+    /// Качество видео: "best", "1080p", "720p", "480p", "360p"
+    pub video_quality: String,
+    /// Битрейт аудио: "128k", "192k", "256k", "320k"
+    pub audio_bitrate: String,
 }
 
 impl User {
@@ -157,6 +161,28 @@ fn migrate_schema(conn: &rusqlite::Connection) -> Result<()> {
         }
     }
     
+    // Add video_quality if it doesn't exist
+    if !columns.contains(&"video_quality".to_string()) {
+        log::info!("Adding missing column: video_quality to users table");
+        if let Err(e) = conn.execute(
+            "ALTER TABLE users ADD COLUMN video_quality TEXT DEFAULT 'best'",
+            [],
+        ) {
+            log::warn!("Failed to add video_quality column: {}", e);
+        }
+    }
+    
+    // Add audio_bitrate if it doesn't exist
+    if !columns.contains(&"audio_bitrate".to_string()) {
+        log::info!("Adding missing column: audio_bitrate to users table");
+        if let Err(e) = conn.execute(
+            "ALTER TABLE users ADD COLUMN audio_bitrate TEXT DEFAULT '320k'",
+            [],
+        ) {
+            log::warn!("Failed to add audio_bitrate column: {}", e);
+        }
+    }
+    
     Ok(())
 }
 
@@ -177,7 +203,7 @@ fn migrate_schema(conn: &rusqlite::Connection) -> Result<()> {
 /// Возвращает ошибку если пользователь с таким ID уже существует или произошла ошибка БД.
 pub fn create_user(conn: &DbConnection, telegram_id: i64, username: Option<String>) -> Result<()> {
     conn.execute(
-        "INSERT INTO users (telegram_id, username, download_format, download_subtitles) VALUES (?1, ?2, 'mp3', 0)",
+        "INSERT INTO users (telegram_id, username, download_format, download_subtitles, video_quality, audio_bitrate) VALUES (?1, ?2, 'mp3', 0, 'best', '320k')",
         &[&telegram_id as &dyn rusqlite::ToSql, &username as &dyn rusqlite::ToSql],
     )?;
     Ok(())
@@ -195,7 +221,7 @@ pub fn create_user(conn: &DbConnection, telegram_id: i64, username: Option<Strin
 /// Возвращает `Ok(Some(User))` если пользователь найден, `Ok(None)` если не найден,
 /// или ошибку базы данных.
 pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
-    let mut stmt = conn.prepare("SELECT telegram_id, username, plan, download_format, download_subtitles FROM users WHERE telegram_id = ?")?;
+    let mut stmt = conn.prepare("SELECT telegram_id, username, plan, download_format, download_subtitles, video_quality, audio_bitrate FROM users WHERE telegram_id = ?")?;
     let mut rows = stmt.query(&[&telegram_id as &dyn rusqlite::ToSql])?;
 
     if let Some(row) = rows.next()? {
@@ -204,6 +230,8 @@ pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
         let plan: String = row.get(2)?;
         let download_format: String = row.get(3)?;
         let download_subtitles: i32 = row.get(4)?;
+        let video_quality: String = row.get(5).unwrap_or_else(|_| "best".to_string());
+        let audio_bitrate: String = row.get(6).unwrap_or_else(|_| "320k".to_string());
 
         Ok(Some(User {
             telegram_id,
@@ -211,6 +239,8 @@ pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
             plan,
             download_format,
             download_subtitles,
+            video_quality,
+            audio_bitrate,
         }))
     } else {
         Ok(None)
@@ -334,6 +364,86 @@ pub fn set_user_download_subtitles(conn: &DbConnection, telegram_id: i64, enable
     conn.execute(
         "UPDATE users SET download_subtitles = ?1 WHERE telegram_id = ?2",
         &[&value as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
+    )?;
+    Ok(())
+}
+
+/// Получает качество видео пользователя.
+/// 
+/// # Arguments
+/// 
+/// * `conn` - Соединение с базой данных
+/// * `telegram_id` - Telegram ID пользователя
+/// 
+/// # Returns
+/// 
+/// Возвращает качество видео ("best", "1080p", "720p", "480p", "360p") или "best" по умолчанию.
+pub fn get_user_video_quality(conn: &DbConnection, telegram_id: i64) -> Result<String> {
+    let mut stmt = conn.prepare("SELECT video_quality FROM users WHERE telegram_id = ?")?;
+    let mut rows = stmt.query(&[&telegram_id as &dyn rusqlite::ToSql])?;
+    
+    if let Some(row) = rows.next()? {
+        Ok(row.get(0).unwrap_or_else(|_| "best".to_string()))
+    } else {
+        Ok("best".to_string())
+    }
+}
+
+/// Устанавливает качество видео пользователя.
+/// 
+/// # Arguments
+/// 
+/// * `conn` - Соединение с базой данных
+/// * `telegram_id` - Telegram ID пользователя
+/// * `quality` - Качество видео: "best", "1080p", "720p", "480p", "360p"
+/// 
+/// # Returns
+/// 
+/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+pub fn set_user_video_quality(conn: &DbConnection, telegram_id: i64, quality: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE users SET video_quality = ?1 WHERE telegram_id = ?2",
+        &[&quality as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
+    )?;
+    Ok(())
+}
+
+/// Получает битрейт аудио пользователя.
+/// 
+/// # Arguments
+/// 
+/// * `conn` - Соединение с базой данных
+/// * `telegram_id` - Telegram ID пользователя
+/// 
+/// # Returns
+/// 
+/// Возвращает битрейт аудио ("128k", "192k", "256k", "320k") или "320k" по умолчанию.
+pub fn get_user_audio_bitrate(conn: &DbConnection, telegram_id: i64) -> Result<String> {
+    let mut stmt = conn.prepare("SELECT audio_bitrate FROM users WHERE telegram_id = ?")?;
+    let mut rows = stmt.query(&[&telegram_id as &dyn rusqlite::ToSql])?;
+    
+    if let Some(row) = rows.next()? {
+        Ok(row.get(0).unwrap_or_else(|_| "320k".to_string()))
+    } else {
+        Ok("320k".to_string())
+    }
+}
+
+/// Устанавливает битрейт аудио пользователя.
+/// 
+/// # Arguments
+/// 
+/// * `conn` - Соединение с базой данных
+/// * `telegram_id` - Telegram ID пользователя
+/// * `bitrate` - Битрейт аудио: "128k", "192k", "256k", "320k"
+/// 
+/// # Returns
+/// 
+/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+pub fn set_user_audio_bitrate(conn: &DbConnection, telegram_id: i64, bitrate: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE users SET audio_bitrate = ?1 WHERE telegram_id = ?2",
+        &[&bitrate as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
     )?;
     Ok(())
 }

@@ -17,7 +17,15 @@ pub enum DownloadStatus {
         /// Название файла/трека
         title: String, 
         /// Прогресс загрузки в процентах (0-100)
-        progress: u8 
+        progress: u8,
+        /// Скорость загрузки в MB/s (опционально)
+        speed_mbs: Option<f64>,
+        /// Примерное время до завершения в секундах (опционально)
+        eta_seconds: Option<u64>,
+        /// Текущий размер в байтах (опционально)
+        current_size: Option<u64>,
+        /// Общий размер в байтах (опционально)
+        total_size: Option<u64>,
     },
     /// Отправка файла на сервер Telegram
     Uploading { 
@@ -78,16 +86,41 @@ impl DownloadStatus {
                 s.push_str("*\n\n⏳ Начинаю скачивание\\.\\.\\.");
                 s
             }
-            DownloadStatus::Downloading { title, progress } => {
+            DownloadStatus::Downloading { title, progress, speed_mbs, eta_seconds, current_size, total_size } => {
                 let escaped = escape_markdown(title);
                 let bar = create_progress_bar(*progress);
-                let mut s = String::with_capacity(escaped.len() + bar.len() + 50);
+                let mut s = String::with_capacity(escaped.len() + bar.len() + 200);
                 s.push_str("🎵 *");
                 s.push_str(&escaped);
                 s.push_str("*\n\n📥 Скачиваю: ");
                 s.push_str(&progress.to_string());
                 s.push_str("%\n");
                 s.push_str(&bar);
+                
+                // Добавляем скорость, ETA и размер если доступны
+                if let Some(speed) = speed_mbs {
+                    s.push_str("\n\n⚡ Скорость: ");
+                    s.push_str(&format!("{:.1} MB/s", speed));
+                }
+                
+                if let Some(eta) = eta_seconds {
+                    let minutes = eta / 60;
+                    let seconds = eta % 60;
+                    s.push_str("\n⏱️ Осталось: ");
+                    if minutes > 0 {
+                        s.push_str(&format!("~{} мин {} сек", minutes, seconds));
+                    } else {
+                        s.push_str(&format!("~{} сек", seconds));
+                    }
+                }
+                
+                if let (Some(current), Some(total)) = (current_size, total_size) {
+                    let current_mb = *current as f64 / (1024.0 * 1024.0);
+                    let total_mb = *total as f64 / (1024.0 * 1024.0);
+                    s.push_str("\n📦 Размер: ");
+                    s.push_str(&format!("{:.1} / {:.1} MB", current_mb, total_mb));
+                }
+                
                 s
             }
             DownloadStatus::Uploading { title, dots } => {
