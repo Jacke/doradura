@@ -5,7 +5,8 @@ use crate::db::{self, DbPool};
 use crate::utils::pluralize_seconds;
 use std::sync::Arc;
 use url::Url;
-use crate::queue::{DownloadTask, DownloadQueue};
+use crate::queue::DownloadQueue;
+use crate::preview::{get_preview_metadata, send_preview};
 use once_cell::sync::Lazy;
 
 /// Cached regex for matching URLs
@@ -69,7 +70,7 @@ pub async fn handle_rate_limit(bot: &Bot, msg: &Message, rate_limiter: &RateLimi
 /// - Checks user's download format preference from database (optimized: gets full user info)
 /// - Adds download task to queue if rate limit allows
 /// - Sends confirmation message to user
-pub async fn handle_message(bot: Bot, msg: Message, download_queue: Arc<DownloadQueue>, rate_limiter: Arc<RateLimiter>, db_pool: Arc<DbPool>) -> ResponseResult<Option<db::User>> {
+pub async fn handle_message(bot: Bot, msg: Message, _download_queue: Arc<DownloadQueue>, rate_limiter: Arc<RateLimiter>, db_pool: Arc<DbPool>) -> ResponseResult<Option<db::User>> {
     if let Some(text) = msg.text() {
         log::debug!("handle_message: {:?}", text);
         if text.starts_with("/start") || text.starts_with("/help") {
@@ -136,24 +137,29 @@ pub async fn handle_message(bot: Bot, msg: Message, download_queue: Arc<Download
                 }
             };
             
-            // Determine if it's a video format
-            let is_video = format == "mp4";
-
+            // Check rate limit before showing preview
             if handle_rate_limit(&bot, &msg, &rate_limiter).await? {
-                let format_clone = format.clone();
-                let task = DownloadTask::new(url.as_str().to_string(), msg.chat.id, is_video, format);
-                download_queue.add_task(task).await;
-                
-                // Send confirmation message based on format
-                let confirmation_msg = match format_clone.as_str() {
-                    "mp3" => "Я Дора, попробую скачать тебе трек! 🎵 Терпение!",
-                    "mp4" => "Я Дора, попробую скачать тебе видео! 🎥 Терпение!",
-                    "srt" => "Я Дора, попробую скачать тебе субтитры! 📝 Терпение!",
-                    "txt" => "Я Дора, попробую скачать тебе субтитры! 📄 Терпение!",
-                    _ => "Я Дора, попробую скачать тебе файл! ❤️‍🔥 Терпение!",
-                };
-                
-                bot.send_message(msg.chat.id, confirmation_msg).await?;
+                // Show preview instead of immediately downloading
+                match get_preview_metadata(&url).await {
+                    Ok(metadata) => {
+                        // Send preview with inline buttons
+                        match send_preview(&bot, msg.chat.id, &url, &metadata, &format).await {
+                            Ok(_) => {
+                                log::info!("Preview sent successfully for chat {}", msg.chat.id);
+                            }
+                            Err(e) => {
+                                log::error!("Failed to send preview: {:?}", e);
+                                // Fallback: send error message
+                                bot.send_message(msg.chat.id, "У меня не получилось показать превью 😢 Попробуй еще раз или напиши Стэну.").await?;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to get preview metadata: {:?}", e);
+                        // Fallback: send error message
+                        bot.send_message(msg.chat.id, "У меня не получилось получить информацию о треке 😢 Попробуй еще раз или напиши Стэну.").await?;
+                    }
+                }
                 
                 // Return user info for reuse in logging
                 return Ok(user_info);

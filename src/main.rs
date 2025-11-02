@@ -26,6 +26,7 @@ mod utils;
 mod queue;
 mod progress;
 mod menu;
+mod preview;
 
 use db::{create_pool, get_connection, create_user, get_user, log_request};
 use crate::commands::handle_message;
@@ -242,10 +243,14 @@ async fn main() -> Result<()> {
         }))
         .branch(Update::filter_callback_query().endpoint({
             let db_pool = Arc::clone(&db_pool);
+            let download_queue = Arc::clone(&download_queue);
+            let rate_limiter = Arc::clone(&rate_limiter);
             move |bot: Bot, q: CallbackQuery| {
                 let db_pool = Arc::clone(&db_pool);
+                let download_queue = Arc::clone(&download_queue);
+                let rate_limiter = Arc::clone(&rate_limiter);
                 async move {
-                    handle_menu_callback(bot, q, db_pool).await
+                    handle_menu_callback(bot, q, db_pool, download_queue, rate_limiter).await
                 }
             }
         }));
