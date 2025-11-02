@@ -3,6 +3,7 @@ use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, InputFile};
 use url::Url;
 use crate::error::AppError;
 use crate::config;
+use crate::cache;
 use tokio::process::Command as TokioCommand;
 use tokio::time::timeout;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -60,38 +61,53 @@ pub async fn get_preview_metadata(url: &Url) -> Result<PreviewMetadata, AppError
     let ytdl_bin = &*config::YTDL_BIN;
     log::debug!("Getting preview metadata for URL: {}", url);
 
-    // Получаем title
-    let title_output = timeout(
-        config::download::ytdlp_timeout(),
-        TokioCommand::new(ytdl_bin)
-            .args(["--get-title", "--no-playlist", url.as_str()])
-            .output()
-    )
-    .await
-    .map_err(|_| AppError::Download("yt-dlp command timed out".to_string()))?
-    .map_err(|e| AppError::Download(format!("Failed to get title: {}", e)))?;
-
-    let title = if title_output.status.success() {
-        String::from_utf8_lossy(&title_output.stdout).trim().to_string()
+    // Проверяем кэш для базовых метаданных
+    let (cached_title, cached_artist) = if let Some((title, artist)) = cache::get_cached_metadata(url).await {
+        (Some(title), Some(artist))
     } else {
-        "Unknown Track".to_string()
+        (None, None)
     };
 
-    // Получаем artist
-    let artist_output = timeout(
-        config::download::ytdlp_timeout(),
-        TokioCommand::new(ytdl_bin)
-            .args(["--print", "%(artist)s", "--no-playlist", url.as_str()])
-            .output()
-    )
-    .await
-    .map_err(|_| AppError::Download("yt-dlp command timed out".to_string()))?
-    .map_err(|e| AppError::Download(format!("Failed to get artist: {}", e)))?;
-
-    let artist = if artist_output.status.success() {
-        String::from_utf8_lossy(&artist_output.stdout).trim().to_string()
+    // Получаем title (используем кэш если доступен)
+    let title = if let Some(cached) = cached_title {
+        cached
     } else {
-        String::new()
+        let title_output = timeout(
+            config::download::ytdlp_timeout(),
+            TokioCommand::new(ytdl_bin)
+                .args(["--get-title", "--no-playlist", url.as_str()])
+                .output()
+        )
+        .await
+        .map_err(|_| AppError::Download("yt-dlp command timed out".to_string()))?
+        .map_err(|e| AppError::Download(format!("Failed to get title: {}", e)))?;
+
+        if title_output.status.success() {
+            String::from_utf8_lossy(&title_output.stdout).trim().to_string()
+        } else {
+            "Unknown Track".to_string()
+        }
+    };
+
+    // Получаем artist (используем кэш если доступен)
+    let artist = if let Some(cached) = cached_artist {
+        cached
+    } else {
+        let artist_output = timeout(
+            config::download::ytdlp_timeout(),
+            TokioCommand::new(ytdl_bin)
+                .args(["--print", "%(artist)s", "--no-playlist", url.as_str()])
+                .output()
+        )
+        .await
+        .map_err(|_| AppError::Download("yt-dlp command timed out".to_string()))?
+        .map_err(|e| AppError::Download(format!("Failed to get artist: {}", e)))?;
+
+        if artist_output.status.success() {
+            String::from_utf8_lossy(&artist_output.stdout).trim().to_string()
+        } else {
+            String::new()
+        }
     };
 
     // Получаем thumbnail URL
@@ -184,14 +200,19 @@ pub async fn get_preview_metadata(url: &Url) -> Result<PreviewMetadata, AppError
             }
         });
 
-    Ok(PreviewMetadata {
-        title,
-        artist,
-        thumbnail_url,
+    let metadata = PreviewMetadata {
+        title: title.clone(),
+        artist: artist.clone(),
+        thumbnail_url: thumbnail_url.clone(),
         duration,
         filesize,
         description,
-    })
+    };
+
+    // Сохраняем расширенные метаданные в кэш
+    cache::cache_extended_metadata(url, title, artist, thumbnail_url, duration, filesize).await;
+
+    Ok(metadata)
 }
 
 /// Экранирует специальные символы для MarkdownV2

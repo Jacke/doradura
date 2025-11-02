@@ -30,6 +30,8 @@ mod preview;
 mod history;
 mod stats;
 mod export;
+mod cache;
+mod backup;
 
 use db::{create_pool, get_connection, create_user, get_user, log_request};
 use crate::commands::handle_message;
@@ -40,6 +42,8 @@ use crate::menu::{show_main_menu, handle_menu_callback};
 use crate::history::show_history;
 use crate::stats::{show_user_stats, show_global_stats};
 use crate::export::show_export_menu;
+use crate::backup::{create_backup, list_backups};
+use std::env;
 
 #[derive(BotCommands, Clone, Debug)]
 #[command(rename_rule = "lowercase", description = "Я умею:")]
@@ -56,6 +60,8 @@ enum Command {
     Global,
     #[command(description = "экспорт истории")]
     Export,
+    #[command(description = "создать бэкап БД (только для администраторов)")]
+    Backup,
 }
 
 /// Main entry point for the Telegram bot
@@ -108,7 +114,8 @@ async fn main() -> Result<()> {
         BotCommand::new("history", "история загрузок"),
         BotCommand::new("stats", "личная статистика"),
         BotCommand::new("global", "глобальная статистика"),
-        BotCommand::new("export", "экспорт истории")
+        BotCommand::new("export", "экспорт истории"),
+        BotCommand::new("backup", "создать бэкап БД (только для администраторов)")
     ])
     .await?;
 
@@ -125,11 +132,24 @@ async fn main() -> Result<()> {
         log::warn!("Some migration steps failed (this is normal if tables/columns already exist): {}", e);
     }
 
-    let rate_limiter = Arc::new(RateLimiter::new(config::rate_limit::duration()));
+    let rate_limiter = Arc::new(RateLimiter::new());
     let download_queue = Arc::new(DownloadQueue::new());
 
     // Start the queue processing
     tokio::spawn(process_queue(bot.clone(), Arc::clone(&download_queue), Arc::clone(&rate_limiter), Arc::clone(&db_pool)));
+
+    // Start automatic backup scheduler (daily backups)
+    let db_path = "database.sqlite".to_string();
+    tokio::spawn(async move {
+        let mut interval = interval(Duration::from_secs(24 * 60 * 60)); // 24 hours
+        loop {
+            interval.tick().await;
+            match create_backup(&db_path) {
+                Ok(path) => log::info!("Automatic backup created: {}", path.display()),
+                Err(e) => log::error!("Failed to create automatic backup: {}", e),
+            }
+        }
+    });
 
     // Create a dispatcher to handle both commands and plain messages
     let handler = dptree::entry()
@@ -197,6 +217,43 @@ async fn main() -> Result<()> {
                                 }
                                 Command::Export => {
                                     let _ = show_export_menu(&bot, msg.chat.id, db_pool).await;
+                                }
+                                Command::Backup => {
+                                    // Проверяем, является ли пользователь администратором
+                                    let admin_ids_str = env::var("ADMIN_IDS").unwrap_or_else(|_| String::new());
+                                    let is_admin = admin_ids_str.split(',')
+                                        .any(|id_str| {
+                                            id_str.trim().parse::<i64>()
+                                                .map(|id| id == msg.chat.id.0)
+                                                .unwrap_or(false)
+                                        });
+                                    
+                                    if is_admin {
+                                        match create_backup("database.sqlite") {
+                                            Ok(backup_path) => {
+                                                let backups = list_backups().unwrap_or_default();
+                                                let _ = bot.send_message(
+                                                    msg.chat.id,
+                                                    format!(
+                                                        "✅ Бэкап создан успешно!\n\n📁 Путь: {}\n📊 Всего бэкапов: {}",
+                                                        backup_path.display(),
+                                                        backups.len()
+                                                    )
+                                                ).await;
+                                            }
+                                            Err(e) => {
+                                                let _ = bot.send_message(
+                                                    msg.chat.id,
+                                                    format!("❌ Ошибка при создании бэкапа: {}", e)
+                                                ).await;
+                                            }
+                                        }
+                                    } else {
+                                        let _ = bot.send_message(
+                                            msg.chat.id,
+                                            "❌ У тебя нет прав для выполнения этой команды."
+                                        ).await;
+                                    }
                                 }
                             }
                             respond(())
@@ -285,28 +342,62 @@ async fn main() -> Result<()> {
             }
         }));
 
-    // Run the dispatcher with retry logic
-    loop {
-        let mut dispatcher = Dispatcher::builder(bot.clone(), handler.clone())
-            .dependencies(DependencyMap::new())
-            .build();
+    // Check if webhook mode is enabled
+    let webhook_url = env::var("WEBHOOK_URL").ok();
 
-        if let Err(err) = run_dispatcher(&mut dispatcher).await {
-            log::error!("Dispatcher error: {:?}", err);
-            if retry_count < max_retries {
-                retry_count += 1;
-                exponential_backoff(retry_count).await;
-            } else {
-                log::error!("Max retries reached. Exiting...");
-                break;
-            }
-        } else {
-            retry_count = 0; // Reset retry count on success
+    if let Some(url) = webhook_url {
+        // Webhook mode
+        log::info!("Starting bot in webhook mode at {}", url);
+        
+        // Delete existing webhook to ensure clean state
+        let _ = bot.delete_webhook().await;
+        
+        // Set webhook
+        bot.set_webhook(url::Url::parse(&url)?).await?;
+        log::info!("Webhook set successfully");
+
+        // Note: For full webhook support, you need to set up an HTTP server
+        // (e.g., using axum) to receive webhook updates from Telegram.
+        // For now, webhook URL is set but you need to handle incoming updates
+        // via your HTTP server endpoint.
+        // This is a placeholder - full implementation requires HTTP server setup.
+        log::warn!("Webhook URL set to {}, but HTTP server is not implemented yet.", url);
+        log::warn!("Please set up an HTTP server to receive webhook updates, or use polling mode.");
+        
+        // Keep the main thread alive
+        tokio::select! {
+            _ = signal::ctrl_c() => {
+                log::info!("Shutting down gracefully...");
+                bot.delete_webhook().await?;
+            },
         }
+    } else {
+        // Long polling mode (default)
+        log::info!("Starting bot in long polling mode");
+        
+        // Run the dispatcher with retry logic
+        loop {
+            let mut dispatcher = Dispatcher::builder(bot.clone(), handler.clone())
+                .dependencies(DependencyMap::new())
+                .build();
 
-        // Add a delay between retries to avoid overwhelming the API
-        if retry_count > 0 {
-            sleep(config::retry::dispatcher_delay()).await;
+            if let Err(err) = run_dispatcher(&mut dispatcher).await {
+                log::error!("Dispatcher error: {:?}", err);
+                if retry_count < max_retries {
+                    retry_count += 1;
+                    exponential_backoff(retry_count).await;
+                } else {
+                    log::error!("Max retries reached. Exiting...");
+                    break;
+                }
+            } else {
+                retry_count = 0; // Reset retry count on success
+            }
+
+            // Add a delay between retries to avoid overwhelming the API
+            if retry_count > 0 {
+                sleep(config::retry::dispatcher_delay()).await;
+            }
         }
     }
 
