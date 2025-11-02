@@ -77,43 +77,10 @@ pub async fn handle_message(bot: Bot, msg: Message, _download_queue: Arc<Downloa
             return Ok(None);
         }
         
-        // Use cached regex for better performance
-        if let Some(url_match) = URL_REGEX.find(text) {
-            let url_text = url_match.as_str();
-            
-            // Validate URL length
-            if url_text.len() > crate::config::validation::MAX_URL_LENGTH {
-                log::warn!("URL too long: {} characters (max: {})", url_text.len(), crate::config::validation::MAX_URL_LENGTH);
-                bot.send_message(msg.chat.id, format!("Извини, ссылка слишком длинная (максимум {} символов). Пожалуйста, пришли более короткую ссылку.", crate::config::validation::MAX_URL_LENGTH)).await?;
-                return Ok(None);
-            }
-            
-            let mut url = match Url::parse(url_text) {
-                Ok(parsed_url) => parsed_url,
-                Err(e) => {
-                    log::warn!("Failed to parse URL '{}': {}", url_text, e);
-                    bot.send_message(msg.chat.id, "Извини, я не смогла распознать ссылку. Пожалуйста, пришли мне корректную ссылку на YouTube или SoundCloud.").await?;
-                return Ok(None);
-                }
-            };
-
-            // Remove the &list parameter if it exists
-            if url.query_pairs().any(|(key, _)| key == "list") {
-                // Optimized: build new query string directly without intermediate Vec
-                let mut new_query = String::new();
-                for (key, value) in url.query_pairs() {
-                    if key != "list" {
-                        if !new_query.is_empty() {
-                            new_query.push('&');
-                        }
-                        new_query.push_str(&key);
-                        new_query.push('=');
-                        new_query.push_str(&value);
-                    }
-                }
-                url.set_query(if new_query.is_empty() { None } else { Some(&new_query) });
-            }
-
+        // Use cached regex for better performance - find all URLs
+        let urls: Vec<&str> = URL_REGEX.find_iter(text).map(|m| m.as_str()).collect();
+        
+        if !urls.is_empty() {
             // Get user's preferred download format from database
             // Use get_user to get full user info (will be reused for logging)
             let (format, user_info) = match db::get_connection(&db_pool) {
@@ -137,8 +104,173 @@ pub async fn handle_message(bot: Bot, msg: Message, _download_queue: Arc<Downloa
                 }
             };
             
-            // Check rate limit before showing preview
-            if handle_rate_limit(&bot, &msg, &rate_limiter).await? {
+            // Check rate limit before processing URLs
+            if !handle_rate_limit(&bot, &msg, &rate_limiter).await? {
+                return Ok(user_info);
+            }
+            
+            // Process multiple URLs (group downloads)
+            if urls.len() > 1 {
+                // Group download mode
+                let mut valid_urls = Vec::new();
+                
+                for url_text in urls {
+                    // Validate URL length
+                    if url_text.len() > crate::config::validation::MAX_URL_LENGTH {
+                        log::warn!("URL too long: {} characters (max: {})", url_text.len(), crate::config::validation::MAX_URL_LENGTH);
+                        continue;
+                    }
+                    
+                    let mut url = match Url::parse(url_text) {
+                        Ok(parsed_url) => parsed_url,
+                        Err(e) => {
+                            log::warn!("Failed to parse URL '{}': {}", url_text, e);
+                            continue;
+                        }
+                    };
+
+                    // Remove the &list parameter if it exists
+                    if url.query_pairs().any(|(key, _)| key == "list") {
+                        let mut new_query = String::new();
+                        for (key, value) in url.query_pairs() {
+                            if key != "list" {
+                                if !new_query.is_empty() {
+                                    new_query.push('&');
+                                }
+                                new_query.push_str(&key);
+                                new_query.push('=');
+                                new_query.push_str(&value);
+                            }
+                        }
+                        url.set_query(if new_query.is_empty() { None } else { Some(&new_query) });
+                    }
+                    
+                    valid_urls.push(url);
+                }
+                
+                if valid_urls.is_empty() {
+                    bot.send_message(msg.chat.id, "Извини, я не смогла распознать ни одной корректной ссылки. Пожалуйста, пришли мне корректные ссылки на YouTube или SoundCloud.").await?;
+                    return Ok(user_info);
+                }
+                
+                // Send confirmation message
+                let confirmation_msg = format!("✅ Добавлено {} треков в очередь!", valid_urls.len());
+                let status_message = bot.send_message(msg.chat.id, &confirmation_msg).await?;
+                
+                // Process each URL - get metadata and add to queue
+                let download_queue = _download_queue.clone();
+                let bot_clone = bot.clone();
+                let db_pool_clone = db_pool.clone();
+                let chat_id = msg.chat.id;
+                
+                tokio::spawn(async move {
+                    let mut status_text = confirmation_msg.clone();
+                    status_text.push_str("\n\n");
+                    
+                    for (idx, url) in valid_urls.iter().enumerate() {
+                        // Get metadata for preview
+                        match get_preview_metadata(url).await {
+                            Ok(metadata) => {
+                                let display_title = metadata.display_title();
+                                status_text.push_str(&format!("{}. {} [⏳ В очереди]\n", 
+                                    idx + 1, 
+                                    display_title.chars().take(50).collect::<String>()
+                                ));
+                                
+                                // Add to queue using preview callback logic
+                                // Get user preferences for quality/bitrate
+                                let conn = match db::get_connection(&db_pool_clone) {
+                                    Ok(c) => c,
+                                    Err(_) => continue,
+                                };
+                                
+                                let video_quality = if format == "mp4" {
+                                    match db::get_user_video_quality(&conn, chat_id.0) {
+                                        Ok(q) => Some(q),
+                                        Err(_) => Some("best".to_string()),
+                                    }
+                                } else {
+                                    None
+                                };
+                                let audio_bitrate = if format == "mp3" {
+                                    match db::get_user_audio_bitrate(&conn, chat_id.0) {
+                                        Ok(b) => Some(b),
+                                        Err(_) => Some("320k".to_string()),
+                                    }
+                                } else {
+                                    None
+                                };
+                                
+                                let is_video = format == "mp4";
+                                let task = crate::queue::DownloadTask::new(
+                                    url.as_str().to_string(),
+                                    chat_id,
+                                    is_video,
+                                    format.clone(),
+                                    video_quality,
+                                    audio_bitrate,
+                                );
+                                download_queue.add_task(task).await;
+                            }
+                            Err(e) => {
+                                log::error!("Failed to get preview metadata for URL {}: {:?}", url, e);
+                                status_text.push_str(&format!("{}. {} [❌ Ошибка]\n", 
+                                    idx + 1, 
+                                    url.as_str().chars().take(50).collect::<String>()
+                                ));
+                            }
+                        }
+                        
+                        // Update status message every few URLs
+                        if (idx + 1) % 5 == 0 || idx == valid_urls.len() - 1 {
+                            if let Err(e) = bot_clone.edit_message_text(chat_id, status_message.id, &status_text).await {
+                                log::warn!("Failed to update status message: {:?}", e);
+                            }
+                        }
+                    }
+                    
+                    // Final update
+                    status_text.push_str("\n✅ Все треки добавлены в очередь!");
+                    let _ = bot_clone.edit_message_text(chat_id, status_message.id, &status_text).await;
+                });
+                
+                return Ok(user_info);
+            } else {
+                // Single URL mode (existing behavior)
+                let url_text = urls[0];
+                
+                // Validate URL length
+                if url_text.len() > crate::config::validation::MAX_URL_LENGTH {
+                    log::warn!("URL too long: {} characters (max: {})", url_text.len(), crate::config::validation::MAX_URL_LENGTH);
+                    bot.send_message(msg.chat.id, format!("Извини, ссылка слишком длинная (максимум {} символов). Пожалуйста, пришли более короткую ссылку.", crate::config::validation::MAX_URL_LENGTH)).await?;
+                    return Ok(user_info);
+                }
+                
+                let mut url = match Url::parse(url_text) {
+                    Ok(parsed_url) => parsed_url,
+                    Err(e) => {
+                        log::warn!("Failed to parse URL '{}': {}", url_text, e);
+                        bot.send_message(msg.chat.id, "Извини, я не смогла распознать ссылку. Пожалуйста, пришли мне корректную ссылку на YouTube или SoundCloud.").await?;
+                        return Ok(user_info);
+                    }
+                };
+
+                // Remove the &list parameter if it exists
+                if url.query_pairs().any(|(key, _)| key == "list") {
+                    let mut new_query = String::new();
+                    for (key, value) in url.query_pairs() {
+                        if key != "list" {
+                            if !new_query.is_empty() {
+                                new_query.push('&');
+                            }
+                            new_query.push_str(&key);
+                            new_query.push('=');
+                            new_query.push_str(&value);
+                        }
+                    }
+                    url.set_query(if new_query.is_empty() { None } else { Some(&new_query) });
+                }
+                
                 // Show preview instead of immediately downloading
                 match get_preview_metadata(&url).await {
                     Ok(metadata) => {

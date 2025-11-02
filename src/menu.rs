@@ -5,6 +5,7 @@ use crate::db::{self, DbPool};
 use crate::queue::{DownloadTask, DownloadQueue};
 use crate::rate_limiter::RateLimiter;
 use crate::history::handle_history_callback;
+use crate::export::handle_export;
 use std::sync::Arc;
 use url::Url;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -585,6 +586,11 @@ pub async fn handle_menu_callback(
             } else if data.starts_with("history:") {
                 // Handle history callbacks
                 handle_history_callback(&bot, callback_id, chat_id, message_id, &data, Arc::clone(&db_pool), Arc::clone(&download_queue), Arc::clone(&rate_limiter)).await?;
+            } else if data.starts_with("export:") {
+                // Handle export callbacks
+                bot.answer_callback_query(callback_id.clone()).await?;
+                let format = &data[7..]; // Remove "export:" prefix
+                handle_export(&bot, chat_id, format, Arc::clone(&db_pool)).await?;
             }
         }
     }

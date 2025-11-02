@@ -2,8 +2,6 @@ use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, MessageId};
 use teloxide::RequestError;
 use crate::db::{self, DbPool};
-use crate::queue::DownloadQueue;
-use crate::rate_limiter::RateLimiter;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::NaiveDateTime;
 use std::sync::Arc;
