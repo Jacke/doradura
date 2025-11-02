@@ -603,3 +603,211 @@ pub fn get_download_history_entry(
         Ok(None)
     }
 }
+
+/// Структура статистики пользователя
+#[derive(Debug, Clone)]
+pub struct UserStats {
+    pub total_downloads: i64,
+    pub total_size: i64, // в байтах (приблизительно)
+    pub active_days: i64,
+    pub top_artists: Vec<(String, i64)>, // (artist, count)
+    pub top_formats: Vec<(String, i64)>, // (format, count)
+    pub activity_by_day: Vec<(String, i64)>, // (date, count) для последних 7 дней
+}
+
+/// Получает статистику пользователя
+pub fn get_user_stats(conn: &DbConnection, telegram_id: i64) -> Result<UserStats> {
+    // Общее количество загрузок
+    let total_downloads: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM download_history WHERE user_id = ?",
+        &[&telegram_id as &dyn rusqlite::ToSql],
+        |row| row.get(0),
+    )?;
+
+    // Приблизительный общий размер (очень грубая оценка: mp3 ~5MB, mp4 ~50MB)
+    let total_size: i64 = match conn.query_row(
+        "SELECT 
+            SUM(CASE 
+                WHEN format = 'mp3' THEN 5000000
+                WHEN format = 'mp4' THEN 50000000
+                ELSE 1000000
+            END)
+        FROM download_history WHERE user_id = ?",
+        &[&telegram_id as &dyn rusqlite::ToSql],
+        |row| row.get::<_, Option<i64>>(0),
+    ) {
+        Ok(Some(size)) => size,
+        Ok(None) => 0,
+        Err(e) => return Err(e),
+    };
+
+    // Количество дней активности
+    let active_days: i64 = conn.query_row(
+        "SELECT COUNT(DISTINCT DATE(downloaded_at)) FROM download_history WHERE user_id = ?",
+        &[&telegram_id as &dyn rusqlite::ToSql],
+        |row| row.get(0),
+    )?;
+
+    // Топ-5 исполнителей (парсим из title: "Artist - Song")
+    let mut stmt = conn.prepare(
+        "SELECT title FROM download_history WHERE user_id = ? ORDER BY downloaded_at DESC LIMIT 100"
+    )?;
+    let rows = stmt.query_map(&[&telegram_id as &dyn rusqlite::ToSql], |row| {
+        Ok(row.get::<_, String>(0)?)
+    })?;
+
+    let mut artist_counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
+    for row in rows {
+        if let Ok(title) = row {
+            // Пытаемся извлечь исполнителя из формата "Artist - Song"
+            if let Some(pos) = title.find(" - ") {
+                let artist = title[..pos].trim().to_string();
+                if !artist.is_empty() {
+                    *artist_counts.entry(artist).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    let mut top_artists: Vec<(String, i64)> = artist_counts.into_iter().collect();
+    top_artists.sort_by(|a, b| b.1.cmp(&a.1));
+    top_artists.truncate(5);
+
+    // Топ форматов
+    let mut stmt = conn.prepare(
+        "SELECT format, COUNT(*) as cnt FROM download_history 
+         WHERE user_id = ? GROUP BY format ORDER BY cnt DESC LIMIT 5"
+    )?;
+    let rows = stmt.query_map(&[&telegram_id as &dyn rusqlite::ToSql], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+
+    let mut top_formats = Vec::new();
+    for row in rows {
+        if let Ok((format, count)) = row {
+            top_formats.push((format, count));
+        }
+    }
+
+    // Активность по дням (последние 7 дней)
+    let mut stmt = conn.prepare(
+        "SELECT DATE(downloaded_at) as day, COUNT(*) as cnt 
+         FROM download_history 
+         WHERE user_id = ? AND downloaded_at >= datetime('now', '-7 days')
+         GROUP BY DATE(downloaded_at) 
+         ORDER BY day DESC"
+    )?;
+    let rows = stmt.query_map(&[&telegram_id as &dyn rusqlite::ToSql], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+
+    let mut activity_by_day = Vec::new();
+    for row in rows {
+        if let Ok((day, count)) = row {
+            activity_by_day.push((day, count));
+        }
+    }
+
+    Ok(UserStats {
+        total_downloads,
+        total_size,
+        active_days,
+        top_artists,
+        top_formats,
+        activity_by_day,
+    })
+}
+
+/// Структура глобальной статистики
+#[derive(Debug, Clone)]
+pub struct GlobalStats {
+    pub total_users: i64,
+    pub total_downloads: i64,
+    pub top_tracks: Vec<(String, i64)>, // (title, count)
+    pub top_formats: Vec<(String, i64)>, // (format, count)
+}
+
+/// Получает глобальную статистику бота
+pub fn get_global_stats(conn: &DbConnection) -> Result<GlobalStats> {
+    // Общее количество пользователей
+    let total_users: i64 = conn.query_row(
+        "SELECT COUNT(DISTINCT user_id) FROM download_history",
+        [],
+        |row| row.get(0),
+    )?;
+
+    // Общее количество загрузок
+    let total_downloads: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM download_history",
+        [],
+        |row| row.get(0),
+    )?;
+
+    // Топ-10 треков (по title)
+    let mut stmt = conn.prepare(
+        "SELECT title, COUNT(*) as cnt FROM download_history 
+         GROUP BY title ORDER BY cnt DESC LIMIT 10"
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+
+    let mut top_tracks = Vec::new();
+    for row in rows {
+        if let Ok((title, count)) = row {
+            top_tracks.push((title, count));
+        }
+    }
+
+    // Топ форматов
+    let mut stmt = conn.prepare(
+        "SELECT format, COUNT(*) as cnt FROM download_history 
+         GROUP BY format ORDER BY cnt DESC"
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })?;
+
+    let mut top_formats = Vec::new();
+    for row in rows {
+        if let Ok((format, count)) = row {
+            top_formats.push((format, count));
+        }
+    }
+
+    Ok(GlobalStats {
+        total_users,
+        total_downloads,
+        top_tracks,
+        top_formats,
+    })
+}
+
+/// Получает всю историю загрузок пользователя для экспорта
+pub fn get_all_download_history(
+    conn: &DbConnection,
+    telegram_id: i64,
+) -> Result<Vec<DownloadHistoryEntry>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, url, title, format, downloaded_at FROM download_history 
+         WHERE user_id = ? ORDER BY downloaded_at DESC"
+    )?;
+    let rows = stmt.query_map(
+        &[&telegram_id as &dyn rusqlite::ToSql],
+        |row| {
+            Ok(DownloadHistoryEntry {
+                id: row.get(0)?,
+                url: row.get(1)?,
+                title: row.get(2)?,
+                format: row.get(3)?,
+                downloaded_at: row.get(4)?,
+            })
+        },
+    )?;
+    
+    let mut entries = Vec::new();
+    for row in rows {
+        entries.push(row?);
+    }
+    Ok(entries)
+}
