@@ -6,6 +6,7 @@ use crate::progress::{ProgressMessage, DownloadStatus};
 use crate::config;
 use crate::error::AppError;
 use crate::db::{DbPool, save_download_history};
+use crate::cache;
 use std::sync::Arc;
 use url::Url;
 use std::process::{Command, Stdio};
@@ -39,7 +40,15 @@ fn probe_duration_seconds(path: &str) -> Option<u32> {
 
 /// Получить метаданные от yt-dlp (быстрее чем HTTP парсинг)
 /// Использует async команду чтобы не блокировать runtime
+/// Проверяет кэш перед запросом к yt-dlp
 async fn get_metadata_from_ytdlp(url: &Url) -> Result<(String, String), AppError> {
+    // Проверяем кэш
+    if let Some((title, artist)) = cache::get_cached_metadata(url).await {
+        log::debug!("Metadata cache hit for URL: {}", url);
+        return Ok((title, artist));
+    }
+
+    log::debug!("Metadata cache miss for URL: {}", url);
     let ytdl_bin = &*config::YTDL_BIN;
     log::debug!("Using downloader binary: {}", ytdl_bin);
     log::debug!("Fetching metadata for URL: {}", url);
@@ -78,6 +87,9 @@ async fn get_metadata_from_ytdlp(url: &Url) -> Result<(String, String), AppError
     // Для простоты, artist пока оставляем пустым
     // В будущем можно парсить через --print "%(artist)s"
     let artist = String::new();
+
+    // Сохраняем в кэш
+    cache::cache_metadata(url, title.clone(), artist.clone()).await;
 
     log::info!("Got metadata from yt-dlp: title='{}', artist='{}'", title, artist);
     Ok((title, artist))

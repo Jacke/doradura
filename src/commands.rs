@@ -24,6 +24,7 @@ static URL_REGEX: Lazy<Regex> = Lazy::new(|| {
 /// * `bot` - Telegram bot instance
 /// * `msg` - Message to check rate limit for
 /// * `rate_limiter` - Rate limiter instance
+/// * `plan` - User's subscription plan ("free", "premium", "vip")
 /// 
 /// # Returns
 /// 
@@ -32,8 +33,8 @@ static URL_REGEX: Lazy<Regex> = Lazy::new(|| {
 /// # Errors
 /// 
 /// Returns `ResponseResult` error if sending a message fails.
-pub async fn handle_rate_limit(bot: &Bot, msg: &Message, rate_limiter: &RateLimiter) -> ResponseResult<bool> {
-    if rate_limiter.is_rate_limited(msg.chat.id).await {
+pub async fn handle_rate_limit(bot: &Bot, msg: &Message, rate_limiter: &RateLimiter, plan: &str) -> ResponseResult<bool> {
+    if rate_limiter.is_rate_limited(msg.chat.id, plan).await {
         if let Some(remaining_time) = rate_limiter.get_remaining_time(msg.chat.id).await {
             let remaining_seconds = remaining_time.as_secs();
             bot.send_message(msg.chat.id, format!("Я Дора, чай закончился и я не смогу скачать тебе трек сейчас. Попробуй попозже через {} {}.", remaining_seconds, pluralize_seconds(remaining_seconds))).await?;
@@ -42,7 +43,7 @@ pub async fn handle_rate_limit(bot: &Bot, msg: &Message, rate_limiter: &RateLimi
         }
         return Ok(false);
     }
-    rate_limiter.update_rate_limit(msg.chat.id).await;
+    rate_limiter.update_rate_limit(msg.chat.id, plan).await;
     Ok(true)
 }
 
@@ -105,7 +106,9 @@ pub async fn handle_message(bot: Bot, msg: Message, _download_queue: Arc<Downloa
             };
             
             // Check rate limit before processing URLs
-            if !handle_rate_limit(&bot, &msg, &rate_limiter).await? {
+            let plan = user_info.as_ref().map(|u| u.plan.as_str()).unwrap_or("free");
+            let plan_string = plan.to_string();
+            if !handle_rate_limit(&bot, &msg, &rate_limiter, &plan_string).await? {
                 return Ok(user_info);
             }
             
@@ -202,13 +205,15 @@ pub async fn handle_message(bot: Bot, msg: Message, _download_queue: Arc<Downloa
                                 };
                                 
                                 let is_video = format == "mp4";
-                                let task = crate::queue::DownloadTask::new(
+                                let plan_for_task = plan_string.clone();
+                                let task = crate::queue::DownloadTask::from_plan(
                                     url.as_str().to_string(),
                                     chat_id,
                                     is_video,
                                     format.clone(),
                                     video_quality,
                                     audio_bitrate,
+                                    &plan_for_task,
                                 );
                                 download_queue.add_task(task).await;
                             }
