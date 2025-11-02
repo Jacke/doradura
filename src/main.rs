@@ -350,16 +350,18 @@ async fn process_queue(bot: Bot, queue: Arc<DownloadQueue>, rate_limiter: Arc<ra
                 
                 // Process task based on format
                 let db_pool_clone = Arc::clone(&db_pool);
+                let video_quality = task.video_quality.clone();
+                let audio_bitrate = task.audio_bitrate.clone();
                 let result = match task.format.as_str() {
                     "mp4" => {
-                        download_and_send_video(bot.clone(), task.chat_id, url, rate_limiter.clone(), task.created_timestamp, Some(db_pool_clone.clone())).await
+                        download_and_send_video(bot.clone(), task.chat_id, url, rate_limiter.clone(), task.created_timestamp, Some(db_pool_clone.clone()), video_quality).await
                     }
                     "srt" | "txt" => {
                         download_and_send_subtitles(bot.clone(), task.chat_id, url, rate_limiter.clone(), task.created_timestamp, task.format.clone(), Some(db_pool_clone.clone())).await
                     }
                     _ => {
                         // Default to audio (mp3)
-                        download_and_send_audio(bot.clone(), task.chat_id, url, rate_limiter.clone(), task.created_timestamp, Some(db_pool_clone.clone())).await
+                        download_and_send_audio(bot.clone(), task.chat_id, url, rate_limiter.clone(), task.created_timestamp, Some(db_pool_clone.clone()), audio_bitrate).await
                     }
                 };
                 
@@ -386,7 +388,9 @@ mod tests {
             "http://example.com/video.mp4".to_string(),
             teloxide::types::ChatId(123456789),
             true,
-            "mp4".to_string()
+            "mp4".to_string(),
+            Some("1080p".to_string()),
+            None
         );
 
         // Test adding a task to the queue
@@ -407,7 +411,9 @@ mod tests {
             "http://example.com/audio.mp3".to_string(),
             teloxide::types::ChatId(987654321),
             false,
-            "mp3".to_string()
+            "mp3".to_string(),
+            None,
+            Some("320k".to_string())
         );
 
         queue.add_task(task).await;
@@ -425,13 +431,17 @@ mod tests {
             "http://example.com/second.mp4".to_string(),
             teloxide::types::ChatId(111111111),
             true,
-            "mp4".to_string()
+            "mp4".to_string(),
+            Some("720p".to_string()),
+            None
         );
         let task2 = DownloadTask::new(
             "http://example.com/second.mp4".to_string(),
             teloxide::types::ChatId(111111111),
             false,
-            "mp3".to_string()
+            "mp3".to_string(),
+            None,
+            Some("256k".to_string())
         );
         queue.add_task(task2).await;
         queue.add_task(task1).await;

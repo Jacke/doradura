@@ -30,6 +30,8 @@ pub async fn show_main_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) ->
     let conn = db::get_connection(&db_pool)
         .map_err(|e| RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
     let format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
+    let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
+    let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
     
     let format_emoji = match format.as_str() {
         "mp3" => "🎵 MP3",
@@ -39,10 +41,38 @@ pub async fn show_main_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) ->
         _ => "🎵 MP3",
     };
     
+    let quality_emoji = match video_quality.as_str() {
+        "1080p" => "🎬 1080p",
+        "720p" => "🎬 720p",
+        "480p" => "🎬 480p",
+        "360p" => "🎬 360p",
+        _ => "🎬 Best",
+    };
+    
+    let bitrate_display = match audio_bitrate.as_str() {
+        "128k" => "128 kbps",
+        "192k" => "192 kbps",
+        "256k" => "256 kbps",
+        "320k" => "320 kbps",
+        _ => "320 kbps",
+    };
+    
     let keyboard = InlineKeyboardMarkup::new(vec![
         vec![InlineKeyboardButton::callback(
             format!("📥 Тип загрузки: {}", format_emoji),
             "mode:download_type"
+        )],
+        vec![InlineKeyboardButton::callback(
+            if format == "mp4" {
+                format!("🎬 Качество видео: {}", quality_emoji)
+            } else {
+                format!("🎵 Битрейт аудио: {}", bitrate_display)
+            },
+            if format == "mp4" {
+                "mode:video_quality"
+            } else {
+                "mode:audio_bitrate"
+            }
         )],
         vec![InlineKeyboardButton::callback(
             "🌐 Доступные сервисы".to_string(),
@@ -116,6 +146,124 @@ pub async fn show_download_type_menu(bot: &Bot, chat_id: ChatId, message_id: Mes
     Ok(())
 }
 
+/// Показывает меню выбора качества видео.
+/// 
+/// Отображает меню с доступными качествами (1080p, 720p, 480p, 360p, best) и отмечает текущий выбор пользователя.
+/// 
+/// # Arguments
+/// 
+/// * `bot` - Экземпляр Telegram бота
+/// * `chat_id` - ID чата пользователя
+/// * `message_id` - ID сообщения для редактирования
+/// * `db_pool` - Пул соединений с базой данных
+/// 
+/// # Returns
+/// 
+/// Возвращает `ResponseResult<()>` или ошибку при редактировании сообщения.
+pub async fn show_video_quality_menu(bot: &Bot, chat_id: ChatId, message_id: MessageId, db_pool: Arc<DbPool>) -> ResponseResult<()> {
+    let conn = db::get_connection(&db_pool)
+        .map_err(|e| RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+    let current_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
+    
+    let keyboard = InlineKeyboardMarkup::new(vec![
+        vec![
+            InlineKeyboardButton::callback(
+                if current_quality == "1080p" { "🎬 1080p (Full HD) ✓" } else { "🎬 1080p (Full HD)" }.to_string(),
+                "quality:1080p"
+            ),
+            InlineKeyboardButton::callback(
+                if current_quality == "720p" { "🎬 720p (HD) ✓" } else { "🎬 720p (HD)" }.to_string(),
+                "quality:720p"
+            ),
+        ],
+        vec![
+            InlineKeyboardButton::callback(
+                if current_quality == "480p" { "🎬 480p (SD) ✓" } else { "🎬 480p (SD)" }.to_string(),
+                "quality:480p"
+            ),
+            InlineKeyboardButton::callback(
+                if current_quality == "360p" { "🎬 360p (Low) ✓" } else { "🎬 360p (Low)" }.to_string(),
+                "quality:360p"
+            ),
+        ],
+        vec![InlineKeyboardButton::callback(
+            if current_quality == "best" { "🎬 Best (Авто) ✓" } else { "🎬 Best (Авто)" }.to_string(),
+            "quality:best"
+        )],
+        vec![InlineKeyboardButton::callback(
+            "🔙 Назад".to_string(),
+            "back:main"
+        )],
+    ]);
+    
+    let quality_display = match current_quality.as_str() {
+        "1080p" => "🎬 1080p (Full HD)",
+        "720p" => "🎬 720p (HD)",
+        "480p" => "🎬 480p (SD)",
+        "360p" => "🎬 360p (Low)",
+        _ => "🎬 Best (Авто)",
+    };
+    
+    bot.edit_message_text(chat_id, message_id, format!("Выбери качество видео\\:\n\n*Текущее качество\\: {}*", quality_display))
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .reply_markup(keyboard)
+        .await?;
+    Ok(())
+}
+
+/// Показывает меню выбора битрейта аудио.
+/// 
+/// Отображает меню с доступными битрейтами (128kbps, 192kbps, 256kbps, 320kbps) и отмечает текущий выбор пользователя.
+/// 
+/// # Arguments
+/// 
+/// * `bot` - Экземпляр Telegram бота
+/// * `chat_id` - ID чата пользователя
+/// * `message_id` - ID сообщения для редактирования
+/// * `db_pool` - Пул соединений с базой данных
+/// 
+/// # Returns
+/// 
+/// Возвращает `ResponseResult<()>` или ошибку при редактировании сообщения.
+pub async fn show_audio_bitrate_menu(bot: &Bot, chat_id: ChatId, message_id: MessageId, db_pool: Arc<DbPool>) -> ResponseResult<()> {
+    let conn = db::get_connection(&db_pool)
+        .map_err(|e| RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+    let current_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
+    
+    let keyboard = InlineKeyboardMarkup::new(vec![
+        vec![
+            InlineKeyboardButton::callback(
+                if current_bitrate == "128k" { "🎵 128 kbps ✓" } else { "🎵 128 kbps" }.to_string(),
+                "bitrate:128k"
+            ),
+            InlineKeyboardButton::callback(
+                if current_bitrate == "192k" { "🎵 192 kbps ✓" } else { "🎵 192 kbps" }.to_string(),
+                "bitrate:192k"
+            ),
+        ],
+        vec![
+            InlineKeyboardButton::callback(
+                if current_bitrate == "256k" { "🎵 256 kbps ✓" } else { "🎵 256 kbps" }.to_string(),
+                "bitrate:256k"
+            ),
+            InlineKeyboardButton::callback(
+                if current_bitrate == "320k" { "🎵 320 kbps ✓" } else { "🎵 320 kbps" }.to_string(),
+                "bitrate:320k"
+            ),
+        ],
+        vec![InlineKeyboardButton::callback(
+            "🔙 Назад".to_string(),
+            "back:main"
+        )],
+    ]);
+    
+    bot.edit_message_text(chat_id, message_id, format!("Выбери битрейт для аудио\\:\n\n*Текущий битрейт\\: {}*", current_bitrate))
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .reply_markup(keyboard)
+        .await?;
+    Ok(())
+}
+
 /// Показывает меню с информацией о поддерживаемых сервисах.
 /// 
 /// Отображает список доступных сервисов (YouTube, SoundCloud) и поддерживаемых форматов.
@@ -161,6 +309,8 @@ async fn edit_main_menu(bot: &Bot, chat_id: ChatId, message_id: MessageId, db_po
     let conn = db::get_connection(&db_pool)
         .map_err(|e| RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
     let format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
+    let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
+    let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
     
     let format_emoji = match format.as_str() {
         "mp3" => "🎵 MP3",
@@ -170,10 +320,38 @@ async fn edit_main_menu(bot: &Bot, chat_id: ChatId, message_id: MessageId, db_po
         _ => "🎵 MP3",
     };
     
+    let quality_emoji = match video_quality.as_str() {
+        "1080p" => "🎬 1080p",
+        "720p" => "🎬 720p",
+        "480p" => "🎬 480p",
+        "360p" => "🎬 360p",
+        _ => "🎬 Best",
+    };
+    
+    let bitrate_display = match audio_bitrate.as_str() {
+        "128k" => "128 kbps",
+        "192k" => "192 kbps",
+        "256k" => "256 kbps",
+        "320k" => "320 kbps",
+        _ => "320 kbps",
+    };
+    
     let keyboard = InlineKeyboardMarkup::new(vec![
         vec![InlineKeyboardButton::callback(
             format!("📥 Тип загрузки: {}", format_emoji),
             "mode:download_type"
+        )],
+        vec![InlineKeyboardButton::callback(
+            if format == "mp4" {
+                format!("🎬 Качество видео: {}", quality_emoji)
+            } else {
+                format!("🎵 Битрейт аудио: {}", bitrate_display)
+            },
+            if format == "mp4" {
+                "mode:video_quality"
+            } else {
+                "mode:audio_bitrate"
+            }
         )],
         vec![InlineKeyboardButton::callback(
             "🌐 Доступные сервисы".to_string(),
@@ -232,11 +410,37 @@ pub async fn handle_menu_callback(
                     "mode:download_type" => {
                         show_download_type_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
                     }
+                    "mode:video_quality" => {
+                        show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
+                    }
+                    "mode:audio_bitrate" => {
+                        show_audio_bitrate_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
+                    }
                     "mode:services" => {
                         show_services_menu(&bot, chat_id, message_id).await?;
                     }
                     _ => {}
                 }
+            } else if data.starts_with("quality:") {
+                bot.answer_callback_query(callback_id.clone()).await?;
+                let quality = &data[8..]; // Remove "quality:" prefix
+                let conn = db::get_connection(&db_pool)
+                    .map_err(|e| RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+                db::set_user_video_quality(&conn, chat_id.0, quality)
+                    .map_err(|e| RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+                
+                // Update the menu to show new selection
+                show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
+            } else if data.starts_with("bitrate:") {
+                bot.answer_callback_query(callback_id.clone()).await?;
+                let bitrate = &data[8..]; // Remove "bitrate:" prefix
+                let conn = db::get_connection(&db_pool)
+                    .map_err(|e| RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+                db::set_user_audio_bitrate(&conn, chat_id.0, bitrate)
+                    .map_err(|e| RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+                
+                // Update the menu to show new selection
+                show_audio_bitrate_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
             } else if data.starts_with("back:") {
                 bot.answer_callback_query(callback_id.clone()).await?;
                 match data.as_str() {
@@ -294,9 +498,23 @@ pub async fn handle_menu_callback(
                                             
                                             rate_limiter.update_rate_limit(chat_id).await;
                                             
+                                            // Get user preferences for quality/bitrate
+                                            let conn = db::get_connection(&db_pool)
+                                                .map_err(|e| RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+                                            let video_quality = if format == "mp4" {
+                                                Some(db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string()))
+                                            } else {
+                                                None
+                                            };
+                                            let audio_bitrate = if format == "mp3" {
+                                                Some(db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string()))
+                                            } else {
+                                                None
+                                            };
+                                            
                                             // Add task to queue
                                             let is_video = format == "mp4";
-                                            let task = DownloadTask::new(url.as_str().to_string(), chat_id, is_video, format.to_string());
+                                            let task = DownloadTask::new(url.as_str().to_string(), chat_id, is_video, format.to_string(), video_quality, audio_bitrate);
                                             download_queue.add_task(task).await;
                                             
                                             // Delete preview message

@@ -7,6 +7,7 @@ use crate::rate_limiter::RateLimiter;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::NaiveDateTime;
 use std::sync::Arc;
+use url::Url;
 
 /// Экранирует специальные символы для MarkdownV2
 fn escape_markdown(text: &str) -> String {
@@ -194,6 +195,24 @@ pub async fn handle_history_callback(
                                     
                                     rate_limiter.update_rate_limit(chat_id).await;
                                     
+                                    // Get user preferences for quality/bitrate
+                                    let video_quality = if format == "mp4" {
+                                        match db::get_user_video_quality(&conn, chat_id.0) {
+                                            Ok(q) => Some(q),
+                                            Err(_) => Some("best".to_string()),
+                                        }
+                                    } else {
+                                        None
+                                    };
+                                    let audio_bitrate = if format == "mp3" {
+                                        match db::get_user_audio_bitrate(&conn, chat_id.0) {
+                                            Ok(b) => Some(b),
+                                            Err(_) => Some("320k".to_string()),
+                                        }
+                                    } else {
+                                        None
+                                    };
+                                    
                                     // Добавляем задачу в очередь
                                     let is_video = format == "mp4";
                                     let task = crate::queue::DownloadTask::new(
@@ -201,6 +220,8 @@ pub async fn handle_history_callback(
                                         chat_id,
                                         is_video,
                                         format.clone(),
+                                        video_quality,
+                                        audio_bitrate,
                                     );
                                     download_queue.add_task(task).await;
                                     

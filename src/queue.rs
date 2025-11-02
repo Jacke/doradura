@@ -20,6 +20,10 @@ pub struct DownloadTask {
     pub is_video: bool,
     /// Формат загрузки: "mp3", "mp4", "srt", "txt"
     pub format: String,
+    /// Качество видео: "best", "1080p", "720p", "480p", "360p" (только для видео)
+    pub video_quality: Option<String>,
+    /// Битрейт аудио: "128k", "192k", "256k", "320k" (только для аудио)
+    pub audio_bitrate: Option<String>,
     /// Временная метка создания задачи
     pub created_timestamp: DateTime<Utc>,
 }
@@ -33,6 +37,8 @@ impl DownloadTask {
     /// * `chat_id` - ID чата пользователя в Telegram
     /// * `is_video` - Флаг, указывающий является ли это видео (true) или аудио (false)
     /// * `format` - Формат загрузки: "mp3", "mp4", "srt", "txt"
+    /// * `video_quality` - Качество видео (опционально, только для видео)
+    /// * `audio_bitrate` - Битрейт аудио (опционально, только для аудио)
     /// 
     /// # Returns
     /// 
@@ -48,10 +54,12 @@ impl DownloadTask {
     ///     "https://youtube.com/watch?v=...".to_string(),
     ///     ChatId(123456789),
     ///     false,
-    ///     "mp3".to_string()
+    ///     "mp3".to_string(),
+    ///     None,
+    ///     Some("320k".to_string())
     /// );
     /// ```
-    pub fn new(url: String, chat_id: ChatId, is_video: bool, format: String) -> Self {
+    pub fn new(url: String, chat_id: ChatId, is_video: bool, format: String, video_quality: Option<String>, audio_bitrate: Option<String>) -> Self {
         let id = uuid::Uuid::new_v4().to_string();
         Self {
             id,
@@ -59,6 +67,8 @@ impl DownloadTask {
             chat_id,
             is_video,
             format,
+            video_quality,
+            audio_bitrate,
             created_timestamp: Utc::now(),
         }
     }
@@ -251,7 +261,9 @@ mod tests {
             "http://example.com".to_string(),
             ChatId(123),
             false,
-            "mp3".to_string()
+            "mp3".to_string(),
+            None,
+            Some("320k".to_string())
         );
 
         queue.add_task(task.clone()).await;
@@ -271,13 +283,17 @@ mod tests {
             chat_id: ChatId(123),
             is_video: false,
             format: "mp3".to_string(),
+            video_quality: None,
+            audio_bitrate: Some("320k".to_string()),
             created_timestamp: Utc::now() - Duration::days(2),
         };
         let new_task = DownloadTask::new(
             "http://example.com/new".to_string(),
             ChatId(456),
             true,
-            "mp4".to_string()
+            "mp4".to_string(),
+            Some("1080p".to_string()),
+            None
         );
 
         queue.add_task(old_task).await;
