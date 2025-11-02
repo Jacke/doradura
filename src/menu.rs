@@ -4,6 +4,7 @@ use teloxide::RequestError;
 use crate::db::{self, DbPool};
 use crate::queue::{DownloadTask, DownloadQueue};
 use crate::rate_limiter::RateLimiter;
+use crate::history::handle_history_callback;
 use std::sync::Arc;
 use url::Url;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
@@ -363,6 +364,9 @@ pub async fn handle_menu_callback(
                         }
                     }
                 }
+            } else if data.starts_with("history:") {
+                // Handle history callbacks
+                handle_history_callback(&bot, callback_id, chat_id, message_id, &data, Arc::clone(&db_pool), Arc::clone(&download_queue), Arc::clone(&rate_limiter)).await?;
             }
         }
     }
