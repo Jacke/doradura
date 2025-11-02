@@ -28,6 +28,8 @@ mod progress;
 mod menu;
 mod preview;
 mod history;
+mod stats;
+mod export;
 
 use db::{create_pool, get_connection, create_user, get_user, log_request};
 use crate::commands::handle_message;
@@ -36,6 +38,8 @@ use crate::queue::DownloadQueue;
 use crate::downloader::{download_and_send_audio, download_and_send_video, download_and_send_subtitles};
 use crate::menu::{show_main_menu, handle_menu_callback};
 use crate::history::show_history;
+use crate::stats::{show_user_stats, show_global_stats};
+use crate::export::show_export_menu;
 
 #[derive(BotCommands, Clone, Debug)]
 #[command(rename_rule = "lowercase", description = "Я умею:")]
@@ -46,6 +50,12 @@ enum Command {
     Mode,
     #[command(description = "история загрузок")]
     History,
+    #[command(description = "личная статистика")]
+    Stats,
+    #[command(description = "глобальная статистика")]
+    Global,
+    #[command(description = "экспорт истории")]
+    Export,
 }
 
 /// Main entry point for the Telegram bot
@@ -95,7 +105,10 @@ async fn main() -> Result<()> {
     bot.set_my_commands(vec![
         BotCommand::new("start", "показывает главное меню"),
         BotCommand::new("mode", "настройки режима загрузки"),
-        BotCommand::new("history", "история загрузок")
+        BotCommand::new("history", "история загрузок"),
+        BotCommand::new("stats", "личная статистика"),
+        BotCommand::new("global", "глобальная статистика"),
+        BotCommand::new("export", "экспорт истории")
     ])
     .await?;
 
@@ -175,6 +188,15 @@ async fn main() -> Result<()> {
                                 }
                                 Command::History => {
                                     let _ = show_history(&bot, msg.chat.id, db_pool).await;
+                                }
+                                Command::Stats => {
+                                    let _ = show_user_stats(&bot, msg.chat.id, db_pool).await;
+                                }
+                                Command::Global => {
+                                    let _ = show_global_stats(&bot, msg.chat.id, db_pool).await;
+                                }
+                                Command::Export => {
+                                    let _ = show_export_menu(&bot, msg.chat.id, db_pool).await;
                                 }
                             }
                             respond(())
