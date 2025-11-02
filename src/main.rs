@@ -32,6 +32,7 @@ mod stats;
 mod export;
 mod cache;
 mod backup;
+mod ytdlp;
 
 use db::{create_pool, get_connection, create_user, get_user, log_request};
 use crate::commands::handle_message;
@@ -97,6 +98,11 @@ async fn main() -> Result<()> {
     let _ = dotenv();
 
     log::info!("Starting bot...");
+
+    // Check and update yt-dlp on startup
+    if let Err(e) = ytdlp::check_and_update_ytdlp().await {
+        log::warn!("Failed to check/update yt-dlp: {}. Continuing anyway.", e);
+    }
 
     let bot = Bot::from_env_with_client(
         ClientBuilder::new()
