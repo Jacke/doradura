@@ -160,8 +160,16 @@ pub async fn handle_history_callback(
                         Ok(url_str) => {
                             match Url::parse(&url_str) {
                                 Ok(url) => {
+                                    // Получаем план пользователя для rate limiting
+                                    let conn = db::get_connection(&db_pool)
+                                        .map_err(|e| RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+                                    let plan = match db::get_user(&conn, chat_id.0) {
+                                        Ok(Some(ref user)) => user.plan.clone(),
+                                        _ => "free".to_string(),
+                                    };
+                                    
                                     // Проверяем rate limit
-                                    if rate_limiter.is_rate_limited(chat_id).await {
+                                    if rate_limiter.is_rate_limited(chat_id, &plan).await {
                                         if let Some(remaining_time) = rate_limiter.get_remaining_time(chat_id).await {
                                             let remaining_seconds = remaining_time.as_secs();
                                             bot.answer_callback_query(callback_id)
@@ -178,9 +186,6 @@ pub async fn handle_history_callback(
                                     bot.answer_callback_query(callback_id.clone()).await?;
                                     
                                     // Получаем формат из истории
-                                    let conn = db::get_connection(&db_pool)
-                                        .map_err(|e| RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
-                                    
                                     let format = match entry_id_str.parse::<i64>() {
                                         Ok(id) => {
                                             match db::get_download_history_entry(&conn, chat_id.0, id) {
@@ -191,7 +196,7 @@ pub async fn handle_history_callback(
                                         Err(_) => "mp3".to_string(),
                                     };
                                     
-                                    rate_limiter.update_rate_limit(chat_id).await;
+                                    rate_limiter.update_rate_limit(chat_id, &plan).await;
                                     
                                     // Get user preferences for quality/bitrate
                                     let video_quality = if format == "mp4" {
@@ -213,13 +218,14 @@ pub async fn handle_history_callback(
                                     
                                     // Добавляем задачу в очередь
                                     let is_video = format == "mp4";
-                                    let task = crate::queue::DownloadTask::new(
+                                    let task = crate::queue::DownloadTask::from_plan(
                                         url.as_str().to_string(),
                                         chat_id,
                                         is_video,
                                         format.clone(),
                                         video_quality,
                                         audio_bitrate,
+                                        &plan,
                                     );
                                     download_queue.add_task(task).await;
                                     

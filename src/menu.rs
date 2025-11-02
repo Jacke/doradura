@@ -480,8 +480,16 @@ pub async fn handle_menu_callback(
                                 Ok(url_str) => {
                                     match Url::parse(&url_str) {
                                         Ok(url) => {
+                                            // Get user preferences for quality/bitrate and plan
+                                            let conn = db::get_connection(&db_pool)
+                                                .map_err(|e| RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+                                            let plan = match db::get_user(&conn, chat_id.0) {
+                                                Ok(Some(ref user)) => user.plan.clone(),
+                                                _ => "free".to_string(),
+                                            };
+                                            
                                             // Check rate limit
-                                            if rate_limiter.is_rate_limited(chat_id).await {
+                                            if rate_limiter.is_rate_limited(chat_id, &plan).await {
                                                 if let Some(remaining_time) = rate_limiter.get_remaining_time(chat_id).await {
                                                     let remaining_seconds = remaining_time.as_secs();
                                                     bot.answer_callback_query(callback_id)
@@ -497,11 +505,7 @@ pub async fn handle_menu_callback(
                                             
                                             bot.answer_callback_query(callback_id.clone()).await?;
                                             
-                                            rate_limiter.update_rate_limit(chat_id).await;
-                                            
-                                            // Get user preferences for quality/bitrate
-                                            let conn = db::get_connection(&db_pool)
-                                                .map_err(|e| RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+                                            rate_limiter.update_rate_limit(chat_id, &plan).await;
                                             let video_quality = if format == "mp4" {
                                                 Some(db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string()))
                                             } else {
@@ -515,7 +519,7 @@ pub async fn handle_menu_callback(
                                             
                                             // Add task to queue
                                             let is_video = format == "mp4";
-                                            let task = DownloadTask::new(url.as_str().to_string(), chat_id, is_video, format.to_string(), video_quality, audio_bitrate);
+                                            let task = DownloadTask::from_plan(url.as_str().to_string(), chat_id, is_video, format.to_string(), video_quality, audio_bitrate, &plan);
                                             download_queue.add_task(task).await;
                                             
                                             // Delete preview message

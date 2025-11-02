@@ -4,6 +4,28 @@ use teloxide::types::ChatId;
 use chrono::{DateTime, Utc};
 use log::info; // Использование логирования вместо println
 
+/// Приоритет задачи в очереди
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum TaskPriority {
+    /// Низкий приоритет (free пользователи)
+    Low = 0,
+    /// Средний приоритет (premium пользователи)
+    Medium = 1,
+    /// Высокий приоритет (vip пользователи)
+    High = 2,
+}
+
+impl TaskPriority {
+    /// Получает приоритет на основе плана пользователя
+    pub fn from_plan(plan: &str) -> Self {
+        match plan {
+            "vip" => TaskPriority::High,
+            "premium" => TaskPriority::Medium,
+            _ => TaskPriority::Low, // По умолчанию free
+        }
+    }
+}
+
 /// Структура, представляющая задачу загрузки.
 /// 
 /// Содержит всю необходимую информацию для загрузки медиафайла:
@@ -26,6 +48,8 @@ pub struct DownloadTask {
     pub audio_bitrate: Option<String>,
     /// Временная метка создания задачи
     pub created_timestamp: DateTime<Utc>,
+    /// Приоритет задачи (для приоритетной очереди)
+    pub priority: TaskPriority,
 }
 
 impl DownloadTask {
@@ -60,6 +84,11 @@ impl DownloadTask {
     /// );
     /// ```
     pub fn new(url: String, chat_id: ChatId, is_video: bool, format: String, video_quality: Option<String>, audio_bitrate: Option<String>) -> Self {
+        Self::with_priority(url, chat_id, is_video, format, video_quality, audio_bitrate, TaskPriority::Low)
+    }
+
+    /// Создает новую задачу с указанным приоритетом
+    pub fn with_priority(url: String, chat_id: ChatId, is_video: bool, format: String, video_quality: Option<String>, audio_bitrate: Option<String>, priority: TaskPriority) -> Self {
         let id = uuid::Uuid::new_v4().to_string();
         Self {
             id,
@@ -70,16 +99,25 @@ impl DownloadTask {
             video_quality,
             audio_bitrate,
             created_timestamp: Utc::now(),
+            priority,
         }
+    }
+
+    /// Создает новую задачу на основе плана пользователя
+    pub fn from_plan(url: String, chat_id: ChatId, is_video: bool, format: String, video_quality: Option<String>, audio_bitrate: Option<String>, plan: &str) -> Self {
+        let priority = TaskPriority::from_plan(plan);
+        Self::with_priority(url, chat_id, is_video, format, video_quality, audio_bitrate, priority)
     }
 }
 
 /// Очередь для задач загрузки с потокобезопасной реализацией.
 /// 
 /// Использует `Mutex` для синхронизации доступа к внутренней очереди.
-/// Задачи обрабатываются в порядке FIFO (First In, First Out).
+/// Задачи обрабатываются с учетом приоритета: сначала высокий, затем средний, затем низкий.
+/// Внутри каждого приоритета задачи обрабатываются в порядке FIFO (First In, First Out).
 pub struct DownloadQueue {
     /// Внутренняя очередь задач, защищенная мьютексом
+    /// Задачи хранятся в порядке приоритета: High -> Medium -> Low
     pub queue: Mutex<VecDeque<DownloadTask>>,
 }
 
@@ -103,7 +141,10 @@ impl DownloadQueue {
         }
     }
 
-    /// Добавляет задачу в конец очереди.
+    /// Добавляет задачу в очередь с учетом приоритета.
+    /// 
+    /// Задачи с высоким приоритетом добавляются в начало соответствующей секции,
+    /// задачи с низким приоритетом - в конец.
     /// 
     /// # Arguments
     /// 
@@ -121,18 +162,44 @@ impl DownloadQueue {
     ///     "https://youtube.com/watch?v=...".to_string(),
     ///     ChatId(123456789),
     ///     false,
-    ///     "mp3".to_string()
+    ///     "mp3".to_string(),
+    ///     None,
+    ///     None
     /// );
     /// queue.add_task(task).await;
     /// # }
     /// ```
     pub async fn add_task(&self, task: DownloadTask) {
-        info!("Добавляем задачу: {:?}", task);
+        info!("Добавляем задачу с приоритетом {:?}: {:?}", task.priority, task);
         let mut queue = self.queue.lock().await;
-        queue.push_back(task);
+        
+        // Находим позицию для вставки с учетом приоритета
+        let insert_pos = queue.iter()
+            .position(|t| t.priority < task.priority)
+            .unwrap_or(queue.len());
+        
+        // Вставляем задачу в нужную позицию
+        let mut new_queue = VecDeque::new();
+        let mut inserted = false;
+        
+        for (idx, existing_task) in queue.iter().enumerate() {
+            if idx == insert_pos && !inserted {
+                new_queue.push_back(task.clone());
+                inserted = true;
+            }
+            new_queue.push_back(existing_task.clone());
+        }
+        
+        if !inserted {
+            new_queue.push_back(task);
+        }
+        
+        *queue = new_queue;
     }
 
-    /// Извлекает и возвращает первую задачу из очереди (FIFO).
+    /// Извлекает и возвращает первую задачу из очереди (с учетом приоритета).
+    /// 
+    /// Задачи с высоким приоритетом обрабатываются первыми.
     /// 
     /// # Returns
     /// 
@@ -154,9 +221,27 @@ impl DownloadQueue {
     pub async fn get_task(&self) -> Option<DownloadTask> {
         let mut queue = self.queue.lock().await;
         if queue.len() != 0 {
-            info!("Получаем задачу из очереди, размер: {}", queue.len());
+            info!("Получаем задачу из очереди, размер: {}, приоритет: {:?}", 
+                  queue.len(), 
+                  queue.front().map(|t| t.priority));
         }
         queue.pop_front()
+    }
+
+    /// Получает позицию задачи пользователя в очереди
+    /// 
+    /// # Arguments
+    /// 
+    /// * `chat_id` - ID чата пользователя
+    /// 
+    /// # Returns
+    /// 
+    /// Возвращает позицию в очереди (1-based) или None если задача не найдена
+    pub async fn get_queue_position(&self, chat_id: ChatId) -> Option<usize> {
+        let queue = self.queue.lock().await;
+        queue.iter()
+            .position(|task| task.chat_id == chat_id)
+            .map(|pos| pos + 1)
     }
 
     /// Возвращает текущее количество задач в очереди.
@@ -286,6 +371,7 @@ mod tests {
             video_quality: None,
             audio_bitrate: Some("320k".to_string()),
             created_timestamp: Utc::now() - Duration::days(2),
+            priority: TaskPriority::Low,
         };
         let new_task = DownloadTask::new(
             "http://example.com/new".to_string(),
