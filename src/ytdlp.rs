@@ -63,8 +63,14 @@ pub async fn check_and_update_ytdlp() -> Result<(), AppError> {
                     log::info!("yt-dlp update check completed: {}", stdout);
                 }
             } else {
-                log::warn!("yt-dlp update check failed (exit code: {:?}): {}", output.status.code(), stderr);
-                // Не считаем это критической ошибкой - может быть проблема с сетью или правами
+                // Код выхода 100 означает, что yt-dlp установлен через pip
+                // Это нормальная ситуация, не нужно показывать предупреждение
+                if output.status.code() == Some(100) {
+                    log::info!("yt-dlp is installed via pip. Use 'pip install --upgrade yt-dlp' to update.");
+                } else {
+                    log::warn!("yt-dlp update check failed (exit code: {:?}): {}", output.status.code(), stderr);
+                    // Не считаем это критической ошибкой - может быть проблема с сетью или правами
+                }
             }
         }
         Ok(Err(e)) => {
