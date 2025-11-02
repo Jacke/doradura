@@ -462,6 +462,29 @@ pub async fn handle_menu_callback(
                     }
                     _ => {}
                 }
+            } else if data.starts_with("subscribe:") {
+                bot.answer_callback_query(callback_id.clone()).await?;
+                let plan = &data[10..]; // Remove "subscribe:" prefix
+                match plan {
+                    "premium" | "vip" => {
+                        // Пока просто показываем сообщение о том, что оплата будет добавлена позже
+                        let _ = bot.send_message(
+                            chat_id,
+                            format!(
+                                "💳 Покупка подписки {}\n\n\
+                                ⚠️ Функция оплаты через Telegram Stars будет добавлена в ближайшее время.\n\n\
+                                Сейчас ты можешь использовать бота с планом Free. \
+                                Для получения Premium или VIP подписки обратись к администратору.",
+                                if plan == "premium" { "⭐ Premium" } else { "👑 VIP" }
+                            )
+                        ).await;
+                    }
+                    _ => {
+                        bot.answer_callback_query(callback_id)
+                            .text("Неизвестный план")
+                            .await?;
+                    }
+                }
             } else if data.starts_with("quality:") {
                 bot.answer_callback_query(callback_id.clone()).await?;
                 let quality = &data[8..]; // Remove "quality:" prefix
