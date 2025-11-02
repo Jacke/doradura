@@ -469,6 +469,11 @@ pub async fn handle_menu_callback(
                     "mode:services" => {
                         show_services_menu(&bot, chat_id, message_id).await?;
                     }
+                    "mode:subscription" => {
+                        // Удаляем старое сообщение и показываем информацию о подписке
+                        let _ = bot.delete_message(chat_id, message_id).await;
+                        let _ = show_subscription_info(&bot, chat_id, Arc::clone(&db_pool)).await;
+                    }
                     _ => {}
                 }
             } else if data.starts_with("subscribe:") {
