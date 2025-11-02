@@ -33,6 +33,7 @@ mod export;
 mod cache;
 mod backup;
 mod ytdlp;
+mod subscription;
 
 use db::{create_pool, get_connection, create_user, get_user, log_request};
 use crate::commands::handle_message;
@@ -44,6 +45,7 @@ use crate::history::show_history;
 use crate::stats::{show_user_stats, show_global_stats};
 use crate::export::show_export_menu;
 use crate::backup::{create_backup, list_backups};
+use crate::subscription::show_subscription_info;
 use std::env;
 
 #[derive(BotCommands, Clone, Debug)]
@@ -63,6 +65,8 @@ enum Command {
     Export,
     #[command(description = "создать бэкап БД (только для администраторов)")]
     Backup,
+    #[command(description = "информация о подписке и тарифах")]
+    Plan,
 }
 
 /// Main entry point for the Telegram bot
@@ -121,7 +125,8 @@ async fn main() -> Result<()> {
         BotCommand::new("stats", "личная статистика"),
         BotCommand::new("global", "глобальная статистика"),
         BotCommand::new("export", "экспорт истории"),
-        BotCommand::new("backup", "создать бэкап БД (только для администраторов)")
+        BotCommand::new("backup", "создать бэкап БД (только для администраторов)"),
+        BotCommand::new("plan", "информация о подписке и тарифах")
     ])
     .await?;
 
@@ -260,6 +265,9 @@ async fn main() -> Result<()> {
                                             "❌ У тебя нет прав для выполнения этой команды."
                                         ).await;
                                     }
+                                }
+                                Command::Plan => {
+                                    let _ = show_subscription_info(&bot, msg.chat.id, db_pool).await;
                                 }
                             }
                             respond(())
