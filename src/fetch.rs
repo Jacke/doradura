@@ -1,32 +1,42 @@
 use reqwest;
 use select::document::Document;
 use select::predicate::Name;
+use crate::error::AppError;
 
-// src/fetch.rs
-use thiserror::Error;
-
-#[derive(Debug, Error)]
-pub enum FetchError {
-    #[error("HTTP request failed with status: {0}")]
-    Http(reqwest::StatusCode),
-    #[error(transparent)]
-    Reqwest(#[from] reqwest::Error),
-}
-
-
-/*
-pub async fn fetch_url_to_file(url: &Url, file: &mut File) -> Result<(), Box<dyn Error + Send + Sync>> {
-    let response = reqwest::get(url.as_str()).await?;
-    let bytes = response.bytes().await?;
-    file.write_all(&bytes).await?;
-    Ok(())
-}*/
-
-pub async fn fetch_song_metadata(url: &str) -> Result<(String, String), FetchError> {
+/// Получает метаданные песни из URL.
+/// 
+/// Загружает HTML-страницу и извлекает заголовок и исполнителя из мета-тегов.
+/// 
+/// # Arguments
+/// 
+/// * `url` - URL для получения метаданных
+/// 
+/// # Returns
+/// 
+/// Возвращает кортеж `(title, artist)` или ошибку `AppError`.
+/// 
+/// # Errors
+/// 
+/// Возвращает ошибку если:
+/// - Не удалось выполнить HTTP-запрос
+/// - HTTP-статус ответа не успешный
+/// - Не удалось прочитать тело ответа
+/// 
+/// # Example
+/// 
+/// ```no_run
+/// use doradura::fetch::fetch_song_metadata;
+/// 
+/// # async fn example() {
+/// let (title, artist) = fetch_song_metadata("https://youtube.com/watch?v=...").await?;
+/// println!("{} - {}", artist, title);
+/// # }
+/// ```
+pub async fn fetch_song_metadata(url: &str) -> Result<(String, String), AppError> {
     let resp = reqwest::get(url).await?;
 
     if !resp.status().is_success() {
-        return Err(FetchError::Http(resp.status()));
+        return Err(AppError::HttpStatus(resp.status()));
     }
 
     let resp_text = resp.text().await?;

@@ -2,12 +2,12 @@
 
 # 🎵 Doradura
 
-<img src="logo.webp" width="200" height="200" alt="Doradura Logo">
+<img src="logo.webp" width="66%" height="200" alt="Doradura Logo">
 
 ### High-performance Telegram bot for downloading music and videos
 
 [![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Telegram](https://img.shields.io/badge/Telegram-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://telegram.org/)
+[![Telegram](https://img.shields.io/badge/Telegram-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/DoraDuraDoraDuraBot?start)
 
 **Download audio & video from YouTube and SoundCloud with ease**
 
