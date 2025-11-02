@@ -149,18 +149,105 @@ fn spawn_downloader_with_fallback(ytdl_bin: &str, args: &[&str]) -> Result<std::
         })
 }
 
-/// Парсит процент прогресса из строки вывода yt-dlp
+/// Структура для хранения данных прогресса загрузки
+#[derive(Debug, Clone)]
+pub struct ProgressInfo {
+    pub percent: u8,
+    pub speed_mbs: Option<f64>,
+    pub eta_seconds: Option<u64>,
+    pub current_size: Option<u64>,
+    pub total_size: Option<u64>,
+}
+
+/// Парсит прогресс из строки вывода yt-dlp
 /// Пример: "[download]  45.2% of 10.00MiB at 500.00KiB/s ETA 00:10"
-fn parse_progress(line: &str) -> Option<u8> {
-    if line.contains("[download]") && line.contains("%") {
-        // Ищем паттерн типа "45.2%"
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        for part in parts {
-            if part.ends_with('%') {
-                if let Ok(percent) = part.trim_end_matches('%').parse::<f32>() {
-                    return Some(percent.min(100.0) as u8);
-                }
+fn parse_progress(line: &str) -> Option<ProgressInfo> {
+    if !line.contains("[download]") || !line.contains("%") {
+        return None;
+    }
+    
+    let mut percent = None;
+    let mut speed_mbs = None;
+    let mut eta_seconds = None;
+    let mut current_size = None;
+    let mut total_size = None;
+    
+    // Парсим процент
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    for (i, part) in parts.iter().enumerate() {
+        if part.ends_with('%') {
+            if let Ok(p) = part.trim_end_matches('%').parse::<f32>() {
+                percent = Some(p.min(100.0) as u8);
             }
+        }
+        
+        // Парсим размер: "of 10.00MiB"
+        if *part == "of" && i + 1 < parts.len() {
+            if let Some(size_bytes) = parse_size(parts[i + 1]) {
+                total_size = Some(size_bytes);
+            }
+        }
+        
+        // Парсим скорость: "at 500.00KiB/s" или "at 2.3MiB/s"
+        if *part == "at" && i + 1 < parts.len() {
+            if let Some(speed) = parse_size(parts[i + 1]) {
+                // Конвертируем в MB/s
+                speed_mbs = Some(speed as f64 / (1024.0 * 1024.0));
+            }
+        }
+        
+        // Парсим ETA: "ETA 00:10" или "ETA 1:23"
+        if *part == "ETA" && i + 1 < parts.len() {
+            if let Some(eta) = parse_eta(parts[i + 1]) {
+                eta_seconds = Some(eta);
+            }
+        }
+    }
+    
+    // Если есть процент, возвращаем ProgressInfo
+    if let Some(p) = percent {
+        // Вычисляем текущий размер на основе процента
+        if let Some(total) = total_size {
+            current_size = Some((total as f64 * (p as f64 / 100.0)) as u64);
+        }
+        
+        Some(ProgressInfo {
+            percent: p,
+            speed_mbs,
+            eta_seconds,
+            current_size,
+            total_size,
+        })
+    } else {
+        None
+    }
+}
+
+/// Парсит размер из строки типа "10.00MiB" или "500.00KiB"
+fn parse_size(size_str: &str) -> Option<u64> {
+    let size_str = size_str.trim_end_matches("/s"); // Убираем "/s" если есть
+    if size_str.ends_with("MiB") {
+        if let Ok(mb) = size_str.trim_end_matches("MiB").parse::<f64>() {
+            return Some((mb * 1024.0 * 1024.0) as u64);
+        }
+    } else if size_str.ends_with("KiB") {
+        if let Ok(kb) = size_str.trim_end_matches("KiB").parse::<f64>() {
+            return Some((kb * 1024.0) as u64);
+        }
+    } else if size_str.ends_with("GiB") {
+        if let Ok(gb) = size_str.trim_end_matches("GiB").parse::<f64>() {
+            return Some((gb * 1024.0 * 1024.0 * 1024.0) as u64);
+        }
+    }
+    None
+}
+
+/// Парсит ETA из строки типа "00:10" или "1:23"
+fn parse_eta(eta_str: &str) -> Option<u64> {
+    let parts: Vec<&str> = eta_str.split(':').collect();
+    if parts.len() == 2 {
+        if let (Ok(minutes), Ok(seconds)) = (parts[0].parse::<u64>(), parts[1].parse::<u64>()) {
+            return Some(minutes * 60 + seconds);
         }
     }
     None
@@ -195,15 +282,18 @@ fn download_audio_file(url: &Url, download_path: &str) -> Result<Option<u32>, Ap
 async fn download_audio_file_with_progress(
     url: &Url,
     download_path: &str,
-) -> Result<(tokio::sync::mpsc::UnboundedReceiver<u8>, tokio::task::JoinHandle<Result<Option<u32>, AppError>>), AppError> {
+    bitrate: Option<String>,
+) -> Result<(tokio::sync::mpsc::UnboundedReceiver<ProgressInfo>, tokio::task::JoinHandle<Result<Option<u32>, AppError>>), AppError> {
     let ytdl_bin = config::YTDL_BIN.clone();
     let url_str = url.to_string();
     let download_path_clone = download_path.to_string();
+    let bitrate_str = bitrate.unwrap_or_else(|| "320k".to_string());
 
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
     // Запускаем в blocking task, так как читаем stdout построчно
     let handle = tokio::task::spawn_blocking(move || {
+        let postprocessor_args = format!("-acodec libmp3lame -b:a {}", bitrate_str);
         let mut child = Command::new(&ytdl_bin)
             .args([
                 "-o", &download_path_clone,
@@ -215,7 +305,7 @@ async fn download_audio_file_with_progress(
                 "--embed-thumbnail",
                 "--no-playlist",
                 "--concurrent-fragments", "5",
-                "--postprocessor-args", "-acodec libmp3lame -b:a 320k",
+                "--postprocessor-args", &postprocessor_args,
                 &url_str,
             ])
             .stdout(Stdio::piped())
@@ -238,9 +328,9 @@ async fn download_audio_file_with_progress(
                 for line in reader.lines() {
                     if let Ok(line_str) = line {
                         log::debug!("yt-dlp stderr: {}", line_str);
-                        if let Some(progress) = parse_progress(&line_str) {
-                            log::info!("Parsed progress from stderr: {}%", progress);
-                            let _ = tx_clone.send(progress);
+                        if let Some(progress_info) = parse_progress(&line_str) {
+                            log::info!("Parsed progress from stderr: {}%", progress_info.percent);
+                            let _ = tx_clone.send(progress_info);
                         }
                     }
                 }
@@ -250,13 +340,13 @@ async fn download_audio_file_with_progress(
         if let Some(stdout_stream) = stdout {
             let reader = BufReader::new(stdout_stream);
             for line in reader.lines() {
-                if let Ok(line_str) = line {
-                    log::debug!("yt-dlp stdout: {}", line_str);
-                    if let Some(progress) = parse_progress(&line_str) {
-                        log::info!("Parsed progress from stdout: {}%", progress);
-                        let _ = tx.send(progress);
+                    if let Ok(line_str) = line {
+                        log::debug!("yt-dlp stdout: {}", line_str);
+                        if let Some(progress_info) = parse_progress(&line_str) {
+                            log::info!("Parsed progress from stdout: {}%", progress_info.percent);
+                            let _ = tx.send(progress_info);
+                        }
                     }
-                }
             }
         }
 
@@ -299,7 +389,7 @@ async fn download_audio_file_with_progress(
 /// 5. Sends audio file with retry logic
 /// 6. Shows success message
 /// 7. Cleans up temporary file after delay
-pub async fn download_and_send_audio(bot: Bot, chat_id: ChatId, url: Url, rate_limiter: Arc<RateLimiter>, _created_timestamp: DateTime<Utc>, db_pool: Option<Arc<DbPool>>) -> ResponseResult<()> {
+pub async fn download_and_send_audio(bot: Bot, chat_id: ChatId, url: Url, rate_limiter: Arc<RateLimiter>, _created_timestamp: DateTime<Utc>, db_pool: Option<Arc<DbPool>>, audio_bitrate: Option<String>) -> ResponseResult<()> {
     log::info!("Starting download_and_send_audio for chat {} with URL: {}", chat_id, url);
     let bot_clone = bot.clone();
     let _rate_limiter = Arc::clone(&rate_limiter);
@@ -342,7 +432,7 @@ pub async fn download_and_send_audio(bot: Bot, chat_id: ChatId, url: Url, rate_l
             let download_path = shellexpand::tilde(&full_path).into_owned();
 
             // Step 2: Download with real-time progress updates
-            let (mut progress_rx, mut download_handle) = download_audio_file_with_progress(&url, &download_path).await?;
+            let (mut progress_rx, mut download_handle) = download_audio_file_with_progress(&url, &download_path, audio_bitrate.clone()).await?;
 
             // Читаем обновления прогресса из channel
             let bot_for_progress = bot_clone.clone();
@@ -352,13 +442,17 @@ pub async fn download_and_send_audio(bot: Bot, chat_id: ChatId, url: Url, rate_l
             let duration_result = loop {
                 tokio::select! {
                     // Получаем обновления прогресса
-                    Some(progress) = progress_rx.recv() => {
-                        // Обновляем только на значимых изменениях (каждые 10%)
-                        if progress % 10 == 0 && progress != last_progress {
-                            last_progress = progress;
+                    Some(progress_info) = progress_rx.recv() => {
+                        // Обновляем только на значимых изменениях (каждые 5%)
+                        if progress_info.percent % 5 == 0 && progress_info.percent != last_progress {
+                            last_progress = progress_info.percent;
                             let _ = progress_msg.update(&bot_for_progress, DownloadStatus::Downloading {
                                 title: title_for_progress.as_ref().to_string(),
-                                progress,
+                                progress: progress_info.percent,
+                                speed_mbs: progress_info.speed_mbs,
+                                eta_seconds: progress_info.eta_seconds,
+                                current_size: progress_info.current_size,
+                                total_size: progress_info.total_size,
                             }).await;
                         }
                     }
@@ -621,7 +715,7 @@ async fn send_video_with_retry(
 /// # Behavior
 /// 
 /// Similar to [`download_and_send_audio`], but for video files.
-pub async fn download_and_send_video(bot: Bot, chat_id: ChatId, url: Url, rate_limiter: Arc<RateLimiter>, _created_timestamp: DateTime<Utc>, db_pool: Option<Arc<DbPool>>) -> ResponseResult<()> {
+pub async fn download_and_send_video(bot: Bot, chat_id: ChatId, url: Url, rate_limiter: Arc<RateLimiter>, _created_timestamp: DateTime<Utc>, db_pool: Option<Arc<DbPool>>, video_quality: Option<String>) -> ResponseResult<()> {
     let bot_clone = bot.clone();
     let _rate_limiter = Arc::clone(&rate_limiter);
     let db_pool_clone = db_pool.clone();
@@ -661,18 +755,31 @@ pub async fn download_and_send_video(bot: Bot, chat_id: ChatId, url: Url, rate_l
             let full_path = format!("~/downloads/{}", safe_filename);
             let download_path = shellexpand::tilde(&full_path).into_owned();
 
-            // Step 2: Show downloading status with simulated progress
-            // TODO: Можно добавить real-time прогресс как для аудио
+            // Step 2: Determine video quality format
+            let format_arg = match video_quality.as_deref() {
+                Some("1080p") => "bestvideo[height<=1080]+bestaudio/best[height<=1080]",
+                Some("720p") => "bestvideo[height<=720]+bestaudio/best[height<=720]",
+                Some("480p") => "bestvideo[height<=480]+bestaudio/best[height<=480]",
+                Some("360p") => "bestvideo[height<=360]+bestaudio/best[height<=360]",
+                _ => "best", // best или не указано
+            };
+
+            // Show downloading status
             let _ = progress_msg.update(&bot_clone, DownloadStatus::Downloading {
                 title: display_title.as_ref().to_string(),
                 progress: 10,
+                speed_mbs: None,
+                eta_seconds: None,
+                current_size: None,
+                total_size: None,
             }).await;
 
             let ytdl_bin = &*config::YTDL_BIN;
             let args = [
                 "-o", &download_path,
                 "--newline",
-                "--format", "best",
+                "--format", format_arg,
+                "--merge-output-format", "mp4",
                 "--concurrent-fragments", "5",
                 url.as_str(),
             ];
@@ -687,6 +794,10 @@ pub async fn download_and_send_video(bot: Bot, chat_id: ChatId, url: Url, rate_l
             let _ = progress_msg.update(&bot_clone, DownloadStatus::Downloading {
                 title: display_title.as_ref().to_string(),
                 progress: 90,
+                speed_mbs: None,
+                eta_seconds: None,
+                current_size: None,
+                total_size: None,
             }).await;
 
             log::debug!("Download path: {:?}", download_path);
