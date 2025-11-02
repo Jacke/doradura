@@ -337,3 +337,159 @@ pub fn set_user_download_subtitles(conn: &DbConnection, telegram_id: i64, enable
     )?;
     Ok(())
 }
+
+/// Структура, представляющая запись истории загрузок.
+#[derive(Debug, Clone)]
+pub struct DownloadHistoryEntry {
+    /// ID записи
+    pub id: i64,
+    /// URL загруженного контента
+    pub url: String,
+    /// Название трека/видео
+    pub title: String,
+    /// Формат загрузки (mp3, mp4, srt, txt)
+    pub format: String,
+    /// Дата и время загрузки
+    pub downloaded_at: String,
+}
+
+/// Сохраняет запись в историю загрузок.
+/// 
+/// # Arguments
+/// 
+/// * `conn` - Соединение с базой данных
+/// * `telegram_id` - Telegram ID пользователя
+/// * `url` - URL загруженного контента
+/// * `title` - Название трека/видео
+/// * `format` - Формат загрузки (mp3, mp4, srt, txt)
+/// 
+/// # Returns
+/// 
+/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+pub fn save_download_history(
+    conn: &DbConnection,
+    telegram_id: i64,
+    url: &str,
+    title: &str,
+    format: &str,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO download_history (user_id, url, title, format) VALUES (?1, ?2, ?3, ?4)",
+        &[
+            &telegram_id as &dyn rusqlite::ToSql,
+            &url as &dyn rusqlite::ToSql,
+            &title as &dyn rusqlite::ToSql,
+            &format as &dyn rusqlite::ToSql,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Получает последние N записей истории загрузок пользователя.
+/// 
+/// # Arguments
+/// 
+/// * `conn` - Соединение с базой данных
+/// * `telegram_id` - Telegram ID пользователя
+/// * `limit` - Максимальное количество записей (по умолчанию 20)
+/// 
+/// # Returns
+/// 
+/// Возвращает `Ok(Vec<DownloadHistoryEntry>)` с записями истории или ошибку базы данных.
+pub fn get_download_history(
+    conn: &DbConnection,
+    telegram_id: i64,
+    limit: Option<i32>,
+) -> Result<Vec<DownloadHistoryEntry>> {
+    let limit = limit.unwrap_or(20);
+    let mut stmt = conn.prepare(
+        "SELECT id, url, title, format, downloaded_at FROM download_history 
+         WHERE user_id = ? ORDER BY downloaded_at DESC LIMIT ?"
+    )?;
+    let rows = stmt.query_map(
+        &[&telegram_id as &dyn rusqlite::ToSql, &limit as &dyn rusqlite::ToSql],
+        |row| {
+            Ok(DownloadHistoryEntry {
+                id: row.get(0)?,
+                url: row.get(1)?,
+                title: row.get(2)?,
+                format: row.get(3)?,
+                downloaded_at: row.get(4)?,
+            })
+        },
+    )?;
+    
+    let mut entries = Vec::new();
+    for row in rows {
+        entries.push(row?);
+    }
+    Ok(entries)
+}
+
+/// Удаляет запись из истории загрузок.
+/// 
+/// # Arguments
+/// 
+/// * `conn` - Соединение с базой данных
+/// * `telegram_id` - Telegram ID пользователя
+/// * `entry_id` - ID записи для удаления
+/// 
+/// # Returns
+/// 
+/// Возвращает `Ok(true)` если запись была удалена, `Ok(false)` если запись не найдена,
+/// или ошибку базы данных.
+pub fn delete_download_history_entry(
+    conn: &DbConnection,
+    telegram_id: i64,
+    entry_id: i64,
+) -> Result<bool> {
+    let rows_affected = conn.execute(
+        "DELETE FROM download_history WHERE id = ?1 AND user_id = ?2",
+        &[
+            &entry_id as &dyn rusqlite::ToSql,
+            &telegram_id as &dyn rusqlite::ToSql,
+        ],
+    )?;
+    Ok(rows_affected > 0)
+}
+
+/// Получает запись истории загрузок по ID.
+/// 
+/// # Arguments
+/// 
+/// * `conn` - Соединение с базой данных
+/// * `telegram_id` - Telegram ID пользователя
+/// * `entry_id` - ID записи
+/// 
+/// # Returns
+/// 
+/// Возвращает `Ok(Some(DownloadHistoryEntry))` если запись найдена, `Ok(None)` если не найдена,
+/// или ошибку базы данных.
+pub fn get_download_history_entry(
+    conn: &DbConnection,
+    telegram_id: i64,
+    entry_id: i64,
+) -> Result<Option<DownloadHistoryEntry>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, url, title, format, downloaded_at FROM download_history 
+         WHERE id = ?1 AND user_id = ?2"
+    )?;
+    let mut rows = stmt.query_map(
+        &[&entry_id as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
+        |row| {
+            Ok(DownloadHistoryEntry {
+                id: row.get(0)?,
+                url: row.get(1)?,
+                title: row.get(2)?,
+                format: row.get(3)?,
+                downloaded_at: row.get(4)?,
+            })
+        },
+    )?;
+    
+    if let Some(row) = rows.next() {
+        Ok(Some(row?))
+    } else {
+        Ok(None)
+    }
+}

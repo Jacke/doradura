@@ -42,3 +42,18 @@ CREATE TABLE IF NOT EXISTS request_history (
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
+
+-- Create the download_history table if it does not exist
+CREATE TABLE IF NOT EXISTS download_history (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL,
+    url TEXT NOT NULL,
+    title TEXT NOT NULL,
+    format TEXT NOT NULL,
+    downloaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_id) REFERENCES users(telegram_id)
+);
+
+-- Create index for faster queries
+CREATE INDEX IF NOT EXISTS idx_download_history_user_id ON download_history(user_id);
+CREATE INDEX IF NOT EXISTS idx_download_history_downloaded_at ON download_history(downloaded_at DESC);
