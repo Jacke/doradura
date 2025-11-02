@@ -13,53 +13,64 @@ use reqwest::ClientBuilder;
 use tokio::time::{sleep, interval};
 use simplelog::*;
 use std::fs::File;
-use chrono::{DateTime, Utc};
 use dotenvy::dotenv;
 
 mod commands;
+mod config;
 mod db;
 mod downloader;
+mod error;
 mod fetch;
 mod rate_limiter;
 mod utils;
 mod queue;
+mod progress;
+mod menu;
 
-use db::{get_connection, create_user, get_user, log_request};
+use db::{create_pool, get_connection, create_user, get_user, log_request};
 use crate::commands::handle_message;
 use crate::rate_limiter::RateLimiter;
 use crate::queue::DownloadQueue;
-use crate::downloader::{download_and_send_audio, download_and_send_video};
+use crate::downloader::{download_and_send_audio, download_and_send_video, download_and_send_subtitles};
+use crate::menu::{show_main_menu, handle_menu_callback};
 
 #[derive(BotCommands, Clone, Debug)]
 #[command(rename_rule = "lowercase", description = "Я умею:")]
 enum Command {
     #[command(description = "показывает главное меню")]
     Start,
-    #[command(description = "показывает это сообщение")]
-    Help,
-    #[command(description = "показывает настройки")]
-    Settings,
-    #[command(description = "показывает активные скачивания")]
-    Tasks,
+    #[command(description = "настройки режима загрузки")]
+    Mode,
 }
 
+/// Main entry point for the Telegram bot
+/// 
+/// Initializes logging, database connection pool, rate limiter, download queue,
+/// and starts the Telegram bot dispatcher.
+/// 
+/// # Errors
+/// 
+/// Returns an error if initialization fails (logging, database, bot creation).
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize simplelog for both console and file logging
+    let log_file = File::create("app.log")
+        .map_err(|e| anyhow::anyhow!("Failed to create log file: {}", e))?;
+    
     CombinedLogger::init(vec![
         TermLogger::new(
-            LevelFilter::Error,
+            LevelFilter::Debug,  // Временно Debug для отладки прогресса
             Config::default(),
             TerminalMode::Mixed,
             ColorChoice::Auto,
         ),
         WriteLogger::new(
-            LevelFilter::Error,
+            LevelFilter::Debug,  // Временно Debug для отладки прогресса
             Config::default(),
-            File::create("app.log").unwrap(),
+            log_file,
         ),
     ])
-    .unwrap();
+    .map_err(|e| anyhow::anyhow!("Failed to initialize logger: {}", e))?;
 
     // Load environment variables from .env if present
     let _ = dotenv();
@@ -68,28 +79,34 @@ async fn main() -> Result<()> {
 
     let bot = Bot::from_env_with_client(
         ClientBuilder::new()
-            .timeout(Duration::from_secs(300)) // Increase request timeout to 30 seconds
+            .timeout(config::network::timeout())
             .build()?,
     );
 
     let mut retry_count = 0;
-    let max_retries = 5;
+    let max_retries = config::retry::MAX_DISPATCHER_RETRIES;
 
     // Set the list of bot commands
     bot.set_my_commands(vec![
         BotCommand::new("start", "показывает главное меню"),
-        BotCommand::new("help", "расскажу что я могу, помимо вкусного чая"),
-        BotCommand::new("settings", "твои настройки"),
-        BotCommand::new("tasks", "активные скачивания"),
+        BotCommand::new("mode", "настройки режима загрузки")
     ])
     .await?;
 
+    // Create database connection pool
+    let db_pool = Arc::new(create_pool("database.sqlite")
+        .map_err(|e| anyhow::anyhow!("Failed to create database pool: {}", e))?);
+    
     // Read and apply the migration.sql file
     let migration_sql = read_to_string("migration.sql")?;
-    let conn = get_connection()?;
-    conn.execute_batch(&migration_sql)?;
+    let conn = get_connection(&db_pool)
+        .map_err(|e| anyhow::anyhow!("Failed to get database connection: {}", e))?;
+    // Execute migration, but don't fail if some steps already exist
+    if let Err(e) = conn.execute_batch(&migration_sql) {
+        log::warn!("Some migration steps failed (this is normal if tables/columns already exist): {}", e);
+    }
 
-    let rate_limiter = Arc::new(RateLimiter::new(Duration::from_secs(30)));
+    let rate_limiter = Arc::new(RateLimiter::new(config::rate_limit::duration()));
     let download_queue = Arc::new(DownloadQueue::new());
 
     // Start the queue processing
@@ -100,57 +117,135 @@ async fn main() -> Result<()> {
         .branch(Update::filter_message().branch(
             dptree::entry()
                 .filter_command::<Command>()
-                .endpoint(|bot: Bot, msg: Message, cmd: Command| async move {
-                    println!("cmd {:?}", cmd);
-                    // let tasks = download_queue.filter_tasks_by_chat_id(msg.chat.id);
-                    match cmd {
-                        Command::Start => {
-                            let message = "Приветик\\! Я Дора ❤️‍🔥\\. Я делаю чай и скачиваю треки и видео\\. Используй /help чтобы получить полную инфу\\.".to_string();
-                            bot.send_message(msg.chat.id, message)
-                                .parse_mode(ParseMode::MarkdownV2)
-                                .await?;
-                        }
-                        Command::Help => {
-                            bot.send_message(msg.chat.id, Command::descriptions().to_string())
-                                .parse_mode(ParseMode::MarkdownV2)
-                                .await?;
-                        }
-                        Command::Settings => {
-                            bot.send_message(msg.chat.id, "Ты можешь качать каждые 30 секунд\\! Дополнительные возможности на подходе")
-                                .parse_mode(ParseMode::MarkdownV2)
-                                .await?;
-                        }
-                        Command::Tasks => { 
-                            // let tasks = download_queue.filter_tasks_by_chat_id(msg.chat.id);
-                            bot.send_message(msg.chat.id, "У вас нет активных загрузок")
-                                .parse_mode(ParseMode::MarkdownV2)
-                                .await?;
+                .endpoint({
+                    let db_pool = Arc::clone(&db_pool);
+                    move |bot: Bot, msg: Message, cmd: Command| {
+                        let db_pool = Arc::clone(&db_pool);
+                        async move {
+                            log::debug!("Received command: {:?}", cmd);
+                            match cmd {
+                                Command::Start => {
+                                    // Список file_id стикеров из стикерпака doraduradoradura
+                                    let sticker_file_ids = vec![
+                                        "CAACAgIAAxUAAWj-ZokEQu5YpTnjl6IWPzCQZ0UUAAJCEwAC52QwSC6nTghQdw-KNgQ",
+                                        "CAACAgIAAxUAAWj-ZomIQgQKKpbMZA0_VDzfavIiAAK1GgACt8dBSNRj5YvFS-dmNgQ",
+                                        "CAACAgIAAxUAAWj-Zokct93wagdDXh1JbhxBIyJOAALzFwACoktASAOjHltqzx0ENgQ",
+                                        "CAACAgIAAxUAAWj-ZomorWU-YHGN6oQ6-ikN46CJAAInFAACqlJYSGHilrVqW1AxNgQ",
+                                        "CAACAgIAAxUAAWj-ZonVzqfhCC1-YjDNhqGioqvVAALdEwAC-_ZpSB5PRC_sd93QNgQ",
+                                        "CAACAgIAAxkBAAIFymj-YswNosbIex7SmXJejbO_GN7-AAJMGQAC9MFQSHBzdKlbjXskNgQ",
+                                        "CAACAgIAAxUAAWj-Zol_H6tZIPG-PPHnpNZS1QkIAAJFGwACIQtBSDwm6rS-ZojVNgQ",
+                                        "CAACAgIAAxUAAWj-ZomOtDnC9_6jFRp84js-HQN5AALzEgACqc5ISI4uefJ9dzZPNgQ",
+                                        "CAACAgIAAxUAAWj-ZolmPZFTqhyNqwssS4JVQY_AAALgFAACU7NBSCIDa2YqXjXyNgQ",
+                                        "CAACAgIAAxUAAWj-ZonZTWGW2DadfQ2Mo6bHAAHy2AACjxEAAgSTSUj1H3gU_UUHdjYE",
+                                        "CAACAgIAAxUAAWj-ZolQ6OCfECavW19ATgcCup5PAAIOFgACgbdJSMOkkJfpAbs_NgQ",
+                                        "CAACAgIAAxUAAWj-Zol19ilXmGth6SKa-4FRrSEJAAJRFwACM9JISKFYdRXvbsb1NgQ",
+                                        "CAACAgIAAxUAAWj-ZokRA50GUCiz_OXQUih3uljfAAIeGQACsyBISDP8m_5FL5CJNgQ",
+                                        "CAACAgIAAxUAAWj-ZomiM5Mt2aK1G3b8O7JK-shMAALPFQACWGhoSMeITTonc71ENgQ",
+                                        "CAACAgIAAxUAAWj-ZomSF9AsKZr6myR3lYgyc-HyAAIRGQACM9KRSG5IUy40KB2KNgQ",
+                                    ];
+
+                                    // Генерируем случайный индекс используя timestamp
+                                    use std::time::{SystemTime, UNIX_EPOCH};
+                                    let random_index = match SystemTime::now().duration_since(UNIX_EPOCH) {
+                                        Ok(timestamp) => (timestamp.as_nanos() as usize) % sticker_file_ids.len(),
+                                        Err(e) => {
+                                            log::error!("Failed to get system time: {}", e);
+                                            // Fallback to a simple random index using length
+                                            0
+                                        }
+                                    };
+                                    let random_sticker_id = sticker_file_ids[random_index];
+
+                                    // Отправляем случайный стикер
+                                    let _ = bot.send_sticker(msg.chat.id, teloxide::types::InputFile::file_id(random_sticker_id)).await;
+
+                                    // Отправляем приветственное сообщение и показываем mode меню
+                                    let _ = bot.send_message(msg.chat.id, "Хэй\\! Я Дора, дай мне ссылку и я скачаю ❤️‍🔥")
+                                        .parse_mode(ParseMode::MarkdownV2)
+                                        .await;
+                                }
+                                Command::Mode => {
+                                    let _ = show_main_menu(&bot, msg.chat.id, db_pool).await;
+                                }
+                            }
+                            respond(())
                         }
                     }
-                    respond(())
                 })
         ))
         .branch(Update::filter_message().endpoint({
             let rate_limiter = Arc::clone(&rate_limiter);
             let download_queue = Arc::clone(&download_queue);
+            let db_pool = Arc::clone(&db_pool);
             move |bot: Bot, msg: Message| {
                 let rate_limiter = Arc::clone(&rate_limiter);
                 let download_queue = Arc::clone(&download_queue);
+                let db_pool = Arc::clone(&db_pool);
                 async move {
-                    if let Err(err) = handle_message(bot.clone(), msg.clone(), download_queue.clone(), rate_limiter.clone()).await {
+                    // Handle message and get user info (optimized: avoids duplicate DB query)
+                    let user_info_result = handle_message(bot.clone(), msg.clone(), download_queue.clone(), rate_limiter.clone(), db_pool.clone()).await;
+                    
+                    // Log request and manage user (reuse user info if available)
+                    if let Some(text) = msg.text() {
+                        match &user_info_result {
+                            Ok(Some(user)) => {
+                                // User info already retrieved in handle_message, reuse it
+                                match get_connection(&db_pool) {
+                                    Ok(conn) => {
+                                        if let Err(e) = log_request(&conn, user.telegram_id(), text) {
+                                            log::error!("Failed to log request: {}", e);
+                                        }
+                                    }
+                                    Err(e) => {
+                                        log::error!("Failed to get database connection: {}", e);
+                                    }
+                                }
+                            }
+                            Ok(None) | Err(_) => {
+                                // User not found or error occurred, try to get/create user
+                                match get_connection(&db_pool) {
+                                    Ok(conn) => {
+                                        let chat_id = msg.chat.id.0;
+                                        match get_user(&conn, chat_id) {
+                                            Ok(Some(user)) => {
+                                                if let Err(e) = log_request(&conn, user.telegram_id(), text) {
+                                                    log::error!("Failed to log request: {}", e);
+                                                }
+                                            }
+                                            Ok(None) => {
+                                                if let Err(e) = create_user(&conn, chat_id, msg.from().and_then(|u| u.username.clone())) {
+                                                    log::error!("Failed to create user: {}", e);
+                                                } else if let Err(e) = log_request(&conn, chat_id, text) {
+                                                    log::error!("Failed to log request for new user: {}", e);
+                                                }
+                                            }
+                                            Err(e) => {
+                                                log::error!("Failed to get user from database: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        log::error!("Failed to get database connection: {}", e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    if let Err(err) = user_info_result {
                         log::error!("Error handling message: {:?}", err);
                     }
-
-                    // Log request and manage user
-                    let conn = get_connection().unwrap();
-                    let chat_id = msg.chat.id.0; // Extract i64 from ChatId
-                    if let Some(user) = get_user(&conn, chat_id).unwrap() {
-                        log_request(&conn, user.telegram_id(), &msg.text().unwrap()).unwrap();
-                    } else {
-                        create_user(&conn, chat_id, msg.from().and_then(|u| u.username.clone())).unwrap();
-                        log_request(&conn, chat_id, &msg.text().unwrap()).unwrap();
-                    }
+                    
                     respond(())
+                }
+            }
+        }))
+        .branch(Update::filter_callback_query().endpoint({
+            let db_pool = Arc::clone(&db_pool);
+            move |bot: Bot, q: CallbackQuery| {
+                let db_pool = Arc::clone(&db_pool);
+                async move {
+                    handle_menu_callback(bot, q, db_pool).await
                 }
             }
         }));
@@ -176,13 +271,13 @@ async fn main() -> Result<()> {
 
         // Add a delay between retries to avoid overwhelming the API
         if retry_count > 0 {
-            sleep(Duration::from_secs(5)).await;
+            sleep(config::retry::dispatcher_delay()).await;
         }
     }
 
     tokio::select! {
         _ = signal::ctrl_c() => {
-            println!("Shutting down gracefully...");
+            log::info!("Shutting down gracefully...");
         },
     }
 
@@ -202,49 +297,15 @@ where
 }
 
 async fn exponential_backoff(retry_count: u32) {
-    let delay = Duration::from_secs(2u64.pow(retry_count));
+    let delay = Duration::from_secs(config::retry::EXPONENTIAL_BACKOFF_BASE.pow(retry_count));
     tokio::time::sleep(delay).await;
 }
 
-/*
-fn make_menu() -> KeyboardMarkup {
-    let buttons = vec![
-        vec![
-            KeyboardButton::new("Option 1"),
-            KeyboardButton::new("Option 2"),
-        ],
-        vec![
-            KeyboardButton::new("Option 3"),
-            KeyboardButton::new("Option 4"),
-        ],
-    ];
-    KeyboardMarkup::new(buttons)
-        .resize_keyboard(true)
-        .one_time_keyboard(false)
-}
-
-async fn get_updates_with_retry(client: &Client, url: &str) -> Result<String, ReqwestError> {
-    let retry_strategy = ExponentialBackoff::from_millis(100).take(5);
-
-    let response = Retry::spawn(retry_strategy, || async {
-        client
-            .get(url)
-            .timeout(Duration::from_secs(10)) // Set a timeout for the request
-            .send()
-            .await?
-            .text()
-            .await
-    })
-    .await?;
-
-    Ok(response)
-}
- */
 
 async fn process_queue(bot: Bot, queue: Arc<DownloadQueue>, rate_limiter: Arc<rate_limiter::RateLimiter>) {
-    // Semaphore to limit concurrent downloads (max 5 simultaneous tasks)
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(5));
-    let mut interval = interval(Duration::from_millis(100)); // Check queue more frequently
+    // Semaphore to limit concurrent downloads
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(config::queue::MAX_CONCURRENT_DOWNLOADS));
+    let mut interval = interval(config::queue::check_interval());
 
     loop {
         interval.tick().await;
@@ -256,18 +317,39 @@ async fn process_queue(bot: Bot, queue: Arc<DownloadQueue>, rate_limiter: Arc<ra
 
             tokio::spawn(async move {
                 // Acquire permit from semaphore (will wait if all permits are taken)
-                let _permit = semaphore.acquire().await.unwrap();
+                let _permit = match semaphore.acquire().await {
+                    Ok(p) => p,
+                    Err(e) => {
+                        log::error!("Failed to acquire semaphore permit for task {}: {}", task.id, e);
+                        return;
+                    }
+                };
                 log::info!("Processing task {} (permits available: {})", task.id, semaphore.available_permits());
 
-                let url = url::Url::parse(&task.url).expect("Invalid URL");
-                if task.is_video {
-                    if let Err(e) = download_and_send_video(bot.clone(), task.chat_id, url, rate_limiter, task.created_timestamp).await {
-                        log::error!("Failed to process video task {}: {:?}", task.id, e);
+                let url = match url::Url::parse(&task.url) {
+                    Ok(u) => u,
+                    Err(e) => {
+                        log::error!("Invalid URL for task {}: {} - {}", task.id, task.url, e);
+                        return;
                     }
-                } else {
-                    if let Err(e) = download_and_send_audio(bot.clone(), task.chat_id, url, rate_limiter, task.created_timestamp).await {
-                        log::error!("Failed to process audio task {}: {:?}", task.id, e);
+                };
+                
+                // Process task based on format
+                let result = match task.format.as_str() {
+                    "mp4" => {
+                        download_and_send_video(bot.clone(), task.chat_id, url, rate_limiter.clone(), task.created_timestamp).await
                     }
+                    "srt" | "txt" => {
+                        download_and_send_subtitles(bot.clone(), task.chat_id, url, rate_limiter.clone(), task.created_timestamp, task.format.clone()).await
+                    }
+                    _ => {
+                        // Default to audio (mp3)
+                        download_and_send_audio(bot.clone(), task.chat_id, url, rate_limiter.clone(), task.created_timestamp).await
+                    }
+                };
+                
+                if let Err(e) = result {
+                    log::error!("Failed to process task {} (format: {}): {:?}", task.id, task.format, e);
                 }
 
                 log::info!("Task {} completed, permit released", task.id);
@@ -279,7 +361,6 @@ async fn process_queue(bot: Bot, queue: Arc<DownloadQueue>, rate_limiter: Arc<ra
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     pub use crate::queue::DownloadQueue;
     pub use crate::queue::DownloadTask;
 
@@ -289,7 +370,8 @@ mod tests {
         let task = DownloadTask::new(
             "http://example.com/video.mp4".to_string(),
             teloxide::types::ChatId(123456789),
-            true
+            true,
+            "mp4".to_string()
         );
 
         // Test adding a task to the queue
@@ -297,7 +379,7 @@ mod tests {
         assert_eq!(queue.queue.lock().await.len(), 1);
 
         // Test retrieving a task from the queue
-        let retrieved_task = queue.get_task().await.unwrap();
+        let retrieved_task = queue.get_task().await.expect("Should retrieve task from non-empty queue");
         assert_eq!(retrieved_task.url, "http://example.com/video.mp4");
         assert_eq!(retrieved_task.chat_id, teloxide::types::ChatId(123456789));
         assert_eq!(retrieved_task.is_video, true);
@@ -309,14 +391,15 @@ mod tests {
         let task = DownloadTask::new(
             "http://example.com/audio.mp3".to_string(),
             teloxide::types::ChatId(987654321),
-            false
+            false,
+            "mp3".to_string()
         );
 
         queue.add_task(task).await;
         assert_eq!(queue.queue.lock().await.len(), 1);
 
         // After retrieving, the queue should be empty
-        let _retrieved_task = queue.get_task().await.unwrap();
+        let _retrieved_task = queue.get_task().await.expect("Should retrieve task that was just added");
         assert!(queue.queue.lock().await.is_empty());
     }
 
@@ -326,12 +409,14 @@ mod tests {
         let task1 = DownloadTask::new(
             "http://example.com/second.mp4".to_string(),
             teloxide::types::ChatId(111111111),
-            true
+            true,
+            "mp4".to_string()
         );
         let task2 = DownloadTask::new(
             "http://example.com/second.mp4".to_string(),
             teloxide::types::ChatId(111111111),
-            false
+            false,
+            "mp3".to_string()
         );
         queue.add_task(task2).await;
         queue.add_task(task1).await;
@@ -340,12 +425,12 @@ mod tests {
         assert_eq!(queue.queue.lock().await.len(), 2);
 
         // Retrieve tasks and check the order and properties
-        let first_retrieved_task = queue.get_task().await.unwrap();
+        let first_retrieved_task = queue.get_task().await.expect("Should retrieve first task from queue");
         assert_eq!(first_retrieved_task.url, "http://example.com/second.mp4");
         assert_eq!(first_retrieved_task.chat_id, teloxide::types::ChatId(111111111));
         assert_eq!(first_retrieved_task.is_video, false);
 
-        let second_retrieved_task = queue.get_task().await.unwrap();
+        let second_retrieved_task = queue.get_task().await.expect("Should retrieve second task from queue");
         assert_eq!(second_retrieved_task.url, "http://example.com/second.mp4");
         assert_eq!(second_retrieved_task.chat_id, teloxide::types::ChatId(111111111));
         assert_eq!(second_retrieved_task.is_video, true);

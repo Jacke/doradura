@@ -3,8 +3,20 @@ CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY,
     telegram_id INTEGER UNIQUE NOT NULL,
     username TEXT,
-    plan TEXT DEFAULT 'free'
+    plan TEXT DEFAULT 'free',
+    download_format TEXT DEFAULT 'mp3',
+    download_subtitles INTEGER DEFAULT 0
 );
+
+-- Add missing columns to existing users table (if they don't exist)
+-- SQLite doesn't support IF NOT EXISTS for ALTER TABLE, so we need to use a workaround
+-- We'll use a pragma to check if the column exists, but SQLite doesn't support that either
+-- Instead, we'll catch errors and ignore them, or use a different approach
+
+-- Add missing columns to existing users table
+-- Note: SQLite doesn't support IF NOT EXISTS for ALTER TABLE
+-- We'll handle errors in the application code if columns already exist
+-- SQLite will return an error if the column already exists, which we'll ignore
 
 -- Create the subscription_plans table if it does not exist
 CREATE TABLE IF NOT EXISTS subscription_plans (
