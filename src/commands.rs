@@ -152,7 +152,7 @@ pub async fn handle_message(bot: Bot, msg: Message, _download_queue: Arc<Downloa
                 }
                 
                 if valid_urls.is_empty() {
-                    bot.send_message(msg.chat.id, "Извини, я не смогла распознать ни одной корректной ссылки. Пожалуйста, пришли мне корректные ссылки на YouTube или SoundCloud.").await?;
+                    bot.send_message(msg.chat.id, "Извини, я не смогла распознать ни одной корректной ссылки. Пожалуйста, пришли мне корректные ссылки на поддерживаемые сервисы (YouTube, SoundCloud, VK, TikTok, Instagram, Twitch, Spotify и другие).").await?;
                     return Ok(user_info);
                 }
                 
@@ -255,7 +255,7 @@ pub async fn handle_message(bot: Bot, msg: Message, _download_queue: Arc<Downloa
                     Ok(parsed_url) => parsed_url,
                     Err(e) => {
                         log::warn!("Failed to parse URL '{}': {}", url_text, e);
-                        bot.send_message(msg.chat.id, "Извини, я не смогла распознать ссылку. Пожалуйста, пришли мне корректную ссылку на YouTube или SoundCloud.").await?;
+                        bot.send_message(msg.chat.id, "Извини, я не смогла распознать ссылку. Пожалуйста, пришли мне корректную ссылку на поддерживаемые сервисы (YouTube, SoundCloud, VK, TikTok, Instagram, Twitch, Spotify и другие).").await?;
                         return Ok(user_info);
                     }
                 };
@@ -302,10 +302,10 @@ pub async fn handle_message(bot: Bot, msg: Message, _download_queue: Arc<Downloa
                 return Ok(user_info);
             }
         } else {
-            bot.send_message(msg.chat.id, "Извини, я не нашла ссылки на YouTube или SoundCloud. Пожалуйста, пришли мне ссылку на трек или видео, который ты хочешь скачать.").await?;
+            bot.send_message(msg.chat.id, "Извини, я не нашла ссылки. Пожалуйста, пришли мне ссылку на трек или видео с поддерживаемых сервисов (YouTube, SoundCloud, VK, TikTok, Instagram, Twitch, Spotify и другие).").await?;
         }
     } else {
-        bot.send_message(msg.chat.id, "Извини, я не нашла ссылки на YouTube или SoundCloud. Пожалуйста, пришли мне ссылку на трек или видео, который ты хочешь скачать.").await?;
+        bot.send_message(msg.chat.id, "Извини, я не нашла ссылки. Пожалуйста, пришли мне ссылку на трек или видео с поддерживаемых сервисов (YouTube, SoundCloud, VK, TikTok, Instagram, Twitch, Spotify и другие).").await?;
     }
     Ok(None)
 }
