@@ -5,6 +5,7 @@ use crate::utils::escape_filename;
 use crate::progress::{ProgressMessage, DownloadStatus};
 use crate::config;
 use crate::error::AppError;
+use crate::db::{DbPool, save_download_history};
 use std::sync::Arc;
 use url::Url;
 use std::process::{Command, Stdio};
@@ -298,10 +299,11 @@ async fn download_audio_file_with_progress(
 /// 5. Sends audio file with retry logic
 /// 6. Shows success message
 /// 7. Cleans up temporary file after delay
-pub async fn download_and_send_audio(bot: Bot, chat_id: ChatId, url: Url, rate_limiter: Arc<RateLimiter>, _created_timestamp: DateTime<Utc>) -> ResponseResult<()> {
+pub async fn download_and_send_audio(bot: Bot, chat_id: ChatId, url: Url, rate_limiter: Arc<RateLimiter>, _created_timestamp: DateTime<Utc>, db_pool: Option<Arc<DbPool>>) -> ResponseResult<()> {
     log::info!("Starting download_and_send_audio for chat {} with URL: {}", chat_id, url);
     let bot_clone = bot.clone();
     let _rate_limiter = Arc::clone(&rate_limiter);
+    let db_pool_clone = db_pool.clone();
 
     tokio::spawn(async move {
         log::info!("Inside spawn for audio download, chat_id: {}", chat_id);
@@ -394,6 +396,15 @@ pub async fn download_and_send_audio(bot: Bot, chat_id: ChatId, url: Url, rate_l
 
             // Step 4: Send audio with retry logic and animation
             send_audio_with_retry(&bot_clone, chat_id, &download_path, duration, &mut progress_msg, display_title.as_ref()).await?;
+
+            // Save to download history after successful send
+            if let Some(ref pool) = db_pool_clone {
+                if let Ok(conn) = crate::db::get_connection(pool) {
+                    if let Err(e) = save_download_history(&conn, chat_id.0, url.as_str(), display_title.as_ref(), "mp3") {
+                        log::warn!("Failed to save download history: {}", e);
+                    }
+                }
+            }
 
             // Step 5: Show success status with time
             let _ = progress_msg.update(&bot_clone, DownloadStatus::Success {
@@ -610,9 +621,10 @@ async fn send_video_with_retry(
 /// # Behavior
 /// 
 /// Similar to [`download_and_send_audio`], but for video files.
-pub async fn download_and_send_video(bot: Bot, chat_id: ChatId, url: Url, rate_limiter: Arc<RateLimiter>, _created_timestamp: DateTime<Utc>) -> ResponseResult<()> {
+pub async fn download_and_send_video(bot: Bot, chat_id: ChatId, url: Url, rate_limiter: Arc<RateLimiter>, _created_timestamp: DateTime<Utc>, db_pool: Option<Arc<DbPool>>) -> ResponseResult<()> {
     let bot_clone = bot.clone();
     let _rate_limiter = Arc::clone(&rate_limiter);
+    let db_pool_clone = db_pool.clone();
 
     tokio::spawn(async move {
         let mut progress_msg = ProgressMessage::new(chat_id);
@@ -703,6 +715,15 @@ pub async fn download_and_send_video(bot: Bot, chat_id: ChatId, url: Url, rate_l
             // Step 4: Send video with retry logic and animation
             send_video_with_retry(&bot_clone, chat_id, &download_path, &mut progress_msg, display_title.as_ref()).await?;
 
+            // Save to download history after successful send
+            if let Some(ref pool) = db_pool_clone {
+                if let Ok(conn) = crate::db::get_connection(pool) {
+                    if let Err(e) = save_download_history(&conn, chat_id.0, url.as_str(), display_title.as_ref(), "mp4") {
+                        log::warn!("Failed to save download history: {}", e);
+                    }
+                }
+            }
+
             // Step 5: Show success status with time
             let _ = progress_msg.update(&bot_clone, DownloadStatus::Success {
                 title: display_title.as_ref().to_string(),
@@ -768,9 +789,10 @@ fn generate_file_name(title: &str, artist: &str) -> String {
 /// # Returns
 /// 
 /// Returns `Ok(())` on success or a `ResponseResult` error.
-pub async fn download_and_send_subtitles(bot: Bot, chat_id: ChatId, url: Url, rate_limiter: Arc<RateLimiter>, _created_timestamp: DateTime<Utc>, subtitle_format: String) -> ResponseResult<()> {
+pub async fn download_and_send_subtitles(bot: Bot, chat_id: ChatId, url: Url, rate_limiter: Arc<RateLimiter>, _created_timestamp: DateTime<Utc>, subtitle_format: String, db_pool: Option<Arc<DbPool>>) -> ResponseResult<()> {
     let bot_clone = bot.clone();
     let _rate_limiter = Arc::clone(&rate_limiter);
+    let db_pool_clone = db_pool.clone();
 
     tokio::spawn(async move {
         let mut progress_msg = ProgressMessage::new(chat_id);
@@ -863,6 +885,15 @@ pub async fn download_and_send_subtitles(bot: Bot, chat_id: ChatId, url: Url, ra
             // Calculate elapsed time
             let elapsed_secs = start_time.elapsed().as_secs();
             log::info!("Subtitle downloaded in {} seconds", elapsed_secs);
+
+            // Save to download history after successful send
+            if let Some(ref pool) = db_pool_clone {
+                if let Ok(conn) = crate::db::get_connection(pool) {
+                    if let Err(e) = save_download_history(&conn, chat_id.0, url.as_str(), display_title.as_ref(), &subtitle_format) {
+                        log::warn!("Failed to save download history: {}", e);
+                    }
+                }
+            }
 
             // Step 3: Show success status
             let _ = progress_msg.update(&bot_clone, DownloadStatus::Success {

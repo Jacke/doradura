@@ -27,6 +27,7 @@ mod queue;
 mod progress;
 mod menu;
 mod preview;
+mod history;
 
 use db::{create_pool, get_connection, create_user, get_user, log_request};
 use crate::commands::handle_message;
@@ -34,6 +35,7 @@ use crate::rate_limiter::RateLimiter;
 use crate::queue::DownloadQueue;
 use crate::downloader::{download_and_send_audio, download_and_send_video, download_and_send_subtitles};
 use crate::menu::{show_main_menu, handle_menu_callback};
+use crate::history::show_history;
 
 #[derive(BotCommands, Clone, Debug)]
 #[command(rename_rule = "lowercase", description = "Я умею:")]
@@ -42,6 +44,8 @@ enum Command {
     Start,
     #[command(description = "настройки режима загрузки")]
     Mode,
+    #[command(description = "история загрузок")]
+    History,
 }
 
 /// Main entry point for the Telegram bot
@@ -90,7 +94,8 @@ async fn main() -> Result<()> {
     // Set the list of bot commands
     bot.set_my_commands(vec![
         BotCommand::new("start", "показывает главное меню"),
-        BotCommand::new("mode", "настройки режима загрузки")
+        BotCommand::new("mode", "настройки режима загрузки"),
+        BotCommand::new("history", "история загрузок")
     ])
     .await?;
 
@@ -111,7 +116,7 @@ async fn main() -> Result<()> {
     let download_queue = Arc::new(DownloadQueue::new());
 
     // Start the queue processing
-    tokio::spawn(process_queue(bot.clone(), Arc::clone(&download_queue), Arc::clone(&rate_limiter)));
+    tokio::spawn(process_queue(bot.clone(), Arc::clone(&download_queue), Arc::clone(&rate_limiter), Arc::clone(&db_pool)));
 
     // Create a dispatcher to handle both commands and plain messages
     let handler = dptree::entry()
@@ -167,6 +172,9 @@ async fn main() -> Result<()> {
                                 }
                                 Command::Mode => {
                                     let _ = show_main_menu(&bot, msg.chat.id, db_pool).await;
+                                }
+                                Command::History => {
+                                    let _ = show_history(&bot, msg.chat.id, db_pool).await;
                                 }
                             }
                             respond(())
@@ -307,7 +315,7 @@ async fn exponential_backoff(retry_count: u32) {
 }
 
 
-async fn process_queue(bot: Bot, queue: Arc<DownloadQueue>, rate_limiter: Arc<rate_limiter::RateLimiter>) {
+async fn process_queue(bot: Bot, queue: Arc<DownloadQueue>, rate_limiter: Arc<rate_limiter::RateLimiter>, db_pool: Arc<db::DbPool>) {
     // Semaphore to limit concurrent downloads
     let semaphore = Arc::new(tokio::sync::Semaphore::new(config::queue::MAX_CONCURRENT_DOWNLOADS));
     let mut interval = interval(config::queue::check_interval());
@@ -319,6 +327,7 @@ async fn process_queue(bot: Bot, queue: Arc<DownloadQueue>, rate_limiter: Arc<ra
             let bot = bot.clone();
             let rate_limiter = Arc::clone(&rate_limiter);
             let semaphore = Arc::clone(&semaphore);
+            let db_pool = Arc::clone(&db_pool);
 
             tokio::spawn(async move {
                 // Acquire permit from semaphore (will wait if all permits are taken)
@@ -340,16 +349,17 @@ async fn process_queue(bot: Bot, queue: Arc<DownloadQueue>, rate_limiter: Arc<ra
                 };
                 
                 // Process task based on format
+                let db_pool_clone = Arc::clone(&db_pool);
                 let result = match task.format.as_str() {
                     "mp4" => {
-                        download_and_send_video(bot.clone(), task.chat_id, url, rate_limiter.clone(), task.created_timestamp).await
+                        download_and_send_video(bot.clone(), task.chat_id, url, rate_limiter.clone(), task.created_timestamp, Some(db_pool_clone.clone())).await
                     }
                     "srt" | "txt" => {
-                        download_and_send_subtitles(bot.clone(), task.chat_id, url, rate_limiter.clone(), task.created_timestamp, task.format.clone()).await
+                        download_and_send_subtitles(bot.clone(), task.chat_id, url, rate_limiter.clone(), task.created_timestamp, task.format.clone(), Some(db_pool_clone.clone())).await
                     }
                     _ => {
                         // Default to audio (mp3)
-                        download_and_send_audio(bot.clone(), task.chat_id, url, rate_limiter.clone(), task.created_timestamp).await
+                        download_and_send_audio(bot.clone(), task.chat_id, url, rate_limiter.clone(), task.created_timestamp, Some(db_pool_clone.clone())).await
                     }
                 };
                 
