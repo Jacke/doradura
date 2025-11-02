@@ -375,6 +375,85 @@ async fn download_audio_file_with_progress(
     Ok((rx, handle))
 }
 
+/// Скачивает видео с отслеживанием прогресса через channel
+async fn download_video_file_with_progress(
+    url: &Url,
+    download_path: &str,
+    format_arg: &str,
+) -> Result<(tokio::sync::mpsc::UnboundedReceiver<ProgressInfo>, tokio::task::JoinHandle<Result<(), AppError>>), AppError> {
+    let ytdl_bin = config::YTDL_BIN.clone();
+    let url_str = url.to_string();
+    let download_path_clone = download_path.to_string();
+    let format_arg_clone = format_arg.to_string();
+
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+
+    // Запускаем в blocking task, так как читаем stdout построчно
+    let handle = tokio::task::spawn_blocking(move || {
+        let mut child = Command::new(&ytdl_bin)
+            .args([
+                "-o", &download_path_clone,
+                "--newline", // Выводить прогресс построчно
+                "--format", &format_arg_clone,
+                "--merge-output-format", "mp4",
+                "--concurrent-fragments", "5",
+                &url_str,
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| AppError::Download(format!("Failed to spawn yt-dlp: {}", e)))?;
+
+        // Читаем stdout и stderr построчно для отслеживания прогресса
+        // Прогресс может быть как в stdout, так и в stderr
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+
+        // Объединяем оба потока
+        use std::thread;
+        let tx_clone = tx.clone();
+
+        if let Some(stderr_stream) = stderr {
+            thread::spawn(move || {
+                let reader = BufReader::new(stderr_stream);
+                for line in reader.lines() {
+                    if let Ok(line_str) = line {
+                        log::debug!("yt-dlp stderr: {}", line_str);
+                        if let Some(progress_info) = parse_progress(&line_str) {
+                            log::info!("Parsed progress from stderr: {}%", progress_info.percent);
+                            let _ = tx_clone.send(progress_info);
+                        }
+                    }
+                }
+            });
+        }
+
+        if let Some(stdout_stream) = stdout {
+            let reader = BufReader::new(stdout_stream);
+            for line in reader.lines() {
+                if let Ok(line_str) = line {
+                    log::debug!("yt-dlp stdout: {}", line_str);
+                    if let Some(progress_info) = parse_progress(&line_str) {
+                        log::info!("Parsed progress from stdout: {}%", progress_info.percent);
+                        let _ = tx.send(progress_info);
+                    }
+                }
+            }
+        }
+
+        let status = child.wait()
+            .map_err(|e| AppError::Download(format!("downloader process failed: {}", e)))?;
+
+        if !status.success() {
+            return Err(AppError::Download(format!("downloader exited with status: {}", status)));
+        }
+
+        Ok(())
+    });
+
+    Ok((rx, handle))
+}
+
 /// Download audio file and send it to user
 /// 
 /// Downloads audio from URL using yt-dlp, shows progress updates, validates file size,
@@ -776,41 +855,38 @@ pub async fn download_and_send_video(bot: Bot, chat_id: ChatId, url: Url, rate_l
                 _ => "best", // best или не указано
             };
 
-            // Show downloading status
-            let _ = progress_msg.update(&bot_clone, DownloadStatus::Downloading {
-                title: display_title.as_ref().to_string(),
-                progress: 10,
-                speed_mbs: None,
-                eta_seconds: None,
-                current_size: None,
-                total_size: None,
-            }).await;
+            // Step 3: Download with real-time progress updates
+            let (mut progress_rx, mut download_handle) = download_video_file_with_progress(&url, &download_path, format_arg).await?;
 
-            let ytdl_bin = &*config::YTDL_BIN;
-            let args = [
-                "-o", &download_path,
-                "--newline",
-                "--format", format_arg,
-                "--merge-output-format", "mp4",
-                "--concurrent-fragments", "5",
-                url.as_str(),
-            ];
-            let mut child = spawn_downloader_with_fallback(&ytdl_bin, &args)?;
-            let status = child.wait().map_err(|e| AppError::Download(format!("downloader process failed: {}", e)))?;
+            // Читаем обновления прогресса из channel
+            let bot_for_progress = bot_clone.clone();
+            let title_for_progress = Arc::clone(&display_title);
+            let mut last_progress = 0u8;
 
-            if !status.success() {
-                return Err(AppError::Download(format!("downloader exited with status: {}", status)));
+            loop {
+                tokio::select! {
+                    // Получаем обновления прогресса
+                    Some(progress_info) = progress_rx.recv() => {
+                        // Обновляем только на значимых изменениях (каждые 5%)
+                        if progress_info.percent % 5 == 0 && progress_info.percent != last_progress {
+                            last_progress = progress_info.percent;
+                            let _ = progress_msg.update(&bot_for_progress, DownloadStatus::Downloading {
+                                title: title_for_progress.as_ref().to_string(),
+                                progress: progress_info.percent,
+                                speed_mbs: progress_info.speed_mbs,
+                                eta_seconds: progress_info.eta_seconds,
+                                current_size: progress_info.current_size,
+                                total_size: progress_info.total_size,
+                            }).await;
+                        }
+                    }
+                    // Ждем завершения загрузки
+                    result = &mut download_handle => {
+                        result.map_err(|e| AppError::Download(format!("Task join error: {}", e)))??;
+                        break;
+                    }
+                }
             }
-
-            // Update to 90% after download
-            let _ = progress_msg.update(&bot_clone, DownloadStatus::Downloading {
-                title: display_title.as_ref().to_string(),
-                progress: 90,
-                speed_mbs: None,
-                eta_seconds: None,
-                current_size: None,
-                total_size: None,
-            }).await;
 
             log::debug!("Download path: {:?}", download_path);
 
