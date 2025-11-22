@@ -61,7 +61,7 @@ impl PlanLimits {
 /// Показывает информацию о текущем плане пользователя и доступных подписках
 pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
     let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))))?;
     
     let user = match db::get_user(&conn, chat_id.0) {
         Ok(Some(u)) => u,
@@ -72,7 +72,7 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
             }
             // Пробуем получить снова
             db::get_user(&conn, chat_id.0)
-                .map_err(|e| RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?
+                .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))))?
                 .unwrap_or_else(|| {
                     // Fallback к free плану
                     crate::db::User {
@@ -82,13 +82,16 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
                         download_format: "mp3".to_string(),
                         download_subtitles: 0,
                         video_quality: "best".to_string(),
+                        send_as_document: 0,
+                        send_audio_as_document: 0,
                         audio_bitrate: "320k".to_string(),
+                        subscription_expires_at: None,
                     }
                 })
         }
         Err(e) => {
             log::error!("Failed to get user: {}", e);
-            return Err(RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())));
+            return Err(RequestError::from(std::sync::Arc::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))));
         }
     };
     
@@ -110,7 +113,24 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
     
     let mut text = format!("💳 *Информация о подписке*\n\n");
     text.push_str(&format!("📊 *Твой текущий план:* {} {}\n", plan_emoji, plan_name));
-    text.push_str(&format!("📅 *Действует до:* бессрочно\n\n"));
+    
+    // Показываем дату окончания подписки
+    if let Some(expires_at) = &user.subscription_expires_at {
+        // Форматируем дату для отображения (из формата "2025-12-03 01:29:24" в "03.12.2025")
+        let formatted_date = if let Some(date_part) = expires_at.split(' ').next() {
+            let parts: Vec<&str> = date_part.split('-').collect();
+            if parts.len() == 3 {
+                format!("{}\\.{}\\.{}", parts[2], parts[1], parts[0])
+            } else {
+                expires_at.replace("-", "\\-").replace(":", "\\:")
+            }
+        } else {
+            expires_at.replace("-", "\\-").replace(":", "\\:")
+        };
+        text.push_str(&format!("📅 *Действует до:* {}\n\n", formatted_date));
+    } else {
+        text.push_str(&format!("📅 *Действует до:* бессрочно\n\n"));
+    }
     
     text.push_str("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n");
     text.push_str(&format!("*Твои лимиты:*\n"));
@@ -177,6 +197,69 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
         .parse_mode(teloxide::types::ParseMode::MarkdownV2)
         .reply_markup(keyboard)
         .await
+}
+
+/// Создает инвойс для оплаты подписки через Telegram Stars
+pub async fn create_subscription_invoice(
+    bot: &Bot,
+    chat_id: ChatId,
+    plan: &str,
+) -> ResponseResult<Message> {
+    let (title, description, price_stars) = match plan {
+        "premium" => (
+            "⭐ Premium подписка",
+            "Premium подписка на 30 дней\n• 10 секунд между запросами\n• Неограниченные загрузки\n• Файлы до 100 MB\n• Все форматы + выбор качества\n• Приоритетная очередь",
+            1u32,
+        ),
+        "vip" => (
+            "👑 VIP подписка",
+            "VIP подписка на 30 дней\n• 5 секунд между запросами\n• Неограниченные загрузки\n• Файлы до 200 MB\n• Все форматы + выбор качества\n• Максимальный приоритет\n• Плейлисты до 100 треков",
+            2u32,
+        ),
+        _ => {
+            return Err(RequestError::from(std::sync::Arc::new(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Invalid plan",
+            ))));
+        }
+    };
+
+    // Создаем payload для идентификации платежа
+    let payload = format!("subscription:{}:{}", plan, chat_id.0);
+
+    // Создаем инвойс
+    use teloxide::types::LabeledPrice;
+    // В teloxide 0.17 send_invoice принимает currency как String
+    bot.send_invoice(
+        chat_id,
+        title,
+        description,
+        payload,
+        "XTR".to_string(),
+        vec![LabeledPrice::new(
+            format!("{} подписка на 30 дней", if plan == "premium" { "Premium" } else { "VIP" }),
+            price_stars, // Для Telegram Stars (XTR) цена указывается напрямую в Stars
+        )],
+    )
+    .await
+}
+
+/// Активирует подписку для пользователя
+pub async fn activate_subscription(
+    db_pool: Arc<DbPool>,
+    telegram_id: i64,
+    plan: &str,
+    days: i32,
+) -> Result<(), String> {
+    let conn = db::get_connection(&db_pool)
+        .map_err(|e| format!("Failed to get connection: {}", e))?;
+    
+    // Обновляем план пользователя с датой окончания
+    db::update_user_plan_with_expiry(&conn, telegram_id, plan, Some(days))
+        .map_err(|e| format!("Failed to update plan: {}", e))?;
+    
+    log::info!("Subscription activated: user_id={}, plan={}, days={}", telegram_id, plan, days);
+    Ok(())
 }
 
 

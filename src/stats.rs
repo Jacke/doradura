@@ -16,6 +16,31 @@ fn format_size(bytes: i64) -> String {
     }
 }
 
+/// Безопасно обрезает строку до указанной длины символов (не байт!)
+/// Возвращает обрезанную строку с добавлением "..." если была обрезка
+fn truncate_string_safe(text: &str, max_len: usize) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+    
+    let char_count = text.chars().count();
+    if char_count <= max_len {
+        return text.to_string();
+    }
+    
+    // Безопасно обрезаем до max_len - 3 символов, чтобы поместить "..."
+    let truncate_len = max_len.saturating_sub(3);
+    let mut result = String::with_capacity(truncate_len + 3);
+    for (idx, ch) in text.chars().enumerate() {
+        if idx >= truncate_len {
+            break;
+        }
+        result.push(ch);
+    }
+    result.push_str("...");
+    result
+}
+
 /// Создает ASCII график активности
 fn create_activity_chart(activity_by_day: &[(String, i64)]) -> String {
     if activity_by_day.is_empty() {
@@ -54,7 +79,7 @@ fn create_activity_chart(activity_by_day: &[(String, i64)]) -> String {
 /// Показывает статистику пользователя
 pub async fn show_user_stats(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
     let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))))?;
     
     let stats = match db::get_user_stats(&conn, chat_id.0) {
         Ok(stats) => stats,
@@ -70,7 +95,7 @@ pub async fn show_user_stats(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -
     
     text.push_str(&format!("🎵 Всего загрузок: {}\n", stats.total_downloads));
     text.push_str(&format!("📅 Дней активности: {}\n", stats.active_days));
-    text.push_str(&format!("💾 Общий размер: ~{}\n\n", format_size(stats.total_size)));
+    text.push_str(&format!("💾 Общий размер: {}\n\n", format_size(stats.total_size)));
     
     if !stats.top_artists.is_empty() {
         text.push_str("🏆 *Топ исполнителей:*\n");
@@ -114,7 +139,7 @@ pub async fn show_user_stats(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -
 /// Показывает глобальную статистику бота
 pub async fn show_global_stats(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
     let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))))?;
     
     let stats = match db::get_global_stats(&conn) {
         Ok(stats) => stats,
@@ -134,13 +159,16 @@ pub async fn show_global_stats(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>)
     if !stats.top_tracks.is_empty() {
         text.push_str("🔥 *Топ\\-10 треков:*\n");
         for (idx, (title, count)) in stats.top_tracks.iter().enumerate() {
-            let escaped_title = escape_markdown(title);
-            // Обрезаем длинные названия
-            let display_title = if escaped_title.len() > 50 {
-                format!("{}...", &escaped_title[..47])
+            // Защита от пустых или некорректных названий
+            let safe_title = if title.is_empty() {
+                "(Без названия)"
             } else {
-                escaped_title
+                title
             };
+            
+            let escaped_title = escape_markdown(safe_title);
+            // Безопасно обрезаем длинные названия до 50 символов
+            let display_title = truncate_string_safe(&escaped_title, 50);
             text.push_str(&format!("{}. {} \\- {} раз\n", idx + 1, display_title, count));
         }
         text.push_str("\n");
@@ -166,25 +194,39 @@ pub async fn show_global_stats(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>)
 }
 
 /// Экранирует специальные символы для MarkdownV2
+/// 
+/// В Telegram MarkdownV2 требуется экранировать следующие символы:
+/// _ * [ ] ( ) ~ ` > # + - = | { } . !
+/// 
+/// Важно: обратный слеш должен экранироваться первым, чтобы избежать повторного экранирования
 fn escape_markdown(text: &str) -> String {
-    text.replace('\\', "\\\\")
-        .replace('_', "\\_")
-        .replace('*', "\\*")
-        .replace('[', "\\[")
-        .replace(']', "\\]")
-        .replace('(', "\\(")
-        .replace(')', "\\)")
-        .replace('~', "\\~")
-        .replace('`', "\\`")
-        .replace('>', "\\>")
-        .replace('#', "\\#")
-        .replace('+', "\\+")
-        .replace('-', "\\-")
-        .replace('=', "\\=")
-        .replace('|', "\\|")
-        .replace('{', "\\{")
-        .replace('}', "\\}")
-        .replace('.', "\\.")
-        .replace('!', "\\!")
+    let mut result = String::with_capacity(text.len() * 2);
+    
+    for c in text.chars() {
+        match c {
+            '\\' => result.push_str("\\\\"),
+            '_' => result.push_str("\\_"),
+            '*' => result.push_str("\\*"),
+            '[' => result.push_str("\\["),
+            ']' => result.push_str("\\]"),
+            '(' => result.push_str("\\("),
+            ')' => result.push_str("\\)"),
+            '~' => result.push_str("\\~"),
+            '`' => result.push_str("\\`"),
+            '>' => result.push_str("\\>"),
+            '#' => result.push_str("\\#"),
+            '+' => result.push_str("\\+"),
+            '-' => result.push_str("\\-"),
+            '=' => result.push_str("\\="),
+            '|' => result.push_str("\\|"),
+            '{' => result.push_str("\\{"),
+            '}' => result.push_str("\\}"),
+            '.' => result.push_str("\\."),
+            '!' => result.push_str("\\!"),
+            _ => result.push(c),
+        }
+    }
+    
+    result
 }
 

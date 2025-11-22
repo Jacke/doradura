@@ -1,6 +1,5 @@
 use std::fs::read_to_string;
 use std::sync::Arc;
-use std::hash::Hash;
 use teloxide::prelude::*;
 use teloxide::types::{ParseMode, Message, BotCommand};
 use teloxide::utils::command::BotCommands;
@@ -14,6 +13,10 @@ use tokio::time::{sleep, interval};
 use simplelog::*;
 use std::fs::File;
 use dotenvy::dotenv;
+use rand::Rng;
+use std::process::Command as ProcessCommand;
+use std::path::Path;
+use shellexpand;
 
 mod commands;
 mod config;
@@ -33,9 +36,12 @@ mod export;
 mod cache;
 mod backup;
 mod ytdlp;
+mod ytdlp_errors;
 mod subscription;
+mod notifications;
 
-use db::{create_pool, get_connection, create_user, get_user, log_request};
+use db::{create_pool, get_connection, create_user, get_user, log_request, get_all_users, update_user_plan, expire_old_subscriptions, get_failed_tasks, mark_task_processing, mark_task_failed, mark_task_completed};
+use crate::notifications::notify_admin_task_failed;
 use crate::commands::handle_message;
 use crate::rate_limiter::RateLimiter;
 use crate::queue::DownloadQueue;
@@ -45,7 +51,7 @@ use crate::history::show_history;
 use crate::stats::{show_user_stats, show_global_stats};
 use crate::export::show_export_menu;
 use crate::backup::{create_backup, list_backups};
-use crate::subscription::show_subscription_info;
+use crate::subscription::{show_subscription_info, activate_subscription};
 use std::env;
 
 #[derive(BotCommands, Clone, Debug)]
@@ -67,6 +73,10 @@ enum Command {
     Backup,
     #[command(description = "информация о подписке и тарифах")]
     Plan,
+    #[command(description = "список всех пользователей (только для администратора)")]
+    Users,
+    #[command(description = "изменить план пользователя (только для администратора)")]
+    Setplan,
 }
 
 /// Main entry point for the Telegram bot
@@ -76,9 +86,109 @@ enum Command {
 /// 
 /// # Errors
 /// 
+/// Логирует конфигурацию cookies при старте приложения
+fn log_cookies_configuration() {
+    log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    log::info!("🍪 Cookies Configuration Check");
+    log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    
+    // Проверяем файл cookies
+    if let Some(ref cookies_file) = *config::YTDL_COOKIES_FILE {
+        if !cookies_file.is_empty() {
+            let cookies_path = if std::path::Path::new(cookies_file).is_absolute() {
+                cookies_file.clone()
+            } else {
+                shellexpand::tilde(cookies_file).to_string()
+            };
+            
+            let cookies_path_buf = std::path::Path::new(&cookies_path);
+            if cookies_path_buf.exists() {
+                if let Ok(abs_path) = cookies_path_buf.canonicalize() {
+                    log::info!("✅ YTDL_COOKIES_FILE: {}", abs_path.display());
+                    log::info!("   File exists and will be used for YouTube authentication");
+                } else {
+                    log::warn!("⚠️  YTDL_COOKIES_FILE: {} (exists but cannot canonicalize)", cookies_path);
+                }
+            } else {
+                log::error!("❌ YTDL_COOKIES_FILE: {} (FILE NOT FOUND!)", cookies_file);
+                log::error!("   Checked path: {}", cookies_path);
+                log::error!("   Current directory: {:?}", std::env::current_dir());
+                log::error!("   YouTube downloads will FAIL without valid cookies!");
+            }
+        } else {
+            log::warn!("⚠️  YTDL_COOKIES_FILE is set but empty");
+        }
+    } else {
+        log::warn!("⚠️  YTDL_COOKIES_FILE: not set");
+    }
+    
+    // Проверяем браузер cookies
+    let browser = config::YTDL_COOKIES_BROWSER.as_str();
+    if !browser.is_empty() {
+        log::info!("✅ YTDL_COOKIES_BROWSER: {}", browser);
+        log::info!("   Will extract cookies from browser");
+    } else {
+        log::warn!("⚠️  YTDL_COOKIES_BROWSER: not set");
+    }
+    
+    // Итоговый статус
+    if config::YTDL_COOKIES_FILE.is_some() && !config::YTDL_COOKIES_FILE.as_ref().unwrap().is_empty() {
+        let cookies_path = if std::path::Path::new(config::YTDL_COOKIES_FILE.as_ref().unwrap()).is_absolute() {
+            config::YTDL_COOKIES_FILE.as_ref().unwrap().clone()
+        } else {
+            shellexpand::tilde(config::YTDL_COOKIES_FILE.as_ref().unwrap()).to_string()
+        };
+        
+        if std::path::Path::new(&cookies_path).exists() {
+            log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            log::info!("✅ Cookies configured - YouTube downloads should work");
+            log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        } else {
+            log::error!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+            log::error!("❌ Cookies file NOT FOUND - YouTube downloads will FAIL!");
+            log::error!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        }
+    } else if !browser.is_empty() {
+        log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        log::info!("✅ Cookies from browser configured - YouTube downloads should work");
+        log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    } else {
+        log::error!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        log::error!("❌ NO COOKIES CONFIGURED - YouTube downloads will FAIL!");
+        log::error!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+        log::error!("");
+        log::error!("Quick fix:");
+        log::error!("");
+        log::error!("💡 Option 1: Automatic extraction (Linux/Windows):");
+        log::error!("  1. Login to YouTube in browser");
+        log::error!("  2. Install: pip3 install keyring pycryptodomex");
+        log::error!("  3. Set: export YTDL_COOKIES_BROWSER=chrome");
+        log::error!("  4. Restart bot");
+        log::error!("");
+        log::error!("💡 Option 2: Export to file (macOS recommended):");
+        log::error!("  1. Export cookies to youtube_cookies.txt");
+        log::error!("  2. Set: export YTDL_COOKIES_FILE=youtube_cookies.txt");
+        log::error!("  3. Or run: ./run_with_cookies.sh");
+        log::error!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    }
+}
+
 /// Returns an error if initialization fails (logging, database, bot creation).
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Устанавливаем глобальный обработчик паники для перехвата паник в dispatcher
+    // Это позволит нам логировать панику и продолжать работу вместо завершения программы
+    std::panic::set_hook(Box::new(|panic_info| {
+        log::error!("Panic caught: {:?}", panic_info);
+        if let Some(location) = panic_info.location() {
+            log::error!("Panic at {}:{}:{}", location.file(), location.line(), location.column());
+        }
+        if let Some(msg) = panic_info.payload().downcast_ref::<&str>() {
+            log::error!("Panic message: {}", msg);
+        }
+        // Не завершаем программу - позволим основному циклу обработать ошибку
+    }));
+    
     // Initialize simplelog for both console and file logging
     let log_file = File::create("app.log")
         .map_err(|e| anyhow::anyhow!("Failed to create log file: {}", e))?;
@@ -103,19 +213,41 @@ async fn main() -> Result<()> {
 
     log::info!("Starting bot...");
 
+    // Log cookies configuration at startup
+    log_cookies_configuration();
+
     // Check and update yt-dlp on startup
     if let Err(e) = ytdlp::check_and_update_ytdlp().await {
         log::warn!("Failed to check/update yt-dlp: {}. Continuing anyway.", e);
     }
 
-    let bot = Bot::from_env_with_client(
-        ClientBuilder::new()
-            .timeout(config::network::timeout())
-            .build()?,
-    );
+    // Check if local Bot API server is configured
+    let bot = if let Ok(bot_api_url) = std::env::var("BOT_API_URL") {
+        log::info!("Using custom Bot API URL: {}", bot_api_url);
+        let url = url::Url::parse(&bot_api_url)
+            .map_err(|e| anyhow::anyhow!("Invalid BOT_API_URL: {}", e))?;
+        Bot::from_env_with_client(
+            ClientBuilder::new()
+                .timeout(config::network::timeout())
+                .build()?,
+        )
+        .set_api_url(url)
+    } else {
+        Bot::from_env_with_client(
+            ClientBuilder::new()
+                .timeout(config::network::timeout())
+                .build()?,
+        )
+    };
 
     let mut retry_count = 0;
     let max_retries = config::retry::MAX_DISPATCHER_RETRIES;
+
+    // Get bot information to check mentions
+    let bot_info = bot.get_me().await?;
+    let bot_username = bot_info.username.as_ref().map(|s| s.as_str());
+    let bot_id = bot_info.id;
+    log::info!("Bot username: {:?}, Bot ID: {}", bot_username, bot_id);
 
     // Set the list of bot commands
     bot.set_my_commands(vec![
@@ -126,7 +258,9 @@ async fn main() -> Result<()> {
         BotCommand::new("global", "глобальная статистика"),
         BotCommand::new("export", "экспорт истории"),
         BotCommand::new("backup", "создать бэкап БД (только для администраторов)"),
-        BotCommand::new("plan", "информация о подписке и тарифах")
+        BotCommand::new("plan", "информация о подписке и тарифах"),
+        BotCommand::new("users", "список всех пользователей (только для администратора)"),
+        BotCommand::new("setplan", "изменить план пользователя (только для администратора)")
     ])
     .await?;
 
@@ -146,6 +280,9 @@ async fn main() -> Result<()> {
     let rate_limiter = Arc::new(RateLimiter::new());
     let download_queue = Arc::new(DownloadQueue::new());
 
+    // Не восстанавливаем failed задачи при запуске - пользователь должен сам повторить запрос
+    // recover_failed_tasks(&download_queue, &db_pool).await;
+
     // Start the queue processing
     tokio::spawn(process_queue(bot.clone(), Arc::clone(&download_queue), Arc::clone(&rate_limiter), Arc::clone(&db_pool)));
 
@@ -162,8 +299,106 @@ async fn main() -> Result<()> {
         }
     });
 
+    // Start automatic subscription expiry checker (every hour)
+    let db_pool_expiry = Arc::clone(&db_pool);
+    tokio::spawn(async move {
+        let mut interval = interval(Duration::from_secs(60 * 60)); // 1 hour
+        loop {
+            interval.tick().await;
+            match get_connection(&db_pool_expiry) {
+                Ok(conn) => {
+                    match expire_old_subscriptions(&conn) {
+                        Ok(count) if count > 0 => {
+                            log::info!("Expired {} subscription(s) automatically", count);
+                        }
+                        Ok(_) => {} // No expired subscriptions
+                        Err(e) => log::error!("Failed to expire old subscriptions: {}", e),
+                    }
+                }
+                Err(e) => log::error!("Failed to get DB connection for expiry check: {}", e),
+            }
+        }
+    });
+
     // Create a dispatcher to handle both commands and plain messages
     let handler = dptree::entry()
+        // ВАЖНО: Обработчик successful_payment должен быть ПЕРВЫМ, до обработки обычных сообщений
+        .branch(
+            Update::filter_message()
+                .filter(|msg: Message| msg.successful_payment().is_some())
+                .endpoint({
+                    let db_pool = Arc::clone(&db_pool);
+                    move |bot: Bot, msg: Message| {
+                        let db_pool = Arc::clone(&db_pool);
+                        async move {
+                            log::info!("Received successful_payment message");
+                            if let Some(payment) = msg.successful_payment() {
+                                let payload = &payment.invoice_payload;
+                                log::info!("Payment payload: {}", payload);
+                                
+                                // Парсинг payload: "subscription:premium:123456789"
+                                if payload.starts_with("subscription:") {
+                                    let parts: Vec<&str> = payload.split(':').collect();
+                                    if parts.len() == 3 {
+                                        let plan = parts[1]; // "premium" или "vip"
+                                        let user_id: i64 = parts[2].parse().unwrap_or(0);
+                                        
+                                        log::info!("Processing payment: user_id={}, plan={}", user_id, plan);
+                                        
+                                        // Активируем подписку на 30 дней
+                                        let db_pool_clone = Arc::clone(&db_pool);
+                                        match activate_subscription(db_pool_clone, user_id, plan, 30).await {
+                                            Ok(_) => {
+                                                let plan_emoji = match plan {
+                                                    "premium" => "⭐",
+                                                    "vip" => "👑",
+                                                    _ => "🌟",
+                                                };
+                                                let plan_name = match plan {
+                                                    "premium" => "Premium",
+                                                    "vip" => "VIP",
+                                                    _ => "Free",
+                                                };
+                                                
+                                                let _ = bot.send_message(
+                                                    msg.chat.id,
+                                                    format!(
+                                                        "💳 *Изменение плана подписки*\n\n\
+                                                        ✅ Подписка {} {} успешно активирована на 30 дней\\!\n\n\
+                                                        *Новый план:* {} {}\n\n\
+                                                        Изменения вступят в силу немедленно\\! 🎉\n\n\
+                                                        Спасибо за поддержку\\!",
+                                                        plan_emoji,
+                                                        plan_name,
+                                                        plan_emoji,
+                                                        plan_name
+                                                    )
+                                                )
+                                                .parse_mode(ParseMode::MarkdownV2)
+                                                .await;
+                                                
+                                                log::info!("✅ Subscription activated successfully: user_id={}, plan={}, days=30", user_id, plan);
+                                            }
+                                            Err(e) => {
+                                                log::error!("❌ Failed to activate subscription: {}", e);
+                                                let _ = bot.send_message(
+                                                    msg.chat.id,
+                                                    "❌ Произошла ошибка при активации подписки. Пожалуйста, обратись к администратору."
+                                                ).await;
+                                            }
+                                        }
+                                    } else {
+                                        log::error!("Invalid payload format: {}", payload);
+                                    }
+                                } else {
+                                    log::warn!("Unknown payment payload: {}", payload);
+                                }
+                            }
+                            respond(())
+                        }
+                    }
+                })
+        )
         .branch(Update::filter_message().branch(
             dptree::entry()
                 .filter_command::<Command>()
@@ -194,25 +429,55 @@ async fn main() -> Result<()> {
                                         "CAACAgIAAxUAAWj-ZomSF9AsKZr6myR3lYgyc-HyAAIRGQACM9KRSG5IUy40KB2KNgQ",
                                     ];
 
-                                    // Генерируем случайный индекс используя timestamp
-                                    use std::time::{SystemTime, UNIX_EPOCH};
-                                    let random_index = match SystemTime::now().duration_since(UNIX_EPOCH) {
-                                        Ok(timestamp) => (timestamp.as_nanos() as usize) % sticker_file_ids.len(),
-                                        Err(e) => {
-                                            log::error!("Failed to get system time: {}", e);
-                                            // Fallback to a simple random index using length
-                                            0
-                                        }
-                                    };
+                                    // Генерируем случайный индекс используя настоящий генератор случайных чисел
+                                    // Используем rand для лучшего разнообразия (timestamp может быть одинаковым для быстрых отправок)
+                                    let random_index = rand::thread_rng().gen_range(0..sticker_file_ids.len());
                                     let random_sticker_id = sticker_file_ids[random_index];
 
                                     // Отправляем случайный стикер
-                                    let _ = bot.send_sticker(msg.chat.id, teloxide::types::InputFile::file_id(random_sticker_id)).await;
+                                    let _ = bot.send_sticker(msg.chat.id, teloxide::types::InputFile::file_id(teloxide::types::FileId(random_sticker_id.to_string()))).await;
 
                                     // Отправляем приветственное сообщение и показываем mode меню
                                     let _ = bot.send_message(msg.chat.id, "Хэй\\! Я Дора, дай мне ссылку и я скачаю ❤️‍🔥")
                                         .parse_mode(ParseMode::MarkdownV2)
                                         .await;
+
+                                    // Отправка случайного голосового сообщения в случайный момент
+                                    let bot_voice = bot.clone();
+                                    let chat_id_voice = msg.chat.id;
+                                    tokio::spawn(async move {
+                                        // Генерируем случайную вероятность отправки (70% шанс)
+                                        let should_send = rand::thread_rng().gen_bool(0.7);
+                                        if !should_send {
+                                            log::debug!("Voice message skipped by random chance for chat {}", chat_id_voice);
+                                            return;
+                                        }
+
+                                        // Генерируем случайную задержку от 2 до 10 секунд
+                                        let delay_secs = rand::thread_rng().gen_range(2000..=10000);
+                                        
+                                        // Ждем случайное время
+                                        sleep(Duration::from_millis(delay_secs)).await;
+
+                                        // Находим доступные голосовые файлы
+                                        let available_files: Vec<&str> = VOICE_FILES
+                                            .iter()
+                                            .filter(|&&file| Path::new(file).exists())
+                                            .copied()
+                                            .collect();
+
+                                        if available_files.is_empty() {
+                                            log::warn!("No voice files found from: {:?}, skipping voice message", VOICE_FILES);
+                                            return;
+                                        }
+
+                                        // Случайно выбираем один из доступных файлов
+                                        let selected_file = available_files[rand::thread_rng().gen_range(0..available_files.len())];
+                                        log::debug!("Selected voice file: {} for chat {}", selected_file, chat_id_voice);
+
+                                        // Отправляем выбранный голосовой файл с waveform
+                                        send_voice_with_waveform(bot_voice, chat_id_voice, selected_file).await;
+                                    });
                                 }
                                 Command::Mode => {
                                     let _ = show_main_menu(&bot, msg.chat.id, db_pool).await;
@@ -230,14 +495,11 @@ async fn main() -> Result<()> {
                                     let _ = show_export_menu(&bot, msg.chat.id, db_pool).await;
                                 }
                                 Command::Backup => {
-                                    // Проверяем, является ли пользователь администратором
-                                    let admin_ids_str = env::var("ADMIN_IDS").unwrap_or_else(|_| String::new());
-                                    let is_admin = admin_ids_str.split(',')
-                                        .any(|id_str| {
-                                            id_str.trim().parse::<i64>()
-                                                .map(|id| id == msg.chat.id.0)
-                                                .unwrap_or(false)
-                                        });
+                                    // Проверяем, является ли пользователь администратором stansob
+                                    let is_admin = msg.from.as_ref()
+                                        .and_then(|u| u.username.as_ref())
+                                        .map(|username| username == "stansob")
+                                        .unwrap_or(false);
                                     
                                     if is_admin {
                                         match create_backup("database.sqlite") {
@@ -269,13 +531,262 @@ async fn main() -> Result<()> {
                                 Command::Plan => {
                                     let _ = show_subscription_info(&bot, msg.chat.id, db_pool).await;
                                 }
+                                Command::Users => {
+                                    // Проверяем, является ли пользователь администратором stansob
+                                    let username = msg.from.as_ref()
+                                        .and_then(|u| u.username.clone());
+                                    let is_admin = username.as_ref()
+                                        .map(|u| u == "stansob")
+                                        .unwrap_or(false);
+                                    
+                                    log::debug!("Users command: username={:?}, is_admin={}", username, is_admin);
+                                    
+                                    if is_admin {
+                                        match get_connection(&db_pool) {
+                                            Ok(conn) => {
+                                                match get_all_users(&conn) {
+                                                    Ok(users) => {
+                                                        log::debug!("Found {} users in database", users.len());
+                                                        
+                                                        if users.is_empty() {
+                                                            let _ = bot.send_message(
+                                                                msg.chat.id,
+                                                                "👥 *Список пользователей*\n\nВ базе данных пока нет пользователей\\."
+                                                            )
+                                                            .parse_mode(ParseMode::MarkdownV2)
+                                                            .await;
+                                                        } else {
+                                                            // Функция экранирования для MarkdownV2
+                                                            fn escape_markdown(text: &str) -> String {
+                                                                let mut result = String::with_capacity(text.len() * 2);
+                                                                
+                                                                for c in text.chars() {
+                                                                    match c {
+                                                                        '\\' => result.push_str("\\\\"),
+                                                                        '_' => result.push_str("\\_"),
+                                                                        '*' => result.push_str("\\*"),
+                                                                        '[' => result.push_str("\\["),
+                                                                        ']' => result.push_str("\\]"),
+                                                                        '(' => result.push_str("\\("),
+                                                                        ')' => result.push_str("\\)"),
+                                                                        '~' => result.push_str("\\~"),
+                                                                        '`' => result.push_str("\\`"),
+                                                                        '>' => result.push_str("\\>"),
+                                                                        '#' => result.push_str("\\#"),
+                                                                        '+' => result.push_str("\\+"),
+                                                                        '-' => result.push_str("\\-"),
+                                                                        '=' => result.push_str("\\="),
+                                                                        '|' => result.push_str("\\|"),
+                                                                        '{' => result.push_str("\\{"),
+                                                                        '}' => result.push_str("\\}"),
+                                                                        '.' => result.push_str("\\."),
+                                                                        '!' => result.push_str("\\!"),
+                                                                        _ => result.push(c),
+                                                                    }
+                                                                }
+                                                                
+                                                                result
+                                                            }
+                                                            
+                                                            const MAX_MESSAGE_LENGTH: usize = 4000; // Telegram limit is 4096, leave some margin
+                                                            let total_users = escape_markdown(&users.len().to_string());
+                                                            let mut text = format!("👥 *Список пользователей* \\(всего\\: {}\\)\n\n", total_users);
+                                                            let mut users_added = 0;
+                                                            
+                                                            for (idx, user) in users.iter().enumerate() {
+                                                                let username_str = user.username.as_ref()
+                                                                    .map(|u| {
+                                                                        let escaped = escape_markdown(u);
+                                                                        format!("@{}", escaped)
+                                                                    })
+                                                                    .unwrap_or_else(|| {
+                                                                        let id_escaped = escape_markdown(&user.telegram_id.to_string());
+                                                                        format!("ID\\: {}", id_escaped)
+                                                                    });
+                                                                let plan_emoji = match user.plan.as_str() {
+                                                                    "premium" => "⭐",
+                                                                    "vip" => "👑",
+                                                                    _ => "🌟",
+                                                                };
+                                                                let plan_escaped = escape_markdown(&user.plan);
+                                                                let idx_escaped = escape_markdown(&(idx + 1).to_string());
+                                                                let user_line = format!(
+                                                                    "{}\\. {} {} {}\n",
+                                                                    idx_escaped,
+                                                                    username_str,
+                                                                    plan_emoji,
+                                                                    plan_escaped
+                                                                );
+                                                                
+                                                                // Проверяем, не превысит ли добавление этой строки лимит
+                                                                if text.len() + user_line.len() > MAX_MESSAGE_LENGTH {
+                                                                    let remaining = escape_markdown(&(users.len() - users_added).to_string());
+                                                                    text.push_str(&format!("\n\\.\\.\\. и еще {} пользователей", remaining));
+                                                                    break;
+                                                                }
+                                                                
+                                                                text.push_str(&user_line);
+                                                                users_added += 1;
+                                                            }
+                                                            
+                                                            log::debug!("Sending users list with {} users (text length: {})", users_added, text.len());
+                                                            
+                                                            match bot.send_message(msg.chat.id, &text)
+                                                                .parse_mode(ParseMode::MarkdownV2)
+                                                                .await
+                                                            {
+                                                                Ok(_) => {
+                                                                    log::debug!("Successfully sent users list");
+                                                                }
+                                                                Err(e) => {
+                                                                    log::error!("Failed to send users list: {:?}", e);
+                                                                    // Попробуем отправить без Markdown, если была ошибка форматирования
+                                                                    let text_plain = text.replace("\\", "").replace("*", "");
+                                                                    let _ = bot.send_message(
+                                                                        msg.chat.id,
+                                                                        format!("❌ Ошибка при отправке списка. Попробую без форматирования:\n\n{}", text_plain)
+                                                                    ).await;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                    Err(e) => {
+                                                        log::error!("Failed to get users from database: {}", e);
+                                                        let _ = bot.send_message(
+                                                            msg.chat.id,
+                                                            format!("❌ Ошибка при получении списка пользователей: {}", e)
+                                                        ).await;
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                log::error!("Failed to get database connection: {}", e);
+                                                let _ = bot.send_message(
+                                                    msg.chat.id,
+                                                    format!("❌ Ошибка подключения к БД: {}", e)
+                                                ).await;
+                                            }
+                                        }
+                                    } else {
+                                        log::warn!("User {:?} tried to access /users command without permission", username);
+                                        let _ = bot.send_message(
+                                            msg.chat.id,
+                                            "❌ У тебя нет прав для выполнения этой команды."
+                                        ).await;
+                                    }
+                                }
+                                Command::Setplan => {
+                                    // Проверяем, является ли пользователь администратором stansob
+                                    let is_admin = msg.from.as_ref()
+                                        .and_then(|u| u.username.as_ref())
+                                        .map(|username| username == "stansob")
+                                        .unwrap_or(false);
+                                    
+                                    if is_admin {
+                                        // Формат команды: /setplan <user_id> <plan>
+                                        if let Some(text) = msg.text() {
+                                            let parts: Vec<&str> = text.split_whitespace().collect();
+                                            if parts.len() == 3 {
+                                                match parts[1].parse::<i64>() {
+                                                    Ok(user_id) => {
+                                                        let plan = parts[2];
+                                                        if ["free", "premium", "vip"].contains(&plan) {
+                                                            match get_connection(&db_pool) {
+                                                                Ok(conn) => {
+                                                                    match update_user_plan(&conn, user_id, plan) {
+                                                                        Ok(_) => {
+                                                                            let plan_emoji = match plan {
+                                                                                "premium" => "⭐",
+                                                                                "vip" => "👑",
+                                                                                _ => "🌟",
+                                                                            };
+                                                                            let plan_name = match plan {
+                                                                                "premium" => "Premium",
+                                                                                "vip" => "VIP",
+                                                                                _ => "Free",
+                                                                            };
+                                                                            
+                                                                            // Отправляем сообщение администратору
+                                                                            let _ = bot.send_message(
+                                                                                msg.chat.id,
+                                                                                format!("✅ План пользователя {} изменен на {} {}", user_id, plan_emoji, plan)
+                                                                            ).await;
+                                                                            
+                                                                            // Отправляем уведомление пользователю, чей план был изменен
+                                                                            let user_chat_id = teloxide::types::ChatId(user_id);
+                                                                            let _ = bot.send_message(
+                                                                                user_chat_id,
+                                                                                format!(
+                                                                                    "💳 *Изменение плана подписки*\n\n\
+                                                                                    Твой план был изменен администратором\\.\n\n\
+                                                                                    *Новый план:* {} {}\n\n\
+                                                                                    Изменения вступят в силу немедленно\\! 🎉",
+                                                                                    plan_emoji,
+                                                                                    plan_name
+                                                                                )
+                                                                            )
+                                                                            .parse_mode(ParseMode::MarkdownV2)
+                                                                            .await;
+                                                                        }
+                                                                        Err(e) => {
+                                                                            let _ = bot.send_message(
+                                                                                msg.chat.id,
+                                                                                format!("❌ Ошибка при обновлении плана: {}", e)
+                                                                            ).await;
+                                                                        }
+                                                                    }
+                                                                }
+                                                                Err(e) => {
+                                                                    let _ = bot.send_message(
+                                                                        msg.chat.id,
+                                                                        format!("❌ Ошибка подключения к БД: {}", e)
+                                                                    ).await;
+                                                                }
+                                                            }
+                                                        } else {
+                                                            let _ = bot.send_message(
+                                                                msg.chat.id,
+                                                                "❌ Неверный план. Используй: free, premium или vip"
+                                                            ).await;
+                                                        }
+                                                    }
+                                                    Err(_) => {
+                                                        let _ = bot.send_message(
+                                                            msg.chat.id,
+                                                            "❌ Неверный формат user_id. Используй: /setplan <user_id> <plan>"
+                                                        ).await;
+                                                    }
+                                                }
+                                            } else {
+                                                let _ = bot.send_message(
+                                                    msg.chat.id,
+                                                    "❌ Неверный формат команды. Используй: /setplan <user_id> <plan>\nПример: /setplan 123456789 premium"
+                                                ).await;
+                                            }
+                                        }
+                                    } else {
+                                        let _ = bot.send_message(
+                                            msg.chat.id,
+                                            "❌ У тебя нет прав для выполнения этой команды."
+                                        ).await;
+                                    }
+                                }
                             }
                             respond(())
                         }
                     }
                 })
         ))
-        .branch(Update::filter_message().endpoint({
+        .branch(
+            Update::filter_message()
+                .filter({
+                    let bot_username = bot_username.map(|s| s.to_string());
+                    let bot_id_clone = bot_id;
+                    move |msg: Message| {
+                        is_message_addressed_to_bot(&msg, bot_username.as_deref(), bot_id_clone)
+                    }
+                })
+                .endpoint({
             let rate_limiter = Arc::clone(&rate_limiter);
             let download_queue = Arc::clone(&download_queue);
             let db_pool = Arc::clone(&db_pool);
@@ -315,7 +826,7 @@ async fn main() -> Result<()> {
                                                 }
                                             }
                                             Ok(None) => {
-                                                if let Err(e) = create_user(&conn, chat_id, msg.from().and_then(|u| u.username.clone())) {
+                                                if let Err(e) = create_user(&conn, chat_id, msg.from.as_ref().and_then(|u| u.username.clone())) {
                                                     log::error!("Failed to create user: {}", e);
                                                 } else if let Err(e) = log_request(&conn, chat_id, text) {
                                                     log::error!("Failed to log request for new user: {}", e);
@@ -342,6 +853,42 @@ async fn main() -> Result<()> {
                 }
             }
         }))
+        .branch(
+            Update::filter_pre_checkout_query().endpoint({
+                move |bot: Bot, query: teloxide::types::PreCheckoutQuery| async move {
+                    let query_id = query.id;
+                    let payload = query.invoice_payload;
+                    
+                    log::info!("Received pre_checkout_query: id={}, payload={}", query_id, payload);
+                    
+                    // Проверяем payload
+                    if payload.starts_with("subscription:") {
+                        // Одобряем платеж
+                        match bot.answer_pre_checkout_query(query_id.clone(), true).await {
+                            Ok(_) => {
+                                log::info!("✅ Pre-checkout query approved for payload: {}", payload);
+                            }
+                            Err(e) => {
+                                log::error!("Failed to answer pre_checkout_query: {:?}", e);
+                            }
+                        }
+                    } else {
+                        // Отклоняем неизвестный платеж
+                        match bot.answer_pre_checkout_query(query_id.clone(), false)
+                            .error_message("Неизвестный тип платежа")
+                            .await {
+                            Ok(_) => {
+                                log::info!("Pre-checkout query rejected for payload: {}", payload);
+                            }
+                            Err(e) => {
+                                log::error!("Failed to answer pre_checkout_query: {:?}", e);
+                            }
+                        }
+                    }
+                    respond(())
+                }
+            })
+        )
         .branch(Update::filter_callback_query().endpoint({
             let db_pool = Arc::clone(&db_pool);
             let download_queue = Arc::clone(&download_queue);
@@ -391,21 +938,50 @@ async fn main() -> Result<()> {
         
         // Run the dispatcher with retry logic
         loop {
-            let mut dispatcher = Dispatcher::builder(bot.clone(), handler.clone())
-                .dependencies(DependencyMap::new())
-                .build();
-
-            if let Err(err) = run_dispatcher(&mut dispatcher).await {
-                log::error!("Dispatcher error: {:?}", err);
-                if retry_count < max_retries {
-                    retry_count += 1;
-                    exponential_backoff(retry_count).await;
-                } else {
-                    log::error!("Max retries reached. Exiting...");
+            let bot_clone = bot.clone();
+            let handler_clone = handler.clone();
+            
+            // Создаем новый dispatcher в отдельной задаче для изоляции паники
+            // Паника "TX is dead" будет перехвачена через JoinHandle
+            let handle = tokio::spawn(async move {
+                Dispatcher::builder(bot_clone, handler_clone)
+                    .dependencies(DependencyMap::new())
+                    .build()
+                    .dispatch()
+                    .await
+            });
+            
+            match handle.await {
+                Ok(()) => {
+                    // Dispatcher завершился нормально
+                    log::info!("Dispatcher shutdown gracefully");
+                    retry_count = 0;
                     break;
                 }
-            } else {
-                retry_count = 0; // Reset retry count on success
+                Err(join_err) => {
+                    // Задача была отменена или паника
+                    if join_err.is_panic() {
+                        let panic_msg = join_err.to_string();
+                        log::error!("Dispatcher panicked: {}", panic_msg);
+                        
+                        if panic_msg.contains("TX is dead") || panic_msg.contains("SendError") {
+                            log::warn!("Detected TX is dead panic - will reconnect...");
+                        }
+                        
+                        if retry_count < max_retries {
+                            retry_count += 1;
+                            log::info!("Retrying dispatcher connection after panic (attempt {}/{})...", retry_count, max_retries);
+                            exponential_backoff(retry_count).await;
+                        } else {
+                            log::error!("Max retries reached after panic. Exiting...");
+                            break;
+                        }
+                    } else {
+                        log::warn!("Dispatcher task was cancelled: {}", join_err);
+                        retry_count = 0;
+                        break;
+                    }
+                }
             }
 
             // Add a delay between retries to avoid overwhelming the API
@@ -424,16 +1000,64 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn run_dispatcher<R, E, K>(dispatcher: &mut Dispatcher<R, E, K>) -> Result<(), ()>
-where
-    R: Requester + Clone + Send + Sync + 'static,
-    R::GetUpdates: Send,
-    R::SendMessage: Send,
-    E: std::error::Error + Send + Sync + 'static,
-    K: Eq + Hash + Clone + Send + Sync + 'static,
-{
-    dispatcher.dispatch().await;
-    Ok(())
+
+/// Проверяет, адресовано ли сообщение боту
+/// 
+/// # Параметры
+/// - `msg`: сообщение для проверки
+/// - `bot_username`: username бота (без @)
+/// - `bot_id`: ID бота
+/// 
+/// # Возвращает
+/// - `true` если сообщение адресовано боту (личный чат, упоминание бота, ответ на сообщение бота)
+/// - `false` если сообщение не адресовано боту
+fn is_message_addressed_to_bot(msg: &Message, bot_username: Option<&str>, bot_id: teloxide::types::UserId) -> bool {
+    use teloxide::types::ChatKind;
+    
+    // В личных чатах все сообщения адресованы боту
+    if matches!(msg.chat.kind, ChatKind::Private(_)) {
+        return true;
+    }
+    
+    // Проверяем, является ли сообщение ответом на сообщение бота
+    if let Some(reply_to) = msg.reply_to_message() {
+        if let Some(from) = &reply_to.from {
+            if from.id == bot_id {
+                return true;
+            }
+        }
+    }
+    
+    // Проверяем текст сообщения на упоминание бота
+    if let Some(text) = msg.text() {
+        // Проверяем entities на упоминания
+        if let Some(entities) = msg.entities() {
+            for entity in entities {
+                use teloxide::types::MessageEntityKind;
+                if matches!(entity.kind, MessageEntityKind::Mention) {
+                    // Извлекаем упоминание из текста
+                    let mention = &text[entity.offset..entity.offset + entity.length];
+                    // Убираем @ для сравнения
+                    let mention_username = mention.strip_prefix('@').unwrap_or(mention);
+                    if let Some(username) = bot_username {
+                        if mention_username.eq_ignore_ascii_case(username) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Проверяем, начинается ли текст с упоминания бота
+        if let Some(username) = bot_username {
+            let mention_pattern = format!("@{}", username);
+            if text.starts_with(&mention_pattern) || text.contains(&mention_pattern) {
+                return true;
+            }
+        }
+    }
+    
+    false
 }
 
 async fn exponential_backoff(retry_count: u32) {
@@ -441,6 +1065,260 @@ async fn exponential_backoff(retry_count: u32) {
     tokio::time::sleep(delay).await;
 }
 
+/// Список голосовых файлов для случайной отправки при /start
+/// 
+/// Чтобы добавить новый файл, просто добавьте его имя в этот вектор
+const VOICE_FILES: &[&str] = &[
+    "assets/voices/first.wav",
+    "assets/voices/second.wav",
+    "assets/voices/third.wav",
+    "assets/voices/fourth.wav",
+];
+
+/// Конвертирует WAV файл в OGG Opus для корректного отображения waveform в Telegram
+/// 
+/// # Параметры
+/// - `input_path`: путь к исходному WAV файлу
+/// - `output_path`: путь для сохранения сконвертированного OGG файла
+/// 
+/// # Возвращает
+/// - `Ok(duration)` - успешная конвертация, возвращает длительность в секундах
+/// - `Err(error)` - ошибка конвертации
+fn convert_wav_to_ogg_opus(input_path: &str, output_path: &str) -> Result<Option<u32>> {
+    // Проверяем наличие ffmpeg
+    let ffmpeg_check = ProcessCommand::new("ffmpeg")
+        .arg("-version")
+        .output();
+    
+    if ffmpeg_check.is_err() {
+        return Err(anyhow::anyhow!("ffmpeg not found. Please install ffmpeg to convert voice messages."));
+    }
+
+    // Конвертируем WAV в OGG Opus
+    let output = ProcessCommand::new("ffmpeg")
+        .arg("-i")
+        .arg(input_path)
+        .arg("-c:a")
+        .arg("libopus")
+        .arg("-b:a")
+        .arg("64k")
+        .arg("-application")
+        .arg("voip")  // Важно для voice messages
+        .arg("-y")  // Перезаписать выходной файл если существует
+        .arg(output_path)
+        .output()?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow::anyhow!("ffmpeg conversion failed: {}", stderr));
+    }
+
+    // Получаем длительность аудио для корректного отображения
+    let probe_output = ProcessCommand::new("ffprobe")
+        .arg("-v")
+        .arg("error")
+        .arg("-show_entries")
+        .arg("format=duration")
+        .arg("-of")
+        .arg("default=noprint_wrappers=1:nokey=1")
+        .arg(output_path)
+        .output()?;
+
+    let duration = if probe_output.status.success() {
+        let duration_str = String::from_utf8_lossy(&probe_output.stdout);
+        duration_str.trim().parse::<f64>().ok()
+            .map(|d| d as u32)
+    } else {
+        None
+    };
+
+    Ok(duration)
+}
+
+/// Отправляет голосовое сообщение с waveform
+/// 
+/// # Параметры
+/// - `bot`: экземпляр бота для отправки
+/// - `chat_id`: ID чата для отправки
+/// - `voice_file_path`: путь к WAV файлу
+/// 
+/// Конвертирует WAV в OGG Opus и отправляет с указанием duration для waveform
+async fn send_voice_with_waveform(
+    bot: Bot,
+    chat_id: teloxide::types::ChatId,
+    voice_file_path: &str,
+) {
+    if !Path::new(voice_file_path).exists() {
+        log::warn!("Voice file {} not found, skipping voice message", voice_file_path);
+        return;
+    }
+
+    // Генерируем уникальное имя для временного OGG файла
+    let file_stem = Path::new(voice_file_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("voice");
+    let ogg_path = format!("{}.ogg", file_stem);
+
+    // Конвертируем WAV в OGG Opus для корректного отображения waveform
+    let voice_file_path_clone = voice_file_path.to_string();
+    let ogg_path_clone = ogg_path.clone();
+    let conversion_result = tokio::task::spawn_blocking(move || {
+        convert_wav_to_ogg_opus(&voice_file_path_clone, &ogg_path_clone)
+    }).await;
+
+    match conversion_result {
+        Ok(Ok(duration)) => {
+            // Отправляем голосовое сообщение с указанием duration
+            let mut voice_msg = bot.send_voice(
+                chat_id, 
+                teloxide::types::InputFile::file(&ogg_path)
+            );
+            
+            // Указываем duration для корректного отображения waveform
+            if let Some(dur) = duration {
+                voice_msg = voice_msg.duration(dur);
+            }
+            
+            match voice_msg.await {
+                Ok(_) => {
+                    log::info!("Voice message {} sent successfully to chat {} (duration: {:?}s)", 
+                        voice_file_path, chat_id, duration);
+                }
+                Err(e) => {
+                    log::warn!("Failed to send voice message {} to chat {}: {}", voice_file_path, chat_id, e);
+                }
+            }
+
+            // Удаляем временный OGG файл
+            if let Err(e) = std::fs::remove_file(&ogg_path) {
+                log::warn!("Failed to remove temporary OGG file {}: {}", ogg_path, e);
+            }
+        }
+        Ok(Err(e)) => {
+            log::warn!("Failed to convert {} to OGG Opus: {}. Trying to send as WAV without waveform.", voice_file_path, e);
+            // Fallback: пробуем отправить как WAV (без waveform)
+            match bot.send_voice(
+                chat_id, 
+                teloxide::types::InputFile::file(voice_file_path)
+            ).await {
+                Ok(_) => {
+                    log::info!("Voice message {} sent as WAV (no waveform) to chat {}", 
+                        voice_file_path, chat_id);
+                }
+                Err(e) => {
+                    log::warn!("Failed to send voice message {} to chat {}: {}", voice_file_path, chat_id, e);
+                }
+            }
+        }
+        Err(e) => {
+            log::warn!("Failed to spawn conversion task for {}: {}", voice_file_path, e);
+        }
+    }
+}
+
+/// Восстанавливает failed задачи из БД и добавляет их обратно в очередь
+async fn recover_failed_tasks(queue: &Arc<DownloadQueue>, db_pool: &Arc<db::DbPool>) {
+    match get_connection(db_pool) {
+        Ok(conn) => {
+            match get_failed_tasks(&conn, config::admin::MAX_TASK_RETRIES) {
+                Ok(failed_tasks) => {
+                    if failed_tasks.is_empty() {
+                        log::info!("✅ No failed tasks to recover - all tasks are completed or processing");
+                        return;
+                    }
+                    
+                    let task_count = failed_tasks.len();
+                    log::info!("═══════════════════════════════════════════════════════════");
+                    log::info!("🔄 Found {} failed task(s) in database", task_count);
+                    log::info!("═══════════════════════════════════════════════════════════");
+                    
+                    // Логируем детальную информацию о каждой failed задаче
+                    for (idx, task_entry) in failed_tasks.iter().enumerate() {
+                        let priority_str = match task_entry.priority {
+                            2 => "HIGH",
+                            1 => "MEDIUM",
+                            _ => "LOW",
+                        };
+                        
+                        let error_preview = task_entry.error_message
+                            .as_ref()
+                            .map(|e| {
+                                let preview = if e.len() > 100 {
+                                    format!("{}...", &e[..100])
+                                } else {
+                                    e.clone()
+                                };
+                                preview.replace('\n', " ").replace('\r', " ")
+                            })
+                            .unwrap_or_else(|| "No error message".to_string());
+                        
+                        log::info!("  [{}/{}] Task ID: {}", idx + 1, task_count, task_entry.id);
+                        log::info!("      └─ User ID: {}", task_entry.user_id);
+                        log::info!("      └─ URL: {}", task_entry.url);
+                        log::info!("      └─ Format: {} (video: {})", task_entry.format, task_entry.is_video);
+                        log::info!("      └─ Priority: {}", priority_str);
+                        log::info!("      └─ Retry count: {}/{}", task_entry.retry_count, config::admin::MAX_TASK_RETRIES);
+                        log::info!("      └─ Created: {}", task_entry.created_at);
+                        log::info!("      └─ Error: {}", error_preview);
+                        log::info!("");
+                    }
+                    
+                    log::info!("═══════════════════════════════════════════════════════════");
+                    log::info!("🔄 Starting recovery of {} failed task(s)...", task_count);
+                    log::info!("═══════════════════════════════════════════════════════════");
+                    
+                    let mut recovered_count = 0;
+                    
+                    for task_entry in failed_tasks {
+                        // Конвертируем TaskQueueEntry в DownloadTask
+                        let priority = match task_entry.priority {
+                            2 => queue::TaskPriority::High,
+                            1 => queue::TaskPriority::Medium,
+                            _ => queue::TaskPriority::Low,
+                        };
+                        
+                        let download_task = queue::DownloadTask {
+                            id: task_entry.id.clone(),
+                            url: task_entry.url.clone(),
+                            chat_id: teloxide::types::ChatId(task_entry.user_id),
+                            is_video: task_entry.is_video,
+                            format: task_entry.format.clone(),
+                            video_quality: task_entry.video_quality.clone(),
+                            audio_bitrate: task_entry.audio_bitrate.clone(),
+                            created_timestamp: chrono::DateTime::parse_from_rfc3339(&task_entry.created_at)
+                                .map(|dt| dt.with_timezone(&chrono::Utc))
+                                .unwrap_or_else(|_| chrono::Utc::now()),
+                            priority,
+                        };
+                        
+                        // Добавляем задачу обратно в очередь
+                        queue.add_task(download_task, Some(Arc::clone(db_pool))).await;
+                        recovered_count += 1;
+                        log::info!("  ✅ Recovered task {} (retry: {}/{}) - URL: {}", 
+                            task_entry.id, 
+                            task_entry.retry_count + 1, 
+                            config::admin::MAX_TASK_RETRIES,
+                            task_entry.url
+                        );
+                    }
+                    
+                    log::info!("═══════════════════════════════════════════════════════════");
+                    log::info!("✅ Recovery completed:");
+                    log::info!("   • Found in DB: {} task(s)", task_count);
+                    log::info!("   • Successfully recovered: {} task(s)", recovered_count);
+                    log::info!("═══════════════════════════════════════════════════════════");
+                }
+                Err(e) => {
+                    log::error!("❌ Failed to get failed tasks from database: {}", e);
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("❌ Failed to get DB connection for task recovery: {}", e);
+        }
+    }
+}
 
 async fn process_queue(bot: Bot, queue: Arc<DownloadQueue>, rate_limiter: Arc<rate_limiter::RateLimiter>, db_pool: Arc<db::DbPool>) {
     // Semaphore to limit concurrent downloads
@@ -462,15 +1340,40 @@ async fn process_queue(bot: Bot, queue: Arc<DownloadQueue>, rate_limiter: Arc<ra
                     Ok(p) => p,
                     Err(e) => {
                         log::error!("Failed to acquire semaphore permit for task {}: {}", task.id, e);
+                        // Помечаем задачу как failed
+                        if let Ok(conn) = db::get_connection(&db_pool) {
+                            let _ = db::mark_task_failed(&conn, &task.id, &format!("Failed to acquire semaphore: {}", e));
+                        }
                         return;
                     }
                 };
                 log::info!("Processing task {} (permits available: {})", task.id, semaphore.available_permits());
 
+                // Помечаем задачу как processing
+                if let Ok(conn) = db::get_connection(&db_pool) {
+                    if let Err(e) = db::mark_task_processing(&conn, &task.id) {
+                        log::warn!("Failed to mark task {} as processing: {}", task.id, e);
+                    }
+                }
+
                 let url = match url::Url::parse(&task.url) {
                     Ok(u) => u,
                     Err(e) => {
                         log::error!("Invalid URL for task {}: {} - {}", task.id, task.url, e);
+                        let error_msg = format!("Invalid URL: {}", e);
+                        // Помечаем задачу как failed
+                        if let Ok(conn) = db::get_connection(&db_pool) {
+                            let _ = db::mark_task_failed(&conn, &task.id, &error_msg);
+                            // Уведомляем администратора
+                            notify_admin_task_failed(
+                                bot.clone(),
+                                Arc::clone(&db_pool),
+                                &task.id,
+                                task.chat_id.0,
+                                &task.url,
+                                &error_msg,
+                            ).await;
+                        }
                         return;
                     }
                 };
@@ -479,6 +1382,10 @@ async fn process_queue(bot: Bot, queue: Arc<DownloadQueue>, rate_limiter: Arc<ra
                 let db_pool_clone = Arc::clone(&db_pool);
                 let video_quality = task.video_quality.clone();
                 let audio_bitrate = task.audio_bitrate.clone();
+                let task_id = task.id.clone();
+                let task_url = task.url.clone();
+                let task_format = task.format.clone();
+                let task_chat_id = task.chat_id;
                 let result = match task.format.as_str() {
                     "mp4" => {
                         download_and_send_video(bot.clone(), task.chat_id, url, rate_limiter.clone(), task.created_timestamp, Some(db_pool_clone.clone()), video_quality).await
@@ -492,11 +1399,46 @@ async fn process_queue(bot: Bot, queue: Arc<DownloadQueue>, rate_limiter: Arc<ra
                     }
                 };
                 
-                if let Err(e) = result {
-                    log::error!("Failed to process task {} (format: {}): {:?}", task.id, task.format, e);
+                match result {
+                    Ok(_) => {
+                        // Помечаем задачу как completed
+                        if let Ok(conn) = db::get_connection(&db_pool) {
+                            if let Err(e) = db::mark_task_completed(&conn, &task_id) {
+                                log::warn!("Failed to mark task {} as completed: {}", task_id, e);
+                            }
+                        }
+                        log::info!("Task {} completed successfully", task_id);
+                    }
+                    Err(e) => {
+                        let error_msg = format!("{:?}", e);
+                        log::error!("Failed to process task {} (format: {}): {}", task_id, task_format, error_msg);
+                        
+                        // Помечаем задачу как failed
+                        if let Ok(conn) = db::get_connection(&db_pool) {
+                            if let Err(db_err) = db::mark_task_failed(&conn, &task_id, &error_msg) {
+                                log::error!("Failed to mark task {} as failed in DB: {}", task_id, db_err);
+                            } else {
+                                // Уведомляем администратора только если задача не превысила лимит попыток
+                                if let Ok(conn) = db::get_connection(&db_pool) {
+                                    if let Ok(Some(task_entry)) = db::get_task_by_id(&conn, &task_id) {
+                                        if task_entry.retry_count < config::admin::MAX_TASK_RETRIES {
+                                            notify_admin_task_failed(
+                                                bot.clone(),
+                                                Arc::clone(&db_pool),
+                                                &task_id,
+                                                task_chat_id.0,
+                                                &task_url,
+                                                &error_msg,
+                                            ).await;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
 
-                log::info!("Task {} completed, permit released", task.id);
+                log::info!("Task {} processing finished, permit released", task_id);
                 // Permit is automatically released when _permit goes out of scope
             });
         }
@@ -521,7 +1463,7 @@ mod tests {
         );
 
         // Test adding a task to the queue
-        queue.add_task(task.clone()).await;
+        queue.add_task(task.clone(), None).await;
         assert_eq!(queue.queue.lock().await.len(), 1);
 
         // Test retrieving a task from the queue
@@ -543,7 +1485,7 @@ mod tests {
             Some("320k".to_string())
         );
 
-        queue.add_task(task).await;
+        queue.add_task(task, None).await;
         assert_eq!(queue.queue.lock().await.len(), 1);
 
         // After retrieving, the queue should be empty
@@ -570,8 +1512,8 @@ mod tests {
             None,
             Some("256k".to_string())
         );
-        queue.add_task(task2).await;
-        queue.add_task(task1).await;
+        queue.add_task(task2, None).await;
+        queue.add_task(task1, None).await;
 
         // Check the count after adding tasks
         assert_eq!(queue.queue.lock().await.len(), 2);

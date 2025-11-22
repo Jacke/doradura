@@ -7,6 +7,7 @@ use std::sync::Arc;
 use url::Url;
 use crate::queue::DownloadQueue;
 use crate::preview::{get_preview_metadata, send_preview};
+use crate::config;
 use once_cell::sync::Lazy;
 
 /// Cached regex for matching URLs
@@ -170,15 +171,106 @@ pub async fn handle_message(bot: Bot, msg: Message, _download_queue: Arc<Downloa
                     let mut status_text = confirmation_msg.clone();
                     status_text.push_str("\n\n");
                     
+                    // Получаем connection для получения настроек пользователя
+                    let conn = match db::get_connection(&db_pool_clone) {
+                        Ok(c) => c,
+                        Err(_) => {
+                            // Если не удалось получить connection, используем дефолтные значения
+                            for (idx, url) in valid_urls.iter().enumerate() {
+                                match get_preview_metadata(url, Some(&format), None).await {
+                                    Ok(metadata) => {
+                                        let display_title = metadata.display_title();
+                                        
+                                        // Проверяем размер файла
+                                        let status_marker = if let Some(filesize) = metadata.filesize {
+                                            let max_size = if format == "mp4" {
+                                                config::validation::max_video_size_bytes()
+                                            } else {
+                                                config::validation::max_audio_size_bytes()
+                                            };
+                                            
+                                            if filesize > max_size {
+                                                "❌ Слишком большой"
+                                            } else {
+                                                "⏳ В очереди"
+                                            }
+                                        } else {
+                                            "⏳ В очереди"
+                                        };
+                                        
+                                        status_text.push_str(&format!("{}. {} [{}]\n", 
+                                            idx + 1, 
+                                            display_title.chars().take(50).collect::<String>(),
+                                            status_marker
+                                        ));
+                                    }
+                                    Err(_) => {
+                                        status_text.push_str(&format!("{}. {} [❌ Ошибка]\n", 
+                                            idx + 1, 
+                                            url.as_str().chars().take(50).collect::<String>()
+                                        ));
+                                    }
+                                }
+                            }
+                            return;
+                        }
+                    };
+                    
                     for (idx, url) in valid_urls.iter().enumerate() {
                         // Get metadata for preview
-                        match get_preview_metadata(url).await {
+                        // Получаем качество видео для превью (для групповых загрузок)
+                        let video_quality_for_preview = if format == "mp4" {
+                            match db::get_user_video_quality(&conn, chat_id.0) {
+                                Ok(q) => Some(q),
+                                Err(_) => Some("best".to_string()),
+                            }
+                        } else {
+                            None
+                        };
+                        
+                        match get_preview_metadata(url, Some(&format), video_quality_for_preview.as_deref()).await {
                             Ok(metadata) => {
                                 let display_title = metadata.display_title();
-                                status_text.push_str(&format!("{}. {} [⏳ В очереди]\n", 
+                                
+                                // Проверяем размер файла для групповых загрузок
+                                let status_marker = if let Some(filesize) = metadata.filesize {
+                                    let max_size = if format == "mp4" {
+                                        config::validation::max_video_size_bytes()
+                                    } else {
+                                        config::validation::max_audio_size_bytes()
+                                    };
+                                    
+                                    if filesize > max_size {
+                                        "❌ Слишком большой"
+                                    } else {
+                                        "⏳ В очереди"
+                                    }
+                                } else {
+                                    "⏳ В очереди"
+                                };
+                                
+                                status_text.push_str(&format!("{}. {} [{}]\n", 
                                     idx + 1, 
-                                    display_title.chars().take(50).collect::<String>()
+                                    display_title.chars().take(50).collect::<String>(),
+                                    status_marker
                                 ));
+                                
+                                // Пропускаем файлы, которые слишком большие - не добавляем в очередь
+                                let should_skip = if let Some(filesize) = metadata.filesize {
+                                    let max_size = if format == "mp4" {
+                                        config::validation::max_video_size_bytes()
+                                    } else {
+                                        config::validation::max_audio_size_bytes()
+                                    };
+                                    filesize > max_size
+                                } else {
+                                    false
+                                };
+                                
+                                if should_skip {
+                                    log::info!("Skipping file {} in group download - too large", url.as_str());
+                                    continue;
+                                }
                                 
                                 // Add to queue using preview callback logic
                                 // Get user preferences for quality/bitrate
@@ -215,7 +307,7 @@ pub async fn handle_message(bot: Bot, msg: Message, _download_queue: Arc<Downloa
                                     audio_bitrate,
                                     &plan_for_task,
                                 );
-                                download_queue.add_task(task).await;
+                                download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
                             }
                             Err(e) => {
                                 log::error!("Failed to get preview metadata for URL {}: {:?}", url, e);
@@ -277,24 +369,71 @@ pub async fn handle_message(bot: Bot, msg: Message, _download_queue: Arc<Downloa
                 }
                 
                 // Show preview instead of immediately downloading
-                match get_preview_metadata(&url).await {
+                // Получаем качество видео для превью
+                let conn_for_preview = match db::get_connection(&db_pool) {
+                    Ok(c) => Ok(c),
+                    Err(e) => Err(e),
+                };
+                
+                let video_quality = if format == "mp4" {
+                    if let Ok(ref conn) = conn_for_preview {
+                        match db::get_user_video_quality(conn, msg.chat.id.0) {
+                            Ok(q) => Some(q),
+                            Err(_) => Some("best".to_string()),
+                        }
+                    } else {
+                        Some("best".to_string())
+                    }
+                } else {
+                    None
+                };
+                
+                match get_preview_metadata(&url, Some(&format), video_quality.as_deref()).await {
                     Ok(metadata) => {
+                        // Проверяем размер файла на этапе preview ТОЛЬКО для аудио
+                        // Для видео (mp4) пропускаем проверку, чтобы пользователь мог выбрать меньшее качество в preview
+                        if format != "mp4" {
+                            if let Some(filesize) = metadata.filesize {
+                                let max_size = config::validation::max_audio_size_bytes();
+
+                                if filesize > max_size {
+                                    let size_mb = filesize as f64 / (1024.0 * 1024.0);
+                                    let max_mb = max_size as f64 / (1024.0 * 1024.0);
+
+                                    log::warn!("Audio file too large at preview stage: {:.2} MB (max: {:.2} MB)", size_mb, max_mb);
+
+                                    let error_message = format!(
+                                        "❌ Аудио файл слишком большой (примерно {:.1} MB). Максимальный размер: {:.1} MB.",
+                                        size_mb, max_mb
+                                    );
+
+                                    bot.send_message(msg.chat.id, error_message).await?;
+                                    return Ok(user_info);
+                                }
+                            }
+                        }
+                        
                         // Send preview with inline buttons
-                        match send_preview(&bot, msg.chat.id, &url, &metadata, &format).await {
+                        let default_quality = if format == "mp4" {
+                            video_quality.as_deref()
+                        } else {
+                            None
+                        };
+                        match send_preview(&bot, msg.chat.id, &url, &metadata, &format, default_quality, None, Arc::clone(&db_pool)).await {
                             Ok(_) => {
                                 log::info!("Preview sent successfully for chat {}", msg.chat.id);
                             }
                             Err(e) => {
                                 log::error!("Failed to send preview: {:?}", e);
                                 // Fallback: send error message
-                                bot.send_message(msg.chat.id, "У меня не получилось показать превью 😢 Попробуй еще раз или напиши Стэну.").await?;
+                                bot.send_message(msg.chat.id, "У меня не получилось показать превью 😢 Попробуй еще раз или напиши Стэну (@stansob).").await?;
                             }
                         }
                     }
                     Err(e) => {
                         log::error!("Failed to get preview metadata: {:?}", e);
                         // Fallback: send error message
-                        bot.send_message(msg.chat.id, "У меня не получилось получить информацию о треке 😢 Попробуй еще раз или напиши Стэну.").await?;
+                        bot.send_message(msg.chat.id, "У меня не получилось получить информацию о треке 😢 Попробуй еще раз или напиши Стэну (@stansob).").await?;
                     }
                 }
                 

@@ -56,6 +56,18 @@ impl MetadataCache {
 
     /// Сохраняет метаданные в кэш
     pub async fn set(&self, url: &Url, title: String, artist: String) {
+        // Не кэшируем "Unknown Track", пустые значения или "NA" в artist
+        if title.trim().is_empty() || title.trim() == "Unknown Track" {
+            log::warn!("Not caching invalid metadata: title='{}'", title);
+            return;
+        }
+        
+        // Если artist "NA" или пустой - не кэшируем, чтобы не сохранять плохие данные
+        if artist.trim() == "NA" || artist.trim().is_empty() {
+            log::debug!("Not caching metadata with NA/empty artist for URL: {}", url);
+            return;
+        }
+        
         let url_str = url.as_str();
         let mut cache = self.cache.lock().await;
         
@@ -82,6 +94,12 @@ impl MetadataCache {
         duration: Option<u32>,
         filesize: Option<u64>,
     ) {
+        // Не кэшируем "Unknown Track" или пустые значения
+        if title.trim().is_empty() || title.trim() == "Unknown Track" {
+            log::warn!("Not caching invalid extended metadata: title='{}'", title);
+            return;
+        }
+        
         let url_str = url.as_str();
         let mut cache = self.cache.lock().await;
         
@@ -184,5 +202,113 @@ pub async fn get_cache_stats() -> CacheStats {
 /// Очищает устаревшие записи из кэша
 pub async fn cleanup_cache() -> usize {
     METADATA_CACHE.cleanup().await
+}
+
+use crate::db::{DbPool, get_connection};
+
+/// Генерирует короткий ID из URL (первые 12 символов хеша)
+fn generate_url_id(url: &str) -> String {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    
+    let mut hasher = DefaultHasher::new();
+    url.hash(&mut hasher);
+    let hash = hasher.finish();
+    format!("{:x}", hash)[..12].to_string()
+}
+
+/// Сохраняет URL в БД и возвращает короткий ID для использования в callback_data
+/// 
+/// URL сохраняется в таблице url_cache с TTL 7 дней.
+/// Это позволяет кнопкам работать даже после рестарта бота.
+pub async fn store_url(db_pool: &DbPool, url: &str) -> String {
+    let id = generate_url_id(url);
+    let ttl_seconds = 7 * 24 * 60 * 60; // 7 дней - достаточно долго для работы кнопок после рестарта
+    
+    // Вычисляем expires_at
+    let expires_at = chrono::Utc::now() + chrono::Duration::seconds(ttl_seconds);
+    let expires_at_str = expires_at.format("%Y-%m-%d %H:%M:%S").to_string();
+    
+    // Сохраняем в БД (INSERT OR REPLACE для обновления существующих записей)
+    match get_connection(db_pool) {
+        Ok(conn) => {
+            if let Err(e) = conn.execute(
+                "INSERT OR REPLACE INTO url_cache (id, url, expires_at) VALUES (?1, ?2, ?3)",
+                rusqlite::params![id, url, expires_at_str],
+            ) {
+                log::warn!("Failed to store URL in cache: {}", e);
+            } else {
+                log::debug!("Stored URL in DB cache: {} -> {}", id, url);
+            }
+        }
+        Err(e) => {
+            log::warn!("Failed to get DB connection for URL cache: {}", e);
+        }
+    }
+    
+    id
+}
+
+/// Получает URL по короткому ID из БД
+/// 
+/// Возвращает None если ID не найден или запись устарела.
+pub async fn get_url(db_pool: &DbPool, id: &str) -> Option<String> {
+    match get_connection(db_pool) {
+        Ok(conn) => {
+            let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+            
+            match conn.query_row(
+                "SELECT url FROM url_cache WHERE id = ?1 AND expires_at > ?2",
+                rusqlite::params![id, now],
+                |row| row.get::<_, String>(0),
+            ) {
+                Ok(url) => {
+                    log::debug!("Retrieved URL from DB cache: {} -> {}", id, url);
+                    Some(url)
+                }
+                Err(rusqlite::Error::QueryReturnedNoRows) => {
+                    log::debug!("URL not found in DB cache for ID: {}", id);
+                    None
+                }
+                Err(e) => {
+                    log::warn!("Failed to get URL from cache: {}", e);
+                    None
+                }
+            }
+        }
+        Err(e) => {
+            log::warn!("Failed to get DB connection for URL cache: {}", e);
+            None
+        }
+    }
+}
+
+/// Очищает устаревшие записи из URL кеша в БД
+pub async fn cleanup_url_cache(db_pool: &DbPool) -> usize {
+    match get_connection(db_pool) {
+        Ok(conn) => {
+            let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+            
+            match conn.execute(
+                "DELETE FROM url_cache WHERE expires_at <= ?1",
+                rusqlite::params![now],
+            ) {
+                Ok(removed) => {
+                    if removed > 0 {
+                        log::debug!("Cleaned up {} expired URL cache entries from DB", removed);
+                    }
+                    removed
+                }
+                Err(e) => {
+                    log::warn!("Failed to cleanup URL cache: {}", e);
+                    0
+                }
+            }
+        }
+        Err(e) => {
+            log::warn!("Failed to get DB connection for URL cache cleanup: {}", e);
+            0
+        }
+    }
 }
 
