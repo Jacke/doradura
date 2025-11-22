@@ -5,3 +5,9 @@ app.log
 database.sqlite
 # Local env
 .env
+.env.bot-api
+# YouTube cookies (contains sensitive auth tokens)
+youtube_cookies.txt
+*_cookies.txt
+# Local Bot API server data
+bot-api-data/

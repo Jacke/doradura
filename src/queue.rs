@@ -3,6 +3,8 @@ use tokio::sync::Mutex;
 use teloxide::types::ChatId;
 use chrono::{DateTime, Utc};
 use log::info; // Использование логирования вместо println
+use std::sync::Arc;
+use crate::db::{DbPool, save_task_to_queue};
 
 /// Приоритет задачи в очереди
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -149,6 +151,7 @@ impl DownloadQueue {
     /// # Arguments
     /// 
     /// * `task` - Задача для добавления в очередь
+    /// * `db_pool` - Опциональный пул соединений с БД для сохранения задачи
     /// 
     /// # Example
     /// 
@@ -166,11 +169,34 @@ impl DownloadQueue {
     ///     None,
     ///     None
     /// );
-    /// queue.add_task(task).await;
+    /// queue.add_task(task, None).await;
     /// # }
     /// ```
-    pub async fn add_task(&self, task: DownloadTask) {
+    pub async fn add_task(&self, task: DownloadTask, db_pool: Option<Arc<DbPool>>) {
         info!("Добавляем задачу с приоритетом {:?}: {:?}", task.priority, task);
+        
+        // Сохраняем задачу в БД для гарантированной обработки
+        if let Some(ref pool) = db_pool {
+            if let Ok(conn) = crate::db::get_connection(pool) {
+                let priority_value = task.priority as i32;
+                if let Err(e) = save_task_to_queue(
+                    &conn,
+                    &task.id,
+                    task.chat_id.0,
+                    &task.url,
+                    &task.format,
+                    task.is_video,
+                    task.video_quality.as_deref(),
+                    task.audio_bitrate.as_deref(),
+                    priority_value,
+                ) {
+                    log::error!("Failed to save task {} to database: {}", task.id, e);
+                } else {
+                    log::debug!("Task {} saved to database", task.id);
+                }
+            }
+        }
+        
         let mut queue = self.queue.lock().await;
         
         // Находим позицию для вставки с учетом приоритета
@@ -351,7 +377,7 @@ mod tests {
             Some("320k".to_string())
         );
 
-        queue.add_task(task.clone()).await;
+        queue.add_task(task.clone(), None).await;
         assert_eq!(queue.size().await, 1);
 
         let fetched_task = queue.get_task().await.expect("Should retrieve task that was just added");
@@ -382,8 +408,8 @@ mod tests {
             None
         );
 
-        queue.add_task(old_task).await;
-        queue.add_task(new_task).await;
+        queue.add_task(old_task, None).await;
+        queue.add_task(new_task, None).await;
 
         let removed = queue.remove_old_tasks(Duration::days(1)).await;
         assert_eq!(removed, 1);

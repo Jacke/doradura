@@ -59,7 +59,7 @@ fn export_to_json(entries: &[db::DownloadHistoryEntry]) -> Result<String, serde_
 /// Показывает меню выбора формата экспорта
 pub async fn show_export_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
     let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))))?;
     
     let entries = match db::get_all_download_history(&conn, chat_id.0) {
         Ok(entries) => entries,
@@ -101,7 +101,7 @@ pub async fn handle_export(
     db_pool: Arc<DbPool>,
 ) -> ResponseResult<()> {
     let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))))?;
     
     let entries = match db::get_all_download_history(&conn, chat_id.0) {
         Ok(entries) => entries,

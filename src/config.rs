@@ -10,6 +10,44 @@ pub static YTDL_BIN: Lazy<String> = Lazy::new(|| {
     env::var("YTDL_BIN").unwrap_or_else(|_| "yt-dlp".to_string())
 });
 
+/// Browser to extract cookies from for YouTube authentication
+/// Read from YTDL_COOKIES_BROWSER environment variable
+/// Supported: chrome, firefox, safari, brave, chromium, edge, opera, vivaldi
+/// Set to empty string to disable cookie extraction
+/// 
+/// NOTE: On macOS, browser cookie extraction requires Full Disk Access permission
+/// It's recommended to use YTDL_COOKIES_FILE instead (see MACOS_COOKIES_FIX.md)
+/// 
+/// Default: empty (use YTDL_COOKIES_FILE for macOS)
+pub static YTDL_COOKIES_BROWSER: Lazy<String> = Lazy::new(|| {
+    env::var("YTDL_COOKIES_BROWSER").unwrap_or_else(|_| String::new())
+});
+
+/// Path to cookies file for YouTube authentication
+/// Read from YTDL_COOKIES_FILE environment variable
+/// If set, this takes priority over YTDL_COOKIES_BROWSER
+/// Example: youtube_cookies.txt
+pub static YTDL_COOKIES_FILE: Lazy<Option<String>> = Lazy::new(|| {
+    env::var("YTDL_COOKIES_FILE").ok()
+});
+
+/// Download folder path
+/// Read from DOWNLOAD_FOLDER environment variable
+/// Defaults to ~/downloads/dora-files on macOS, ~/downloads on other platforms
+/// Supports tilde (~) expansion for home directory
+pub static DOWNLOAD_FOLDER: Lazy<String> = Lazy::new(|| {
+    env::var("DOWNLOAD_FOLDER").unwrap_or_else(|_| {
+        #[cfg(target_os = "macos")]
+        {
+            "~/downloads/dora-files".to_string()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            "~/downloads".to_string()
+        }
+    })
+});
+
 /// Rate limiting configuration
 pub mod rate_limit {
     use super::Duration;
@@ -116,7 +154,8 @@ pub mod network {
     use super::Duration;
     
     /// Request timeout for HTTP requests (in seconds)
-    pub const REQUEST_TIMEOUT_SECS: u64 = 300; // 5 minutes
+    /// Increased to 15 minutes for large file uploads (especially videos via local Bot API)
+    pub const REQUEST_TIMEOUT_SECS: u64 = 900; // 15 minutes
     
     /// Request timeout duration
     pub fn timeout() -> Duration {
@@ -130,6 +169,15 @@ pub mod progress {
     pub const CLEAR_DELAY_SECS: u64 = 10;
 }
 
+/// Admin configuration
+pub mod admin {
+    /// Admin username for notifications
+    pub const ADMIN_USERNAME: &str = "stansob";
+    
+    /// Maximum retry attempts for failed tasks before giving up
+    pub const MAX_TASK_RETRIES: i32 = 5;
+}
+
 /// Validation configuration
 pub mod validation {
     /// Maximum URL length (RFC 7230 recommends 8000, but we use 2048 for safety)
@@ -139,10 +187,54 @@ pub mod validation {
     /// Telegram Bot API allows up to 50MB for files
     pub const MAX_FILE_SIZE_BYTES: u64 = 50 * 1024 * 1024; // 50 MB
     
-    /// Maximum file size for audio files (slightly smaller to be safe)
-    pub const MAX_AUDIO_SIZE_BYTES: u64 = 49 * 1024 * 1024; // 49 MB
+    /// Maximum file size for audio files
+    /// 
+    /// Standard Telegram Bot API (api.telegram.org): 50 MB
+    /// Local Bot API Server: up to 5 GB (see https://core.telegram.org/bots/api#using-a-local-bot-api-server)
+    /// 
+    /// Check if local Bot API server is used via BOT_API_URL environment variable.
+    /// If BOT_API_URL is set and not pointing to api.telegram.org, assume local server is used.
+    pub fn max_audio_size_bytes() -> u64 {
+        // Check if local Bot API server is configured
+        if let Ok(bot_api_url) = std::env::var("BOT_API_URL") {
+            if !bot_api_url.contains("api.telegram.org") {
+                // Local Bot API server allows larger files - using 5 GB limit
+                log::info!("Local Bot API server detected (BOT_API_URL={}), using 5 GB limit for audio", bot_api_url);
+                return 5 * 1024 * 1024 * 1024; // 5 GB for local server
+            }
+        }
+        
+        // Default: 50 MB for standard API
+        50 * 1024 * 1024 // 50 MB
+    }
+    
+    /// Legacy constant for backward compatibility
+    /// Use max_audio_size_bytes() instead for dynamic limit detection
+    pub const MAX_AUDIO_SIZE_BYTES: u64 = 50 * 1024 * 1024; // 50 MB
     
     /// Maximum file size for video files
-    pub const MAX_VIDEO_SIZE_BYTES: u64 = 49 * 1024 * 1024; // 49 MB
+    /// 
+    /// Standard Telegram Bot API (api.telegram.org): 50 MB
+    /// Local Bot API Server: up to 5 GB (see https://core.telegram.org/bots/api#using-a-local-bot-api-server)
+    /// 
+    /// Check if local Bot API server is used via BOT_API_URL environment variable.
+    /// If BOT_API_URL is set and not pointing to api.telegram.org, assume local server is used.
+    pub fn max_video_size_bytes() -> u64 {
+        // Check if local Bot API server is configured
+        if let Ok(bot_api_url) = std::env::var("BOT_API_URL") {
+            if !bot_api_url.contains("api.telegram.org") {
+                // Local Bot API server allows larger files - using 5 GB limit
+                log::info!("Local Bot API server detected (BOT_API_URL={}), using 5 GB limit", bot_api_url);
+                return 5 * 1024 * 1024 * 1024; // 5 GB for local server
+            }
+        }
+        
+        // Default: 50 MB for standard API
+        50 * 1024 * 1024 // 50 MB
+    }
+    
+    /// Legacy constant for backward compatibility
+    /// Use max_video_size_bytes() instead for dynamic limit detection
+    pub const MAX_VIDEO_SIZE_BYTES: u64 = 50 * 1024 * 1024; // 50 MB
 }
 

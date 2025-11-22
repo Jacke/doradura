@@ -1,33 +1,46 @@
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, MessageId};
+use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ChatId, CallbackQueryId};
 use teloxide::RequestError;
 use crate::db::{self, DbPool};
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use chrono::NaiveDateTime;
 use std::sync::Arc;
 use url::Url;
 
 /// Экранирует специальные символы для MarkdownV2
+/// 
+/// В Telegram MarkdownV2 требуется экранировать следующие символы:
+/// _ * [ ] ( ) ~ ` > # + - = | { } . !
+/// 
+/// Важно: обратный слеш должен экранироваться первым, чтобы избежать повторного экранирования
 fn escape_markdown(text: &str) -> String {
-    text.replace('\\', "\\\\")
-        .replace('_', "\\_")
-        .replace('*', "\\*")
-        .replace('[', "\\[")
-        .replace(']', "\\]")
-        .replace('(', "\\(")
-        .replace(')', "\\)")
-        .replace('~', "\\~")
-        .replace('`', "\\`")
-        .replace('>', "\\>")
-        .replace('#', "\\#")
-        .replace('+', "\\+")
-        .replace('-', "\\-")
-        .replace('=', "\\=")
-        .replace('|', "\\|")
-        .replace('{', "\\{")
-        .replace('}', "\\}")
-        .replace('.', "\\.")
-        .replace('!', "\\!")
+    let mut result = String::with_capacity(text.len() * 2);
+    
+    for c in text.chars() {
+        match c {
+            '\\' => result.push_str("\\\\"),
+            '_' => result.push_str("\\_"),
+            '*' => result.push_str("\\*"),
+            '[' => result.push_str("\\["),
+            ']' => result.push_str("\\]"),
+            '(' => result.push_str("\\("),
+            ')' => result.push_str("\\)"),
+            '~' => result.push_str("\\~"),
+            '`' => result.push_str("\\`"),
+            '>' => result.push_str("\\>"),
+            '#' => result.push_str("\\#"),
+            '+' => result.push_str("\\+"),
+            '-' => result.push_str("\\-"),
+            '=' => result.push_str("\\="),
+            '|' => result.push_str("\\|"),
+            '{' => result.push_str("\\{"),
+            '}' => result.push_str("\\}"),
+            '.' => result.push_str("\\."),
+            '!' => result.push_str("\\!"),
+            _ => result.push(c),
+        }
+    }
+    
+    result
 }
 
 /// Форматирует дату для отображения
@@ -56,7 +69,7 @@ fn format_date(date_str: &str) -> String {
 /// Показывает историю загрузок пользователя
 pub async fn show_history(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
     let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))))?;
     
     let entries = match db::get_download_history(&conn, chat_id.0, Some(20)) {
         Ok(entries) => entries,
@@ -97,9 +110,9 @@ pub async fn show_history(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> R
             escaped_date
         ));
         
-        // Кодируем данные для callback
-        let url_encoded = STANDARD.encode(&entry.url);
-        let callback_data = format!("history:repeat:{}:{}", entry.id, url_encoded);
+        // Сохраняем URL в кэше и получаем короткий ID
+        let url_id = crate::cache::store_url(&db_pool, &entry.url).await;
+        let callback_data = format!("history:repeat:{}:{}", entry.id, url_id);
         let delete_callback = format!("history:delete:{}", entry.id);
         
         keyboard_rows.push(vec![
@@ -130,7 +143,7 @@ pub async fn show_history(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> R
 /// Обрабатывает callback для истории загрузок
 pub async fn handle_history_callback(
     bot: &Bot,
-    callback_id: String,
+    callback_id: CallbackQueryId,
     chat_id: ChatId,
     message_id: MessageId,
     data: &str,
@@ -150,19 +163,19 @@ pub async fn handle_history_callback(
     
     match action {
         "repeat" => {
-            // Формат: history:repeat:entry_id:base64_url
+            // Формат: history:repeat:entry_id:url_id
             let entry_id_str = parts[2].split(':').next().unwrap_or("");
-            let url_encoded = parts[2].splitn(2, ':').nth(1).unwrap_or("");
+            let url_id = parts[2].splitn(2, ':').nth(1).unwrap_or("");
             
-            match STANDARD.decode(url_encoded) {
-                Ok(url_bytes) => {
-                    match String::from_utf8(url_bytes) {
-                        Ok(url_str) => {
-                            match Url::parse(&url_str) {
+            // Получаем URL из кэша
+            match crate::cache::get_url(&db_pool, url_id).await {
+                Some(url_str) => {
+                    // URL найден в кэше
+                    match Url::parse(&url_str) {
                                 Ok(url) => {
                                     // Получаем план пользователя для rate limiting
                                     let conn = db::get_connection(&db_pool)
-                                        .map_err(|e| RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+                                        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))))?;
                                     let plan = match db::get_user(&conn, chat_id.0) {
                                         Ok(Some(ref user)) => user.plan.clone(),
                                         _ => "free".to_string(),
@@ -227,23 +240,12 @@ pub async fn handle_history_callback(
                                         audio_bitrate,
                                         &plan,
                                     );
-                                    download_queue.add_task(task).await;
+                                    download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
                                     
                                     // Удаляем сообщение истории
                                     if let Err(e) = bot.delete_message(chat_id, message_id).await {
                                         log::warn!("Failed to delete history message: {:?}", e);
                                     }
-                                    
-                                    // Отправляем подтверждение
-                                    let confirmation_msg = match format.as_str() {
-                                        "mp3" => "Я Дора, попробую скачать тебе трек! 🎵 Терпение!",
-                                        "mp4" => "Я Дора, попробую скачать тебе видео! 🎥 Терпение!",
-                                        "srt" => "Я Дора, попробую скачать тебе субтитры! 📝 Терпение!",
-                                        "txt" => "Я Дора, попробую скачать тебе субтитры! 📄 Терпение!",
-                                        _ => "Я Дора, попробую скачать тебе файл! ❤️‍🔥 Терпение!",
-                                    };
-                                    
-                                    bot.send_message(chat_id, confirmation_msg).await?;
                                 }
                                 Err(e) => {
                                     log::error!("Failed to parse URL: {}", e);
@@ -253,18 +255,10 @@ pub async fn handle_history_callback(
                                 }
                             }
                         }
-                        Err(e) => {
-                            log::error!("Failed to decode URL string: {}", e);
-                            bot.answer_callback_query(callback_id)
-                                .text("Ошибка: не удалось декодировать ссылку")
-                                .await?;
-                        }
-                    }
-                }
-                Err(e) => {
-                    log::error!("Failed to decode base64 URL: {}", e);
+                None => {
+                    log::warn!("URL not found in cache for id: {} (expired or invalid)", url_id);
                     bot.answer_callback_query(callback_id)
-                        .text("Ошибка: неверный формат данных")
+                        .text("Ссылка устарела, попробуйте снова")
                         .await?;
                 }
             }
@@ -276,7 +270,7 @@ pub async fn handle_history_callback(
             match entry_id_str.parse::<i64>() {
                 Ok(entry_id) => {
                     let conn = db::get_connection(&db_pool)
-                        .map_err(|e| RequestError::from(std::io::Error::new(std::io::ErrorKind::Other, e.to_string())))?;
+                        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))))?;
                     
                     match db::delete_download_history_entry(&conn, chat_id.0, entry_id) {
                         Ok(true) => {

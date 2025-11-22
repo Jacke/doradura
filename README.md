@@ -75,7 +75,56 @@ Create a `.env` file in the project root:
 ```env
 TELOXIDE_TOKEN=your_telegram_bot_token_here
 YTDL_BIN=yt-dlp  # Optional: override default youtube-dl
+BOT_API_URL=http://localhost:8081  # Optional: use local Bot API server (allows files up to 2GB)
+
+# YouTube Cookies (required for YouTube downloads)
+# Option 1: Automatic extraction from browser (Linux/Windows recommended)
+YTDL_COOKIES_BROWSER=chrome  # chrome, firefox, safari, brave, chromium, edge, opera, vivaldi
+
+# Option 2: Export cookies to file (macOS recommended)
+YTDL_COOKIES_FILE=youtube_cookies.txt
 ```
+
+**📋 Quick Setup for Cookies:**
+
+**Linux/Windows (Automatic):**
+```bash
+# 1. Install dependencies
+pip3 install keyring pycryptodomex
+
+# 2. Login to YouTube in your browser
+# 3. Set environment variable
+export YTDL_COOKIES_BROWSER=chrome
+
+# 4. Restart bot
+```
+
+**macOS (File-based, recommended):**
+```bash
+# 1. Export cookies using browser extension (see MACOS_COOKIES_FIX.md)
+# 2. Set environment variable
+export YTDL_COOKIES_FILE=youtube_cookies.txt
+
+# 3. Restart bot
+```
+
+See [docs/YOUTUBE_COOKIES.md](docs/YOUTUBE_COOKIES.md) for detailed instructions.
+
+### 🚀 Local Bot API Server (Optional)
+
+For sending files larger than 50 MB (up to 2 GB), you can use a local Bot API server:
+
+1. **Quick start with Docker:**
+   ```bash
+   ./start_local_bot_api.sh
+   ```
+   
+   See [LOCAL_BOT_API_SETUP.md](docs/LOCAL_BOT_API_SETUP.md) for detailed instructions.
+
+2. **Benefits:**
+   - Upload files up to **2 GB** (instead of 50 MB)
+   - Lower latency
+   - More flexibility with webhooks
 
 ## 📖 Usage
 
@@ -168,13 +217,18 @@ let rate_limiter = Arc::new(RateLimiter::new(Duration::from_secs(30)));
 
 ### Download Location
 
-Files are downloaded to: `~/downloads/`
+Files are downloaded to a configurable folder with platform-specific defaults:
 
-Change in `src/downloader.rs`:
+- **macOS**: `~/downloads/dora-files/`
+- **Other platforms**: `~/downloads/`
 
-```rust
-let full_path = format!("~/downloads/{}", safe_filename);
+To customize the download folder, set the `DOWNLOAD_FOLDER` environment variable in your `.env` file:
+
+```env
+DOWNLOAD_FOLDER=~/downloads/my-custom-folder
 ```
+
+The path supports tilde (`~`) expansion for the home directory.
 
 ### Retry Logic
 
@@ -187,6 +241,37 @@ let max_attempts = 3;
 // ...
 tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
 ```
+
+## 📚 Documentation
+
+- [AGENTS.md](docs/AGENTS.md)
+- [BOT_FLOWS.md](docs/BOT_FLOWS.md)
+- [CACHE_ISSUE.md](docs/CACHE_ISSUE.md)
+- [CLAUDE.md](docs/CLAUDE.md)
+- [CODE_QUALITY_ANALYSIS.md](docs/CODE_QUALITY_ANALYSIS.md)
+- [COOKIE_FIX_SUMMARY.md](docs/COOKIE_FIX_SUMMARY.md)
+- [FILENAME_FIX.md](docs/FILENAME_FIX.md)
+- [FIX_UNKNOWN_TRACK.md](docs/FIX_UNKNOWN_TRACK.md)
+- [FIX_YOUTUBE_ERRORS.md](docs/FIX_YOUTUBE_ERRORS.md)
+- [IDEAS.md](docs/IDEAS.md)
+- [IMPROVEMENTS.md](docs/IMPROVEMENTS.md)
+- [LOCAL_BOT_API_SETUP.md](docs/LOCAL_BOT_API_SETUP.md)
+- [MACOS_COOKIES_FIX.md](docs/MACOS_COOKIES_FIX.md)
+- [OPTIMIZATION_OPPORTUNITIES.md](docs/OPTIMIZATION_OPPORTUNITIES.md)
+- [OPTIMIZATION_REALISTIC_ANALYSIS.md](docs/OPTIMIZATION_REALISTIC_ANALYSIS.md)
+- [PROGRESS_BAR_FIX.md](docs/PROGRESS_BAR_FIX.md)
+- [QUICKSTART.md](docs/QUICKSTART.md)
+- [QUICK_FIX.md](docs/QUICK_FIX.md)
+- [REMAINING_TASKS.md](docs/REMAINING_TASKS.md)
+- [RUN_TESTS.md](docs/RUN_TESTS.md)
+- [SESSION_SUMMARY.md](docs/SESSION_SUMMARY.md)
+- [SUBSCRIPTIONS.md](docs/SUBSCRIPTIONS.md)
+- [TESTING.md](docs/TESTING.md)
+- [TEST_SUMMARY.md](docs/TEST_SUMMARY.md)
+- [VIDEO_BLACK_SCREEN_FIX.md](docs/VIDEO_BLACK_SCREEN_FIX.md)
+- [VIDEO_BLACK_SCREEN_FIX_V2.md](docs/VIDEO_BLACK_SCREEN_FIX_V2.md)
+- [YOUTUBE_COOKIES.md](docs/YOUTUBE_COOKIES.md)
+- [YOUTUBE_PO_TOKEN_FIX.md](docs/YOUTUBE_PO_TOKEN_FIX.md)
 
 ## 📝 License
 
