@@ -64,9 +64,69 @@ pub async fn check_and_update_ytdlp() -> Result<(), AppError> {
                 }
             } else {
                 // Код выхода 100 означает, что yt-dlp установлен через pip
-                // Это нормальная ситуация, не нужно показывать предупреждение
                 if output.status.code() == Some(100) {
-                    log::info!("yt-dlp is installed via pip. Use 'pip install --upgrade yt-dlp' to update.");
+                    log::info!("yt-dlp is installed via pip. Attempting to update via pip...");
+                    
+                    // Пытаемся обновить через pip или pip3
+                    let pip_commands = vec!["pip3", "pip"];
+                    let mut update_successful = false;
+                    let mut last_error: Option<String> = None;
+                    
+                    for pip_cmd in pip_commands {
+                        log::debug!("Trying to update yt-dlp via {}...", pip_cmd);
+                        
+                        let pip_update_result = timeout(
+                            std::time::Duration::from_secs(60), // 60 секунд на обновление через pip
+                            TokioCommand::new(pip_cmd)
+                                .args(["install", "--upgrade", "yt-dlp"])
+                                .output()
+                        )
+                        .await;
+                        
+                        match pip_update_result {
+                            Ok(Ok(pip_output)) => {
+                                if pip_output.status.success() {
+                                    let pip_stdout = String::from_utf8_lossy(&pip_output.stdout);
+                                    if pip_stdout.contains("Successfully installed") || pip_stdout.contains("Requirement already satisfied") {
+                                        log::info!("yt-dlp updated successfully via {}", pip_cmd);
+                                        update_successful = true;
+                                        break;
+                                    } else {
+                                        log::info!("yt-dlp {} update: {}", pip_cmd, pip_stdout);
+                                        update_successful = true;
+                                        break;
+                                    }
+                                } else {
+                                    let pip_stderr = String::from_utf8_lossy(&pip_output.stderr);
+                                    let exit_code = pip_output.status.code();
+                                    last_error = Some(format!("{} failed with exit code {:?}: {}", pip_cmd, exit_code, pip_stderr));
+                                    log::debug!("{} update failed: {}", pip_cmd, last_error.as_ref().unwrap());
+                                    // Пробуем следующую команду
+                                    continue;
+                                }
+                            }
+                            Ok(Err(e)) => {
+                                last_error = Some(format!("{} command not found or failed to execute: {}", pip_cmd, e));
+                                log::debug!("{} command error: {}", pip_cmd, e);
+                                // Пробуем следующую команду
+                                continue;
+                            }
+                            Err(_) => {
+                                last_error = Some(format!("{} update timed out after 60 seconds", pip_cmd));
+                                log::debug!("{} update timed out", pip_cmd);
+                                // Пробуем следующую команду
+                                continue;
+                            }
+                        }
+                    }
+                    
+                    if !update_successful {
+                        if let Some(error) = last_error {
+                            log::warn!("Failed to update yt-dlp via pip/pip3. Last error: {}. You may need to run 'pip install --upgrade yt-dlp' or 'pip3 install --upgrade yt-dlp' manually (may require sudo).", error);
+                        } else {
+                            log::warn!("Failed to update yt-dlp via pip/pip3. You may need to run 'pip install --upgrade yt-dlp' or 'pip3 install --upgrade yt-dlp' manually (may require sudo).");
+                        }
+                    }
                 } else {
                     log::warn!("yt-dlp update check failed (exit code: {:?}): {}", output.status.code(), stderr);
                     // Не считаем это критической ошибкой - может быть проблема с сетью или правами
