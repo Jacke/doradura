@@ -1,5 +1,5 @@
 /// Модуль для анализа ошибок yt-dlp
-/// 
+///
 /// Предоставляет функции для определения типа ошибки yt-dlp
 /// и генерации информативных сообщений для пользователя и администратора.
 
@@ -19,15 +19,15 @@ pub enum YtDlpErrorType {
 }
 
 /// Анализирует stderr yt-dlp и определяет тип ошибки
-/// 
+///
 /// # Параметры
 /// - `stderr`: содержимое stderr от yt-dlp
-/// 
+///
 /// # Возвращает
 /// - `YtDlpErrorType`: тип определенной ошибки
 pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
     let stderr_lower = stderr.to_lowercase();
-    
+
     // Проверяем ошибки связанные с cookies
     if stderr_lower.contains("cookies are no longer valid")
         || stderr_lower.contains("cookies have likely been rotated")
@@ -39,7 +39,7 @@ pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
     {
         return YtDlpErrorType::InvalidCookies;
     }
-    
+
     // Проверяем bot detection
     if stderr_lower.contains("bot detection")
         || stderr_lower.contains("http error 403")
@@ -48,7 +48,7 @@ pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
     {
         return YtDlpErrorType::BotDetection;
     }
-    
+
     // Проверяем недоступное видео
     if stderr_lower.contains("private video")
         || stderr_lower.contains("video unavailable")
@@ -60,7 +60,7 @@ pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
     {
         return YtDlpErrorType::VideoUnavailable;
     }
-    
+
     // Проверяем сетевые ошибки
     if stderr_lower.contains("timeout")
         || stderr_lower.contains("connection")
@@ -71,16 +71,16 @@ pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
     {
         return YtDlpErrorType::NetworkError;
     }
-    
+
     // Неизвестная ошибка
     YtDlpErrorType::Unknown
 }
 
 /// Возвращает пользовательское сообщение об ошибке
-/// 
+///
 /// # Параметры
 /// - `error_type`: тип ошибки
-/// 
+///
 /// # Возвращает
 /// - `String`: сообщение для пользователя
 pub fn get_error_message(error_type: &YtDlpErrorType) -> String {
@@ -91,39 +91,31 @@ pub fn get_error_message(error_type: &YtDlpErrorType) -> String {
             Обратись к администратору для настройки."
                 .to_string()
         }
-        YtDlpErrorType::BotDetection => {
-            "❌ YouTube заблокировал запрос (обнаружен бот).\n\n\
+        YtDlpErrorType::BotDetection => "❌ YouTube заблокировал запрос (обнаружен бот).\n\n\
             Проблема решается обновлением cookies.\n\
             Обратись к администратору."
-                .to_string()
-        }
-        YtDlpErrorType::VideoUnavailable => {
-            "❌ Видео недоступно.\n\n\
+            .to_string(),
+        YtDlpErrorType::VideoUnavailable => "❌ Видео недоступно.\n\n\
             Возможные причины:\n\
             • Видео приватное или удалено\n\
             • Региональные ограничения\n\
             • Видео заблокировано автором"
-                .to_string()
-        }
-        YtDlpErrorType::NetworkError => {
-            "❌ Проблема с сетью при получении данных.\n\n\
+            .to_string(),
+        YtDlpErrorType::NetworkError => "❌ Проблема с сетью при получении данных.\n\n\
             Попробуй позже или проверь интернет-соединение."
-                .to_string()
-        }
-        YtDlpErrorType::Unknown => {
-            "❌ Не удалось получить данные о видео.\n\n\
+            .to_string(),
+        YtDlpErrorType::Unknown => "❌ Не удалось получить данные о видео.\n\n\
             Проверь, что ссылка корректна и видео доступно.\n\
             Если проблема повторяется, обратись к администратору."
-                .to_string()
-        }
+            .to_string(),
     }
 }
 
 /// Определяет, нужно ли уведомлять администратора об ошибке
-/// 
+///
 /// # Параметры
 /// - `error_type`: тип ошибки
-/// 
+///
 /// # Возвращает
 /// - `true` если нужно уведомить администратора
 pub fn should_notify_admin(error_type: &YtDlpErrorType) -> bool {
@@ -137,10 +129,10 @@ pub fn should_notify_admin(error_type: &YtDlpErrorType) -> bool {
 }
 
 /// Возвращает рекомендации по исправлению ошибки для логов
-/// 
+///
 /// # Параметры
 /// - `error_type`: тип ошибки
-/// 
+///
 /// # Возвращает
 /// - `String`: рекомендации для администратора
 pub fn get_fix_recommendations(error_type: &YtDlpErrorType) -> String {
@@ -192,4 +184,3 @@ pub fn get_fix_recommendations(error_type: &YtDlpErrorType) -> String {
         }
     }
 }
-

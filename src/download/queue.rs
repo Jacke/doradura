@@ -1,10 +1,10 @@
-use std::collections::VecDeque;
-use tokio::sync::Mutex;
-use teloxide::types::ChatId;
+use crate::storage::db::{save_task_to_queue, DbPool};
 use chrono::{DateTime, Utc};
 use log::info; // Использование логирования вместо println
+use std::collections::VecDeque;
 use std::sync::Arc;
-use crate::db::{DbPool, save_task_to_queue};
+use teloxide::types::ChatId;
+use tokio::sync::Mutex;
 
 /// Приоритет задачи в очереди
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -29,7 +29,7 @@ impl TaskPriority {
 }
 
 /// Структура, представляющая задачу загрузки.
-/// 
+///
 /// Содержит всю необходимую информацию для загрузки медиафайла:
 /// URL источника, идентификатор пользователя, формат загрузки и время создания.
 #[derive(Debug, Clone)]
@@ -40,6 +40,8 @@ pub struct DownloadTask {
     pub url: String,
     /// ID чата пользователя в Telegram
     pub chat_id: ChatId,
+    /// ID сообщения пользователя (для реакций)
+    pub message_id: Option<i32>,
     /// Флаг, указывающий является ли задача загрузкой видео
     pub is_video: bool,
     /// Формат загрузки: "mp3", "mp4", "srt", "txt"
@@ -56,46 +58,75 @@ pub struct DownloadTask {
 
 impl DownloadTask {
     /// Создает новую задачу загрузки с уникальным ID
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `url` - URL для загрузки
     /// * `chat_id` - ID чата пользователя в Telegram
+    /// * `message_id` - ID сообщения пользователя (опционально, для реакций)
     /// * `is_video` - Флаг, указывающий является ли это видео (true) или аудио (false)
     /// * `format` - Формат загрузки: "mp3", "mp4", "srt", "txt"
     /// * `video_quality` - Качество видео (опционально, только для видео)
     /// * `audio_bitrate` - Битрейт аудио (опционально, только для аудио)
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Возвращает новый экземпляр `DownloadTask` с автоматически сгенерированным UUID и текущим временем.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```no_run
     /// use teloxide::types::ChatId;
     /// use doradura::queue::DownloadTask;
-    /// 
+    ///
     /// let task = DownloadTask::new(
     ///     "https://youtube.com/watch?v=...".to_string(),
     ///     ChatId(123456789),
+    ///     Some(12345),
     ///     false,
     ///     "mp3".to_string(),
     ///     None,
     ///     Some("320k".to_string())
     /// );
     /// ```
-    pub fn new(url: String, chat_id: ChatId, is_video: bool, format: String, video_quality: Option<String>, audio_bitrate: Option<String>) -> Self {
-        Self::with_priority(url, chat_id, is_video, format, video_quality, audio_bitrate, TaskPriority::Low)
+    pub fn new(
+        url: String,
+        chat_id: ChatId,
+        message_id: Option<i32>,
+        is_video: bool,
+        format: String,
+        video_quality: Option<String>,
+        audio_bitrate: Option<String>,
+    ) -> Self {
+        Self::with_priority(
+            url,
+            chat_id,
+            message_id,
+            is_video,
+            format,
+            video_quality,
+            audio_bitrate,
+            TaskPriority::Low,
+        )
     }
 
     /// Создает новую задачу с указанным приоритетом
-    pub fn with_priority(url: String, chat_id: ChatId, is_video: bool, format: String, video_quality: Option<String>, audio_bitrate: Option<String>, priority: TaskPriority) -> Self {
+    pub fn with_priority(
+        url: String,
+        chat_id: ChatId,
+        message_id: Option<i32>,
+        is_video: bool,
+        format: String,
+        video_quality: Option<String>,
+        audio_bitrate: Option<String>,
+        priority: TaskPriority,
+    ) -> Self {
         let id = uuid::Uuid::new_v4().to_string();
         Self {
             id,
             url,
             chat_id,
+            message_id,
             is_video,
             format,
             video_quality,
@@ -106,14 +137,32 @@ impl DownloadTask {
     }
 
     /// Создает новую задачу на основе плана пользователя
-    pub fn from_plan(url: String, chat_id: ChatId, is_video: bool, format: String, video_quality: Option<String>, audio_bitrate: Option<String>, plan: &str) -> Self {
+    pub fn from_plan(
+        url: String,
+        chat_id: ChatId,
+        message_id: Option<i32>,
+        is_video: bool,
+        format: String,
+        video_quality: Option<String>,
+        audio_bitrate: Option<String>,
+        plan: &str,
+    ) -> Self {
         let priority = TaskPriority::from_plan(plan);
-        Self::with_priority(url, chat_id, is_video, format, video_quality, audio_bitrate, priority)
+        Self::with_priority(
+            url,
+            chat_id,
+            message_id,
+            is_video,
+            format,
+            video_quality,
+            audio_bitrate,
+            priority,
+        )
     }
 }
 
 /// Очередь для задач загрузки с потокобезопасной реализацией.
-/// 
+///
 /// Использует `Mutex` для синхронизации доступа к внутренней очереди.
 /// Задачи обрабатываются с учетом приоритета: сначала высокий, затем средний, затем низкий.
 /// Внутри каждого приоритета задачи обрабатываются в порядке FIFO (First In, First Out).
@@ -125,16 +174,16 @@ pub struct DownloadQueue {
 
 impl DownloadQueue {
     /// Создает новую пустую очередь.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Возвращает новый экземпляр `DownloadQueue` с пустой внутренней очередью.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```no_run
     /// use doradura::queue::DownloadQueue;
-    /// 
+    ///
     /// let queue = DownloadQueue::new();
     /// ```
     pub fn new() -> Self {
@@ -144,21 +193,21 @@ impl DownloadQueue {
     }
 
     /// Добавляет задачу в очередь с учетом приоритета.
-    /// 
+    ///
     /// Задачи с высоким приоритетом добавляются в начало соответствующей секции,
     /// задачи с низким приоритетом - в конец.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `task` - Задача для добавления в очередь
     /// * `db_pool` - Опциональный пул соединений с БД для сохранения задачи
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```no_run
     /// use teloxide::types::ChatId;
     /// use doradura::queue::{DownloadQueue, DownloadTask};
-    /// 
+    ///
     /// # async fn example() {
     /// let queue = DownloadQueue::new();
     /// let task = DownloadTask::new(
@@ -173,11 +222,14 @@ impl DownloadQueue {
     /// # }
     /// ```
     pub async fn add_task(&self, task: DownloadTask, db_pool: Option<Arc<DbPool>>) {
-        info!("Добавляем задачу с приоритетом {:?}: {:?}", task.priority, task);
-        
+        info!(
+            "Добавляем задачу с приоритетом {:?}: {:?}",
+            task.priority, task
+        );
+
         // Сохраняем задачу в БД для гарантированной обработки
         if let Some(ref pool) = db_pool {
-            if let Ok(conn) = crate::db::get_connection(pool) {
+            if let Ok(conn) = crate::storage::db::get_connection(pool) {
                 let priority_value = task.priority as i32;
                 if let Err(e) = save_task_to_queue(
                     &conn,
@@ -196,18 +248,19 @@ impl DownloadQueue {
                 }
             }
         }
-        
+
         let mut queue = self.queue.lock().await;
-        
+
         // Находим позицию для вставки с учетом приоритета
-        let insert_pos = queue.iter()
+        let insert_pos = queue
+            .iter()
             .position(|t| t.priority < task.priority)
             .unwrap_or(queue.len());
-        
+
         // Вставляем задачу в нужную позицию
         let mut new_queue = VecDeque::new();
         let mut inserted = false;
-        
+
         for (idx, existing_task) in queue.iter().enumerate() {
             if idx == insert_pos && !inserted {
                 new_queue.push_back(task.clone());
@@ -215,27 +268,27 @@ impl DownloadQueue {
             }
             new_queue.push_back(existing_task.clone());
         }
-        
+
         if !inserted {
             new_queue.push_back(task);
         }
-        
+
         *queue = new_queue;
     }
 
     /// Извлекает и возвращает первую задачу из очереди (с учетом приоритета).
-    /// 
+    ///
     /// Задачи с высоким приоритетом обрабатываются первыми.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Возвращает `Some(DownloadTask)` если очередь не пуста, иначе `None`.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```no_run
     /// use doradura::queue::DownloadQueue;
-    /// 
+    ///
     /// # async fn example() {
     /// let queue = DownloadQueue::new();
     /// // ... добавить задачи ...
@@ -247,40 +300,43 @@ impl DownloadQueue {
     pub async fn get_task(&self) -> Option<DownloadTask> {
         let mut queue = self.queue.lock().await;
         if queue.len() != 0 {
-            info!("Получаем задачу из очереди, размер: {}, приоритет: {:?}", 
-                  queue.len(), 
-                  queue.front().map(|t| t.priority));
+            info!(
+                "Получаем задачу из очереди, размер: {}, приоритет: {:?}",
+                queue.len(),
+                queue.front().map(|t| t.priority)
+            );
         }
         queue.pop_front()
     }
 
     /// Получает позицию задачи пользователя в очереди
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `chat_id` - ID чата пользователя
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Возвращает позицию в очереди (1-based) или None если задача не найдена
     pub async fn get_queue_position(&self, chat_id: ChatId) -> Option<usize> {
         let queue = self.queue.lock().await;
-        queue.iter()
+        queue
+            .iter()
             .position(|task| task.chat_id == chat_id)
             .map(|pos| pos + 1)
     }
 
     /// Возвращает текущее количество задач в очереди.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Количество задач в очереди.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```no_run
     /// use doradura::queue::DownloadQueue;
-    /// 
+    ///
     /// # async fn example() {
     /// let queue = DownloadQueue::new();
     /// // ... добавить задачи ...
@@ -294,25 +350,25 @@ impl DownloadQueue {
     }
 
     /// Фильтрует задачи по chat_id и возвращает список задач для указанного пользователя.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `chat_id` - ID чата пользователя для фильтрации
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Вектор всех задач, принадлежащих указанному пользователю.
-    /// 
+    ///
     /// # Note
-    /// 
+    ///
     /// Задачи не удаляются из очереди, возвращаются только их копии.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```no_run
     /// use teloxide::types::ChatId;
     /// use doradura::queue::DownloadQueue;
-    /// 
+    ///
     /// # async fn example() {
     /// let queue = DownloadQueue::new();
     /// let user_tasks = queue.filter_tasks_by_chat_id(ChatId(123456789)).await;
@@ -328,21 +384,21 @@ impl DownloadQueue {
     }
 
     /// Удаляет задачи, которые старше заданного временного порога.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `max_age` - Максимальный возраст задачи (задачи старше этого возраста будут удалены)
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Количество удаленных задач.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```no_run
     /// use chrono::Duration;
     /// use doradura::queue::DownloadQueue;
-    /// 
+    ///
     /// # async fn example() {
     /// let queue = DownloadQueue::new();
     /// // Удалить задачи старше 1 дня
@@ -374,13 +430,16 @@ mod tests {
             false,
             "mp3".to_string(),
             None,
-            Some("320k".to_string())
+            Some("320k".to_string()),
         );
 
         queue.add_task(task.clone(), None).await;
         assert_eq!(queue.size().await, 1);
 
-        let fetched_task = queue.get_task().await.expect("Should retrieve task that was just added");
+        let fetched_task = queue
+            .get_task()
+            .await
+            .expect("Should retrieve task that was just added");
         assert_eq!(fetched_task.url, task.url);
     }
 
@@ -405,7 +464,7 @@ mod tests {
             true,
             "mp4".to_string(),
             Some("1080p".to_string()),
-            None
+            None,
         );
 
         queue.add_task(old_task, None).await;
