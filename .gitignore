@@ -5,3 +5,4 @@ app.log
 database.sqlite
 # Local env
 .env
+youtube_cookies.txt
