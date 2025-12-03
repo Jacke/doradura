@@ -1,22 +1,22 @@
+use crate::core::utils::pluralize_seconds;
+use regex::Regex;
 use teloxide::prelude::*;
 use teloxide::types::MessageId;
-use crate::utils::pluralize_seconds;
-use regex::Regex;
 
 /// Состояние загрузки файла для отображения прогресса пользователю.
-/// 
+///
 /// Используется для отслеживания различных этапов процесса загрузки и отправки файла.
 #[derive(Debug, Clone)]
 pub enum DownloadStatus {
     /// Начало загрузки
-    Starting { 
+    Starting {
         /// Название файла/трека
         title: String,
         /// Формат файла для выбора эмодзи: "mp3", "mp4", "srt", "txt" (опционально)
         file_format: Option<String>,
     },
     /// Процесс загрузки с прогресс-баром
-    Downloading { 
+    Downloading {
         /// Название файла/трека
         title: String,
         /// Прогресс загрузки в процентах (0-100)
@@ -33,7 +33,7 @@ pub enum DownloadStatus {
         file_format: Option<String>,
     },
     /// Отправка файла на сервер Telegram
-    Uploading { 
+    Uploading {
         /// Название файла/трека
         title: String,
         /// Количество точек для анимации (0-3)
@@ -50,7 +50,7 @@ pub enum DownloadStatus {
         file_format: Option<String>,
     },
     /// Успешная загрузка с информацией о времени
-    Success { 
+    Success {
         /// Название файла/трека
         title: String,
         /// Затраченное время в секундах
@@ -59,14 +59,14 @@ pub enum DownloadStatus {
         file_format: Option<String>,
     },
     /// Финальное состояние (только название, без дополнительной информации)
-    Completed { 
+    Completed {
         /// Название файла/трека
         title: String,
         /// Формат файла для выбора эмодзи: "mp3", "mp4", "srt", "txt" (опционально)
         file_format: Option<String>,
     },
     /// Ошибка при загрузке
-    Error { 
+    Error {
         /// Название файла/трека
         title: String,
         /// Описание ошибки
@@ -78,13 +78,13 @@ pub enum DownloadStatus {
 
 impl DownloadStatus {
     /// Возвращает эмодзи в зависимости от формата файла
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `file_format` - Формат файла: "mp3", "mp4", "srt", "txt" или None
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Эмодзи для соответствующего типа файла или 🎵 по умолчанию
     fn get_emoji(file_format: Option<&String>) -> &'static str {
         match file_format {
@@ -97,21 +97,21 @@ impl DownloadStatus {
             None => "🎵", // По умолчанию нота для обратной совместимости
         }
     }
-    
+
     /// Генерирует форматированный текст сообщения для текущего состояния.
-    /// 
+    ///
     /// Форматирует сообщение в соответствии с MarkdownV2 синтаксисом Telegram,
     /// включая прогресс-бар для состояния загрузки и экранирование специальных символов.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Строка с форматированным сообщением о статусе загрузки.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```
     /// use doradura::progress::DownloadStatus;
-    /// 
+    ///
     /// let status = DownloadStatus::Downloading {
     ///     title: "Test Song".to_string(),
     ///     progress: 50,
@@ -130,7 +130,15 @@ impl DownloadStatus {
                 s.push_str("*\n\n⏳ Начинаю скачивание\\.\\.\\.");
                 s
             }
-            DownloadStatus::Downloading { title, progress, speed_mbs, eta_seconds, current_size, total_size, file_format } => {
+            DownloadStatus::Downloading {
+                title,
+                progress,
+                speed_mbs,
+                eta_seconds,
+                current_size,
+                total_size,
+                file_format,
+            } => {
                 let escaped = escape_markdown(title);
                 let emoji = Self::get_emoji(file_format.as_ref());
                 let bar = create_progress_bar(*progress);
@@ -142,14 +150,14 @@ impl DownloadStatus {
                 s.push_str(&progress.to_string());
                 s.push_str("%\n");
                 s.push_str(&bar);
-                
+
                 // Добавляем скорость, ETA и размер если доступны
                 if let Some(speed) = speed_mbs {
                     s.push_str("\n\n⚡ Скорость: ");
                     // Экранируем точку в числе с плавающей точкой
                     s.push_str(&format!("{:.1} MB/s", speed).replace('.', "\\."));
                 }
-                
+
                 if let Some(eta) = eta_seconds {
                     let minutes = eta / 60;
                     let seconds = eta % 60;
@@ -164,18 +172,28 @@ impl DownloadStatus {
                         s.push_str(&format!("{} сек", escaped_sec));
                     }
                 }
-                
+
                 if let (Some(current), Some(total)) = (current_size, total_size) {
                     let current_mb = *current as f64 / (1024.0 * 1024.0);
                     let total_mb = *total as f64 / (1024.0 * 1024.0);
                     s.push_str("\n📦 Размер: ");
                     // Экранируем точки в числах с плавающей точкой
-                    s.push_str(&format!("{:.1} / {:.1} MB", current_mb, total_mb).replace('.', "\\."));
+                    s.push_str(
+                        &format!("{:.1} / {:.1} MB", current_mb, total_mb).replace('.', "\\."),
+                    );
                 }
-                
+
                 s
             }
-            DownloadStatus::Uploading { title, dots, progress, eta_seconds, current_size, total_size, file_format } => {
+            DownloadStatus::Uploading {
+                title,
+                dots,
+                progress,
+                eta_seconds,
+                current_size,
+                total_size,
+                file_format,
+            } => {
                 let escaped = escape_markdown(title);
                 let emoji = Self::get_emoji(file_format.as_ref());
                 let mut s = String::with_capacity(escaped.len() + 2000);
@@ -183,7 +201,7 @@ impl DownloadStatus {
                 s.push_str(" *");
                 s.push_str(&escaped);
                 s.push_str("*\n\n📤 Отправка файла");
-                
+
                 // Если есть прогресс - показываем прогресс-бар
                 if let Some(p) = *progress {
                     let bar = create_progress_bar(p);
@@ -201,7 +219,7 @@ impl DownloadStatus {
                     };
                     s.push_str(&dots_str);
                 }
-                
+
                 // Добавляем ETA если доступно
                 if let Some(eta) = eta_seconds {
                     let minutes = eta / 60;
@@ -216,23 +234,30 @@ impl DownloadStatus {
                         s.push_str(&format!("{} сек", escaped_sec));
                     }
                 }
-                
+
                 // Добавляем размер если доступно
                 if let (Some(current), Some(total)) = (current_size, total_size) {
                     let current_mb = *current as f64 / (1024.0 * 1024.0);
                     let total_mb = *total as f64 / (1024.0 * 1024.0);
                     s.push_str("\n📦 Размер: ");
-                    s.push_str(&format!("{:.1} / {:.1} MB", current_mb, total_mb).replace('.', "\\."));
+                    s.push_str(
+                        &format!("{:.1} / {:.1} MB", current_mb, total_mb).replace('.', "\\."),
+                    );
                 }
-                
+
                 s
             }
-            DownloadStatus::Success { title, elapsed_secs, file_format } => {
+            DownloadStatus::Success {
+                title,
+                elapsed_secs,
+                file_format,
+            } => {
                 let escaped = escape_markdown(title);
                 let emoji = Self::get_emoji(file_format.as_ref());
                 let elapsed_str = elapsed_secs.to_string();
                 let plural = pluralize_seconds(*elapsed_secs);
-                let mut s = String::with_capacity(escaped.len() + elapsed_str.len() + plural.len() + 50);
+                let mut s =
+                    String::with_capacity(escaped.len() + elapsed_str.len() + plural.len() + 50);
                 s.push_str(emoji);
                 s.push_str(" *");
                 s.push_str(&escaped);
@@ -253,7 +278,11 @@ impl DownloadStatus {
                 s.push('*');
                 s
             }
-            DownloadStatus::Error { title, error, file_format } => {
+            DownloadStatus::Error {
+                title,
+                error,
+                file_format,
+            } => {
                 let escaped_title = escape_markdown(title);
                 let escaped_error = escape_markdown(error);
                 let emoji = Self::get_emoji(file_format.as_ref());
@@ -282,7 +311,7 @@ fn create_progress_bar(progress: u8) -> String {
 }
 
 /// Извлекает время ожидания из ошибки Telegram API (rate limiting)
-/// 
+///
 /// Парсит строку ошибки вида "Retry after Xs" и возвращает количество секунд
 fn extract_retry_after(error_str: &str) -> Option<u64> {
     // Пробуем найти паттерн "Retry after Xs" или "retry_after: X"
@@ -292,7 +321,7 @@ fn extract_retry_after(error_str: &str) -> Option<u64> {
             return seconds_str.as_str().parse::<u64>().ok();
         }
     }
-    
+
     // Альтернативный паттерн: "retry_after: X"
     let re2 = Regex::new(r"(?i)retry_after[:\s]+(\d+)").ok()?;
     if let Some(caps) = re2.captures(error_str) {
@@ -300,19 +329,19 @@ fn extract_retry_after(error_str: &str) -> Option<u64> {
             return seconds_str.as_str().parse::<u64>().ok();
         }
     }
-    
+
     None
 }
 
 /// Экранирует специальные символы для MarkdownV2
-/// 
+///
 /// В Telegram MarkdownV2 требуется экранировать следующие символы:
 /// _ * [ ] ( ) ~ ` > # + - = | { } . !
-/// 
+///
 /// Важно: обратный слеш должен экранироваться первым, чтобы избежать повторного экранирования
 fn escape_markdown(text: &str) -> String {
     let mut result = String::with_capacity(text.len() * 2);
-    
+
     for c in text.chars() {
         match c {
             '\\' => result.push_str("\\\\"),
@@ -337,12 +366,12 @@ fn escape_markdown(text: &str) -> String {
             _ => result.push(c),
         }
     }
-    
+
     result
 }
 
 /// Структура для управления сообщением с прогрессом загрузки.
-/// 
+///
 /// Отслеживает ID сообщения с прогрессом и позволяет обновлять его по мере выполнения загрузки.
 pub struct ProgressMessage {
     /// ID чата пользователя
@@ -353,21 +382,21 @@ pub struct ProgressMessage {
 
 impl ProgressMessage {
     /// Создает новое сообщение прогресса для указанного чата.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `chat_id` - ID чата пользователя
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Новый экземпляр `ProgressMessage` без отправленного сообщения.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```no_run
     /// use teloxide::types::ChatId;
     /// use doradura::progress::ProgressMessage;
-    /// 
+    ///
     /// let mut progress = ProgressMessage::new(ChatId(123456789));
     /// ```
     pub fn new(chat_id: ChatId) -> Self {
@@ -378,25 +407,25 @@ impl ProgressMessage {
     }
 
     /// Отправляет или обновляет сообщение с прогрессом загрузки.
-    /// 
+    ///
     /// Если сообщение еще не было отправлено, создает новое. Если уже существует,
     /// редактирует существующее сообщение. При ошибке редактирования отправляет новое сообщение.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `bot` - Экземпляр Telegram бота
     /// * `status` - Текущее состояние загрузки
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Возвращает `ResponseResult<()>` или ошибку при отправке/редактировании сообщения.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```no_run
     /// use teloxide::prelude::*;
     /// use doradura::progress::{ProgressMessage, DownloadStatus};
-    /// 
+    ///
     /// # async fn example(bot: Bot, chat_id: ChatId) -> ResponseResult<()> {
     /// let mut progress = ProgressMessage::new(chat_id);
     /// progress.update(&bot, DownloadStatus::Starting {
@@ -424,12 +453,16 @@ impl ProgressMessage {
                         // Не логируем как ошибку и не отправляем новое сообщение
                         return Ok(());
                     }
-                    
+
                     // Проверяем rate limiting
                     if let Some(retry_after_secs) = extract_retry_after(&error_str) {
-                        log::warn!("Rate limit hit when editing message: Retry after {}s. Waiting...", retry_after_secs);
+                        log::warn!(
+                            "Rate limit hit when editing message: Retry after {}s. Waiting...",
+                            retry_after_secs
+                        );
                         // Ждем указанное время + небольшая задержка для надежности
-                        tokio::time::sleep(tokio::time::Duration::from_secs(retry_after_secs + 1)).await;
+                        tokio::time::sleep(tokio::time::Duration::from_secs(retry_after_secs + 1))
+                            .await;
                         // Пробуем еще раз отредактировать
                         match bot
                             .edit_message_text(self.chat_id, msg_id, text.clone())
@@ -449,7 +482,7 @@ impl ProgressMessage {
                     } else {
                         log::warn!("Failed to edit message: {}. Trying to send new one.", e);
                     }
-                    
+
                     // Если не удалось отредактировать по другой причине, отправляем новое
                     let msg = bot
                         .send_message(self.chat_id, text)
@@ -471,36 +504,53 @@ impl ProgressMessage {
     }
 
     /// Очищает сообщение (оставляет только название) после указанной задержки.
-    /// 
+    ///
     /// Полезно для очистки деталей прогресса после успешной загрузки, оставляя только название файла.
-    /// 
+    ///
     /// # Arguments
-    /// 
+    ///
     /// * `bot` - Экземпляр Telegram бота
     /// * `delay_secs` - Задержка в секундах перед очисткой
     /// * `title` - Название файла для финального сообщения
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Возвращает `ResponseResult<()>` или ошибку при обновлении сообщения.
-    /// 
+    ///
     /// # Example
-    /// 
+    ///
     /// ```no_run
     /// use teloxide::prelude::*;
     /// use doradura::progress::ProgressMessage;
-    /// 
+    ///
     /// # async fn example(bot: Bot, mut progress: ProgressMessage) -> ResponseResult<()> {
     /// // Очистить сообщение через 10 секунд
     /// progress.clear_after(&bot, 10, "Test Song".to_string()).await?;
     /// # Ok(())
     /// # }
     /// ```
-    pub async fn clear_after(&mut self, bot: &Bot, delay_secs: u64, title: String, file_format: Option<String>) -> ResponseResult<()> {
+    pub async fn clear_after(
+        &mut self,
+        bot: &Bot,
+        delay_secs: u64,
+        title: String,
+        file_format: Option<String>,
+    ) -> ResponseResult<()> {
         if self.message_id.is_some() {
             tokio::time::sleep(tokio::time::Duration::from_secs(delay_secs)).await;
-            self.update(bot, DownloadStatus::Completed { title: title.clone(), file_format }).await?;
-            log::info!("Cleared progress message for chat {} after {} seconds", self.chat_id, delay_secs);
+            self.update(
+                bot,
+                DownloadStatus::Completed {
+                    title: title.clone(),
+                    file_format,
+                },
+            )
+            .await?;
+            log::info!(
+                "Cleared progress message for chat {} after {} seconds",
+                self.chat_id,
+                delay_secs
+            );
         }
         Ok(())
     }

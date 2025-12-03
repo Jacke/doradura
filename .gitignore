@@ -2,6 +2,8 @@
 /target
 TMP/
 app.log
+bot.log
+*.log
 database.sqlite
 # Local env
 .env
@@ -11,3 +13,10 @@ youtube_cookies.txt
 *_cookies.txt
 # Local Bot API server data
 bot-api-data/
+# Development artifacts
+backups/
+cursor/
+.cursor/
+# IDE
+.idea/
+.vscode/

@@ -2,7 +2,7 @@
 
 # 🎵 Doradura
 
-<img src="logo.webp" width="66%" height="200" alt="Doradura Logo">
+<img src="logo.webp" width="55%" height="350" alt="Doradura Logo">
 
 ### High-performance Telegram bot for downloading music and videos
 
