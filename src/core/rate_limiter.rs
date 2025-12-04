@@ -20,6 +20,12 @@ pub struct RateLimiter {
     vip_duration: Duration,
 }
 
+impl Default for RateLimiter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RateLimiter {
     /// Создает новый rate limiter с разными лимитами для разных планов.
     ///

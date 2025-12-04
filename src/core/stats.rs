@@ -87,10 +87,7 @@ pub async fn show_user_stats(
     db_pool: Arc<DbPool>,
 ) -> ResponseResult<Message> {
     let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            e.to_string(),
-        )))
+        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
     })?;
 
     let stats = match db::get_user_stats(&conn, chat_id.0) {
@@ -126,7 +123,7 @@ pub async fn show_user_stats(
                 count
             ));
         }
-        text.push_str("\n");
+        text.push('\n');
     }
 
     if !stats.top_formats.is_empty() {
@@ -146,7 +143,7 @@ pub async fn show_user_stats(
                 count
             ));
         }
-        text.push_str("\n");
+        text.push('\n');
     }
 
     if !stats.activity_by_day.is_empty() {
@@ -172,10 +169,7 @@ pub async fn show_global_stats(
     db_pool: Arc<DbPool>,
 ) -> ResponseResult<Message> {
     let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            e.to_string(),
-        )))
+        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
     })?;
 
     let stats = match db::get_global_stats(&conn) {
@@ -217,7 +211,7 @@ pub async fn show_global_stats(
                 count
             ));
         }
-        text.push_str("\n");
+        text.push('\n');
     }
 
     if !stats.top_formats.is_empty() {

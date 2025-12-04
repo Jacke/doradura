@@ -71,10 +71,7 @@ pub async fn show_main_menu(
     db_pool: Arc<DbPool>,
 ) -> ResponseResult<Message> {
     let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            e.to_string(),
-        )))
+        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
     })?;
     let format =
         db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
@@ -169,10 +166,7 @@ pub async fn show_download_type_menu(
     preview_msg_id: Option<MessageId>,
 ) -> ResponseResult<()> {
     let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            e.to_string(),
-        )))
+        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
     })?;
     let current_format =
         db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
@@ -302,10 +296,7 @@ pub async fn send_download_type_menu_as_new(
     preview_msg_id: Option<MessageId>,
 ) -> ResponseResult<()> {
     let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            e.to_string(),
-        )))
+        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
     })?;
     let current_format =
         db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
@@ -434,10 +425,7 @@ pub async fn show_video_quality_menu(
     url_id: Option<&str>,
 ) -> ResponseResult<()> {
     let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            e.to_string(),
-        )))
+        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
     })?;
     let current_quality =
         db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
@@ -565,10 +553,7 @@ pub async fn show_audio_bitrate_menu(
     url_id: Option<&str>,
 ) -> ResponseResult<()> {
     let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            e.to_string(),
-        )))
+        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
     })?;
     let current_bitrate =
         db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
@@ -724,10 +709,7 @@ async fn edit_main_menu(
     _preview_msg_id: Option<MessageId>,
 ) -> ResponseResult<()> {
     let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            e.to_string(),
-        )))
+        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
     })?;
     let format =
         db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
@@ -842,10 +824,7 @@ pub async fn send_main_menu_as_new(
     preview_msg_id: Option<MessageId>,
 ) -> ResponseResult<()> {
     let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            e.to_string(),
-        )))
+        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
     })?;
     let format =
         db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
@@ -994,10 +973,7 @@ pub async fn handle_menu_callback(
                     None
                 };
                 let preview_msg_id = if is_from_preview && parts.len() >= 5 {
-                    parts[4]
-                        .parse::<i32>()
-                        .ok()
-                        .map(|id| teloxide::types::MessageId(id))
+                    parts[4].parse::<i32>().ok().map(teloxide::types::MessageId)
                 } else {
                     None
                 };
@@ -1044,14 +1020,14 @@ pub async fn handle_menu_callback(
                     }
                     _ => {}
                 }
-            } else if data.starts_with("subscribe:") {
+            } else if let Some(plan) = data.strip_prefix("subscribe:") {
                 log::info!(
                     "🔔 Subscribe callback received: data={}, chat_id={}",
                     data,
                     chat_id.0
                 );
                 bot.answer_callback_query(callback_id.clone()).await?;
-                let plan = &data[10..]; // Remove "subscribe:" prefix
+                // Remove "subscribe:" prefix
                 log::info!("📌 Extracted plan: {}", plan);
                 match plan {
                     "premium" | "vip" => {
@@ -1087,9 +1063,9 @@ pub async fn handle_menu_callback(
                             .await?;
                     }
                 }
-            } else if data.starts_with("subscription:") {
+            } else if let Some(action) = data.strip_prefix("subscription:") {
                 bot.answer_callback_query(callback_id.clone()).await?;
-                let action = &data[13..]; // Remove "subscription:" prefix
+                // Remove "subscription:" prefix
                 match action {
                     "cancel" => {
                         // Отменяем подписку пользователя
@@ -1133,20 +1109,14 @@ pub async fn handle_menu_callback(
                             .await?;
                     }
                 }
-            } else if data.starts_with("quality:") {
+            } else if let Some(quality) = data.strip_prefix("quality:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
-                let quality = &data[8..]; // Remove "quality:" prefix
+                // Remove "quality:" prefix
                 let conn = db::get_connection(&db_pool).map_err(|e| {
-                    RequestError::from(std::sync::Arc::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        e.to_string(),
-                    )))
+                    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
                 db::set_user_video_quality(&conn, chat_id.0, quality).map_err(|e| {
-                    RequestError::from(std::sync::Arc::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        e.to_string(),
-                    )))
+                    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
 
                 // Get url_id from message context if available (check if we came from preview)
@@ -1160,10 +1130,7 @@ pub async fn handle_menu_callback(
             } else if data == "send_type:toggle" {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
                 let conn = db::get_connection(&db_pool).map_err(|e| {
-                    RequestError::from(std::sync::Arc::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        e.to_string(),
-                    )))
+                    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
 
                 // Получаем текущее значение и переключаем
@@ -1171,29 +1138,20 @@ pub async fn handle_menu_callback(
                 let new_value = if current_value == 0 { 1 } else { 0 };
 
                 db::set_user_send_as_document(&conn, chat_id.0, new_value).map_err(|e| {
-                    RequestError::from(std::sync::Arc::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        e.to_string(),
-                    )))
+                    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
 
                 // Обновляем меню
                 show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None)
                     .await?;
-            } else if data.starts_with("bitrate:") {
+            } else if let Some(bitrate) = data.strip_prefix("bitrate:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
-                let bitrate = &data[8..]; // Remove "bitrate:" prefix
+                // Remove "bitrate:" prefix
                 let conn = db::get_connection(&db_pool).map_err(|e| {
-                    RequestError::from(std::sync::Arc::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        e.to_string(),
-                    )))
+                    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
                 db::set_user_audio_bitrate(&conn, chat_id.0, bitrate).map_err(|e| {
-                    RequestError::from(std::sync::Arc::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        e.to_string(),
-                    )))
+                    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
 
                 // Update the menu to show new selection
@@ -1202,10 +1160,7 @@ pub async fn handle_menu_callback(
             } else if data == "audio_send_type:toggle" {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
                 let conn = db::get_connection(&db_pool).map_err(|e| {
-                    RequestError::from(std::sync::Arc::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        e.to_string(),
-                    )))
+                    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
 
                 // Получаем текущее значение и переключаем
@@ -1214,10 +1169,7 @@ pub async fn handle_menu_callback(
                 let new_value = if current_value == 0 { 1 } else { 0 };
 
                 db::set_user_send_audio_as_document(&conn, chat_id.0, new_value).map_err(|e| {
-                    RequestError::from(std::sync::Arc::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        e.to_string(),
-                    )))
+                    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
 
                 // Обновляем меню
@@ -1232,8 +1184,7 @@ pub async fn handle_menu_callback(
                     let url_id = parts[2];
 
                     let conn = db::get_connection(&db_pool).map_err(|e| {
-                        RequestError::from(std::sync::Arc::new(std::io::Error::new(
-                            std::io::ErrorKind::Other,
+                        RequestError::from(std::sync::Arc::new(std::io::Error::other(
                             e.to_string(),
                         )))
                     })?;
@@ -1261,52 +1212,56 @@ pub async fn handle_menu_callback(
                     );
 
                     db::set_user_send_as_document(&conn, chat_id.0, new_value).map_err(|e| {
-                        RequestError::from(std::sync::Arc::new(std::io::Error::new(
-                            std::io::ErrorKind::Other,
+                        RequestError::from(std::sync::Arc::new(std::io::Error::other(
                             e.to_string(),
                         )))
                     })?;
 
                     // Получаем текущую клавиатуру из сообщения и обновляем только toggle кнопку
-                    if let Some(msg) = q.message.as_ref() {
-                        if let teloxide::types::MaybeInaccessibleMessage::Regular(regular_msg) = msg
-                        {
-                            // Получаем текущую клавиатуру
-                            if let Some(keyboard) = regular_msg.reply_markup() {
-                                // Клонируем клавиатуру и обновляем toggle кнопку
-                                let mut new_buttons = keyboard.inline_keyboard.clone();
+                    if let Some(teloxide::types::MaybeInaccessibleMessage::Regular(regular_msg)) =
+                        q.message.as_ref()
+                    {
+                        // Получаем текущую клавиатуру
+                        if let Some(keyboard) = regular_msg.reply_markup() {
+                            // Клонируем клавиатуру и обновляем toggle кнопку
+                            let mut new_buttons = keyboard.inline_keyboard.clone();
 
-                                // Находим и обновляем toggle кнопку (ищем кнопку с callback video_send_type:toggle)
-                                for row in &mut new_buttons {
-                                    for button in row {
-                                        if let teloxide::types::InlineKeyboardButtonKind::CallbackData(ref cb_data) = button.kind {
-                                            if cb_data.starts_with("video_send_type:toggle:") {
-                                                // Обновляем текст кнопки
-                                                button.text = if new_value == 0 {
-                                                    "📹 Отправка: Media ✓".to_string()
-                                                } else {
-                                                    "📄 Отправка: Document ✓".to_string()
-                                                };
-                                                log::debug!("Updated toggle button text to: {}", button.text);
-                                            }
+                            // Находим и обновляем toggle кнопку (ищем кнопку с callback video_send_type:toggle)
+                            for row in &mut new_buttons {
+                                for button in row {
+                                    if let teloxide::types::InlineKeyboardButtonKind::CallbackData(
+                                        ref cb_data,
+                                    ) = button.kind
+                                    {
+                                        if cb_data.starts_with("video_send_type:toggle:") {
+                                            // Обновляем текст кнопки
+                                            button.text = if new_value == 0 {
+                                                "📹 Отправка: Media ✓".to_string()
+                                            } else {
+                                                "📄 Отправка: Document ✓".to_string()
+                                            };
+                                            log::debug!(
+                                                "Updated toggle button text to: {}",
+                                                button.text
+                                            );
                                         }
                                     }
                                 }
-
-                                // Обновляем только клавиатуру, не трогая текст и изображение
-                                let new_keyboard =
-                                    teloxide::types::InlineKeyboardMarkup::new(new_buttons);
-                                let _ = bot
-                                    .edit_message_reply_markup(chat_id, message_id)
-                                    .reply_markup(new_keyboard)
-                                    .await;
-
-                                log::info!(
-                                    "✅ Updated video preview keyboard for user {} (url_id: {})",
-                                    chat_id.0,
-                                    url_id
-                                );
                             }
+
+                            // Обновляем только клавиатуру, не трогая текст и изображение
+                            let new_keyboard =
+                                teloxide::types::InlineKeyboardMarkup::new(new_buttons);
+                            let _ = bot
+                                .edit_message_reply_markup(chat_id, message_id)
+                                .reply_markup(new_keyboard)
+                                .await;
+
+                            log::info!(
+                                "✅ Updated video preview keyboard for user {} (url_id: {})",
+                                chat_id.0,
+                                url_id
+                            );
                         }
                     }
                 }
@@ -1317,10 +1272,7 @@ pub async fn handle_menu_callback(
                     let parts: Vec<&str> = data.split(':').collect();
                     let url_id = parts[2];
                     let preview_msg_id = if parts.len() >= 4 {
-                        parts[3]
-                            .parse::<i32>()
-                            .ok()
-                            .map(|id| teloxide::types::MessageId(id))
+                        parts[3].parse::<i32>().ok().map(teloxide::types::MessageId)
                     } else {
                         None
                     };
@@ -1332,10 +1284,7 @@ pub async fn handle_menu_callback(
                                 Ok(url) => {
                                     let conn = db::get_connection(&db_pool).map_err(|e| {
                                         RequestError::from(std::sync::Arc::new(
-                                            std::io::Error::new(
-                                                std::io::ErrorKind::Other,
-                                                e.to_string(),
-                                            ),
+                                            std::io::Error::other(e.to_string()),
                                         ))
                                     })?;
                                     let current_format =
@@ -1402,10 +1351,7 @@ pub async fn handle_menu_callback(
                     let parts: Vec<&str> = data.split(':').collect();
                     let url_id = parts[3];
                     let preview_msg_id = if parts.len() >= 5 {
-                        parts[4]
-                            .parse::<i32>()
-                            .ok()
-                            .map(|id| teloxide::types::MessageId(id))
+                        parts[4].parse::<i32>().ok().map(teloxide::types::MessageId)
                     } else {
                         None
                     };
@@ -1455,25 +1401,16 @@ pub async fn handle_menu_callback(
                     None
                 };
                 let preview_msg_id = if is_from_preview && parts.len() >= 5 {
-                    parts[4]
-                        .parse::<i32>()
-                        .ok()
-                        .map(|id| teloxide::types::MessageId(id))
+                    parts[4].parse::<i32>().ok().map(teloxide::types::MessageId)
                 } else {
                     None
                 };
 
                 let conn = db::get_connection(&db_pool).map_err(|e| {
-                    RequestError::from(std::sync::Arc::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        e.to_string(),
-                    )))
+                    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
                 db::set_user_download_format(&conn, chat_id.0, format).map_err(|e| {
-                    RequestError::from(std::sync::Arc::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        e.to_string(),
-                    )))
+                    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
 
                 if is_from_preview && url_id.is_some() {
@@ -1603,10 +1540,7 @@ pub async fn handle_menu_callback(
                                     // Get user preferences for quality/bitrate and plan
                                     let conn = db::get_connection(&db_pool).map_err(|e| {
                                         RequestError::from(std::sync::Arc::new(
-                                            std::io::Error::new(
-                                                std::io::ErrorKind::Other,
-                                                e.to_string(),
-                                            ),
+                                            std::io::Error::other(e.to_string()),
                                         ))
                                     })?;
                                     let plan = match db::get_user(&conn, chat_id.0) {
@@ -1621,7 +1555,7 @@ pub async fn handle_menu_callback(
                                         {
                                             let remaining_seconds = remaining_time.as_secs();
                                             bot.answer_callback_query(callback_id)
-                                                .text(&format!(
+                                                .text(format!(
                                                     "Подожди {} секунд",
                                                     remaining_seconds
                                                 ))
@@ -1830,10 +1764,10 @@ pub async fn handle_menu_callback(
                     Arc::clone(&rate_limiter),
                 )
                 .await?;
-            } else if data.starts_with("export:") {
+            } else if let Some(format) = data.strip_prefix("export:") {
                 // Handle export callbacks
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
-                let format = &data[7..]; // Remove "export:" prefix
+                // Remove "export:" prefix
                 handle_export(&bot, chat_id, format, Arc::clone(&db_pool)).await?;
             } else if data.starts_with("admin:") {
                 // Handle admin panel callbacks
@@ -1853,9 +1787,9 @@ pub async fn handle_menu_callback(
                     return Ok(());
                 }
 
-                if data.starts_with("admin:user:") {
+                if let Some(user_id_str) = data.strip_prefix("admin:user:") {
                     // Показываем меню управления конкретным пользователем
-                    let user_id_str = &data[11..]; // Remove "admin:user:" prefix
+                    // Remove "admin:user:" prefix
 
                     if let Ok(user_id) = user_id_str.parse::<i64>() {
                         match db::get_connection(&db_pool) {
@@ -1930,7 +1864,7 @@ pub async fn handle_menu_callback(
                                                     expires_info
                                                 ),
                                             )
-                                            .parse_mode(teloxide::types::ParseMode::Markdown)
+                                            .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                                             .reply_markup(keyboard)
                                             .await;
                                     }
@@ -1980,7 +1914,7 @@ pub async fn handle_menu_callback(
                                                         plan_emoji, plan_name
                                                     ),
                                                 )
-                                                .parse_mode(teloxide::types::ParseMode::Markdown)
+                                                .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                                                 .await;
 
                                             let _ = bot
@@ -2063,7 +1997,7 @@ pub async fn handle_menu_callback(
                                             users.len()
                                         ),
                                     )
-                                    .parse_mode(teloxide::types::ParseMode::Markdown)
+                                    .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                                     .reply_markup(keyboard)
                                     .await;
                             }

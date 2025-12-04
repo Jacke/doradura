@@ -172,6 +172,12 @@ pub struct DownloadQueue {
     pub queue: Mutex<VecDeque<DownloadTask>>,
 }
 
+impl Default for DownloadQueue {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DownloadQueue {
     /// Создает новую пустую очередь.
     ///
@@ -299,7 +305,7 @@ impl DownloadQueue {
     /// ```
     pub async fn get_task(&self) -> Option<DownloadTask> {
         let mut queue = self.queue.lock().await;
-        if queue.len() != 0 {
+        if !queue.is_empty() {
             info!(
                 "Получаем задачу из очереди, размер: {}, приоритет: {:?}",
                 queue.len(),
@@ -427,6 +433,7 @@ mod tests {
         let task = DownloadTask::new(
             "http://example.com".to_string(),
             ChatId(123),
+            Some(12345),
             false,
             "mp3".to_string(),
             None,
@@ -451,6 +458,7 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             url: "http://example.com/old".to_string(),
             chat_id: ChatId(123),
+            message_id: Some(11111),
             is_video: false,
             format: "mp3".to_string(),
             video_quality: None,
@@ -461,6 +469,7 @@ mod tests {
         let new_task = DownloadTask::new(
             "http://example.com/new".to_string(),
             ChatId(456),
+            Some(22222),
             true,
             "mp4".to_string(),
             Some("1080p".to_string()),

@@ -139,7 +139,7 @@ fn migrate_schema(conn: &rusqlite::Connection) -> Result<()> {
     // Table exists, check if columns exist
     let mut stmt = conn.prepare("PRAGMA table_info(users)")?;
     let rows = stmt.query_map([], |row| {
-        Ok(row.get::<_, String>(1)?) // column name
+        row.get::<_, String>(1) // column name
     })?;
 
     let mut columns = Vec::new();
@@ -286,7 +286,7 @@ fn migrate_schema(conn: &rusqlite::Connection) -> Result<()> {
 pub fn create_user(conn: &DbConnection, telegram_id: i64, username: Option<String>) -> Result<()> {
     conn.execute(
         "INSERT INTO users (telegram_id, username, download_format, download_subtitles, video_quality, audio_bitrate, send_as_document, send_audio_as_document, telegram_charge_id) VALUES (?1, ?2, 'mp3', 0, 'best', '320k', 0, 0, NULL)",
-        &[&telegram_id as &dyn rusqlite::ToSql, &username as &dyn rusqlite::ToSql],
+        [&telegram_id as &dyn rusqlite::ToSql, &username as &dyn rusqlite::ToSql],
     )?;
     Ok(())
 }
@@ -304,7 +304,7 @@ pub fn create_user(conn: &DbConnection, telegram_id: i64, username: Option<Strin
 /// или ошибку базы данных.
 pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
     let mut stmt = conn.prepare("SELECT telegram_id, username, plan, download_format, download_subtitles, video_quality, audio_bitrate, send_as_document, send_audio_as_document, subscription_expires_at, telegram_charge_id FROM users WHERE telegram_id = ?")?;
-    let mut rows = stmt.query(&[&telegram_id as &dyn rusqlite::ToSql])?;
+    let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
 
     if let Some(row) = rows.next()? {
         let telegram_id: i64 = row.get(0)?;
@@ -351,7 +351,7 @@ pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
 pub fn update_user_plan(conn: &DbConnection, telegram_id: i64, plan: &str) -> Result<()> {
     conn.execute(
         "UPDATE users SET plan = ?1 WHERE telegram_id = ?2",
-        &[
+        [
             &plan as &dyn rusqlite::ToSql,
             &telegram_id as &dyn rusqlite::ToSql,
         ],
@@ -381,13 +381,13 @@ pub fn update_user_plan_with_expiry(
         // Устанавливаем дату окончания на N дней вперед от текущей даты
         conn.execute(
             "UPDATE users SET plan = ?1, subscription_expires_at = datetime('now', '+' || ?2 || ' days') WHERE telegram_id = ?3",
-            &[&plan as &dyn rusqlite::ToSql, &days_count as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
+            [&plan as &dyn rusqlite::ToSql, &days_count as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
         )?;
     } else {
         // Для free плана или бессрочных подписок, убираем дату окончания
         conn.execute(
             "UPDATE users SET plan = ?1, subscription_expires_at = NULL WHERE telegram_id = ?2",
-            &[
+            [
                 &plan as &dyn rusqlite::ToSql,
                 &telegram_id as &dyn rusqlite::ToSql,
             ],
@@ -435,7 +435,7 @@ pub fn expire_old_subscriptions(conn: &DbConnection) -> Result<usize> {
 pub fn log_request(conn: &DbConnection, user_id: i64, request_text: &str) -> Result<()> {
     conn.execute(
         "INSERT INTO request_history (user_id, request_text) VALUES (?1, ?2)",
-        &[
+        [
             &user_id as &dyn rusqlite::ToSql,
             &request_text as &dyn rusqlite::ToSql,
         ],
@@ -456,7 +456,7 @@ pub fn log_request(conn: &DbConnection, user_id: i64, request_text: &str) -> Res
 /// если пользователь не найден или произошла ошибка.
 pub fn get_user_download_format(conn: &DbConnection, telegram_id: i64) -> Result<String> {
     let mut stmt = conn.prepare("SELECT download_format FROM users WHERE telegram_id = ?")?;
-    let mut rows = stmt.query(&[&telegram_id as &dyn rusqlite::ToSql])?;
+    let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
 
     if let Some(row) = rows.next()? {
         Ok(row.get(0)?)
@@ -479,7 +479,7 @@ pub fn get_user_download_format(conn: &DbConnection, telegram_id: i64) -> Result
 pub fn set_user_download_format(conn: &DbConnection, telegram_id: i64, format: &str) -> Result<()> {
     conn.execute(
         "UPDATE users SET download_format = ?1 WHERE telegram_id = ?2",
-        &[
+        [
             &format as &dyn rusqlite::ToSql,
             &telegram_id as &dyn rusqlite::ToSql,
         ],
@@ -499,7 +499,7 @@ pub fn set_user_download_format(conn: &DbConnection, telegram_id: i64, format: &
 /// Возвращает `true` если загрузка субтитров включена, `false` если отключена или пользователь не найден.
 pub fn get_user_download_subtitles(conn: &DbConnection, telegram_id: i64) -> Result<bool> {
     let mut stmt = conn.prepare("SELECT download_subtitles FROM users WHERE telegram_id = ?")?;
-    let mut rows = stmt.query(&[&telegram_id as &dyn rusqlite::ToSql])?;
+    let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
 
     if let Some(row) = rows.next()? {
         let subtitles: i32 = row.get(0)?;
@@ -528,7 +528,7 @@ pub fn set_user_download_subtitles(
     let value = if enabled { 1 } else { 0 };
     conn.execute(
         "UPDATE users SET download_subtitles = ?1 WHERE telegram_id = ?2",
-        &[
+        [
             &value as &dyn rusqlite::ToSql,
             &telegram_id as &dyn rusqlite::ToSql,
         ],
@@ -548,7 +548,7 @@ pub fn set_user_download_subtitles(
 /// Возвращает качество видео ("best", "1080p", "720p", "480p", "360p") или "best" по умолчанию.
 pub fn get_user_video_quality(conn: &DbConnection, telegram_id: i64) -> Result<String> {
     let mut stmt = conn.prepare("SELECT video_quality FROM users WHERE telegram_id = ?")?;
-    let mut rows = stmt.query(&[&telegram_id as &dyn rusqlite::ToSql])?;
+    let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
 
     if let Some(row) = rows.next()? {
         Ok(row.get(0).unwrap_or_else(|_| "best".to_string()))
@@ -571,7 +571,7 @@ pub fn get_user_video_quality(conn: &DbConnection, telegram_id: i64) -> Result<S
 pub fn set_user_video_quality(conn: &DbConnection, telegram_id: i64, quality: &str) -> Result<()> {
     conn.execute(
         "UPDATE users SET video_quality = ?1 WHERE telegram_id = ?2",
-        &[
+        [
             &quality as &dyn rusqlite::ToSql,
             &telegram_id as &dyn rusqlite::ToSql,
         ],
@@ -592,7 +592,7 @@ pub fn set_user_video_quality(conn: &DbConnection, telegram_id: i64, quality: &s
 /// По умолчанию возвращает 0 (Media).
 pub fn get_user_send_as_document(conn: &DbConnection, telegram_id: i64) -> Result<i32> {
     let mut stmt = conn.prepare("SELECT send_as_document FROM users WHERE telegram_id = ?")?;
-    let mut rows = stmt.query(&[&telegram_id as &dyn rusqlite::ToSql])?;
+    let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
 
     if let Some(row) = rows.next()? {
         Ok(row.get(0).unwrap_or(0))
@@ -619,7 +619,7 @@ pub fn set_user_send_as_document(
 ) -> Result<()> {
     conn.execute(
         "UPDATE users SET send_as_document = ?1 WHERE telegram_id = ?2",
-        &[
+        [
             &send_as_document as &dyn rusqlite::ToSql,
             &telegram_id as &dyn rusqlite::ToSql,
         ],
@@ -641,7 +641,7 @@ pub fn set_user_send_as_document(
 pub fn get_user_send_audio_as_document(conn: &DbConnection, telegram_id: i64) -> Result<i32> {
     let mut stmt =
         conn.prepare("SELECT send_audio_as_document FROM users WHERE telegram_id = ?")?;
-    let mut rows = stmt.query(&[&telegram_id as &dyn rusqlite::ToSql])?;
+    let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
 
     if let Some(row) = rows.next()? {
         Ok(row.get(0).unwrap_or(0))
@@ -668,7 +668,7 @@ pub fn set_user_send_audio_as_document(
 ) -> Result<()> {
     conn.execute(
         "UPDATE users SET send_audio_as_document = ?1 WHERE telegram_id = ?2",
-        &[
+        [
             &send_audio_as_document as &dyn rusqlite::ToSql,
             &telegram_id as &dyn rusqlite::ToSql,
         ],
@@ -688,7 +688,7 @@ pub fn set_user_send_audio_as_document(
 /// Возвращает битрейт аудио ("128k", "192k", "256k", "320k") или "320k" по умолчанию.
 pub fn get_user_audio_bitrate(conn: &DbConnection, telegram_id: i64) -> Result<String> {
     let mut stmt = conn.prepare("SELECT audio_bitrate FROM users WHERE telegram_id = ?")?;
-    let mut rows = stmt.query(&[&telegram_id as &dyn rusqlite::ToSql])?;
+    let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
 
     if let Some(row) = rows.next()? {
         Ok(row.get(0).unwrap_or_else(|_| "320k".to_string()))
@@ -711,7 +711,7 @@ pub fn get_user_audio_bitrate(conn: &DbConnection, telegram_id: i64) -> Result<S
 pub fn set_user_audio_bitrate(conn: &DbConnection, telegram_id: i64, bitrate: &str) -> Result<()> {
     conn.execute(
         "UPDATE users SET audio_bitrate = ?1 WHERE telegram_id = ?2",
-        &[
+        [
             &bitrate as &dyn rusqlite::ToSql,
             &telegram_id as &dyn rusqlite::ToSql,
         ],
@@ -756,7 +756,7 @@ pub fn save_download_history(
 ) -> Result<()> {
     conn.execute(
         "INSERT INTO download_history (user_id, url, title, format) VALUES (?1, ?2, ?3, ?4)",
-        &[
+        [
             &telegram_id as &dyn rusqlite::ToSql,
             &url as &dyn rusqlite::ToSql,
             &title as &dyn rusqlite::ToSql,
@@ -788,7 +788,7 @@ pub fn get_download_history(
          WHERE user_id = ? ORDER BY downloaded_at DESC LIMIT ?",
     )?;
     let rows = stmt.query_map(
-        &[
+        [
             &telegram_id as &dyn rusqlite::ToSql,
             &limit as &dyn rusqlite::ToSql,
         ],
@@ -829,7 +829,7 @@ pub fn delete_download_history_entry(
 ) -> Result<bool> {
     let rows_affected = conn.execute(
         "DELETE FROM download_history WHERE id = ?1 AND user_id = ?2",
-        &[
+        [
             &entry_id as &dyn rusqlite::ToSql,
             &telegram_id as &dyn rusqlite::ToSql,
         ],
@@ -859,7 +859,7 @@ pub fn get_download_history_entry(
          WHERE id = ?1 AND user_id = ?2",
     )?;
     let mut rows = stmt.query_map(
-        &[
+        [
             &entry_id as &dyn rusqlite::ToSql,
             &telegram_id as &dyn rusqlite::ToSql,
         ],
@@ -897,7 +897,7 @@ pub fn get_user_stats(conn: &DbConnection, telegram_id: i64) -> Result<UserStats
     // Общее количество загрузок
     let total_downloads: i64 = conn.query_row(
         "SELECT COUNT(*) FROM download_history WHERE user_id = ?",
-        &[&telegram_id as &dyn rusqlite::ToSql],
+        [&telegram_id as &dyn rusqlite::ToSql],
         |row| row.get(0),
     )?;
 
@@ -910,7 +910,7 @@ pub fn get_user_stats(conn: &DbConnection, telegram_id: i64) -> Result<UserStats
                 ELSE 1000000
             END)
         FROM download_history WHERE user_id = ?",
-        &[&telegram_id as &dyn rusqlite::ToSql],
+        [&telegram_id as &dyn rusqlite::ToSql],
         |row| row.get::<_, Option<i64>>(0),
     ) {
         Ok(Some(size)) => size,
@@ -921,7 +921,7 @@ pub fn get_user_stats(conn: &DbConnection, telegram_id: i64) -> Result<UserStats
     // Количество дней активности
     let active_days: i64 = conn.query_row(
         "SELECT COUNT(DISTINCT DATE(downloaded_at)) FROM download_history WHERE user_id = ?",
-        &[&telegram_id as &dyn rusqlite::ToSql],
+        [&telegram_id as &dyn rusqlite::ToSql],
         |row| row.get(0),
     )?;
 
@@ -929,8 +929,8 @@ pub fn get_user_stats(conn: &DbConnection, telegram_id: i64) -> Result<UserStats
     let mut stmt = conn.prepare(
         "SELECT title FROM download_history WHERE user_id = ? ORDER BY downloaded_at DESC LIMIT 100"
     )?;
-    let rows = stmt.query_map(&[&telegram_id as &dyn rusqlite::ToSql], |row| {
-        Ok(row.get::<_, String>(0)?)
+    let rows = stmt.query_map([&telegram_id as &dyn rusqlite::ToSql], |row| {
+        row.get::<_, String>(0)
     })?;
 
     let mut artist_counts: std::collections::HashMap<String, i64> =
@@ -956,7 +956,7 @@ pub fn get_user_stats(conn: &DbConnection, telegram_id: i64) -> Result<UserStats
         "SELECT format, COUNT(*) as cnt FROM download_history
          WHERE user_id = ? GROUP BY format ORDER BY cnt DESC LIMIT 5",
     )?;
-    let rows = stmt.query_map(&[&telegram_id as &dyn rusqlite::ToSql], |row| {
+    let rows = stmt.query_map([&telegram_id as &dyn rusqlite::ToSql], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
     })?;
 
@@ -975,7 +975,7 @@ pub fn get_user_stats(conn: &DbConnection, telegram_id: i64) -> Result<UserStats
          GROUP BY DATE(downloaded_at)
          ORDER BY day DESC",
     )?;
-    let rows = stmt.query_map(&[&telegram_id as &dyn rusqlite::ToSql], |row| {
+    let rows = stmt.query_map([&telegram_id as &dyn rusqlite::ToSql], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
     })?;
 
@@ -1069,7 +1069,7 @@ pub fn get_all_download_history(
         "SELECT id, url, title, format, downloaded_at FROM download_history
          WHERE user_id = ? ORDER BY downloaded_at DESC",
     )?;
-    let rows = stmt.query_map(&[&telegram_id as &dyn rusqlite::ToSql], |row| {
+    let rows = stmt.query_map([&telegram_id as &dyn rusqlite::ToSql], |row| {
         Ok(DownloadHistoryEntry {
             id: row.get(0)?,
             url: row.get(1)?,
@@ -1139,6 +1139,7 @@ pub struct TaskQueueEntry {
 }
 
 /// Сохраняет задачу в очередь БД
+#[allow(clippy::too_many_arguments)]
 pub fn save_task_to_queue(
     conn: &DbConnection,
     task_id: &str,
@@ -1158,7 +1159,7 @@ pub fn save_task_to_queue(
          updated_at = CURRENT_TIMESTAMP,
          retry_count = 0,
          error_message = NULL",
-        &[
+        [
             &task_id as &dyn rusqlite::ToSql,
             &user_id as &dyn rusqlite::ToSql,
             &url as &dyn rusqlite::ToSql,
@@ -1181,7 +1182,7 @@ pub fn update_task_status(
 ) -> Result<()> {
     conn.execute(
         "UPDATE task_queue SET status = ?1, error_message = ?2, updated_at = CURRENT_TIMESTAMP WHERE id = ?3",
-        &[
+        [
             &status as &dyn rusqlite::ToSql,
             &error_message as &dyn rusqlite::ToSql,
             &task_id as &dyn rusqlite::ToSql,
@@ -1199,7 +1200,7 @@ pub fn mark_task_failed(conn: &DbConnection, task_id: &str, error_message: &str)
              retry_count = retry_count + 1,
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?2",
-        &[
+        [
             &error_message as &dyn rusqlite::ToSql,
             &task_id as &dyn rusqlite::ToSql,
         ],
@@ -1215,7 +1216,7 @@ pub fn get_failed_tasks(conn: &DbConnection, max_retries: i32) -> Result<Vec<Tas
          WHERE status = 'failed' AND retry_count < ?1
          ORDER BY priority DESC, created_at ASC"
     )?;
-    let rows = stmt.query_map(&[&max_retries as &dyn rusqlite::ToSql], |row| {
+    let rows = stmt.query_map([&max_retries as &dyn rusqlite::ToSql], |row| {
         Ok(TaskQueueEntry {
             id: row.get(0)?,
             user_id: row.get(1)?,
@@ -1246,7 +1247,7 @@ pub fn get_task_by_id(conn: &DbConnection, task_id: &str) -> Result<Option<TaskQ
         "SELECT id, user_id, url, format, is_video, video_quality, audio_bitrate, priority, status, error_message, retry_count, created_at, updated_at
          FROM task_queue WHERE id = ?1"
     )?;
-    let mut rows = stmt.query_map(&[&task_id as &dyn rusqlite::ToSql], |row| {
+    let mut rows = stmt.query_map([&task_id as &dyn rusqlite::ToSql], |row| {
         Ok(TaskQueueEntry {
             id: row.get(0)?,
             user_id: row.get(1)?,
@@ -1275,7 +1276,7 @@ pub fn get_task_by_id(conn: &DbConnection, task_id: &str) -> Result<Option<TaskQ
 pub fn mark_task_completed(conn: &DbConnection, task_id: &str) -> Result<()> {
     conn.execute(
         "UPDATE task_queue SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
-        &[&task_id as &dyn rusqlite::ToSql],
+        [&task_id as &dyn rusqlite::ToSql],
     )?;
     Ok(())
 }
@@ -1284,7 +1285,7 @@ pub fn mark_task_completed(conn: &DbConnection, task_id: &str) -> Result<()> {
 pub fn mark_task_processing(conn: &DbConnection, task_id: &str) -> Result<()> {
     conn.execute(
         "UPDATE task_queue SET status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
-        &[&task_id as &dyn rusqlite::ToSql],
+        [&task_id as &dyn rusqlite::ToSql],
     )?;
     Ok(())
 }
@@ -1307,7 +1308,7 @@ pub fn update_telegram_charge_id(
 ) -> Result<()> {
     conn.execute(
         "UPDATE users SET telegram_charge_id = ?1 WHERE telegram_id = ?2",
-        &[
+        [
             &charge_id as &dyn rusqlite::ToSql,
             &telegram_id as &dyn rusqlite::ToSql,
         ],

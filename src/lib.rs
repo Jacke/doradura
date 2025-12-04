@@ -8,6 +8,9 @@
 //!
 //! - `core`: Core utilities, configuration, errors, and common features
 //! - `storage`: Database, cache, and backup functionality
+
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::manual_flatten)]
 //! - `download`: Download management and processing
 //! - `telegram`: Telegram bot integration and handlers
 

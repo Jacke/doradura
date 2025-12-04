@@ -733,7 +733,7 @@ async fn get_metadata_from_ytdlp(url: &Url) -> Result<(String, String), AppError
     // Получаем title используя async команду с таймаутом
     let title_output = timeout(
         config::download::ytdlp_timeout(),
-        TokioCommand::new(&ytdl_bin).args(&args).output(),
+        TokioCommand::new(ytdl_bin).args(&args).output(),
     )
     .await
     .map_err(|_| {
@@ -741,7 +741,7 @@ async fn get_metadata_from_ytdlp(url: &Url) -> Result<(String, String), AppError
             "yt-dlp command timed out after {} seconds",
             config::download::YTDLP_TIMEOUT_SECS
         );
-        AppError::Download(format!("yt-dlp command timed out"))
+        AppError::Download("yt-dlp command timed out".to_string())
     })?
     .map_err(|e| {
         log::error!("Failed to execute {}: {}", ytdl_bin, e);
@@ -785,9 +785,9 @@ async fn get_metadata_from_ytdlp(url: &Url) -> Result<(String, String), AppError
     // Проверяем что название не пустое
     if title.is_empty() {
         log::error!("yt-dlp returned empty title for URL: {}", url);
-        return Err(AppError::Download(format!(
-            "Failed to get video title. Video might be unavailable or private."
-        )));
+        return Err(AppError::Download(
+            "Failed to get video title. Video might be unavailable or private.".to_string(),
+        ));
     }
 
     log::info!("Successfully got metadata from yt-dlp: title='{}'", title);
@@ -814,7 +814,7 @@ async fn get_metadata_from_ytdlp(url: &Url) -> Result<(String, String), AppError
 
     let artist_output = timeout(
         config::download::ytdlp_timeout(),
-        TokioCommand::new(&ytdl_bin).args(&artist_args).output(),
+        TokioCommand::new(ytdl_bin).args(&artist_args).output(),
     )
     .await
     .ok(); // Не критично, игнорируем ошибки таймаута
@@ -850,7 +850,7 @@ async fn get_metadata_from_ytdlp(url: &Url) -> Result<(String, String), AppError
 
         let uploader_output = timeout(
             config::download::ytdlp_timeout(),
-            TokioCommand::new(&ytdl_bin).args(&uploader_args).output(),
+            TokioCommand::new(ytdl_bin).args(&uploader_args).output(),
         )
         .await
         .ok();
@@ -1112,7 +1112,7 @@ fn download_audio_file(url: &Url, download_path: &str) -> Result<Option<u32>, Ap
         "-acodec libmp3lame -b:a 320k",
         url.as_str(),
     ];
-    let mut child = spawn_downloader_with_fallback(&ytdl_bin, &args)?;
+    let mut child = spawn_downloader_with_fallback(ytdl_bin, &args)?;
     let status = child
         .wait()
         .map_err(|e| AppError::Download(format!("downloader process failed: {}", e)))?;
@@ -1972,7 +1972,7 @@ where
                 );
                 let error_msg = match file_type {
                     "video" => format!("У меня не получилось отправить тебе видео 🥲 попробуй как-нибудь позже. Все {} попытки не удались: {}", max_attempts, e),
-                    _ => format!("Failed to send {} file after {} attempts: {}", file_type, max_attempts, e.to_string()),
+                    _ => format!("Failed to send {} file after {} attempts: {}", file_type, max_attempts, e),
                 };
                 return Err(AppError::Download(error_msg));
             }
@@ -1994,8 +1994,6 @@ async fn send_audio_with_retry(
     title: &str,
     send_as_document: bool,
 ) -> Result<(), AppError> {
-    let duration = duration; // Capture duration for closure
-
     if send_as_document {
         log::info!("User preference: sending audio as document");
         send_file_with_retry(
@@ -3171,7 +3169,7 @@ pub async fn download_and_send_subtitles(
                 command_str
             );
 
-            let mut child = spawn_downloader_with_fallback(&ytdl_bin, &args)?;
+            let mut child = spawn_downloader_with_fallback(ytdl_bin, &args)?;
             let status = child
                 .wait()
                 .map_err(|e| AppError::Download(format!("downloader process failed: {}", e)))?;
@@ -3184,7 +3182,7 @@ pub async fn download_and_send_subtitles(
             }
 
             // Check if file exists
-            if !fs::metadata(&download_path).is_ok() {
+            if fs::metadata(&download_path).is_err() {
                 // Try to find the actual filename that was downloaded
                 let parent_dir = shellexpand::tilde("~/downloads/").into_owned();
                 let dir_entries = fs::read_dir(&parent_dir).map_err(|e| {
@@ -3211,7 +3209,7 @@ pub async fn download_and_send_subtitles(
                             AppError::Download(format!("Failed to send document: {}", e))
                         })?;
                 } else {
-                    return Err(AppError::Download(format!("Subtitle file not found")));
+                    return Err(AppError::Download("Subtitle file not found".to_string()));
                 }
             } else {
                 // Send the file
