@@ -3,7 +3,6 @@ use dotenvy::dotenv;
 use dptree::di::DependencyMap;
 use rand::Rng;
 use reqwest::ClientBuilder;
-use shellexpand;
 use simplelog::*;
 use std::fs::read_to_string;
 use std::fs::File;
@@ -249,7 +248,7 @@ async fn main() -> Result<()> {
 
     // Get bot information to check mentions
     let bot_info = bot.get_me().await?;
-    let bot_username = bot_info.username.as_ref().map(|s| s.as_str());
+    let bot_username = bot_info.username.as_deref();
     let bot_id = bot_info.id;
     log::info!("Bot username: {:?}, Bot ID: {}", bot_username, bot_id);
 
@@ -423,7 +422,7 @@ async fn main() -> Result<()> {
                                                 );
 
                                                 let _ = bot.send_message(msg.chat.id, message)
-                                                    .parse_mode(teloxide::types::ParseMode::Markdown)
+                                                    .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                                                     .await;
 
                                                 log::info!("User {} requested upgrade to {}", msg.chat.id, plan);
@@ -989,7 +988,7 @@ async fn main() -> Result<()> {
                                                                 users.len()
                                                             )
                                                         )
-                                                        .parse_mode(ParseMode::Markdown)
+                                                        .parse_mode(ParseMode::MarkdownV2)
                                                         .reply_markup(keyboard)
                                                         .await;
                                                     }
@@ -1531,7 +1530,7 @@ async fn recover_failed_tasks(queue: &Arc<DownloadQueue>, db_pool: &Arc<db::DbPo
                                 } else {
                                     e.clone()
                                 };
-                                preview.replace('\n', " ").replace('\r', " ")
+                                preview.replace(['\n', '\r'], " ")
                             })
                             .unwrap_or_else(|| "No error message".to_string());
 
@@ -1833,7 +1832,7 @@ mod tests {
             .expect("Should retrieve task from non-empty queue");
         assert_eq!(retrieved_task.url, "http://example.com/video.mp4");
         assert_eq!(retrieved_task.chat_id, teloxide::types::ChatId(123456789));
-        assert_eq!(retrieved_task.is_video, true);
+        assert!(retrieved_task.is_video);
     }
 
     #[tokio::test]
@@ -1897,7 +1896,7 @@ mod tests {
             first_retrieved_task.chat_id,
             teloxide::types::ChatId(111111111)
         );
-        assert_eq!(first_retrieved_task.is_video, false);
+        assert!(!first_retrieved_task.is_video);
 
         let second_retrieved_task = queue
             .get_task()
@@ -1908,7 +1907,7 @@ mod tests {
             second_retrieved_task.chat_id,
             teloxide::types::ChatId(111111111)
         );
-        assert_eq!(second_retrieved_task.is_video, true);
+        assert!(second_retrieved_task.is_video);
 
         // After retrieving all tasks, the queue should be empty
         assert!(queue.queue.lock().await.is_empty());

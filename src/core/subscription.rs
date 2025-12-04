@@ -76,10 +76,7 @@ pub async fn show_subscription_info(
     db_pool: Arc<DbPool>,
 ) -> ResponseResult<Message> {
     let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            e.to_string(),
-        )))
+        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
     })?;
 
     let user = match db::get_user(&conn, chat_id.0) {
@@ -92,10 +89,7 @@ pub async fn show_subscription_info(
             // Пробуем получить снова
             db::get_user(&conn, chat_id.0)
                 .map_err(|e| {
-                    RequestError::from(std::sync::Arc::new(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        e.to_string(),
-                    )))
+                    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?
                 .unwrap_or_else(|| {
                     // Fallback к free плану
@@ -117,7 +111,7 @@ pub async fn show_subscription_info(
         Err(e) => {
             log::error!("Failed to get user: {}", e);
             return Err(RequestError::from(std::sync::Arc::new(
-                std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+                std::io::Error::other(e.to_string()),
             )));
         }
     };
@@ -138,7 +132,7 @@ pub async fn show_subscription_info(
         _ => "Free",
     };
 
-    let mut text = format!("💳 *Информация о подписке*\n\n");
+    let mut text = "💳 *Информация о подписке*\n\n".to_string();
     text.push_str(&format!(
         "📊 *Твой текущий план:* {} {}\n",
         plan_emoji, plan_name
@@ -159,11 +153,11 @@ pub async fn show_subscription_info(
         };
         text.push_str(&format!("📅 *Действует до:* {}\n\n", formatted_date));
     } else {
-        text.push_str(&format!("📅 *Действует до:* бессрочно\n\n"));
+        text.push_str("📅 *Действует до:* бессрочно\n\n");
     }
 
     text.push_str("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n");
-    text.push_str(&format!("*Твои лимиты:*\n"));
+    text.push_str("*Твои лимиты:*\n");
     text.push_str(&format!(
         "⏱️ Интервал между запросами: {} сек\n",
         limits.rate_limit_seconds
@@ -442,10 +436,7 @@ pub async fn handle_successful_payment(
 
             // Сохраняем telegram_charge_id для управления подпиской
             let conn = db::get_connection(&db_pool).map_err(|e| {
-                RequestError::from(std::sync::Arc::new(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                )))
+                RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
             })?;
 
             // Сохраняем charge_id из платежа (конвертируем в строку)

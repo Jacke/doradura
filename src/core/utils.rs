@@ -167,7 +167,7 @@ pub fn pluralize_seconds(n: u64) -> &'static str {
     let n_mod_10 = n % 10;
 
     // Исключения: 11, 12, 13, 14 - всегда "секунд"
-    if n_mod_100 >= 11 && n_mod_100 <= 14 {
+    if (11..=14).contains(&n_mod_100) {
         return "секунд";
     }
 

@@ -3,7 +3,6 @@ use std::env;
 use std::time::Duration;
 
 /// Configuration constants for the bot
-
 /// Cached yt-dlp binary path
 /// Read once at startup from YTDL_BIN environment variable or defaults to "yt-dlp"
 pub static YTDL_BIN: Lazy<String> =
