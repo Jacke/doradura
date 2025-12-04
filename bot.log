@@ -1,0 +1,116 @@
+15:11:48 [INFO] Starting bot...
+15:11:48 [INFO] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+15:11:48 [INFO] 🍪 Cookies Configuration Check
+15:11:48 [INFO] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+15:11:48 [WARN] ⚠️  YTDL_COOKIES_FILE: not set
+15:11:48 [WARN] ⚠️  YTDL_COOKIES_BROWSER: not set
+15:11:48 [ERROR] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+15:11:48 [ERROR] ❌ NO COOKIES CONFIGURED - YouTube downloads will FAIL!
+15:11:48 [ERROR] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+15:11:48 [ERROR] 
+15:11:48 [ERROR] Quick fix:
+15:11:48 [ERROR] 
+15:11:48 [ERROR] 💡 Option 1: Automatic extraction (Linux/Windows):
+15:11:48 [ERROR]   1. Login to YouTube in browser
+15:11:48 [ERROR]   2. Install: pip3 install keyring pycryptodomex
+15:11:48 [ERROR]   3. Set: export YTDL_COOKIES_BROWSER=chrome
+15:11:48 [ERROR]   4. Restart bot
+15:11:48 [ERROR] 
+15:11:48 [ERROR] 💡 Option 2: Export to file (macOS recommended):
+15:11:48 [ERROR]   1. Export cookies to youtube_cookies.txt
+15:11:48 [ERROR]   2. Set: export YTDL_COOKIES_FILE=youtube_cookies.txt
+15:11:48 [ERROR]   3. Or run: ./run_with_cookies.sh
+15:11:48 [ERROR] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+15:11:48 [INFO] Checking yt-dlp version...
+15:11:48 [INFO] Current yt-dlp version: 2025.10.22
+15:11:48 [INFO] Checking for yt-dlp updates...
+15:12:15 [INFO] yt-dlp is installed via pip. Attempting to update via pip...
+15:12:15 [DEBUG] (1) doradura::ytdlp: Trying to update yt-dlp via pip3...
+15:12:16 [DEBUG] (1) doradura::ytdlp: pip3 update failed: pip3 failed with exit code Some(1): error: externally-managed-environment
+
+× This environment is externally managed
+╰─> To install Python packages system-wide, try brew install
+    xyz, where xyz is the package you are trying to
+    install.
+    
+    If you wish to install a Python library that isn't in Homebrew,
+    use a virtual environment:
+    
+    python3 -m venv path/to/venv
+    source path/to/venv/bin/activate
+    python3 -m pip install xyz
+    
+    If you wish to install a Python application that isn't in Homebrew,
+    it may be easiest to use 'pipx install xyz', which will manage a
+    virtual environment for you. You can install pipx with
+    
+    brew install pipx
+    
+    You may restore the old behavior of pip by passing
+    the '--break-system-packages' flag to pip, or by adding
+    'break-system-packages = true' to your pip.conf file. The latter
+    will permanently disable this error.
+    
+    If you disable this error, we STRONGLY recommend that you additionally
+    pass the '--user' flag to pip, or set 'user = true' in your pip.conf
+    file. Failure to do this can result in a broken Homebrew installation.
+    
+    Read more about this behavior here: <https://peps.python.org/pep-0668/>
+
+note: If you believe this is a mistake, please contact your Python installation or OS distribution provider. You can override this, at the risk of breaking your Python installation or OS, by passing --break-system-packages.
+hint: See PEP 668 for the detailed specification.
+
+15:12:16 [DEBUG] (1) doradura::ytdlp: Trying to update yt-dlp via pip...
+15:12:16 [DEBUG] (1) doradura::ytdlp: pip command error: No such file or directory (os error 2)
+15:12:16 [WARN] Failed to update yt-dlp via pip/pip3. Last error: pip command not found or failed to execute: No such file or directory (os error 2). You may need to run 'pip install --upgrade yt-dlp' or 'pip3 install --upgrade yt-dlp' manually (may require sudo).
+15:12:16 [DEBUG] (1) reqwest::connect: starting new connection: https://api.telegram.org/
+15:12:26 [INFO] Bot username: Some("DoraDuraDoraDuraBot"), Bot ID: 6310079371
+15:12:26 [INFO] Starting bot in long polling mode
+15:12:26 [INFO] Created backup: backups/20251114_151226_database.sqlite
+15:12:26 [INFO] Automatic backup created: backups/20251114_151226_database.sqlite
+15:12:26 [DEBUG] (15) teloxide::dispatching::dispatcher: hinting allowed updates: [CallbackQuery, Message, PreCheckoutQuery]
+15:12:26 [DEBUG] (15) doradura::commands: handle_message: "https://youtu.be/MCQlzqdldi4?list=RDMCQlzqdldi4"
+15:12:26 [DEBUG] (15) doradura::preview: Getting preview metadata for URL: https://youtu.be/MCQlzqdldi4
+15:12:26 [WARN] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+15:12:26 [WARN] ⚠️  NO COOKIES CONFIGURED!
+15:12:26 [WARN] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+15:12:26 [WARN] YouTube downloads will fail with 'bot detection' or 'only images' errors!
+15:12:26 [WARN] 
+15:12:26 [WARN] 🍎 macOS USERS:
+15:12:26 [WARN]    Browser cookie extraction requires Full Disk Access.
+15:12:26 [WARN]    It's MUCH EASIER to export cookies to a file!
+15:12:26 [WARN] 
+15:12:26 [WARN]    📖 See: MACOS_COOKIES_FIX.md for step-by-step guide
+15:12:26 [WARN] 
+15:12:26 [WARN]    Quick fix:
+15:12:26 [WARN]    1. Install Chrome extension: Get cookies.txt LOCALLY
+15:12:26 [WARN]    2. Go to youtube.com → login
+15:12:26 [WARN]    3. Click extension → Export → save as youtube_cookies.txt
+15:12:26 [WARN]    4. Run: ./run_with_cookies.sh
+15:12:26 [WARN] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+15:12:26 [INFO] [DEBUG] yt-dlp command for preview metadata (JSON): yt-dlp --dump-json --no-playlist --socket-timeout 30 --retries 2 https://youtu.be/MCQlzqdldi4
+15:12:49 [DEBUG] (10) doradura::preview: Artist is empty or 'NA' in preview, trying to get channel/uploader
+15:12:49 [INFO] Using uploader/channel as artist in preview: 'The Tonight Show Starring Jimmy Fallon'
+15:12:49 [WARN] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+15:12:49 [WARN] ⚠️  NO COOKIES CONFIGURED!
+15:12:49 [WARN] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+15:12:49 [WARN] YouTube downloads will fail with 'bot detection' or 'only images' errors!
+15:12:49 [WARN] 
+15:12:49 [WARN] 🍎 macOS USERS:
+15:12:49 [WARN]    Browser cookie extraction requires Full Disk Access.
+15:12:49 [WARN]    It's MUCH EASIER to export cookies to a file!
+15:12:49 [WARN] 
+15:12:49 [WARN]    📖 See: MACOS_COOKIES_FIX.md for step-by-step guide
+15:12:49 [WARN] 
+15:12:49 [WARN]    Quick fix:
+15:12:49 [WARN]    1. Install Chrome extension: Get cookies.txt LOCALLY
+15:12:49 [WARN]    2. Go to youtube.com → login
+15:12:49 [WARN]    3. Click extension → Export → save as youtube_cookies.txt
+15:12:49 [WARN]    4. Run: ./run_with_cookies.sh
+15:12:49 [WARN] ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+15:12:58 [DEBUG] (10) doradura::preview: Successfully got 4 video formats for URL: https://youtu.be/MCQlzqdldi4
+15:12:58 [DEBUG] (10) doradura::cache: Stored URL in DB cache: b20e31f32e64 -> https://youtu.be/MCQlzqdldi4
+15:12:58 [DEBUG] (10) doradura::preview: Stored URL https://youtu.be/MCQlzqdldi4 with ID: b20e31f32e64
+15:12:58 [DEBUG] (10) doradura::preview: Creating video format keyboard with 4 formats
+15:12:58 [DEBUG] (10) reqwest::connect: starting new connection: https://i.ytimg.com/
+15:13:10 [DEBUG] (4) reqwest::connect: starting new connection: https://api.telegram.org/
