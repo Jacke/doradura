@@ -67,7 +67,9 @@ fn download_youtube_video_with_ytdlp() {
             }
         }
     }
-    assert!(found, "no downloaded file matching prefix found in {}", tmp_dir.display());
+    assert!(
+        found,
+        "no downloaded file matching prefix found in {}",
+        tmp_dir.display()
+    );
 }
-
-
