@@ -98,10 +98,7 @@ pub async fn show_history_page(
     page: usize,
 ) -> ResponseResult<Message> {
     let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            e.to_string(),
-        )))
+        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
     })?;
 
     // Получаем все записи истории для подсчета страниц
@@ -126,7 +123,7 @@ pub async fn show_history_page(
     }
 
     let total_items = all_entries.len();
-    let total_pages = (total_items + ITEMS_PER_PAGE - 1) / ITEMS_PER_PAGE;
+    let total_pages = total_items.div_ceil(ITEMS_PER_PAGE);
     let current_page = page.min(total_pages - 1);
 
     let start_idx = current_page * ITEMS_PER_PAGE;
@@ -280,7 +277,7 @@ pub async fn handle_history_callback(
         "repeat" => {
             // Формат: history:repeat:entry_id:url_id
             let entry_id_str = parts[2].split(':').next().unwrap_or("");
-            let url_id = parts[2].splitn(2, ':').nth(1).unwrap_or("");
+            let url_id = parts[2].split_once(':').map(|x| x.1).unwrap_or("");
 
             // Получаем URL из кэша
             match crate::storage::cache::get_url(&db_pool, url_id).await {
@@ -290,8 +287,7 @@ pub async fn handle_history_callback(
                         Ok(url) => {
                             // Получаем план пользователя для rate limiting
                             let conn = db::get_connection(&db_pool).map_err(|e| {
-                                RequestError::from(std::sync::Arc::new(std::io::Error::new(
-                                    std::io::ErrorKind::Other,
+                                RequestError::from(std::sync::Arc::new(std::io::Error::other(
                                     e.to_string(),
                                 )))
                             })?;
@@ -307,7 +303,7 @@ pub async fn handle_history_callback(
                                 {
                                     let remaining_seconds = remaining_time.as_secs();
                                     bot.answer_callback_query(callback_id)
-                                        .text(&format!("Подожди {} секунд", remaining_seconds))
+                                        .text(format!("Подожди {} секунд", remaining_seconds))
                                         .await?;
                                 } else {
                                     bot.answer_callback_query(callback_id)
@@ -397,8 +393,7 @@ pub async fn handle_history_callback(
             match entry_id_str.parse::<i64>() {
                 Ok(entry_id) => {
                     let conn = db::get_connection(&db_pool).map_err(|e| {
-                        RequestError::from(std::sync::Arc::new(std::io::Error::new(
-                            std::io::ErrorKind::Other,
+                        RequestError::from(std::sync::Arc::new(std::io::Error::other(
                             e.to_string(),
                         )))
                     })?;

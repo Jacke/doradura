@@ -218,9 +218,9 @@ pub async fn get_preview_metadata(
 
     if title.trim().is_empty() {
         log::warn!("yt-dlp returned empty title for URL: {}", url);
-        return Err(AppError::Download(format!(
-            "Failed to get video title. Video might be unavailable or private."
-        )));
+        return Err(AppError::Download(
+            "Failed to get video title. Video might be unavailable or private.".to_string(),
+        ));
     }
 
     // Извлекаем artist из JSON (используем кэш если доступен, но игнорируем "NA")
@@ -326,11 +326,18 @@ pub async fn get_preview_metadata(
     // Получаем примерный размер файла
     // Для видео получаем размер для конкретного качества через --list-formats (если нужно)
     // Для аудио используем filesize из JSON
-    let mut filesize = if format == Some("mp4") && video_quality.is_some() {
-        // Для видео с конкретным качеством пытаемся получить из JSON formats массива
-        get_video_filesize_from_json(&json_metadata, video_quality.unwrap())
+    let mut filesize = if format == Some("mp4") {
+        if let Some(quality) = video_quality {
+            // Для видео с конкретным качеством пытаемся получить из JSON formats массива
+            get_video_filesize_from_json(&json_metadata, quality)
+        } else {
+            // Для видео без конкретного качества - используем filesize из JSON
+            get_json_value(&json_metadata, "filesize")
+                .or_else(|| get_json_value(&json_metadata, "filesize_approx"))
+                .and_then(|s| s.parse::<u64>().ok())
+        }
     } else {
-        // Для аудио или видео без конкретного качества - используем filesize из JSON
+        // Для аудио используем filesize из JSON
         get_json_value(&json_metadata, "filesize")
             .or_else(|| get_json_value(&json_metadata, "filesize_approx"))
             .and_then(|s| s.parse::<u64>().ok())
@@ -611,6 +618,7 @@ fn escape_markdown(text: &str) -> String {
 /// * `default_format` - Default format (mp3, mp4, etc.)
 /// * `default_quality` - Default video quality (1080p, 720p, etc.) - only for mp4
 /// * `old_preview_msg_id` - Опциональный ID старого preview сообщения для удаления
+#[allow(clippy::too_many_arguments)]
 pub async fn send_preview(
     bot: &Bot,
     chat_id: ChatId,

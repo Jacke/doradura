@@ -428,10 +428,7 @@ pub async fn handle_message(
 
                 // Show preview instead of immediately downloading
                 // Получаем качество видео для превью
-                let conn_for_preview = match db::get_connection(&db_pool) {
-                    Ok(c) => Ok(c),
-                    Err(e) => Err(e),
-                };
+                let conn_for_preview = db::get_connection(&db_pool);
 
                 let video_quality = if format == "mp4" {
                     if let Ok(ref conn) = conn_for_preview {

@@ -50,12 +50,11 @@ pub async fn fetch_song_metadata(url: &str) -> Result<(String, String), AppError
 
     let artist = document
         .find(Name("meta"))
-        .filter(|n| {
+        .find(|n| {
             n.attr("property")
                 .map(|v| v == "og:artist")
                 .unwrap_or(false)
         })
-        .next()
         .and_then(|n| n.attr("content"))
         .unwrap_or_default()
         .to_string();

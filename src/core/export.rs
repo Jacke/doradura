@@ -15,7 +15,7 @@ fn export_to_txt(entries: &[db::DownloadHistoryEntry]) -> String {
         content.push_str(&format!("   URL: {}\n", entry.url));
         content.push_str(&format!("   Формат: {}\n", entry.format));
         content.push_str(&format!("   Дата: {}\n", entry.downloaded_at));
-        content.push_str("\n");
+        content.push('\n');
     }
 
     content
@@ -68,10 +68,7 @@ pub async fn show_export_menu(
     db_pool: Arc<DbPool>,
 ) -> ResponseResult<Message> {
     let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            e.to_string(),
-        )))
+        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
     })?;
 
     let entries = match db::get_all_download_history(&conn, chat_id.0) {
@@ -122,10 +119,7 @@ pub async fn handle_export(
     db_pool: Arc<DbPool>,
 ) -> ResponseResult<()> {
     let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            e.to_string(),
-        )))
+        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
     })?;
 
     let entries = match db::get_all_download_history(&conn, chat_id.0) {

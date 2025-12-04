@@ -713,7 +713,7 @@ async fn handle_get_queue(
         )
         .map_err(|e| AppError::Internal(format!("Failed to prepare queue query: {}", e)))?;
 
-    let mut rows = stmt
+    let rows = stmt
         .query_map([], |row| {
             Ok((
                 row.get::<_, String>(0)?,
@@ -729,7 +729,7 @@ async fn handle_get_queue(
     let mut items = Vec::new();
     let mut pending_counter: usize = 0;
 
-    while let Some(row) = rows.next() {
+    for row in rows {
         let (task_id, task_user_id, url, format, status, created_at) =
             row.map_err(|e| AppError::Internal(format!("Queue row error: {}", e)))?;
 
