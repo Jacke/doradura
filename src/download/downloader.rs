@@ -2718,23 +2718,12 @@ pub async fn download_and_send_video(
                     .unwrap_or(false);
 
                 if !is_local_bot_api {
-                    // Для стандартного API блокируем 1080p если размер NA
+                    // Для стандартного API предупреждаем о возможном превышении лимита
                     match video_quality.as_deref() {
-                        Some("1080p") => {
-                            log::warn!("File size not available (NA) for 1080p quality. 1080p videos almost always exceed 50 MB limit.");
-                            log::warn!("Blocking download for 1080p when size is unavailable.");
-
-                            send_error_with_sticker(&bot_clone, chat_id).await;
-                            let _ = progress_msg.update(&bot_clone, DownloadStatus::Error {
-                                title: display_title.as_ref().to_string(),
-                                error: "Видео в качестве 1080p обычно превышают лимит 50 MB.\n\nРазмер файла недоступен заранее, но опыт показывает, что 1080p видео почти всегда > 50 MB.\n\nПожалуйста, выбери меньшее качество (720p, 480p или 360p) в настройках.".to_string(),
-                                file_format: Some("mp4".to_string()),
-                            }).await;
-                            return Err(AppError::Validation("1080p videos typically exceed 50 MB limit. Please choose lower quality.".to_string()));
-                        },
-                        Some("720p") => {
-                            log::warn!("File size not available (NA) for 720p quality. Will proceed but may exceed 50 MB.");
-                            log::info!("Will proceed with download, will check size after download.");
+                        Some("1080p") | Some("720p") => {
+                            let quality_str = video_quality.as_deref().unwrap_or("unknown");
+                            log::warn!("File size not available (NA) for {} quality. Will proceed with download and check size after.", quality_str);
+                            log::info!("⚠️ Downloading {} video without knowing size beforehand. Will check after download.", quality_str);
                         },
                         _ => {
                             log::info!("File size not available before download (NA), will check after download");
