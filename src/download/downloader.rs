@@ -2608,21 +2608,7 @@ pub async fn download_and_send_video(
                         if let Ok(file_size) = size_str.parse::<u64>() {
                             size_available = true;
                             let size_mb = file_size as f64 / (1024.0 * 1024.0);
-                            let max_size = config::validation::max_video_size_bytes();
-                            let max_mb = max_size as f64 / (1024.0 * 1024.0);
-
-                            log::info!("Estimated video file size for {}: {:.2} MB (max: {:.2} MB)", first_format, size_mb, max_mb);
-
-                            if file_size > max_size {
-                                log::warn!("Video file too large (estimated): {:.2} MB (max: {:.2} MB)", size_mb, max_mb);
-                                send_error_with_sticker(&bot_clone, chat_id).await;
-                                let _ = progress_msg.update(&bot_clone, DownloadStatus::Error {
-                                    title: display_title.as_ref().to_string(),
-                                    error: format!("Видео слишком большое (примерно {:.2} MB). Максимальный размер: {:.2} MB.\n\nПопробуй выбрать меньшее качество (720p, 480p или 360p) в настройках.", size_mb, max_mb),
-                                    file_format: Some("mp4".to_string()),
-                                }).await;
-                                return Err(AppError::Validation(format!("Видео слишком большое (примерно {:.2} MB). Максимальный размер: {:.2} MB. Попробуй выбрать меньшее качество.", size_mb, max_mb)));
-                            }
+                            log::info!("Estimated video file size for {}: {:.2} MB", first_format, size_mb);
                         }
                     }
                 }
@@ -2685,23 +2671,7 @@ pub async fn download_and_send_video(
                                         if let Some(start) = before_size.rfind(|c: char| c.is_ascii_digit() || c == '.' || c == '~') {
                                             let size_str = &line[start..size_mb_pos].trim().trim_start_matches('~');
                                             if let Ok(size_mb) = size_str.parse::<f64>() {
-                                                let size_bytes = (size_mb * 1024.0 * 1024.0) as u64;
-
                                                 log::info!("Found format size via --list-formats: {:.2} MB for {}p", size_mb, target_height);
-
-                                                let max_size = config::validation::max_video_size_bytes();
-                                                if size_bytes > max_size {
-                                                    let max_mb = max_size as f64 / (1024.0 * 1024.0);
-                                                    log::warn!("Video format too large: {:.2} MB (max: {:.2} MB) for {}p", size_mb, max_mb, target_height);
-
-                                                    send_error_with_sticker(&bot_clone, chat_id).await;
-                                                    let _ = progress_msg.update(&bot_clone, DownloadStatus::Error {
-                                                        title: display_title.as_ref().to_string(),
-                                                        error: format!("Видео в качестве {}p слишком большое (примерно {:.2} MB). Максимальный размер: {:.2} MB.\n\nПопробуй выбрать меньшее качество (720p, 480p или 360p) в настройках.", target_height, size_mb, max_mb),
-                                                        file_format: Some("mp4".to_string()),
-                                                    }).await;
-                                                    return Err(AppError::Validation(format!("Видео в качестве {}p слишком большое: {:.2} MB (максимум: {:.2} MB). Попробуй выбрать меньшее качество.", target_height, size_mb, max_mb)));
-                                                }
                                             }
                                         }
                                     }
@@ -2784,33 +2754,7 @@ pub async fn download_and_send_video(
                             }).await;
                         }
 
-                        // Проверяем размер файла во время скачивания ПОСЛЕ обновления UI
-                        // Если total_size известен и превышает лимит - прерываем скачивание
-                        if let Some(total_size) = progress_info.total_size {
-                            let max_size = config::validation::max_video_size_bytes();
-                            if total_size > max_size {
-                                let size_mb = total_size as f64 / (1024.0 * 1024.0);
-                                let max_mb = max_size as f64 / (1024.0 * 1024.0);
-
-                                log::warn!("Video file too large during download (detected from progress): {:.2} MB (max: {:.2} MB)", size_mb, max_mb);
-                                log::warn!("Stopping download to save bandwidth and time");
-
-                                // Прерываем процесс скачивания (download_handle будет отменен при выходе)
-                                send_error_with_sticker(&bot_clone, chat_id).await;
-                                let _ = progress_msg.update(&bot_clone, DownloadStatus::Error {
-                                    title: display_title.as_ref().to_string(),
-                                    error: format!("Видео слишком большое (примерно {:.2} MB). Максимальный размер: {:.2} MB.\n\nПопробуй выбрать меньшее качество (720p, 480p или 360p) в настройках.", size_mb, max_mb),
-                                    file_format: Some("mp4".to_string()),
-                                }).await;
-
-                                // Удаляем частично скачанный файл
-                                if let Err(e) = fs::remove_file(&download_path) {
-                                    log::warn!("Failed to remove partially downloaded file: {}", e);
-                                }
-
-                                return Err(AppError::Validation(format!("Видео слишком большое (обнаружено во время скачивания): {:.2} MB (максимум: {:.2} MB). Попробуй выбрать меньшее качество.", size_mb, max_mb)));
-                            }
-                        }
+                        // Размер файла больше не проверяется - пользователь сам решает что качать
                     }
                     // Ждем завершения загрузки
                     result = &mut download_handle => {
@@ -2838,28 +2782,12 @@ pub async fn download_and_send_video(
                 }
             };
 
-            // Step 3: Validate file size before sending
+            // Step 3: Get file size info (no validation, just logging)
             let file_size = fs::metadata(&actual_file_path)
                 .map_err(|e| AppError::Download(format!("Failed to get file metadata: {}", e)))?
                 .len();
 
             log::info!("Downloaded video file size: {:.2} MB", file_size as f64 / (1024.0 * 1024.0));
-
-            let max_size = config::validation::max_video_size_bytes();
-            if file_size > max_size {
-                let size_mb = file_size as f64 / (1024.0 * 1024.0);
-                let max_mb = max_size as f64 / (1024.0 * 1024.0);
-                log::warn!("Video file too large: {:.2} MB (max: {:.2} MB)", size_mb, max_mb);
-                log::warn!("Telegram Bot API limit exceeded by {:.2} MB", size_mb - max_mb);
-                log::warn!("Consider downloading with lower quality (720p, 480p, or 360p) to reduce file size");
-                send_error_with_sticker(&bot_clone, chat_id).await;
-                let _ = progress_msg.update(&bot_clone, DownloadStatus::Error {
-                    title: display_title.as_ref().to_string(),
-                    error: format!("Файл слишком большой ({:.2} MB). Максимальный размер: {:.2} MB.\nПопробуй скачать с меньшим качеством (720p, 480p или 360p).", size_mb, max_mb),
-                    file_format: Some("mp4".to_string()),
-                }).await;
-                return Err(AppError::Validation(format!("Файл слишком большой: {:.2} MB (максимум: {:.2} MB). Попробуй выбрать меньшее качество.", size_mb, max_mb)));
-            }
 
             // Step 3.5: Проверяем, что файл содержит и видео, и аудио дорожки
             match has_both_video_and_audio(&actual_file_path) {
