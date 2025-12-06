@@ -14,6 +14,9 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY build.rs ./
 
+# Copy C code for build.rs
+COPY c_code ./c_code
+
 # Copy source code
 COPY src ./src
 COPY migration.sql ./
