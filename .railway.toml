@@ -1,0 +1,19 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+numReplicas = 1
+sleepApplication = false
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+healthcheckPath = "/"
+healthcheckTimeout = 100
+
+[env]
+# These are just placeholders - set actual values via Railway Dashboard or CLI
+# TELOXIDE_TOKEN = "required"
+# YTDL_COOKIES_FILE = "youtube_cookies.txt"
+# ADMIN_IDS = "optional"
+# WEBAPP_PORT = "8080"
+# WEBAPP_URL = "https://your-project.railway.app"

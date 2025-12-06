@@ -48,6 +48,38 @@ fn escape_markdown(text: &str) -> String {
     result
 }
 
+/// Edit caption if present, else fallback to editing text.
+async fn edit_caption_or_text(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    text: String,
+    keyboard: Option<InlineKeyboardMarkup>,
+) -> ResponseResult<()> {
+    let mut caption_req = bot
+        .edit_message_caption(chat_id, message_id)
+        .caption(text.clone())
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2);
+
+    if let Some(ref kb) = keyboard {
+        caption_req = caption_req.reply_markup(kb.clone());
+    }
+
+    match caption_req.await {
+        Ok(_) => Ok(()),
+        Err(_) => {
+            let mut text_req = bot
+                .edit_message_text(chat_id, message_id, text)
+                .parse_mode(teloxide::types::ParseMode::MarkdownV2);
+            if let Some(kb) = keyboard {
+                text_req = text_req.reply_markup(kb);
+            }
+            text_req.await?;
+            Ok(())
+        }
+    }
+}
+
 /// Показывает главное меню настроек режима загрузки.
 ///
 /// Отображает меню с инлайн-кнопками для выбора типа загрузки и просмотра доступных сервисов.
@@ -688,7 +720,8 @@ pub async fn show_services_menu(
         И многие другие сервисы, которые я поддерживаю\\!\n\n\
         Просто отправь мне ссылку на трек или видео\\! ❤️‍🔥";
 
-    bot.edit_message_text(chat_id, message_id, text)
+    bot.edit_message_caption(chat_id, message_id)
+        .caption(text)
         .parse_mode(teloxide::types::ParseMode::MarkdownV2)
         .reply_markup(keyboard)
         .await?;
@@ -956,11 +989,34 @@ pub async fn handle_menu_callback(
     rate_limiter: Arc<RateLimiter>,
 ) -> ResponseResult<()> {
     let callback_id = q.id.clone();
+    let data_clone = q.data.clone();
+    let message_clone = q.message.clone();
+
     if let Some(data) = q.data {
         let chat_id = q.message.as_ref().map(|m| m.chat().id);
         let message_id = q.message.as_ref().map(|m| m.id());
 
         if let (Some(chat_id), Some(message_id)) = (chat_id, message_id) {
+            // Handle audio effects callbacks first
+            if data.starts_with("ae:") {
+                // Reconstruct CallbackQuery for audio effects handler
+                let ae_query = CallbackQuery {
+                    id: callback_id.clone(),
+                    from: q.from.clone(),
+                    message: message_clone,
+                    inline_message_id: q.inline_message_id.clone(),
+                    chat_instance: q.chat_instance.clone(),
+                    data: data_clone,
+                    game_short_name: q.game_short_name.clone(),
+                };
+                if let Err(e) =
+                    handle_audio_effects_callback(bot.clone(), ae_query, Arc::clone(&db_pool)).await
+                {
+                    log::error!("Audio effects callback error: {}", e);
+                }
+                return Ok(());
+            }
+
             if data.starts_with("mode:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
                 // Format: mode:action or mode:action:preview:url_id or mode:action:preview:url_id:preview_msg_id
@@ -2011,6 +2067,630 @@ pub async fn handle_menu_callback(
                     }
                 }
             }
+        }
+    }
+
+    Ok(())
+}
+
+// ==================== Audio Effects UI ====================
+
+/// Create audio effects keyboard with pitch and tempo controls
+fn create_audio_effects_keyboard(
+    session_id: &str,
+    current_pitch: i8,
+    current_tempo: f32,
+    current_bass: i8,
+    current_morph: crate::download::audio_effects::MorphProfile,
+) -> InlineKeyboardMarkup {
+    use teloxide::types::InlineKeyboardButton;
+
+    // Pitch buttons row
+    let pitch_values = [-2, -1, 0, 1, 2];
+    let pitch_row: Vec<InlineKeyboardButton> = pitch_values
+        .iter()
+        .map(|&value| {
+            let marker = if current_pitch == value { " ✓" } else { "" };
+            let label = if value > 0 {
+                format!("Pitch: +{}{}", value, marker)
+            } else {
+                format!("Pitch: {}{}", value, marker)
+            };
+            InlineKeyboardButton::callback(label, format!("ae:pitch:{}:{}", session_id, value))
+        })
+        .collect();
+
+    // Tempo buttons row
+    let tempo_values = [0.5, 0.75, 1.0, 1.5, 2.0];
+    let tempo_row: Vec<InlineKeyboardButton> = tempo_values
+        .iter()
+        .map(|&value| {
+            let marker = if (current_tempo - value).abs() < 0.01 {
+                " ✓"
+            } else {
+                ""
+            };
+            let label = format!("Tempo: {}x{}", value, marker);
+            InlineKeyboardButton::callback(label, format!("ae:tempo:{}:{}", session_id, value))
+        })
+        .collect();
+
+    // Action buttons row
+    let action_row = vec![
+        InlineKeyboardButton::callback("✅ Apply Changes", format!("ae:apply:{}", session_id)),
+        InlineKeyboardButton::callback("🔄 Reset", format!("ae:reset:{}", session_id)),
+        InlineKeyboardButton::callback("❌ Cancel", format!("ae:cancel:{}", session_id)),
+    ];
+
+    // Bass buttons row (dB)
+    let bass_values = [-6, -3, 0, 3, 6];
+    let bass_row: Vec<InlineKeyboardButton> = bass_values
+        .iter()
+        .map(|&value| {
+            let marker = if current_bass == value { " ✓" } else { "" };
+            InlineKeyboardButton::callback(
+                format!("Bass {:+}{}", value, marker),
+                format!("ae:bass:{}:{:+}", session_id, value),
+            )
+        })
+        .collect();
+
+    // Neural morph row
+    let morph_row = vec![InlineKeyboardButton::callback(
+        format!(
+            "🤖 Morph: {}",
+            match current_morph {
+                crate::download::audio_effects::MorphProfile::None => "Off",
+                crate::download::audio_effects::MorphProfile::Soft => "Soft",
+                crate::download::audio_effects::MorphProfile::Aggressive => "Aggro",
+                crate::download::audio_effects::MorphProfile::Lofi => "LoFi",
+                crate::download::audio_effects::MorphProfile::Wide => "Wide",
+            }
+        ),
+        format!("ae:morph:{}", session_id),
+    )];
+
+    InlineKeyboardMarkup::new(vec![pitch_row, tempo_row, bass_row, morph_row, action_row])
+}
+
+/// Show audio effects editor
+async fn show_audio_effects_editor(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    session: &crate::download::audio_effects::AudioEffectSession,
+) -> ResponseResult<()> {
+    let pitch_str = escape_markdown(&format!("{:+}", session.pitch_semitones));
+    let tempo_str = escape_markdown(&format!("{}", session.tempo_factor));
+
+    let bass_str = escape_markdown(&format!("{:+} dB", session.bass_gain_db));
+    let morph_str = match session.morph_profile {
+        crate::download::audio_effects::MorphProfile::None => "Off",
+        crate::download::audio_effects::MorphProfile::Soft => "Soft",
+        crate::download::audio_effects::MorphProfile::Aggressive => "Aggro",
+        crate::download::audio_effects::MorphProfile::Lofi => "LoFi",
+        crate::download::audio_effects::MorphProfile::Wide => "Wide",
+    };
+
+    let text = format!(
+        "🎵 *Audio Effects Editor*\n\
+        Title: {}\n\
+        Current: Pitch {} \\| Tempo {}x \\| Bass {} \\| Morph {}\n\n\
+        Adjust pitch, tempo, bass, morph preset, then press Apply\\.",
+        escape_markdown(&session.title),
+        pitch_str,
+        tempo_str,
+        bass_str,
+        escape_markdown(morph_str),
+    );
+
+    let keyboard = create_audio_effects_keyboard(
+        &session.id,
+        session.pitch_semitones,
+        session.tempo_factor,
+        session.bass_gain_db,
+        session.morph_profile,
+    );
+
+    edit_caption_or_text(bot, chat_id, message_id, text, Some(keyboard)).await?;
+
+    Ok(())
+}
+
+/// Handle audio effects callbacks
+pub async fn handle_audio_effects_callback(
+    bot: Bot,
+    q: CallbackQuery,
+    db_pool: Arc<crate::storage::db::DbPool>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use crate::storage::db;
+
+    let callback_id = q.id.clone();
+    let data = q.data.clone().ok_or("No callback data")?;
+
+    let message = q.message.ok_or("No message in callback")?;
+    let chat_id = message.chat().id;
+    let message_id = message.id();
+
+    // Parse callback data
+    let parts: Vec<&str> = data.split(':').collect();
+    if parts.len() < 2 {
+        bot.answer_callback_query(callback_id).await?;
+        return Ok(());
+    }
+
+    let action = parts[1];
+
+    // Check Premium/VIP access
+    let conn = db::get_connection(&db_pool)?;
+    if !db::is_premium_or_vip(&conn, chat_id.0)? {
+        bot.answer_callback_query(callback_id)
+            .text("⭐ Эта функция доступна только Premium/VIP подписчикам")
+            .show_alert(true)
+            .await?;
+        return Ok(());
+    }
+
+    match action {
+        "open" => {
+            let session_id = parts.get(2).ok_or("Missing session_id")?;
+
+            let session =
+                db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+
+            if session.is_expired() {
+                bot.answer_callback_query(callback_id)
+                    .text("❌ Сессия истекла (24 часа). Скачайте трек заново.")
+                    .show_alert(true)
+                    .await?;
+                return Ok(());
+            }
+
+            bot.answer_callback_query(callback_id).await?;
+            show_audio_effects_editor(&bot, chat_id, message_id, &session).await?;
+        }
+
+        "pitch" => {
+            let session_id = parts.get(2).ok_or("Missing session_id")?;
+            let pitch_str = parts.get(3).ok_or("Missing pitch value")?;
+            let pitch: i8 = pitch_str.parse().map_err(|_| "Invalid pitch")?;
+
+            let mut session =
+                db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+
+            if session.processing {
+                bot.answer_callback_query(callback_id)
+                    .text("⏳ Подождите, идёт обработка...")
+                    .await?;
+                return Ok(());
+            }
+
+            session.pitch_semitones = pitch;
+            db::update_audio_effect_session(
+                &conn,
+                session_id,
+                pitch,
+                session.tempo_factor,
+                session.bass_gain_db,
+                session.morph_profile.as_str(),
+                &session.current_file_path,
+                session.version,
+            )?;
+
+            bot.answer_callback_query(callback_id).await?;
+            show_audio_effects_editor(&bot, chat_id, message_id, &session).await?;
+        }
+
+        "tempo" => {
+            let session_id = parts.get(2).ok_or("Missing session_id")?;
+            let tempo_str = parts.get(3).ok_or("Missing tempo value")?;
+            let tempo: f32 = tempo_str.parse().map_err(|_| "Invalid tempo")?;
+
+            let mut session =
+                db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+
+            if session.processing {
+                bot.answer_callback_query(callback_id)
+                    .text("⏳ Подождите, идёт обработка...")
+                    .await?;
+                return Ok(());
+            }
+
+            session.tempo_factor = tempo;
+            db::update_audio_effect_session(
+                &conn,
+                session_id,
+                session.pitch_semitones,
+                tempo,
+                session.bass_gain_db,
+                session.morph_profile.as_str(),
+                &session.current_file_path,
+                session.version,
+            )?;
+
+            bot.answer_callback_query(callback_id).await?;
+            show_audio_effects_editor(&bot, chat_id, message_id, &session).await?;
+        }
+
+        "bass" => {
+            let session_id = parts.get(2).ok_or("Missing session_id")?;
+            let bass_str = parts.get(3).ok_or("Missing bass value")?;
+            let bass: i8 = bass_str.parse().map_err(|_| "Invalid bass")?;
+
+            let mut session =
+                db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+
+            if session.processing {
+                bot.answer_callback_query(callback_id)
+                    .text("⏳ Подождите, идёт обработка...")
+                    .await?;
+                return Ok(());
+            }
+
+            session.bass_gain_db = bass;
+            db::update_audio_effect_session(
+                &conn,
+                session_id,
+                session.pitch_semitones,
+                session.tempo_factor,
+                bass,
+                session.morph_profile.as_str(),
+                &session.current_file_path,
+                session.version,
+            )?;
+
+            bot.answer_callback_query(callback_id).await?;
+            show_audio_effects_editor(&bot, chat_id, message_id, &session).await?;
+        }
+
+        "morph" => {
+            let session_id = parts.get(2).ok_or("Missing session_id")?;
+
+            let mut session =
+                db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+
+            if session.processing {
+                bot.answer_callback_query(callback_id)
+                    .text("⏳ Подождите, идёт обработка...")
+                    .await?;
+                return Ok(());
+            }
+
+            // Cycle morph profiles
+            session.morph_profile = match session.morph_profile {
+                crate::download::audio_effects::MorphProfile::None => {
+                    crate::download::audio_effects::MorphProfile::Soft
+                }
+                crate::download::audio_effects::MorphProfile::Soft => {
+                    crate::download::audio_effects::MorphProfile::Aggressive
+                }
+                crate::download::audio_effects::MorphProfile::Aggressive => {
+                    crate::download::audio_effects::MorphProfile::Lofi
+                }
+                crate::download::audio_effects::MorphProfile::Lofi => {
+                    crate::download::audio_effects::MorphProfile::Wide
+                }
+                crate::download::audio_effects::MorphProfile::Wide => {
+                    crate::download::audio_effects::MorphProfile::None
+                }
+            };
+
+            db::update_audio_effect_session(
+                &conn,
+                session_id,
+                session.pitch_semitones,
+                session.tempo_factor,
+                session.bass_gain_db,
+                session.morph_profile.as_str(),
+                &session.current_file_path,
+                session.version,
+            )?;
+
+            bot.answer_callback_query(callback_id).await?;
+            show_audio_effects_editor(&bot, chat_id, message_id, &session).await?;
+        }
+
+        "apply" => {
+            let session_id = parts.get(2).ok_or("Missing session_id")?;
+
+            let session =
+                db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+
+            if session.processing {
+                bot.answer_callback_query(callback_id)
+                    .text("⏳ Подождите, идёт обработка...")
+                    .await?;
+                return Ok(());
+            }
+
+            bot.answer_callback_query(callback_id).await?;
+
+            // Set processing flag
+            db::set_session_processing(&conn, session_id, true)?;
+
+            // Show processing message
+            edit_caption_or_text(
+                &bot,
+                chat_id,
+                message_id,
+                format!(
+                    "⏳ *Обрабатываю аудио\\.\\.\\.*\n\n\
+                    Pitch: {}\n\
+                    Tempo: {}x\n\
+                    Bass: {}\n\
+                    Morph: {}\n\n\
+                    {}",
+                    escape_markdown(&format!("{:+}", session.pitch_semitones)),
+                    escape_markdown(&format!("{}", session.tempo_factor)),
+                    escape_markdown(&format!("{:+} dB", session.bass_gain_db)),
+                    escape_markdown(match session.morph_profile {
+                        crate::download::audio_effects::MorphProfile::None => "Off",
+                        crate::download::audio_effects::MorphProfile::Soft => "Soft",
+                        crate::download::audio_effects::MorphProfile::Aggressive => "Aggro",
+                        crate::download::audio_effects::MorphProfile::Lofi => "LoFi",
+                        crate::download::audio_effects::MorphProfile::Wide => "Wide",
+                    }),
+                    if session.duration > 300 {
+                        "Это может занять до 30 секунд\\.\\.\\."
+                    } else {
+                        "Подождите несколько секунд\\.\\.\\."
+                    }
+                ),
+                None,
+            )
+            .await?;
+
+            // Spawn processing task
+            let bot_clone = bot.clone();
+            let db_pool_clone = Arc::clone(&db_pool);
+            let session_clone = session.clone();
+            tokio::spawn(async move {
+                if let Err(e) = process_audio_effects(
+                    bot_clone,
+                    chat_id,
+                    message_id,
+                    session_clone,
+                    db_pool_clone,
+                )
+                .await
+                {
+                    log::error!("Failed to process audio effects: {}", e);
+                }
+            });
+        }
+
+        "reset" => {
+            let session_id = parts.get(2).ok_or("Missing session_id")?;
+
+            let mut session =
+                db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+
+            session.pitch_semitones = 0;
+            session.tempo_factor = 1.0;
+            session.bass_gain_db = 0;
+            session.morph_profile = crate::download::audio_effects::MorphProfile::None;
+            db::update_audio_effect_session(
+                &conn,
+                session_id,
+                0,
+                1.0,
+                0,
+                crate::download::audio_effects::MorphProfile::None.as_str(),
+                &session.current_file_path,
+                session.version,
+            )?;
+
+            bot.answer_callback_query(callback_id).await?;
+            show_audio_effects_editor(&bot, chat_id, message_id, &session).await?;
+        }
+
+        "cancel" => {
+            bot.answer_callback_query(callback_id).await?;
+            bot.delete_message(chat_id, message_id).await?;
+        }
+
+        "again" => {
+            let session_id = parts.get(2).ok_or("Missing session_id")?;
+
+            let session =
+                db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+
+            if session.is_expired() {
+                bot.answer_callback_query(callback_id)
+                    .text("❌ Сессия истекла (24 часа). Скачайте трек заново.")
+                    .show_alert(true)
+                    .await?;
+                return Ok(());
+            }
+
+            bot.answer_callback_query(callback_id).await?;
+
+            // Send new editor message
+            let pitch_str = escape_markdown(&format!("{:+}", session.pitch_semitones));
+            let tempo_str = escape_markdown(&format!("{}", session.tempo_factor));
+
+            let text = format!(
+                "🎵 *Audio Effects Editor*\n\
+                Title: {}\n\
+                Current: Pitch {} \\| Tempo {}x \\| Bass {} \\| Morph {}\n\n\
+                Adjust pitch, tempo, bass, morph preset, then press Apply\\.",
+                escape_markdown(&session.title),
+                pitch_str,
+                tempo_str,
+                escape_markdown(&format!("{:+} dB", session.bass_gain_db)),
+                escape_markdown(match session.morph_profile {
+                    crate::download::audio_effects::MorphProfile::None => "Off",
+                    crate::download::audio_effects::MorphProfile::Soft => "Soft",
+                    crate::download::audio_effects::MorphProfile::Aggressive => "Aggro",
+                    crate::download::audio_effects::MorphProfile::Lofi => "LoFi",
+                    crate::download::audio_effects::MorphProfile::Wide => "Wide",
+                })
+            );
+
+            let keyboard = create_audio_effects_keyboard(
+                &session.id,
+                session.pitch_semitones,
+                session.tempo_factor,
+                session.bass_gain_db,
+                session.morph_profile,
+            );
+
+            // New editor message after applying again (plain text message)
+            bot.send_message(chat_id, text)
+                .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                .reply_markup(keyboard)
+                .await?;
+        }
+
+        "original" => {
+            let session_id = parts.get(2).ok_or("Missing session_id")?;
+
+            let session =
+                db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+
+            bot.answer_callback_query(callback_id).await?;
+
+            // Send original file
+            if std::path::Path::new(&session.original_file_path).exists() {
+                let file = teloxide::types::InputFile::file(&session.original_file_path);
+                bot.send_audio(chat_id, file)
+                    .title(format!("{} (Original)", session.title))
+                    .duration(session.duration)
+                    .await?;
+            } else {
+                bot.send_message(
+                    chat_id,
+                    "❌ Оригинальный файл не найден. Возможно, сессия истекла.",
+                )
+                .await?;
+            }
+        }
+
+        _ => {
+            bot.answer_callback_query(callback_id).await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Process audio effects and send modified file
+async fn process_audio_effects(
+    bot: Bot,
+    chat_id: ChatId,
+    editor_message_id: MessageId,
+    session: crate::download::audio_effects::AudioEffectSession,
+    db_pool: Arc<crate::storage::db::DbPool>,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use crate::core::config;
+    use crate::storage::db;
+    use std::path::Path;
+
+    let session_id = session.id.clone();
+    let new_version = session.version + 1;
+
+    // Generate output path
+    let output_path_raw = crate::download::audio_effects::get_modified_file_path(
+        &session_id,
+        new_version,
+        &config::DOWNLOAD_FOLDER,
+    );
+    let output_path = shellexpand::tilde(&output_path_raw).into_owned();
+    if let Some(parent) = Path::new(&output_path).parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    // Apply effects
+    let settings = session.settings();
+    let result = crate::download::audio_effects::apply_audio_effects(
+        &session.original_file_path,
+        &output_path,
+        &settings,
+    )
+    .await;
+
+    // Clear processing flag
+    let conn = db::get_connection(&db_pool)?;
+    db::set_session_processing(&conn, &session_id, false)?;
+
+    match result {
+        Ok(_) => {
+            // Send modified audio
+            let file = teloxide::types::InputFile::file(&output_path);
+            let title = format!(
+                "{} (Pitch {:+}, Tempo {}x, Bass {:+} dB, Morph {})",
+                session.title,
+                session.pitch_semitones,
+                session.tempo_factor,
+                session.bass_gain_db,
+                match session.morph_profile {
+                    crate::download::audio_effects::MorphProfile::None => "Off",
+                    crate::download::audio_effects::MorphProfile::Soft => "Soft",
+                    crate::download::audio_effects::MorphProfile::Aggressive => "Aggro",
+                    crate::download::audio_effects::MorphProfile::Lofi => "LoFi",
+                    crate::download::audio_effects::MorphProfile::Wide => "Wide",
+                }
+            );
+
+            let sent_message = bot
+                .send_audio(chat_id, file)
+                .title(&title)
+                .duration(session.duration)
+                .await?;
+
+            // Add "Edit Again" and "Get Original" buttons
+            let keyboard = InlineKeyboardMarkup::new(vec![vec![
+                InlineKeyboardButton::callback("🎛️ Edit Again", format!("ae:again:{}", session_id)),
+                InlineKeyboardButton::callback(
+                    "📥 Get Original",
+                    format!("ae:original:{}", session_id),
+                ),
+            ]]);
+
+            // Replace the sent audio message caption with the new buttons (no text change)
+            bot.edit_message_reply_markup(chat_id, sent_message.id)
+                .reply_markup(keyboard)
+                .await?;
+
+            // Update session in DB
+            db::update_audio_effect_session(
+                &conn,
+                &session_id,
+                session.pitch_semitones,
+                session.tempo_factor,
+                session.bass_gain_db,
+                session.morph_profile.as_str(),
+                &output_path,
+                new_version,
+            )?;
+
+            // Delete old version file if exists
+            if session.version > 0 && session.current_file_path != session.original_file_path {
+                let _ = tokio::fs::remove_file(&session.current_file_path).await;
+            }
+
+            // Delete editor message
+            bot.delete_message(chat_id, editor_message_id).await?;
+
+            log::info!(
+                "Audio effects applied for session {}: pitch {:+}, tempo {}x",
+                session_id,
+                session.pitch_semitones,
+                session.tempo_factor
+            );
+        }
+        Err(e) => {
+            log::error!("Failed to apply audio effects: {}", e);
+
+            let mut error_msg = e.to_string();
+            if error_msg.chars().count() > 900 {
+                let trimmed: String = error_msg.chars().take(900).collect();
+                error_msg = format!("{} …", trimmed);
+            }
+
+            let error_text = format!("❌ *Ошибка обработки*\n\n{}", escape_markdown(&error_msg));
+
+            edit_caption_or_text(&bot, chat_id, editor_message_id, error_text, None).await?;
         }
     }
 

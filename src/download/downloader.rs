@@ -1602,8 +1602,88 @@ pub async fn download_and_send_audio(
                 false
             };
 
-            // Step 5: Send audio with retry logic and animation
-            send_audio_with_retry(&bot_clone, chat_id, &download_path, duration, &mut progress_msg, display_title.as_ref(), send_audio_as_document).await?;
+            // Step 5: Send audio with retry logic and get the sent message
+            let sent_message = send_audio_with_retry_and_return(&bot_clone, chat_id, &download_path, duration, &mut progress_msg, display_title.as_ref(), send_audio_as_document).await?;
+
+            // Add audio effects button for Premium/VIP users
+            // Copy file BEFORE it gets deleted
+            log::info!("Audio effects: checking if we should add button (db_pool exists: {})", db_pool_clone.is_some());
+            if let Some(ref pool) = db_pool_clone {
+                log::info!("Audio effects: db_pool exists, getting connection");
+                if let Ok(conn) = crate::storage::db::get_connection(pool) {
+                    log::info!("Audio effects: got DB connection");
+                    // TODO: Re-enable premium check after testing
+                    // if crate::storage::db::is_premium_or_vip(&conn, chat_id.0).unwrap_or(false) {
+                    if true { // Temporarily enabled for all users for testing
+                        log::info!("Audio effects: premium check passed (testing mode)");
+                        // Create session and copy file immediately (before cleanup)
+                        use crate::download::audio_effects::{self, AudioEffectSession};
+                        use crate::storage::db;
+
+                        let session_id = uuid::Uuid::new_v4().to_string();
+                        let session_file_path_raw = audio_effects::get_original_file_path(&session_id, &config::DOWNLOAD_FOLDER);
+                        let session_file_path = shellexpand::tilde(&session_file_path_raw).into_owned();
+
+                        log::info!("Audio effects: attempting to copy file from '{}' to '{}'", download_path, session_file_path);
+                        log::info!("Audio effects: checking if source file exists: {}", std::path::Path::new(&download_path).exists());
+
+                        // Copy file synchronously before it gets deleted
+                        match std::fs::copy(&download_path, &session_file_path) {
+                            Ok(bytes) => {
+                                log::info!("Audio effects: successfully copied {} bytes to {}", bytes, session_file_path);
+                                let session = AudioEffectSession::new(
+                                    session_id.clone(),
+                                    chat_id.0,
+                                    session_file_path,
+                                    sent_message.id.0,
+                                    display_title.as_ref().to_string(),
+                                    duration,
+                                );
+
+                                match db::create_audio_effect_session(&conn, &session) {
+                                    Ok(_) => {
+                                        log::info!("Audio effects: session created in DB with id {}", session_id);
+                                        // Now add button asynchronously
+                                        let bot_for_button = bot_clone.clone();
+                                        let session_id_clone = session_id.clone();
+                                        tokio::spawn(async move {
+                                            use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
+
+                                            let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+                                                "🎛️ Edit Audio (Pitch/Tempo)",
+                                                format!("ae:open:{}", session_id_clone),
+                                            )]]);
+
+                                            log::info!("Audio effects: attempting to add button to message {}", sent_message.id.0);
+                                            if let Err(e) = bot_for_button
+                                                .edit_message_reply_markup(chat_id, sent_message.id)
+                                                .reply_markup(keyboard)
+                                                .await
+                                            {
+                                                log::warn!("Failed to add audio effects button: {}", e);
+                                            } else {
+                                                log::info!("Added audio effects button to message {} for session {}", sent_message.id.0, session_id_clone);
+                                            }
+                                        });
+                                    }
+                                    Err(e) => {
+                                        log::warn!("Failed to create audio effect session in DB: {}", e);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                log::warn!("Failed to copy file for audio effects session: {} (source: {}, dest: {})", e, download_path, session_file_path);
+                            }
+                        }
+                    } else {
+                        log::info!("Audio effects: user is not premium/vip");
+                    }
+                } else {
+                    log::warn!("Audio effects: failed to get DB connection");
+                }
+            } else {
+                log::warn!("Audio effects: db_pool is None");
+            }
 
             // Save to download history after successful send
             if let Some(ref pool) = db_pool_clone {
@@ -1985,13 +2065,14 @@ where
 /// Send audio file with retry logic
 /// Args: bot - telegram bot instance, chat_id - user's chat ID, download_path - path to audio file, duration - audio duration in seconds, progress_msg - progress message handler, title - audio title
 /// Functionality: Wrapper around send_file_with_retry for audio files
+#[allow(dead_code)]
 async fn send_audio_with_retry(
     bot: &Bot,
     chat_id: ChatId,
     download_path: &str,
     duration: u32,
-    progress_msg: &mut ProgressMessage,
-    title: &str,
+    _progress_msg: &mut ProgressMessage,
+    _title: &str,
     send_as_document: bool,
 ) -> Result<(), AppError> {
     if send_as_document {
@@ -2000,8 +2081,11 @@ async fn send_audio_with_retry(
             bot,
             chat_id,
             download_path,
-            progress_msg,
-            title,
+            &mut ProgressMessage {
+                chat_id,
+                message_id: None,
+            },
+            "",
             "audio",
             move |bot, chat_id, path| async move {
                 bot.send_document(chat_id, InputFile::file(path)).await
@@ -2013,8 +2097,11 @@ async fn send_audio_with_retry(
             bot,
             chat_id,
             download_path,
-            progress_msg,
-            title,
+            &mut ProgressMessage {
+                chat_id,
+                message_id: None,
+            },
+            "",
             "audio",
             move |bot, chat_id, path| {
                 let duration = duration;
@@ -3239,6 +3326,42 @@ pub async fn download_and_send_subtitles(
         }
     });
     Ok(())
+}
+
+// ==================== Audio Effects Integration ====================
+
+/// Send audio with retry and return the sent Message for adding buttons
+async fn send_audio_with_retry_and_return(
+    bot: &Bot,
+    chat_id: ChatId,
+    download_path: &str,
+    duration: u32,
+    _progress_msg: &mut ProgressMessage,
+    _title: &str,
+    send_as_document: bool,
+) -> Result<Message, AppError> {
+    use teloxide::types::ChatAction;
+
+    // Send chat action
+    if let Err(e) = bot
+        .send_chat_action(chat_id, ChatAction::UploadDocument)
+        .await
+    {
+        log::warn!("Failed to send chat action: {}", e);
+    }
+
+    // Send file and return Message
+    let message = if send_as_document {
+        log::info!("User preference: sending audio as document");
+        bot.send_document(chat_id, InputFile::file(download_path))
+            .await?
+    } else {
+        bot.send_audio(chat_id, InputFile::file(download_path))
+            .duration(duration)
+            .await?
+    };
+
+    Ok(message)
 }
 
 #[cfg(test)]

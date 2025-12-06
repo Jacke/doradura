@@ -55,6 +55,10 @@ pub enum AppError {
     /// Validation errors
     #[error("Validation error: {0}")]
     Validation(String),
+
+    /// Audio effects processing errors
+    #[error("Audio effect error: {0}")]
+    AudioEffect(#[from] crate::download::audio_effects::AudioEffectError),
 }
 
 /// Type alias for Result with AppError
