@@ -50,23 +50,30 @@ WORKDIR /app
 # Copy the compiled binary from builder
 COPY --from=builder /app/target/release/doradura /app/doradura
 
-# Copy migration script
+# Copy migration script (for fallback)
 COPY migration.sql ./
 
-# Create startup script with database initialization
+# Copy database from git (contains all users and settings)
+COPY database.sqlite ./
+
+# Create startup script
 RUN echo '#!/bin/bash\n\
 set -e\n\
 \n\
-echo "Initializing database..."\n\
+echo "Database initialization..."\n\
 \n\
-# Initialize database if it doesnt exist\n\
-if [ ! -f /app/database.sqlite ]; then\n\
-  echo "Creating new database from migration.sql..."\n\
-  sqlite3 /app/database.sqlite < /app/migration.sql\n\
-  echo "Database created successfully"\n\
+# Database is already copied from git\n\
+if [ -f /app/database.sqlite ]; then\n\
+  echo "✅ Using database from git repository"\n\
+  echo "   Database synced with local development"\n\
 else\n\
-  echo "Database exists - migrations will run from Rust code"\n\
+  echo "⚠️  Database not found, creating from migration.sql..."\n\
+  sqlite3 /app/database.sqlite < /app/migration.sql\n\
+  echo "✅ Database created from migration"\n\
 fi\n\
+\n\
+# Run any pending migrations from Rust code\n\
+echo "Ready to start bot (migrations will run if needed)"\n\
 \n\
 echo "Starting bot..."\n\
 exec /app/doradura "$@"\n\
