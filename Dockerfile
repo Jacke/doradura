@@ -53,6 +53,25 @@ COPY --from=builder /app/target/release/doradura /app/doradura
 # Copy migration script
 COPY migration.sql ./
 
+# Create startup script with database initialization
+RUN echo '#!/bin/bash\n\
+set -e\n\
+\n\
+echo "Initializing database..."\n\
+\n\
+# Initialize database if it doesnt exist\n\
+if [ ! -f /app/database.sqlite ]; then\n\
+  echo "Creating new database from migration.sql..."\n\
+  sqlite3 /app/database.sqlite < /app/migration.sql\n\
+  echo "Database created successfully"\n\
+else\n\
+  echo "Database exists - migrations will run from Rust code"\n\
+fi\n\
+\n\
+echo "Starting bot..."\n\
+exec /app/doradura "$@"\n\
+' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+
 # Create necessary directories
 RUN mkdir -p downloads logs backups
 
@@ -69,5 +88,5 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD pgrep doradura || exit 1
 
-# Run the bot
-CMD ["/app/doradura"]
+# Run the bot via entrypoint script
+CMD ["/app/entrypoint.sh"]
