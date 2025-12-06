@@ -4,7 +4,10 @@ TMP/
 app.log
 bot.log
 *.log
-database.sqlite
+# Database - now tracked in git for Railway sync
+# database.sqlite
+database.sqlite-shm
+database.sqlite-wal
 # Local env
 .env
 .env.bot-api
