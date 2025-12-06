@@ -1,0 +1,66 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Build artifacts
+target/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+# Logs
+*.log
+logs/
+app.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Test files
+tests/
+benchmarks/
+
+# Backups
+backups/
+*.backup
+
+# Downloads
+downloads/
+dora-files/
+
+# Temporary files
+tmp/
+TMP/
+*.tmp
+
+# Node modules (for webapp)
+webapp/node_modules/
+
+# Cookies (will be set via env vars)
+youtube_cookies.txt
+*.txt
+
+# Build files
+build.rs.bak

@@ -99,3 +99,30 @@ CREATE INDEX IF NOT EXISTS idx_url_cache_expires_at ON url_cache(expires_at);
 -- Add subscription_expires_at column to existing users table if it doesn't exist
 -- This will fail silently if the column already exists, which is fine
 -- Note: SQLite doesn't support IF NOT EXISTS for ALTER TABLE ADD COLUMN
+
+-- Audio effect sessions table for pitch/tempo modifications
+-- Stores sessions for audio effects editing with 24-hour TTL
+CREATE TABLE IF NOT EXISTS audio_effect_sessions (
+    id TEXT PRIMARY KEY,                    -- UUID session ID
+    user_id INTEGER NOT NULL,               -- Telegram user ID
+    original_file_path TEXT NOT NULL,       -- Path to original MP3
+    current_file_path TEXT NOT NULL,        -- Path to current modified version
+    telegram_file_id TEXT,                  -- Telegram file_id of sent audio
+    original_message_id INTEGER NOT NULL,   -- Message ID where audio was sent
+    title TEXT NOT NULL,                    -- Track title
+    duration INTEGER NOT NULL,              -- Duration in seconds
+    pitch_semitones INTEGER DEFAULT 0,      -- Current pitch shift (-12 to +12)
+    tempo_factor REAL DEFAULT 1.0,          -- Current tempo (0.5 to 2.0)
+    bass_gain_db INTEGER DEFAULT 0,         -- Bass gain in dB (-12 to +12)
+    morph_profile TEXT DEFAULT 'none',      -- Morph preset
+    version INTEGER DEFAULT 0,              -- Modification version number
+    processing INTEGER DEFAULT 0,           -- Processing flag (0 or 1)
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    expires_at DATETIME NOT NULL,           -- TTL expiration (24 hours)
+    FOREIGN KEY (user_id) REFERENCES users(telegram_id)
+);
+
+-- Indexes for efficient lookups
+CREATE INDEX IF NOT EXISTS idx_audio_sessions_user_id ON audio_effect_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_audio_sessions_expires_at ON audio_effect_sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_audio_sessions_msg_id ON audio_effect_sessions(original_message_id);

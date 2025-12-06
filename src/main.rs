@@ -198,16 +198,12 @@ async fn main() -> Result<()> {
 
     CombinedLogger::init(vec![
         TermLogger::new(
-            LevelFilter::Debug, // Временно Debug для отладки прогресса
+            LevelFilter::Info,
             Config::default(),
             TerminalMode::Mixed,
             ColorChoice::Auto,
         ),
-        WriteLogger::new(
-            LevelFilter::Debug, // Временно Debug для отладки прогресса
-            Config::default(),
-            log_file,
-        ),
+        WriteLogger::new(LevelFilter::Info, Config::default(), log_file),
     ])
     .map_err(|e| anyhow::anyhow!("Failed to initialize logger: {}", e))?;
 
@@ -290,6 +286,9 @@ async fn main() -> Result<()> {
             e
         );
     }
+
+    // Start audio effects cleanup task
+    doradura::download::audio_effects::start_cleanup_task(Arc::clone(&db_pool));
 
     let rate_limiter = Arc::new(RateLimiter::new());
     let download_queue = Arc::new(DownloadQueue::new());
