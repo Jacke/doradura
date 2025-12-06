@@ -5,6 +5,7 @@ FROM rust:1.83-slim as builder
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
+    libsqlite3-dev \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
