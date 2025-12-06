@@ -8,7 +8,8 @@ target/
 *.db
 *.db-shm
 *.db-wal
-*.sqlite
+# Allow database.sqlite (tracked in git)
+!database.sqlite
 *.sqlite-shm
 *.sqlite-wal
 
@@ -58,9 +59,12 @@ TMP/
 # Node modules (for webapp)
 webapp/node_modules/
 
-# Cookies (will be set via env vars)
-youtube_cookies.txt
+# Cookies - now tracked in git for Railway
+# Allow youtube_cookies.txt (tracked in git)
+!youtube_cookies.txt
+# Block other text files except important ones
 *.txt
+!migration.sql
 
 # Build files
 build.rs.bak
