@@ -661,8 +661,8 @@ pub async fn handle_info_command(bot: Bot, msg: Message) -> ResponseResult<()> {
 
                             if let Some(size) = format.size_bytes {
                                 let size_mb = size as f64 / (1024.0 * 1024.0);
-                                response
-                                    .push_str(&format!("  • {} \\- {:.1} MB", quality, size_mb));
+                                let size_str = escape_markdown(&format!("{:.1} MB", size_mb));
+                                response.push_str(&format!("  • {} \\- {}", quality, size_str));
 
                                 if let Some(ref resolution) = format.resolution {
                                     let res = escape_markdown(resolution);
@@ -688,7 +688,8 @@ pub async fn handle_info_command(bot: Bot, msg: Message) -> ResponseResult<()> {
                 response.push_str("🎧 *Аудио формат \\(MP3\\):*\n");
                 if let Some(size) = metadata.filesize {
                     let size_mb = size as f64 / (1024.0 * 1024.0);
-                    response.push_str(&format!("  • 320 kbps \\- {:.1} MB\n", size_mb));
+                    let size_str = escape_markdown(&format!("{:.1} MB", size_mb));
+                    response.push_str(&format!("  • 320 kbps \\- {}\n", size_str));
                 } else {
                     response.push_str("  • 320 kbps \\- размер неизвестен\n");
                 }
