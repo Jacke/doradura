@@ -81,7 +81,7 @@ pub mod download {
     pub const FILE_CLEANUP_DELAY_SECS: u64 = 600; // 10 minutes
 
     /// Timeout for yt-dlp commands (in seconds)
-    pub const YTDLP_TIMEOUT_SECS: u64 = 120; // 2 minutes
+    pub const YTDLP_TIMEOUT_SECS: u64 = 240; // 4 minutes, to avoid timeouts on slow metadata fetches
 
     /// File cleanup delay duration
     pub fn cleanup_delay() -> Duration {
@@ -203,13 +203,13 @@ pub mod validation {
             }
         }
 
-        // Default: 50 MB for standard API
-        50 * 1024 * 1024 // 50 MB
+        // Default: 1000 MB (1 GB) for standard API
+        1000 * 1024 * 1024 // 1000 MB
     }
 
     /// Legacy constant for backward compatibility
     /// Use max_audio_size_bytes() instead for dynamic limit detection
-    pub const MAX_AUDIO_SIZE_BYTES: u64 = 50 * 1024 * 1024; // 50 MB
+    pub const MAX_AUDIO_SIZE_BYTES: u64 = 1000 * 1024 * 1024; // 1000 MB
 
     /// Maximum file size for video files
     ///
@@ -231,11 +231,11 @@ pub mod validation {
             }
         }
 
-        // Default: 50 MB for standard API
-        50 * 1024 * 1024 // 50 MB
+        // Default: 1000 MB (1 GB) for standard API
+        1000 * 1024 * 1024 // 1000 MB
     }
 
     /// Legacy constant for backward compatibility
     /// Use max_video_size_bytes() instead for dynamic limit detection
-    pub const MAX_VIDEO_SIZE_BYTES: u64 = 50 * 1024 * 1024; // 50 MB
+    pub const MAX_VIDEO_SIZE_BYTES: u64 = 1000 * 1024 * 1024; // 1000 MB
 }

@@ -8,7 +8,6 @@ use crate::storage::cache;
 use crate::storage::db::DbPool;
 use serde_json::Value;
 use std::sync::Arc;
-use std::time::Duration;
 use teloxide::prelude::*;
 use teloxide::types::MessageId;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, InputFile};
@@ -407,7 +406,9 @@ async fn get_video_formats_list(
     list_formats_args.push(url.as_str().to_string());
 
     let list_formats_output = timeout(
-        Duration::from_secs(30),
+        // Используем тот же таймаут, что и для остальных вызовов yt-dlp,
+        // чтобы не обрывать долгие запросы к YouTube раньше времени
+        config::download::ytdlp_timeout(),
         TokioCommand::new(ytdl_bin)
             .args(&list_formats_args)
             .output(),
@@ -439,6 +440,7 @@ async fn get_video_formats_list(
 
     let formats_output = String::from_utf8_lossy(&list_formats_output.stdout);
     let mut formats: Vec<VideoFormatInfo> = Vec::new();
+    // log::info!("formats: {:?}", formats_output);
 
     // Ищем форматы для разных разрешений
     // Включаем как горизонтальные (обычные видео), так и вертикальные (YouTube Shorts)
@@ -492,6 +494,44 @@ async fn get_video_formats_list(
                                         max_size = Some(size_bytes);
 
                                         // Извлекаем разрешение из строки
+                                        for &res in &resolutions {
+                                            if line.contains(res) {
+                                                found_resolution = Some(res.to_string());
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    } else if let Some(gib_pos) = line.find("GiB") {
+                        // Поддерживаем размеры в гигабайтах (yt-dlp помечает как GiB)
+                        let before_gib = &line[..gib_pos];
+                        let mut num_chars = Vec::new();
+                        let mut found_digit = false;
+
+                        for ch in before_gib.chars().rev() {
+                            if ch.is_ascii_digit() || ch == '.' {
+                                num_chars.push(ch);
+                                found_digit = true;
+                            } else if found_digit {
+                                break;
+                            }
+                        }
+
+                        if !num_chars.is_empty() {
+                            num_chars.reverse();
+                            let size_str: String = num_chars.into_iter().collect();
+                            let size_str = size_str.trim();
+
+                            if let Ok(size_gb) = size_str.parse::<f64>() {
+                                // Ставим разумный предел, чтобы отфильтровать мусорные значения
+                                if size_gb > 0.0 && size_gb < 10000.0 {
+                                    let size_bytes = (size_gb * 1024.0 * 1024.0 * 1024.0) as u64;
+
+                                    if max_size.is_none() || size_bytes > max_size.unwrap() {
+                                        max_size = Some(size_bytes);
+
                                         for &res in &resolutions {
                                             if line.contains(res) {
                                                 found_resolution = Some(res.to_string());
