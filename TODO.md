@@ -26,9 +26,11 @@
 - [x] Display video formats (MP4) with quality and file sizes
 - [x] Display audio format (MP3) information
 - [x] Show resolution and bitrate details
+- [x] Add extractor-args to fix YouTube SABR streaming and nsig extraction issues
 
 ## Decision Log
-- 2024-... - ...
+
+- 2025-12-07 - Added youtube:player_client=default,web_safari,web_embedded to handle SABR streaming and nsig extraction failures
 
 ## Blockers
 - 2024-... - ...
