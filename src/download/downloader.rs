@@ -1171,6 +1171,9 @@ async fn download_audio_file_with_progress(
         // НЕ используем android клиент!
         // YouTube изменил политику: теперь Android требует PO Token
         // Используем дефолтный web клиент который работает с cookies
+        // Добавляем extractor-args для решения проблем с SABR streaming и nsig extraction
+        args.push("--extractor-args");
+        args.push("youtube:player_client=default,web_safari,web_embedded");
 
         args.extend_from_slice(&[
             "--no-check-certificate", // Отключаем проверку сертификатов
@@ -1323,6 +1326,9 @@ async fn download_video_file_with_progress(
         // YouTube изменил политику: теперь Android требует PO Token для видео форматов
         // Используем дефолтный web клиент который работает с cookies
         // Если нужен android - требуется настройка PO Token: https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide
+        // Добавляем extractor-args для решения проблем с SABR streaming и nsig extraction
+        args.push("--extractor-args");
+        args.push("youtube:player_client=default,web_safari,web_embedded");
 
         args.extend_from_slice(&[
             "--no-check-certificate", // Отключаем проверку сертификатов
