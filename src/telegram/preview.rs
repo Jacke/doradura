@@ -15,62 +15,8 @@ use tokio::process::Command as TokioCommand;
 use tokio::time::timeout;
 use url::Url;
 
-/// Информация о доступном формате видео
-#[derive(Debug, Clone)]
-pub struct VideoFormatInfo {
-    pub quality: String,            // "1080p", "720p", "480p", "360p", "best"
-    pub size_bytes: Option<u64>,    // размер в байтах
-    pub resolution: Option<String>, // например "1920x1080"
-}
-
-/// Структура метаданных для превью
-#[derive(Debug, Clone)]
-pub struct PreviewMetadata {
-    pub title: String,
-    pub artist: String,
-    pub thumbnail_url: Option<String>,
-    pub duration: Option<u32>, // в секундах
-    pub filesize: Option<u64>, // в байтах (для default формата)
-    pub description: Option<String>,
-    pub video_formats: Option<Vec<VideoFormatInfo>>, // доступные форматы видео (только для mp4)
-}
-
-impl PreviewMetadata {
-    /// Форматирует длительность в читаемый формат (MM:SS)
-    pub fn format_duration(&self) -> String {
-        if let Some(duration) = self.duration {
-            let minutes = duration / 60;
-            let seconds = duration % 60;
-            format!("{}:{:02}", minutes, seconds)
-        } else {
-            "Неизвестно".to_string()
-        }
-    }
-
-    /// Форматирует размер файла в читаемый формат (MB или KB)
-    pub fn format_filesize(&self) -> String {
-        if let Some(size) = self.filesize {
-            if size > 1024 * 1024 {
-                format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
-            } else if size > 1024 {
-                format!("{:.1} KB", size as f64 / 1024.0)
-            } else {
-                format!("{} B", size)
-            }
-        } else {
-            "Неизвестно".to_string()
-        }
-    }
-
-    /// Возвращает отображаемое название (title или "artist - title")
-    pub fn display_title(&self) -> String {
-        if self.artist.trim().is_empty() {
-            self.title.clone()
-        } else {
-            format!("{} - {}", self.artist, self.title)
-        }
-    }
-}
+use crate::telegram::cache::PREVIEW_CACHE;
+use crate::telegram::types::{PreviewMetadata, VideoFormatInfo};
 
 /// Получает метаданные из JSON ответа yt-dlp
 ///
@@ -83,6 +29,8 @@ async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<Value, AppE
         "30",
         "--retries",
         "2",
+        "--extractor-args",
+        "youtube:player_client=default,web_safari,web_embedded",
     ];
     add_cookies_args(&mut args);
     args.push(url.as_str());
@@ -195,7 +143,13 @@ pub async fn get_preview_metadata(
     let ytdl_bin = &*config::YTDL_BIN;
     log::debug!("Getting preview metadata for URL: {}", url);
 
-    // Проверяем кэш для базовых метаданных
+    // Проверяем кэш превью
+    if let Some(metadata) = PREVIEW_CACHE.get(url.as_str()).await {
+        log::debug!("Preview metadata found in cache for URL: {}", url);
+        return Ok(metadata);
+    }
+
+    // Проверяем кэш для базовых метаданных (старый кэш, если нужно)
     let (cached_title, cached_artist) =
         if let Some((title, artist)) = cache::get_cached_metadata(url).await {
             (Some(title), Some(artist))
@@ -377,7 +331,20 @@ pub async fn get_preview_metadata(
 
     // Сохраняем расширенные метаданные в кэш только если title не пустой и не "Unknown Track"
     if !title.trim().is_empty() && title.trim() != "Unknown Track" {
-        cache::cache_extended_metadata(url, title, artist, thumbnail_url, duration, filesize).await;
+        cache::cache_extended_metadata(
+            url,
+            title.clone(),
+            artist.clone(),
+            thumbnail_url.clone(),
+            duration,
+            filesize,
+        )
+        .await;
+
+        // Сохраняем в новый кэш превью
+        PREVIEW_CACHE
+            .set(url.as_str().to_string(), metadata.clone())
+            .await;
     } else {
         log::warn!("Not caching metadata with invalid title: '{}'", title);
     }
@@ -831,6 +798,134 @@ pub async fn send_preview(
         .parse_mode(teloxide::types::ParseMode::MarkdownV2)
         .reply_markup(keyboard)
         .await
+}
+
+/// Обновляет существующее сообщение превью (редактирует текст/подпись и клавиатуру)
+///
+/// Используется для возврата из меню настроек без пересоздания сообщения
+pub async fn update_preview_message(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    url: &Url,
+    metadata: &PreviewMetadata,
+    default_format: &str,
+    default_quality: Option<&str>,
+    db_pool: Arc<DbPool>,
+) -> ResponseResult<()> {
+    // Формируем текст превью с экранированием (копия логики из send_preview)
+    let escaped_title = escape_markdown(&metadata.display_title());
+    let mut text = format!("🎵 *{}*\n\n", escaped_title);
+
+    if metadata.duration.is_some() {
+        let duration_str = metadata.format_duration();
+        text.push_str(&format!(
+            "⏱️ Длительность: {}\n",
+            escape_markdown(&duration_str)
+        ));
+    }
+
+    // Для видео показываем список форматов с размерами
+    if (default_format == "mp4" || default_format == "mp4+mp3") && metadata.video_formats.is_some()
+    {
+        let formats = metadata.video_formats.as_ref().unwrap();
+        if !formats.is_empty() {
+            text.push_str("\n📹 *Доступные форматы:*\n");
+            for format_info in formats {
+                let size_str = if let Some(size) = format_info.size_bytes {
+                    if size > 1024 * 1024 {
+                        format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
+                    } else if size > 1024 {
+                        format!("{:.1} KB", size as f64 / 1024.0)
+                    } else {
+                        format!("{} B", size)
+                    }
+                } else {
+                    "Неизвестно".to_string()
+                };
+                let resolution_str = format_info
+                    .resolution
+                    .as_ref()
+                    .map(|r| format!(" ({})", r))
+                    .unwrap_or_default();
+                text.push_str(&format!(
+                    "• {}: {}{}\n",
+                    escape_markdown(&format_info.quality),
+                    escape_markdown(&size_str),
+                    escape_markdown(&resolution_str)
+                ));
+            }
+        }
+    } else if metadata.filesize.is_some() {
+        let size_str = metadata.format_filesize();
+        text.push_str(&format!(
+            "📦 Примерный размер: {}\n",
+            escape_markdown(&size_str)
+        ));
+    }
+
+    if let Some(desc) = &metadata.description {
+        text.push_str(&format!("\n📝 {}\n", escape_markdown(desc)));
+    }
+
+    text.push_str("\nВыбери действие\\:");
+
+    // Создаем inline клавиатуру
+    // Сохраняем URL в кэше и получаем короткий ID
+    let url_id = cache::store_url(&db_pool, url.as_str()).await;
+
+    // Получаем настройку send_as_document из БД для видео
+    let send_as_document = if default_format == "mp4" {
+        match crate::storage::db::get_connection(&db_pool) {
+            Ok(conn) => {
+                crate::storage::db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0)
+            }
+            Err(e) => {
+                log::warn!("Failed to get db connection for send_as_document: {}", e);
+                0
+            }
+        }
+    } else {
+        0
+    };
+
+    let keyboard = if (default_format == "mp4" || default_format == "mp4+mp3")
+        && metadata.video_formats.is_some()
+    {
+        let formats = metadata.video_formats.as_ref().unwrap();
+        if formats.is_empty() {
+            create_fallback_keyboard(default_format, default_quality, &url_id)
+        } else {
+            create_video_format_keyboard(
+                formats,
+                default_quality,
+                &url_id,
+                send_as_document,
+                default_format,
+            )
+        }
+    } else {
+        create_fallback_keyboard(default_format, default_quality, &url_id)
+    };
+
+    // Пытаемся отредактировать подпись (если это фото/видео)
+    let caption_req = bot
+        .edit_message_caption(chat_id, message_id)
+        .caption(text.clone())
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .reply_markup(keyboard.clone());
+
+    match caption_req.await {
+        Ok(_) => Ok(()),
+        Err(_) => {
+            // Если не получилось (например, это текстовое сообщение), редактируем текст
+            bot.edit_message_text(chat_id, message_id, text)
+                .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                .reply_markup(keyboard)
+                .await?;
+            Ok(())
+        }
+    }
 }
 
 /// Создает стандартную клавиатуру с кнопкой скачивания
