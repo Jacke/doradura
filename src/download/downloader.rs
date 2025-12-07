@@ -1007,7 +1007,9 @@ fn parse_progress(line: &str) -> Option<ProgressInfo> {
     for (i, part) in parts.iter().enumerate() {
         if part.ends_with('%') {
             if let Ok(p) = part.trim_end_matches('%').parse::<f32>() {
-                percent = Some(p.min(100.0) as u8);
+                // Обрезаем в разумные границы, чтобы не прыгать на 100% при мусорных данных
+                let clamped = p.clamp(0.0, 100.0) as u8;
+                percent = Some(clamped);
             }
         }
 
@@ -1533,18 +1535,18 @@ pub async fn download_and_send_audio(
                     // Получаем обновления прогресса
                     Some(progress_info) = progress_rx.recv() => {
                         // Обновляем при значимых изменениях (разница >= 5%)
-                        let progress_diff = if progress_info.percent >= last_progress {
-                            progress_info.percent - last_progress
-                        } else {
-                            progress_info.percent
-                        };
+                        // Не позволяем скачущим значениям сразу прыгать на 100% — ограничиваем до 99,
+                        // а также не даём прогрессу откатываться назад (берём максимум с last_progress).
+                        let safe_progress = progress_info.percent.min(99).max(last_progress);
+
+                        let progress_diff = safe_progress.saturating_sub(last_progress);
 
                         if progress_diff >= 5 {
-                            last_progress = progress_info.percent;
-                            log::info!("Updating progress UI: {}%", progress_info.percent);
+                            last_progress = safe_progress;
+                            log::info!("Updating progress UI: {}%", safe_progress);
                             let _ = progress_msg.update(&bot_for_progress, DownloadStatus::Downloading {
                                 title: title_for_progress.as_ref().to_string(),
-                                progress: progress_info.percent,
+                                progress: safe_progress,
                                 speed_mbs: progress_info.speed_mbs,
                                 eta_seconds: progress_info.eta_seconds,
                                 current_size: progress_info.current_size,
@@ -2821,18 +2823,17 @@ pub async fn download_and_send_video(
 
                         // Сначала обновляем UI, чтобы пользователь видел прогресс
                         // Обновляем при значимых изменениях (разница >= 5%)
-                        let progress_diff = if progress_info.percent >= last_progress {
-                            progress_info.percent - last_progress
-                        } else {
-                            progress_info.percent
-                        };
+                        // Не даём прогрессу прыгать до 100% во время скачивания и не откатываем его назад
+                        let safe_progress = progress_info.percent.min(99).max(last_progress);
+
+                        let progress_diff = safe_progress.saturating_sub(last_progress);
 
                         if progress_diff >= 5 {
-                            last_progress = progress_info.percent;
-                            log::info!("Updating progress UI: {}%", progress_info.percent);
+                            last_progress = safe_progress;
+                            log::info!("Updating progress UI: {}%", safe_progress);
                             let _ = progress_msg.update(&bot_for_progress, DownloadStatus::Downloading {
                                 title: title_for_progress.as_ref().to_string(),
-                                progress: progress_info.percent,
+                                progress: safe_progress,
                                 speed_mbs: progress_info.speed_mbs,
                                 eta_seconds: progress_info.eta_seconds,
                                 current_size: progress_info.current_size,
