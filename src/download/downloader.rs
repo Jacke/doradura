@@ -2905,11 +2905,12 @@ pub async fn download_and_send_video(
             };
 
             // Step 3: Get file size info (no validation, just logging)
+            // NOTE: This might be incomplete if ffmpeg is still merging video+audio streams
             let file_size = fs::metadata(&actual_file_path)
                 .map_err(|e| AppError::Download(format!("Failed to get file metadata: {}", e)))?
                 .len();
 
-            log::info!("Downloaded video file size: {:.2} MB", file_size as f64 / (1024.0 * 1024.0));
+            log::info!("Downloaded video file size (might be video-only stream, before merging): {:.2} MB", file_size as f64 / (1024.0 * 1024.0));
 
             // Step 3.5: Проверяем, что файл содержит и видео, и аудио дорожки
             match has_both_video_and_audio(&actual_file_path) {
@@ -2958,6 +2959,12 @@ pub async fn download_and_send_video(
             } else {
                 false
             };
+
+            // Log final merged file size before sending
+            let final_file_size = fs::metadata(&actual_file_path)
+                .map(|m| m.len())
+                .unwrap_or(0);
+            log::info!("📦 Final merged video file size (before sending): {:.2} MB", final_file_size as f64 / (1024.0 * 1024.0));
 
             log::info!("📤 Calling send_video_with_retry with send_as_document={} for user {}", send_as_document, chat_id.0);
 
