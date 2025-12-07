@@ -203,13 +203,13 @@ pub mod validation {
             }
         }
 
-        // Default: 1000 MB (1 GB) for standard API
-        1000 * 1024 * 1024 // 1000 MB
+        // Default: 50 MB for standard API
+        50 * 1024 * 1024 // 50 MB
     }
 
     /// Legacy constant for backward compatibility
     /// Use max_audio_size_bytes() instead for dynamic limit detection
-    pub const MAX_AUDIO_SIZE_BYTES: u64 = 1000 * 1024 * 1024; // 1000 MB
+    pub const MAX_AUDIO_SIZE_BYTES: u64 = 50 * 1024 * 1024; // 50 MB
 
     /// Maximum file size for video files
     ///
@@ -231,11 +231,11 @@ pub mod validation {
             }
         }
 
-        // Default: 1000 MB (1 GB) for standard API
-        1000 * 1024 * 1024 // 1000 MB
+        // Default: 50 MB for standard API
+        50 * 1024 * 1024 // 50 MB
     }
 
     /// Legacy constant for backward compatibility
     /// Use max_video_size_bytes() instead for dynamic limit detection
-    pub const MAX_VIDEO_SIZE_BYTES: u64 = 1000 * 1024 * 1024; // 1000 MB
+    pub const MAX_VIDEO_SIZE_BYTES: u64 = 50 * 1024 * 1024; // 50 MB
 }

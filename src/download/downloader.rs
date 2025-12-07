@@ -1534,10 +1534,13 @@ pub async fn download_and_send_audio(
                 tokio::select! {
                     // Получаем обновления прогресса
                     Some(progress_info) = progress_rx.recv() => {
-                        // Обновляем при значимых изменениях (разница >= 5%)
-                        // Не позволяем скачущим значениям сразу прыгать на 100% — ограничиваем до 99,
-                        // а также не даём прогрессу откатываться назад (берём максимум с last_progress).
-                        let safe_progress = progress_info.percent.min(99).max(last_progress);
+                        // Не даём прогрессу откатываться назад и фильтруем ложные ранние 100%
+                        let mut safe_progress = progress_info
+                            .percent
+                            .clamp(last_progress, 100);
+                        if safe_progress == 100 && last_progress < 90 {
+                            safe_progress = last_progress;
+                        }
 
                         let progress_diff = safe_progress.saturating_sub(last_progress);
 
@@ -1557,6 +1560,19 @@ pub async fn download_and_send_audio(
                     }
                     // Ждем завершения загрузки
                     result = &mut download_handle => {
+                        // Дорисовываем прогресс до 100% после успешной загрузки
+                        if last_progress < 100 {
+                            let _ = progress_msg.update(&bot_for_progress, DownloadStatus::Downloading {
+                                title: title_for_progress.as_ref().to_string(),
+                                progress: 100,
+                                speed_mbs: None,
+                                eta_seconds: None,
+                                current_size: None,
+                                total_size: None,
+                                file_format: Some("mp3".to_string()),
+                            }).await;
+                            let _ = last_progress; // Suppress unused warning
+                        }
                         break result.map_err(|e| AppError::Download(format!("Task join error: {}", e)))??;
                     }
                 }
@@ -2823,8 +2839,13 @@ pub async fn download_and_send_video(
 
                         // Сначала обновляем UI, чтобы пользователь видел прогресс
                         // Обновляем при значимых изменениях (разница >= 5%)
-                        // Не даём прогрессу прыгать до 100% во время скачивания и не откатываем его назад
-                        let safe_progress = progress_info.percent.min(99).max(last_progress);
+                        // Не даём прогрессу откатываться назад и игнорируем ранние ложные 100%
+                        let mut safe_progress = progress_info
+                            .percent
+                            .clamp(last_progress, 100);
+                        if safe_progress == 100 && last_progress < 90 {
+                            safe_progress = last_progress;
+                        }
 
                         let progress_diff = safe_progress.saturating_sub(last_progress);
 
@@ -2846,6 +2867,19 @@ pub async fn download_and_send_video(
                     }
                     // Ждем завершения загрузки
                     result = &mut download_handle => {
+                        // Дорисовываем прогресс до 100% после успешной загрузки
+                        if last_progress < 100 {
+                            let _ = progress_msg.update(&bot_for_progress, DownloadStatus::Downloading {
+                                title: title_for_progress.as_ref().to_string(),
+                                progress: 100,
+                                speed_mbs: None,
+                                eta_seconds: None,
+                                current_size: None,
+                                total_size: None,
+                                file_format: Some("mp4".to_string()),
+                            }).await;
+                            let _ = last_progress; // Suppress unused warning
+                        }
                         result.map_err(|e| AppError::Download(format!("Task join error: {}", e)))??;
                         break;
                     }
