@@ -549,42 +549,84 @@ pub async fn handle_message(
 /// - Shows audio format information
 /// - Sends formatted message to user
 pub async fn handle_info_command(bot: Bot, msg: Message) -> ResponseResult<()> {
+    log::info!("════════════════════════════════════════════════════════");
+    log::info!("📋 /info command called");
+    log::info!("Chat ID: {}", msg.chat.id);
+    log::info!("════════════════════════════════════════════════════════");
+
     if let Some(text) = msg.text() {
+        log::info!("✅ Message text found: '{}'", text);
+
         // Extract URL from command text
         let parts: Vec<&str> = text.split_whitespace().collect();
+        log::info!("📊 Parts count: {} - Parts: {:?}", parts.len(), parts);
 
         if parts.len() < 2 {
-            bot.send_message(
+            log::warn!("⚠️  No URL provided, sending usage instructions");
+            match bot.send_message(
                 msg.chat.id,
                 "Использование: /info <URL>\n\nПример:\n/info https://www.youtube.com/watch?v=dQw4w9WgXcQ"
             )
-            .await?;
+            .await {
+                Ok(_) => log::info!("✅ Usage message sent successfully"),
+                Err(e) => log::error!("❌ Failed to send usage message: {:?}", e),
+            }
             return Ok(());
         }
 
         let url_text = parts[1];
+        log::info!("🔗 Extracted URL: {}", url_text);
 
         // Validate URL
         let url = match Url::parse(url_text) {
-            Ok(parsed_url) => parsed_url,
-            Err(_) => {
-                bot.send_message(
-                    msg.chat.id,
-                    "Некорректная ссылка. Пожалуйста, пришли корректную ссылку.",
-                )
-                .await?;
+            Ok(parsed_url) => {
+                log::info!("✅ URL parsed successfully: {}", parsed_url);
+                parsed_url
+            }
+            Err(e) => {
+                log::error!("❌ Failed to parse URL '{}': {}", url_text, e);
+                match bot
+                    .send_message(
+                        msg.chat.id,
+                        "Некорректная ссылка. Пожалуйста, пришли корректную ссылку.",
+                    )
+                    .await
+                {
+                    Ok(_) => log::info!("✅ Error message sent successfully"),
+                    Err(e) => log::error!("❌ Failed to send error message: {:?}", e),
+                }
                 return Ok(());
             }
         };
 
         // Send "processing" message
-        let processing_msg = bot
+        log::info!("📤 Sending 'processing' message...");
+        let processing_msg = match bot
             .send_message(msg.chat.id, "⏳ Получаю информацию...")
-            .await?;
+            .await
+        {
+            Ok(msg) => {
+                log::info!("✅ Processing message sent, ID: {}", msg.id);
+                msg
+            }
+            Err(e) => {
+                log::error!("❌ Failed to send processing message: {:?}", e);
+                return Err(e);
+            }
+        };
 
         // Get metadata with video formats
+        log::info!("🔍 Fetching metadata from yt-dlp...");
         match get_preview_metadata(&url, Some("mp4"), Some("best")).await {
             Ok(metadata) => {
+                log::info!("✅ Metadata fetched successfully");
+                log::info!("📝 Title: {}", metadata.display_title());
+                log::info!("⏱ Duration: {:?}", metadata.duration);
+                log::info!("📦 File size: {:?}", metadata.filesize);
+                log::info!(
+                    "🎬 Video formats count: {:?}",
+                    metadata.video_formats.as_ref().map(|f| f.len())
+                );
                 let mut response = String::new();
 
                 // Title and artist
@@ -658,21 +700,63 @@ pub async fn handle_info_command(bot: Bot, msg: Message) -> ResponseResult<()> {
                 response.push_str("2\\. Выбери формат и качество в меню\n");
                 response.push_str("3\\. Получи файл\\!");
 
-                // Delete processing message and send result
-                let _ = bot.delete_message(msg.chat.id, processing_msg.id).await;
+                log::info!("📝 Response formatted, length: {} chars", response.len());
+                log::debug!("Response preview: {}", &response[..response.len().min(200)]);
 
-                bot.send_message(msg.chat.id, response)
+                // Delete processing message and send result
+                log::info!("🗑 Deleting processing message...");
+                match bot.delete_message(msg.chat.id, processing_msg.id).await {
+                    Ok(_) => log::info!("✅ Processing message deleted"),
+                    Err(e) => log::warn!("⚠️  Failed to delete processing message: {:?}", e),
+                }
+
+                log::info!("📤 Sending formatted response with MarkdownV2...");
+                match bot
+                    .send_message(msg.chat.id, response)
                     .parse_mode(ParseMode::MarkdownV2)
-                    .await?;
+                    .await
+                {
+                    Ok(_) => {
+                        log::info!("✅ Response sent successfully!");
+                        log::info!("════════════════════════════════════════════════════════");
+                    }
+                    Err(e) => {
+                        log::error!("❌ Failed to send response: {:?}", e);
+                        log::info!("════════════════════════════════════════════════════════");
+                        return Err(e);
+                    }
+                }
             }
             Err(e) => {
-                let _ = bot.delete_message(msg.chat.id, processing_msg.id).await;
+                log::error!("❌ Failed to get metadata: {:?}", e);
+
+                log::info!("🗑 Deleting processing message...");
+                match bot.delete_message(msg.chat.id, processing_msg.id).await {
+                    Ok(_) => log::info!("✅ Processing message deleted"),
+                    Err(e) => log::warn!("⚠️  Failed to delete processing message: {:?}", e),
+                }
 
                 let error_msg = format!("❌ Не удалось получить информацию о файле:\n{}", e);
-                bot.send_message(msg.chat.id, error_msg).await?;
+                log::info!("📤 Sending error message...");
+                match bot.send_message(msg.chat.id, error_msg).await {
+                    Ok(_) => {
+                        log::info!("✅ Error message sent successfully");
+                        log::info!("════════════════════════════════════════════════════════");
+                    }
+                    Err(e) => {
+                        log::error!("❌ Failed to send error message: {:?}", e);
+                        log::info!("════════════════════════════════════════════════════════");
+                        return Err(e);
+                    }
+                }
             }
         }
+    } else {
+        log::error!("❌ No text in message!");
+        log::info!("════════════════════════════════════════════════════════");
     }
+
+    log::info!("✅ handle_info_command completed");
     Ok(())
 }
 

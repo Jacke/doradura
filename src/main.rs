@@ -513,7 +513,10 @@ async fn main() -> Result<()> {
                     move |bot: Bot, msg: Message, cmd: Command| {
                         let db_pool = Arc::clone(&db_pool);
                         async move {
-                            log::debug!("Received command: {:?}", cmd);
+                            log::info!("🎯 Received command: {:?} from chat {}", cmd, msg.chat.id);
+                            if let Some(text) = msg.text() {
+                                log::info!("📝 Full message text: '{}'", text);
+                            }
                             match cmd {
                                 Command::Start => {
                                     // Список file_id стикеров из стикерпака doraduradoradura
@@ -608,7 +611,11 @@ async fn main() -> Result<()> {
                                     let _ = show_main_menu(&bot, msg.chat.id, db_pool).await;
                                 }
                                 Command::Info => {
-                                    let _ = handle_info_command(bot.clone(), msg.clone()).await;
+                                    log::info!("⚡ Command::Info matched, calling handle_info_command");
+                                    match handle_info_command(bot.clone(), msg.clone()).await {
+                                        Ok(_) => log::info!("✅ handle_info_command completed successfully"),
+                                        Err(e) => log::error!("❌ handle_info_command failed: {:?}", e),
+                                    }
                                 }
                                 Command::History => {
                                     let _ = show_history(&bot, msg.chat.id, db_pool).await;
