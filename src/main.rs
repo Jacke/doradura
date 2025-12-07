@@ -34,7 +34,7 @@ use doradura::storage::db::{
     log_request, update_user_plan,
 };
 use doradura::storage::{create_pool, get_connection};
-use doradura::telegram::commands::handle_message;
+use doradura::telegram::commands::{handle_info_command, handle_message};
 use doradura::telegram::menu::{handle_menu_callback, show_main_menu};
 use doradura::telegram::notifications::notify_admin_task_failed;
 use doradura::telegram::webapp::{run_webapp_server, WebAppAction, WebAppData};
@@ -51,6 +51,8 @@ enum Command {
     Start,
     #[command(description = "настройки режима загрузки")]
     Mode,
+    #[command(description = "показать информацию о доступных форматах")]
+    Info,
     #[command(description = "история загрузок")]
     History,
     #[command(description = "личная статистика")]
@@ -252,6 +254,7 @@ async fn main() -> Result<()> {
     bot.set_my_commands(vec![
         BotCommand::new("start", "показывает главное меню"),
         BotCommand::new("mode", "настройки режима загрузки"),
+        BotCommand::new("info", "показать информацию о доступных форматах"),
         BotCommand::new("history", "история загрузок"),
         BotCommand::new("stats", "личная статистика"),
         BotCommand::new("global", "глобальная статистика"),
@@ -603,6 +606,9 @@ async fn main() -> Result<()> {
                                 }
                                 Command::Mode => {
                                     let _ = show_main_menu(&bot, msg.chat.id, db_pool).await;
+                                }
+                                Command::Info => {
+                                    let _ = handle_info_command(bot.clone(), msg.clone()).await;
                                 }
                                 Command::History => {
                                     let _ = show_history(&bot, msg.chat.id, db_pool).await;
