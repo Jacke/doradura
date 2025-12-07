@@ -9,6 +9,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use std::sync::Arc;
 use teloxide::prelude::*;
+use teloxide::types::ParseMode;
 use url::Url;
 
 /// Cached regex for matching URLs
@@ -451,10 +452,10 @@ pub async fn handle_message(
                             if let Some(filesize) = metadata.filesize {
                                 let max_size = config::validation::max_audio_size_bytes();
 
-                                if filesize > max_size {
+                                if filesize > max_size * 1000 {
                                     let size_mb = filesize as f64 / (1024.0 * 1024.0);
-                                    let max_mb = max_size as f64 / (1024.0 * 1024.0);
-
+                                    //let max_mb = max_size as f64 / (1024.0 * 1024.0);
+                                    let max_mb = max_size as f64 / (1024.0 * 2.0 * 1024.0);
                                     log::warn!("Audio file too large at preview stage: {:.2} MB (max: {:.2} MB)", size_mb, max_mb);
 
                                     let error_message = format!(
@@ -524,4 +525,171 @@ pub async fn handle_message(
         bot.send_message(msg.chat.id, "Извини, я не нашла ссылки. Пожалуйста, пришли мне ссылку на трек или видео с поддерживаемых сервисов (YouTube, SoundCloud, VK, TikTok, Instagram, Twitch, Spotify и другие).").await?;
     }
     Ok(None)
+}
+
+/// Handle /info command to show available formats for a URL
+///
+/// Parses URL from command text and displays detailed information about available formats,
+/// sizes, quality options, and types (mp4, mp3).
+///
+/// # Arguments
+///
+/// * `bot` - Telegram bot instance
+/// * `msg` - Message containing the /info command and URL
+///
+/// # Returns
+///
+/// Returns `ResponseResult<()>` indicating success or failure
+///
+/// # Behavior
+///
+/// - Extracts URL from message text (format: /info <URL>)
+/// - Fetches metadata using yt-dlp
+/// - Displays available video formats with quality and sizes
+/// - Shows audio format information
+/// - Sends formatted message to user
+pub async fn handle_info_command(bot: Bot, msg: Message) -> ResponseResult<()> {
+    if let Some(text) = msg.text() {
+        // Extract URL from command text
+        let parts: Vec<&str> = text.split_whitespace().collect();
+
+        if parts.len() < 2 {
+            bot.send_message(
+                msg.chat.id,
+                "Использование: /info <URL>\n\nПример:\n/info https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+            )
+            .await?;
+            return Ok(());
+        }
+
+        let url_text = parts[1];
+
+        // Validate URL
+        let url = match Url::parse(url_text) {
+            Ok(parsed_url) => parsed_url,
+            Err(_) => {
+                bot.send_message(
+                    msg.chat.id,
+                    "Некорректная ссылка. Пожалуйста, пришли корректную ссылку.",
+                )
+                .await?;
+                return Ok(());
+            }
+        };
+
+        // Send "processing" message
+        let processing_msg = bot
+            .send_message(msg.chat.id, "⏳ Получаю информацию...")
+            .await?;
+
+        // Get metadata with video formats
+        match get_preview_metadata(&url, Some("mp4"), Some("best")).await {
+            Ok(metadata) => {
+                let mut response = String::new();
+
+                // Title and artist
+                response.push_str(&format!(
+                    "🎵 *{}*\n\n",
+                    escape_markdown(&metadata.display_title())
+                ));
+
+                // Duration
+                if let Some(duration) = metadata.duration {
+                    let minutes = duration / 60;
+                    let seconds = duration % 60;
+                    response.push_str(&format!("⏱ Длительность: {}:{:02}\n\n", minutes, seconds));
+                }
+
+                // Video formats section
+                if let Some(ref formats) = metadata.video_formats {
+                    response.push_str("📹 *Видео форматы \\(MP4\\):*\n");
+
+                    // Filter and sort formats by quality
+                    let quality_order = ["1080p", "720p", "480p", "360p"];
+                    let available_formats: Vec<_> = quality_order
+                        .iter()
+                        .filter_map(|&quality| formats.iter().find(|f| f.quality == quality))
+                        .collect();
+
+                    if available_formats.is_empty() {
+                        response.push_str("  • Нет доступных форматов\n");
+                    } else {
+                        for format in available_formats {
+                            let quality = escape_markdown(&format.quality);
+
+                            if let Some(size) = format.size_bytes {
+                                let size_mb = size as f64 / (1024.0 * 1024.0);
+                                response
+                                    .push_str(&format!("  • {} \\- {:.1} MB", quality, size_mb));
+
+                                if let Some(ref resolution) = format.resolution {
+                                    let res = escape_markdown(resolution);
+                                    response.push_str(&format!(" \\({}\\)", res));
+                                }
+                                response.push('\n');
+                            } else {
+                                response
+                                    .push_str(&format!("  • {} \\- размер неизвестен", quality));
+
+                                if let Some(ref resolution) = format.resolution {
+                                    let res = escape_markdown(resolution);
+                                    response.push_str(&format!(" \\({}\\)", res));
+                                }
+                                response.push('\n');
+                            }
+                        }
+                    }
+                    response.push('\n');
+                }
+
+                // Audio format section
+                response.push_str("🎧 *Аудио формат \\(MP3\\):*\n");
+                if let Some(size) = metadata.filesize {
+                    let size_mb = size as f64 / (1024.0 * 1024.0);
+                    response.push_str(&format!("  • 320 kbps \\- {:.1} MB\n", size_mb));
+                } else {
+                    response.push_str("  • 320 kbps \\- размер неизвестен\n");
+                }
+                response.push('\n');
+
+                // Additional info
+                response.push_str("💡 *Как скачать:*\n");
+                response.push_str("1\\. Отправь мне ссылку\n");
+                response.push_str("2\\. Выбери формат и качество в меню\n");
+                response.push_str("3\\. Получи файл\\!");
+
+                // Delete processing message and send result
+                let _ = bot.delete_message(msg.chat.id, processing_msg.id).await;
+
+                bot.send_message(msg.chat.id, response)
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .await?;
+            }
+            Err(e) => {
+                let _ = bot.delete_message(msg.chat.id, processing_msg.id).await;
+
+                let error_msg = format!("❌ Не удалось получить информацию о файле:\n{}", e);
+                bot.send_message(msg.chat.id, error_msg).await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Helper function to escape special characters for MarkdownV2
+fn escape_markdown(text: &str) -> String {
+    let mut result = String::with_capacity(text.len() * 2);
+
+    for c in text.chars() {
+        match c {
+            '_' | '*' | '[' | ']' | '(' | ')' | '~' | '`' | '>' | '#' | '+' | '-' | '=' | '|'
+            | '{' | '}' | '.' | '!' => {
+                result.push('\\');
+                result.push(c);
+            }
+            _ => result.push(c),
+        }
+    }
+
+    result
 }
