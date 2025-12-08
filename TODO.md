@@ -27,6 +27,7 @@
 - [x] Display audio format (MP3) information
 - [x] Show resolution and bitrate details
 - [x] Add extractor-args to fix YouTube SABR streaming and nsig extraction issues
+- [x] Add video title as caption when sending videos
 
 ## Decision Log
 
