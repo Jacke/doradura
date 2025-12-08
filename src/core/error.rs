@@ -8,7 +8,7 @@ use thiserror::Error;
 /// # Example
 ///
 /// ```no_run
-/// use doradura::error::AppError;
+/// use doradura::core::error::AppError;
 ///
 /// fn handle_error(err: AppError) {
 ///     eprintln!("Error: {}", err);

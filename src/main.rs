@@ -35,7 +35,7 @@ use doradura::storage::db::{
 };
 use doradura::storage::{create_pool, get_connection};
 use doradura::telegram::commands::{handle_info_command, handle_message};
-use doradura::telegram::menu::{handle_menu_callback, show_main_menu};
+use doradura::telegram::menu::{handle_menu_callback, show_enhanced_main_menu, show_main_menu};
 use doradura::telegram::notifications::notify_admin_task_failed;
 use doradura::telegram::webapp::{run_webapp_server, WebAppAction, WebAppData};
 use export::show_export_menu;
@@ -519,56 +519,8 @@ async fn main() -> Result<()> {
                             }
                             match cmd {
                                 Command::Start => {
-                                    // Список file_id стикеров из стикерпака doraduradoradura
-                                    let sticker_file_ids = vec![
-                                        "CAACAgIAAxUAAWj-ZokEQu5YpTnjl6IWPzCQZ0UUAAJCEwAC52QwSC6nTghQdw-KNgQ",
-                                        "CAACAgIAAxUAAWj-ZomIQgQKKpbMZA0_VDzfavIiAAK1GgACt8dBSNRj5YvFS-dmNgQ",
-                                        "CAACAgIAAxUAAWj-Zokct93wagdDXh1JbhxBIyJOAALzFwACoktASAOjHltqzx0ENgQ",
-                                        "CAACAgIAAxUAAWj-ZomorWU-YHGN6oQ6-ikN46CJAAInFAACqlJYSGHilrVqW1AxNgQ",
-                                        "CAACAgIAAxUAAWj-ZonVzqfhCC1-YjDNhqGioqvVAALdEwAC-_ZpSB5PRC_sd93QNgQ",
-                                        "CAACAgIAAxkBAAIFymj-YswNosbIex7SmXJejbO_GN7-AAJMGQAC9MFQSHBzdKlbjXskNgQ",
-                                        "CAACAgIAAxUAAWj-Zol_H6tZIPG-PPHnpNZS1QkIAAJFGwACIQtBSDwm6rS-ZojVNgQ",
-                                        "CAACAgIAAxUAAWj-ZomOtDnC9_6jFRp84js-HQN5AALzEgACqc5ISI4uefJ9dzZPNgQ",
-                                        "CAACAgIAAxUAAWj-ZolmPZFTqhyNqwssS4JVQY_AAALgFAACU7NBSCIDa2YqXjXyNgQ",
-                                        "CAACAgIAAxUAAWj-ZonZTWGW2DadfQ2Mo6bHAAHy2AACjxEAAgSTSUj1H3gU_UUHdjYE",
-                                        "CAACAgIAAxUAAWj-ZolQ6OCfECavW19ATgcCup5PAAIOFgACgbdJSMOkkJfpAbs_NgQ",
-                                        "CAACAgIAAxUAAWj-Zol19ilXmGth6SKa-4FRrSEJAAJRFwACM9JISKFYdRXvbsb1NgQ",
-                                        "CAACAgIAAxUAAWj-ZokRA50GUCiz_OXQUih3uljfAAIeGQACsyBISDP8m_5FL5CJNgQ",
-                                        "CAACAgIAAxUAAWj-ZomiM5Mt2aK1G3b8O7JK-shMAALPFQACWGhoSMeITTonc71ENgQ",
-                                        "CAACAgIAAxUAAWj-ZomSF9AsKZr6myR3lYgyc-HyAAIRGQACM9KRSG5IUy40KB2KNgQ",
-                                    ];
-
-                                    // Генерируем случайный индекс используя настоящий генератор случайных чисел
-                                    // Используем rand для лучшего разнообразия (timestamp может быть одинаковым для быстрых отправок)
-                                    let random_index = rand::thread_rng().gen_range(0..sticker_file_ids.len());
-                                    let random_sticker_id = sticker_file_ids[random_index];
-
-                                    // Отправляем случайный стикер
-                                    let _ = bot.send_sticker(msg.chat.id, teloxide::types::InputFile::file_id(teloxide::types::FileId(random_sticker_id.to_string()))).await;
-
-                                    // Отправляем приветственное сообщение
-                                    let _ = bot.send_message(msg.chat.id, "Хэй\\! Я Дора, дай мне ссылку и я скачаю ❤️‍🔥")
-                                        .parse_mode(ParseMode::MarkdownV2)
-                                        .await;
-
-                                    // Отправляем кнопку для открытия Mini App (если WEBAPP_URL настроен)
-                                    if let Ok(webapp_url) = env::var("WEBAPP_URL") {
-                                        use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo};
-
-                                        let keyboard = InlineKeyboardMarkup::new(vec![
-                                            vec![InlineKeyboardButton::web_app(
-                                                "🚀 Открыть Mini App",
-                                                WebAppInfo { url: webapp_url.parse().unwrap() }
-                                            )],
-                                        ]);
-
-                                        let _ = bot.send_message(
-                                            msg.chat.id,
-                                            "💡 Попробуй новый Mini App для удобного скачивания!"
-                                        )
-                                        .reply_markup(keyboard)
-                                        .await;
-                                    }
+                                    // Отправляем новое улучшенное главное меню
+                                    let _ = show_enhanced_main_menu(&bot, msg.chat.id, db_pool.clone()).await;
 
                                     // Отправка случайного голосового сообщения в случайный момент
                                     let bot_voice = bot.clone();

@@ -25,11 +25,12 @@ use select::predicate::Name;
 /// # Example
 ///
 /// ```no_run
-/// use doradura::fetch::fetch_song_metadata;
+/// use doradura::download::fetch::fetch_song_metadata;
 ///
-/// # async fn example() {
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let (title, artist) = fetch_song_metadata("https://youtube.com/watch?v=...").await?;
 /// println!("{} - {}", artist, title);
+/// # Ok(())
 /// # }
 /// ```
 pub async fn fetch_song_metadata(url: &str) -> Result<(String, String), AppError> {
