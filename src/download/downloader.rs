@@ -1231,7 +1231,6 @@ async fn download_audio_file_with_progress(
                 if let Ok(line_str) = line {
                     log::debug!("yt-dlp stdout: {}", line_str);
                     if let Some(progress_info) = parse_progress(&line_str) {
-                        log::info!("Parsed progress from stdout: {}%", progress_info.percent);
                         let _ = tx.send(progress_info);
                     }
                 }
@@ -1384,7 +1383,6 @@ async fn download_video_file_with_progress(
                 if let Ok(line_str) = line {
                     log::debug!("yt-dlp stdout: {}", line_str);
                     if let Some(progress_info) = parse_progress(&line_str) {
-                        log::info!("Parsed progress from stdout: {}%", progress_info.percent);
                         let _ = tx.send(progress_info);
                     }
                 }
@@ -2365,6 +2363,7 @@ async fn send_video_with_retry(
     // Если пользователь выбрал отправку как document, сразу отправляем как document
     if send_as_document {
         log::info!("User preference: sending video as document (skip send_video)");
+        let title_for_doc = title.to_string();
         return send_file_with_retry(
             bot,
             chat_id,
@@ -2372,16 +2371,23 @@ async fn send_video_with_retry(
             progress_msg,
             title,
             "video",
-            |bot, chat_id, path| async move {
-                bot.send_document(chat_id, InputFile::file(path)).await
+            move |bot, chat_id, path| {
+                let title_for_doc = title_for_doc.clone();
+                async move {
+                    bot.send_document(chat_id, InputFile::file(path))
+                        .caption(&title_for_doc)
+                        .await
+                }
             },
-        ).await;
+        )
+        .await;
     }
 
     let width_clone = width;
     let height_clone = height;
     let thumbnail_bytes_clone = thumbnail_bytes.clone();
     let temp_thumb_path_clone = temp_thumb_path.clone();
+    let title_clone = title.to_string();
 
     // Пробуем отправить как видео
     let result = send_file_with_retry(
@@ -2397,9 +2403,11 @@ async fn send_video_with_retry(
             let height_clone = height_clone;
             let thumbnail_bytes_clone = thumbnail_bytes_clone.clone();
             let temp_thumb_path_clone = temp_thumb_path_clone.clone();
+            let title_clone = title_clone.clone();
 
             async move {
-                let mut video_msg = bot.send_video(chat_id, InputFile::file(path));
+                let mut video_msg = bot.send_video(chat_id, InputFile::file(path))
+                    .caption(&title_clone);
 
                 // Добавляем метаданные для корректного воспроизведения в Telegram
                 if let Some(dur) = duration_clone {
@@ -2474,6 +2482,7 @@ async fn send_video_with_retry(
     // Если отправка как видео не удалась и файл > 50 MB, пробуем как document
     if result.is_err() && use_document_fallback {
         log::info!("send_video failed, trying send_document as fallback for large file");
+        let title_for_fallback = title.to_string();
         return send_file_with_retry(
             bot,
             chat_id,
@@ -2481,10 +2490,16 @@ async fn send_video_with_retry(
             progress_msg,
             title,
             "video",
-            |bot, chat_id, path| async move {
-                bot.send_document(chat_id, InputFile::file(path)).await
+            move |bot, chat_id, path| {
+                let title_for_fallback = title_for_fallback.clone();
+                async move {
+                    bot.send_document(chat_id, InputFile::file(path))
+                        .caption(&title_for_fallback)
+                        .await
+                }
             },
-        ).await;
+        )
+        .await;
     }
 
     result
