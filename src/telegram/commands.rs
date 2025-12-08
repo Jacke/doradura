@@ -427,6 +427,11 @@ pub async fn handle_message(
                     });
                 }
 
+                // Send "processing" message
+                let processing_msg = bot
+                    .send_message(msg.chat.id, "⏳ Получаю информацию...")
+                    .await?;
+
                 // Show preview instead of immediately downloading
                 // Получаем качество видео для превью
                 let conn_for_preview = db::get_connection(&db_pool);
@@ -463,6 +468,10 @@ pub async fn handle_message(
                                         size_mb, max_mb
                                     );
 
+                                    // Delete processing message
+                                    let _ =
+                                        bot.delete_message(msg.chat.id, processing_msg.id).await;
+
                                     bot.send_message(msg.chat.id, error_message).await?;
                                     return Ok(user_info);
                                 }
@@ -482,7 +491,7 @@ pub async fn handle_message(
                             &metadata,
                             &format,
                             default_quality,
-                            None,
+                            Some(processing_msg.id),
                             Arc::clone(&db_pool),
                         )
                         .await
@@ -499,6 +508,9 @@ pub async fn handle_message(
                     }
                     Err(e) => {
                         log::error!("Failed to get preview metadata: {:?}", e);
+
+                        // Delete processing message
+                        let _ = bot.delete_message(msg.chat.id, processing_msg.id).await;
 
                         // Проверяем, является ли это ошибкой длительности
                         let error_message = if let AppError::Download(ref msg) = e {
@@ -627,6 +639,24 @@ pub async fn handle_info_command(bot: Bot, msg: Message) -> ResponseResult<()> {
                     "🎬 Video formats count: {:?}",
                     metadata.video_formats.as_ref().map(|f| f.len())
                 );
+
+                // Log detailed format information
+                if let Some(ref formats) = metadata.video_formats {
+                    log::info!("📋 Available video formats:");
+                    for (idx, format) in formats.iter().enumerate() {
+                        log::info!(
+                            "  [{}] Quality: {}, Resolution: {:?}, Size: {:?} bytes ({:.2} MB)",
+                            idx,
+                            format.quality,
+                            format.resolution,
+                            format.size_bytes,
+                            format.size_bytes.unwrap_or(0) as f64 / (1024.0 * 1024.0)
+                        );
+                    }
+                } else {
+                    log::warn!("⚠️  No video formats available in metadata");
+                }
+
                 let mut response = String::new();
 
                 // Title and artist
@@ -653,7 +683,22 @@ pub async fn handle_info_command(bot: Bot, msg: Message) -> ResponseResult<()> {
                         .filter_map(|&quality| formats.iter().find(|f| f.quality == quality))
                         .collect();
 
+                    log::info!(
+                        "📊 Filtered formats for display: {} out of {} total",
+                        available_formats.len(),
+                        formats.len()
+                    );
+                    for format in &available_formats {
+                        log::info!(
+                            "  ✓ Will display: {} - {:?} - {:.2} MB",
+                            format.quality,
+                            format.resolution,
+                            format.size_bytes.unwrap_or(0) as f64 / (1024.0 * 1024.0)
+                        );
+                    }
+
                     if available_formats.is_empty() {
+                        log::warn!("⚠️  No formats matched quality_order filter");
                         response.push_str("  • Нет доступных форматов\n");
                     } else {
                         for format in available_formats {

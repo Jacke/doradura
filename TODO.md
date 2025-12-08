@@ -28,6 +28,7 @@
 - [x] Show resolution and bitrate details
 - [x] Add extractor-args to fix YouTube SABR streaming and nsig extraction issues
 - [x] Add video title as caption when sending videos
+- [x] Add detailed format logging to /info command for debugging
 
 ## Decision Log
 
