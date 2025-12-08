@@ -18,9 +18,15 @@ type HmacSha256 = Hmac<Sha256>;
 /// `Ok(user_id)` если валидация успешна, иначе `Err`
 ///
 /// # Пример
-/// ```rust
+/// ```no_run
+/// use doradura::telegram::webapp_auth::validate_telegram_webapp_data;
+///
+/// # fn main() -> anyhow::Result<()> {
 /// let init_data = "query_id=...&user={...}&auth_date=...&hash=...";
-/// let user_id = validate_telegram_webapp_data(init_data, &bot_token)?;
+/// let bot_token = "your_bot_token";
+/// let user_id = validate_telegram_webapp_data(init_data, bot_token)?;
+/// # Ok(())
+/// # }
 /// ```
 pub fn validate_telegram_webapp_data(init_data: &str, bot_token: &str) -> Result<i64> {
     // Парсим query string в HashMap

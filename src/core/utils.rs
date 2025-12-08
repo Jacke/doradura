@@ -26,7 +26,7 @@
 /// # Example
 ///
 /// ```
-/// use doradura::utils::escape_filename;
+/// use doradura::core::utils::escape_filename;
 ///
 /// let safe = escape_filename("song/name*.mp3");
 /// assert_eq!(safe, "song_name_.mp3");
@@ -46,7 +46,7 @@
 /// # Example
 ///
 /// ```
-/// use doradura::utils::sanitize_filename;
+/// use doradura::core::utils::sanitize_filename;
 ///
 /// assert_eq!(sanitize_filename("song name.mp3"), "song_name.mp3");
 /// assert_eq!(sanitize_filename("Artist - Title.mp4"), "Artist_-_Title.mp4");
@@ -102,7 +102,7 @@ pub fn escape_filename(filename: &str) -> String {
 /// # Example
 ///
 /// ```
-/// use doradura::utils::escape_markdown_v2;
+/// use doradura::core::utils::escape_markdown_v2;
 ///
 /// let escaped = escape_markdown_v2("Hello. World!");
 /// assert_eq!(escaped, "Hello\\. World\\!");
@@ -138,6 +138,44 @@ pub fn escape_markdown_v2(text: &str) -> String {
     result
 }
 
+/// Форматирует caption для видео/аудио с использованием MarkdownV2.
+///
+/// Создаёт красиво отформатированный caption с жирным автором и курсивным названием.
+/// Формат:
+/// - Если есть автор: **Автор** — _Название_
+/// - Если автора нет: _Название_
+///
+/// # Arguments
+///
+/// * `title` - Название композиции/видео
+/// * `artist` - Автор (опционально)
+///
+/// # Returns
+///
+/// Отформатированный caption с экранированными символами для MarkdownV2.
+///
+/// # Example
+///
+/// ```
+/// use doradura::core::utils::format_media_caption;
+///
+/// let caption = format_media_caption("Song Name", "Artist");
+/// // Результат: *Artist* — _Song Name_
+/// ```
+pub fn format_media_caption(title: &str, artist: &str) -> String {
+    if artist.trim().is_empty() {
+        // Только название (курсив)
+        format!("_{}_", escape_markdown_v2(title))
+    } else {
+        // Автор (жирный) — Название (курсив)
+        format!(
+            "*{}* — _{}_",
+            escape_markdown_v2(artist),
+            escape_markdown_v2(title)
+        )
+    }
+}
+
 /// Возвращает правильную форму слова "секунд" для русского языка.
 ///
 /// Правила склонения:
@@ -156,7 +194,7 @@ pub fn escape_markdown_v2(text: &str) -> String {
 /// # Example
 ///
 /// ```
-/// use doradura::utils::pluralize_seconds;
+/// use doradura::core::utils::pluralize_seconds;
 ///
 /// assert_eq!(pluralize_seconds(1), "секунду");
 /// assert_eq!(pluralize_seconds(5), "секунд");
@@ -181,7 +219,10 @@ pub fn pluralize_seconds(n: u64) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{escape_filename, escape_markdown_v2, pluralize_seconds, sanitize_filename};
+    use super::{
+        escape_filename, escape_markdown_v2, format_media_caption, pluralize_seconds,
+        sanitize_filename,
+    };
 
     #[test]
     fn test_escape_filename() {
@@ -297,10 +338,40 @@ mod tests {
 
         // Тесты с уже существующими подчеркиваниями
         assert_eq!(sanitize_filename("song_name.mp3"), "song_name.mp3");
-        assert_eq!(sanitize_filename("song _ name.mp3"), "song____name.mp3");
+        assert_eq!(sanitize_filename("song _ name.mp3"), "song___name.mp3");
 
         // Тесты с пустыми строками
         assert_eq!(sanitize_filename(""), "");
         assert_eq!(sanitize_filename("   "), "___");
+    }
+
+    #[test]
+    fn test_format_media_caption() {
+        // С автором
+        assert_eq!(
+            format_media_caption("Song Name", "Artist"),
+            "*Artist* — _Song Name_"
+        );
+
+        // Без автора (пустая строка)
+        assert_eq!(format_media_caption("Song Name", ""), "_Song Name_");
+
+        // Без автора (только пробелы)
+        assert_eq!(format_media_caption("Song Name", "   "), "_Song Name_");
+
+        // С кириллицей
+        assert_eq!(format_media_caption("Дорадура", "NA"), "*NA* — _Дорадура_");
+
+        // Со специальными символами, требующими экранирования
+        assert_eq!(
+            format_media_caption("Song (live).mp3", "Artist-Name"),
+            "*Artist\\-Name* — _Song \\(live\\)\\.mp3_"
+        );
+
+        // Сложный пример
+        assert_eq!(
+            format_media_caption("Дорадура (акустическая версия).mp3", "NA - дора"),
+            "*NA \\- дора* — _Дорадура \\(акустическая версия\\)\\.mp3_"
+        );
     }
 }

@@ -38,8 +38,10 @@ impl RateLimiter {
     ///
     /// # Example
     ///
+    /// # Example
+    ///
     /// ```no_run
-    /// use doradura::rate_limiter::RateLimiter;
+    /// use doradura::core::rate_limiter::RateLimiter;
     ///
     /// let limiter = RateLimiter::new();
     /// ```
@@ -96,7 +98,7 @@ impl RateLimiter {
     ///
     /// ```no_run
     /// use teloxide::types::ChatId;
-    /// use doradura::rate_limiter::RateLimiter;
+    /// use doradura::core::rate_limiter::RateLimiter;
     ///
     /// # async fn example() {
     /// let limiter = RateLimiter::new();
@@ -129,7 +131,7 @@ impl RateLimiter {
     ///
     /// ```no_run
     /// use teloxide::types::ChatId;
-    /// use doradura::rate_limiter::RateLimiter;
+    /// use doradura::core::rate_limiter::RateLimiter;
     ///
     /// # async fn example() {
     /// let limiter = RateLimiter::new();
@@ -162,7 +164,7 @@ impl RateLimiter {
     ///
     /// ```no_run
     /// use teloxide::types::ChatId;
-    /// use doradura::rate_limiter::RateLimiter;
+    /// use doradura::core::rate_limiter::RateLimiter;
     ///
     /// # async fn example() {
     /// let limiter = RateLimiter::new();
@@ -188,11 +190,11 @@ impl RateLimiter {
     ///
     /// ```no_run
     /// use teloxide::types::ChatId;
-    /// use doradura::rate_limiter::RateLimiter;
+    /// use doradura::core::rate_limiter::RateLimiter;
     /// use std::time::Duration;
     ///
     /// # async fn example() {
-    /// let limiter = RateLimiter::new(Duration::from_secs(30));
+    /// let limiter = RateLimiter::new();
     /// // Снять ограничение для пользователя
     /// limiter.remove_rate_limit(ChatId(123456789)).await;
     /// # }
