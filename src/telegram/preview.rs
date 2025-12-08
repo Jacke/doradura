@@ -427,11 +427,10 @@ async fn get_video_formats_list(
             let matches_resolution = resolutions.iter().any(|&res| line.contains(res));
 
             if matches_resolution {
-                // Пропускаем "video only" и "audio only" - нам нужны объединенные форматы
-                let is_video_only = line.contains("video only");
+                // Пропускаем только "audio only" - нам нужны видео форматы (как комбинированные, так и video-only)
                 let is_audio_only = line.contains("audio only");
 
-                if !is_video_only && !is_audio_only {
+                if !is_audio_only {
                     // Извлекаем размер
                     if let Some(mib_pos) = line.find("MiB") {
                         let before_mib = &line[..mib_pos];
@@ -558,6 +557,60 @@ async fn get_video_formats_list(
                 resolution: found_resolution,
             });
         }
+    }
+
+    // Находим размер лучшего аудио формата чтобы добавить к размеру video-only форматов
+    let mut best_audio_size: Option<u64> = None;
+    for line in formats_output.lines() {
+        if line.contains("audio only") {
+            // Ищем m4a или webm аудио с наибольшим битрейтом
+            if line.contains("m4a") || line.contains("webm") {
+                if let Some(mib_pos) = line.find("MiB") {
+                    let before_mib = &line[..mib_pos];
+                    let mut num_chars = Vec::new();
+                    let mut found_digit = false;
+
+                    for ch in before_mib.chars().rev() {
+                        if ch.is_ascii_digit() || ch == '.' {
+                            num_chars.push(ch);
+                            found_digit = true;
+                        } else if found_digit {
+                            break;
+                        }
+                    }
+
+                    if !num_chars.is_empty() {
+                        num_chars.reverse();
+                        let size_str: String = num_chars.into_iter().collect();
+                        if let Ok(size_mb) = size_str.trim().parse::<f64>() {
+                            if size_mb > 0.0 && size_mb < 1000.0 {
+                                let size_bytes = (size_mb * 1024.0 * 1024.0) as u64;
+                                if best_audio_size.is_none()
+                                    || size_bytes > best_audio_size.unwrap()
+                                {
+                                    best_audio_size = Some(size_bytes);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Добавляем размер аудио к размеру каждого видео формата
+    if let Some(audio_size) = best_audio_size {
+        log::info!(
+            "Found best audio size: {:.2} MB, adding to video formats",
+            audio_size as f64 / (1024.0 * 1024.0)
+        );
+        for format in &mut formats {
+            if let Some(ref mut video_size) = format.size_bytes {
+                *video_size += audio_size;
+            }
+        }
+    } else {
+        log::warn!("No audio format size found, video format sizes might be underestimated");
     }
 
     // Сортируем форматы по качеству (от лучшего к худшему)
