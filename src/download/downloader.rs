@@ -2668,17 +2668,16 @@ pub async fn download_and_send_video(
             let download_path = shellexpand::tilde(&full_path).into_owned();
 
             // Step 2: Determine video quality format with fallback chain
-            // Используем best вместо bestvideo+bestaudio для избежания проблем с объединением
-            // best выбирает готовое видео с аудио, если доступно
-            // Добавляем fallback цепочку форматов для обработки случаев, когда запрашиваемый формат недоступен
-            // (например, из-за проблем с nsig extraction или SABR streaming)
+            // Используем bestvideo[height<=X]+bestaudio для автоматического объединения video-only и audio-only форматов
+            // YouTube SABR streaming возвращает только отдельные форматы, yt-dlp объединит их автоматически с помощью ffmpeg
+            // Добавляем fallback на best для случаев когда доступны готовые комбинированные форматы
             // Синтаксис "format1/format2/format3" позволяет yt-dlp выбрать первый доступный формат
             let format_arg = match video_quality.as_deref() {
-                Some("1080p") => "best[height<=1080]/best[height<=720]/best[height<=480]/best[height<=360]/best/worst",
-                Some("720p") => "best[height<=720]/best[height<=480]/best[height<=360]/best/worst",
-                Some("480p") => "best[height<=480]/best[height<=360]/best/worst",
-                Some("360p") => "best[height<=360]/best/worst",
-                _ => "best/worst", // best - готовое видео с аудио, worst - последний fallback
+                Some("1080p") => "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo[height<=720]+bestaudio/best[height<=720]/best/worst",
+                Some("720p") => "bestvideo[height<=720]+bestaudio/best[height<=720]/bestvideo[height<=480]+bestaudio/best[height<=480]/best/worst",
+                Some("480p") => "bestvideo[height<=480]+bestaudio/best[height<=480]/bestvideo[height<=360]+bestaudio/best[height<=360]/best/worst",
+                Some("360p") => "bestvideo[height<=360]+bestaudio/best[height<=360]/best/worst",
+                _ => "bestvideo+bestaudio/best/worst", // Сначала пробуем объединить лучшее видео с аудио, потом готовое best
             };
 
             log::info!("Using video format with fallback chain: {}", format_arg);
@@ -2692,11 +2691,11 @@ pub async fn download_and_send_video(
 
             // Получаем первый формат из цепочки для проверки (без fallback)
             let first_format = match video_quality.as_deref() {
-                Some("1080p") => "best[height<=1080]",
-                Some("720p") => "best[height<=720]",
-                Some("480p") => "best[height<=480]",
-                Some("360p") => "best[height<=360]",
-                _ => "best",
+                Some("1080p") => "bestvideo[height<=1080]+bestaudio",
+                Some("720p") => "bestvideo[height<=720]+bestaudio",
+                Some("480p") => "bestvideo[height<=480]+bestaudio",
+                Some("360p") => "bestvideo[height<=360]+bestaudio",
+                _ => "bestvideo+bestaudio",
             };
 
             let mut size_check_args: Vec<String> = vec![
