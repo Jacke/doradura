@@ -29,6 +29,7 @@
 - [x] Add extractor-args to fix YouTube SABR streaming and nsig extraction issues
 - [x] Add video title as caption when sending videos
 - [x] Add detailed format logging to /info command for debugging
+- [x] Fix video format detection to include video-only formats with audio size estimation
 
 ## Decision Log
 
