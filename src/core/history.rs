@@ -279,7 +279,76 @@ pub async fn handle_history_callback(
             let entry_id_str = parts[2].split(':').next().unwrap_or("");
             let url_id = parts[2].split_once(':').map(|x| x.1).unwrap_or("");
 
-            // Получаем URL из кэша
+            // Сначала пробуем отправить по file_id, если он есть
+            let mut file_sent = false;
+            if let Ok(entry_id) = entry_id_str.parse::<i64>() {
+                if let Ok(conn) = db::get_connection(&db_pool) {
+                    if let Ok(Some(entry)) =
+                        db::get_download_history_entry(&conn, chat_id.0, entry_id)
+                    {
+                        if let Some(file_id) = entry.file_id {
+                            log::info!("Found file_id for history entry {}: {}", entry_id, file_id);
+
+                            let result = match entry.format.as_str() {
+                                "mp3" => {
+                                    bot.send_audio(
+                                        chat_id,
+                                        teloxide::types::InputFile::file_id(
+                                            teloxide::types::FileId(file_id.clone()),
+                                        ),
+                                    )
+                                    .await
+                                }
+                                "mp4" => {
+                                    bot.send_video(
+                                        chat_id,
+                                        teloxide::types::InputFile::file_id(
+                                            teloxide::types::FileId(file_id.clone()),
+                                        ),
+                                    )
+                                    .await
+                                }
+                                _ => {
+                                    bot.send_document(
+                                        chat_id,
+                                        teloxide::types::InputFile::file_id(
+                                            teloxide::types::FileId(file_id),
+                                        ),
+                                    )
+                                    .await
+                                }
+                            };
+
+                            match result {
+                                Ok(_) => {
+                                    log::info!(
+                                        "Successfully resent file using file_id for entry {}",
+                                        entry_id
+                                    );
+                                    bot.answer_callback_query(callback_id.clone())
+                                        .text("Файл отправлен!")
+                                        .await?;
+                                    file_sent = true;
+
+                                    // Удаляем сообщение истории
+                                    if let Err(e) = bot.delete_message(chat_id, message_id).await {
+                                        log::warn!("Failed to delete history message: {:?}", e);
+                                    }
+                                }
+                                Err(e) => {
+                                    log::warn!("Failed to resend file using file_id: {}. Falling back to re-download.", e);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if file_sent {
+                return Ok(());
+            }
+
+            // Получаем URL из кэша (fallback)
             match crate::storage::cache::get_url(&db_pool, url_id).await {
                 Some(url_str) => {
                     // URL найден в кэше

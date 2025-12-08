@@ -87,12 +87,12 @@ pub fn get_error_message(error_type: &YtDlpErrorType) -> String {
         YtDlpErrorType::InvalidCookies => {
             "❌ Cookies для YouTube устарели или недействительны.\n\n\
             Пожалуйста, обнови cookies.\n\
-            Обратись к администратору для настройки."
+            Обратись к @stansob для настройки."
                 .to_string()
         }
         YtDlpErrorType::BotDetection => "❌ YouTube заблокировал запрос (обнаружен бот).\n\n\
             Проблема решается обновлением cookies.\n\
-            Обратись к администратору."
+            Обратись к @stansob."
             .to_string(),
         YtDlpErrorType::VideoUnavailable => "❌ Видео недоступно.\n\n\
             Возможные причины:\n\
@@ -100,12 +100,10 @@ pub fn get_error_message(error_type: &YtDlpErrorType) -> String {
             • Региональные ограничения\n\
             • Видео заблокировано автором"
             .to_string(),
-        YtDlpErrorType::NetworkError => "❌ Проблема с сетью при получении данных.\n\n\
-            Попробуй позже или проверь интернет-соединение."
-            .to_string(),
+        YtDlpErrorType::NetworkError => "❌ Проблема с сетью при получении данных.".to_string(),
         YtDlpErrorType::Unknown => "❌ Не удалось получить данные о видео.\n\n\
             Проверь, что ссылка корректна и видео доступно.\n\
-            Если проблема повторяется, обратись к администратору."
+            Если проблема повторяется, обратись к @stansob."
             .to_string(),
     }
 }

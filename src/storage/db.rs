@@ -66,9 +66,12 @@ pub type DbConnection = PooledConnection<SqliteConnectionManager>;
 /// # Example
 ///
 /// ```no_run
-/// use doradura::db;
+/// use doradura::storage::db;
 ///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let pool = db::create_pool("database.sqlite")?;
+/// # Ok(())
+/// # }
 /// ```
 pub fn create_pool(database_path: &str) -> Result<DbPool, r2d2::Error> {
     let manager = SqliteConnectionManager::file(database_path);
@@ -102,11 +105,14 @@ pub fn create_pool(database_path: &str) -> Result<DbPool, r2d2::Error> {
 /// # Example
 ///
 /// ```no_run
-/// use doradura::db;
+/// use doradura::storage::db;
 ///
+/// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let pool = db::create_pool("database.sqlite")?;
 /// let conn = db::get_connection(&pool)?;
 /// // Use connection...
+/// # Ok(())
+/// # }
 /// ```
 pub fn get_connection(pool: &DbPool) -> Result<DbConnection, r2d2::Error> {
     pool.get()
@@ -261,6 +267,35 @@ fn migrate_schema(conn: &rusqlite::Connection) -> Result<()> {
                 [],
             ) {
                 log::warn!("Failed to create index on url_cache: {}", e);
+            }
+        }
+    }
+
+    // Add file_id to download_history if it doesn't exist
+    let download_history_exists: bool = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='download_history'",
+        [],
+        |row| Ok(row.get::<_, i32>(0)? > 0),
+    )?;
+
+    if download_history_exists {
+        let mut stmt = conn.prepare("PRAGMA table_info(download_history)")?;
+        let rows = stmt.query_map([], |row| {
+            row.get::<_, String>(1) // column name
+        })?;
+
+        let mut columns = Vec::new();
+        for row in rows {
+            columns.push(row?);
+        }
+
+        if !columns.contains(&"file_id".to_string()) {
+            log::info!("Adding missing column: file_id to download_history table");
+            if let Err(e) = conn.execute(
+                "ALTER TABLE download_history ADD COLUMN file_id TEXT DEFAULT NULL",
+                [],
+            ) {
+                log::warn!("Failed to add file_id column: {}", e);
             }
         }
     }
@@ -732,6 +767,8 @@ pub struct DownloadHistoryEntry {
     pub format: String,
     /// Дата и время загрузки
     pub downloaded_at: String,
+    /// Telegram file_id (опционально)
+    pub file_id: Option<String>,
 }
 
 /// Сохраняет запись в историю загрузок.
@@ -743,6 +780,7 @@ pub struct DownloadHistoryEntry {
 /// * `url` - URL загруженного контента
 /// * `title` - Название трека/видео
 /// * `format` - Формат загрузки (mp3, mp4, srt, txt)
+/// * `file_id` - Telegram file_id, если контент был отправлен в Telegram (опционально)
 ///
 /// # Returns
 ///
@@ -753,15 +791,11 @@ pub fn save_download_history(
     url: &str,
     title: &str,
     format: &str,
+    file_id: Option<&str>,
 ) -> Result<()> {
     conn.execute(
-        "INSERT INTO download_history (user_id, url, title, format) VALUES (?1, ?2, ?3, ?4)",
-        [
-            &telegram_id as &dyn rusqlite::ToSql,
-            &url as &dyn rusqlite::ToSql,
-            &title as &dyn rusqlite::ToSql,
-            &format as &dyn rusqlite::ToSql,
-        ],
+        "INSERT INTO download_history (user_id, url, title, format, file_id) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![telegram_id, url, title, format, file_id],
     )?;
     Ok(())
 }
@@ -784,24 +818,19 @@ pub fn get_download_history(
 ) -> Result<Vec<DownloadHistoryEntry>> {
     let limit = limit.unwrap_or(20);
     let mut stmt = conn.prepare(
-        "SELECT id, url, title, format, downloaded_at FROM download_history
+        "SELECT id, url, title, format, downloaded_at, file_id FROM download_history
          WHERE user_id = ? ORDER BY downloaded_at DESC LIMIT ?",
     )?;
-    let rows = stmt.query_map(
-        [
-            &telegram_id as &dyn rusqlite::ToSql,
-            &limit as &dyn rusqlite::ToSql,
-        ],
-        |row| {
-            Ok(DownloadHistoryEntry {
-                id: row.get(0)?,
-                url: row.get(1)?,
-                title: row.get(2)?,
-                format: row.get(3)?,
-                downloaded_at: row.get(4)?,
-            })
-        },
-    )?;
+    let rows = stmt.query_map(rusqlite::params![telegram_id, limit], |row| {
+        Ok(DownloadHistoryEntry {
+            id: row.get(0)?,
+            url: row.get(1)?,
+            title: row.get(2)?,
+            format: row.get(3)?,
+            downloaded_at: row.get(4)?,
+            file_id: row.get(5)?,
+        })
+    })?;
 
     let mut entries = Vec::new();
     for row in rows {
@@ -855,24 +884,19 @@ pub fn get_download_history_entry(
     entry_id: i64,
 ) -> Result<Option<DownloadHistoryEntry>> {
     let mut stmt = conn.prepare(
-        "SELECT id, url, title, format, downloaded_at FROM download_history
+        "SELECT id, url, title, format, downloaded_at, file_id FROM download_history
          WHERE id = ?1 AND user_id = ?2",
     )?;
-    let mut rows = stmt.query_map(
-        [
-            &entry_id as &dyn rusqlite::ToSql,
-            &telegram_id as &dyn rusqlite::ToSql,
-        ],
-        |row| {
-            Ok(DownloadHistoryEntry {
-                id: row.get(0)?,
-                url: row.get(1)?,
-                title: row.get(2)?,
-                format: row.get(3)?,
-                downloaded_at: row.get(4)?,
-            })
-        },
-    )?;
+    let mut rows = stmt.query_map(rusqlite::params![entry_id, telegram_id], |row| {
+        Ok(DownloadHistoryEntry {
+            id: row.get(0)?,
+            url: row.get(1)?,
+            title: row.get(2)?,
+            format: row.get(3)?,
+            downloaded_at: row.get(4)?,
+            file_id: row.get(5)?,
+        })
+    })?;
 
     if let Some(row) = rows.next() {
         Ok(Some(row?))
@@ -1066,16 +1090,17 @@ pub fn get_all_download_history(
     telegram_id: i64,
 ) -> Result<Vec<DownloadHistoryEntry>> {
     let mut stmt = conn.prepare(
-        "SELECT id, url, title, format, downloaded_at FROM download_history
+        "SELECT id, url, title, format, downloaded_at, file_id FROM download_history
          WHERE user_id = ? ORDER BY downloaded_at DESC",
     )?;
-    let rows = stmt.query_map([&telegram_id as &dyn rusqlite::ToSql], |row| {
+    let rows = stmt.query_map(rusqlite::params![telegram_id], |row| {
         Ok(DownloadHistoryEntry {
             id: row.get(0)?,
             url: row.get(1)?,
             title: row.get(2)?,
             format: row.get(3)?,
             downloaded_at: row.get(4)?,
+            file_id: row.get(5)?,
         })
     })?;
 

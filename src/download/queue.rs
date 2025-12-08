@@ -77,7 +77,7 @@ impl DownloadTask {
     ///
     /// ```no_run
     /// use teloxide::types::ChatId;
-    /// use doradura::queue::DownloadTask;
+    /// use doradura::download::queue::DownloadTask;
     ///
     /// let task = DownloadTask::new(
     ///     "https://youtube.com/watch?v=...".to_string(),
@@ -188,7 +188,7 @@ impl DownloadQueue {
     /// # Example
     ///
     /// ```no_run
-    /// use doradura::queue::DownloadQueue;
+    /// use doradura::download::queue::DownloadQueue;
     ///
     /// let queue = DownloadQueue::new();
     /// ```
@@ -212,17 +212,18 @@ impl DownloadQueue {
     ///
     /// ```no_run
     /// use teloxide::types::ChatId;
-    /// use doradura::queue::{DownloadQueue, DownloadTask};
+    /// use doradura::download::queue::{DownloadQueue, DownloadTask};
     ///
     /// # async fn example() {
     /// let queue = DownloadQueue::new();
     /// let task = DownloadTask::new(
     ///     "https://youtube.com/watch?v=...".to_string(),
     ///     ChatId(123456789),
+    ///     Some(12345),
     ///     false,
     ///     "mp3".to_string(),
     ///     None,
-    ///     None
+    ///     Some("320k".to_string())
     /// );
     /// queue.add_task(task, None).await;
     /// # }
@@ -293,7 +294,7 @@ impl DownloadQueue {
     /// # Example
     ///
     /// ```no_run
-    /// use doradura::queue::DownloadQueue;
+    /// use doradura::download::queue::DownloadQueue;
     ///
     /// # async fn example() {
     /// let queue = DownloadQueue::new();
@@ -341,7 +342,7 @@ impl DownloadQueue {
     /// # Example
     ///
     /// ```no_run
-    /// use doradura::queue::DownloadQueue;
+    /// use doradura::download::queue::DownloadQueue;
     ///
     /// # async fn example() {
     /// let queue = DownloadQueue::new();
@@ -373,7 +374,7 @@ impl DownloadQueue {
     ///
     /// ```no_run
     /// use teloxide::types::ChatId;
-    /// use doradura::queue::DownloadQueue;
+    /// use doradura::download::queue::DownloadQueue;
     ///
     /// # async fn example() {
     /// let queue = DownloadQueue::new();
@@ -403,7 +404,7 @@ impl DownloadQueue {
     ///
     /// ```no_run
     /// use chrono::Duration;
-    /// use doradura::queue::DownloadQueue;
+    /// use doradura::download::queue::DownloadQueue;
     ///
     /// # async fn example() {
     /// let queue = DownloadQueue::new();

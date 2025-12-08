@@ -110,11 +110,16 @@ impl DownloadStatus {
     /// # Example
     ///
     /// ```
-    /// use doradura::progress::DownloadStatus;
+    /// use doradura::download::progress::DownloadStatus;
     ///
     /// let status = DownloadStatus::Downloading {
     ///     title: "Test Song".to_string(),
     ///     progress: 50,
+    ///     speed_mbs: None,
+    ///     eta_seconds: None,
+    ///     current_size: None,
+    ///     total_size: None,
+    ///     file_format: Some("mp3".to_string()),
     /// };
     /// let message = status.to_message();
     /// ```
@@ -395,7 +400,7 @@ impl ProgressMessage {
     ///
     /// ```no_run
     /// use teloxide::types::ChatId;
-    /// use doradura::progress::ProgressMessage;
+    /// use doradura::download::progress::ProgressMessage;
     ///
     /// let mut progress = ProgressMessage::new(ChatId(123456789));
     /// ```
@@ -424,12 +429,13 @@ impl ProgressMessage {
     ///
     /// ```no_run
     /// use teloxide::prelude::*;
-    /// use doradura::progress::{ProgressMessage, DownloadStatus};
+    /// use doradura::download::progress::{ProgressMessage, DownloadStatus};
     ///
     /// # async fn example(bot: Bot, chat_id: ChatId) -> ResponseResult<()> {
     /// let mut progress = ProgressMessage::new(chat_id);
     /// progress.update(&bot, DownloadStatus::Starting {
-    ///     title: "Test Song".to_string()
+    ///     title: "Test Song".to_string(),
+    ///     file_format: Some("mp3".to_string())
     /// }).await?;
     /// # Ok(())
     /// # }
@@ -521,11 +527,11 @@ impl ProgressMessage {
     ///
     /// ```no_run
     /// use teloxide::prelude::*;
-    /// use doradura::progress::ProgressMessage;
+    /// use doradura::download::progress::ProgressMessage;
     ///
     /// # async fn example(bot: Bot, mut progress: ProgressMessage) -> ResponseResult<()> {
     /// // Очистить сообщение через 10 секунд
-    /// progress.clear_after(&bot, 10, "Test Song".to_string()).await?;
+    /// progress.clear_after(&bot, 10, "Test Song".to_string(), Some("mp3".to_string())).await?;
     /// # Ok(())
     /// # }
     /// ```

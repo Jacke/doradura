@@ -290,17 +290,18 @@ pub async fn show_download_type_menu(
         "txt" => "📄 TXT",
         _ => "🎵 MP3",
     };
+
     let escaped_format = escape_markdown(format_display);
-    bot.edit_message_text(
+    edit_caption_or_text(
+        bot,
         chat_id,
         message_id,
         format!(
             "Выбери формат для скачивания\\:\n\n*Текущий формат\\: {}*",
             escaped_format
         ),
+        Some(keyboard),
     )
-    .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-    .reply_markup(keyboard)
     .await?;
     Ok(())
 }
@@ -548,16 +549,16 @@ pub async fn show_video_quality_menu(
 
     let escaped_quality = escape_markdown(quality_display);
     let escaped_send_type = escape_markdown(send_type_display);
-    bot.edit_message_text(
+    edit_caption_or_text(
+        bot,
         chat_id,
         message_id,
         format!(
             "Выбери качество видео\\:\n\n*Текущее качество\\: {}*\n*Тип отправки\\: {}*",
             escaped_quality, escaped_send_type
         ),
+        Some(keyboard),
     )
-    .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-    .reply_markup(keyboard)
     .await?;
     Ok(())
 }
@@ -659,16 +660,17 @@ pub async fn show_audio_bitrate_menu(
 
     let escaped_bitrate = escape_markdown(&current_bitrate);
     let escaped_send_type = escape_markdown(send_type_display);
-    bot.edit_message_text(
+
+    edit_caption_or_text(
+        bot,
         chat_id,
         message_id,
         format!(
             "Выбери битрейт для аудио\\:\n\n*Текущий битрейт\\: {}*\n*Тип отправки\\: {}*",
             escaped_bitrate, escaped_send_type
         ),
+        Some(keyboard),
     )
-    .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-    .reply_markup(keyboard)
     .await?;
     Ok(())
 }
@@ -693,7 +695,7 @@ pub async fn show_services_menu(
 ) -> ResponseResult<()> {
     let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
         "🔙 Назад".to_string(),
-        "back:main",
+        "back:enhanced_main",
     )]]);
 
     let text = "🌐 *Поддерживаемые сервисы*\n\n\
@@ -720,11 +722,7 @@ pub async fn show_services_menu(
         И многие другие сервисы, которые я поддерживаю\\!\n\n\
         Просто отправь мне ссылку на трек или видео\\! ❤️‍🔥";
 
-    bot.edit_message_caption(chat_id, message_id)
-        .caption(text)
-        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-        .reply_markup(keyboard)
-        .await?;
+    edit_caption_or_text(bot, chat_id, message_id, text.to_string(), Some(keyboard)).await?;
     Ok(())
 }
 
@@ -822,13 +820,13 @@ async fn edit_main_menu(
 
     let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
 
-    bot.edit_message_text(
+    edit_caption_or_text(
+        bot,
         chat_id,
         message_id,
-        "🎵 *Дора \\- Режимы Загрузки*\n\nВыбери, что хочешь настроить\\!",
+        "🎵 *Дора \\- Режимы Загрузки*\n\nВыбери, что хочешь настроить\\!".to_string(),
+        Some(keyboard),
     )
-    .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-    .reply_markup(keyboard)
     .await?;
     Ok(())
 }
@@ -1073,6 +1071,63 @@ pub async fn handle_menu_callback(
                         // Удаляем старое сообщение и показываем информацию о подписке
                         let _ = bot.delete_message(chat_id, message_id).await;
                         let _ = show_subscription_info(&bot, chat_id, Arc::clone(&db_pool)).await;
+                    }
+                    _ => {}
+                }
+            } else if data.starts_with("main:") {
+                let _ = bot.answer_callback_query(callback_id.clone()).await;
+                let action = data.strip_prefix("main:").unwrap_or("");
+
+                match action {
+                    "settings" => {
+                        // Show the old main menu (current /mode functionality)
+                        edit_main_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None, None)
+                            .await?;
+                    }
+                    "current" => {
+                        // Show detailed current settings
+                        show_current_settings_detail(
+                            &bot,
+                            chat_id,
+                            message_id,
+                            Arc::clone(&db_pool),
+                        )
+                        .await?;
+                    }
+                    "stats" => {
+                        // Delete current message and show stats
+                        let _ = bot.delete_message(chat_id, message_id).await;
+                        let _ = crate::core::stats::show_user_stats(
+                            &bot,
+                            chat_id,
+                            Arc::clone(&db_pool),
+                        )
+                        .await;
+                    }
+                    "history" => {
+                        // Delete current message and show history
+                        let _ = bot.delete_message(chat_id, message_id).await;
+                        let _ =
+                            crate::core::history::show_history(&bot, chat_id, Arc::clone(&db_pool))
+                                .await;
+                    }
+                    "services" => {
+                        // Edit message to show services
+                        show_services_menu(&bot, chat_id, message_id).await?;
+                    }
+                    "subscription" => {
+                        // Delete current message and show subscription info
+                        let _ = bot.delete_message(chat_id, message_id).await;
+                        let _ = crate::core::subscription::show_subscription_info(
+                            &bot,
+                            chat_id,
+                            Arc::clone(&db_pool),
+                        )
+                        .await;
+                    }
+                    "help" => {
+                        // Edit message to show help
+                        show_help_menu(&bot, chat_id, message_id).await?;
                     }
                     _ => {}
                 }
@@ -1327,7 +1382,7 @@ pub async fn handle_menu_callback(
                     // Format: back:preview:url_id or back:preview:url_id:preview_msg_id
                     let parts: Vec<&str> = data.split(':').collect();
                     let url_id = parts[2];
-                    let preview_msg_id = if parts.len() >= 4 {
+                    let _preview_msg_id = if parts.len() >= 4 {
                         parts[3].parse::<i32>().ok().map(teloxide::types::MessageId)
                     } else {
                         None
@@ -1352,12 +1407,7 @@ pub async fn handle_menu_callback(
                                         None
                                     };
 
-                                    // Delete settings menu
-                                    if let Err(e) = bot.delete_message(chat_id, message_id).await {
-                                        log::warn!("Failed to delete settings menu: {:?}", e);
-                                    }
-
-                                    // Get metadata and send new preview, delete old preview if preview_msg_id is available
+                                    // Get metadata and update preview
                                     match crate::telegram::preview::get_preview_metadata(
                                         &url,
                                         Some(&current_format),
@@ -1366,17 +1416,28 @@ pub async fn handle_menu_callback(
                                     .await
                                     {
                                         Ok(metadata) => {
-                                            let _ = crate::telegram::preview::send_preview(
+                                            // Update existing preview message
+                                            match crate::telegram::preview::update_preview_message(
                                                 &bot,
                                                 chat_id,
+                                                message_id, // Use current message_id (which is the menu) to update it back to preview
                                                 &url,
                                                 &metadata,
                                                 &current_format,
                                                 video_quality.as_deref(),
-                                                preview_msg_id,
                                                 Arc::clone(&db_pool),
                                             )
-                                            .await;
+                                            .await
+                                            {
+                                                Ok(_) => {}
+                                                Err(e) => {
+                                                    log::error!(
+                                                        "Failed to update preview message: {:?}",
+                                                        e
+                                                    );
+                                                    let _ = bot.send_message(chat_id, "Не удалось обновить превью. Попробуй отправить ссылку снова.").await;
+                                                }
+                                            }
                                         }
                                         Err(e) => {
                                             log::error!("Failed to get preview metadata: {:?}", e);
@@ -1433,6 +1494,15 @@ pub async fn handle_menu_callback(
                             )
                             .await?;
                         }
+                        "back:enhanced_main" => {
+                            edit_enhanced_main_menu(
+                                &bot,
+                                chat_id,
+                                message_id,
+                                Arc::clone(&db_pool),
+                            )
+                            .await?;
+                        }
                         "back:start" => {
                             bot.edit_message_text(
                                 chat_id,
@@ -1456,7 +1526,7 @@ pub async fn handle_menu_callback(
                 } else {
                     None
                 };
-                let preview_msg_id = if is_from_preview && parts.len() >= 5 {
+                let _preview_msg_id = if is_from_preview && parts.len() >= 5 {
                     parts[4].parse::<i32>().ok().map(teloxide::types::MessageId)
                 } else {
                     None
@@ -1470,11 +1540,6 @@ pub async fn handle_menu_callback(
                 })?;
 
                 if is_from_preview && url_id.is_some() {
-                    // Delete settings menu
-                    if let Err(e) = bot.delete_message(chat_id, message_id).await {
-                        log::warn!("Failed to delete settings menu: {:?}", e);
-                    }
-
                     // Get URL from cache and return to preview menu with updated format
                     match cache::get_url(&db_pool, url_id.unwrap()).await {
                         Some(url_str) => {
@@ -1495,15 +1560,15 @@ pub async fn handle_menu_callback(
                                     .await
                                     {
                                         Ok(metadata) => {
-                                            // Send new preview with updated format, delete old preview
-                                            match crate::telegram::preview::send_preview(
+                                            // Update existing preview message
+                                            match crate::telegram::preview::update_preview_message(
                                                 &bot,
                                                 chat_id,
+                                                message_id, // Use current message_id (which is the menu) to update it back to preview
                                                 &url,
                                                 &metadata,
                                                 format,
                                                 video_quality.as_deref(),
-                                                preview_msg_id,
                                                 Arc::clone(&db_pool),
                                             )
                                             .await
@@ -2119,8 +2184,12 @@ fn create_audio_effects_keyboard(
     let action_row = vec![
         InlineKeyboardButton::callback("✅ Apply Changes", format!("ae:apply:{}", session_id)),
         InlineKeyboardButton::callback("🔄 Reset", format!("ae:reset:{}", session_id)),
-        InlineKeyboardButton::callback("❌ Cancel", format!("ae:cancel:{}", session_id)),
     ];
+
+    let skip_row = vec![InlineKeyboardButton::callback(
+        "⏭️ Skip",
+        format!("ae:skip:{}", session_id),
+    )];
 
     // Bass buttons row (dB)
     let bass_values = [-6, -3, 0, 3, 6];
@@ -2150,11 +2219,59 @@ fn create_audio_effects_keyboard(
         format!("ae:morph:{}", session_id),
     )];
 
-    InlineKeyboardMarkup::new(vec![pitch_row, tempo_row, bass_row, morph_row, action_row])
+    InlineKeyboardMarkup::new(vec![
+        pitch_row, tempo_row, bass_row, morph_row, action_row, skip_row,
+    ])
 }
 
-/// Show audio effects editor
+/// Show audio effects editor by sending a new message
 async fn show_audio_effects_editor(
+    bot: &Bot,
+    chat_id: ChatId,
+    session: &crate::download::audio_effects::AudioEffectSession,
+) -> ResponseResult<()> {
+    let pitch_str = escape_markdown(&format!("{:+}", session.pitch_semitones));
+    let tempo_str = escape_markdown(&format!("{}", session.tempo_factor));
+
+    let bass_str = escape_markdown(&format!("{:+} dB", session.bass_gain_db));
+    let morph_str = match session.morph_profile {
+        crate::download::audio_effects::MorphProfile::None => "Off",
+        crate::download::audio_effects::MorphProfile::Soft => "Soft",
+        crate::download::audio_effects::MorphProfile::Aggressive => "Aggro",
+        crate::download::audio_effects::MorphProfile::Lofi => "LoFi",
+        crate::download::audio_effects::MorphProfile::Wide => "Wide",
+    };
+
+    let text = format!(
+        "🎵 *Audio Effects Editor*\n\
+        Title: {}\n\
+        Current: Pitch {} \\| Tempo {}x \\| Bass {} \\| Morph {}\n\n\
+        Adjust pitch, tempo, bass, morph preset, then press Apply\\.",
+        escape_markdown(&session.title),
+        pitch_str,
+        tempo_str,
+        bass_str,
+        escape_markdown(morph_str),
+    );
+
+    let keyboard = create_audio_effects_keyboard(
+        &session.id,
+        session.pitch_semitones,
+        session.tempo_factor,
+        session.bass_gain_db,
+        session.morph_profile,
+    );
+
+    bot.send_message(chat_id, text)
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .reply_markup(keyboard)
+        .await?;
+
+    Ok(())
+}
+
+/// Update existing audio effects editor message
+async fn update_audio_effects_editor(
     bot: &Bot,
     chat_id: ChatId,
     message_id: MessageId,
@@ -2192,7 +2309,10 @@ async fn show_audio_effects_editor(
         session.morph_profile,
     );
 
-    edit_caption_or_text(bot, chat_id, message_id, text, Some(keyboard)).await?;
+    bot.edit_message_text(chat_id, message_id, text)
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .reply_markup(keyboard)
+        .await?;
 
     Ok(())
 }
@@ -2247,7 +2367,14 @@ pub async fn handle_audio_effects_callback(
             }
 
             bot.answer_callback_query(callback_id).await?;
-            show_audio_effects_editor(&bot, chat_id, message_id, &session).await?;
+
+            // Remove the "Edit Audio" button from the audio message
+            if let Err(e) = bot.edit_message_reply_markup(chat_id, message_id).await {
+                log::warn!("Failed to remove button from audio message: {}", e);
+            }
+
+            // Send a new editor message
+            show_audio_effects_editor(&bot, chat_id, &session).await?;
         }
 
         "pitch" => {
@@ -2278,7 +2405,7 @@ pub async fn handle_audio_effects_callback(
             )?;
 
             bot.answer_callback_query(callback_id).await?;
-            show_audio_effects_editor(&bot, chat_id, message_id, &session).await?;
+            update_audio_effects_editor(&bot, chat_id, message_id, &session).await?;
         }
 
         "tempo" => {
@@ -2309,7 +2436,7 @@ pub async fn handle_audio_effects_callback(
             )?;
 
             bot.answer_callback_query(callback_id).await?;
-            show_audio_effects_editor(&bot, chat_id, message_id, &session).await?;
+            update_audio_effects_editor(&bot, chat_id, message_id, &session).await?;
         }
 
         "bass" => {
@@ -2340,7 +2467,7 @@ pub async fn handle_audio_effects_callback(
             )?;
 
             bot.answer_callback_query(callback_id).await?;
-            show_audio_effects_editor(&bot, chat_id, message_id, &session).await?;
+            update_audio_effects_editor(&bot, chat_id, message_id, &session).await?;
         }
 
         "morph" => {
@@ -2387,7 +2514,7 @@ pub async fn handle_audio_effects_callback(
             )?;
 
             bot.answer_callback_query(callback_id).await?;
-            show_audio_effects_editor(&bot, chat_id, message_id, &session).await?;
+            update_audio_effects_editor(&bot, chat_id, message_id, &session).await?;
         }
 
         "apply" => {
@@ -2481,10 +2608,15 @@ pub async fn handle_audio_effects_callback(
             )?;
 
             bot.answer_callback_query(callback_id).await?;
-            show_audio_effects_editor(&bot, chat_id, message_id, &session).await?;
+            update_audio_effects_editor(&bot, chat_id, message_id, &session).await?;
         }
 
         "cancel" => {
+            bot.answer_callback_query(callback_id).await?;
+            bot.delete_message(chat_id, message_id).await?;
+        }
+
+        "skip" => {
             bot.answer_callback_query(callback_id).await?;
             bot.delete_message(chat_id, message_id).await?;
         }
@@ -2695,4 +2827,363 @@ async fn process_audio_effects(
     }
 
     Ok(())
+}
+
+/// Shows the enhanced main menu with user's current settings and main action buttons.
+///
+/// This is the improved main menu that replaces the old /start handler.
+///
+/// # Arguments
+///
+/// * `bot` - Telegram bot instance
+/// * `chat_id` - User's chat ID
+/// * `db_pool` - Database connection pool
+///
+/// # Returns
+///
+/// Returns `ResponseResult<Message>` with the sent message or an error.
+pub async fn show_enhanced_main_menu(
+    bot: &Bot,
+    chat_id: ChatId,
+    db_pool: Arc<DbPool>,
+) -> ResponseResult<Message> {
+    let conn = db::get_connection(&db_pool).map_err(|e| {
+        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+    })?;
+
+    let format =
+        db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
+    let video_quality =
+        db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
+    let audio_bitrate =
+        db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
+
+    // Get user plan from database
+    let plan = match db::get_user(&conn, chat_id.0) {
+        Ok(Some(user)) => user.plan,
+        _ => "free".to_string(),
+    };
+
+    // Format emoji
+    let format_emoji = match format.as_str() {
+        "mp3" => "🎵 MP3",
+        "mp4" => "🎬 MP4",
+        "mp4+mp3" => "🎬🎵 MP4 \\+ MP3",
+        "srt" => "📝 SRT",
+        "txt" => "📄 TXT",
+        _ => "🎵 MP3",
+    };
+
+    // Quality or bitrate line based on format
+    let quality_line = if format == "mp4" {
+        let quality_display = match video_quality.as_str() {
+            "1080p" => "1080p",
+            "720p" => "720p",
+            "480p" => "480p",
+            "360p" => "360p",
+            _ => "Best",
+        };
+        format!("🎬 Качество: {}", quality_display)
+    } else {
+        let bitrate_display = match audio_bitrate.as_str() {
+            "128k" => "128 kbps",
+            "192k" => "192 kbps",
+            "256k" => "256 kbps",
+            "320k" => "320 kbps",
+            _ => "320 kbps",
+        };
+        format!("🎵 Битрейт: {}", bitrate_display)
+    };
+
+    // Plan display
+    let plan_display = match plan.as_str() {
+        "premium" => "Premium ⭐",
+        "vip" => "VIP 💎",
+        _ => "Free",
+    };
+
+    let text = format!(
+        "Хэй\\! Я Дора ❤️‍🔥\n\n\
+        Просто отправь мне ссылку, и я скачаю тебе видео или трек\\!\n\n\
+        *Твои текущие настройки:*\n\
+        📥 Формат: {}\n\
+        {}\n\
+        💎 План: {}\n\n\
+        Выбери действие ниже или отправь ссылку прямо сейчас\\!",
+        format_emoji, quality_line, plan_display
+    );
+
+    let keyboard = InlineKeyboardMarkup::new(vec![
+        vec![
+            InlineKeyboardButton::callback("⚙️ Настройки загрузки".to_string(), "main:settings"),
+            InlineKeyboardButton::callback("🎬 Мои настройки".to_string(), "main:current"),
+        ],
+        vec![
+            InlineKeyboardButton::callback("📊 Моя статистика".to_string(), "main:stats"),
+            InlineKeyboardButton::callback("📜 История загрузок".to_string(), "main:history"),
+        ],
+        vec![
+            InlineKeyboardButton::callback("🌐 Доступные сервисы".to_string(), "main:services"),
+            InlineKeyboardButton::callback("💎 Подписка".to_string(), "main:subscription"),
+        ],
+        vec![InlineKeyboardButton::callback(
+            "❓ Помощь и FAQ".to_string(),
+            "main:help",
+        )],
+    ]);
+
+    bot.send_message(chat_id, text)
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .reply_markup(keyboard)
+        .await
+}
+
+/// Edits existing message to show the enhanced main menu.
+///
+/// Used for "back" buttons to return to main menu without sending a new message.
+///
+/// # Arguments
+///
+/// * `bot` - Telegram bot instance
+/// * `chat_id` - User's chat ID
+/// * `message_id` - ID of message to edit
+/// * `db_pool` - Database connection pool
+async fn edit_enhanced_main_menu(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    db_pool: Arc<DbPool>,
+) -> ResponseResult<()> {
+    let conn = db::get_connection(&db_pool).map_err(|e| {
+        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+    })?;
+
+    let format =
+        db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
+    let video_quality =
+        db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
+    let audio_bitrate =
+        db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
+
+    let plan = match db::get_user(&conn, chat_id.0) {
+        Ok(Some(user)) => user.plan,
+        _ => "free".to_string(),
+    };
+
+    let format_emoji = match format.as_str() {
+        "mp3" => "🎵 MP3",
+        "mp4" => "🎬 MP4",
+        "mp4+mp3" => "🎬🎵 MP4 \\+ MP3",
+        "srt" => "📝 SRT",
+        "txt" => "📄 TXT",
+        _ => "🎵 MP3",
+    };
+
+    let quality_line = if format == "mp4" {
+        let quality_display = match video_quality.as_str() {
+            "1080p" => "1080p",
+            "720p" => "720p",
+            "480p" => "480p",
+            "360p" => "360p",
+            _ => "Best",
+        };
+        format!("🎬 Качество: {}", quality_display)
+    } else {
+        let bitrate_display = match audio_bitrate.as_str() {
+            "128k" => "128 kbps",
+            "192k" => "192 kbps",
+            "256k" => "256 kbps",
+            "320k" => "320 kbps",
+            _ => "320 kbps",
+        };
+        format!("🎵 Битрейт: {}", bitrate_display)
+    };
+
+    let plan_display = match plan.as_str() {
+        "premium" => "Premium ⭐",
+        "vip" => "VIP 💎",
+        _ => "Free",
+    };
+
+    let text = format!(
+        "Хэй\\! Я Дора ❤️‍🔥\n\n\
+        Просто отправь мне ссылку, и я скачаю тебе видео или трек\\!\n\n\
+        *Твои текущие настройки:*\n\
+        📥 Формат: {}\n\
+        {}\n\
+        💎 План: {}\n\n\
+        Выбери действие ниже или отправь ссылку прямо сейчас\\!",
+        format_emoji, quality_line, plan_display
+    );
+
+    let keyboard = InlineKeyboardMarkup::new(vec![
+        vec![
+            InlineKeyboardButton::callback("⚙️ Настройки загрузки".to_string(), "main:settings"),
+            InlineKeyboardButton::callback("🎬 Мои настройки".to_string(), "main:current"),
+        ],
+        vec![
+            InlineKeyboardButton::callback("📊 Моя статистика".to_string(), "main:stats"),
+            InlineKeyboardButton::callback("📜 История загрузок".to_string(), "main:history"),
+        ],
+        vec![
+            InlineKeyboardButton::callback("🌐 Доступные сервисы".to_string(), "main:services"),
+            InlineKeyboardButton::callback("💎 Подписка".to_string(), "main:subscription"),
+        ],
+        vec![InlineKeyboardButton::callback(
+            "❓ Помощь и FAQ".to_string(),
+            "main:help",
+        )],
+    ]);
+
+    edit_caption_or_text(bot, chat_id, message_id, text, Some(keyboard)).await
+}
+
+/// Shows detailed view of user's current settings.
+///
+/// Displays all user preferences including format, quality, bitrate, send type, and plan.
+///
+/// # Arguments
+///
+/// * `bot` - Telegram bot instance
+/// * `chat_id` - User's chat ID
+/// * `message_id` - ID of message to edit
+/// * `db_pool` - Database connection pool
+async fn show_current_settings_detail(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    db_pool: Arc<DbPool>,
+) -> ResponseResult<()> {
+    let conn = db::get_connection(&db_pool).map_err(|e| {
+        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+    })?;
+
+    let format =
+        db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
+    let video_quality =
+        db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
+    let audio_bitrate =
+        db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
+    let send_as_document = db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0);
+    let send_audio_as_document = db::get_user_send_audio_as_document(&conn, chat_id.0).unwrap_or(0);
+
+    let plan = match db::get_user(&conn, chat_id.0) {
+        Ok(Some(user)) => user.plan,
+        _ => "free".to_string(),
+    };
+
+    let format_emoji = match format.as_str() {
+        "mp3" => "🎵 MP3",
+        "mp4" => "🎬 MP4",
+        "mp4+mp3" => "🎬🎵 MP4 \\+ MP3",
+        "srt" => "📝 SRT",
+        "txt" => "📄 TXT",
+        _ => "🎵 MP3",
+    };
+
+    let quality_line = if format == "mp4" || format == "mp4+mp3" {
+        let quality_display = match video_quality.as_str() {
+            "1080p" => "1080p",
+            "720p" => "720p",
+            "480p" => "480p",
+            "360p" => "360p",
+            _ => "Best",
+        };
+        format!("🎬 *Качество видео:* {}", quality_display)
+    } else {
+        "".to_string()
+    };
+
+    let bitrate_line = if format == "mp3" || format == "mp4+mp3" {
+        let bitrate_display = match audio_bitrate.as_str() {
+            "128k" => "128 kbps",
+            "192k" => "192 kbps",
+            "256k" => "256 kbps",
+            "320k" => "320 kbps",
+            _ => "320 kbps",
+        };
+        format!("🎵 *Битрейт аудио:* {}", bitrate_display)
+    } else {
+        "".to_string()
+    };
+
+    let video_send_type = if send_as_document == 1 {
+        "📎 *Отправка видео:* Документ"
+    } else {
+        "📹 *Отправка видео:* Медиа"
+    };
+
+    let audio_send_type = if send_audio_as_document == 1 {
+        "📎 *Отправка аудио:* Документ"
+    } else {
+        "🎵 *Отправка аудио:* Медиа"
+    };
+
+    let plan_display = match plan.as_str() {
+        "premium" => "Premium ⭐",
+        "vip" => "VIP 💎",
+        _ => "Free",
+    };
+
+    let mut text = format!(
+        "🎬 *Твои настройки загрузки*\n\n\
+        📥 *Формат:* {}\n",
+        format_emoji
+    );
+
+    if !quality_line.is_empty() {
+        text.push_str(&format!("{}\n", quality_line));
+    }
+    if !bitrate_line.is_empty() {
+        text.push_str(&format!("{}\n", bitrate_line));
+    }
+
+    text.push_str(&format!(
+        "{}\n\
+        {}\n\n\
+        💎 *Подписка:* {}\n\n\
+        Чтобы изменить настройки, нажми \"⚙️ Настройки загрузки\" в главном меню\\.",
+        video_send_type, audio_send_type, plan_display
+    ));
+
+    let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+        "🔙 Назад в меню".to_string(),
+        "back:enhanced_main",
+    )]]);
+
+    edit_caption_or_text(bot, chat_id, message_id, text, Some(keyboard)).await
+}
+
+/// Shows help and FAQ information.
+///
+/// Displays common questions and answers about using the bot.
+///
+/// # Arguments
+///
+/// * `bot` - Telegram bot instance
+/// * `chat_id` - User's chat ID
+/// * `message_id` - ID of message to edit
+async fn show_help_menu(bot: &Bot, chat_id: ChatId, message_id: MessageId) -> ResponseResult<()> {
+    let text = "❓ *Помощь и FAQ*\n\n\
+        *Как пользоваться ботом?*\n\
+        Просто отправь мне ссылку на видео или трек с YouTube, SoundCloud, VK, TikTok, Instagram или других сервисов\\.\n\n\
+        *Какие форматы поддерживаются?*\n\
+        🎵 MP3 \\- только аудио\n\
+        🎬 MP4 \\- видео\n\
+        🎬🎵 MP4 \\+ MP3 \\- и видео, и аудио\n\
+        📝 SRT \\- субтитры\n\
+        📄 TXT \\- текстовые субтитры\n\n\
+        *Как изменить качество?*\n\
+        Используй кнопку \"⚙️ Настройки загрузки\" в главном меню\\.\n\n\
+        *Какие сервисы поддерживаются?*\n\
+        YouTube, SoundCloud, VK, TikTok, Instagram, Twitch, Spotify и многие другие\\! Полный список в разделе \"🌐 Доступные сервисы\"\\.\n\n\
+        *Нужна помощь?*\n\
+        Напиши @stansob \\(администратор\\)";
+
+    let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+        "🔙 Назад в меню".to_string(),
+        "back:enhanced_main",
+    )]]);
+
+    edit_caption_or_text(bot, chat_id, message_id, text.to_string(), Some(keyboard)).await
 }

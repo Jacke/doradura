@@ -18,7 +18,7 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 use teloxide::prelude::*;
-use teloxide::types::InputFile;
+use teloxide::types::{InputFile, ParseMode};
 use tokio::process::Command as TokioCommand;
 use tokio::time::timeout;
 use url::Url;
@@ -1504,6 +1504,12 @@ pub async fn download_and_send_audio(
                 Arc::from(format!("{} - {}", artist, title))
             };
 
+            // Создаём отформатированный caption для Telegram с MarkdownV2
+            let caption: Arc<str> = Arc::from(crate::core::utils::format_media_caption(&title, &artist));
+
+            log::info!("Display title for audio: '{}'", display_title);
+            log::info!("Formatted caption for audio: '{}'", caption);
+
             // Show starting status
             let _ = progress_msg.update(&bot_clone, DownloadStatus::Starting {
                 title: display_title.as_ref().to_string(),
@@ -1625,7 +1631,16 @@ pub async fn download_and_send_audio(
             };
 
             // Step 5: Send audio with retry logic and get the sent message
-            let sent_message = send_audio_with_retry_and_return(&bot_clone, chat_id, &download_path, duration, &mut progress_msg, display_title.as_ref(), send_audio_as_document).await?;
+            let sent_message = send_audio_with_retry(&bot_clone, chat_id, &download_path, duration, &mut progress_msg, caption.as_ref(), send_audio_as_document).await?;
+
+            // Сразу после успешной отправки обновляем сообщение прогресса до Success
+            // чтобы убрать застрявшее состояние "Uploading: 99%"
+            let elapsed_secs = start_time.elapsed().as_secs();
+            let _ = progress_msg.update(&bot_clone, DownloadStatus::Success {
+                title: display_title.as_ref().to_string(),
+                elapsed_secs,
+                file_format: Some("mp3".to_string()),
+            }).await;
 
             // Add audio effects button for Premium/VIP users
             // Copy file BEFORE it gets deleted
@@ -1710,18 +1725,14 @@ pub async fn download_and_send_audio(
             // Save to download history after successful send
             if let Some(ref pool) = db_pool_clone {
                 if let Ok(conn) = crate::storage::db::get_connection(pool) {
-                    if let Err(e) = save_download_history(&conn, chat_id.0, url.as_str(), display_title.as_ref(), "mp3") {
+                    let file_id = sent_message.audio().map(|a| a.file.id.0.clone())
+                        .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
+
+                    if let Err(e) = save_download_history(&conn, chat_id.0, url.as_str(), display_title.as_ref(), "mp3", file_id.as_deref()) {
                         log::warn!("Failed to save download history: {}", e);
                     }
                 }
             }
-
-            // Step 6: Show success status with time
-            let _ = progress_msg.update(&bot_clone, DownloadStatus::Success {
-                title: display_title.as_ref().to_string(),
-                elapsed_secs,
-                file_format: Some("mp3".to_string()),
-            }).await;
 
             // Add eyes emoji reaction to the original message if message_id is available
             if let Some(msg_id) = message_id {
@@ -1833,7 +1844,7 @@ async fn send_file_with_retry<F, Fut>(
     title: &str,
     file_type: &str,
     send_fn: F,
-) -> Result<(), AppError>
+) -> Result<Message, AppError>
 where
     F: Fn(Bot, ChatId, String) -> Fut,
     Fut: std::future::Future<Output = ResponseResult<Message>>,
@@ -2016,14 +2027,21 @@ where
         tokio::time::sleep(config::animation::stop_delay()).await;
 
         match response {
-            Ok(_) => {
+            Ok(msg) => {
                 log::info!(
                     "Successfully sent {} to chat {} on attempt {}",
                     file_type,
                     chat_id,
                     attempt
                 );
-                return Ok(());
+
+                // Очищаем сообщение прогресса, чтобы убрать оставшийся прогресс "99%"
+                // Это важно, потому что фоновая задача могла оставить сообщение в состоянии Uploading
+                // Отправляем пустое сообщение прогресса или просто обновляем его до финального состояния
+                // будет обновлено в основной функции до Success/Completed
+                log::debug!("File sent successfully, progress message will be updated by caller");
+
+                return Ok(msg);
             }
             Err(e) if attempt < max_attempts => {
                 let error_str = e.to_string();
@@ -2085,7 +2103,7 @@ where
 }
 
 /// Send audio file with retry logic
-/// Args: bot - telegram bot instance, chat_id - user's chat ID, download_path - path to audio file, duration - audio duration in seconds, progress_msg - progress message handler, title - audio title
+/// Args: bot - telegram bot instance, chat_id - user's chat ID, download_path - path to audio file, duration - audio duration in seconds, progress_msg - progress message handler, caption - formatted caption with MarkdownV2
 /// Functionality: Wrapper around send_file_with_retry for audio files
 #[allow(dead_code)]
 async fn send_audio_with_retry(
@@ -2093,42 +2111,47 @@ async fn send_audio_with_retry(
     chat_id: ChatId,
     download_path: &str,
     duration: u32,
-    _progress_msg: &mut ProgressMessage,
-    _title: &str,
+    progress_msg: &mut ProgressMessage,
+    caption: &str,
     send_as_document: bool,
-) -> Result<(), AppError> {
+) -> Result<Message, AppError> {
     if send_as_document {
         log::info!("User preference: sending audio as document");
+        let caption_clone = caption.to_string();
         send_file_with_retry(
             bot,
             chat_id,
             download_path,
-            &mut ProgressMessage {
-                chat_id,
-                message_id: None,
-            },
+            progress_msg,
             "",
             "audio",
-            move |bot, chat_id, path| async move {
-                bot.send_document(chat_id, InputFile::file(path)).await
+            move |bot, chat_id, path| {
+                let caption_clone = caption_clone.clone();
+                async move {
+                    bot.send_document(chat_id, InputFile::file(path))
+                        .caption(&caption_clone)
+                        .parse_mode(ParseMode::MarkdownV2)
+                        .await
+                }
             },
         )
         .await
     } else {
+        let caption_clone = caption.to_string();
         send_file_with_retry(
             bot,
             chat_id,
             download_path,
-            &mut ProgressMessage {
-                chat_id,
-                message_id: None,
-            },
+            progress_msg,
             "",
             "audio",
             move |bot, chat_id, path| {
                 let duration = duration;
+                let caption_clone = caption_clone.clone();
                 async move {
                     bot.send_audio(chat_id, InputFile::file(path))
+                        .caption(&caption_clone)
+                        .parse_mode(ParseMode::MarkdownV2)
                         .duration(duration)
                         .await
                 }
@@ -2160,7 +2183,7 @@ async fn send_video_with_retry(
     title: &str,
     thumbnail_url: Option<&str>,
     send_as_document: bool,
-) -> Result<(), AppError> {
+) -> Result<Message, AppError> {
     // Получаем метаданные видео для корректной отправки в Telegram
     let video_metadata = probe_video_metadata(download_path);
 
@@ -2376,6 +2399,7 @@ async fn send_video_with_retry(
                 async move {
                     bot.send_document(chat_id, InputFile::file(path))
                         .caption(&title_for_doc)
+                        .parse_mode(ParseMode::MarkdownV2)
                         .await
                 }
             },
@@ -2407,7 +2431,8 @@ async fn send_video_with_retry(
 
             async move {
                 let mut video_msg = bot.send_video(chat_id, InputFile::file(path))
-                    .caption(&title_clone);
+                    .caption(&title_clone)
+                    .parse_mode(ParseMode::MarkdownV2);
 
                 // Добавляем метаданные для корректного воспроизведения в Telegram
                 if let Some(dur) = duration_clone {
@@ -2495,6 +2520,7 @@ async fn send_video_with_retry(
                 async move {
                     bot.send_document(chat_id, InputFile::file(path))
                         .caption(&title_for_fallback)
+                        .parse_mode(ParseMode::MarkdownV2)
                         .await
                 }
             },
@@ -2636,7 +2662,11 @@ pub async fn download_and_send_video(
                 Arc::from(format!("{} - {}", artist, title))
             };
 
+            // Создаём отформатированный caption для Telegram с MarkdownV2
+            let caption: Arc<str> = Arc::from(crate::core::utils::format_media_caption(&title, &artist));
+
             log::info!("Display title for video: '{}'", display_title);
+            log::info!("Formatted caption for video: '{}'", caption);
 
             // Show starting status
             let _ = progress_msg.update(&bot_clone, DownloadStatus::Starting {
@@ -2989,23 +3019,27 @@ pub async fn download_and_send_video(
             log::info!("📤 Calling send_video_with_retry with send_as_document={} for user {}", send_as_document, chat_id.0);
 
             // Step 5: Send video with retry logic and animation
-            send_video_with_retry(&bot_clone, chat_id, &actual_file_path, &mut progress_msg, display_title.as_ref(), thumbnail_url.as_deref(), send_as_document).await?;
+            let sent_message = send_video_with_retry(&bot_clone, chat_id, &actual_file_path, &mut progress_msg, caption.as_ref(), thumbnail_url.as_deref(), send_as_document).await?;
 
-            // Save to download history after successful send
-            if let Some(ref pool) = db_pool_clone {
-                if let Ok(conn) = crate::storage::db::get_connection(pool) {
-                    if let Err(e) = save_download_history(&conn, chat_id.0, url.as_str(), display_title.as_ref(), "mp4") {
-                        log::warn!("Failed to save download history: {}", e);
-                    }
-                }
-            }
-
-            // Step 5: Show success status with time
+            // Сразу после успешной отправки обновляем сообщение прогресса до Success
+            // чтобы убрать застрявшее состояние "Uploading: 99%"
             let _ = progress_msg.update(&bot_clone, DownloadStatus::Success {
                 title: display_title.as_ref().to_string(),
                 elapsed_secs,
                 file_format: Some("mp4".to_string()),
             }).await;
+
+            // Save to download history after successful send
+            if let Some(ref pool) = db_pool_clone {
+                if let Ok(conn) = crate::storage::db::get_connection(pool) {
+                    let file_id = sent_message.video().map(|v| v.file.id.0.clone())
+                        .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
+
+                    if let Err(e) = save_download_history(&conn, chat_id.0, url.as_str(), display_title.as_ref(), "mp4", file_id.as_deref()) {
+                        log::warn!("Failed to save download history: {}", e);
+                    }
+                }
+            }
 
             // Add eyes emoji reaction to the original message if message_id is available
             if let Some(msg_id) = message_id {
@@ -3268,41 +3302,60 @@ pub async fn download_and_send_subtitles(
 
                 if let Some(found) = found_file {
                     // Send the found file
-                    let _ = bot_clone
+                    let sent_message = bot_clone
                         .send_document(chat_id, InputFile::file(&found))
                         .await
                         .map_err(|e| {
                             AppError::Download(format!("Failed to send document: {}", e))
                         })?;
+
+                    // Save to download history after successful send
+                    if let Some(ref pool) = db_pool_clone {
+                        if let Ok(conn) = crate::storage::db::get_connection(pool) {
+                            let file_id = sent_message.document().map(|d| d.file.id.0.clone());
+                            if let Err(e) = save_download_history(
+                                &conn,
+                                chat_id.0,
+                                url.as_str(),
+                                display_title.as_ref(),
+                                &subtitle_format,
+                                file_id.as_deref(),
+                            ) {
+                                log::warn!("Failed to save download history: {}", e);
+                            }
+                        }
+                    }
                 } else {
                     return Err(AppError::Download("Subtitle file not found".to_string()));
                 }
             } else {
                 // Send the file
-                let _ = bot_clone
+                let sent_message = bot_clone
                     .send_document(chat_id, InputFile::file(&download_path))
                     .await
                     .map_err(|e| AppError::Download(format!("Failed to send document: {}", e)))?;
+
+                // Save to download history after successful send
+                if let Some(ref pool) = db_pool_clone {
+                    if let Ok(conn) = crate::storage::db::get_connection(pool) {
+                        let file_id = sent_message.document().map(|d| d.file.id.0.clone());
+                        if let Err(e) = save_download_history(
+                            &conn,
+                            chat_id.0,
+                            url.as_str(),
+                            display_title.as_ref(),
+                            &subtitle_format,
+                            file_id.as_deref(),
+                        ) {
+                            log::warn!("Failed to save download history: {}", e);
+                        }
+                    }
+                }
             }
 
             // Calculate elapsed time
             let elapsed_secs = start_time.elapsed().as_secs();
             log::info!("Subtitle downloaded in {} seconds", elapsed_secs);
-
-            // Save to download history after successful send
-            if let Some(ref pool) = db_pool_clone {
-                if let Ok(conn) = crate::storage::db::get_connection(pool) {
-                    if let Err(e) = save_download_history(
-                        &conn,
-                        chat_id.0,
-                        url.as_str(),
-                        display_title.as_ref(),
-                        &subtitle_format,
-                    ) {
-                        log::warn!("Failed to save download history: {}", e);
-                    }
-                }
-            }
 
             // Step 3: Show success status
             let _ = progress_msg
@@ -3391,40 +3444,6 @@ pub async fn download_and_send_subtitles(
 }
 
 // ==================== Audio Effects Integration ====================
-
-/// Send audio with retry and return the sent Message for adding buttons
-async fn send_audio_with_retry_and_return(
-    bot: &Bot,
-    chat_id: ChatId,
-    download_path: &str,
-    duration: u32,
-    _progress_msg: &mut ProgressMessage,
-    _title: &str,
-    send_as_document: bool,
-) -> Result<Message, AppError> {
-    use teloxide::types::ChatAction;
-
-    // Send chat action
-    if let Err(e) = bot
-        .send_chat_action(chat_id, ChatAction::UploadDocument)
-        .await
-    {
-        log::warn!("Failed to send chat action: {}", e);
-    }
-
-    // Send file and return Message
-    let message = if send_as_document {
-        log::info!("User preference: sending audio as document");
-        bot.send_document(chat_id, InputFile::file(download_path))
-            .await?
-    } else {
-        bot.send_audio(chat_id, InputFile::file(download_path))
-            .duration(duration)
-            .await?
-    };
-
-    Ok(message)
-}
 
 #[cfg(test)]
 mod download_tests {
