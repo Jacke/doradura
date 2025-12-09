@@ -1,0 +1,32 @@
+### Замена для admin команд (Users, Setplan, Admin):
+
+Заменить весь блок от "Command::Users => {" до конца "Command::Admin => {" (строки примерно 379-738)
+
+На:
+```rust
+                                Command::Users => {
+                                    let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
+                                    let _ = handle_users_command(&bot, msg.chat.id, username, db_pool.clone()).await;
+                                }
+                                Command::Setplan => {
+                                    let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
+                                    let message_text = msg.text().unwrap_or("");
+                                    let _ = handle_setplan_command(&bot, msg.chat.id, username, message_text, db_pool.clone()).await;
+                                }
+                                Command::Admin => {
+                                    let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
+                                    let _ = handle_admin_command(&bot, msg.chat.id, username, db_pool.clone()).await;
+                                }
+```
+
+### Удалить функции в конце файла:
+
+1. Удалить VOICE_FILES константу
+2. Удалить convert_wav_to_ogg_opus()
+3. Удалить send_voice_with_waveform()
+4. Удалить is_message_addressed_to_bot()
+5. Удалить exponential_backoff() - вынести в отдельный модуль
+
+### Общее сокращение:
+
+main.rs должен сократиться с 1807 строк до примерно 800-900 строк.

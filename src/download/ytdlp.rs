@@ -32,10 +32,7 @@ pub async fn check_and_update_ytdlp() -> Result<(), AppError> {
             log::info!("Current yt-dlp version: {}", version);
         }
         Err(e) => {
-            log::warn!(
-                "Failed to get yt-dlp version: {}. Will try to update anyway.",
-                e
-            );
+            log::warn!("Failed to get yt-dlp version: {}. Will try to update anyway.", e);
         }
     }
 
@@ -100,31 +97,22 @@ pub async fn check_and_update_ytdlp() -> Result<(), AppError> {
                                 } else {
                                     let pip_stderr = String::from_utf8_lossy(&pip_output.stderr);
                                     let exit_code = pip_output.status.code();
-                                    last_error = Some(format!(
-                                        "{} failed with exit code {:?}: {}",
-                                        pip_cmd, exit_code, pip_stderr
-                                    ));
-                                    log::debug!(
-                                        "{} update failed: {}",
-                                        pip_cmd,
-                                        last_error.as_ref().unwrap()
-                                    );
+                                    let error_msg =
+                                        format!("{} failed with exit code {:?}: {}", pip_cmd, exit_code, pip_stderr);
+                                    log::debug!("{} update failed: {}", pip_cmd, error_msg);
+                                    last_error = Some(error_msg);
                                     // Пробуем следующую команду
                                     continue;
                                 }
                             }
                             Ok(Err(e)) => {
-                                last_error = Some(format!(
-                                    "{} command not found or failed to execute: {}",
-                                    pip_cmd, e
-                                ));
+                                last_error = Some(format!("{} command not found or failed to execute: {}", pip_cmd, e));
                                 log::debug!("{} command error: {}", pip_cmd, e);
                                 // Пробуем следующую команду
                                 continue;
                             }
                             Err(_) => {
-                                last_error =
-                                    Some(format!("{} update timed out after 60 seconds", pip_cmd));
+                                last_error = Some(format!("{} update timed out after 60 seconds", pip_cmd));
                                 log::debug!("{} update timed out", pip_cmd);
                                 // Пробуем следующую команду
                                 continue;
@@ -219,20 +207,14 @@ pub async fn get_supported_extractors() -> Result<Vec<String>, AppError> {
 
     let output = timeout(
         std::time::Duration::from_secs(10),
-        TokioCommand::new(ytdl_bin)
-            .arg("--list-extractors")
-            .output(),
+        TokioCommand::new(ytdl_bin).arg("--list-extractors").output(),
     )
     .await
     .map_err(|_| AppError::Download("yt-dlp list-extractors command timed out".to_string()))?
-    .map_err(|e| {
-        AppError::Download(format!("Failed to execute yt-dlp --list-extractors: {}", e))
-    })?;
+    .map_err(|e| AppError::Download(format!("Failed to execute yt-dlp --list-extractors: {}", e)))?;
 
     if !output.status.success() {
-        return Err(AppError::Download(
-            "yt-dlp --list-extractors failed".to_string(),
-        ));
+        return Err(AppError::Download("yt-dlp --list-extractors failed".to_string()));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);

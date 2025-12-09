@@ -156,10 +156,7 @@ fn migrate_schema(conn: &rusqlite::Connection) -> Result<()> {
     // Add download_format if it doesn't exist
     if !columns.contains(&"download_format".to_string()) {
         log::info!("Adding missing column: download_format to users table");
-        if let Err(e) = conn.execute(
-            "ALTER TABLE users ADD COLUMN download_format TEXT DEFAULT 'mp3'",
-            [],
-        ) {
+        if let Err(e) = conn.execute("ALTER TABLE users ADD COLUMN download_format TEXT DEFAULT 'mp3'", []) {
             log::warn!("Failed to add download_format column: {}", e);
         }
     }
@@ -167,10 +164,7 @@ fn migrate_schema(conn: &rusqlite::Connection) -> Result<()> {
     // Add download_subtitles if it doesn't exist
     if !columns.contains(&"download_subtitles".to_string()) {
         log::info!("Adding missing column: download_subtitles to users table");
-        if let Err(e) = conn.execute(
-            "ALTER TABLE users ADD COLUMN download_subtitles INTEGER DEFAULT 0",
-            [],
-        ) {
+        if let Err(e) = conn.execute("ALTER TABLE users ADD COLUMN download_subtitles INTEGER DEFAULT 0", []) {
             log::warn!("Failed to add download_subtitles column: {}", e);
         }
     }
@@ -178,10 +172,7 @@ fn migrate_schema(conn: &rusqlite::Connection) -> Result<()> {
     // Add video_quality if it doesn't exist
     if !columns.contains(&"video_quality".to_string()) {
         log::info!("Adding missing column: video_quality to users table");
-        if let Err(e) = conn.execute(
-            "ALTER TABLE users ADD COLUMN video_quality TEXT DEFAULT 'best'",
-            [],
-        ) {
+        if let Err(e) = conn.execute("ALTER TABLE users ADD COLUMN video_quality TEXT DEFAULT 'best'", []) {
             log::warn!("Failed to add video_quality column: {}", e);
         }
     }
@@ -189,10 +180,7 @@ fn migrate_schema(conn: &rusqlite::Connection) -> Result<()> {
     // Add audio_bitrate if it doesn't exist
     if !columns.contains(&"audio_bitrate".to_string()) {
         log::info!("Adding missing column: audio_bitrate to users table");
-        if let Err(e) = conn.execute(
-            "ALTER TABLE users ADD COLUMN audio_bitrate TEXT DEFAULT '320k'",
-            [],
-        ) {
+        if let Err(e) = conn.execute("ALTER TABLE users ADD COLUMN audio_bitrate TEXT DEFAULT '320k'", []) {
             log::warn!("Failed to add audio_bitrate column: {}", e);
         }
     }
@@ -211,10 +199,7 @@ fn migrate_schema(conn: &rusqlite::Connection) -> Result<()> {
     // Add send_as_document if it doesn't exist
     if !columns.contains(&"send_as_document".to_string()) {
         log::info!("Adding missing column: send_as_document to users table");
-        if let Err(e) = conn.execute(
-            "ALTER TABLE users ADD COLUMN send_as_document INTEGER DEFAULT 0",
-            [],
-        ) {
+        if let Err(e) = conn.execute("ALTER TABLE users ADD COLUMN send_as_document INTEGER DEFAULT 0", []) {
             log::warn!("Failed to add send_as_document column: {}", e);
         }
     }
@@ -233,10 +218,7 @@ fn migrate_schema(conn: &rusqlite::Connection) -> Result<()> {
     // Add telegram_charge_id if it doesn't exist
     if !columns.contains(&"telegram_charge_id".to_string()) {
         log::info!("Adding missing column: telegram_charge_id to users table");
-        if let Err(e) = conn.execute(
-            "ALTER TABLE users ADD COLUMN telegram_charge_id TEXT DEFAULT NULL",
-            [],
-        ) {
+        if let Err(e) = conn.execute("ALTER TABLE users ADD COLUMN telegram_charge_id TEXT DEFAULT NULL", []) {
             log::warn!("Failed to add telegram_charge_id column: {}", e);
         }
     }
@@ -291,10 +273,7 @@ fn migrate_schema(conn: &rusqlite::Connection) -> Result<()> {
 
         if !columns.contains(&"file_id".to_string()) {
             log::info!("Adding missing column: file_id to download_history table");
-            if let Err(e) = conn.execute(
-                "ALTER TABLE download_history ADD COLUMN file_id TEXT DEFAULT NULL",
-                [],
-            ) {
+            if let Err(e) = conn.execute("ALTER TABLE download_history ADD COLUMN file_id TEXT DEFAULT NULL", []) {
                 log::warn!("Failed to add file_id column: {}", e);
             }
         }
@@ -386,10 +365,7 @@ pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
 pub fn update_user_plan(conn: &DbConnection, telegram_id: i64, plan: &str) -> Result<()> {
     conn.execute(
         "UPDATE users SET plan = ?1 WHERE telegram_id = ?2",
-        [
-            &plan as &dyn rusqlite::ToSql,
-            &telegram_id as &dyn rusqlite::ToSql,
-        ],
+        [&plan as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
     )?;
     Ok(())
 }
@@ -422,10 +398,7 @@ pub fn update_user_plan_with_expiry(
         // Для free плана или бессрочных подписок, убираем дату окончания
         conn.execute(
             "UPDATE users SET plan = ?1, subscription_expires_at = NULL WHERE telegram_id = ?2",
-            [
-                &plan as &dyn rusqlite::ToSql,
-                &telegram_id as &dyn rusqlite::ToSql,
-            ],
+            [&plan as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
         )?;
     }
     Ok(())
@@ -470,10 +443,7 @@ pub fn expire_old_subscriptions(conn: &DbConnection) -> Result<usize> {
 pub fn log_request(conn: &DbConnection, user_id: i64, request_text: &str) -> Result<()> {
     conn.execute(
         "INSERT INTO request_history (user_id, request_text) VALUES (?1, ?2)",
-        [
-            &user_id as &dyn rusqlite::ToSql,
-            &request_text as &dyn rusqlite::ToSql,
-        ],
+        [&user_id as &dyn rusqlite::ToSql, &request_text as &dyn rusqlite::ToSql],
     )?;
     Ok(())
 }
@@ -514,10 +484,7 @@ pub fn get_user_download_format(conn: &DbConnection, telegram_id: i64) -> Result
 pub fn set_user_download_format(conn: &DbConnection, telegram_id: i64, format: &str) -> Result<()> {
     conn.execute(
         "UPDATE users SET download_format = ?1 WHERE telegram_id = ?2",
-        [
-            &format as &dyn rusqlite::ToSql,
-            &telegram_id as &dyn rusqlite::ToSql,
-        ],
+        [&format as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
     )?;
     Ok(())
 }
@@ -555,18 +522,11 @@ pub fn get_user_download_subtitles(conn: &DbConnection, telegram_id: i64) -> Res
 /// # Returns
 ///
 /// Возвращает `Ok(())` при успехе или ошибку базы данных.
-pub fn set_user_download_subtitles(
-    conn: &DbConnection,
-    telegram_id: i64,
-    enabled: bool,
-) -> Result<()> {
+pub fn set_user_download_subtitles(conn: &DbConnection, telegram_id: i64, enabled: bool) -> Result<()> {
     let value = if enabled { 1 } else { 0 };
     conn.execute(
         "UPDATE users SET download_subtitles = ?1 WHERE telegram_id = ?2",
-        [
-            &value as &dyn rusqlite::ToSql,
-            &telegram_id as &dyn rusqlite::ToSql,
-        ],
+        [&value as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
     )?;
     Ok(())
 }
@@ -606,10 +566,7 @@ pub fn get_user_video_quality(conn: &DbConnection, telegram_id: i64) -> Result<S
 pub fn set_user_video_quality(conn: &DbConnection, telegram_id: i64, quality: &str) -> Result<()> {
     conn.execute(
         "UPDATE users SET video_quality = ?1 WHERE telegram_id = ?2",
-        [
-            &quality as &dyn rusqlite::ToSql,
-            &telegram_id as &dyn rusqlite::ToSql,
-        ],
+        [&quality as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
     )?;
     Ok(())
 }
@@ -647,11 +604,7 @@ pub fn get_user_send_as_document(conn: &DbConnection, telegram_id: i64) -> Resul
 /// # Returns
 ///
 /// Возвращает `Ok(())` при успехе или ошибку базы данных.
-pub fn set_user_send_as_document(
-    conn: &DbConnection,
-    telegram_id: i64,
-    send_as_document: i32,
-) -> Result<()> {
+pub fn set_user_send_as_document(conn: &DbConnection, telegram_id: i64, send_as_document: i32) -> Result<()> {
     conn.execute(
         "UPDATE users SET send_as_document = ?1 WHERE telegram_id = ?2",
         [
@@ -674,8 +627,7 @@ pub fn set_user_send_as_document(
 /// Возвращает `Ok(0)` для Media (send_audio) или `Ok(1)` для Document (send_document).
 /// По умолчанию возвращает 0 (Media).
 pub fn get_user_send_audio_as_document(conn: &DbConnection, telegram_id: i64) -> Result<i32> {
-    let mut stmt =
-        conn.prepare("SELECT send_audio_as_document FROM users WHERE telegram_id = ?")?;
+    let mut stmt = conn.prepare("SELECT send_audio_as_document FROM users WHERE telegram_id = ?")?;
     let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
 
     if let Some(row) = rows.next()? {
@@ -746,10 +698,7 @@ pub fn get_user_audio_bitrate(conn: &DbConnection, telegram_id: i64) -> Result<S
 pub fn set_user_audio_bitrate(conn: &DbConnection, telegram_id: i64, bitrate: &str) -> Result<()> {
     conn.execute(
         "UPDATE users SET audio_bitrate = ?1 WHERE telegram_id = ?2",
-        [
-            &bitrate as &dyn rusqlite::ToSql,
-            &telegram_id as &dyn rusqlite::ToSql,
-        ],
+        [&bitrate as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
     )?;
     Ok(())
 }
@@ -851,17 +800,10 @@ pub fn get_download_history(
 ///
 /// Возвращает `Ok(true)` если запись была удалена, `Ok(false)` если запись не найдена,
 /// или ошибку базы данных.
-pub fn delete_download_history_entry(
-    conn: &DbConnection,
-    telegram_id: i64,
-    entry_id: i64,
-) -> Result<bool> {
+pub fn delete_download_history_entry(conn: &DbConnection, telegram_id: i64, entry_id: i64) -> Result<bool> {
     let rows_affected = conn.execute(
         "DELETE FROM download_history WHERE id = ?1 AND user_id = ?2",
-        [
-            &entry_id as &dyn rusqlite::ToSql,
-            &telegram_id as &dyn rusqlite::ToSql,
-        ],
+        [&entry_id as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
     )?;
     Ok(rows_affected > 0)
 }
@@ -950,15 +892,11 @@ pub fn get_user_stats(conn: &DbConnection, telegram_id: i64) -> Result<UserStats
     )?;
 
     // Топ-5 исполнителей (парсим из title: "Artist - Song")
-    let mut stmt = conn.prepare(
-        "SELECT title FROM download_history WHERE user_id = ? ORDER BY downloaded_at DESC LIMIT 100"
-    )?;
-    let rows = stmt.query_map([&telegram_id as &dyn rusqlite::ToSql], |row| {
-        row.get::<_, String>(0)
-    })?;
+    let mut stmt =
+        conn.prepare("SELECT title FROM download_history WHERE user_id = ? ORDER BY downloaded_at DESC LIMIT 100")?;
+    let rows = stmt.query_map([&telegram_id as &dyn rusqlite::ToSql], |row| row.get::<_, String>(0))?;
 
-    let mut artist_counts: std::collections::HashMap<String, i64> =
-        std::collections::HashMap::new();
+    let mut artist_counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
     for row in rows {
         if let Ok(title) = row {
             // Пытаемся извлечь исполнителя из формата "Artist - Song"
@@ -1032,26 +970,19 @@ pub struct GlobalStats {
 /// Получает глобальную статистику бота
 pub fn get_global_stats(conn: &DbConnection) -> Result<GlobalStats> {
     // Общее количество пользователей
-    let total_users: i64 = conn.query_row(
-        "SELECT COUNT(DISTINCT user_id) FROM download_history",
-        [],
-        |row| row.get(0),
-    )?;
+    let total_users: i64 = conn.query_row("SELECT COUNT(DISTINCT user_id) FROM download_history", [], |row| {
+        row.get(0)
+    })?;
 
     // Общее количество загрузок
-    let total_downloads: i64 =
-        conn.query_row("SELECT COUNT(*) FROM download_history", [], |row| {
-            row.get(0)
-        })?;
+    let total_downloads: i64 = conn.query_row("SELECT COUNT(*) FROM download_history", [], |row| row.get(0))?;
 
     // Топ-10 треков (по title)
     let mut stmt = conn.prepare(
         "SELECT title, COUNT(*) as cnt FROM download_history
          GROUP BY title ORDER BY cnt DESC LIMIT 10",
     )?;
-    let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-    })?;
+    let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?;
 
     let mut top_tracks = Vec::new();
     for row in rows {
@@ -1065,9 +996,7 @@ pub fn get_global_stats(conn: &DbConnection) -> Result<GlobalStats> {
         "SELECT format, COUNT(*) as cnt FROM download_history
          GROUP BY format ORDER BY cnt DESC",
     )?;
-    let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-    })?;
+    let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?)))?;
 
     let mut top_formats = Vec::new();
     for row in rows {
@@ -1085,10 +1014,7 @@ pub fn get_global_stats(conn: &DbConnection) -> Result<GlobalStats> {
 }
 
 /// Получает всю историю загрузок пользователя для экспорта
-pub fn get_all_download_history(
-    conn: &DbConnection,
-    telegram_id: i64,
-) -> Result<Vec<DownloadHistoryEntry>> {
+pub fn get_all_download_history(conn: &DbConnection, telegram_id: i64) -> Result<Vec<DownloadHistoryEntry>> {
     let mut stmt = conn.prepare(
         "SELECT id, url, title, format, downloaded_at, file_id FROM download_history
          WHERE user_id = ? ORDER BY downloaded_at DESC",
@@ -1199,12 +1125,7 @@ pub fn save_task_to_queue(
 }
 
 /// Обновляет статус задачи
-pub fn update_task_status(
-    conn: &DbConnection,
-    task_id: &str,
-    status: &str,
-    error_message: Option<&str>,
-) -> Result<()> {
+pub fn update_task_status(conn: &DbConnection, task_id: &str, status: &str, error_message: Option<&str>) -> Result<()> {
     conn.execute(
         "UPDATE task_queue SET status = ?1, error_message = ?2, updated_at = CURRENT_TIMESTAMP WHERE id = ?3",
         [
@@ -1225,10 +1146,7 @@ pub fn mark_task_failed(conn: &DbConnection, task_id: &str, error_message: &str)
              retry_count = retry_count + 1,
              updated_at = CURRENT_TIMESTAMP
          WHERE id = ?2",
-        [
-            &error_message as &dyn rusqlite::ToSql,
-            &task_id as &dyn rusqlite::ToSql,
-        ],
+        [&error_message as &dyn rusqlite::ToSql, &task_id as &dyn rusqlite::ToSql],
     )?;
     Ok(())
 }
@@ -1326,17 +1244,10 @@ pub fn mark_task_processing(conn: &DbConnection, task_id: &str) -> Result<()> {
 /// # Returns
 ///
 /// Возвращает `Ok(())` при успехе или ошибку базы данных.
-pub fn update_telegram_charge_id(
-    conn: &DbConnection,
-    telegram_id: i64,
-    charge_id: Option<&str>,
-) -> Result<()> {
+pub fn update_telegram_charge_id(conn: &DbConnection, telegram_id: i64, charge_id: Option<&str>) -> Result<()> {
     conn.execute(
         "UPDATE users SET telegram_charge_id = ?1 WHERE telegram_id = ?2",
-        [
-            &charge_id as &dyn rusqlite::ToSql,
-            &telegram_id as &dyn rusqlite::ToSql,
-        ],
+        [&charge_id as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
     )?;
     Ok(())
 }
@@ -1346,9 +1257,7 @@ pub fn update_telegram_charge_id(
 /// Check if user is Premium or VIP
 pub fn is_premium_or_vip(conn: &DbConnection, user_id: i64) -> Result<bool> {
     let user = get_user(conn, user_id)?;
-    Ok(user
-        .map(|u| u.plan == "premium" || u.plan == "vip")
-        .unwrap_or(false))
+    Ok(user.map(|u| u.plan == "premium" || u.plan == "vip").unwrap_or(false))
 }
 
 fn ensure_audio_effects_bass_column(conn: &DbConnection) {
@@ -1428,9 +1337,7 @@ pub fn get_audio_effect_session(
             pitch_semitones: row.get(8)?,
             tempo_factor: row.get(9)?,
             bass_gain_db: row.get(10)?,
-            morph_profile: crate::download::audio_effects::MorphProfile::parse(
-                row.get::<_, String>(11)?.as_str(),
-            ),
+            morph_profile: crate::download::audio_effects::MorphProfile::parse(row.get::<_, String>(11)?.as_str()),
             version: row.get(12)?,
             processing: row.get::<_, i32>(13)? != 0,
             created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(14)?)
@@ -1477,9 +1384,7 @@ pub fn get_audio_effect_session_by_message(
             pitch_semitones: row.get(8)?,
             tempo_factor: row.get(9)?,
             bass_gain_db: row.get(10)?,
-            morph_profile: crate::download::audio_effects::MorphProfile::parse(
-                row.get::<_, String>(11)?.as_str(),
-            ),
+            morph_profile: crate::download::audio_effects::MorphProfile::parse(row.get::<_, String>(11)?.as_str()),
             version: row.get(12)?,
             processing: row.get::<_, i32>(13)? != 0,
             created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(14)?)
@@ -1538,11 +1443,7 @@ pub fn update_session_file_id(conn: &DbConnection, session_id: &str, file_id: &s
 }
 
 /// Set session processing flag
-pub fn set_session_processing(
-    conn: &DbConnection,
-    session_id: &str,
-    processing: bool,
-) -> Result<()> {
+pub fn set_session_processing(conn: &DbConnection, session_id: &str, processing: bool) -> Result<()> {
     conn.execute(
         "UPDATE audio_effect_sessions SET processing = ?1 WHERE id = ?2",
         rusqlite::params![processing as i32, session_id],
@@ -1579,9 +1480,7 @@ pub fn delete_expired_audio_sessions(
                 pitch_semitones: row.get(8)?,
                 tempo_factor: row.get(9)?,
                 bass_gain_db: row.get(10)?,
-                morph_profile: crate::download::audio_effects::MorphProfile::parse(
-                    row.get::<_, String>(11)?.as_str(),
-                ),
+                morph_profile: crate::download::audio_effects::MorphProfile::parse(row.get::<_, String>(11)?.as_str()),
                 version: row.get(12)?,
                 processing: row.get::<_, i32>(13)? != 0,
                 created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(14)?)
@@ -1597,10 +1496,7 @@ pub fn delete_expired_audio_sessions(
     // Delete expired sessions
     let session_ids: Vec<String> = sessions.iter().map(|s| s.id.clone()).collect();
     for session_id in session_ids {
-        conn.execute(
-            "DELETE FROM audio_effect_sessions WHERE id = ?1",
-            [&session_id],
-        )?;
+        conn.execute("DELETE FROM audio_effect_sessions WHERE id = ?1", [&session_id])?;
     }
 
     Ok(sessions)
@@ -1608,9 +1504,6 @@ pub fn delete_expired_audio_sessions(
 
 /// Delete specific audio effect session
 pub fn delete_audio_effect_session(conn: &DbConnection, session_id: &str) -> Result<()> {
-    conn.execute(
-        "DELETE FROM audio_effect_sessions WHERE id = ?1",
-        [session_id],
-    )?;
+    conn.execute("DELETE FROM audio_effect_sessions WHERE id = ?1", [session_id])?;
     Ok(())
 }

@@ -168,11 +168,7 @@ pub fn format_media_caption(title: &str, artist: &str) -> String {
         format!("_{}_", escape_markdown_v2(title))
     } else {
         // Автор (жирный) — Название (курсив)
-        format!(
-            "*{}* — _{}_",
-            escape_markdown_v2(artist),
-            escape_markdown_v2(title)
-        )
+        format!("*{}* — _{}_", escape_markdown_v2(artist), escape_markdown_v2(title))
     }
 }
 
@@ -219,10 +215,7 @@ pub fn pluralize_seconds(n: u64) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        escape_filename, escape_markdown_v2, format_media_caption, pluralize_seconds,
-        sanitize_filename,
-    };
+    use super::{escape_filename, escape_markdown_v2, format_media_caption, pluralize_seconds, sanitize_filename};
 
     #[test]
     fn test_escape_filename() {
@@ -247,14 +240,8 @@ mod tests {
         assert_eq!(escape_filename("   "), "unnamed");
 
         // Кириллица и специальные символы
-        assert_eq!(
-            escape_filename("Дорадура - трек.mp3"),
-            "Дорадура - трек.mp3"
-        );
-        assert_eq!(
-            escape_filename("Song (live) [2024].mp3"),
-            "Song (live) [2024].mp3"
-        );
+        assert_eq!(escape_filename("Дорадура - трек.mp3"), "Дорадура - трек.mp3");
+        assert_eq!(escape_filename("Song (live) [2024].mp3"), "Song (live) [2024].mp3");
     }
 
     #[test]
@@ -264,10 +251,7 @@ mod tests {
         assert_eq!(escape_markdown_v2("file.mp3"), "file\\.mp3");
 
         // Тест на скобки и дефисы
-        assert_eq!(
-            escape_markdown_v2("Song (live).mp3"),
-            "Song \\(live\\)\\.mp3"
-        );
+        assert_eq!(escape_markdown_v2("Song (live).mp3"), "Song \\(live\\)\\.mp3");
         assert_eq!(escape_markdown_v2("track-name"), "track\\-name");
 
         // Тест на обратный слеш
@@ -321,20 +305,11 @@ mod tests {
     fn test_sanitize_filename() {
         // Базовые тесты на замену пробелов
         assert_eq!(sanitize_filename("song name.mp3"), "song_name.mp3");
-        assert_eq!(
-            sanitize_filename("Artist - Title.mp4"),
-            "Artist_-_Title.mp4"
-        );
-        assert_eq!(
-            sanitize_filename("multiple   spaces.mp3"),
-            "multiple___spaces.mp3"
-        );
+        assert_eq!(sanitize_filename("Artist - Title.mp4"), "Artist_-_Title.mp4");
+        assert_eq!(sanitize_filename("multiple   spaces.mp3"), "multiple___spaces.mp3");
 
         // Тесты с кириллицей
-        assert_eq!(
-            sanitize_filename("Дорадура - трек.mp3"),
-            "Дорадура_-_трек.mp3"
-        );
+        assert_eq!(sanitize_filename("Дорадура - трек.mp3"), "Дорадура_-_трек.mp3");
 
         // Тесты с уже существующими подчеркиваниями
         assert_eq!(sanitize_filename("song_name.mp3"), "song_name.mp3");
@@ -348,10 +323,7 @@ mod tests {
     #[test]
     fn test_format_media_caption() {
         // С автором
-        assert_eq!(
-            format_media_caption("Song Name", "Artist"),
-            "*Artist* — _Song Name_"
-        );
+        assert_eq!(format_media_caption("Song Name", "Artist"), "*Artist* — _Song Name_");
 
         // Без автора (пустая строка)
         assert_eq!(format_media_caption("Song Name", ""), "_Song Name_");
