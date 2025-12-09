@@ -4,8 +4,9 @@ use teloxide::prelude::*;
 use teloxide::RequestError;
 
 /// Форматирует размер в читаемый формат
+/// Экранирует точки для MarkdownV2
 fn format_size(bytes: i64) -> String {
-    if bytes >= 1024 * 1024 * 1024 {
+    let size_str = if bytes >= 1024 * 1024 * 1024 {
         format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
     } else if bytes >= 1024 * 1024 {
         format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
@@ -13,7 +14,10 @@ fn format_size(bytes: i64) -> String {
         format!("{:.1} KB", bytes as f64 / 1024.0)
     } else {
         format!("{} B", bytes)
-    }
+    };
+
+    // Экранируем точку для MarkdownV2
+    size_str.replace('.', "\\.")
 }
 
 /// Безопасно обрезает строку до указанной длины символов (не байт!)
@@ -47,11 +51,7 @@ fn create_activity_chart(activity_by_day: &[(String, i64)]) -> String {
         return "Нет данных".to_string();
     }
 
-    let max_count = activity_by_day
-        .iter()
-        .map(|(_, count)| *count)
-        .max()
-        .unwrap_or(1);
+    let max_count = activity_by_day.iter().map(|(_, count)| *count).max().unwrap_or(1);
     let max_bars = 10;
 
     let mut chart = String::new();
@@ -81,11 +81,7 @@ fn create_activity_chart(activity_by_day: &[(String, i64)]) -> String {
 }
 
 /// Показывает статистику пользователя
-pub async fn show_user_stats(
-    bot: &Bot,
-    chat_id: ChatId,
-    db_pool: Arc<DbPool>,
-) -> ResponseResult<Message> {
+pub async fn show_user_stats(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
     log::info!("show_user_stats called for chat_id: {}", chat_id.0);
 
     let conn = db::get_connection(&db_pool).map_err(|e| {
@@ -93,10 +89,7 @@ pub async fn show_user_stats(
         RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
     })?;
 
-    log::debug!(
-        "DB connection obtained, fetching stats for user {}",
-        chat_id.0
-    );
+    log::debug!("DB connection obtained, fetching stats for user {}", chat_id.0);
 
     let stats = match db::get_user_stats(&conn, chat_id.0) {
         Ok(stats) => {
@@ -126,16 +119,13 @@ pub async fn show_user_stats(
 
     text.push_str(&format!("🎵 Всего загрузок: {}\n", stats.total_downloads));
     text.push_str(&format!("📅 Дней активности: {}\n", stats.active_days));
-    text.push_str(&format!(
-        "💾 Общий размер: {}\n\n",
-        format_size(stats.total_size)
-    ));
+    text.push_str(&format!("💾 Общий размер: {}\n\n", format_size(stats.total_size)));
 
     if !stats.top_artists.is_empty() {
         text.push_str("🏆 *Топ исполнителей:*\n");
         for (idx, (artist, count)) in stats.top_artists.iter().enumerate() {
             text.push_str(&format!(
-                "{}. {} \\- {} треков\n",
+                "{}\\. {} \\- {} треков\n",
                 idx + 1,
                 escape_markdown(artist),
                 count
@@ -154,12 +144,7 @@ pub async fn show_user_stats(
                 "txt" => "📄",
                 _ => "📦",
             };
-            text.push_str(&format!(
-                "{} {}: {}\n",
-                format_emoji,
-                format.to_uppercase(),
-                count
-            ));
+            text.push_str(&format!("{} {}: {}\n", format_emoji, format.to_uppercase(), count));
         }
         text.push('\n');
     }
@@ -172,8 +157,16 @@ pub async fn show_user_stats(
     }
 
     if stats.total_downloads == 0 {
-        text = "📊 *Твоя статистика*\n\nУ тебя пока нет загрузок\\. Отправь мне ссылку на трек или видео\\!".to_string();
+        text =
+            "📊 *Твоя статистика*\n\nУ тебя пока нет загрузок\\. Отправь мне ссылку на трек или видео\\!".to_string();
     }
+
+    log::info!("=== STATS MESSAGE DEBUG ===");
+    log::info!("Sending stats message:");
+    log::info!("Text length: {}", text.len());
+    log::info!("Full text:\n{}", text);
+    log::info!("Text bytes: {:?}", text.as_bytes());
+    log::info!("=== END DEBUG ===");
 
     bot.send_message(chat_id, text)
         .parse_mode(teloxide::types::ParseMode::MarkdownV2)
@@ -181,14 +174,9 @@ pub async fn show_user_stats(
 }
 
 /// Показывает глобальную статистику бота
-pub async fn show_global_stats(
-    bot: &Bot,
-    chat_id: ChatId,
-    db_pool: Arc<DbPool>,
-) -> ResponseResult<Message> {
-    let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-    })?;
+pub async fn show_global_stats(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
+    let conn = db::get_connection(&db_pool)
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
     let stats = match db::get_global_stats(&conn) {
         Ok(stats) => stats,
@@ -222,12 +210,7 @@ pub async fn show_global_stats(
             let escaped_title = escape_markdown(safe_title);
             // Безопасно обрезаем длинные названия до 50 символов
             let display_title = truncate_string_safe(&escaped_title, 50);
-            text.push_str(&format!(
-                "{}. {} \\- {} раз\n",
-                idx + 1,
-                display_title,
-                count
-            ));
+            text.push_str(&format!("{}\\. {} \\- {} раз\n", idx + 1, display_title, count));
         }
         text.push('\n');
     }
@@ -242,12 +225,7 @@ pub async fn show_global_stats(
                 "txt" => "📄",
                 _ => "📦",
             };
-            text.push_str(&format!(
-                "{} {}: {}\n",
-                format_emoji,
-                format.to_uppercase(),
-                count
-            ));
+            text.push_str(&format!("{} {}: {}\n", format_emoji, format.to_uppercase(), count));
         }
     }
 
@@ -291,4 +269,41 @@ fn escape_markdown(text: &str) -> String {
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_size_escapes_dots() {
+        // Test GB format (has decimal point)
+        let gb_size = 2_500_000_000; // ~2.33 GB
+        let result = format_size(gb_size);
+        assert!(result.contains("\\."), "GB format should escape dot: {}", result);
+        assert!(!result.contains(" . "), "Should not have unescaped dots");
+
+        // Test MB format (has decimal point)
+        let mb_size = 12_500_000; // ~11.9 MB
+        let result = format_size(mb_size);
+        assert!(result.contains("\\."), "MB format should escape dot: {}", result);
+
+        // Test KB format (has decimal point)
+        let kb_size = 2_500; // ~2.4 KB
+        let result = format_size(kb_size);
+        assert!(result.contains("\\."), "KB format should escape dot: {}", result);
+
+        // Test B format (no decimal point)
+        let b_size = 500;
+        let result = format_size(b_size);
+        assert!(!result.contains("."), "B format should have no dots: {}", result);
+        assert_eq!(result, "500 B");
+    }
+
+    #[test]
+    fn test_escape_markdown_escapes_dots() {
+        let text = "Hello. World. Test.";
+        let result = escape_markdown(text);
+        assert_eq!(result, "Hello\\. World\\. Test\\.");
+    }
 }

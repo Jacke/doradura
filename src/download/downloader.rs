@@ -72,12 +72,7 @@ fn detect_image_format(bytes: &[u8]) -> ImageFormat {
     }
 
     // PNG: 89 50 4E 47
-    if bytes.len() >= 4
-        && bytes[0] == 0x89
-        && bytes[1] == 0x50
-        && bytes[2] == 0x4E
-        && bytes[3] == 0x47
-    {
+    if bytes.len() >= 4 && bytes[0] == 0x89 && bytes[1] == 0x50 && bytes[2] == 0x4E && bytes[3] == 0x47 {
         return ImageFormat::Png;
     }
 
@@ -106,8 +101,7 @@ fn validate_cookies_file_format(cookies_file: &str) -> bool {
     if let Ok(contents) = std::fs::read_to_string(cookies_file) {
         // Проверяем наличие заголовка Netscape
         let has_header = contents.lines().any(|line| {
-            line.trim().starts_with("# Netscape HTTP Cookie File")
-                || line.trim().starts_with("# HTTP Cookie File")
+            line.trim().starts_with("# Netscape HTTP Cookie File") || line.trim().starts_with("# HTTP Cookie File")
         });
 
         // Проверяем наличие хотя бы одной строки с cookie (формат: domain\tflag\tpath...)
@@ -151,10 +145,7 @@ pub fn add_cookies_args(args: &mut Vec<&str>) {
                     cookies_file,
                     cookies_path
                 );
-                log::error!(
-                    "   Current working directory: {:?}",
-                    std::env::current_dir()
-                );
+                log::error!("   Current working directory: {:?}", std::env::current_dir());
                 log::error!("   YouTube downloads will FAIL without valid cookies!");
                 log::error!("   Please check the path and ensure the file exists.");
                 // НЕ добавляем аргументы cookies, если файл не найден
@@ -167,15 +158,10 @@ pub fn add_cookies_args(args: &mut Vec<&str>) {
 
                 // Проверяем формат файла
                 if !validate_cookies_file_format(&cookies_path) {
-                    log::warn!(
-                        "⚠️  Cookies file format may be invalid: {}",
-                        abs_path.display()
-                    );
+                    log::warn!("⚠️  Cookies file format may be invalid: {}", abs_path.display());
                     log::warn!("Expected Netscape HTTP Cookie File format:");
                     log::warn!("  - Header: # Netscape HTTP Cookie File");
-                    log::warn!(
-                        "  - Format: domain\\tflag\\tpath\\tsecure\\texpiration\\tname\\tvalue"
-                    );
+                    log::warn!("  - Format: domain\\tflag\\tpath\\tsecure\\texpiration\\tname\\tvalue");
                     log::warn!("See: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp");
                     log::warn!("You may need to re-export cookies from your browser.");
                 } else {
@@ -228,9 +214,7 @@ pub fn add_cookies_args(args: &mut Vec<&str>) {
             log::warn!("   1. Login to YouTube in your browser (chrome/firefox/etc)");
             log::warn!("   2. Install dependencies: pip3 install keyring pycryptodomex");
             log::warn!("   3. Set browser: export YTDL_COOKIES_BROWSER=chrome");
-            log::warn!(
-                "      Supported: chrome, firefox, safari, brave, chromium, edge, opera, vivaldi"
-            );
+            log::warn!("      Supported: chrome, firefox, safari, brave, chromium, edge, opera, vivaldi");
             log::warn!("   4. Restart the bot");
             log::warn!("");
             log::warn!("💡 OR EXPORT TO FILE (Alternative):");
@@ -283,9 +267,7 @@ fn has_both_video_and_audio(path: &str) -> Result<bool, AppError> {
         .output()
         .map_err(|e| AppError::Download(format!("Failed to check video stream: {}", e)))?;
 
-    let has_video = !String::from_utf8_lossy(&video_output.stdout)
-        .trim()
-        .is_empty();
+    let has_video = !String::from_utf8_lossy(&video_output.stdout).trim().is_empty();
 
     // Проверяем наличие аудио дорожки
     let audio_output = Command::new("ffprobe")
@@ -303,9 +285,7 @@ fn has_both_video_and_audio(path: &str) -> Result<bool, AppError> {
         .output()
         .map_err(|e| AppError::Download(format!("Failed to check audio stream: {}", e)))?;
 
-    let has_audio = !String::from_utf8_lossy(&audio_output.stdout)
-        .trim()
-        .is_empty();
+    let has_audio = !String::from_utf8_lossy(&audio_output.stdout).trim().is_empty();
 
     Ok(has_video && has_audio)
 }
@@ -332,10 +312,7 @@ fn probe_video_metadata(path: &str) -> Option<(u32, Option<u32>, Option<u32>)> {
         .output()
         .ok()?;
 
-    let width = String::from_utf8_lossy(&width_output.stdout)
-        .trim()
-        .parse::<u32>()
-        .ok();
+    let width = String::from_utf8_lossy(&width_output.stdout).trim().parse::<u32>().ok();
 
     // Получаем height
     let height_output = Command::new("ffprobe")
@@ -411,19 +388,13 @@ fn convert_webp_to_jpeg(webp_bytes: &[u8]) -> Result<Vec<u8>, AppError> {
                     }
                     Err(e) => {
                         let _ = fs::remove_file(&temp_jpeg);
-                        Err(AppError::Download(format!(
-                            "Failed to read converted JPEG: {}",
-                            e
-                        )))
+                        Err(AppError::Download(format!("Failed to read converted JPEG: {}", e)))
                     }
                 }
             } else {
                 let stderr = String::from_utf8_lossy(&result.stderr);
                 let _ = fs::remove_file(&temp_jpeg);
-                Err(AppError::Download(format!(
-                    "ffmpeg conversion failed: {}",
-                    stderr
-                )))
+                Err(AppError::Download(format!("ffmpeg conversion failed: {}", stderr)))
             }
         }
         Err(e) => {
@@ -508,10 +479,7 @@ fn compress_thumbnail_jpeg(jpeg_bytes: &[u8]) -> Option<Vec<u8>> {
 /// Args: video_path - путь к видео файлу
 /// Returns: Option<Vec<u8>> - байты JPEG изображения или None при ошибке
 fn generate_thumbnail_from_video(video_path: &str) -> Option<Vec<u8>> {
-    log::info!(
-        "[THUMBNAIL] Generating thumbnail from video file: {}",
-        video_path
-    );
+    log::info!("[THUMBNAIL] Generating thumbnail from video file: {}", video_path);
 
     // Создаем временный файл для thumbnail
     let temp_dir = std::env::temp_dir();
@@ -548,8 +516,11 @@ fn generate_thumbnail_from_video(video_path: &str) -> Option<Vec<u8>> {
                 // Читаем сгенерированный thumbnail
                 match fs::read(&temp_thumbnail_path) {
                     Ok(bytes) => {
-                        log::info!("[THUMBNAIL] Successfully generated thumbnail from video: {} bytes ({} KB)",
-                            bytes.len(), bytes.len() as f64 / 1024.0);
+                        log::info!(
+                            "[THUMBNAIL] Successfully generated thumbnail from video: {} bytes ({} KB)",
+                            bytes.len(),
+                            bytes.len() as f64 / 1024.0
+                        );
 
                         // Удаляем временный файл
                         let _ = fs::remove_file(&temp_thumbnail_path);
@@ -572,19 +543,13 @@ fn generate_thumbnail_from_video(video_path: &str) -> Option<Vec<u8>> {
                 }
             } else {
                 let stderr = String::from_utf8_lossy(&result.stderr);
-                log::warn!(
-                    "[THUMBNAIL] ffmpeg failed to generate thumbnail: {}",
-                    stderr
-                );
+                log::warn!("[THUMBNAIL] ffmpeg failed to generate thumbnail: {}", stderr);
                 let _ = fs::remove_file(&temp_thumbnail_path);
                 None
             }
         }
         Err(e) => {
-            log::warn!(
-                "[THUMBNAIL] Failed to run ffmpeg to generate thumbnail: {}",
-                e
-            );
+            log::warn!("[THUMBNAIL] Failed to run ffmpeg to generate thumbnail: {}", e);
             None
         }
     }
@@ -612,22 +577,20 @@ fn find_actual_downloaded_file(expected_path: &str) -> Result<String, AppError> 
     log::warn!("File not found at expected path: {}", expected_path);
 
     // Получаем директорию и базовое имя файла
-    let parent_dir = path.parent().ok_or_else(|| {
-        AppError::Download(format!(
-            "Cannot get parent directory for: {}",
-            expected_path
-        ))
-    })?;
+    let parent_dir = path
+        .parent()
+        .ok_or_else(|| AppError::Download(format!("Cannot get parent directory for: {}", expected_path)))?;
 
-    let file_stem = path.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {
-        AppError::Download(format!("Cannot get file stem for: {}", expected_path))
-    })?;
+    let file_stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| AppError::Download(format!("Cannot get file stem for: {}", expected_path)))?;
 
     let file_extension = path.extension().and_then(|s| s.to_str()).unwrap_or("mp4");
 
     // Ищем файлы, начинающиеся с базового имени
-    let dir_entries = fs::read_dir(parent_dir)
-        .map_err(|e| AppError::Download(format!("Failed to read downloads dir: {}", e)))?;
+    let dir_entries =
+        fs::read_dir(parent_dir).map_err(|e| AppError::Download(format!("Failed to read downloads dir: {}", e)))?;
 
     let mut found_files = Vec::new();
     for entry in dir_entries {
@@ -638,8 +601,8 @@ fn find_actual_downloaded_file(expected_path: &str) -> Result<String, AppError> 
             // Проверяем, начинается ли имя файла с нашего базового имени и имеет нужное расширение
             // yt-dlp может добавлять суффиксы как (1).mp4, (2).mp4 к имени файла
             // file_stem уже содержит timestamp, поэтому проверяем точное совпадение или начало
-            let matches_pattern = file_name_str.starts_with(file_stem)
-                && file_name_str.ends_with(&format!(".{}", file_extension));
+            let matches_pattern =
+                file_name_str.starts_with(file_stem) && file_name_str.ends_with(&format!(".{}", file_extension));
 
             if matches_pattern {
                 let full_path = entry.path().to_string_lossy().to_string();
@@ -648,19 +611,17 @@ fn find_actual_downloaded_file(expected_path: &str) -> Result<String, AppError> 
         }
     }
 
-    if found_files.is_empty() {
-        log::error!(
-            "No matching files found in directory: {}",
-            parent_dir.display()
-        );
-        return Err(AppError::Download(format!(
-            "Downloaded file not found at {} or in directory",
-            expected_path
-        )));
-    }
-
     // Если найдено несколько файлов, берем последний (наиболее вероятно новый)
-    let actual_path = found_files.last().unwrap().clone();
+    let actual_path = found_files
+        .last()
+        .ok_or_else(|| {
+            log::error!("No matching files found in directory: {}", parent_dir.display());
+            AppError::Download(format!(
+                "Downloaded file not found at {} or in directory",
+                expected_path
+            ))
+        })?
+        .clone();
     log::info!(
         "Found actual downloaded file: {} (searched for: {})",
         actual_path,
@@ -679,20 +640,13 @@ async fn get_metadata_from_ytdlp(url: &Url) -> Result<(String, String), AppError
         if title.trim() != "Unknown Track" && !title.trim().is_empty() {
             // Если artist пустой или "NA" - игнорируем кэш и получаем свежие данные
             if artist.trim().is_empty() || artist.trim() == "NA" {
-                log::debug!(
-                    "Ignoring cached metadata with empty/NA artist for URL: {}",
-                    url
-                );
+                log::debug!("Ignoring cached metadata with empty/NA artist for URL: {}", url);
             } else {
                 log::debug!("Metadata cache hit for URL: {}", url);
                 return Ok((title, artist));
             }
         } else {
-            log::warn!(
-                "Ignoring invalid cached metadata '{}' for URL: {}",
-                title,
-                url
-            );
+            log::warn!("Ignoring invalid cached metadata '{}' for URL: {}", title, url);
         }
     }
 
@@ -759,10 +713,7 @@ async fn get_metadata_from_ytdlp(url: &Url) -> Result<(String, String), AppError
         let error_type = analyze_ytdlp_error(&stderr);
 
         // Логируем детальную информацию об ошибке
-        log::error!(
-            "yt-dlp failed to get metadata, error type: {:?}",
-            error_type
-        );
+        log::error!("yt-dlp failed to get metadata, error type: {:?}", error_type);
         log::error!("yt-dlp stderr: {}", stderr);
 
         // Логируем рекомендации по исправлению
@@ -778,9 +729,7 @@ async fn get_metadata_from_ytdlp(url: &Url) -> Result<(String, String), AppError
         return Err(AppError::Download(get_error_message(&error_type)));
     }
 
-    let title = String::from_utf8_lossy(&title_output.stdout)
-        .trim()
-        .to_string();
+    let title = String::from_utf8_lossy(&title_output.stdout).trim().to_string();
 
     // Проверяем что название не пустое
     if title.is_empty() {
@@ -875,11 +824,7 @@ async fn get_metadata_from_ytdlp(url: &Url) -> Result<(String, String), AppError
         log::warn!("Not caching metadata with invalid title: '{}'", title);
     }
 
-    log::info!(
-        "Got metadata from yt-dlp: title='{}', artist='{}'",
-        title,
-        artist
-    );
+    log::info!("Got metadata from yt-dlp: title='{}', artist='{}'", title, artist);
     Ok((title, artist))
 }
 
@@ -889,11 +834,7 @@ async fn send_error_with_sticker(bot: &Bot, chat_id: ChatId) {
 }
 
 /// Отправляет сообщение об ошибке с случайным стикером и опциональным кастомным сообщением
-async fn send_error_with_sticker_and_message(
-    bot: &Bot,
-    chat_id: ChatId,
-    custom_message: Option<&str>,
-) {
+async fn send_error_with_sticker_and_message(bot: &Bot, chat_id: ChatId, custom_message: Option<&str>) {
     // Список file_id стикеров из стикерпака doraduradoradura
     let sticker_file_ids = vec![
         "CAACAgIAAxUAAWj-ZokEQu5YpTnjl6IWPzCQZ0UUAAJCEwAC52QwSC6nTghQdw-KNgQ",
@@ -930,17 +871,13 @@ async fn send_error_with_sticker_and_message(
     }
 
     // Отправляем сообщение об ошибке
-    let error_text =
-        custom_message.unwrap_or("У меня не получилось, все сломалось 😢 Я написала Стэну");
+    let error_text = custom_message.unwrap_or("У меня не получилось, все сломалось 😢 Я написала Стэну");
     if let Err(e) = bot.send_message(chat_id, error_text).await {
         log::error!("Failed to send error message: {}", e);
     }
 }
 
-fn spawn_downloader_with_fallback(
-    ytdl_bin: &str,
-    args: &[&str],
-) -> Result<std::process::Child, AppError> {
+fn spawn_downloader_with_fallback(ytdl_bin: &str, args: &[&str]) -> Result<std::process::Child, AppError> {
     Command::new(ytdl_bin)
         .args(args)
         .stdin(Stdio::null())
@@ -1119,10 +1056,7 @@ fn download_audio_file(url: &Url, download_path: &str) -> Result<Option<u32>, Ap
         .wait()
         .map_err(|e| AppError::Download(format!("downloader process failed: {}", e)))?;
     if !status.success() {
-        return Err(AppError::Download(format!(
-            "downloader exited with status: {}",
-            status
-        )));
+        return Err(AppError::Download(format!("downloader exited with status: {}", status)));
     }
     Ok(probe_duration_seconds(download_path))
 }
@@ -1268,10 +1202,7 @@ async fn download_audio_file_with_progress(
                 // Возвращаем пользовательское сообщение об ошибке
                 return Err(AppError::Download(get_error_message(&error_type)));
             } else {
-                return Err(AppError::Download(format!(
-                    "downloader exited with status: {}",
-                    status
-                )));
+                return Err(AppError::Download(format!("downloader exited with status: {}", status)));
             }
         }
 
@@ -1420,10 +1351,7 @@ async fn download_video_file_with_progress(
                 // Возвращаем пользовательское сообщение об ошибке
                 return Err(AppError::Download(get_error_message(&error_type)));
             } else {
-                return Err(AppError::Download(format!(
-                    "downloader exited with status: {}",
-                    status
-                )));
+                return Err(AppError::Download(format!("downloader exited with status: {}", status)));
             }
         }
 
@@ -1511,10 +1439,15 @@ pub async fn download_and_send_audio(
             log::info!("Formatted caption for audio: '{}'", caption);
 
             // Show starting status
-            let _ = progress_msg.update(&bot_clone, DownloadStatus::Starting {
-                title: display_title.as_ref().to_string(),
-                file_format: Some("mp3".to_string()),
-            }).await;
+            let _ = progress_msg
+                .update(
+                    &bot_clone,
+                    DownloadStatus::Starting {
+                        title: display_title.as_ref().to_string(),
+                        file_format: Some("mp3".to_string()),
+                    },
+                )
+                .await;
 
             let file_name = generate_file_name(&title, &artist);
             let safe_filename = escape_filename(&file_name);
@@ -1522,18 +1455,24 @@ pub async fn download_and_send_audio(
             let download_path = shellexpand::tilde(&full_path).into_owned();
 
             // Step 2: Download with real-time progress updates
-            let (mut progress_rx, mut download_handle) = download_audio_file_with_progress(&url, &download_path, audio_bitrate.clone()).await?;
+            let (mut progress_rx, mut download_handle) =
+                download_audio_file_with_progress(&url, &download_path, audio_bitrate.clone()).await?;
 
             // Показываем начальный прогресс 0%
-            let _ = progress_msg.update(&bot_clone, DownloadStatus::Downloading {
-                title: display_title.as_ref().to_string(),
-                progress: 0,
-                speed_mbs: None,
-                eta_seconds: None,
-                current_size: None,
-                total_size: None,
-                file_format: Some("mp3".to_string()),
-            }).await;
+            let _ = progress_msg
+                .update(
+                    &bot_clone,
+                    DownloadStatus::Downloading {
+                        title: display_title.as_ref().to_string(),
+                        progress: 0,
+                        speed_mbs: None,
+                        eta_seconds: None,
+                        current_size: None,
+                        total_size: None,
+                        file_format: Some("mp3".to_string()),
+                    },
+                )
+                .await;
 
             // Читаем обновления прогресса из channel
             let bot_for_progress = bot_clone.clone();
@@ -1607,22 +1546,31 @@ pub async fn download_and_send_audio(
                 let max_mb = max_audio_size as f64 / (1024.0 * 1024.0);
                 log::warn!("Audio file too large: {:.2} MB (max: {:.2} MB)", size_mb, max_mb);
                 send_error_with_sticker(&bot_clone, chat_id).await;
-                let _ = progress_msg.update(&bot_clone, DownloadStatus::Error {
-                    title: display_title.as_ref().to_string(),
-                    error: format!("Файл слишком большой ({:.2} MB). Максимальный размер: {:.2} MB", size_mb, max_mb),
-                    file_format: Some("mp3".to_string()),
-                }).await;
+                let _ = progress_msg
+                    .update(
+                        &bot_clone,
+                        DownloadStatus::Error {
+                            title: display_title.as_ref().to_string(),
+                            error: format!(
+                                "Файл слишком большой ({:.2} MB). Максимальный размер: {:.2} MB",
+                                size_mb, max_mb
+                            ),
+                            file_format: Some("mp3".to_string()),
+                        },
+                    )
+                    .await;
                 return Err(AppError::Validation(format!("Файл слишком большой: {:.2} MB", size_mb)));
             }
 
             // Step 4: Get user preference for send_audio_as_document
             let send_audio_as_document = if let Some(ref pool) = db_pool_clone {
                 match db::get_connection(pool) {
-                    Ok(conn) => {
-                        db::get_user_send_audio_as_document(&conn, chat_id.0).unwrap_or(0) == 1
-                    }
+                    Ok(conn) => db::get_user_send_audio_as_document(&conn, chat_id.0).unwrap_or(0) == 1,
                     Err(e) => {
-                        log::warn!("Failed to get db connection for send_audio_as_document preference: {}", e);
+                        log::warn!(
+                            "Failed to get db connection for send_audio_as_document preference: {}",
+                            e
+                        );
                         false
                     }
                 }
@@ -1631,43 +1579,73 @@ pub async fn download_and_send_audio(
             };
 
             // Step 5: Send audio with retry logic and get the sent message
-            let sent_message = send_audio_with_retry(&bot_clone, chat_id, &download_path, duration, &mut progress_msg, caption.as_ref(), send_audio_as_document).await?;
+            let sent_message = send_audio_with_retry(
+                &bot_clone,
+                chat_id,
+                &download_path,
+                duration,
+                &mut progress_msg,
+                caption.as_ref(),
+                send_audio_as_document,
+            )
+            .await?;
 
             // Сразу после успешной отправки обновляем сообщение прогресса до Success
             // чтобы убрать застрявшее состояние "Uploading: 99%"
             let elapsed_secs = start_time.elapsed().as_secs();
-            let _ = progress_msg.update(&bot_clone, DownloadStatus::Success {
-                title: display_title.as_ref().to_string(),
-                elapsed_secs,
-                file_format: Some("mp3".to_string()),
-            }).await;
+            let _ = progress_msg
+                .update(
+                    &bot_clone,
+                    DownloadStatus::Success {
+                        title: display_title.as_ref().to_string(),
+                        elapsed_secs,
+                        file_format: Some("mp3".to_string()),
+                    },
+                )
+                .await;
 
             // Add audio effects button for Premium/VIP users
             // Copy file BEFORE it gets deleted
-            log::info!("Audio effects: checking if we should add button (db_pool exists: {})", db_pool_clone.is_some());
+            log::info!(
+                "Audio effects: checking if we should add button (db_pool exists: {})",
+                db_pool_clone.is_some()
+            );
             if let Some(ref pool) = db_pool_clone {
                 log::info!("Audio effects: db_pool exists, getting connection");
                 if let Ok(conn) = crate::storage::db::get_connection(pool) {
                     log::info!("Audio effects: got DB connection");
                     // TODO: Re-enable premium check after testing
                     // if crate::storage::db::is_premium_or_vip(&conn, chat_id.0).unwrap_or(false) {
-                    if true { // Temporarily enabled for all users for testing
+                    if true {
+                        // Temporarily enabled for all users for testing
                         log::info!("Audio effects: premium check passed (testing mode)");
                         // Create session and copy file immediately (before cleanup)
                         use crate::download::audio_effects::{self, AudioEffectSession};
                         use crate::storage::db;
 
                         let session_id = uuid::Uuid::new_v4().to_string();
-                        let session_file_path_raw = audio_effects::get_original_file_path(&session_id, &config::DOWNLOAD_FOLDER);
+                        let session_file_path_raw =
+                            audio_effects::get_original_file_path(&session_id, &config::DOWNLOAD_FOLDER);
                         let session_file_path = shellexpand::tilde(&session_file_path_raw).into_owned();
 
-                        log::info!("Audio effects: attempting to copy file from '{}' to '{}'", download_path, session_file_path);
-                        log::info!("Audio effects: checking if source file exists: {}", std::path::Path::new(&download_path).exists());
+                        log::info!(
+                            "Audio effects: attempting to copy file from '{}' to '{}'",
+                            download_path,
+                            session_file_path
+                        );
+                        log::info!(
+                            "Audio effects: checking if source file exists: {}",
+                            std::path::Path::new(&download_path).exists()
+                        );
 
                         // Copy file synchronously before it gets deleted
                         match std::fs::copy(&download_path, &session_file_path) {
                             Ok(bytes) => {
-                                log::info!("Audio effects: successfully copied {} bytes to {}", bytes, session_file_path);
+                                log::info!(
+                                    "Audio effects: successfully copied {} bytes to {}",
+                                    bytes,
+                                    session_file_path
+                                );
                                 let session = AudioEffectSession::new(
                                     session_id.clone(),
                                     chat_id.0,
@@ -1686,12 +1664,16 @@ pub async fn download_and_send_audio(
                                         tokio::spawn(async move {
                                             use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
 
-                                            let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
-                                                "🎛️ Edit Audio (Pitch/Tempo)",
-                                                format!("ae:open:{}", session_id_clone),
-                                            )]]);
+                                            let keyboard =
+                                                InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+                                                    "🎛️ Edit Audio (Pitch/Tempo)",
+                                                    format!("ae:open:{}", session_id_clone),
+                                                )]]);
 
-                                            log::info!("Audio effects: attempting to add button to message {}", sent_message.id.0);
+                                            log::info!(
+                                                "Audio effects: attempting to add button to message {}",
+                                                sent_message.id.0
+                                            );
                                             if let Err(e) = bot_for_button
                                                 .edit_message_reply_markup(chat_id, sent_message.id)
                                                 .reply_markup(keyboard)
@@ -1699,7 +1681,11 @@ pub async fn download_and_send_audio(
                                             {
                                                 log::warn!("Failed to add audio effects button: {}", e);
                                             } else {
-                                                log::info!("Added audio effects button to message {} for session {}", sent_message.id.0, session_id_clone);
+                                                log::info!(
+                                                    "Added audio effects button to message {} for session {}",
+                                                    sent_message.id.0,
+                                                    session_id_clone
+                                                );
                                             }
                                         });
                                     }
@@ -1709,7 +1695,12 @@ pub async fn download_and_send_audio(
                                 }
                             }
                             Err(e) => {
-                                log::warn!("Failed to copy file for audio effects session: {} (source: {}, dest: {})", e, download_path, session_file_path);
+                                log::warn!(
+                                    "Failed to copy file for audio effects session: {} (source: {}, dest: {})",
+                                    e,
+                                    download_path,
+                                    session_file_path
+                                );
                             }
                         }
                     } else {
@@ -1725,10 +1716,19 @@ pub async fn download_and_send_audio(
             // Save to download history after successful send
             if let Some(ref pool) = db_pool_clone {
                 if let Ok(conn) = crate::storage::db::get_connection(pool) {
-                    let file_id = sent_message.audio().map(|a| a.file.id.0.clone())
+                    let file_id = sent_message
+                        .audio()
+                        .map(|a| a.file.id.0.clone())
                         .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
 
-                    if let Err(e) = save_download_history(&conn, chat_id.0, url.as_str(), display_title.as_ref(), "mp3", file_id.as_deref()) {
+                    if let Err(e) = save_download_history(
+                        &conn,
+                        chat_id.0,
+                        url.as_str(),
+                        display_title.as_ref(),
+                        "mp3",
+                        file_id.as_deref(),
+                    ) {
                         log::warn!("Failed to save download history: {}", e);
                     }
                 }
@@ -1736,11 +1736,15 @@ pub async fn download_and_send_audio(
 
             // Add eyes emoji reaction to the original message if message_id is available
             if let Some(msg_id) = message_id {
-                use teloxide::types::{ReactionType, MessageId};
+                use teloxide::types::{MessageId, ReactionType};
                 let reaction = vec![ReactionType::Emoji {
                     emoji: "👀".to_string(),
                 }];
-                if let Err(e) = bot_clone.set_message_reaction(chat_id, MessageId(msg_id)).reaction(reaction).await {
+                if let Err(e) = bot_clone
+                    .set_message_reaction(chat_id, MessageId(msg_id))
+                    .reaction(reaction)
+                    .await
+                {
                     log::warn!("Failed to set message reaction: {}", e);
                     // Not critical, continue
                 }
@@ -1756,7 +1760,14 @@ pub async fn download_and_send_audio(
                 message_id: progress_msg.message_id,
             };
             tokio::spawn(async move {
-                let _ = msg_for_clear.clear_after(&bot_for_clear, config::progress::CLEAR_DELAY_SECS, title_for_clear.as_ref().to_string(), Some("mp3".to_string())).await;
+                let _ = msg_for_clear
+                    .clear_after(
+                        &bot_for_clear,
+                        config::progress::CLEAR_DELAY_SECS,
+                        title_for_clear.as_ref().to_string(),
+                        Some("mp3".to_string()),
+                    )
+                    .await;
             });
 
             // Wait before cleaning up file
@@ -1769,18 +1780,15 @@ pub async fn download_and_send_audio(
             }
 
             Ok(())
-        }.await;
+        }
+        .await;
 
         match result {
             Ok(_) => {
                 log::info!("Audio download completed successfully for chat {}", chat_id);
             }
             Err(e) => {
-                log::error!(
-                    "An error occurred during audio download for chat {}: {:?}",
-                    chat_id,
-                    e
-                );
+                log::error!("An error occurred during audio download for chat {}: {:?}", chat_id, e);
 
                 // Определяем тип ошибки и формируем полезное сообщение
                 let error_str = e.to_string();
@@ -1880,10 +1888,7 @@ where
 
     // Send chat action "Uploading document..." before sending file
     use teloxide::types::ChatAction;
-    if let Err(e) = bot
-        .send_chat_action(chat_id, ChatAction::UploadDocument)
-        .await
-    {
+    if let Err(e) = bot.send_chat_action(chat_id, ChatAction::UploadDocument).await {
         log::warn!("Failed to send chat action: {}", e);
         // Not critical, continue with file upload
     }
@@ -1943,8 +1948,7 @@ where
                     10.0 + (update_count as f64 * 0.2).min(10.0) // от 10 до 20 MB/s
                 };
 
-                let estimated_uploaded =
-                    (estimated_speed_mbps * 1024.0 * 1024.0 * elapsed_secs as f64) as u64;
+                let estimated_uploaded = (estimated_speed_mbps * 1024.0 * 1024.0 * elapsed_secs as f64) as u64;
                 let progress = if estimated_uploaded >= file_size_clone {
                     99 // Максимум 99% пока не завершится реальная отправка
                 } else {
@@ -1989,7 +1993,7 @@ where
                             &bot_clone,
                             DownloadStatus::Uploading {
                                 title: title_clone.clone(),
-                                dots: 0, // Не используем точки, используем прогресс
+                                dots: 0,                          // Не используем точки, используем прогресс
                                 progress: Some(progress.min(99)), // Не показываем 100% пока не завершится
                                 eta_seconds,
                                 current_size: Some(estimated_uploaded.min(file_size_clone)),
@@ -2204,22 +2208,18 @@ async fn send_video_with_retry(
     if send_as_document {
         log::info!("User preference: sending video as document");
     } else if use_document_fallback {
-        log::info!("File size ({:.2} MB) exceeds standard send_video limit (50 MB), will use send_document fallback",
-            file_size as f64 / (1024.0 * 1024.0));
+        log::info!(
+            "File size ({:.2} MB) exceeds standard send_video limit (50 MB), will use send_document fallback",
+            file_size as f64 / (1024.0 * 1024.0)
+        );
     }
 
     // Скачиваем thumbnail если доступен, иначе генерируем из видео
     let thumbnail_bytes = if let Some(thumb_url) = thumbnail_url {
-        log::info!(
-            "[THUMBNAIL] Starting thumbnail download from URL: {}",
-            thumb_url
-        );
+        log::info!("[THUMBNAIL] Starting thumbnail download from URL: {}", thumb_url);
         match reqwest::get(thumb_url).await {
             Ok(response) => {
-                log::info!(
-                    "[THUMBNAIL] Thumbnail HTTP response status: {}",
-                    response.status()
-                );
+                log::info!("[THUMBNAIL] Thumbnail HTTP response status: {}", response.status());
 
                 // Проверяем Content-Type
                 if let Some(content_type) = response.headers().get("content-type") {
@@ -2296,15 +2296,12 @@ async fn send_video_with_retry(
     // Создаем временный файл для thumbnail если он доступен
     // Это нужно для правильной передачи thumbnail в Telegram с именем файла
     // Конвертируем WebP в JPEG если нужно, так как Telegram лучше работает с JPEG
-    let temp_thumb_path: Option<std::path::PathBuf> = if let Some(ref thumb_bytes) = thumbnail_bytes
-    {
+    let temp_thumb_path: Option<std::path::PathBuf> = if let Some(ref thumb_bytes) = thumbnail_bytes {
         let format = detect_image_format(thumb_bytes);
 
         // Конвертируем WebP в JPEG если нужно (Telegram лучше работает с JPEG)
         let (final_bytes, file_ext) = if format == ImageFormat::WebP {
-            log::info!(
-                "[THUMBNAIL] Converting WebP thumbnail to JPEG for better Telegram compatibility"
-            );
+            log::info!("[THUMBNAIL] Converting WebP thumbnail to JPEG for better Telegram compatibility");
             // Попробуем использовать ffmpeg для конвертации WebP в JPEG
             match convert_webp_to_jpeg(thumb_bytes) {
                 Ok(jpeg_bytes) => {
@@ -2315,10 +2312,7 @@ async fn send_video_with_retry(
                     (jpeg_bytes, "jpg")
                 }
                 Err(e) => {
-                    log::warn!(
-                        "[THUMBNAIL] Failed to convert WebP to JPEG: {}. Using original.",
-                        e
-                    );
+                    log::warn!("[THUMBNAIL] Failed to convert WebP to JPEG: {}. Using original.", e);
                     (thumb_bytes.clone(), "webp")
                 }
             }
@@ -2355,9 +2349,7 @@ async fn send_video_with_retry(
 
         // Получаем абсолютный путь (canonicalize работает только для существующих файлов)
         let abs_path = if temp_path.exists() {
-            temp_path
-                .canonicalize()
-                .unwrap_or_else(|_| temp_path.clone())
+            temp_path.canonicalize().unwrap_or_else(|_| temp_path.clone())
         } else {
             // Если файл еще не создан, получаем абсолютный путь через parent
             temp_dir
@@ -2430,7 +2422,8 @@ async fn send_video_with_retry(
             let title_clone = title_clone.clone();
 
             async move {
-                let mut video_msg = bot.send_video(chat_id, InputFile::file(path))
+                let mut video_msg = bot
+                    .send_video(chat_id, InputFile::file(path))
                     .caption(&title_clone)
                     .parse_mode(ParseMode::MarkdownV2);
 
@@ -2451,16 +2444,21 @@ async fn send_video_with_retry(
                     // Проверяем, что файл существует перед отправкой
                     if thumb_path.exists() {
                         let abs_path_str = thumb_path.to_str().unwrap_or("thumb.jpg");
-                        log::info!("[THUMBNAIL] Adding thumbnail from file: {} (exists: {}, size: {} bytes)",
+                        log::info!(
+                            "[THUMBNAIL] Adding thumbnail from file: {} (exists: {}, size: {} bytes)",
                             abs_path_str,
                             thumb_path.exists(),
-                            fs::metadata(&thumb_path).map(|m| m.len()).unwrap_or(0));
+                            fs::metadata(&thumb_path).map(|m| m.len()).unwrap_or(0)
+                        );
                         video_msg = video_msg.thumbnail(InputFile::file(abs_path_str));
                         log::info!("[THUMBNAIL] Thumbnail successfully added to video message");
                     } else {
-                        log::warn!("[THUMBNAIL] Thumbnail file does not exist: {:?}, trying memory fallback", thumb_path);
+                        log::warn!(
+                            "[THUMBNAIL] Thumbnail file does not exist: {:?}, trying memory fallback",
+                            thumb_path
+                        );
                         // Fallback на memory если файл не существует
-                if let Some(thumb_bytes) = thumbnail_bytes_clone {
+                        if let Some(thumb_bytes) = thumbnail_bytes_clone {
                             log::info!("[THUMBNAIL] Adding thumbnail from memory: {} bytes", thumb_bytes.len());
                             video_msg = video_msg.thumbnail(InputFile::memory(thumb_bytes));
                         }
@@ -2480,7 +2478,8 @@ async fn send_video_with_retry(
                 video_msg.await
             }
         },
-    ).await;
+    )
+    .await;
 
     // Удаляем временный файл thumbnail после успешной отправки
     // Добавляем небольшую задержку, чтобы teloxide успел прочитать файл
@@ -2490,10 +2489,7 @@ async fn send_video_with_retry(
 
         if result.is_ok() {
             let _ = fs::remove_file(&thumb_path);
-            log::info!(
-                "[THUMBNAIL] Cleaned up temporary thumbnail file: {:?}",
-                thumb_path
-            );
+            log::info!("[THUMBNAIL] Cleaned up temporary thumbnail file: {:?}", thumb_path);
         } else {
             // При ошибке тоже удаляем, так как retry создаст новый файл
             let _ = fs::remove_file(&thumb_path);
@@ -3080,11 +3076,7 @@ pub async fn download_and_send_video(
         }.await;
 
         if let Err(e) = result {
-            log::error!(
-                "An error occurred during video download for chat {}: {:?}",
-                chat_id,
-                e
-            );
+            log::error!("An error occurred during video download for chat {}: {:?}", chat_id, e);
 
             // Определяем тип ошибки и формируем полезное сообщение
             let error_str = e.to_string();
@@ -3104,9 +3096,7 @@ pub async fn download_and_send_video(
                 Стэн уже знает и скоро обновит!\n\
                 Попробуй позже или другое видео.",
                 )
-            } else if error_str.contains("Sign in to confirm you're not a bot")
-                || error_str.contains("bot detection")
-            {
+            } else if error_str.contains("Sign in to confirm you're not a bot") || error_str.contains("bot detection") {
                 Some(
                     "YouTube заблокировал бота 🤖\n\n\
                 Нужно настроить cookies.\n\
@@ -3153,10 +3143,7 @@ fn generate_file_name_with_ext(title: &str, artist: &str, extension: &str) -> St
     );
 
     let filename = if artist_trimmed.is_empty() && title_trimmed.is_empty() {
-        log::warn!(
-            "Both title and artist are empty, using 'Unknown.{}'",
-            extension
-        );
+        log::warn!("Both title and artist are empty, using 'Unknown.{}'", extension);
         format!("Unknown.{}", extension)
     } else if artist_trimmed.is_empty() {
         log::debug!("Using title only: '{}.{}'", title_trimmed, extension);
@@ -3165,12 +3152,7 @@ fn generate_file_name_with_ext(title: &str, artist: &str, extension: &str) -> St
         log::debug!("Using artist only: '{}.{}'", artist_trimmed, extension);
         format!("{}.{}", artist_trimmed, extension)
     } else {
-        log::debug!(
-            "Using both: '{} - {}.{}'",
-            artist_trimmed,
-            title_trimmed,
-            extension
-        );
+        log::debug!("Using both: '{} - {}.{}'", artist_trimmed, title_trimmed, extension);
         format!("{} - {}.{}", artist_trimmed, title_trimmed, extension)
     };
 
@@ -3264,10 +3246,7 @@ pub async fn download_and_send_subtitles(
 
             // Логируем полную команду для отладки
             let command_str = format!("{} {}", ytdl_bin, args.join(" "));
-            log::info!(
-                "[DEBUG] yt-dlp command for subtitles download: {}",
-                command_str
-            );
+            log::info!("[DEBUG] yt-dlp command for subtitles download: {}", command_str);
 
             let mut child = spawn_downloader_with_fallback(ytdl_bin, &args)?;
             let status = child
@@ -3275,19 +3254,15 @@ pub async fn download_and_send_subtitles(
                 .map_err(|e| AppError::Download(format!("downloader process failed: {}", e)))?;
 
             if !status.success() {
-                return Err(AppError::Download(format!(
-                    "downloader exited with status: {}",
-                    status
-                )));
+                return Err(AppError::Download(format!("downloader exited with status: {}", status)));
             }
 
             // Check if file exists
             if fs::metadata(&download_path).is_err() {
                 // Try to find the actual filename that was downloaded
                 let parent_dir = shellexpand::tilde("~/downloads/").into_owned();
-                let dir_entries = fs::read_dir(&parent_dir).map_err(|e| {
-                    AppError::Download(format!("Failed to read downloads dir: {}", e))
-                })?;
+                let dir_entries = fs::read_dir(&parent_dir)
+                    .map_err(|e| AppError::Download(format!("Failed to read downloads dir: {}", e)))?;
                 let mut found_file: Option<String> = None;
 
                 for entry in dir_entries {
@@ -3305,9 +3280,7 @@ pub async fn download_and_send_subtitles(
                     let sent_message = bot_clone
                         .send_document(chat_id, InputFile::file(&found))
                         .await
-                        .map_err(|e| {
-                            AppError::Download(format!("Failed to send document: {}", e))
-                        })?;
+                        .map_err(|e| AppError::Download(format!("Failed to send document: {}", e)))?;
 
                     // Save to download history after successful send
                     if let Some(ref pool) = db_pool_clone {
@@ -3486,8 +3459,7 @@ mod download_tests {
             eprintln!("skipping: no ffprobe in PATH");
             return;
         }
-        let url = Url::parse("https://www.youtube.com/watch?v=0CAltmPaNZY")
-            .expect("Test URL should be valid");
+        let url = Url::parse("https://www.youtube.com/watch?v=0CAltmPaNZY").expect("Test URL should be valid");
         let tmp_dir = std::env::temp_dir();
         let dest = tmp_dir.join(format!("test_dl_{}.mp3", uuid::Uuid::new_v4()));
         let dest_str = dest.to_string_lossy().to_string();

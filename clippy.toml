@@ -1,0 +1,11 @@
+# Clippy Linting Configuration
+# Based on Rust Style Guide requirements
+
+# Maximum allowed cognitive complexity for functions
+cognitive-complexity-threshold = 30
+
+# Maximum function arguments
+too-many-arguments-threshold = 5
+
+# Type complexity threshold
+type-complexity-threshold = 250

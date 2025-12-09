@@ -70,14 +70,9 @@ impl PlanLimits {
 }
 
 /// Показывает информацию о текущем плане пользователя и доступных подписках
-pub async fn show_subscription_info(
-    bot: &Bot,
-    chat_id: ChatId,
-    db_pool: Arc<DbPool>,
-) -> ResponseResult<Message> {
-    let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-    })?;
+pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
+    let conn = db::get_connection(&db_pool)
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
     let user = match db::get_user(&conn, chat_id.0) {
         Ok(Some(u)) => u,
@@ -88,9 +83,7 @@ pub async fn show_subscription_info(
             }
             // Пробуем получить снова
             db::get_user(&conn, chat_id.0)
-                .map_err(|e| {
-                    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?
+                .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
                 .unwrap_or_else(|| {
                     // Fallback к free плану
                     crate::storage::db::User {
@@ -110,9 +103,9 @@ pub async fn show_subscription_info(
         }
         Err(e) => {
             log::error!("Failed to get user: {}", e);
-            return Err(RequestError::from(std::sync::Arc::new(
-                std::io::Error::other(e.to_string()),
-            )));
+            return Err(RequestError::from(std::sync::Arc::new(std::io::Error::other(
+                e.to_string(),
+            ))));
         }
     };
 
@@ -133,10 +126,7 @@ pub async fn show_subscription_info(
     };
 
     let mut text = "💳 *Информация о подписке*\n\n".to_string();
-    text.push_str(&format!(
-        "📊 *Твой текущий план:* {} {}\n",
-        plan_emoji, plan_name
-    ));
+    text.push_str(&format!("📊 *Твой текущий план:* {} {}\n", plan_emoji, plan_name));
 
     // Показываем дату окончания подписки
     if let Some(expires_at) = &user.subscription_expires_at {
@@ -259,11 +249,7 @@ pub async fn show_subscription_info(
 ///
 /// Создает рекуррентный invoice с автоматическим ежемесячным списанием Stars.
 /// Telegram будет автоматически списывать указанную сумму каждые 30 дней.
-pub async fn create_subscription_invoice(
-    bot: &Bot,
-    chat_id: ChatId,
-    plan: &str,
-) -> ResponseResult<Message> {
+pub async fn create_subscription_invoice(bot: &Bot, chat_id: ChatId, plan: &str) -> ResponseResult<Message> {
     log::info!(
         "🎯 create_subscription_invoice called for chat_id: {}, plan: {}",
         chat_id.0,
@@ -302,7 +288,11 @@ pub async fn create_subscription_invoice(
         plan,
         price_stars
     );
-    log::info!("📝 Invoice details: title='{}', currency=XTR, price={} Stars, subscription_period=2592000 sec (30 days)", title, price_stars);
+    log::info!(
+        "📝 Invoice details: title='{}', currency=XTR, price={} Stars, subscription_period=2592000 sec (30 days)",
+        title,
+        price_stars
+    );
 
     // Создаём invoice link с subscription_period
     let invoice_link_result = bot
@@ -330,13 +320,20 @@ pub async fn create_subscription_invoice(
             use teloxide::types::InlineKeyboardButton;
             use teloxide::types::InlineKeyboardMarkup;
 
+            let invoice_url = Url::parse(&invoice_link).map_err(|e| {
+                RequestError::from(std::sync::Arc::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("Invalid invoice URL: {}", e),
+                )))
+            })?;
+
             let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::url(
                 format!(
                     "💳 Оплатить {} ({}⭐)",
                     if plan == "premium" { "Premium" } else { "VIP" },
                     price_stars
                 ),
-                Url::parse(&invoice_link).unwrap(),
+                invoice_url,
             )]]);
 
             // Экранируем все спецсимволы MarkdownV2
@@ -376,8 +373,7 @@ pub async fn activate_subscription(
     plan: &str,
     days: i32,
 ) -> Result<(), String> {
-    let conn =
-        db::get_connection(&db_pool).map_err(|e| format!("Failed to get connection: {}", e))?;
+    let conn = db::get_connection(&db_pool).map_err(|e| format!("Failed to get connection: {}", e))?;
 
     // Обновляем план пользователя с датой окончания
     db::update_user_plan_with_expiry(&conn, telegram_id, plan, Some(days))
@@ -418,10 +414,7 @@ pub async fn handle_successful_payment(
             let telegram_id = parts[2].parse::<i64>().unwrap_or(0);
 
             if telegram_id == 0 {
-                log::error!(
-                    "Invalid telegram_id in payment payload: {}",
-                    payment.invoice_payload
-                );
+                log::error!("Invalid telegram_id in payment payload: {}", payment.invoice_payload);
                 return Ok(());
             }
 
@@ -435,20 +428,17 @@ pub async fn handle_successful_payment(
             );
 
             // Сохраняем telegram_charge_id для управления подпиской
-            let conn = db::get_connection(&db_pool).map_err(|e| {
-                RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-            })?;
+            let conn = db::get_connection(&db_pool)
+                .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
             // Сохраняем charge_id из платежа (конвертируем в строку)
             let charge_id_str = payment.telegram_payment_charge_id.0.clone();
-            if let Err(e) = db::update_telegram_charge_id(&conn, telegram_id, Some(&charge_id_str))
-            {
+            if let Err(e) = db::update_telegram_charge_id(&conn, telegram_id, Some(&charge_id_str)) {
                 log::error!("Failed to save telegram_charge_id: {}", e);
             }
 
             // Активируем подписку на 30 дней
-            if let Err(e) = activate_subscription(Arc::clone(&db_pool), telegram_id, plan, 30).await
-            {
+            if let Err(e) = activate_subscription(Arc::clone(&db_pool), telegram_id, plan, 30).await {
                 log::error!("Failed to activate subscription: {}", e);
                 bot.send_message(
                     chat_id,
@@ -480,10 +470,7 @@ pub async fn handle_successful_payment(
                 .await?;
             }
         } else {
-            log::warn!(
-                "Invalid payment payload format: {}",
-                payment.invoice_payload
-            );
+            log::warn!("Invalid payment payload format: {}", payment.invoice_payload);
         }
     }
 
@@ -501,13 +488,8 @@ pub async fn handle_successful_payment(
 /// # Returns
 ///
 /// Возвращает `Result<(), String>` или ошибку при отмене подписки.
-pub async fn cancel_subscription(
-    bot: &Bot,
-    telegram_id: i64,
-    db_pool: Arc<DbPool>,
-) -> Result<(), String> {
-    let conn =
-        db::get_connection(&db_pool).map_err(|e| format!("Failed to get connection: {}", e))?;
+pub async fn cancel_subscription(bot: &Bot, telegram_id: i64, db_pool: Arc<DbPool>) -> Result<(), String> {
+    let conn = db::get_connection(&db_pool).map_err(|e| format!("Failed to get connection: {}", e))?;
 
     // Получаем charge_id пользователя
     let user = db::get_user(&conn, telegram_id)
@@ -548,13 +530,8 @@ pub async fn cancel_subscription(
 /// # Returns
 ///
 /// Возвращает `Result<(), String>` или ошибку при возобновлении подписки.
-pub async fn restore_subscription(
-    bot: &Bot,
-    telegram_id: i64,
-    db_pool: Arc<DbPool>,
-) -> Result<(), String> {
-    let conn =
-        db::get_connection(&db_pool).map_err(|e| format!("Failed to get connection: {}", e))?;
+pub async fn restore_subscription(bot: &Bot, telegram_id: i64, db_pool: Arc<DbPool>) -> Result<(), String> {
+    let conn = db::get_connection(&db_pool).map_err(|e| format!("Failed to get connection: {}", e))?;
 
     // Получаем charge_id пользователя
     let user = db::get_user(&conn, telegram_id)

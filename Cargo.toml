@@ -14,11 +14,11 @@ categories = ["command-line-utilities"]
 
 [dependencies]
 chrono = "0.4"
-teloxide = { git = "https://github.com/teloxide/teloxide.git", features = ["macros"] }
+teloxide = { version = "0.17", features = ["macros"] }
 log = "0.4"
 pretty_env_logger = "0.4"
 simplelog = "0.11"
-tokio = { version = "1.8", features = ["full"] }
+tokio = { version = "1.40", features = ["full"] }
 url = "2.5.0"
 shellexpand = "3.1.0"
 uuid = "1.1"
@@ -48,6 +48,9 @@ hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
 urlencoding = "2.1"
+
+[dev-dependencies]
+tempfile = "3.8"
 
 [build-dependencies]
 cc = "1.1.6"

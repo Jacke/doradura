@@ -292,10 +292,7 @@ pub async fn cleanup_url_cache(db_pool: &DbPool) -> usize {
         Ok(conn) => {
             let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-            match conn.execute(
-                "DELETE FROM url_cache WHERE expires_at <= ?1",
-                rusqlite::params![now],
-            ) {
+            match conn.execute("DELETE FROM url_cache WHERE expires_at <= ?1", rusqlite::params![now]) {
                 Ok(removed) => {
                     if removed > 0 {
                         log::debug!("Cleaned up {} expired URL cache entries from DB", removed);

@@ -1,0 +1,52 @@
+# Rust Style Guide Configuration
+# Based on: https://github.com/andeya/rust-style-guide
+# Note: Many advanced options require rustfmt nightly. This is a stable-compatible version.
+
+# Maximum width of each line
+max_width = 120
+
+# Use spaces instead of tabs
+hard_tabs = false
+tab_spaces = 4
+
+# Edition
+edition = "2024"
+
+# Reorder imports alphabetically
+reorder_imports = true
+
+# Use field initialization shorthand
+use_field_init_shorthand = true
+
+# Merge derives
+merge_derives = true
+
+# Remove nested parens
+use_try_shorthand = true
+
+# Match arms
+match_arm_leading_pipes = "Never"
+
+# Newline style
+newline_style = "Unix"
+
+# Unstable features (require nightly rustfmt)
+# Uncomment if using rustfmt nightly:
+# imports_granularity = "Crate"
+# group_imports = "StdExternalCrate"
+# brace_style = "SameLineWhere"
+# control_brace_style = "AlwaysSameLine"
+# where_single_line = false
+# format_strings = true
+# normalize_comments = true
+# wrap_comments = true
+# comment_width = 100
+# trailing_comma = "Vertical"
+# trailing_semicolon = true
+# space_before_colon = false
+# space_after_colon = true
+# type_punctuation_density = "Wide"
+# blank_lines_upper_bound = 2
+# format_code_in_doc_comments = true
+# overflow_delimited_expr = true
+# format_macro_bodies = true

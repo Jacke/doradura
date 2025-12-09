@@ -30,6 +30,7 @@
 - [x] Add video title as caption when sending videos
 - [x] Add detailed format logging to /info command for debugging
 - [x] Fix video format detection to include video-only formats with audio size estimation
+- [x] Update format selectors to use bestvideo+bestaudio for proper video/audio merging
 
 ## Decision Log
 

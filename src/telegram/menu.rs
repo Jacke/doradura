@@ -97,20 +97,12 @@ async fn edit_caption_or_text(
 /// # Errors
 ///
 /// Возвращает ошибку если не удалось получить соединение с БД или отправить сообщение.
-pub async fn show_main_menu(
-    bot: &Bot,
-    chat_id: ChatId,
-    db_pool: Arc<DbPool>,
-) -> ResponseResult<Message> {
-    let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-    })?;
-    let format =
-        db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
-    let video_quality =
-        db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
-    let audio_bitrate =
-        db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
+pub async fn show_main_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
+    let conn = db::get_connection(&db_pool)
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+    let format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
+    let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
+    let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
 
     let format_emoji = match format.as_str() {
         "mp3" => "🎵 MP3",
@@ -197,11 +189,9 @@ pub async fn show_download_type_menu(
     url_id: Option<&str>,
     preview_msg_id: Option<MessageId>,
 ) -> ResponseResult<()> {
-    let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-    })?;
-    let current_format =
-        db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
+    let conn = db::get_connection(&db_pool)
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+    let current_format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
 
     // Формируем callback данные с url_id и preview_msg_id если они есть
     let format_callback = |format: &str| {
@@ -216,11 +206,11 @@ pub async fn show_download_type_menu(
         }
     };
 
-    let back_callback = if url_id.is_some() {
+    let back_callback = if let Some(id) = url_id {
         if let Some(preview_id) = preview_msg_id {
-            format!("back:preview:{}:{}", url_id.unwrap(), preview_id.0)
+            format!("back:preview:{}:{}", id, preview_id.0)
         } else {
-            format!("back:preview:{}", url_id.unwrap())
+            format!("back:preview:{}", id)
         }
     } else {
         "back:main".to_string()
@@ -276,10 +266,7 @@ pub async fn show_download_type_menu(
                 format_callback("txt"),
             ),
         ],
-        vec![InlineKeyboardButton::callback(
-            "🔙 Назад".to_string(),
-            back_callback,
-        )],
+        vec![InlineKeyboardButton::callback("🔙 Назад".to_string(), back_callback)],
     ]);
 
     let format_display = match current_format.as_str() {
@@ -328,11 +315,9 @@ pub async fn send_download_type_menu_as_new(
     url_id: Option<&str>,
     preview_msg_id: Option<MessageId>,
 ) -> ResponseResult<()> {
-    let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-    })?;
-    let current_format =
-        db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
+    let conn = db::get_connection(&db_pool)
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+    let current_format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
 
     // Формируем callback данные с url_id и preview_msg_id если они есть
     let format_callback = |format: &str| {
@@ -347,11 +332,11 @@ pub async fn send_download_type_menu_as_new(
         }
     };
 
-    let back_callback = if url_id.is_some() {
+    let back_callback = if let Some(id) = url_id {
         if let Some(preview_id) = preview_msg_id {
-            format!("back:preview:{}:{}", url_id.unwrap(), preview_id.0)
+            format!("back:preview:{}:{}", id, preview_id.0)
         } else {
-            format!("back:preview:{}", url_id.unwrap())
+            format!("back:preview:{}", id)
         }
     } else {
         "back:main".to_string()
@@ -407,10 +392,7 @@ pub async fn send_download_type_menu_as_new(
                 format_callback("txt"),
             ),
         ],
-        vec![InlineKeyboardButton::callback(
-            "🔙 Назад".to_string(),
-            back_callback,
-        )],
+        vec![InlineKeyboardButton::callback("🔙 Назад".to_string(), back_callback)],
     ]);
 
     let format_display = match current_format.as_str() {
@@ -457,11 +439,9 @@ pub async fn show_video_quality_menu(
     db_pool: Arc<DbPool>,
     url_id: Option<&str>,
 ) -> ResponseResult<()> {
-    let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-    })?;
-    let current_quality =
-        db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
+    let conn = db::get_connection(&db_pool)
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+    let current_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
     let send_as_document = db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0);
 
     let keyboard = InlineKeyboardMarkup::new(vec![
@@ -525,11 +505,7 @@ pub async fn show_video_quality_menu(
         )],
         vec![InlineKeyboardButton::callback(
             "🔙 Назад".to_string(),
-            if url_id.is_some() {
-                format!("back:main:preview:{}", url_id.unwrap())
-            } else {
-                "back:main".to_string()
-            },
+            url_id.map_or_else(|| "back:main".to_string(), |id| format!("back:main:preview:{}", id)),
         )],
     ]);
 
@@ -585,11 +561,9 @@ pub async fn show_audio_bitrate_menu(
     db_pool: Arc<DbPool>,
     url_id: Option<&str>,
 ) -> ResponseResult<()> {
-    let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-    })?;
-    let current_bitrate =
-        db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
+    let conn = db::get_connection(&db_pool)
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+    let current_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
     let send_audio_as_document = db::get_user_send_audio_as_document(&conn, chat_id.0).unwrap_or(0);
 
     let keyboard = InlineKeyboardMarkup::new(vec![
@@ -644,11 +618,7 @@ pub async fn show_audio_bitrate_menu(
         )],
         vec![InlineKeyboardButton::callback(
             "🔙 Назад".to_string(),
-            if url_id.is_some() {
-                format!("back:main:preview:{}", url_id.unwrap())
-            } else {
-                "back:main".to_string()
-            },
+            url_id.map_or_else(|| "back:main".to_string(), |id| format!("back:main:preview:{}", id)),
         )],
     ]);
 
@@ -688,11 +658,7 @@ pub async fn show_audio_bitrate_menu(
 /// # Returns
 ///
 /// Возвращает `ResponseResult<()>` или ошибку при редактировании сообщения.
-pub async fn show_services_menu(
-    bot: &Bot,
-    chat_id: ChatId,
-    message_id: MessageId,
-) -> ResponseResult<()> {
+pub async fn show_services_menu(bot: &Bot, chat_id: ChatId, message_id: MessageId) -> ResponseResult<()> {
     let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
         "🔙 Назад".to_string(),
         "back:enhanced_main",
@@ -739,15 +705,11 @@ async fn edit_main_menu(
     url_id: Option<&str>,
     _preview_msg_id: Option<MessageId>,
 ) -> ResponseResult<()> {
-    let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-    })?;
-    let format =
-        db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
-    let video_quality =
-        db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
-    let audio_bitrate =
-        db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
+    let conn = db::get_connection(&db_pool)
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+    let format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
+    let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
+    let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
 
     let format_emoji = match format.as_str() {
         "mp3" => "🎵 MP3",
@@ -811,10 +773,10 @@ async fn edit_main_menu(
     ];
 
     // Добавляем кнопку "Назад" если меню открыто из preview
-    if url_id.is_some() {
+    if let Some(id) = url_id {
         keyboard_rows.push(vec![InlineKeyboardButton::callback(
             "🔙 Назад к превью".to_string(),
-            format!("back:preview:{}", url_id.unwrap()),
+            format!("back:preview:{}", id),
         )]);
     }
 
@@ -854,15 +816,11 @@ pub async fn send_main_menu_as_new(
     url_id: Option<&str>,
     preview_msg_id: Option<MessageId>,
 ) -> ResponseResult<()> {
-    let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-    })?;
-    let format =
-        db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
-    let video_quality =
-        db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
-    let audio_bitrate =
-        db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
+    let conn = db::get_connection(&db_pool)
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+    let format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
+    let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
+    let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
 
     let format_emoji = match format.as_str() {
         "mp3" => "🎵 MP3",
@@ -930,11 +888,11 @@ pub async fn send_main_menu_as_new(
     ];
 
     // Добавляем кнопку "Назад" если меню открыто из preview
-    if url_id.is_some() {
+    if let Some(id) = url_id {
         let back_callback = if let Some(preview_id) = preview_msg_id {
-            format!("back:preview:{}:{}", url_id.unwrap(), preview_id.0)
+            format!("back:preview:{}:{}", id, preview_id.0)
         } else {
-            format!("back:preview:{}", url_id.unwrap())
+            format!("back:preview:{}", id)
         };
         keyboard_rows.push(vec![InlineKeyboardButton::callback(
             "🔙 Назад к превью".to_string(),
@@ -1007,9 +965,7 @@ pub async fn handle_menu_callback(
                     data: data_clone,
                     game_short_name: q.game_short_name.clone(),
                 };
-                if let Err(e) =
-                    handle_audio_effects_callback(bot.clone(), ae_query, Arc::clone(&db_pool)).await
-                {
+                if let Err(e) = handle_audio_effects_callback(bot.clone(), ae_query, Arc::clone(&db_pool)).await {
                     log::error!("Audio effects callback error: {}", e);
                 }
                 return Ok(());
@@ -1021,11 +977,7 @@ pub async fn handle_menu_callback(
                 let parts: Vec<&str> = data.split(':').collect();
                 let action = parts.get(1).unwrap_or(&"");
                 let is_from_preview = parts.len() >= 4 && parts[2] == "preview";
-                let url_id = if is_from_preview {
-                    Some(parts[3])
-                } else {
-                    None
-                };
+                let url_id = if is_from_preview { Some(parts[3]) } else { None };
                 let preview_msg_id = if is_from_preview && parts.len() >= 5 {
                     parts[4].parse::<i32>().ok().map(teloxide::types::MessageId)
                 } else {
@@ -1045,24 +997,10 @@ pub async fn handle_menu_callback(
                         .await?;
                     }
                     "video_quality" => {
-                        show_video_quality_menu(
-                            &bot,
-                            chat_id,
-                            message_id,
-                            Arc::clone(&db_pool),
-                            url_id,
-                        )
-                        .await?;
+                        show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), url_id).await?;
                     }
                     "audio_bitrate" => {
-                        show_audio_bitrate_menu(
-                            &bot,
-                            chat_id,
-                            message_id,
-                            Arc::clone(&db_pool),
-                            url_id,
-                        )
-                        .await?;
+                        show_audio_bitrate_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), url_id).await?;
                     }
                     "services" => {
                         show_services_menu(&bot, chat_id, message_id).await?;
@@ -1081,35 +1019,21 @@ pub async fn handle_menu_callback(
                 match action {
                     "settings" => {
                         // Show the old main menu (current /mode functionality)
-                        edit_main_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None, None)
-                            .await?;
+                        edit_main_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None, None).await?;
                     }
                     "current" => {
                         // Show detailed current settings
-                        show_current_settings_detail(
-                            &bot,
-                            chat_id,
-                            message_id,
-                            Arc::clone(&db_pool),
-                        )
-                        .await?;
+                        show_current_settings_detail(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
                     }
                     "stats" => {
                         // Delete current message and show stats
                         let _ = bot.delete_message(chat_id, message_id).await;
-                        let _ = crate::core::stats::show_user_stats(
-                            &bot,
-                            chat_id,
-                            Arc::clone(&db_pool),
-                        )
-                        .await;
+                        let _ = crate::core::stats::show_user_stats(&bot, chat_id, Arc::clone(&db_pool)).await;
                     }
                     "history" => {
                         // Delete current message and show history
                         let _ = bot.delete_message(chat_id, message_id).await;
-                        let _ =
-                            crate::core::history::show_history(&bot, chat_id, Arc::clone(&db_pool))
-                                .await;
+                        let _ = crate::core::history::show_history(&bot, chat_id, Arc::clone(&db_pool)).await;
                     }
                     "services" => {
                         // Edit message to show services
@@ -1118,12 +1042,8 @@ pub async fn handle_menu_callback(
                     "subscription" => {
                         // Delete current message and show subscription info
                         let _ = bot.delete_message(chat_id, message_id).await;
-                        let _ = crate::core::subscription::show_subscription_info(
-                            &bot,
-                            chat_id,
-                            Arc::clone(&db_pool),
-                        )
-                        .await;
+                        let _ = crate::core::subscription::show_subscription_info(&bot, chat_id, Arc::clone(&db_pool))
+                            .await;
                     }
                     "help" => {
                         // Edit message to show help
@@ -1132,25 +1052,22 @@ pub async fn handle_menu_callback(
                     _ => {}
                 }
             } else if let Some(plan) = data.strip_prefix("subscribe:") {
-                log::info!(
-                    "🔔 Subscribe callback received: data={}, chat_id={}",
-                    data,
-                    chat_id.0
-                );
+                log::info!("🔔 Subscribe callback received: data={}, chat_id={}", data, chat_id.0);
                 bot.answer_callback_query(callback_id.clone()).await?;
                 // Remove "subscribe:" prefix
                 log::info!("📌 Extracted plan: {}", plan);
                 match plan {
                     "premium" | "vip" => {
-                        log::info!(
-                            "✅ Valid plan '{}', creating invoice for chat_id={}",
-                            plan,
-                            chat_id.0
-                        );
+                        log::info!("✅ Valid plan '{}', creating invoice for chat_id={}", plan, chat_id.0);
                         // Создаем инвойс для оплаты через Telegram Stars
                         match create_subscription_invoice(&bot, chat_id, plan).await {
                             Ok(msg) => {
-                                log::info!("✅ Invoice created successfully for user {} plan {}. Message ID: {}", chat_id.0, plan, msg.id.0);
+                                log::info!(
+                                    "✅ Invoice created successfully for user {} plan {}. Message ID: {}",
+                                    chat_id.0,
+                                    plan,
+                                    msg.id.0
+                                );
                             }
                             Err(e) => {
                                 log::error!(
@@ -1169,9 +1086,7 @@ pub async fn handle_menu_callback(
                     }
                     _ => {
                         log::warn!("⚠️ Unknown plan requested: {}", plan);
-                        bot.answer_callback_query(callback_id)
-                            .text("Неизвестный план")
-                            .await?;
+                        bot.answer_callback_query(callback_id).text("Неизвестный план").await?;
                     }
                 }
             } else if let Some(action) = data.strip_prefix("subscription:") {
@@ -1180,12 +1095,8 @@ pub async fn handle_menu_callback(
                 match action {
                     "cancel" => {
                         // Отменяем подписку пользователя
-                        match crate::core::subscription::cancel_subscription(
-                            &bot,
-                            chat_id.0,
-                            Arc::clone(&db_pool),
-                        )
-                        .await
+                        match crate::core::subscription::cancel_subscription(&bot, chat_id.0, Arc::clone(&db_pool))
+                            .await
                         {
                             Ok(_) => {
                                 log::info!("Subscription canceled for user {}", chat_id.0);
@@ -1199,8 +1110,7 @@ pub async fn handle_menu_callback(
 
                                 // Обновляем меню подписки
                                 let _ = bot.delete_message(chat_id, message_id).await;
-                                let _ = show_subscription_info(&bot, chat_id, Arc::clone(&db_pool))
-                                    .await;
+                                let _ = show_subscription_info(&bot, chat_id, Arc::clone(&db_pool)).await;
                             }
                             Err(e) => {
                                 log::error!("Failed to cancel subscription: {}", e);
@@ -1223,12 +1133,10 @@ pub async fn handle_menu_callback(
             } else if let Some(quality) = data.strip_prefix("quality:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
                 // Remove "quality:" prefix
-                let conn = db::get_connection(&db_pool).map_err(|e| {
-                    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
-                db::set_user_video_quality(&conn, chat_id.0, quality).map_err(|e| {
-                    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
+                let conn = db::get_connection(&db_pool)
+                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+                db::set_user_video_quality(&conn, chat_id.0, quality)
+                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
                 // Get url_id from message context if available (check if we came from preview)
                 // For now, we'll need to get it from the current menu's callback data
@@ -1236,56 +1144,45 @@ pub async fn handle_menu_callback(
                 // This is a limitation - we'd need to store url_id in quality callback data too
                 // For simplicity, we'll just update the menu without url_id
                 // Update the menu to show new selection
-                show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None)
-                    .await?;
+                show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
             } else if data == "send_type:toggle" {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
-                let conn = db::get_connection(&db_pool).map_err(|e| {
-                    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
+                let conn = db::get_connection(&db_pool)
+                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
                 // Получаем текущее значение и переключаем
                 let current_value = db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0);
                 let new_value = if current_value == 0 { 1 } else { 0 };
 
-                db::set_user_send_as_document(&conn, chat_id.0, new_value).map_err(|e| {
-                    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
+                db::set_user_send_as_document(&conn, chat_id.0, new_value)
+                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
                 // Обновляем меню
-                show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None)
-                    .await?;
+                show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
             } else if let Some(bitrate) = data.strip_prefix("bitrate:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
                 // Remove "bitrate:" prefix
-                let conn = db::get_connection(&db_pool).map_err(|e| {
-                    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
-                db::set_user_audio_bitrate(&conn, chat_id.0, bitrate).map_err(|e| {
-                    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
+                let conn = db::get_connection(&db_pool)
+                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+                db::set_user_audio_bitrate(&conn, chat_id.0, bitrate)
+                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
                 // Update the menu to show new selection
-                show_audio_bitrate_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None)
-                    .await?;
+                show_audio_bitrate_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
             } else if data == "audio_send_type:toggle" {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
-                let conn = db::get_connection(&db_pool).map_err(|e| {
-                    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
+                let conn = db::get_connection(&db_pool)
+                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
                 // Получаем текущее значение и переключаем
-                let current_value =
-                    db::get_user_send_audio_as_document(&conn, chat_id.0).unwrap_or(0);
+                let current_value = db::get_user_send_audio_as_document(&conn, chat_id.0).unwrap_or(0);
                 let new_value = if current_value == 0 { 1 } else { 0 };
 
-                db::set_user_send_audio_as_document(&conn, chat_id.0, new_value).map_err(|e| {
-                    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
+                db::set_user_send_audio_as_document(&conn, chat_id.0, new_value)
+                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
                 // Обновляем меню
-                show_audio_bitrate_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None)
-                    .await?;
+                show_audio_bitrate_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
             } else if data.starts_with("video_send_type:toggle:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
 
@@ -1294,44 +1191,27 @@ pub async fn handle_menu_callback(
                 if parts.len() >= 3 {
                     let url_id = parts[2];
 
-                    let conn = db::get_connection(&db_pool).map_err(|e| {
-                        RequestError::from(std::sync::Arc::new(std::io::Error::other(
-                            e.to_string(),
-                        )))
-                    })?;
+                    let conn = db::get_connection(&db_pool)
+                        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
                     // Получаем текущее значение и переключаем
-                    let current_value =
-                        db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0);
+                    let current_value = db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0);
                     let new_value = if current_value == 0 { 1 } else { 0 };
 
                     // Логируем изменение
                     log::info!(
                         "🔄 Video send type toggled for user {}: {} -> {} ({})",
                         chat_id.0,
-                        if current_value == 0 {
-                            "Media"
-                        } else {
-                            "Document"
-                        },
+                        if current_value == 0 { "Media" } else { "Document" },
                         if new_value == 0 { "Media" } else { "Document" },
-                        if new_value == 0 {
-                            "send_video"
-                        } else {
-                            "send_document"
-                        }
+                        if new_value == 0 { "send_video" } else { "send_document" }
                     );
 
-                    db::set_user_send_as_document(&conn, chat_id.0, new_value).map_err(|e| {
-                        RequestError::from(std::sync::Arc::new(std::io::Error::other(
-                            e.to_string(),
-                        )))
-                    })?;
+                    db::set_user_send_as_document(&conn, chat_id.0, new_value)
+                        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
                     // Получаем текущую клавиатуру из сообщения и обновляем только toggle кнопку
-                    if let Some(teloxide::types::MaybeInaccessibleMessage::Regular(regular_msg)) =
-                        q.message.as_ref()
-                    {
+                    if let Some(teloxide::types::MaybeInaccessibleMessage::Regular(regular_msg)) = q.message.as_ref() {
                         // Получаем текущую клавиатуру
                         if let Some(keyboard) = regular_msg.reply_markup() {
                             // Клонируем клавиатуру и обновляем toggle кнопку
@@ -1340,9 +1220,8 @@ pub async fn handle_menu_callback(
                             // Находим и обновляем toggle кнопку (ищем кнопку с callback video_send_type:toggle)
                             for row in &mut new_buttons {
                                 for button in row {
-                                    if let teloxide::types::InlineKeyboardButtonKind::CallbackData(
-                                        ref cb_data,
-                                    ) = button.kind
+                                    if let teloxide::types::InlineKeyboardButtonKind::CallbackData(ref cb_data) =
+                                        button.kind
                                     {
                                         if cb_data.starts_with("video_send_type:toggle:") {
                                             // Обновляем текст кнопки
@@ -1351,18 +1230,14 @@ pub async fn handle_menu_callback(
                                             } else {
                                                 "📄 Отправка: Document ✓".to_string()
                                             };
-                                            log::debug!(
-                                                "Updated toggle button text to: {}",
-                                                button.text
-                                            );
+                                            log::debug!("Updated toggle button text to: {}", button.text);
                                         }
                                     }
                                 }
                             }
 
                             // Обновляем только клавиатуру, не трогая текст и изображение
-                            let new_keyboard =
-                                teloxide::types::InlineKeyboardMarkup::new(new_buttons);
+                            let new_keyboard = teloxide::types::InlineKeyboardMarkup::new(new_buttons);
                             let _ = bot
                                 .edit_message_reply_markup(chat_id, message_id)
                                 .reply_markup(new_keyboard)
@@ -1394,13 +1269,10 @@ pub async fn handle_menu_callback(
                             match url::Url::parse(&url_str) {
                                 Ok(url) => {
                                     let conn = db::get_connection(&db_pool).map_err(|e| {
-                                        RequestError::from(std::sync::Arc::new(
-                                            std::io::Error::other(e.to_string()),
-                                        ))
+                                        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                                     })?;
-                                    let current_format =
-                                        db::get_user_download_format(&conn, chat_id.0)
-                                            .unwrap_or_else(|_| "mp3".to_string());
+                                    let current_format = db::get_user_download_format(&conn, chat_id.0)
+                                        .unwrap_or_else(|_| "mp3".to_string());
                                     let video_quality = if current_format == "mp4" {
                                         db::get_user_video_quality(&conn, chat_id.0).ok()
                                     } else {
@@ -1431,17 +1303,19 @@ pub async fn handle_menu_callback(
                                             {
                                                 Ok(_) => {}
                                                 Err(e) => {
-                                                    log::error!(
-                                                        "Failed to update preview message: {:?}",
-                                                        e
-                                                    );
+                                                    log::error!("Failed to update preview message: {:?}", e);
                                                     let _ = bot.send_message(chat_id, "Не удалось обновить превью. Попробуй отправить ссылку снова.").await;
                                                 }
                                             }
                                         }
                                         Err(e) => {
                                             log::error!("Failed to get preview metadata: {:?}", e);
-                                            let _ = bot.send_message(chat_id, "Не удалось обновить превью. Попробуй отправить ссылку снова.").await;
+                                            let _ = bot
+                                                .send_message(
+                                                    chat_id,
+                                                    "Не удалось обновить превью. Попробуй отправить ссылку снова.",
+                                                )
+                                                .await;
                                         }
                                     }
                                 }
@@ -1454,10 +1328,7 @@ pub async fn handle_menu_callback(
                             }
                         }
                         None => {
-                            log::warn!(
-                                "URL not found in cache for ID: {} (expired or invalid)",
-                                url_id
-                            );
+                            log::warn!("URL not found in cache for ID: {} (expired or invalid)", url_id);
                             bot.answer_callback_query(callback_id)
                                 .text("Ссылка устарела, отправь её снова")
                                 .await?;
@@ -1484,33 +1355,15 @@ pub async fn handle_menu_callback(
                 } else {
                     match data.as_str() {
                         "back:main" => {
-                            edit_main_menu(
-                                &bot,
-                                chat_id,
-                                message_id,
-                                Arc::clone(&db_pool),
-                                None,
-                                None,
-                            )
-                            .await?;
+                            edit_main_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None, None).await?;
                         }
                         "back:enhanced_main" => {
-                            edit_enhanced_main_menu(
-                                &bot,
-                                chat_id,
-                                message_id,
-                                Arc::clone(&db_pool),
-                            )
-                            .await?;
+                            edit_enhanced_main_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
                         }
                         "back:start" => {
-                            bot.edit_message_text(
-                                chat_id,
-                                message_id,
-                                "Хэй\\! Я Дора, дай мне ссылку и я скачаю ❤️‍🔥",
-                            )
-                            .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-                            .await?;
+                            bot.edit_message_text(chat_id, message_id, "Хэй\\! Я Дора, дай мне ссылку и я скачаю ❤️‍🔥")
+                                .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                                .await?;
                         }
                         _ => {}
                     }
@@ -1521,108 +1374,92 @@ pub async fn handle_menu_callback(
                 let parts: Vec<&str> = data.split(':').collect();
                 let format = parts[1];
                 let is_from_preview = parts.len() >= 4 && parts[2] == "preview";
-                let url_id = if is_from_preview {
-                    Some(parts[3])
-                } else {
-                    None
-                };
+                let url_id = if is_from_preview { Some(parts[3]) } else { None };
                 let _preview_msg_id = if is_from_preview && parts.len() >= 5 {
                     parts[4].parse::<i32>().ok().map(teloxide::types::MessageId)
                 } else {
                     None
                 };
 
-                let conn = db::get_connection(&db_pool).map_err(|e| {
-                    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
-                db::set_user_download_format(&conn, chat_id.0, format).map_err(|e| {
-                    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
+                let conn = db::get_connection(&db_pool)
+                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+                db::set_user_download_format(&conn, chat_id.0, format)
+                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
-                if is_from_preview && url_id.is_some() {
-                    // Get URL from cache and return to preview menu with updated format
-                    match cache::get_url(&db_pool, url_id.unwrap()).await {
-                        Some(url_str) => {
-                            match url::Url::parse(&url_str) {
-                                Ok(url) => {
-                                    let video_quality = if format == "mp4" {
-                                        db::get_user_video_quality(&conn, chat_id.0).ok()
-                                    } else {
-                                        None
-                                    };
+                if is_from_preview {
+                    if let Some(id) = url_id {
+                        // Get URL from cache and return to preview menu with updated format
+                        match cache::get_url(&db_pool, id).await {
+                            Some(url_str) => {
+                                match url::Url::parse(&url_str) {
+                                    Ok(url) => {
+                                        let video_quality = if format == "mp4" {
+                                            db::get_user_video_quality(&conn, chat_id.0).ok()
+                                        } else {
+                                            None
+                                        };
 
-                                    // Get metadata and send new preview, delete old preview if preview_msg_id is available
-                                    match crate::telegram::preview::get_preview_metadata(
-                                        &url,
-                                        Some(format),
-                                        video_quality.as_deref(),
-                                    )
-                                    .await
-                                    {
-                                        Ok(metadata) => {
-                                            // Update existing preview message
-                                            match crate::telegram::preview::update_preview_message(
-                                                &bot,
-                                                chat_id,
-                                                message_id, // Use current message_id (which is the menu) to update it back to preview
-                                                &url,
-                                                &metadata,
-                                                format,
-                                                video_quality.as_deref(),
-                                                Arc::clone(&db_pool),
-                                            )
-                                            .await
-                                            {
-                                                Ok(_) => {
-                                                    log::info!(
-                                                        "Preview updated with new format: {}",
-                                                        format
-                                                    );
-                                                }
-                                                Err(e) => {
-                                                    log::error!(
-                                                        "Failed to send updated preview: {:?}",
-                                                        e
-                                                    );
-                                                    let _ = bot.send_message(chat_id, "Не удалось обновить превью. Попробуй отправить ссылку снова.").await;
+                                        // Get metadata and send new preview, delete old preview if preview_msg_id is available
+                                        match crate::telegram::preview::get_preview_metadata(
+                                            &url,
+                                            Some(format),
+                                            video_quality.as_deref(),
+                                        )
+                                        .await
+                                        {
+                                            Ok(metadata) => {
+                                                // Update existing preview message
+                                                match crate::telegram::preview::update_preview_message(
+                                                    &bot,
+                                                    chat_id,
+                                                    message_id, // Use current message_id (which is the menu) to update it back to preview
+                                                    &url,
+                                                    &metadata,
+                                                    format,
+                                                    video_quality.as_deref(),
+                                                    Arc::clone(&db_pool),
+                                                )
+                                                .await
+                                                {
+                                                    Ok(_) => {
+                                                        log::info!("Preview updated with new format: {}", format);
+                                                    }
+                                                    Err(e) => {
+                                                        log::error!("Failed to send updated preview: {:?}", e);
+                                                        let _ = bot.send_message(chat_id, "Не удалось обновить превью. Попробуй отправить ссылку снова.").await;
+                                                    }
                                                 }
                                             }
-                                        }
-                                        Err(e) => {
-                                            log::error!("Failed to get preview metadata: {:?}", e);
-                                            let _ = bot.send_message(chat_id, "Не удалось обновить превью. Попробуй отправить ссылку снова.").await;
+                                            Err(e) => {
+                                                log::error!("Failed to get preview metadata: {:?}", e);
+                                                let _ = bot
+                                                    .send_message(
+                                                        chat_id,
+                                                        "Не удалось обновить превью. Попробуй отправить ссылку снова.",
+                                                    )
+                                                    .await;
+                                            }
                                         }
                                     }
-                                }
-                                Err(e) => {
-                                    log::error!("Failed to parse URL from cache: {}", e);
-                                    bot.answer_callback_query(callback_id)
-                                        .text("Ошибка: неверная ссылка")
-                                        .await?;
+                                    Err(e) => {
+                                        log::error!("Failed to parse URL from cache: {}", e);
+                                        bot.answer_callback_query(callback_id)
+                                            .text("Ошибка: неверная ссылка")
+                                            .await?;
+                                    }
                                 }
                             }
-                        }
-                        None => {
-                            log::warn!(
-                                "URL not found in cache for ID: {} (expired or invalid)",
-                                url_id.unwrap()
-                            );
-                            bot.answer_callback_query(callback_id)
-                                .text("Ссылка устарела, отправь её снова")
-                                .await?;
+                            None => {
+                                log::warn!("URL not found in cache for ID: {} (expired or invalid)", id);
+                                bot.answer_callback_query(callback_id)
+                                    .text("Ссылка устарела, отправь её снова")
+                                    .await?;
+                            }
                         }
                     }
                 } else {
                     // Update the menu to show new selection
-                    show_download_type_menu(
-                        &bot,
-                        chat_id,
-                        message_id,
-                        Arc::clone(&db_pool),
-                        None,
-                        None,
-                    )
-                    .await?;
+                    show_download_type_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None, None).await?;
                 }
             } else if data.starts_with("dl:") {
                 // Don't answer immediately - we'll answer after processing
@@ -1660,9 +1497,7 @@ pub async fn handle_menu_callback(
                                 Ok(url) => {
                                     // Get user preferences for quality/bitrate and plan
                                     let conn = db::get_connection(&db_pool).map_err(|e| {
-                                        RequestError::from(std::sync::Arc::new(
-                                            std::io::Error::other(e.to_string()),
-                                        ))
+                                        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                                     })?;
                                     let plan = match db::get_user(&conn, chat_id.0) {
                                         Ok(Some(ref user)) => user.plan.clone(),
@@ -1671,20 +1506,13 @@ pub async fn handle_menu_callback(
 
                                     // Check rate limit
                                     if rate_limiter.is_rate_limited(chat_id, &plan).await {
-                                        if let Some(remaining_time) =
-                                            rate_limiter.get_remaining_time(chat_id).await
-                                        {
+                                        if let Some(remaining_time) = rate_limiter.get_remaining_time(chat_id).await {
                                             let remaining_seconds = remaining_time.as_secs();
                                             bot.answer_callback_query(callback_id)
-                                                .text(format!(
-                                                    "Подожди {} секунд",
-                                                    remaining_seconds
-                                                ))
+                                                .text(format!("Подожди {} секунд", remaining_seconds))
                                                 .await?;
                                         } else {
-                                            bot.answer_callback_query(callback_id)
-                                                .text("Подожди немного")
-                                                .await?;
+                                            bot.answer_callback_query(callback_id).text("Подожди немного").await?;
                                         }
                                         return Ok(());
                                     }
@@ -1697,8 +1525,7 @@ pub async fn handle_menu_callback(
                                     // Обрабатываем формат "mp4+mp3" - добавляем 2 задачи в очередь
                                     if format == "mp4+mp3" {
                                         // Задача 1: MP4 (видео)
-                                        let video_quality = if let Some(quality) = selected_quality
-                                        {
+                                        let video_quality = if let Some(quality) = selected_quality {
                                             Some(quality)
                                         } else {
                                             Some(
@@ -1716,9 +1543,7 @@ pub async fn handle_menu_callback(
                                             None, // audio_bitrate для видео не нужен
                                             &plan,
                                         );
-                                        download_queue
-                                            .add_task(task_mp4, Some(Arc::clone(&db_pool)))
-                                            .await;
+                                        download_queue.add_task(task_mp4, Some(Arc::clone(&db_pool))).await;
 
                                         // Задача 2: MP3 (аудио)
                                         let audio_bitrate = Some(
@@ -1735,11 +1560,12 @@ pub async fn handle_menu_callback(
                                             audio_bitrate,
                                             &plan,
                                         );
-                                        download_queue
-                                            .add_task(task_mp3, Some(Arc::clone(&db_pool)))
-                                            .await;
+                                        download_queue.add_task(task_mp3, Some(Arc::clone(&db_pool))).await;
 
-                                        log::info!("Added 2 tasks to queue for mp4+mp3: MP4 and MP3 for chat {}", chat_id.0);
+                                        log::info!(
+                                            "Added 2 tasks to queue for mp4+mp3: MP4 and MP3 for chat {}",
+                                            chat_id.0
+                                        );
                                     } else {
                                         // Обычная обработка для одного формата
                                         let video_quality = if format == "mp4" {
@@ -1777,9 +1603,7 @@ pub async fn handle_menu_callback(
                                             audio_bitrate,
                                             &plan,
                                         );
-                                        download_queue
-                                            .add_task(task, Some(Arc::clone(&db_pool)))
-                                            .await;
+                                        download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
                                     }
 
                                     // Delete preview message
@@ -1796,10 +1620,7 @@ pub async fn handle_menu_callback(
                             }
                         }
                         None => {
-                            log::warn!(
-                                "URL not found in cache for ID: {} (expired or invalid)",
-                                url_id
-                            );
+                            log::warn!("URL not found in cache for ID: {} (expired or invalid)", url_id);
                             bot.answer_callback_query(callback_id)
                                 .text("Ссылка устарела, отправь её снова")
                                 .await?;
@@ -1831,9 +1652,7 @@ pub async fn handle_menu_callback(
                                 .message
                                 .as_ref()
                                 .and_then(|m| match m {
-                                    teloxide::types::MaybeInaccessibleMessage::Regular(msg) => {
-                                        msg.photo()
-                                    }
+                                    teloxide::types::MaybeInaccessibleMessage::Regular(msg) => msg.photo(),
                                     _ => None,
                                 })
                                 .is_some();
@@ -1895,12 +1714,7 @@ pub async fn handle_menu_callback(
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
 
                 // Проверка прав администратора
-                let is_admin = q
-                    .from
-                    .username
-                    .as_ref()
-                    .map(|u| u == "stansob")
-                    .unwrap_or(false);
+                let is_admin = q.from.username.as_ref().map(|u| u == "stansob").unwrap_or(false);
 
                 if !is_admin {
                     bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
@@ -1935,17 +1749,14 @@ pub async fn handle_menu_callback(
                                             "🔒 Нет подписки"
                                         };
 
-                                        let expires_info =
-                                            if let Some(expires) = &user.subscription_expires_at {
-                                                format!("\n📅 Истекает: {}", expires)
-                                            } else {
-                                                String::new()
-                                            };
+                                        let expires_info = if let Some(expires) = &user.subscription_expires_at {
+                                            format!("\n📅 Истекает: {}", expires)
+                                        } else {
+                                            String::new()
+                                        };
 
                                         // Создаем клавиатуру с действиями
-                                        use teloxide::types::{
-                                            InlineKeyboardButton, InlineKeyboardMarkup,
-                                        };
+                                        use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
 
                                         let keyboard = InlineKeyboardMarkup::new(vec![
                                             vec![InlineKeyboardButton::callback(
@@ -1960,10 +1771,7 @@ pub async fn handle_menu_callback(
                                                 "👑 Set VIP",
                                                 format!("admin:setplan:{}:vip", user_id),
                                             )],
-                                            vec![InlineKeyboardButton::callback(
-                                                "🔙 Назад к списку",
-                                                "admin:back",
-                                            )],
+                                            vec![InlineKeyboardButton::callback("🔙 Назад к списку", "admin:back")],
                                         ]);
 
                                         let _ = bot
@@ -2083,14 +1891,10 @@ pub async fn handle_menu_callback(
                                         _ => "🌟",
                                     };
 
-                                    let button_text =
-                                        format!("{} {}", plan_emoji, username_display);
+                                    let button_text = format!("{} {}", plan_emoji, username_display);
                                     let callback_data = format!("admin:user:{}", user.telegram_id);
 
-                                    current_row.push(InlineKeyboardButton::callback(
-                                        button_text,
-                                        callback_data,
-                                    ));
+                                    current_row.push(InlineKeyboardButton::callback(button_text, callback_data));
 
                                     if current_row.len() == 2 {
                                         keyboard_rows.push(current_row.clone());
@@ -2219,9 +2023,7 @@ fn create_audio_effects_keyboard(
         format!("ae:morph:{}", session_id),
     )];
 
-    InlineKeyboardMarkup::new(vec![
-        pitch_row, tempo_row, bass_row, morph_row, action_row, skip_row,
-    ])
+    InlineKeyboardMarkup::new(vec![pitch_row, tempo_row, bass_row, morph_row, action_row, skip_row])
 }
 
 /// Show audio effects editor by sending a new message
@@ -2355,8 +2157,7 @@ pub async fn handle_audio_effects_callback(
         "open" => {
             let session_id = parts.get(2).ok_or("Missing session_id")?;
 
-            let session =
-                db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+            let session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
 
             if session.is_expired() {
                 bot.answer_callback_query(callback_id)
@@ -2382,8 +2183,7 @@ pub async fn handle_audio_effects_callback(
             let pitch_str = parts.get(3).ok_or("Missing pitch value")?;
             let pitch: i8 = pitch_str.parse().map_err(|_| "Invalid pitch")?;
 
-            let mut session =
-                db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+            let mut session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
 
             if session.processing {
                 bot.answer_callback_query(callback_id)
@@ -2413,8 +2213,7 @@ pub async fn handle_audio_effects_callback(
             let tempo_str = parts.get(3).ok_or("Missing tempo value")?;
             let tempo: f32 = tempo_str.parse().map_err(|_| "Invalid tempo")?;
 
-            let mut session =
-                db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+            let mut session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
 
             if session.processing {
                 bot.answer_callback_query(callback_id)
@@ -2444,8 +2243,7 @@ pub async fn handle_audio_effects_callback(
             let bass_str = parts.get(3).ok_or("Missing bass value")?;
             let bass: i8 = bass_str.parse().map_err(|_| "Invalid bass")?;
 
-            let mut session =
-                db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+            let mut session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
 
             if session.processing {
                 bot.answer_callback_query(callback_id)
@@ -2473,8 +2271,7 @@ pub async fn handle_audio_effects_callback(
         "morph" => {
             let session_id = parts.get(2).ok_or("Missing session_id")?;
 
-            let mut session =
-                db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+            let mut session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
 
             if session.processing {
                 bot.answer_callback_query(callback_id)
@@ -2520,8 +2317,7 @@ pub async fn handle_audio_effects_callback(
         "apply" => {
             let session_id = parts.get(2).ok_or("Missing session_id")?;
 
-            let session =
-                db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+            let session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
 
             if session.processing {
                 bot.answer_callback_query(callback_id)
@@ -2572,14 +2368,8 @@ pub async fn handle_audio_effects_callback(
             let db_pool_clone = Arc::clone(&db_pool);
             let session_clone = session.clone();
             tokio::spawn(async move {
-                if let Err(e) = process_audio_effects(
-                    bot_clone,
-                    chat_id,
-                    message_id,
-                    session_clone,
-                    db_pool_clone,
-                )
-                .await
+                if let Err(e) =
+                    process_audio_effects(bot_clone, chat_id, message_id, session_clone, db_pool_clone).await
                 {
                     log::error!("Failed to process audio effects: {}", e);
                 }
@@ -2589,8 +2379,7 @@ pub async fn handle_audio_effects_callback(
         "reset" => {
             let session_id = parts.get(2).ok_or("Missing session_id")?;
 
-            let mut session =
-                db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+            let mut session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
 
             session.pitch_semitones = 0;
             session.tempo_factor = 1.0;
@@ -2624,8 +2413,7 @@ pub async fn handle_audio_effects_callback(
         "again" => {
             let session_id = parts.get(2).ok_or("Missing session_id")?;
 
-            let session =
-                db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+            let session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
 
             if session.is_expired() {
                 bot.answer_callback_query(callback_id)
@@ -2677,8 +2465,7 @@ pub async fn handle_audio_effects_callback(
         "original" => {
             let session_id = parts.get(2).ok_or("Missing session_id")?;
 
-            let session =
-                db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+            let session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
 
             bot.answer_callback_query(callback_id).await?;
 
@@ -2690,11 +2477,8 @@ pub async fn handle_audio_effects_callback(
                     .duration(session.duration)
                     .await?;
             } else {
-                bot.send_message(
-                    chat_id,
-                    "❌ Оригинальный файл не найден. Возможно, сессия истекла.",
-                )
-                .await?;
+                bot.send_message(chat_id, "❌ Оригинальный файл не найден. Возможно, сессия истекла.")
+                    .await?;
             }
         }
 
@@ -2722,11 +2506,8 @@ async fn process_audio_effects(
     let new_version = session.version + 1;
 
     // Generate output path
-    let output_path_raw = crate::download::audio_effects::get_modified_file_path(
-        &session_id,
-        new_version,
-        &config::DOWNLOAD_FOLDER,
-    );
+    let output_path_raw =
+        crate::download::audio_effects::get_modified_file_path(&session_id, new_version, &config::DOWNLOAD_FOLDER);
     let output_path = shellexpand::tilde(&output_path_raw).into_owned();
     if let Some(parent) = Path::new(&output_path).parent() {
         tokio::fs::create_dir_all(parent).await?;
@@ -2734,12 +2515,8 @@ async fn process_audio_effects(
 
     // Apply effects
     let settings = session.settings();
-    let result = crate::download::audio_effects::apply_audio_effects(
-        &session.original_file_path,
-        &output_path,
-        &settings,
-    )
-    .await;
+    let result =
+        crate::download::audio_effects::apply_audio_effects(&session.original_file_path, &output_path, &settings).await;
 
     // Clear processing flag
     let conn = db::get_connection(&db_pool)?;
@@ -2773,10 +2550,7 @@ async fn process_audio_effects(
             // Add "Edit Again" and "Get Original" buttons
             let keyboard = InlineKeyboardMarkup::new(vec![vec![
                 InlineKeyboardButton::callback("🎛️ Edit Again", format!("ae:again:{}", session_id)),
-                InlineKeyboardButton::callback(
-                    "📥 Get Original",
-                    format!("ae:original:{}", session_id),
-                ),
+                InlineKeyboardButton::callback("📥 Get Original", format!("ae:original:{}", session_id)),
             ]]);
 
             // Replace the sent audio message caption with the new buttons (no text change)
@@ -2842,21 +2616,13 @@ async fn process_audio_effects(
 /// # Returns
 ///
 /// Returns `ResponseResult<Message>` with the sent message or an error.
-pub async fn show_enhanced_main_menu(
-    bot: &Bot,
-    chat_id: ChatId,
-    db_pool: Arc<DbPool>,
-) -> ResponseResult<Message> {
-    let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-    })?;
+pub async fn show_enhanced_main_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
+    let conn = db::get_connection(&db_pool)
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
-    let format =
-        db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
-    let video_quality =
-        db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
-    let audio_bitrate =
-        db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
+    let format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
+    let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
+    let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
 
     // Get user plan from database
     let plan = match db::get_user(&conn, chat_id.0) {
@@ -2954,16 +2720,12 @@ async fn edit_enhanced_main_menu(
     message_id: MessageId,
     db_pool: Arc<DbPool>,
 ) -> ResponseResult<()> {
-    let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-    })?;
+    let conn = db::get_connection(&db_pool)
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
-    let format =
-        db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
-    let video_quality =
-        db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
-    let audio_bitrate =
-        db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
+    let format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
+    let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
+    let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
 
     let plan = match db::get_user(&conn, chat_id.0) {
         Ok(Some(user)) => user.plan,
@@ -3054,16 +2816,12 @@ async fn show_current_settings_detail(
     message_id: MessageId,
     db_pool: Arc<DbPool>,
 ) -> ResponseResult<()> {
-    let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-    })?;
+    let conn = db::get_connection(&db_pool)
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
-    let format =
-        db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
-    let video_quality =
-        db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
-    let audio_bitrate =
-        db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
+    let format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
+    let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
+    let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
     let send_as_document = db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0);
     let send_audio_as_document = db::get_user_send_audio_as_document(&conn, chat_id.0).unwrap_or(0);
 

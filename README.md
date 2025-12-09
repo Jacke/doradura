@@ -74,6 +74,7 @@ Create a `.env` file in the project root:
 
 ```env
 TELOXIDE_TOKEN=your_telegram_bot_token_here
+ADMIN_USERNAME=your_telegram_username  # Admin user (without @) for /admin, /users, /setplan commands
 YTDL_BIN=yt-dlp  # Optional: override default youtube-dl
 BOT_API_URL=http://localhost:8081  # Optional: use local Bot API server (allows files up to 2GB)
 

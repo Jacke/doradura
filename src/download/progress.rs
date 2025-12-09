@@ -183,9 +183,7 @@ impl DownloadStatus {
                     let total_mb = *total as f64 / (1024.0 * 1024.0);
                     s.push_str("\n📦 Размер: ");
                     // Экранируем точки в числах с плавающей точкой
-                    s.push_str(
-                        &format!("{:.1} / {:.1} MB", current_mb, total_mb).replace('.', "\\."),
-                    );
+                    s.push_str(&format!("{:.1} / {:.1} MB", current_mb, total_mb).replace('.', "\\."));
                 }
 
                 s
@@ -245,9 +243,7 @@ impl DownloadStatus {
                     let current_mb = *current as f64 / (1024.0 * 1024.0);
                     let total_mb = *total as f64 / (1024.0 * 1024.0);
                     s.push_str("\n📦 Размер: ");
-                    s.push_str(
-                        &format!("{:.1} / {:.1} MB", current_mb, total_mb).replace('.', "\\."),
-                    );
+                    s.push_str(&format!("{:.1} / {:.1} MB", current_mb, total_mb).replace('.', "\\."));
                 }
 
                 s
@@ -261,8 +257,7 @@ impl DownloadStatus {
                 let emoji = Self::get_emoji(file_format.as_ref());
                 let elapsed_str = elapsed_secs.to_string();
                 let plural = pluralize_seconds(*elapsed_secs);
-                let mut s =
-                    String::with_capacity(escaped.len() + elapsed_str.len() + plural.len() + 50);
+                let mut s = String::with_capacity(escaped.len() + elapsed_str.len() + plural.len() + 50);
                 s.push_str(emoji);
                 s.push_str(" *");
                 s.push_str(&escaped);
@@ -467,8 +462,7 @@ impl ProgressMessage {
                             retry_after_secs
                         );
                         // Ждем указанное время + небольшая задержка для надежности
-                        tokio::time::sleep(tokio::time::Duration::from_secs(retry_after_secs + 1))
-                            .await;
+                        tokio::time::sleep(tokio::time::Duration::from_secs(retry_after_secs + 1)).await;
                         // Пробуем еще раз отредактировать
                         match bot
                             .edit_message_text(self.chat_id, msg_id, text.clone())
@@ -482,7 +476,10 @@ impl ProgressMessage {
                                 if error_str2.contains("message is not modified") {
                                     return Ok(());
                                 }
-                                log::warn!("Still failed to edit message after rate limit wait: {}. Trying to send new one.", e2);
+                                log::warn!(
+                                    "Still failed to edit message after rate limit wait: {}. Trying to send new one.",
+                                    e2
+                                );
                             }
                         }
                     } else {

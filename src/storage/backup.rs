@@ -63,12 +63,7 @@ fn cleanup_old_backups(backup_dir: &Path) -> Result<()> {
                 // Пытаемся извлечь timestamp из имени файла
                 if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
                     // Формат: YYYYMMDD_HHMMSS_database.sqlite
-                    if let Some(timestamp_part) = file_name
-                        .split('_')
-                        .take(2)
-                        .collect::<Vec<_>>()
-                        .join("_")
-                        .get(0..15)
+                    if let Some(timestamp_part) = file_name.split('_').take(2).collect::<Vec<_>>().join("_").get(0..15)
                     {
                         if let Ok(dt) = DateTime::parse_from_str(timestamp_part, "%Y%m%d_%H%M%S") {
                             backups.push((path, dt.with_timezone(&Utc)));
@@ -107,12 +102,7 @@ pub fn list_backups() -> Result<Vec<(PathBuf, DateTime<Utc>)>> {
             let path = entry.path();
             if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("sqlite") {
                 if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                    if let Some(timestamp_part) = file_name
-                        .split('_')
-                        .take(2)
-                        .collect::<Vec<_>>()
-                        .join("_")
-                        .get(0..15)
+                    if let Some(timestamp_part) = file_name.split('_').take(2).collect::<Vec<_>>().join("_").get(0..15)
                     {
                         if let Ok(dt) = DateTime::parse_from_str(timestamp_part, "%Y%m%d_%H%M%S") {
                             backups.push((path, dt.with_timezone(&Utc)));
@@ -141,10 +131,7 @@ pub fn list_backups() -> Result<Vec<(PathBuf, DateTime<Utc>)>> {
 /// Возвращает Ok(()) при успехе или ошибку
 pub fn restore_backup(backup_path: &Path, db_path: &str) -> Result<()> {
     if !backup_path.exists() {
-        return Err(anyhow::anyhow!(
-            "Backup file does not exist: {}",
-            backup_path.display()
-        ));
+        return Err(anyhow::anyhow!("Backup file does not exist: {}", backup_path.display()));
     }
 
     // Копируем бэкап на место базы данных

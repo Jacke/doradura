@@ -46,9 +46,7 @@ pub fn validate_telegram_webapp_data(init_data: &str, bot_token: &str) -> Result
         .collect();
 
     // Извлекаем hash из параметров
-    let received_hash = params
-        .get("hash")
-        .ok_or_else(|| anyhow!("Missing hash parameter"))?;
+    let received_hash = params.get("hash").ok_or_else(|| anyhow!("Missing hash parameter"))?;
 
     // Создаём data_check_string (все параметры кроме hash, отсортированные по ключу)
     let mut check_pairs: Vec<String> = params
@@ -61,8 +59,7 @@ pub fn validate_telegram_webapp_data(init_data: &str, bot_token: &str) -> Result
     let data_check_string = check_pairs.join("\n");
 
     // Создаём secret key: HMAC_SHA256("WebAppData", bot_token)
-    let mut secret_key_mac =
-        HmacSha256::new_from_slice(b"WebAppData").expect("HMAC can take key of any size");
+    let mut secret_key_mac = HmacSha256::new_from_slice(b"WebAppData").expect("HMAC can take key of any size");
     secret_key_mac.update(bot_token.as_bytes());
     let secret_key = secret_key_mac.finalize().into_bytes();
 
@@ -81,7 +78,7 @@ pub fn validate_telegram_webapp_data(init_data: &str, bot_token: &str) -> Result
         if let Ok(auth_date) = auth_date_str.parse::<i64>() {
             let now = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .map_err(|e| anyhow!("System time error: {}", e))?
                 .as_secs() as i64;
 
             let age_seconds = now - auth_date;
@@ -93,9 +90,7 @@ pub fn validate_telegram_webapp_data(init_data: &str, bot_token: &str) -> Result
     }
 
     // Извлекаем user_id из параметра user
-    let user_json = params
-        .get("user")
-        .ok_or_else(|| anyhow!("Missing user parameter"))?;
+    let user_json = params.get("user").ok_or_else(|| anyhow!("Missing user parameter"))?;
 
     let user: serde_json::Value =
         serde_json::from_str(user_json).map_err(|e| anyhow!("Failed to parse user JSON: {}", e))?;
@@ -132,9 +127,7 @@ pub fn extract_user_id_unsafe(init_data: &str) -> Result<i64> {
         })
         .collect();
 
-    let user_json = params
-        .get("user")
-        .ok_or_else(|| anyhow!("Missing user parameter"))?;
+    let user_json = params.get("user").ok_or_else(|| anyhow!("Missing user parameter"))?;
 
     let user: serde_json::Value =
         serde_json::from_str(user_json).map_err(|e| anyhow!("Failed to parse user JSON: {}", e))?;
@@ -154,7 +147,7 @@ mod tests {
     #[test]
     fn test_extract_user_id() {
         let init_data = "user=%7B%22id%22%3A123456789%2C%22first_name%22%3A%22Test%22%7D&auth_date=1234567890&hash=abc";
-        let user_id = extract_user_id_unsafe(init_data).unwrap();
+        let user_id = extract_user_id_unsafe(init_data).expect("Failed to extract user_id in test");
         assert_eq!(user_id, 123456789);
     }
 

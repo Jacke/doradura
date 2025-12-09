@@ -61,11 +61,7 @@ impl RateLimiter {
     /// * `free_duration` - Время между запросами для free плана
     /// * `premium_duration` - Время между запросами для premium плана
     /// * `vip_duration` - Время между запросами для vip плана
-    pub fn with_durations(
-        free_duration: Duration,
-        premium_duration: Duration,
-        vip_duration: Duration,
-    ) -> Self {
+    pub fn with_durations(free_duration: Duration, premium_duration: Duration, vip_duration: Duration) -> Self {
         Self {
             limits: Arc::new(Mutex::new(HashMap::new())),
             free_duration,

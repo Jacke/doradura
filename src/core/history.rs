@@ -2,9 +2,7 @@ use crate::storage::db::{self, DbPool};
 use chrono::NaiveDateTime;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{
-    CallbackQueryId, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId,
-};
+use teloxide::types::{CallbackQueryId, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId};
 use teloxide::RequestError;
 use url::Url;
 
@@ -82,11 +80,7 @@ fn format_date(date_str: &str) -> String {
 const ITEMS_PER_PAGE: usize = 5;
 
 /// Показывает историю загрузок пользователя с пагинацией
-pub async fn show_history(
-    bot: &Bot,
-    chat_id: ChatId,
-    db_pool: Arc<DbPool>,
-) -> ResponseResult<Message> {
+pub async fn show_history(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
     show_history_page(bot, chat_id, db_pool, 0).await
 }
 
@@ -97,9 +91,8 @@ pub async fn show_history_page(
     db_pool: Arc<DbPool>,
     page: usize,
 ) -> ResponseResult<Message> {
-    let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-    })?;
+    let conn = db::get_connection(&db_pool)
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
     // Получаем все записи истории для подсчета страниц
     let all_entries = match db::get_download_history(&conn, chat_id.0, None) {
@@ -107,17 +100,18 @@ pub async fn show_history_page(
         Err(e) => {
             log::error!("Failed to get download history: {}", e);
             return bot
-                .send_message(
-                    chat_id,
-                    "У меня не получилось загрузить историю 😢 Попробуй позже\\.",
-                )
+                .send_message(chat_id, "У меня не получилось загрузить историю 😢 Попробуй позже\\.")
                 .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                 .await;
         }
     };
 
     if all_entries.is_empty() {
-        return bot.send_message(chat_id, "📚 *История загрузок*\n\nУ тебя пока нет загрузок\\. Отправь мне ссылку на трек или видео\\!")
+        return bot
+            .send_message(
+                chat_id,
+                "📚 *История загрузок*\n\nУ тебя пока нет загрузок\\. Отправь мне ссылку на трек или видео\\!",
+            )
             .parse_mode(teloxide::types::ParseMode::MarkdownV2)
             .await;
     }
@@ -283,9 +277,7 @@ pub async fn handle_history_callback(
             let mut file_sent = false;
             if let Ok(entry_id) = entry_id_str.parse::<i64>() {
                 if let Ok(conn) = db::get_connection(&db_pool) {
-                    if let Ok(Some(entry)) =
-                        db::get_download_history_entry(&conn, chat_id.0, entry_id)
-                    {
+                    if let Ok(Some(entry)) = db::get_download_history_entry(&conn, chat_id.0, entry_id) {
                         if let Some(file_id) = entry.file_id {
                             log::info!("Found file_id for history entry {}: {}", entry_id, file_id);
 
@@ -293,27 +285,21 @@ pub async fn handle_history_callback(
                                 "mp3" => {
                                     bot.send_audio(
                                         chat_id,
-                                        teloxide::types::InputFile::file_id(
-                                            teloxide::types::FileId(file_id.clone()),
-                                        ),
+                                        teloxide::types::InputFile::file_id(teloxide::types::FileId(file_id.clone())),
                                     )
                                     .await
                                 }
                                 "mp4" => {
                                     bot.send_video(
                                         chat_id,
-                                        teloxide::types::InputFile::file_id(
-                                            teloxide::types::FileId(file_id.clone()),
-                                        ),
+                                        teloxide::types::InputFile::file_id(teloxide::types::FileId(file_id.clone())),
                                     )
                                     .await
                                 }
                                 _ => {
                                     bot.send_document(
                                         chat_id,
-                                        teloxide::types::InputFile::file_id(
-                                            teloxide::types::FileId(file_id),
-                                        ),
+                                        teloxide::types::InputFile::file_id(teloxide::types::FileId(file_id)),
                                     )
                                     .await
                                 }
@@ -321,10 +307,7 @@ pub async fn handle_history_callback(
 
                             match result {
                                 Ok(_) => {
-                                    log::info!(
-                                        "Successfully resent file using file_id for entry {}",
-                                        entry_id
-                                    );
+                                    log::info!("Successfully resent file using file_id for entry {}", entry_id);
                                     bot.answer_callback_query(callback_id.clone())
                                         .text("Файл отправлен!")
                                         .await?;
@@ -336,7 +319,10 @@ pub async fn handle_history_callback(
                                     }
                                 }
                                 Err(e) => {
-                                    log::warn!("Failed to resend file using file_id: {}. Falling back to re-download.", e);
+                                    log::warn!(
+                                        "Failed to resend file using file_id: {}. Falling back to re-download.",
+                                        e
+                                    );
                                 }
                             }
                         }
@@ -356,9 +342,7 @@ pub async fn handle_history_callback(
                         Ok(url) => {
                             // Получаем план пользователя для rate limiting
                             let conn = db::get_connection(&db_pool).map_err(|e| {
-                                RequestError::from(std::sync::Arc::new(std::io::Error::other(
-                                    e.to_string(),
-                                )))
+                                RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                             })?;
                             let plan = match db::get_user(&conn, chat_id.0) {
                                 Ok(Some(ref user)) => user.plan.clone(),
@@ -367,17 +351,13 @@ pub async fn handle_history_callback(
 
                             // Проверяем rate limit
                             if rate_limiter.is_rate_limited(chat_id, &plan).await {
-                                if let Some(remaining_time) =
-                                    rate_limiter.get_remaining_time(chat_id).await
-                                {
+                                if let Some(remaining_time) = rate_limiter.get_remaining_time(chat_id).await {
                                     let remaining_seconds = remaining_time.as_secs();
                                     bot.answer_callback_query(callback_id)
                                         .text(format!("Подожди {} секунд", remaining_seconds))
                                         .await?;
                                 } else {
-                                    bot.answer_callback_query(callback_id)
-                                        .text("Подожди немного")
-                                        .await?;
+                                    bot.answer_callback_query(callback_id).text("Подожди немного").await?;
                                 }
                                 return Ok(());
                             }
@@ -386,12 +366,10 @@ pub async fn handle_history_callback(
 
                             // Получаем формат из истории
                             let format = match entry_id_str.parse::<i64>() {
-                                Ok(id) => {
-                                    match db::get_download_history_entry(&conn, chat_id.0, id) {
-                                        Ok(Some(entry)) => entry.format,
-                                        _ => "mp3".to_string(),
-                                    }
-                                }
+                                Ok(id) => match db::get_download_history_entry(&conn, chat_id.0, id) {
+                                    Ok(Some(entry)) => entry.format,
+                                    _ => "mp3".to_string(),
+                                },
                                 Err(_) => "mp3".to_string(),
                             };
 
@@ -427,9 +405,7 @@ pub async fn handle_history_callback(
                                 audio_bitrate,
                                 &plan,
                             );
-                            download_queue
-                                .add_task(task, Some(Arc::clone(&db_pool)))
-                                .await;
+                            download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
 
                             // Удаляем сообщение истории
                             if let Err(e) = bot.delete_message(chat_id, message_id).await {
@@ -445,10 +421,7 @@ pub async fn handle_history_callback(
                     }
                 }
                 None => {
-                    log::warn!(
-                        "URL not found in cache for id: {} (expired or invalid)",
-                        url_id
-                    );
+                    log::warn!("URL not found in cache for id: {} (expired or invalid)", url_id);
                     bot.answer_callback_query(callback_id)
                         .text("Ссылка устарела, попробуйте снова")
                         .await?;
@@ -461,11 +434,8 @@ pub async fn handle_history_callback(
 
             match entry_id_str.parse::<i64>() {
                 Ok(entry_id) => {
-                    let conn = db::get_connection(&db_pool).map_err(|e| {
-                        RequestError::from(std::sync::Arc::new(std::io::Error::other(
-                            e.to_string(),
-                        )))
-                    })?;
+                    let conn = db::get_connection(&db_pool)
+                        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
                     match db::delete_download_history_entry(&conn, chat_id.0, entry_id) {
                         Ok(true) => {
@@ -480,9 +450,7 @@ pub async fn handle_history_callback(
                             }
                         }
                         Ok(false) => {
-                            bot.answer_callback_query(callback_id)
-                                .text("Запись не найдена")
-                                .await?;
+                            bot.answer_callback_query(callback_id).text("Запись не найдена").await?;
                         }
                         Err(e) => {
                             log::error!("Failed to delete history entry: {}", e);

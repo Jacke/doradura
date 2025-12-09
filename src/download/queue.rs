@@ -229,10 +229,7 @@ impl DownloadQueue {
     /// # }
     /// ```
     pub async fn add_task(&self, task: DownloadTask, db_pool: Option<Arc<DbPool>>) {
-        info!(
-            "Добавляем задачу с приоритетом {:?}: {:?}",
-            task.priority, task
-        );
+        info!("Добавляем задачу с приоритетом {:?}: {:?}", task.priority, task);
 
         // Сохраняем задачу в БД для гарантированной обработки
         if let Some(ref pool) = db_pool {
@@ -327,10 +324,7 @@ impl DownloadQueue {
     /// Возвращает позицию в очереди (1-based) или None если задача не найдена
     pub async fn get_queue_position(&self, chat_id: ChatId) -> Option<usize> {
         let queue = self.queue.lock().await;
-        queue
-            .iter()
-            .position(|task| task.chat_id == chat_id)
-            .map(|pos| pos + 1)
+        queue.iter().position(|task| task.chat_id == chat_id).map(|pos| pos + 1)
     }
 
     /// Возвращает текущее количество задач в очереди.
@@ -383,11 +377,7 @@ impl DownloadQueue {
     /// ```
     pub async fn filter_tasks_by_chat_id(&self, chat_id: ChatId) -> Vec<DownloadTask> {
         let queue = self.queue.lock().await;
-        queue
-            .iter()
-            .filter(|task| task.chat_id == chat_id)
-            .cloned()
-            .collect()
+        queue.iter().filter(|task| task.chat_id == chat_id).cloned().collect()
     }
 
     /// Удаляет задачи, которые старше заданного временного порога.

@@ -28,7 +28,7 @@ pub async fn notify_admin_task_failed(
             match crate::storage::db::get_all_users(&conn) {
                 Ok(users) => users
                     .iter()
-                    .find(|u| u.username.as_deref() == Some(ADMIN_USERNAME))
+                    .find(|u| u.username.as_deref() == Some(ADMIN_USERNAME.as_str()))
                     .map(|u| teloxide::types::ChatId(u.telegram_id)),
                 Err(e) => {
                     log::error!("Failed to get users for admin notification: {}", e);
@@ -87,7 +87,7 @@ pub async fn notify_admin_task_failed(
     } else {
         log::warn!(
             "Admin user '{}' not found in database. Notification not sent for task {}",
-            ADMIN_USERNAME,
+            ADMIN_USERNAME.as_str(),
             task_id
         );
     }
