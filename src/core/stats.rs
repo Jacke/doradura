@@ -86,14 +86,30 @@ pub async fn show_user_stats(
     chat_id: ChatId,
     db_pool: Arc<DbPool>,
 ) -> ResponseResult<Message> {
+    log::info!("show_user_stats called for chat_id: {}", chat_id.0);
+
     let conn = db::get_connection(&db_pool).map_err(|e| {
+        log::error!("Failed to get DB connection: {}", e);
         RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
     })?;
 
+    log::debug!(
+        "DB connection obtained, fetching stats for user {}",
+        chat_id.0
+    );
+
     let stats = match db::get_user_stats(&conn, chat_id.0) {
-        Ok(stats) => stats,
+        Ok(stats) => {
+            log::info!(
+                "Stats fetched: downloads={}, size={}, days={}",
+                stats.total_downloads,
+                stats.total_size,
+                stats.active_days
+            );
+            stats
+        }
         Err(e) => {
-            log::error!("Failed to get user stats: {}", e);
+            log::error!("Failed to get user stats from DB: {}", e);
             return bot
                 .send_message(
                     chat_id,
@@ -103,6 +119,8 @@ pub async fn show_user_stats(
                 .await;
         }
     };
+
+    log::debug!("Building stats text message");
 
     let mut text = "📊 *Твоя статистика*\n\n".to_string();
 

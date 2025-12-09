@@ -573,7 +573,11 @@ async fn main() -> Result<()> {
                                     let _ = show_history(&bot, msg.chat.id, db_pool).await;
                                 }
                                 Command::Stats => {
-                                    let _ = show_user_stats(&bot, msg.chat.id, db_pool).await;
+                                    log::info!("Stats command called for user {}", msg.chat.id);
+                                    match show_user_stats(&bot, msg.chat.id, db_pool).await {
+                                        Ok(_) => log::info!("Stats sent successfully"),
+                                        Err(e) => log::error!("Failed to show user stats: {:?}", e),
+                                    }
                                 }
                                 Command::Global => {
                                     let _ = show_global_stats(&bot, msg.chat.id, db_pool).await;
