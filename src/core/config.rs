@@ -5,8 +5,7 @@ use std::time::Duration;
 /// Configuration constants for the bot
 /// Cached yt-dlp binary path
 /// Read once at startup from YTDL_BIN environment variable or defaults to "yt-dlp"
-pub static YTDL_BIN: Lazy<String> =
-    Lazy::new(|| env::var("YTDL_BIN").unwrap_or_else(|_| "yt-dlp".to_string()));
+pub static YTDL_BIN: Lazy<String> = Lazy::new(|| env::var("YTDL_BIN").unwrap_or_else(|_| "yt-dlp".to_string()));
 
 /// Browser to extract cookies from for YouTube authentication
 /// Read from YTDL_COOKIES_BROWSER environment variable
@@ -24,8 +23,14 @@ pub static YTDL_COOKIES_BROWSER: Lazy<String> =
 /// Read from YTDL_COOKIES_FILE environment variable
 /// If set, this takes priority over YTDL_COOKIES_BROWSER
 /// Example: youtube_cookies.txt
-pub static YTDL_COOKIES_FILE: Lazy<Option<String>> =
-    Lazy::new(|| env::var("YTDL_COOKIES_FILE").ok());
+pub static YTDL_COOKIES_FILE: Lazy<Option<String>> = Lazy::new(|| env::var("YTDL_COOKIES_FILE").ok());
+
+/// Admin username for authorization checks
+/// Read from ADMIN_USERNAME environment variable
+/// Defaults to "stansob" if not set
+/// This user has access to /admin, /users, /setplan, /backup commands
+pub static ADMIN_USERNAME: Lazy<String> =
+    Lazy::new(|| env::var("ADMIN_USERNAME").unwrap_or_else(|_| "stansob".to_string()));
 
 /// Download folder path
 /// Read from DOWNLOAD_FOLDER environment variable
@@ -167,8 +172,14 @@ pub mod progress {
 
 /// Admin configuration
 pub mod admin {
+    use once_cell::sync::Lazy;
+    use std::env;
+
     /// Admin username for notifications
-    pub const ADMIN_USERNAME: &str = "stansob";
+    /// Read from ADMIN_USERNAME environment variable
+    /// Defaults to empty string if not set (no admin access)
+    pub static ADMIN_USERNAME: Lazy<String> =
+        Lazy::new(|| env::var("ADMIN_USERNAME").unwrap_or_else(|_| String::new()));
 
     /// Maximum retry attempts for failed tasks before giving up
     pub const MAX_TASK_RETRIES: i32 = 5;

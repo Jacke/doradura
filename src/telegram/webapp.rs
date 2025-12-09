@@ -307,10 +307,7 @@ pub fn create_webapp_router(
     };
 
     // CORS для Mini App
-    let cors = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods(Any)
-        .allow_headers(Any);
+    let cors = CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any);
 
     Router::new()
         // Статические файлы (HTML, CSS, JS) - root path
@@ -375,14 +372,12 @@ async fn handle_preview(
     log::info!("Preview request from user {}: {}", user_id, req.url);
 
     // Парсинг URL
-    let url = url::Url::parse(&req.url)
-        .map_err(|e| AppError::BadRequest(format!("Invalid URL: {}", e)))?;
+    let url = url::Url::parse(&req.url).map_err(|e| AppError::BadRequest(format!("Invalid URL: {}", e)))?;
 
     // Получение метаданных через существующую функцию
-    let metadata =
-        preview::get_preview_metadata(&url, req.format.as_deref(), req.video_quality.as_deref())
-            .await
-            .map_err(|e| AppError::Internal(format!("Failed to get metadata: {}", e)))?;
+    let metadata = preview::get_preview_metadata(&url, req.format.as_deref(), req.video_quality.as_deref())
+        .await
+        .map_err(|e| AppError::Internal(format!("Failed to get metadata: {}", e)))?;
 
     // Форматирование ответа
     let response = PreviewResponse {
@@ -428,26 +423,22 @@ async fn handle_download(
     );
 
     // Получение настроек пользователя для rate limiting
-    let conn = db::get_connection(&state.db_pool)
-        .map_err(|e| AppError::Internal(format!("DB error: {}", e)))?;
+    let conn = db::get_connection(&state.db_pool).map_err(|e| AppError::Internal(format!("DB error: {}", e)))?;
 
-    let user = match db::get_user(&conn, user_id)
-        .map_err(|e| AppError::Internal(format!("Failed to get user: {}", e)))?
-    {
-        Some(u) => u,
-        None => {
-            // Создать пользователя если не существует
-            db::create_user(&conn, user_id, None)
-                .map_err(|e| AppError::Internal(format!("Failed to create user: {}", e)))?;
+    let user =
+        match db::get_user(&conn, user_id).map_err(|e| AppError::Internal(format!("Failed to get user: {}", e)))? {
+            Some(u) => u,
+            None => {
+                // Создать пользователя если не существует
+                db::create_user(&conn, user_id, None)
+                    .map_err(|e| AppError::Internal(format!("Failed to create user: {}", e)))?;
 
-            // Retry
-            db::get_user(&conn, user_id)
-                .map_err(|e| {
-                    AppError::Internal(format!("Failed to get user after creation: {}", e))
-                })?
-                .ok_or_else(|| AppError::Internal("User not found after creation".to_string()))?
-        }
-    };
+                // Retry
+                db::get_user(&conn, user_id)
+                    .map_err(|e| AppError::Internal(format!("Failed to get user after creation: {}", e)))?
+                    .ok_or_else(|| AppError::Internal("User not found after creation".to_string()))?
+            }
+        };
 
     let plan = user.plan.as_str();
 
@@ -477,8 +468,7 @@ async fn handle_download(
         .await;
 
     // Парсинг URL для валидации
-    let _ = url::Url::parse(&req.url)
-        .map_err(|e| AppError::BadRequest(format!("Invalid URL: {}", e)))?;
+    let _ = url::Url::parse(&req.url).map_err(|e| AppError::BadRequest(format!("Invalid URL: {}", e)))?;
 
     // Создание задачи
     let is_video = req.format == "mp4" || req.format == "mp4+mp3";
@@ -522,8 +512,7 @@ async fn handle_task_status(
     let _user_id = extract_user_id(&headers, &state.bot_token).await?;
 
     // Получение задачи из БД
-    let conn = db::get_connection(&state.db_pool)
-        .map_err(|e| AppError::Internal(format!("DB error: {}", e)))?;
+    let conn = db::get_connection(&state.db_pool).map_err(|e| AppError::Internal(format!("DB error: {}", e)))?;
 
     let task = db::get_task_by_id(&conn, &task_id)
         .map_err(|e| AppError::Internal(format!("Failed to get task: {}", e)))?
@@ -550,15 +539,14 @@ async fn handle_get_settings(
         return Err(AppError::Unauthorized("Access denied".to_string()));
     }
 
-    let conn = db::get_connection(&state.db_pool)
-        .map_err(|e| AppError::Internal(format!("DB error: {}", e)))?;
+    let conn = db::get_connection(&state.db_pool).map_err(|e| AppError::Internal(format!("DB error: {}", e)))?;
 
     let user = db::get_user(&conn, user_id)
         .map_err(|e| AppError::Internal(format!("Failed to get user: {}", e)))?
         .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
     // Проверяем, является ли пользователь админом
-    let is_admin = user.username.as_deref() == Some(crate::core::config::admin::ADMIN_USERNAME);
+    let is_admin = user.username.as_deref() == Some(crate::core::config::admin::ADMIN_USERNAME.as_str());
 
     Ok(Json(UserSettings {
         download_format: user.download_format().to_string(),
@@ -584,8 +572,7 @@ async fn handle_update_settings(
         return Err(AppError::Unauthorized("Access denied".to_string()));
     }
 
-    let conn = db::get_connection(&state.db_pool)
-        .map_err(|e| AppError::Internal(format!("DB error: {}", e)))?;
+    let conn = db::get_connection(&state.db_pool).map_err(|e| AppError::Internal(format!("DB error: {}", e)))?;
 
     // Обновление настроек в БД
     if let Some(format) = req.download_format {
@@ -643,13 +630,9 @@ async fn handle_get_history(
         return Err(AppError::Unauthorized("Access denied".to_string()));
     }
 
-    let conn = db::get_connection(&state.db_pool)
-        .map_err(|e| AppError::Internal(format!("DB error: {}", e)))?;
+    let conn = db::get_connection(&state.db_pool).map_err(|e| AppError::Internal(format!("DB error: {}", e)))?;
 
-    let limit = params
-        .get("limit")
-        .and_then(|s| s.parse::<i64>().ok())
-        .unwrap_or(50);
+    let limit = params.get("limit").and_then(|s| s.parse::<i64>().ok()).unwrap_or(50);
 
     // Получение истории из task_queue
     let mut stmt = conn
@@ -700,8 +683,7 @@ async fn handle_get_queue(
         return Err(AppError::Unauthorized("Access denied".to_string()));
     }
 
-    let conn = db::get_connection(&state.db_pool)
-        .map_err(|e| AppError::Internal(format!("DB error: {}", e)))?;
+    let conn = db::get_connection(&state.db_pool).map_err(|e| AppError::Internal(format!("DB error: {}", e)))?;
 
     let mut stmt = conn
         .prepare(
@@ -766,11 +748,10 @@ async fn handle_get_stats(
         return Err(AppError::Unauthorized("Access denied".to_string()));
     }
 
-    let conn = db::get_connection(&state.db_pool)
-        .map_err(|e| AppError::Internal(format!("DB error: {}", e)))?;
+    let conn = db::get_connection(&state.db_pool).map_err(|e| AppError::Internal(format!("DB error: {}", e)))?;
 
-    let stats = db::get_user_stats(&conn, user_id)
-        .map_err(|e| AppError::Internal(format!("Failed to get stats: {}", e)))?;
+    let stats =
+        db::get_user_stats(&conn, user_id).map_err(|e| AppError::Internal(format!("Failed to get stats: {}", e)))?;
 
     Ok(Json(UserStatsResponse {
         total_downloads: stats.total_downloads,
@@ -788,22 +769,20 @@ async fn handle_get_admin_stats(
     // Аутентификация
     let user_id = extract_user_id(&headers, &state.bot_token).await?;
 
-    let conn = db::get_connection(&state.db_pool)
-        .map_err(|e| AppError::Internal(format!("DB error: {}", e)))?;
+    let conn = db::get_connection(&state.db_pool).map_err(|e| AppError::Internal(format!("DB error: {}", e)))?;
 
     // Проверяем, является ли пользователь админом
     let user = db::get_user(&conn, user_id)
         .map_err(|e| AppError::Internal(format!("Failed to get user: {}", e)))?
         .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
-    let is_admin = user.username.as_deref() == Some(crate::core::config::admin::ADMIN_USERNAME);
+    let is_admin = user.username.as_deref() == Some(crate::core::config::admin::ADMIN_USERNAME.as_str());
     if !is_admin {
         return Err(AppError::Unauthorized("Admin access required".to_string()));
     }
 
     // Получаем всех пользователей для подсчета
-    let all_users = db::get_all_users(&conn)
-        .map_err(|e| AppError::Internal(format!("Failed to get users: {}", e)))?;
+    let all_users = db::get_all_users(&conn).map_err(|e| AppError::Internal(format!("Failed to get users: {}", e)))?;
 
     // Подсчитываем распределение по планам
     let mut plan_free = 0i64;

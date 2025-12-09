@@ -36,10 +36,7 @@ async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<Value, AppE
     args.push(url.as_str());
 
     let command_str = format!("{} {}", ytdl_bin, args.join(" "));
-    log::info!(
-        "[DEBUG] yt-dlp command for preview metadata (JSON): {}",
-        command_str
-    );
+    log::info!("[DEBUG] yt-dlp command for preview metadata (JSON): {}", command_str);
 
     let json_output = timeout(
         config::download::ytdlp_timeout(),
@@ -71,8 +68,7 @@ async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<Value, AppE
     }
 
     let json_str = String::from_utf8_lossy(&json_output.stdout);
-    serde_json::from_str(&json_str)
-        .map_err(|e| AppError::Download(format!("Failed to parse JSON metadata: {}", e)))
+    serde_json::from_str(&json_str).map_err(|e| AppError::Download(format!("Failed to parse JSON metadata: {}", e)))
 }
 
 /// Извлекает значение из JSON по ключу
@@ -104,27 +100,25 @@ fn get_video_filesize_from_json(json: &Value, quality: &str) -> Option<u64> {
     };
 
     // Пробуем получить из formats массива
-    json.get("formats")
-        .and_then(|v| v.as_array())
-        .and_then(|formats| {
-            formats
-                .iter()
-                .filter_map(|format| {
-                    // Ищем формат с нужным разрешением
-                    let height = format.get("height").and_then(|v| v.as_u64()).unwrap_or(0);
+    json.get("formats").and_then(|v| v.as_array()).and_then(|formats| {
+        formats
+            .iter()
+            .filter_map(|format| {
+                // Ищем формат с нужным разрешением
+                let height = format.get("height").and_then(|v| v.as_u64()).unwrap_or(0);
 
-                    if height == target_height as u64 {
-                        // Пробуем получить filesize или filesize_approx
-                        format
-                            .get("filesize")
-                            .or_else(|| format.get("filesize_approx"))
-                            .and_then(|v| v.as_u64())
-                    } else {
-                        None
-                    }
-                })
-                .max() // Берем максимальный размер среди всех форматов с нужным разрешением
-        })
+                if height == target_height as u64 {
+                    // Пробуем получить filesize или filesize_approx
+                    format
+                        .get("filesize")
+                        .or_else(|| format.get("filesize_approx"))
+                        .and_then(|v| v.as_u64())
+                } else {
+                    None
+                }
+            })
+            .max() // Берем максимальный размер среди всех форматов с нужным разрешением
+    })
 }
 
 /// Получает расширенные метаданные для превью
@@ -150,12 +144,11 @@ pub async fn get_preview_metadata(
     }
 
     // Проверяем кэш для базовых метаданных (старый кэш, если нужно)
-    let (cached_title, cached_artist) =
-        if let Some((title, artist)) = cache::get_cached_metadata(url).await {
-            (Some(title), Some(artist))
-        } else {
-            (None, None)
-        };
+    let (cached_title, cached_artist) = if let Some((title, artist)) = cache::get_cached_metadata(url).await {
+        (Some(title), Some(artist))
+    } else {
+        (None, None)
+    };
 
     // Получаем все метаданные за один вызов через JSON (оптимизация скорости)
     let json_metadata = get_metadata_from_json(url, ytdl_bin).await?;
@@ -164,9 +157,8 @@ pub async fn get_preview_metadata(
     let title = if let Some(cached) = cached_title {
         cached
     } else {
-        get_json_value(&json_metadata, "title").ok_or_else(|| {
-            AppError::Download("Failed to get video title from metadata".to_string())
-        })?
+        get_json_value(&json_metadata, "title")
+            .ok_or_else(|| AppError::Download("Failed to get video title from metadata".to_string()))?
     };
 
     if title.trim().is_empty() {
@@ -243,38 +235,30 @@ pub async fn get_preview_metadata(
 
     // Для видео получаем список доступных форматов с размерами
     // Для видео форматов все еще используем --list-formats, так как JSON не всегда содержит точные размеры для всех форматов
-    let video_formats: Option<Vec<VideoFormatInfo>> =
-        if format == Some("mp4") || format == Some("mp4+mp3") {
-            match get_video_formats_list(url, ytdl_bin).await {
-                Ok(formats) => {
-                    if formats.is_empty() {
-                        log::warn!(
-                            "get_video_formats_list returned empty list for URL: {}",
-                            url
-                        );
-                        None
-                    } else {
-                        log::debug!(
-                            "Successfully got {} video formats for URL: {}",
-                            formats.len(),
-                            url
-                        );
-                        Some(formats)
-                    }
+    let video_formats: Option<Vec<VideoFormatInfo>> = if format == Some("mp4") || format == Some("mp4+mp3") {
+        match get_video_formats_list(url, ytdl_bin).await {
+            Ok(formats) => {
+                if formats.is_empty() {
+                    log::warn!("get_video_formats_list returned empty list for URL: {}", url);
+                    None
+                } else {
+                    log::debug!("Successfully got {} video formats for URL: {}", formats.len(), url);
+                    Some(formats)
                 }
-                Err(e) => {
-                    log::warn!(
+            }
+            Err(e) => {
+                log::warn!(
                     "Failed to get video formats list for URL {}: {}. Will use fallback button.",
                     url,
                     e
                 );
-                    // Не возвращаем ошибку, а просто логируем - создадим стандартную кнопку
-                    None
-                }
+                // Не возвращаем ошибку, а просто логируем - создадим стандартную кнопку
+                None
             }
-        } else {
-            None
-        };
+        }
+    } else {
+        None
+    };
 
     // Получаем примерный размер файла
     // Для видео получаем размер для конкретного качества через --list-formats (если нужно)
@@ -297,13 +281,12 @@ pub async fn get_preview_metadata(
     };
 
     // Если filesize не получен из JSON для видео с конкретным качеством, используем размер из video_formats
-    if filesize.is_none() && format == Some("mp4") && video_quality.is_some() {
-        filesize = video_formats.as_ref().and_then(|formats| {
-            formats
-                .iter()
-                .find(|f| f.quality == video_quality.unwrap())
-                .and_then(|f| f.size_bytes)
-        });
+    if filesize.is_none() && format == Some("mp4") {
+        if let Some(quality) = video_quality {
+            filesize = video_formats
+                .as_ref()
+                .and_then(|formats| formats.iter().find(|f| f.quality == quality).and_then(|f| f.size_bytes));
+        }
     }
 
     // Извлекаем description из JSON
@@ -342,9 +325,7 @@ pub async fn get_preview_metadata(
         .await;
 
         // Сохраняем в новый кэш превью
-        PREVIEW_CACHE
-            .set(url.as_str().to_string(), metadata.clone())
-            .await;
+        PREVIEW_CACHE.set(url.as_str().to_string(), metadata.clone()).await;
     } else {
         log::warn!("Not caching metadata with invalid title: '{}'", title);
     }
@@ -358,12 +339,8 @@ pub async fn get_preview_metadata(
 /// - 1080p, 720p, 480p, 360p
 /// - Размеры файлов
 /// - Разрешения
-async fn get_video_formats_list(
-    url: &Url,
-    ytdl_bin: &str,
-) -> Result<Vec<VideoFormatInfo>, AppError> {
-    let mut list_formats_args: Vec<String> =
-        vec!["--list-formats".to_string(), "--no-playlist".to_string()];
+async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<VideoFormatInfo>, AppError> {
+    let mut list_formats_args: Vec<String> = vec!["--list-formats".to_string(), "--no-playlist".to_string()];
 
     let mut temp_args: Vec<&str> = vec![];
     add_cookies_args(&mut temp_args);
@@ -376,9 +353,7 @@ async fn get_video_formats_list(
         // Используем тот же таймаут, что и для остальных вызовов yt-dlp,
         // чтобы не обрывать долгие запросы к YouTube раньше времени
         config::download::ytdlp_timeout(),
-        TokioCommand::new(ytdl_bin)
-            .args(&list_formats_args)
-            .output(),
+        TokioCommand::new(ytdl_bin).args(&list_formats_args).output(),
     )
     .await
     .map_err(|_| AppError::Download("yt-dlp command timed out getting formats list".to_string()))?
@@ -456,7 +431,7 @@ async fn get_video_formats_list(
                                     let size_bytes = (size_mb * 1024.0 * 1024.0) as u64;
 
                                     // Берем максимальный размер (лучший формат)
-                                    if max_size.is_none() || size_bytes > max_size.unwrap() {
+                                    if max_size.is_none_or(|current| size_bytes > current) {
                                         max_size = Some(size_bytes);
 
                                         // Извлекаем разрешение из строки
@@ -495,7 +470,7 @@ async fn get_video_formats_list(
                                 if size_gb > 0.0 && size_gb < 10000.0 {
                                     let size_bytes = (size_gb * 1024.0 * 1024.0 * 1024.0) as u64;
 
-                                    if max_size.is_none() || size_bytes > max_size.unwrap() {
+                                    if max_size.is_none_or(|current| size_bytes > current) {
                                         max_size = Some(size_bytes);
 
                                         for &res in &resolutions {
@@ -532,7 +507,7 @@ async fn get_video_formats_list(
                                 if size_kb > 0.0 && size_kb < 100000.0 {
                                     let size_bytes = (size_kb * 1024.0) as u64;
 
-                                    if max_size.is_none() || size_bytes > max_size.unwrap() {
+                                    if max_size.is_none_or(|current| size_bytes > current) {
                                         max_size = Some(size_bytes);
 
                                         for &res in &resolutions {
@@ -585,9 +560,7 @@ async fn get_video_formats_list(
                         if let Ok(size_mb) = size_str.trim().parse::<f64>() {
                             if size_mb > 0.0 && size_mb < 1000.0 {
                                 let size_bytes = (size_mb * 1024.0 * 1024.0) as u64;
-                                if best_audio_size.is_none()
-                                    || size_bytes > best_audio_size.unwrap()
-                                {
+                                if best_audio_size.is_none_or(|current| size_bytes > current) {
                                     best_audio_size = Some(size_bytes);
                                 }
                             }
@@ -695,49 +668,43 @@ pub async fn send_preview(
 
     if metadata.duration.is_some() {
         let duration_str = metadata.format_duration();
-        text.push_str(&format!(
-            "⏱️ Длительность: {}\n",
-            escape_markdown(&duration_str)
-        ));
+        text.push_str(&format!("⏱️ Длительность: {}\n", escape_markdown(&duration_str)));
     }
 
     // Для видео показываем список форматов с размерами
-    if (default_format == "mp4" || default_format == "mp4+mp3") && metadata.video_formats.is_some()
-    {
-        let formats = metadata.video_formats.as_ref().unwrap();
-        if !formats.is_empty() {
-            text.push_str("\n📹 *Доступные форматы:*\n");
-            for format_info in formats {
-                let size_str = if let Some(size) = format_info.size_bytes {
-                    if size > 1024 * 1024 {
-                        format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
-                    } else if size > 1024 {
-                        format!("{:.1} KB", size as f64 / 1024.0)
+    if default_format == "mp4" || default_format == "mp4+mp3" {
+        if let Some(formats) = &metadata.video_formats {
+            if !formats.is_empty() {
+                text.push_str("\n📹 *Доступные форматы:*\n");
+                for format_info in formats {
+                    let size_str = if let Some(size) = format_info.size_bytes {
+                        if size > 1024 * 1024 {
+                            format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
+                        } else if size > 1024 {
+                            format!("{:.1} KB", size as f64 / 1024.0)
+                        } else {
+                            format!("{} B", size)
+                        }
                     } else {
-                        format!("{} B", size)
-                    }
-                } else {
-                    "Неизвестно".to_string()
-                };
-                let resolution_str = format_info
-                    .resolution
-                    .as_ref()
-                    .map(|r| format!(" ({})", r))
-                    .unwrap_or_default();
-                text.push_str(&format!(
-                    "• {}: {}{}\n",
-                    escape_markdown(&format_info.quality),
-                    escape_markdown(&size_str),
-                    escape_markdown(&resolution_str)
-                ));
+                        "Неизвестно".to_string()
+                    };
+                    let resolution_str = format_info
+                        .resolution
+                        .as_ref()
+                        .map(|r| format!(" ({})", r))
+                        .unwrap_or_default();
+                    text.push_str(&format!(
+                        "• {}: {}{}\n",
+                        escape_markdown(&format_info.quality),
+                        escape_markdown(&size_str),
+                        escape_markdown(&resolution_str)
+                    ));
+                }
             }
         }
     } else if metadata.filesize.is_some() {
         let size_str = metadata.format_filesize();
-        text.push_str(&format!(
-            "📦 Примерный размер: {}\n",
-            escape_markdown(&size_str)
-        ));
+        text.push_str(&format!("📦 Примерный размер: {}\n", escape_markdown(&size_str)));
     }
 
     if let Some(desc) = &metadata.description {
@@ -761,9 +728,7 @@ pub async fn send_preview(
     // Получаем настройку send_as_document из БД для видео
     let send_as_document = if default_format == "mp4" {
         match crate::storage::db::get_connection(&db_pool) {
-            Ok(conn) => {
-                crate::storage::db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0)
-            }
+            Ok(conn) => crate::storage::db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0),
             Err(e) => {
                 log::warn!("Failed to get db connection for send_as_document: {}", e);
                 0
@@ -775,31 +740,27 @@ pub async fn send_preview(
 
     // Получаем message_id нового preview сообщения (будет установлен после отправки)
     // Пока используем временное значение 0, потом обновим после отправки
-    let keyboard = if (default_format == "mp4" || default_format == "mp4+mp3")
-        && metadata.video_formats.is_some()
-    {
-        let formats = metadata.video_formats.as_ref().unwrap();
-        if formats.is_empty() {
-            log::warn!(
-                "video_formats is Some but empty, using fallback button for {}",
-                default_format
-            );
-            // Если список форматов пустой, создаем стандартную кнопку
-            create_fallback_keyboard(default_format, default_quality, &url_id)
+    let keyboard = if default_format == "mp4" || default_format == "mp4+mp3" {
+        if let Some(formats) = &metadata.video_formats {
+            if formats.is_empty() {
+                log::warn!(
+                    "video_formats is Some but empty, using fallback button for {}",
+                    default_format
+                );
+                // Если список форматов пустой, создаем стандартную кнопку
+                create_fallback_keyboard(default_format, default_quality, &url_id)
+            } else {
+                log::debug!(
+                    "Creating video format keyboard with {} formats for {}",
+                    formats.len(),
+                    default_format
+                );
+                // Для видео создаем кнопки для выбора формата с toggle для Media/Document
+                create_video_format_keyboard(formats, default_quality, &url_id, send_as_document, default_format)
+            }
         } else {
-            log::debug!(
-                "Creating video format keyboard with {} formats for {}",
-                formats.len(),
-                default_format
-            );
-            // Для видео создаем кнопки для выбора формата с toggle для Media/Document
-            create_video_format_keyboard(
-                formats,
-                default_quality,
-                &url_id,
-                send_as_document,
-                default_format,
-            )
+            // Если video_formats is None для mp4 форматов
+            create_fallback_keyboard(default_format, default_quality, &url_id)
         }
     } else {
         // Для других форматов или если video_formats is None - стандартные кнопки
@@ -834,10 +795,7 @@ pub async fn send_preview(
                         }
                     }
                 } else {
-                    log::warn!(
-                        "Thumbnail request failed with status: {}",
-                        response.status()
-                    );
+                    log::warn!("Thumbnail request failed with status: {}", response.status());
                 }
             }
             Err(e) => {
@@ -872,49 +830,43 @@ pub async fn update_preview_message(
 
     if metadata.duration.is_some() {
         let duration_str = metadata.format_duration();
-        text.push_str(&format!(
-            "⏱️ Длительность: {}\n",
-            escape_markdown(&duration_str)
-        ));
+        text.push_str(&format!("⏱️ Длительность: {}\n", escape_markdown(&duration_str)));
     }
 
     // Для видео показываем список форматов с размерами
-    if (default_format == "mp4" || default_format == "mp4+mp3") && metadata.video_formats.is_some()
-    {
-        let formats = metadata.video_formats.as_ref().unwrap();
-        if !formats.is_empty() {
-            text.push_str("\n📹 *Доступные форматы:*\n");
-            for format_info in formats {
-                let size_str = if let Some(size) = format_info.size_bytes {
-                    if size > 1024 * 1024 {
-                        format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
-                    } else if size > 1024 {
-                        format!("{:.1} KB", size as f64 / 1024.0)
+    if default_format == "mp4" || default_format == "mp4+mp3" {
+        if let Some(formats) = &metadata.video_formats {
+            if !formats.is_empty() {
+                text.push_str("\n📹 *Доступные форматы:*\n");
+                for format_info in formats {
+                    let size_str = if let Some(size) = format_info.size_bytes {
+                        if size > 1024 * 1024 {
+                            format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
+                        } else if size > 1024 {
+                            format!("{:.1} KB", size as f64 / 1024.0)
+                        } else {
+                            format!("{} B", size)
+                        }
                     } else {
-                        format!("{} B", size)
-                    }
-                } else {
-                    "Неизвестно".to_string()
-                };
-                let resolution_str = format_info
-                    .resolution
-                    .as_ref()
-                    .map(|r| format!(" ({})", r))
-                    .unwrap_or_default();
-                text.push_str(&format!(
-                    "• {}: {}{}\n",
-                    escape_markdown(&format_info.quality),
-                    escape_markdown(&size_str),
-                    escape_markdown(&resolution_str)
-                ));
+                        "Неизвестно".to_string()
+                    };
+                    let resolution_str = format_info
+                        .resolution
+                        .as_ref()
+                        .map(|r| format!(" ({})", r))
+                        .unwrap_or_default();
+                    text.push_str(&format!(
+                        "• {}: {}{}\n",
+                        escape_markdown(&format_info.quality),
+                        escape_markdown(&size_str),
+                        escape_markdown(&resolution_str)
+                    ));
+                }
             }
         }
     } else if metadata.filesize.is_some() {
         let size_str = metadata.format_filesize();
-        text.push_str(&format!(
-            "📦 Примерный размер: {}\n",
-            escape_markdown(&size_str)
-        ));
+        text.push_str(&format!("📦 Примерный размер: {}\n", escape_markdown(&size_str)));
     }
 
     if let Some(desc) = &metadata.description {
@@ -930,9 +882,7 @@ pub async fn update_preview_message(
     // Получаем настройку send_as_document из БД для видео
     let send_as_document = if default_format == "mp4" {
         match crate::storage::db::get_connection(&db_pool) {
-            Ok(conn) => {
-                crate::storage::db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0)
-            }
+            Ok(conn) => crate::storage::db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0),
             Err(e) => {
                 log::warn!("Failed to get db connection for send_as_document: {}", e);
                 0
@@ -942,20 +892,15 @@ pub async fn update_preview_message(
         0
     };
 
-    let keyboard = if (default_format == "mp4" || default_format == "mp4+mp3")
-        && metadata.video_formats.is_some()
-    {
-        let formats = metadata.video_formats.as_ref().unwrap();
-        if formats.is_empty() {
-            create_fallback_keyboard(default_format, default_quality, &url_id)
+    let keyboard = if default_format == "mp4" || default_format == "mp4+mp3" {
+        if let Some(formats) = &metadata.video_formats {
+            if formats.is_empty() {
+                create_fallback_keyboard(default_format, default_quality, &url_id)
+            } else {
+                create_video_format_keyboard(formats, default_quality, &url_id, send_as_document, default_format)
+            }
         } else {
-            create_video_format_keyboard(
-                formats,
-                default_quality,
-                &url_id,
-                send_as_document,
-                default_format,
-            )
+            create_fallback_keyboard(default_format, default_quality, &url_id)
         }
     } else {
         create_fallback_keyboard(default_format, default_quality, &url_id)
@@ -989,11 +934,7 @@ pub async fn update_preview_message(
 /// - `default_format` - формат файла (mp3, mp4, srt, txt)
 /// - `default_quality` - качество видео (только для mp4: "1080p", "720p", "480p", "360p", "best")
 /// - `url_id` - ID URL в кэше
-fn create_fallback_keyboard(
-    default_format: &str,
-    default_quality: Option<&str>,
-    url_id: &str,
-) -> InlineKeyboardMarkup {
+fn create_fallback_keyboard(default_format: &str, default_quality: Option<&str>, url_id: &str) -> InlineKeyboardMarkup {
     // Формируем текст кнопки с учетом формата и качества
     let (button_text, callback_data) = match default_format {
         "mp4" => {
@@ -1013,10 +954,7 @@ fn create_fallback_keyboard(
             (format!("📥 Скачать ({})", quality_display), callback)
         }
         "mp3" => ("📥 Скачать (MP3)".to_string(), format!("dl:mp3:{}", url_id)),
-        "mp4+mp3" => (
-            "📥 Скачать (MP4 + MP3)".to_string(),
-            format!("dl:mp4+mp3:{}", url_id),
-        ),
+        "mp4+mp3" => ("📥 Скачать (MP4 + MP3)".to_string(), format!("dl:mp4+mp3:{}", url_id)),
         "srt" => ("📥 Скачать (SRT)".to_string(), format!("dl:srt:{}", url_id)),
         "txt" => ("📥 Скачать (TXT)".to_string(), format!("dl:txt:{}", url_id)),
         _ => ("📥 Скачать (MP3)".to_string(), format!("dl:mp3:{}", url_id)),

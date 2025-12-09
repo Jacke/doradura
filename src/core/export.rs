@@ -62,24 +62,16 @@ fn export_to_json(entries: &[db::DownloadHistoryEntry]) -> Result<String, serde_
 }
 
 /// Показывает меню выбора формата экспорта
-pub async fn show_export_menu(
-    bot: &Bot,
-    chat_id: ChatId,
-    db_pool: Arc<DbPool>,
-) -> ResponseResult<Message> {
-    let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-    })?;
+pub async fn show_export_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
+    let conn = db::get_connection(&db_pool)
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
     let entries = match db::get_all_download_history(&conn, chat_id.0) {
         Ok(entries) => entries,
         Err(e) => {
             log::error!("Failed to get download history: {}", e);
             return bot
-                .send_message(
-                    chat_id,
-                    "У меня не получилось загрузить историю 😢 Попробуй позже\\.",
-                )
+                .send_message(chat_id, "У меня не получилось загрузить историю 😢 Попробуй позже\\.")
                 .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                 .await;
         }
@@ -112,26 +104,17 @@ pub async fn show_export_menu(
 }
 
 /// Обрабатывает запрос на экспорт в выбранном формате
-pub async fn handle_export(
-    bot: &Bot,
-    chat_id: ChatId,
-    format: &str,
-    db_pool: Arc<DbPool>,
-) -> ResponseResult<()> {
-    let conn = db::get_connection(&db_pool).map_err(|e| {
-        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-    })?;
+pub async fn handle_export(bot: &Bot, chat_id: ChatId, format: &str, db_pool: Arc<DbPool>) -> ResponseResult<()> {
+    let conn = db::get_connection(&db_pool)
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
     let entries = match db::get_all_download_history(&conn, chat_id.0) {
         Ok(entries) => entries,
         Err(e) => {
             log::error!("Failed to get download history: {}", e);
-            bot.send_message(
-                chat_id,
-                "У меня не получилось загрузить историю 😢 Попробуй позже\\.",
-            )
-            .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-            .await?;
+            bot.send_message(chat_id, "У меня не получилось загрузить историю 😢 Попробуй позже\\.")
+                .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                .await?;
             return Ok(());
         }
     };
@@ -184,10 +167,7 @@ pub async fn handle_export(
     }
 
     // Отправляем файл
-    match bot
-        .send_document(chat_id, InputFile::file(&temp_file))
-        .await
-    {
+    match bot.send_document(chat_id, InputFile::file(&temp_file)).await {
         Ok(_) => {
             // Удаляем временный файл
             let _ = std::fs::remove_file(&temp_file);

@@ -243,10 +243,7 @@ fn build_audio_filter(settings: &AudioEffectSettings) -> String {
         (false, true) => build_atempo_filter(settings.tempo_factor),
         (true, true) => {
             let pitch_ratio = calculate_pitch_ratio(settings.pitch_semitones);
-            format!(
-                "rubberband=pitch={}:tempo={}",
-                pitch_ratio, settings.tempo_factor
-            )
+            format!("rubberband=pitch={}:tempo={}", pitch_ratio, settings.tempo_factor)
         }
     };
 
@@ -343,20 +340,16 @@ pub async fn apply_audio_effects(
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AppError::AudioEffect(AudioEffectError::FFmpegError(
-                format!("FFmpeg failed: {}", stderr),
-            )));
+            return Err(AppError::AudioEffect(AudioEffectError::FFmpegError(format!(
+                "FFmpeg failed: {}",
+                stderr
+            ))));
         }
 
         Ok(())
     })
     .await
-    .map_err(|e| {
-        AppError::AudioEffect(AudioEffectError::FFmpegError(format!(
-            "Task join error: {}",
-            e
-        )))
-    })??;
+    .map_err(|e| AppError::AudioEffect(AudioEffectError::FFmpegError(format!("Task join error: {}", e))))??;
 
     // Verify output file exists
     if !std::path::Path::new(output_path).exists() {
@@ -402,10 +395,7 @@ pub fn get_original_file_path(session_id: &str, download_folder: &str) -> String
 
 /// Generate file path for modified audio
 pub fn get_modified_file_path(session_id: &str, version: u32, download_folder: &str) -> String {
-    format!(
-        "{}/modified-{}-v{}.mp3",
-        download_folder, session_id, version
-    )
+    format!("{}/modified-{}-v{}.mp3", download_folder, session_id, version)
 }
 
 /// Cleanup expired audio effect sessions
@@ -424,11 +414,7 @@ pub async fn cleanup_expired_sessions(db_pool: Arc<DbPool>) -> Result<usize, App
         // Delete original file
         if let Err(e) = tokio::fs::remove_file(&session.original_file_path).await {
             if e.kind() != std::io::ErrorKind::NotFound {
-                log::warn!(
-                    "Failed to delete original file {}: {}",
-                    session.original_file_path,
-                    e
-                );
+                log::warn!("Failed to delete original file {}: {}", session.original_file_path, e);
             }
         }
 
@@ -436,11 +422,7 @@ pub async fn cleanup_expired_sessions(db_pool: Arc<DbPool>) -> Result<usize, App
         if session.current_file_path != session.original_file_path {
             if let Err(e) = tokio::fs::remove_file(&session.current_file_path).await {
                 if e.kind() != std::io::ErrorKind::NotFound {
-                    log::warn!(
-                        "Failed to delete current file {}: {}",
-                        session.current_file_path,
-                        e
-                    );
+                    log::warn!("Failed to delete current file {}: {}", session.current_file_path, e);
                 }
             }
         }

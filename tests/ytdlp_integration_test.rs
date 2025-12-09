@@ -154,9 +154,7 @@ fn test_cookies_configuration() {
             println!("❌ ОШИБКА: Cookies не настроены!");
             println!("\nДля работы с YouTube необходимо настроить cookies:");
             println!("1. Экспортируйте cookies из браузера в файл");
-            println!(
-                "2. Установите переменную окружения: export YTDL_COOKIES_FILE=/path/to/cookies.txt"
-            );
+            println!("2. Установите переменную окружения: export YTDL_COOKIES_FILE=/path/to/cookies.txt");
             println!("3. Или используйте браузер: export YTDL_COOKIES_BROWSER=chrome");
             println!("\nСм. документацию: MACOS_COOKIES_FIX.md");
 
@@ -240,7 +238,7 @@ fn test_ytdlp_download_audio() {
     let mut cmd = Command::new("yt-dlp");
     cmd.args([
         "-o",
-        output_file.to_str().unwrap(),
+        output_file.to_str().expect("Invalid UTF-8 in output file path"),
         "--extract-audio",
         "--audio-format",
         "mp3",
@@ -264,12 +262,7 @@ fn test_ytdlp_download_audio() {
     // Используем android клиент который не требует PO Token
     let player_client = "youtube:player_client=android";
 
-    cmd.args([
-        "--extractor-args",
-        player_client,
-        "--no-check-certificate",
-        test_url,
-    ]);
+    cmd.args(["--extractor-args", player_client, "--no-check-certificate", test_url]);
 
     println!("Запуск команды: {:?}", cmd);
     let output = cmd
@@ -319,11 +312,7 @@ fn test_ytdlp_download_audio() {
     std::thread::sleep(Duration::from_secs(2));
 
     // Проверяем что файл создан и не пустой
-    assert!(
-        output_file.exists(),
-        "Файл не был создан: {:?}",
-        output_file
-    );
+    assert!(output_file.exists(), "Файл не был создан: {:?}", output_file);
 
     let metadata = fs::metadata(&output_file).expect("Не удалось получить метаданные файла");
     println!("✓ Файл создан: {:?}", output_file);
@@ -334,10 +323,7 @@ fn test_ytdlp_download_audio() {
     );
 
     assert!(metadata.len() > 0, "Файл пустой");
-    assert!(
-        metadata.len() > 10000,
-        "Файл слишком маленький (возможно поврежден)"
-    );
+    assert!(metadata.len() > 10000, "Файл слишком маленький (возможно поврежден)");
 
     // Очищаем
     cleanup_test_dir(&tmp_dir);
@@ -374,9 +360,7 @@ fn test_ytdlp_invalid_url() {
 
     // Проверяем что ошибка содержит релевантную информацию
     assert!(
-        stderr.contains("ERROR")
-            || stderr.contains("Video unavailable")
-            || stderr.contains("not available"),
+        stderr.contains("ERROR") || stderr.contains("Video unavailable") || stderr.contains("not available"),
         "Ошибка должна содержать информацию о недоступности видео"
     );
 }
@@ -405,7 +389,7 @@ fn test_ytdlp_different_qualities() {
         let mut cmd = Command::new("yt-dlp");
         cmd.args([
             "-o",
-            output_file.to_str().unwrap(),
+            output_file.to_str().expect("Invalid UTF-8 in output file path"),
             "--extract-audio",
             "--audio-format",
             "mp3",
@@ -435,7 +419,9 @@ fn test_ytdlp_different_qualities() {
             std::thread::sleep(Duration::from_secs(2));
 
             if output_file.exists() {
-                let size = fs::metadata(&output_file).unwrap().len();
+                let size = fs::metadata(&output_file)
+                    .expect("Failed to read file metadata in test")
+                    .len();
                 println!("✓ Качество {}: {} байт", name, size);
             } else {
                 println!("⚠️  Файл не создан для качества {}", name);

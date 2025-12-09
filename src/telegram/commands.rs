@@ -14,8 +14,7 @@ use url::Url;
 
 /// Cached regex for matching URLs
 /// Compiled once at startup and reused for all requests
-static URL_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"https?://[^\s]+").expect("Failed to compile URL regex"));
+static URL_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"https?://[^\s]+").expect("Failed to compile URL regex"));
 
 /// Handle rate limiting for a user message
 ///
@@ -44,7 +43,15 @@ pub async fn handle_rate_limit(
     if rate_limiter.is_rate_limited(msg.chat.id, plan).await {
         if let Some(remaining_time) = rate_limiter.get_remaining_time(msg.chat.id).await {
             let remaining_seconds = remaining_time.as_secs();
-            bot.send_message(msg.chat.id, format!("Я Дора, чай закончился и я не смогу скачать тебе трек сейчас. Попробуй попозже через {} {}.", remaining_seconds, pluralize_seconds(remaining_seconds))).await?;
+            bot.send_message(
+                msg.chat.id,
+                format!(
+                    "Я Дора, чай закончился и я не смогу скачать тебе трек сейчас. Попробуй попозже через {} {}.",
+                    remaining_seconds,
+                    pluralize_seconds(remaining_seconds)
+                ),
+            )
+            .await?;
         } else {
             bot.send_message(
                 msg.chat.id,
@@ -111,19 +118,13 @@ pub async fn handle_message(
                     }
                 },
                 Err(e) => {
-                    log::error!(
-                        "Failed to get database connection: {}, using default mp3",
-                        e
-                    );
+                    log::error!("Failed to get database connection: {}, using default mp3", e);
                     (String::from("mp3"), None)
                 }
             };
 
             // Check rate limit before processing URLs
-            let plan = user_info
-                .as_ref()
-                .map(|u| u.plan.as_str())
-                .unwrap_or("free");
+            let plan = user_info.as_ref().map(|u| u.plan.as_str()).unwrap_or("free");
             let plan_string = plan.to_string();
             if !handle_rate_limit(&bot, &msg, &rate_limiter, &plan_string).await? {
                 return Ok(user_info);
@@ -166,11 +167,7 @@ pub async fn handle_message(
                                 new_query.push_str(&value);
                             }
                         }
-                        url.set_query(if new_query.is_empty() {
-                            None
-                        } else {
-                            Some(&new_query)
-                        });
+                        url.set_query(if new_query.is_empty() { None } else { Some(&new_query) });
                     }
 
                     valid_urls.push(url);
@@ -182,8 +179,7 @@ pub async fn handle_message(
                 }
 
                 // Send confirmation message
-                let confirmation_msg =
-                    format!("✅ Добавлено {} треков в очередь!", valid_urls.len());
+                let confirmation_msg = format!("✅ Добавлено {} треков в очередь!", valid_urls.len());
                 let status_message = bot.send_message(msg.chat.id, &confirmation_msg).await?;
 
                 // Process each URL - get metadata and add to queue
@@ -207,22 +203,21 @@ pub async fn handle_message(
                                         let display_title = metadata.display_title();
 
                                         // Проверяем размер файла
-                                        let status_marker =
-                                            if let Some(filesize) = metadata.filesize {
-                                                let max_size = if format == "mp4" {
-                                                    config::validation::max_video_size_bytes()
-                                                } else {
-                                                    config::validation::max_audio_size_bytes()
-                                                };
+                                        let status_marker = if let Some(filesize) = metadata.filesize {
+                                            let max_size = if format == "mp4" {
+                                                config::validation::max_video_size_bytes()
+                                            } else {
+                                                config::validation::max_audio_size_bytes()
+                                            };
 
-                                                if filesize > max_size {
-                                                    "❌ Слишком большой"
-                                                } else {
-                                                    "⏳ В очереди"
-                                                }
+                                            if filesize > max_size {
+                                                "❌ Слишком большой"
                                             } else {
                                                 "⏳ В очереди"
-                                            };
+                                            }
+                                        } else {
+                                            "⏳ В очереди"
+                                        };
 
                                         status_text.push_str(&format!(
                                             "{}. {} [{}]\n",
@@ -256,13 +251,7 @@ pub async fn handle_message(
                             None
                         };
 
-                        match get_preview_metadata(
-                            url,
-                            Some(&format),
-                            video_quality_for_preview.as_deref(),
-                        )
-                        .await
-                        {
+                        match get_preview_metadata(url, Some(&format), video_quality_for_preview.as_deref()).await {
                             Ok(metadata) => {
                                 let display_title = metadata.display_title();
 
@@ -303,10 +292,7 @@ pub async fn handle_message(
                                 };
 
                                 if should_skip {
-                                    log::info!(
-                                        "Skipping file {} in group download - too large",
-                                        url.as_str()
-                                    );
+                                    log::info!("Skipping file {} in group download - too large", url.as_str());
                                     continue;
                                 }
 
@@ -346,16 +332,10 @@ pub async fn handle_message(
                                     audio_bitrate,
                                     &plan_for_task,
                                 );
-                                download_queue
-                                    .add_task(task, Some(Arc::clone(&db_pool)))
-                                    .await;
+                                download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
                             }
                             Err(e) => {
-                                log::error!(
-                                    "Failed to get preview metadata for URL {}: {:?}",
-                                    url,
-                                    e
-                                );
+                                log::error!("Failed to get preview metadata for URL {}: {:?}", url, e);
                                 status_text.push_str(&format!(
                                     "{}. {} [❌ Ошибка]\n",
                                     idx + 1,
@@ -420,17 +400,11 @@ pub async fn handle_message(
                             new_query.push_str(&value);
                         }
                     }
-                    url.set_query(if new_query.is_empty() {
-                        None
-                    } else {
-                        Some(&new_query)
-                    });
+                    url.set_query(if new_query.is_empty() { None } else { Some(&new_query) });
                 }
 
                 // Send "processing" message
-                let processing_msg = bot
-                    .send_message(msg.chat.id, "⏳ Получаю информацию...")
-                    .await?;
+                let processing_msg = bot.send_message(msg.chat.id, "⏳ Получаю информацию...").await?;
 
                 // Show preview instead of immediately downloading
                 // Получаем качество видео для превью
@@ -461,7 +435,11 @@ pub async fn handle_message(
                                     let size_mb = filesize as f64 / (1024.0 * 1024.0);
                                     //let max_mb = max_size as f64 / (1024.0 * 1024.0);
                                     let max_mb = max_size as f64 / (1024.0 * 2.0 * 1024.0);
-                                    log::warn!("Audio file too large at preview stage: {:.2} MB (max: {:.2} MB)", size_mb, max_mb);
+                                    log::warn!(
+                                        "Audio file too large at preview stage: {:.2} MB (max: {:.2} MB)",
+                                        size_mb,
+                                        max_mb
+                                    );
 
                                     let error_message = format!(
                                         "❌ Аудио файл слишком большой (примерно {:.1} MB). Максимальный размер: {:.1} MB.",
@@ -469,8 +447,7 @@ pub async fn handle_message(
                                     );
 
                                     // Delete processing message
-                                    let _ =
-                                        bot.delete_message(msg.chat.id, processing_msg.id).await;
+                                    let _ = bot.delete_message(msg.chat.id, processing_msg.id).await;
 
                                     bot.send_message(msg.chat.id, error_message).await?;
                                     return Ok(user_info);
@@ -575,11 +552,13 @@ pub async fn handle_info_command(bot: Bot, msg: Message) -> ResponseResult<()> {
 
         if parts.len() < 2 {
             log::warn!("⚠️  No URL provided, sending usage instructions");
-            match bot.send_message(
-                msg.chat.id,
-                "Использование: /info <URL>\n\nПример:\n/info https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-            )
-            .await {
+            match bot
+                .send_message(
+                    msg.chat.id,
+                    "Использование: /info <URL>\n\nПример:\n/info https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+                )
+                .await
+            {
                 Ok(_) => log::info!("✅ Usage message sent successfully"),
                 Err(e) => log::error!("❌ Failed to send usage message: {:?}", e),
             }
@@ -613,10 +592,7 @@ pub async fn handle_info_command(bot: Bot, msg: Message) -> ResponseResult<()> {
 
         // Send "processing" message
         log::info!("📤 Sending 'processing' message...");
-        let processing_msg = match bot
-            .send_message(msg.chat.id, "⏳ Получаю информацию...")
-            .await
-        {
+        let processing_msg = match bot.send_message(msg.chat.id, "⏳ Получаю информацию...").await {
             Ok(msg) => {
                 log::info!("✅ Processing message sent, ID: {}", msg.id);
                 msg
@@ -660,10 +636,7 @@ pub async fn handle_info_command(bot: Bot, msg: Message) -> ResponseResult<()> {
                 let mut response = String::new();
 
                 // Title and artist
-                response.push_str(&format!(
-                    "🎵 *{}*\n\n",
-                    escape_markdown(&metadata.display_title())
-                ));
+                response.push_str(&format!("🎵 *{}*\n\n", escape_markdown(&metadata.display_title())));
 
                 // Duration
                 if let Some(duration) = metadata.duration {
@@ -715,8 +688,7 @@ pub async fn handle_info_command(bot: Bot, msg: Message) -> ResponseResult<()> {
                                 }
                                 response.push('\n');
                             } else {
-                                response
-                                    .push_str(&format!("  • {} \\- размер неизвестен", quality));
+                                response.push_str(&format!("  • {} \\- размер неизвестен", quality));
 
                                 if let Some(ref resolution) = format.resolution {
                                     let res = escape_markdown(resolution);
@@ -812,8 +784,8 @@ fn escape_markdown(text: &str) -> String {
 
     for c in text.chars() {
         match c {
-            '_' | '*' | '[' | ']' | '(' | ')' | '~' | '`' | '>' | '#' | '+' | '-' | '=' | '|'
-            | '{' | '}' | '.' | '!' => {
+            '_' | '*' | '[' | ']' | '(' | ')' | '~' | '`' | '>' | '#' | '+' | '-' | '=' | '|' | '{' | '}' | '.'
+            | '!' => {
                 result.push('\\');
                 result.push(c);
             }
