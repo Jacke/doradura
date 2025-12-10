@@ -17,7 +17,7 @@ pub use admin::{
     escape_markdown, handle_admin_command, handle_backup_command, handle_setplan_command, handle_users_command,
     is_admin,
 };
-pub use bot::{create_bot, is_message_addressed_to_bot, setup_bot_commands, Command};
+pub use bot::{create_bot, is_message_addressed_to_bot, setup_all_language_commands, setup_chat_bot_commands, Command};
 pub use commands::{handle_info_command, handle_message};
 pub use menu::{handle_menu_callback, show_enhanced_main_menu, show_main_menu};
 pub use voice::{send_random_voice_message, send_voice_with_waveform, VOICE_FILES};

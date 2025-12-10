@@ -25,13 +25,6 @@ pub static YTDL_COOKIES_BROWSER: Lazy<String> =
 /// Example: youtube_cookies.txt
 pub static YTDL_COOKIES_FILE: Lazy<Option<String>> = Lazy::new(|| env::var("YTDL_COOKIES_FILE").ok());
 
-/// Admin username for authorization checks
-/// Read from ADMIN_USERNAME environment variable
-/// Defaults to "stansob" if not set
-/// This user has access to /admin, /users, /setplan, /backup commands
-pub static ADMIN_USERNAME: Lazy<String> =
-    Lazy::new(|| env::var("ADMIN_USERNAME").unwrap_or_else(|_| "stansob".to_string()));
-
 /// Download folder path
 /// Read from DOWNLOAD_FOLDER environment variable
 /// Defaults to ~/downloads/dora-files on macOS, ~/downloads on other platforms

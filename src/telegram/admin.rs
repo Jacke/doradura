@@ -10,7 +10,7 @@ use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, ParseMode};
 
-use crate::core::config::ADMIN_USERNAME;
+use crate::core::config::admin::ADMIN_USERNAME;
 use crate::storage::backup::{create_backup, list_backups};
 use crate::storage::db::{get_all_users, get_connection, update_user_plan, DbPool};
 
@@ -419,7 +419,7 @@ mod tests {
     #[test]
     fn test_is_admin() {
         // Test with default admin username (from config)
-        let admin_username = crate::core::config::ADMIN_USERNAME.as_str();
+        let admin_username = crate::core::config::admin::ADMIN_USERNAME.as_str();
         assert!(is_admin(Some(admin_username)));
         assert!(!is_admin(Some("other_user")));
         assert!(!is_admin(None));

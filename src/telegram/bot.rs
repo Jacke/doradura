@@ -7,10 +7,12 @@
 
 use reqwest::ClientBuilder;
 use teloxide::prelude::*;
-use teloxide::types::{ChatKind, Message, MessageEntityKind, UserId};
+use teloxide::types::{BotCommand, ChatId, ChatKind, Message, MessageEntityKind, UserId};
 use teloxide::utils::command::BotCommands;
+use unic_langid::LanguageIdentifier;
 
 use crate::core::config;
+use crate::i18n;
 
 /// Bot commands enum with descriptions
 #[derive(BotCommands, Clone, Debug)]
@@ -19,27 +21,105 @@ pub enum Command {
     #[command(description = "показывает главное меню")]
     Start,
     #[command(description = "настройки режима загрузки")]
-    Mode,
+    Settings,
     #[command(description = "показать информацию о доступных форматах")]
     Info,
     #[command(description = "история загрузок")]
     History,
     #[command(description = "личная статистика")]
     Stats,
-    #[command(description = "глобальная статистика")]
-    Global,
     #[command(description = "экспорт истории")]
     Export,
-    #[command(description = "создать бэкап БД (только для администраторов)")]
-    Backup,
     #[command(description = "информация о подписке и тарифах")]
     Plan,
+    #[command(description = "создать бэкап БД (только для администраторов)")]
+    Backup,
     #[command(description = "список всех пользователей (только для администратора)")]
     Users,
     #[command(description = "изменить план пользователя (только для администратора)")]
     Setplan,
     #[command(description = "панель управления пользователями (только для администратора)")]
     Admin,
+}
+
+const BOT_COMMAND_DEFINITIONS: &[(&str, &str)] = &[
+    ("start", "bot_commands.start"),
+    ("settings", "bot_commands.settings"),
+    ("info", "bot_commands.info"),
+    ("history", "bot_commands.history"),
+    ("stats", "bot_commands.stats"),
+    ("global", "bot_commands.global"),
+    ("export", "bot_commands.export"),
+    ("backup", "bot_commands.backup"),
+    ("plan", "bot_commands.plan"),
+    ("users", "bot_commands.users"),
+    ("setplan", "bot_commands.setplan"),
+];
+
+fn build_bot_commands(lang: &LanguageIdentifier) -> Vec<BotCommand> {
+    let commands: Vec<BotCommand> = BOT_COMMAND_DEFINITIONS
+        .iter()
+        .map(|(command, key)| {
+            let description = i18n::t(lang, key);
+            BotCommand::new(*command, description)
+        })
+        .collect();
+    log::info!("Built {} commands for language '{}'", commands.len(), lang);
+    commands
+}
+
+/// Sets commands for all supported languages globally.
+///
+/// This makes the Telegram client automatically show command descriptions in the user's
+/// Telegram interface language, without needing to set commands per-chat.
+pub async fn setup_all_language_commands(bot: &Bot) -> Result<(), teloxide::RequestError> {
+    for (lang_code, lang_name) in i18n::SUPPORTED_LANGS.iter() {
+        let lang = i18n::lang_from_code(lang_code);
+        let commands = build_bot_commands(&lang);
+
+        let result = bot.set_my_commands(commands).language_code(*lang_code).await;
+
+        match result {
+            Ok(_) => log::info!("✓ Set commands for language: {} ({})", lang_name, lang_code),
+            Err(e) => log::error!(
+                "✗ Failed to set commands for language {} ({}): {}",
+                lang_name,
+                lang_code,
+                e
+            ),
+        }
+    }
+
+    // Also set default commands (without language_code) for unsupported languages
+    let default_lang = i18n::lang_from_code("en");
+    let default_commands = build_bot_commands(&default_lang);
+
+    match bot.set_my_commands(default_commands).await {
+        Ok(_) => log::info!("✓ Set default commands (fallback)"),
+        Err(e) => {
+            log::error!("✗ Failed to set default commands: {}", e);
+            return Err(e);
+        }
+    }
+
+    log::info!("✓ Successfully set up commands for all languages");
+    Ok(())
+}
+
+/// Sets commands for a specific chat and language (legacy, kept for compatibility).
+///
+/// Note: This is now a no-op since we set commands globally for all languages.
+pub async fn setup_chat_bot_commands(
+    _bot: &Bot,
+    chat_id: ChatId,
+    lang: &LanguageIdentifier,
+) -> Result<(), teloxide::RequestError> {
+    log::debug!(
+        "setup_chat_bot_commands called for chat {}, lang {} (no-op, using global commands)",
+        chat_id.0,
+        lang
+    );
+    Ok(())
 }
 
 /// Creates a Bot instance with custom or default API URL
@@ -58,35 +138,6 @@ pub fn create_bot() -> anyhow::Result<Bot> {
     };
 
     Ok(bot)
-}
-
-/// Sets up bot commands in Telegram UI
-///
-/// # Arguments
-/// * `bot` - Bot instance to configure
-///
-/// # Returns
-/// * `Ok(())` - Commands set successfully
-/// * `Err(RequestError)` - Failed to set commands
-pub async fn setup_bot_commands(bot: &Bot) -> Result<(), teloxide::RequestError> {
-    use teloxide::types::BotCommand;
-
-    bot.set_my_commands(vec![
-        BotCommand::new("start", "показывает главное меню"),
-        BotCommand::new("mode", "настройки режима загрузки"),
-        BotCommand::new("info", "показать информацию о доступных форматах"),
-        BotCommand::new("history", "история загрузок"),
-        BotCommand::new("stats", "личная статистика"),
-        BotCommand::new("global", "глобальная статистика"),
-        BotCommand::new("export", "экспорт истории"),
-        BotCommand::new("backup", "создать бэкап БД (только для администраторов)"),
-        BotCommand::new("plan", "информация о подписке и тарифах"),
-        BotCommand::new("users", "список всех пользователей (только для администратора)"),
-        BotCommand::new("setplan", "изменить план пользователя (только для администратора)"),
-    ])
-    .await?;
-
-    Ok(())
 }
 
 /// Checks if a message is addressed to the bot
