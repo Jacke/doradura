@@ -1,79 +1,64 @@
-# Тестирование команды /info
+# Testing the /info Command
 
-## Запуск бота
-
-1. Остановите все запущенные экземпляры бота:
+## Run the bot
+1. Stop any running bot instances:
 ```bash
 pkill -f doradura
 ```
+2. Start the bot (pick one):
+   - **Option A: .env**
+     ```bash
+     source .env
+     ./target/debug/doradura
+     ```
+   - **Option B: `run_with_cookies.sh`**
+     ```bash
+     ./run_with_cookies.sh
+     ```
+   - **Option C: Background**
+     ```bash
+     source .env
+     nohup ./target/debug/doradura > bot.log 2>&1 &
+     ```
 
-2. Запустите бота (выберите один из вариантов):
-
-**Вариант A: С переменными окружения из .env**
-```bash
-source .env
-./target/debug/doradura
-```
-
-**Вариант B: Используя run_with_cookies.sh**
-```bash
-./run_with_cookies.sh
-```
-
-**Вариант C: В фоновом режиме**
-```bash
-source .env
-nohup ./target/debug/doradura > bot.log 2>&1 &
-```
-
-## Тестирование команды
-
-Отправьте боту команду с YouTube URL:
+## Test the command
+Send the bot:
 ```
 /info https://www.youtube.com/watch?v=dQw4w9WgXcQ
 ```
-
-Или без URL (должна показать инструкцию):
+Or without URL (should show usage):
 ```
 /info
 ```
 
-## Просмотр логов
-
-Логи будут в файле `app.log`. Смотрите их в реальном времени:
+## View logs
+Logs are in `app.log`.
 ```bash
 tail -f app.log
 ```
-
-Или после теста:
+Or after the run:
 ```bash
 tail -100 app.log | grep -A 30 "info command"
 ```
 
-## Что искать в логах
+## What to look for
+Expected log sequence:
+1. `🎯 Received command: Info from chat XXX`
+2. `⚡ Command::Info matched, calling handle_info_command`
+3. `📋 /info command called`
+4. `✅ Message text found: '/info ...'`
+5. `📊 Parts count: 2 - Parts: ["/info", "URL"]`
+6. `🔗 Extracted URL: ...`
+7. `📤 Sending 'processing' message...`
+8. `🔍 Fetching metadata from yt-dlp...`
+9. `✅ Metadata fetched successfully`
+10. `📤 Sending formatted response...`
+11. `✅ Response sent successfully!`
 
-Вы должны увидеть последовательность логов:
-1. `🎯 Received command: Info from chat XXX` - команда получена
-2. `⚡ Command::Info matched, calling handle_info_command` - обработчик вызван
-3. `📋 /info command called` - функция начала работу
-4. `✅ Message text found: '/info ...'` - текст сообщения найден
-5. `📊 Parts count: 2 - Parts: ["/info", "URL"]` - URL извлечен
-6. `🔗 Extracted URL: ...` - URL распарсен
-7. `📤 Sending 'processing' message...` - отправка "обрабатываю"
-8. `🔍 Fetching metadata from yt-dlp...` - запрос метаданных
-9. `✅ Metadata fetched successfully` - метаданные получены
-10. `📤 Sending formatted response...` - отправка результата
-11. `✅ Response sent successfully!` - всё готово!
+## If it fails
+Check logs for `❌` errors or `⚠️` warnings and where the sequence stops.
 
-## Если команда не работает
-
-Проверьте логи на наличие:
-- `❌` - ошибки
-- `⚠️` - предупреждения
-- Где именно останавливается последовательность логов
-
-## Остановка бота
-
+## Stop the bot
 ```bash
 pkill -f doradura
 ```

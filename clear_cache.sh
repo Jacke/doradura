@@ -1,34 +1,26 @@
 #!/bin/bash
+# Script to clear metadata cache
+# Use if videos are downloading with wrong titles
 
-# Скрипт для очистки кэша метаданных
-# Используйте его если видео скачиваются с неправильными названиями
+echo "🧹 Clearing metadata cache..."
 
-echo "🧹 Очистка кэша метаданных..."
-echo ""
-
-# Проверяем, запущен ли бот
-if pgrep -f "doradura" > /dev/null; then
-    echo "⚠️  Бот запущен!"
-    echo "Для полной очистки кэша рекомендуется остановить бота."
-    echo ""
-    read -p "Остановить бота? (y/N): " -n 1 -r
+# Check if bot is running
+if pgrep -f doradura >/dev/null; then
+    echo "⚠️  Bot is running!"
+    echo "For a full cache clear, stop the bot first."
+    read -p "Stop the bot? (y/N): " -n 1 -r
     echo
     if [[ $REPLY =~ ^[Yy]$ ]]; then
-        echo "Останавливаем бота..."
-        pkill -f "doradura"
-        sleep 2
-        echo "✅ Бот остановлен"
+        echo "Stopping bot..."
+        pkill -f doradura
+        echo "✅ Bot stopped"
     else
-        echo "⚠️  Кэш может быть не полностью очищен, пока бот работает"
+        echo "⚠️  Cache might not fully clear while bot runs"
     fi
 fi
 
-echo ""
-echo "Кэш метаданных хранится в памяти приложения."
-echo "Для полной очистки просто перезапустите бота:"
-echo ""
-echo "  1. Остановите бота (Ctrl+C или pkill -f doradura)"
-echo "  2. Запустите бота снова"
-echo ""
-echo "После перезапуска все видео будут получать свежие метаданные! ✨"
-
+echo "Cache is stored in application memory."
+echo "For a full clear, simply restart the bot:"
+echo "  1. Stop the bot (Ctrl+C or pkill -f doradura)"
+echo "  2. Start the bot again"
+echo "After restart, all videos will get fresh metadata! ✨"

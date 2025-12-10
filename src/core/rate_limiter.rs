@@ -4,19 +4,18 @@ use teloxide::types::ChatId;
 use tokio::sync::Mutex;
 use tokio::time::{Duration, Instant};
 
-/// Rate limiter для ограничения частоты запросов пользователей.
+/// Rate limiter that throttles how often users can send requests.
 ///
-/// Ограничивает количество запросов от каждого пользователя в течение определенного периода времени.
-/// Использует разные лимиты для разных планов подписки.
+/// Applies different limits per subscription plan.
 #[derive(Clone)]
 pub struct RateLimiter {
-    /// Хранилище временных меток последнего запроса для каждого пользователя
+    /// Timestamps of the last request for each user
     limits: Arc<Mutex<HashMap<ChatId, Instant>>>,
-    /// Базовое время между запросами для free плана
+    /// Base delay between requests for the free plan
     free_duration: Duration,
-    /// Время между запросами для premium плана
+    /// Delay between requests for the premium plan
     premium_duration: Duration,
-    /// Время между запросами для vip плана
+    /// Delay between requests for the VIP plan
     vip_duration: Duration,
 }
 
@@ -27,24 +26,12 @@ impl Default for RateLimiter {
 }
 
 impl RateLimiter {
-    /// Создает новый rate limiter с разными лимитами для разных планов.
+    /// Creates a rate limiter with default limits per plan.
     ///
-    /// # Returns
-    ///
-    /// Новый экземпляр `RateLimiter` с настройками:
-    /// - Free: 30 секунд между запросами
-    /// - Premium: 10 секунд между запросами
-    /// - VIP: 5 секунд между запросами
-    ///
-    /// # Example
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use doradura::core::rate_limiter::RateLimiter;
-    ///
-    /// let limiter = RateLimiter::new();
-    /// ```
+    /// Returns a `RateLimiter` configured as:
+    /// - Free: 30 seconds between requests
+    /// - Premium: 10 seconds between requests
+    /// - VIP: 5 seconds between requests
     pub fn new() -> Self {
         Self {
             limits: Arc::new(Mutex::new(HashMap::new())),
@@ -54,13 +41,11 @@ impl RateLimiter {
         }
     }
 
-    /// Создает новый rate limiter с кастомными лимитами.
+    /// Creates a rate limiter with custom limits.
     ///
-    /// # Arguments
-    ///
-    /// * `free_duration` - Время между запросами для free плана
-    /// * `premium_duration` - Время между запросами для premium плана
-    /// * `vip_duration` - Время между запросами для vip плана
+    /// * `free_duration` - Delay between requests for the free plan
+    /// * `premium_duration` - Delay between requests for the premium plan
+    /// * `vip_duration` - Delay between requests for the VIP plan
     pub fn with_durations(free_duration: Duration, premium_duration: Duration, vip_duration: Duration) -> Self {
         Self {
             limits: Arc::new(Mutex::new(HashMap::new())),
@@ -70,39 +55,21 @@ impl RateLimiter {
         }
     }
 
-    /// Получает длительность ограничения для указанного плана.
+    /// Gets the throttle duration for the given plan.
     fn get_duration_for_plan(&self, plan: &str) -> Duration {
         match plan {
             "premium" => self.premium_duration,
             "vip" => self.vip_duration,
-            _ => self.free_duration, // По умолчанию free
+            _ => self.free_duration, // default to free
         }
     }
 
-    /// Проверяет, ограничен ли пользователь по частоте запросов.
+    /// Checks whether a user is currently rate-limited.
     ///
-    /// # Arguments
+    /// * `chat_id` - User chat ID
+    /// * `plan` - User plan ("free", "premium", "vip")
     ///
-    /// * `chat_id` - ID чата пользователя для проверки
-    /// * `plan` - План пользователя ("free", "premium", "vip")
-    ///
-    /// # Returns
-    ///
-    /// Возвращает `true` если пользователь все еще ограничен, `false` если может сделать запрос.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use teloxide::types::ChatId;
-    /// use doradura::core::rate_limiter::RateLimiter;
-    ///
-    /// # async fn example() {
-    /// let limiter = RateLimiter::new();
-    /// if limiter.is_rate_limited(ChatId(123456789), "free").await {
-    ///     println!("Пользователь ограничен");
-    /// }
-    /// # }
-    /// ```
+    /// Returns `true` if limited, otherwise `false`.
     pub async fn is_rate_limited(&self, chat_id: ChatId, _plan: &str) -> bool {
         let limits = self.limits.lock().await;
         if let Some(&instant) = limits.get(&chat_id) {
@@ -113,29 +80,11 @@ impl RateLimiter {
         false
     }
 
-    /// Получает оставшееся время до снятия ограничения для пользователя.
+    /// Returns remaining time until the user is unlocked.
     ///
-    /// # Arguments
+    /// * `chat_id` - User chat ID
     ///
-    /// * `chat_id` - ID чата пользователя
-    ///
-    /// # Returns
-    ///
-    /// Возвращает `Some(Duration)` если пользователь ограничен, иначе `None`.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use teloxide::types::ChatId;
-    /// use doradura::core::rate_limiter::RateLimiter;
-    ///
-    /// # async fn example() {
-    /// let limiter = RateLimiter::new();
-    /// if let Some(remaining) = limiter.get_remaining_time(ChatId(123456789)).await {
-    ///     println!("Осталось ждать: {:?}", remaining);
-    /// }
-    /// # }
-    /// ```
+    /// Returns `Some(Duration)` if limited, otherwise `None`.
     pub async fn get_remaining_time(&self, chat_id: ChatId) -> Option<Duration> {
         let limits = self.limits.lock().await;
         if let Some(&instant) = limits.get(&chat_id) {
@@ -147,54 +96,23 @@ impl RateLimiter {
         None
     }
 
-    /// Обновляет временную метку последнего запроса пользователя.
+    /// Updates the last-request timestamp for a user.
     ///
-    /// Вызывается после успешного запроса для установки нового периода ограничения.
+    /// Call after a successful request to set the new cooldown.
     ///
-    /// # Arguments
-    ///
-    /// * `chat_id` - ID чата пользователя
-    /// * `plan` - План пользователя ("free", "premium", "vip")
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use teloxide::types::ChatId;
-    /// use doradura::core::rate_limiter::RateLimiter;
-    ///
-    /// # async fn example() {
-    /// let limiter = RateLimiter::new();
-    /// // После успешной обработки запроса
-    /// limiter.update_rate_limit(ChatId(123456789), "free").await;
-    /// # }
-    /// ```
+    /// * `chat_id` - User chat ID
+    /// * `plan` - User plan ("free", "premium", "vip")
     pub async fn update_rate_limit(&self, chat_id: ChatId, plan: &str) {
         let mut limits = self.limits.lock().await;
         let duration = self.get_duration_for_plan(plan);
         limits.insert(chat_id, Instant::now() + duration);
     }
 
-    /// Удаляет ограничение для указанного пользователя.
+    /// Removes the limit for the given user.
     ///
-    /// Полезно для административных действий или сброса ограничений.
+    /// Useful for admin actions or manual resets.
     ///
-    /// # Arguments
-    ///
-    /// * `chat_id` - ID чата пользователя
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use teloxide::types::ChatId;
-    /// use doradura::core::rate_limiter::RateLimiter;
-    /// use std::time::Duration;
-    ///
-    /// # async fn example() {
-    /// let limiter = RateLimiter::new();
-    /// // Снять ограничение для пользователя
-    /// limiter.remove_rate_limit(ChatId(123456789)).await;
-    /// # }
-    /// ```
+    /// * `chat_id` - User chat ID
     pub async fn remove_rate_limit(&self, chat_id: ChatId) {
         let mut limits = self.limits.lock().await;
         limits.remove(&chat_id);

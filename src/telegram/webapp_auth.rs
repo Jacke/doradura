@@ -5,19 +5,19 @@ use std::collections::HashMap;
 
 type HmacSha256 = Hmac<Sha256>;
 
-/// Валидация Telegram Web App init data
+/// Validates Telegram Web App init data.
 ///
-/// Telegram подписывает данные с помощью HMAC-SHA256.
-/// Ключ для HMAC создаётся из bot token: HMAC_SHA256("WebAppData", bot_token)
+/// Telegram signs the data using HMAC-SHA256.
+/// The HMAC key is derived from the bot token: HMAC_SHA256("WebAppData", bot_token)
 ///
-/// # Аргументы
-/// * `init_data` - Строка с параметрами от Telegram (query string format)
-/// * `bot_token` - Токен бота
+/// # Arguments
+/// * `init_data` - Parameter string from Telegram (query string format)
+/// * `bot_token` - Bot token
 ///
-/// # Возвращает
-/// `Ok(user_id)` если валидация успешна, иначе `Err`
+/// # Returns
+/// `Ok(user_id)` when validation succeeds, otherwise `Err`
 ///
-/// # Пример
+/// # Example
 /// ```no_run
 /// use doradura::telegram::webapp_auth::validate_telegram_webapp_data;
 ///
@@ -29,14 +29,14 @@ type HmacSha256 = Hmac<Sha256>;
 /// # }
 /// ```
 pub fn validate_telegram_webapp_data(init_data: &str, bot_token: &str) -> Result<i64> {
-    // Парсим query string в HashMap
+    // Parse the query string into a HashMap
     let params: HashMap<String, String> = init_data
         .split('&')
         .filter_map(|pair| {
             let mut parts = pair.splitn(2, '=');
             match (parts.next(), parts.next()) {
                 (Some(key), Some(value)) => {
-                    // URL decode значений
+                    // URL decode the values
                     let decoded_value = urlencoding::decode(value).ok()?;
                     Some((key.to_string(), decoded_value.to_string()))
                 }
@@ -45,10 +45,10 @@ pub fn validate_telegram_webapp_data(init_data: &str, bot_token: &str) -> Result
         })
         .collect();
 
-    // Извлекаем hash из параметров
+    // Extract the hash from parameters
     let received_hash = params.get("hash").ok_or_else(|| anyhow!("Missing hash parameter"))?;
 
-    // Создаём data_check_string (все параметры кроме hash, отсортированные по ключу)
+    // Build data_check_string (all parameters except hash, sorted by key)
     let mut check_pairs: Vec<String> = params
         .iter()
         .filter(|(key, _)| key.as_str() != "hash")
@@ -58,22 +58,22 @@ pub fn validate_telegram_webapp_data(init_data: &str, bot_token: &str) -> Result
     check_pairs.sort();
     let data_check_string = check_pairs.join("\n");
 
-    // Создаём secret key: HMAC_SHA256("WebAppData", bot_token)
+    // Build secret key: HMAC_SHA256("WebAppData", bot_token)
     let mut secret_key_mac = HmacSha256::new_from_slice(b"WebAppData").expect("HMAC can take key of any size");
     secret_key_mac.update(bot_token.as_bytes());
     let secret_key = secret_key_mac.finalize().into_bytes();
 
-    // Вычисляем hash: HMAC_SHA256(data_check_string, secret_key)
+    // Compute the hash: HMAC_SHA256(data_check_string, secret_key)
     let mut mac = HmacSha256::new_from_slice(&secret_key).expect("HMAC can take key of any size");
     mac.update(data_check_string.as_bytes());
     let calculated_hash = hex::encode(mac.finalize().into_bytes());
 
-    // Сравниваем хеши
+    // Compare hashes
     if calculated_hash != *received_hash {
         return Err(anyhow!("Invalid hash - data may be tampered"));
     }
 
-    // Проверяем auth_date (не старше 24 часов)
+    // Validate auth_date (must not be older than 24 hours)
     if let Some(auth_date_str) = params.get("auth_date") {
         if let Ok(auth_date) = auth_date_str.parse::<i64>() {
             let now = std::time::SystemTime::now()
@@ -83,13 +83,13 @@ pub fn validate_telegram_webapp_data(init_data: &str, bot_token: &str) -> Result
 
             let age_seconds = now - auth_date;
             if age_seconds > 86400 {
-                // 24 часа
+                // 24 hours
                 return Err(anyhow!("Init data is too old ({} seconds)", age_seconds));
             }
         }
     }
 
-    // Извлекаем user_id из параметра user
+    // Extract user_id from the user parameter
     let user_json = params.get("user").ok_or_else(|| anyhow!("Missing user parameter"))?;
 
     let user: serde_json::Value =
@@ -103,15 +103,15 @@ pub fn validate_telegram_webapp_data(init_data: &str, bot_token: &str) -> Result
     Ok(user_id)
 }
 
-/// Извлечение user_id из Telegram init data БЕЗ валидации
+/// Extracts user_id from Telegram init data WITHOUT validation.
 ///
-/// Используется когда валидация отключена (для разработки)
+/// Used when validation is disabled (for development).
 ///
-/// # Аргументы
-/// * `init_data` - Строка с параметрами от Telegram
+/// # Arguments
+/// * `init_data` - Parameter string from Telegram
 ///
-/// # Возвращает
-/// `Ok(user_id)` если параметр user найден, иначе `Err`
+/// # Returns
+/// `Ok(user_id)` if the user parameter exists, otherwise `Err`
 pub fn extract_user_id_unsafe(init_data: &str) -> Result<i64> {
     let params: HashMap<String, String> = init_data
         .split('&')

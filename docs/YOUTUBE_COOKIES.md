@@ -1,220 +1,74 @@
-# Настройка YouTube Cookies для обхода защиты "Sign in to confirm you're not a bot"
+# Configuring YouTube Cookies
 
-YouTube начал требовать аутентификацию для некоторых видео. Бот использует cookies из браузера для обхода этой защиты.
+YouTube sometimes requires authentication ("Sign in to confirm you're not a bot"). The bot uses browser cookies to bypass this. Below are two approaches: automatic browser extraction and a manual cookies file.
 
-## Автоматическое извлечение cookies (Рекомендуется)
+## Option A: Automatic extraction (recommended on Linux)
 
-### Шаг 1: Установка зависимостей Python
-
-yt-dlp требует дополнительные библиотеки для извлечения cookies:
-
+### 1) Install Python deps
 ```bash
-# Установка зависимостей
 pip3 install keyring pycryptodomex
-
-# Или через pip (если pip3 не найден)
-pip install keyring pycryptodomex
 ```
 
-### Шаг 2: Проверка работы
-
-Проверь, что yt-dlp может читать cookies:
-
+### 2) Verify extraction works
 ```bash
 yt-dlp --cookies-from-browser chrome --print "%(title)s" "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 ```
+If the title prints, extraction works.
 
-Если команда выводит название видео - все работает! ✅
-
-### Шаг 3: Настройка браузера (опционально)
-
-По умолчанию используется **Chrome**. Можно изменить через переменную окружения:
-
+### 3) Pick a browser (defaults to Chrome)
 ```bash
-# Использовать Firefox
-export YTDL_COOKIES_BROWSER=firefox
-
-# Использовать Safari (macOS)
-export YTDL_COOKIES_BROWSER=safari
-
-# Использовать Brave
-export YTDL_COOKIES_BROWSER=brave
-
-# Отключить cookies (не рекомендуется)
-export YTDL_COOKIES_BROWSER=""
+export YTDL_COOKIES_BROWSER=firefox   # or safari, brave, edge
 ```
 
-**Поддерживаемые браузеры:**
-- `chrome` - Google Chrome (по умолчанию)
-- `firefox` - Mozilla Firefox (работает лучше всего, т.к. cookies не зашифрованы)
-- `safari` - Safari (только macOS)
-- `brave` - Brave Browser
-- `chromium` - Chromium
-- `edge` - Microsoft Edge
-- `opera` - Opera
-- `vivaldi` - Vivaldi
-
-### Шаг 4: Авторизация на YouTube
-
-1. Открой браузер (например, Chrome)
-2. Зайди на https://youtube.com
-3. Войди в свой Google аккаунт
-4. Просто посмотри любое видео
-5. Готово! yt-dlp будет использовать эти cookies
-
----
-
-## Альтернатива: Экспорт cookies вручную
-
-Если автоматическое извлечение не работает:
-
-### Способ 1: Расширение для браузера
-
-1. **Установи расширение:**
-   - Chrome: [Get cookies.txt LOCALLY](https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc)
-   - Firefox: [cookies.txt](https://addons.mozilla.org/en-US/firefox/addon/cookies-txt/)
-
-2. **Экспортируй cookies:**
-   - Открой YouTube.com
-   - Нажми на иконку расширения
-   - Нажми "Export" → Сохрани как `youtube_cookies.txt`
-
-3. **Используй файл:**
-   ```bash
-   # Поместить файл в директорию проекта
-   mv youtube_cookies.txt ~/youtube_cookies.txt
-   ```
-
-4. **Обновить код** (временно):
-   
-   Замени `--cookies-from-browser chrome` на `--cookies youtube_cookies.txt` в файлах:
-   - `src/downloader.rs`
-   - `src/preview.rs`
-
-### Способ 2: Использовать Firefox
-
-Firefox хранит cookies в незашифрованном виде, поэтому работает лучше:
-
+### 4) Run the bot
 ```bash
-# Просто измени браузер на firefox
-export YTDL_COOKIES_BROWSER=firefox
+cargo run --release
 ```
 
----
+## Option B: Manual cookies file (recommended on macOS)
 
-## Решение проблем
-
-### Ошибка "Signature extraction failed" или "Some formats may be missing"
-
-**Причина:** Устаревшая версия yt-dlp
-
-**Решение:**
+1. Install the "Get cookies.txt LOCALLY" extension (Chrome/Firefox).
+2. Log in to YouTube.
+3. Export cookies and save as `youtube_cookies.txt` in the project root.
+4. Set the env var:
 ```bash
-# Обновить yt-dlp
-./update_ytdlp.sh
-
-# Или вручную
-yt-dlp -U
-# или
-pip3 install -U yt-dlp --break-system-packages
+export YTDL_COOKIES_FILE=./youtube_cookies.txt
+```
+5. (Optional) Harden permissions:
+```bash
+chmod 600 youtube_cookies.txt
 ```
 
-### Ошибка "The following content is not available on this app"
-
-**Причина:** YouTube блокирует определенные клиенты
-
-**Решение:** Уже реализовано в боте! Используется `--extractor-args "youtube:player_client=android,web"` для обхода блокировок через Android клиент.
-
-### Ошибка "Sign in to confirm you're not a bot"
-
-**Причина:** cookies не найдены или устарели
-
-**Решение:**
-1. Убедись, что зависимости установлены: `pip3 install keyring pycryptodomex`
-2. Открой браузер и зайди на YouTube
-3. Попробуй использовать Firefox: `export YTDL_COOKIES_BROWSER=firefox`
-
-### Ошибка "keyring.errors.NoKeyringError"
-
-**Причина:** система не поддерживает keyring (часто на серверах без GUI)
-
-**Решения:**
-1. **Использовать Firefox** (не требует keyring):
-   ```bash
-   export YTDL_COOKIES_BROWSER=firefox
-   ```
-
-2. **Экспортировать cookies вручную** (см. выше)
-
-3. **Установить dummy keyring** (для серверов):
-   ```bash
-   pip3 install keyrings.alt
-   ```
-
-### Ошибка "Cryptography module is not available"
-
-**Причина:** отсутствует библиотека для расшифровки
-
-**Решение:**
+## Checking the setup
 ```bash
-pip3 install pycryptodomex
-# или
-pip3 install pycryptodome
-```
-
-### Cookies устарели
-
-**Решение:**
-1. Открой браузер
-2. Выйди из YouTube
-3. Войди снова
-4. Перезапусти бота
-
----
-
-## Проверка настроек
-
-```bash
-# Проверить, какой браузер используется
-echo $YTDL_COOKIES_BROWSER
-
-# Проверить работу yt-dlp с cookies
+# Using browser extraction
 yt-dlp --cookies-from-browser ${YTDL_COOKIES_BROWSER:-chrome} --print "%(title)s" "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
-# Посмотреть логи бота для диагностики
-tail -f logs/bot.log | grep -i cookie
+# Using a cookies file
+yt-dlp --cookies youtube_cookies.txt --print "%(title)s" "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 ```
 
----
+## Common errors and fixes
 
-## Для продакшен серверов
+- **"Please sign in" / "only images available"** → Cookies missing or expired. Re-export and retry.
+- **macOS permission errors** → Use the cookies file method; browser extraction needs Full Disk Access/Keychain.
+- **"ios client requires a GVS PO Token"** → Update yt-dlp and ensure cookies are present.
+- **HTTP 403** → Bot detection; always use cookies and prefer the `android` or `web` client profiles.
 
-На серверах без браузеров используй файл cookies:
+## Security tips
+- Never commit `youtube_cookies.txt` (already in `.gitignore`).
+- Refresh cookies every 2–4 weeks.
+- Limit file permissions to the current user (`chmod 600`).
 
+## Environment variables
+- `YTDL_COOKIES_FILE` — path to exported cookies file.
+- `YTDL_COOKIES_BROWSER` — browser for automatic extraction (chrome/firefox/brave/edge/safari*).
+  - *Safari extraction on macOS is unreliable; use a file instead.
+
+## Quick verification script
 ```bash
-# 1. На локальной машине экспортируй cookies (см. выше)
-
-# 2. Скопируй на сервер
-scp youtube_cookies.txt user@server:/path/to/bot/
-
-# 3. Обнови конфигурацию бота для использования файла
+./test_ytdlp.sh diagnostics
 ```
+Shows whether cookies are configured and usable.
 
----
-
-## Безопасность
-
-⚠️ **Важно:** Файл cookies содержит токены аутентификации!
-
-- ✅ НЕ коммить `youtube_cookies.txt` в git
-- ✅ Добавить в `.gitignore`
-- ✅ Ограничить права доступа: `chmod 600 youtube_cookies.txt`
-- ✅ Регулярно обновлять cookies (раз в месяц)
-
----
-
-## Дополнительные ресурсы
-
-- [yt-dlp wiki: Cookies](https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp)
-- [yt-dlp wiki: Exporting YouTube cookies](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies)
-
+With cookies in place, YouTube downloads should work reliably. ✅

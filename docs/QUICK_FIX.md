@@ -1,153 +1,122 @@
-# 🚀 Быстрое решение проблемы со скачиванием
+# 🚀 Quick Download Fix
 
-## ❌ Проблема
-
+## ❌ Problem
 ```
 ERROR: [youtube] Please sign in. Use --cookies-from-browser or --cookies
 ```
+**Cause:** YouTube requires cookies for downloads.
 
-**Причина:** YouTube требует аутентификацию через cookies для скачивания видео.
+## ✅ Fix (5 minutes)
 
-## ✅ Решение (5 минут)
+### Step 1: Export cookies from the browser
 
-### Шаг 1: Экспорт cookies из браузера
-
-1. **Установите расширение** "Get cookies.txt LOCALLY" в Chrome/Firefox:
-   - Chrome: https://chrome.google.com/webstore (поиск "Get cookies.txt LOCALLY")
+1. **Install** the "Get cookies.txt LOCALLY" extension (Chrome/Firefox):
+   - Chrome: https://chrome.google.com/webstore (search for "Get cookies.txt LOCALLY")
    - Firefox: https://addons.mozilla.org
+2. **Sign in to YouTube** in the browser.
+3. **Export cookies:**
+   - Open youtube.com
+   - Click the extension icon
+   - Press "Export" → "Current domain (youtube.com)"
+   - Save as `youtube_cookies.txt` in the project root
 
-2. **Залогиньтесь на YouTube** в браузере
-
-3. **Экспортируйте cookies:**
-   - Откройте youtube.com
-   - Кликните на иконку расширения
-   - Нажмите "Export" → "Current domain (youtube.com)"
-   - Сохраните как `youtube_cookies.txt` в корень проекта
-
-### Шаг 2: Настройка переменной окружения
+### Step 2: Set the environment variable
 
 ```bash
-# Установите переменную окружения
+# Set the env var
 export YTDL_COOKIES_FILE=./youtube_cookies.txt
 
-# Или добавьте в ~/.zshrc для постоянного использования:
+# Or add it to ~/.zshrc to persist:
 echo 'export YTDL_COOKIES_FILE=/Users/stan/Dev/_PROJ/doradura/youtube_cookies.txt' >> ~/.zshrc
 source ~/.zshrc
 ```
 
-### Шаг 3: Проверка
+### Step 3: Verify
 
 ```bash
-# Запустите тест диагностики
+# Run diagnostics
 ./test_ytdlp.sh diagnostics
 
-# Должно показать:
-# ✅ Используется файл cookies: ./youtube_cookies.txt
-# ✅ Файл существует
+# Expect:
+# ✅ Using cookies file: ./youtube_cookies.txt
+# ✅ File exists
 ```
 
-### Шаг 4: Тест скачивания
+### Step 4: Download test
 
 ```bash
-# Запустите тест скачивания (требует интернет)
+# Requires internet
 ./test_ytdlp.sh download
 
-# Если успешно - видите:
-# ✅ Файл создан: "/tmp/doradura_ytdlp_tests/test_audio.mp3"
-# ✅ Размер файла: 245632 байт
+# On success:
+# ✅ File created: "/tmp/doradura_ytdlp_tests/test_audio.mp3"
+# ✅ File size: 245632 bytes
 ```
 
-### Шаг 5: Перезапустите бота
+### Step 5: Restart the bot
 
 ```bash
-# Перезапустите бота с новыми настройками
 cargo run --release
 ```
 
-## 📝 Альтернативный способ (Linux)
+## 📝 Alternative (Linux)
 
-Если на Linux, можно использовать прямое извлечение из браузера:
+If you're on Linux, you can extract cookies directly from the browser:
 
 ```bash
-# Установите зависимости
 pip3 install keyring pycryptodomex
-
-# Установите переменную
 export YTDL_COOKIES_BROWSER=chrome
-
-# Проверьте
 ./test_ytdlp.sh diagnostics
 ```
 
-⚠️ **На macOS это НЕ работает** из-за требования Full Disk Access!
+⚠️ **Does NOT work on macOS** because it requires Full Disk Access.
 
-## 🔍 Проверка текущего статуса
-
-В любой момент можете проверить статус системы:
+## 🔍 Check current status
 
 ```bash
 ./test_ytdlp.sh diagnostics
 ```
 
-Вывод покажет:
-- ✅ Что установлено
-- ✅ Какие версии
-- ✅/❌ Настроены ли cookies
-- ✅/❌ Готова ли система к работе
+The output shows:
+- ✅ What's installed
+- ✅ Versions
+- ✅/❌ Whether cookies are set up
+- ✅/❌ Whether the system is ready
 
-## 📚 Подробная документация
+## 📚 More docs
+- `TESTING.md` — full testing guide
+- `MACOS_COOKIES_FIX.md` — detailed macOS instructions
+- `YOUTUBE_COOKIES.md` — general cookie notes
 
-- `TESTING.md` - Полное руководство по тестированию
-- `MACOS_COOKIES_FIX.md` - Детальная инструкция для macOS
-- `YOUTUBE_COOKIES.md` - Общая информация о cookies
+## ⚡ Common issues
 
-## ⚡ Частые проблемы
-
-### "Файл cookies не найден"
-
+### "Cookies file not found"
 ```bash
-# Проверьте что файл существует
 ls -lh youtube_cookies.txt
-
-# Если нет - экспортируйте заново (Шаг 1)
+# If missing, re-export (Step 1)
 ```
 
-### "Cookies устарели"
+### "Cookies expired"
+Cookies last ~1 year. Re-export if errors appear.
 
-Cookies живут ~1 год. Если начнутся ошибки - экспортируйте заново.
-
-### "Тест скачивания не работает"
-
+### "Download test fails"
 ```bash
-# Проверьте что:
-1. export YTDL_COOKIES_FILE=./youtube_cookies.txt  # Установлена переменная
-2. ls -lh youtube_cookies.txt                      # Файл существует и не пустой
-3. ./test_ytdlp.sh diagnostics                     # Все ✅
+# Check:
+1. export YTDL_COOKIES_FILE=./youtube_cookies.txt
+2. ls -lh youtube_cookies.txt
+3. ./test_ytdlp.sh diagnostics
 
-# Если все ок, но тест падает - обновите yt-dlp:
+# If still failing, update yt-dlp:
 pip3 install -U yt-dlp
 ```
 
-## 🎯 Быстрый чеклист
+## 🎯 Quick checklist
 
-- [ ] Установлено расширение "Get cookies.txt LOCALLY"
-- [ ] Залогинились на YouTube
-- [ ] Экспортировали cookies → `youtube_cookies.txt`
-- [ ] Файл в корне проекта: `ls youtube_cookies.txt` ✅
-- [ ] Установили переменную: `export YTDL_COOKIES_FILE=./youtube_cookies.txt`
-- [ ] Диагностика успешна: `./test_ytdlp.sh diagnostics` ✅
-- [ ] Тест скачивания успешен: `./test_ytdlp.sh download` ✅
-- [ ] Перезапустили бота: `cargo run --release`
-
-## 💡 Совет
-
-Добавьте `youtube_cookies.txt` в `.gitignore` чтобы не закоммитить личные данные!
-
-```bash
-echo "youtube_cookies.txt" >> .gitignore
-```
-
----
-
-**После выполнения всех шагов бот должен успешно скачивать видео!** 🎉
-
+- [ ] Installed "Get cookies.txt LOCALLY"
+- [ ] Signed in to YouTube
+- [ ] Exported cookies → `youtube_cookies.txt`
+- [ ] File in project root: `ls youtube_cookies.txt` ✅
+- [ ] Set env var: `export YTDL_COOKIES_FILE=./youtube_cookies.txt`
+- [ ] Diagnostics succeed: `./test_ytdlp.sh diagnostics` ✅
+- [ ] Download test succeeds: `./test_ytdlp.sh download` ✅
+- [ ] Restarted bot: `cargo run --release`

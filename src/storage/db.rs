@@ -2,6 +2,8 @@ use r2d2::{Pool, PooledConnection};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{Connection, Result};
 
+use crate::storage::migrations;
+
 /// Структура, представляющая пользователя в базе данных.
 pub struct User {
     /// Telegram ID пользователя
@@ -26,6 +28,8 @@ pub struct User {
     pub subscription_expires_at: Option<String>,
     /// Telegram payment charge ID для управления подписками через Bot API
     pub telegram_charge_id: Option<String>,
+    /// Предпочитаемый язык пользователя (IETF tag, например, "ru", "en-US")
+    pub language: String,
 }
 
 impl User {
@@ -74,17 +78,22 @@ pub type DbConnection = PooledConnection<SqliteConnectionManager>;
 /// # }
 /// ```
 pub fn create_pool(database_path: &str) -> Result<DbPool, r2d2::Error> {
+    // Run migrations before pool creation to avoid holding a pooled connection open
+    match Connection::open(database_path) {
+        Ok(mut conn) => {
+            if let Err(e) = migrations::run_migrations(&mut conn) {
+                log::warn!("Failed to run database migrations: {}", e);
+            }
+        }
+        Err(e) => {
+            log::warn!("Failed to open database for migrations: {}", e);
+        }
+    }
+
     let manager = SqliteConnectionManager::file(database_path);
     let pool = Pool::builder()
         .max_size(10) // Maximum 10 connections in the pool
         .build(manager)?;
-
-    // Ensure schema is up to date on first connection
-    let conn = pool.get()?;
-    if let Err(e) = migrate_schema(&conn) {
-        log::warn!("Failed to migrate schema: {}", e);
-        // Don't fail on migration errors, as they might be expected
-    }
 
     Ok(pool)
 }
@@ -122,164 +131,11 @@ pub fn get_connection(pool: &DbPool) -> Result<DbConnection, r2d2::Error> {
 /// Use get_connection(&pool) instead
 #[deprecated(note = "Use get_connection(&pool) instead")]
 pub fn get_connection_legacy() -> Result<Connection> {
-    let conn = Connection::open("database.sqlite")?;
-    migrate_schema(&conn)?;
+    let mut conn = Connection::open("database.sqlite")?;
+    if let Err(e) = migrations::run_migrations(&mut conn) {
+        log::warn!("Failed to run migrations: {}", e);
+    }
     Ok(conn)
-}
-
-/// Migrate database schema to ensure all required columns exist
-/// This function safely adds missing columns to existing tables
-fn migrate_schema(conn: &rusqlite::Connection) -> Result<()> {
-    // First, check if users table exists
-    let table_exists: bool = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='users'",
-        [],
-        |row| Ok(row.get::<_, i32>(0)? > 0),
-    )?;
-
-    if !table_exists {
-        // Table doesn't exist yet, migration.sql will create it with all columns
-        return Ok(());
-    }
-
-    // Table exists, check if columns exist
-    let mut stmt = conn.prepare("PRAGMA table_info(users)")?;
-    let rows = stmt.query_map([], |row| {
-        row.get::<_, String>(1) // column name
-    })?;
-
-    let mut columns = Vec::new();
-    for row in rows {
-        columns.push(row?);
-    }
-
-    // Add download_format if it doesn't exist
-    if !columns.contains(&"download_format".to_string()) {
-        log::info!("Adding missing column: download_format to users table");
-        if let Err(e) = conn.execute("ALTER TABLE users ADD COLUMN download_format TEXT DEFAULT 'mp3'", []) {
-            log::warn!("Failed to add download_format column: {}", e);
-        }
-    }
-
-    // Add download_subtitles if it doesn't exist
-    if !columns.contains(&"download_subtitles".to_string()) {
-        log::info!("Adding missing column: download_subtitles to users table");
-        if let Err(e) = conn.execute("ALTER TABLE users ADD COLUMN download_subtitles INTEGER DEFAULT 0", []) {
-            log::warn!("Failed to add download_subtitles column: {}", e);
-        }
-    }
-
-    // Add video_quality if it doesn't exist
-    if !columns.contains(&"video_quality".to_string()) {
-        log::info!("Adding missing column: video_quality to users table");
-        if let Err(e) = conn.execute("ALTER TABLE users ADD COLUMN video_quality TEXT DEFAULT 'best'", []) {
-            log::warn!("Failed to add video_quality column: {}", e);
-        }
-    }
-
-    // Add audio_bitrate if it doesn't exist
-    if !columns.contains(&"audio_bitrate".to_string()) {
-        log::info!("Adding missing column: audio_bitrate to users table");
-        if let Err(e) = conn.execute("ALTER TABLE users ADD COLUMN audio_bitrate TEXT DEFAULT '320k'", []) {
-            log::warn!("Failed to add audio_bitrate column: {}", e);
-        }
-    }
-
-    // Add subscription_expires_at if it doesn't exist
-    if !columns.contains(&"subscription_expires_at".to_string()) {
-        log::info!("Adding missing column: subscription_expires_at to users table");
-        if let Err(e) = conn.execute(
-            "ALTER TABLE users ADD COLUMN subscription_expires_at DATETIME DEFAULT NULL",
-            [],
-        ) {
-            log::warn!("Failed to add subscription_expires_at column: {}", e);
-        }
-    }
-
-    // Add send_as_document if it doesn't exist
-    if !columns.contains(&"send_as_document".to_string()) {
-        log::info!("Adding missing column: send_as_document to users table");
-        if let Err(e) = conn.execute("ALTER TABLE users ADD COLUMN send_as_document INTEGER DEFAULT 0", []) {
-            log::warn!("Failed to add send_as_document column: {}", e);
-        }
-    }
-
-    // Add send_audio_as_document if it doesn't exist
-    if !columns.contains(&"send_audio_as_document".to_string()) {
-        log::info!("Adding missing column: send_audio_as_document to users table");
-        if let Err(e) = conn.execute(
-            "ALTER TABLE users ADD COLUMN send_audio_as_document INTEGER DEFAULT 0",
-            [],
-        ) {
-            log::warn!("Failed to add send_audio_as_document column: {}", e);
-        }
-    }
-
-    // Add telegram_charge_id if it doesn't exist
-    if !columns.contains(&"telegram_charge_id".to_string()) {
-        log::info!("Adding missing column: telegram_charge_id to users table");
-        if let Err(e) = conn.execute("ALTER TABLE users ADD COLUMN telegram_charge_id TEXT DEFAULT NULL", []) {
-            log::warn!("Failed to add telegram_charge_id column: {}", e);
-        }
-    }
-
-    // Create url_cache table if it doesn't exist
-    let url_cache_exists: bool = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='url_cache'",
-        [],
-        |row| Ok(row.get::<_, i32>(0)? > 0),
-    )?;
-
-    if !url_cache_exists {
-        log::info!("Creating url_cache table");
-        if let Err(e) = conn.execute(
-            "CREATE TABLE IF NOT EXISTS url_cache (
-                id TEXT PRIMARY KEY,
-                url TEXT NOT NULL,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                expires_at DATETIME NOT NULL
-            )",
-            [],
-        ) {
-            log::warn!("Failed to create url_cache table: {}", e);
-        } else {
-            // Create index for faster lookups
-            if let Err(e) = conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_url_cache_expires_at ON url_cache(expires_at)",
-                [],
-            ) {
-                log::warn!("Failed to create index on url_cache: {}", e);
-            }
-        }
-    }
-
-    // Add file_id to download_history if it doesn't exist
-    let download_history_exists: bool = conn.query_row(
-        "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='download_history'",
-        [],
-        |row| Ok(row.get::<_, i32>(0)? > 0),
-    )?;
-
-    if download_history_exists {
-        let mut stmt = conn.prepare("PRAGMA table_info(download_history)")?;
-        let rows = stmt.query_map([], |row| {
-            row.get::<_, String>(1) // column name
-        })?;
-
-        let mut columns = Vec::new();
-        for row in rows {
-            columns.push(row?);
-        }
-
-        if !columns.contains(&"file_id".to_string()) {
-            log::info!("Adding missing column: file_id to download_history table");
-            if let Err(e) = conn.execute("ALTER TABLE download_history ADD COLUMN file_id TEXT DEFAULT NULL", []) {
-                log::warn!("Failed to add file_id column: {}", e);
-            }
-        }
-    }
-
-    Ok(())
 }
 
 /// Создает нового пользователя в базе данных.
@@ -299,8 +155,11 @@ fn migrate_schema(conn: &rusqlite::Connection) -> Result<()> {
 /// Возвращает ошибку если пользователь с таким ID уже существует или произошла ошибка БД.
 pub fn create_user(conn: &DbConnection, telegram_id: i64, username: Option<String>) -> Result<()> {
     conn.execute(
-        "INSERT INTO users (telegram_id, username, download_format, download_subtitles, video_quality, audio_bitrate, send_as_document, send_audio_as_document, telegram_charge_id) VALUES (?1, ?2, 'mp3', 0, 'best', '320k', 0, 0, NULL)",
-        [&telegram_id as &dyn rusqlite::ToSql, &username as &dyn rusqlite::ToSql],
+        "INSERT INTO users (telegram_id, username, download_format, download_subtitles, video_quality, audio_bitrate, language, send_as_document, send_audio_as_document, telegram_charge_id) VALUES (?1, ?2, 'mp3', 0, 'best', '320k', 'ru', 0, 0, NULL)",
+        [
+            &telegram_id as &dyn rusqlite::ToSql,
+            &username as &dyn rusqlite::ToSql,
+        ],
     )?;
     Ok(())
 }
@@ -317,7 +176,7 @@ pub fn create_user(conn: &DbConnection, telegram_id: i64, username: Option<Strin
 /// Возвращает `Ok(Some(User))` если пользователь найден, `Ok(None)` если не найден,
 /// или ошибку базы данных.
 pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
-    let mut stmt = conn.prepare("SELECT telegram_id, username, plan, download_format, download_subtitles, video_quality, audio_bitrate, send_as_document, send_audio_as_document, subscription_expires_at, telegram_charge_id FROM users WHERE telegram_id = ?")?;
+    let mut stmt = conn.prepare("SELECT telegram_id, username, plan, download_format, download_subtitles, video_quality, audio_bitrate, language, send_as_document, send_audio_as_document, subscription_expires_at, telegram_charge_id FROM users WHERE telegram_id = ?")?;
     let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
 
     if let Some(row) = rows.next()? {
@@ -328,10 +187,11 @@ pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
         let download_subtitles: i32 = row.get(4)?;
         let video_quality: String = row.get(5).unwrap_or_else(|_| "best".to_string());
         let audio_bitrate: String = row.get(6).unwrap_or_else(|_| "320k".to_string());
-        let send_as_document: i32 = row.get(7).unwrap_or(0);
-        let send_audio_as_document: i32 = row.get(8).unwrap_or(0);
-        let subscription_expires_at: Option<String> = row.get(9).ok();
-        let telegram_charge_id: Option<String> = row.get(10).ok();
+        let language: String = row.get(7).unwrap_or_else(|_| "ru".to_string());
+        let send_as_document: i32 = row.get(8).unwrap_or(0);
+        let send_audio_as_document: i32 = row.get(9).unwrap_or(0);
+        let subscription_expires_at: Option<String> = row.get(10).ok();
+        let telegram_charge_id: Option<String> = row.get(11).ok();
 
         Ok(Some(User {
             telegram_id,
@@ -341,6 +201,7 @@ pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
             download_subtitles,
             video_quality,
             audio_bitrate,
+            language,
             send_as_document,
             send_audio_as_document,
             subscription_expires_at,
@@ -703,6 +564,27 @@ pub fn set_user_audio_bitrate(conn: &DbConnection, telegram_id: i64, bitrate: &s
     Ok(())
 }
 
+/// Получает предпочтительный язык пользователя (IETF код, например, "en", "ru").
+pub fn get_user_language(conn: &DbConnection, telegram_id: i64) -> Result<String> {
+    let mut stmt = conn.prepare("SELECT language FROM users WHERE telegram_id = ?")?;
+    let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
+
+    if let Some(row) = rows.next()? {
+        Ok(row.get(0).unwrap_or_else(|_| "ru".to_string()))
+    } else {
+        Ok("ru".to_string())
+    }
+}
+
+/// Устанавливает предпочтительный язык пользователя.
+pub fn set_user_language(conn: &DbConnection, telegram_id: i64, language: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE users SET language = ?1 WHERE telegram_id = ?2",
+        [&language as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
+    )?;
+    Ok(())
+}
+
 /// Структура, представляющая запись истории загрузок.
 #[derive(Debug, Clone)]
 pub struct DownloadHistoryEntry {
@@ -1047,7 +929,7 @@ pub fn get_all_download_history(conn: &DbConnection, telegram_id: i64) -> Result
 ///
 /// Возвращает `Ok(Vec<User>)` со всеми пользователями или ошибку базы данных.
 pub fn get_all_users(conn: &DbConnection) -> Result<Vec<User>> {
-    let mut stmt = conn.prepare("SELECT telegram_id, username, plan, download_format, download_subtitles, video_quality, audio_bitrate, send_as_document, send_audio_as_document, subscription_expires_at, telegram_charge_id FROM users ORDER BY telegram_id")?;
+    let mut stmt = conn.prepare("SELECT telegram_id, username, plan, download_format, download_subtitles, video_quality, audio_bitrate, language, send_as_document, send_audio_as_document, subscription_expires_at, telegram_charge_id FROM users ORDER BY telegram_id")?;
     let rows = stmt.query_map([], |row| {
         Ok(User {
             telegram_id: row.get(0)?,
@@ -1057,10 +939,11 @@ pub fn get_all_users(conn: &DbConnection) -> Result<Vec<User>> {
             download_subtitles: row.get(4)?,
             video_quality: row.get(5).unwrap_or_else(|_| "best".to_string()),
             audio_bitrate: row.get(6).unwrap_or_else(|_| "320k".to_string()),
-            send_as_document: row.get(7).unwrap_or(0),
-            send_audio_as_document: row.get(8).unwrap_or(0),
-            subscription_expires_at: row.get(9).ok(),
-            telegram_charge_id: row.get(10).ok(),
+            language: row.get(7).unwrap_or_else(|_| "ru".to_string()),
+            send_as_document: row.get(8).unwrap_or(0),
+            send_audio_as_document: row.get(9).unwrap_or(0),
+            subscription_expires_at: row.get(10).ok(),
+            telegram_charge_id: row.get(11).ok(),
         })
     })?;
 

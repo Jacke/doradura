@@ -93,6 +93,7 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
                         download_format: "mp3".to_string(),
                         download_subtitles: 0,
                         video_quality: "best".to_string(),
+                        language: "ru".to_string(),
                         send_as_document: 0,
                         send_audio_as_document: 0,
                         audio_bitrate: "320k".to_string(),

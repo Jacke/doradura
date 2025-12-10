@@ -1,138 +1,106 @@
 #!/bin/bash
-# Скрипт для быстрого запуска тестов yt-dlp
-# Usage: ./test_ytdlp.sh [test_name]
+# Quick runner for yt-dlp tests
 
-set -e
-
-# Цвета для вывода
-RED='\033[0;31m'
 GREEN='\033[0;32m'
+RED='\033[0;31m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-echo -e "${BLUE}"
-echo "╔════════════════════════════════════════════════════════════════╗"
-echo "║             ТЕСТИРОВАНИЕ СИСТЕМЫ СКАЧИВАНИЯ yt-dlp             ║"
-echo "╚════════════════════════════════════════════════════════════════╝"
-echo -e "${NC}"
+print_banner() {
+    echo -e "${GREEN}║             YT-DLP DOWNLOAD SYSTEM TESTING                     ║${NC}"
+}
 
-# Функция для запуска теста
 run_test() {
-    local test_name=$1
-    local ignore_flag=$2
-    
-    echo -e "\n${YELLOW}▶ Запуск теста: ${test_name}${NC}\n"
-    
-    if [ "$ignore_flag" = "--ignored" ]; then
-        cargo test --test ytdlp_integration_test "${test_name}" -- --nocapture --test-threads=1 --ignored
-    else
-        cargo test --test ytdlp_integration_test "${test_name}" -- --nocapture --test-threads=1
-    fi
-    
+    local test_name="$1"
+    echo -e "\n${YELLOW}▶ Running test: ${test_name}${NC}\n"
+    cargo test --test ytdlp_integration_test "$test_name" -- --nocapture --test-threads=1
     if [ $? -eq 0 ]; then
-        echo -e "\n${GREEN}✅ Тест ${test_name} успешно пройден${NC}"
+        echo -e "\n${GREEN}✅ Test ${test_name} passed${NC}"
     else
-        echo -e "\n${RED}❌ Тест ${test_name} провален${NC}"
+        echo -e "\n${RED}❌ Test ${test_name} failed${NC}"
         exit 1
     fi
 }
 
-# Если передан аргумент - запускаем конкретный тест
-if [ $# -eq 1 ]; then
-    case $1 in
-        "diagnostics"|"diag")
-            run_test "test_full_diagnostics"
+if [ $# -gt 0 ]; then
+    case "$1" in
+        diagnostics|diag)
+            run_test test_full_diagnostics ;;
+        install|installed)
+            run_test test_ytdlp_installed ;;
+        version)
+            run_test test_ytdlp_version ;;
+        cookies)
+            run_test test_cookies_configuration ;;
+        metadata)
+            run_test test_ytdlp_get_metadata ;;
+        download|audio)
+            run_test test_ytdlp_download_audio ;;
+        invalid)
+            run_test test_ytdlp_invalid_url ;;
+        quality|qualities)
+            run_test test_ytdlp_different_qualities ;;
+        all-basic)
+            echo -e "${BLUE}Running all basic tests (offline)${NC}"
+            run_test test_full_diagnostics
+            run_test test_ytdlp_installed
+            run_test test_ytdlp_version
+            run_test test_cookies_configuration
             ;;
-        "install"|"installed")
-            run_test "test_ytdlp_installed"
+        all-download)
+            echo -e "${BLUE}Running all download tests${NC}"
+            run_test test_ytdlp_get_metadata
+            run_test test_ytdlp_download_audio
+            run_test test_ytdlp_invalid_url
+            run_test test_ytdlp_different_qualities
             ;;
-        "version")
-            run_test "test_ytdlp_version"
+        all)
+            echo -e "${BLUE}Running ALL tests${NC}"
+            run_test test_full_diagnostics
+            run_test test_ytdlp_installed
+            run_test test_ytdlp_version
+            run_test test_cookies_configuration
+            run_test test_ytdlp_get_metadata
+            run_test test_ytdlp_download_audio
+            run_test test_ytdlp_invalid_url
+            run_test test_ytdlp_different_qualities
             ;;
-        "cookies")
-            run_test "test_cookies_configuration"
-            ;;
-        "metadata")
-            run_test "test_ytdlp_get_metadata" "--ignored"
-            ;;
-        "download"|"audio")
-            run_test "test_ytdlp_download_audio" "--ignored"
-            ;;
-        "invalid")
-            run_test "test_ytdlp_invalid_url" "--ignored"
-            ;;
-        "quality"|"qualities")
-            run_test "test_ytdlp_different_qualities" "--ignored"
-            ;;
-        "all-basic")
-            echo -e "${BLUE}Запуск всех базовых тестов (без скачивания)${NC}"
-            run_test "test_ytdlp_installed"
-            run_test "test_ytdlp_version"
-            run_test "test_cookies_configuration"
-            run_test "test_full_diagnostics"
-            ;;
-        "all-download")
-            echo -e "${BLUE}Запуск всех тестов со скачиванием (требует интернет)${NC}"
-            run_test "test_ytdlp_get_metadata" "--ignored"
-            run_test "test_ytdlp_download_audio" "--ignored"
-            run_test "test_ytdlp_invalid_url" "--ignored"
-            run_test "test_ytdlp_different_qualities" "--ignored"
-            ;;
-        "all")
-            echo -e "${BLUE}Запуск ВСЕХ тестов${NC}"
-            run_test "test_ytdlp_installed"
-            run_test "test_ytdlp_version"
-            run_test "test_cookies_configuration"
-            run_test "test_full_diagnostics"
-            run_test "test_ytdlp_get_metadata" "--ignored"
-            run_test "test_ytdlp_download_audio" "--ignored"
-            run_test "test_ytdlp_invalid_url" "--ignored"
-            run_test "test_ytdlp_different_qualities" "--ignored"
-            ;;
-        "help"|"-h"|"--help")
-            echo -e "${GREEN}Использование:${NC}"
-            echo "  ./test_ytdlp.sh [test_name]"
-            echo ""
-            echo -e "${GREEN}Доступные тесты:${NC}"
-            echo "  diagnostics, diag     - Полная диагностика системы (рекомендуется запустить первым)"
-            echo "  install, installed    - Проверка установки yt-dlp и ffmpeg"
-            echo "  version              - Проверка версии yt-dlp"
-            echo "  cookies              - Проверка конфигурации cookies"
-            echo "  metadata             - Получение метаданных видео (требует интернет)"
-            echo "  download, audio      - Тест скачивания аудио (требует интернет)"
-            echo "  invalid              - Тест обработки невалидного URL (требует интернет)"
-            echo "  quality, qualities   - Тест разных качеств скачивания (требует интернет)"
-            echo ""
-            echo -e "${GREEN}Групповые тесты:${NC}"
-            echo "  all-basic            - Все базовые тесты (без скачивания)"
-            echo "  all-download         - Все тесты со скачиванием"
-            echo "  all                  - ВСЕ тесты"
-            echo ""
-            echo -e "${GREEN}Примеры:${NC}"
-            echo "  ./test_ytdlp.sh diagnostics    # Быстрая проверка системы"
-            echo "  ./test_ytdlp.sh download        # Полный тест скачивания"
-            echo "  ./test_ytdlp.sh all-basic       # Все тесты без интернета"
-            echo ""
-            echo -e "${YELLOW}💡 Совет: Запустите сначала 'diagnostics' чтобы проверить готовность системы${NC}"
+        help|-h|--help)
+            echo -e "${GREEN}Usage:${NC}"
+            echo "  ./test_ytdlp.sh <test>"
+            echo -e "${GREEN}Available tests:${NC}"
+            echo "  diagnostics, diag   - Full system diagnostics"
+            echo "  install, installed  - Check yt-dlp/ffmpeg installed"
+            echo "  version             - Check yt-dlp version"
+            echo "  cookies             - Check cookies configuration"
+            echo "  metadata            - Fetch metadata (needs internet)"
+            echo "  download, audio     - Audio download (needs internet)"
+            echo "  invalid             - Invalid URL handling (needs internet)"
+            echo "  quality, qualities  - Quality tests (needs internet)"
+            echo -e "${GREEN}Groups:${NC}"
+            echo "  all-basic           - All offline tests"
+            echo "  all-download        - All download tests"
+            echo "  all                 - All tests"
+            echo -e "${GREEN}Examples:${NC}"
+            echo "  ./test_ytdlp.sh diagnostics"
+            echo "  ./test_ytdlp.sh download"
+            echo "  ./test_ytdlp.sh all-basic"
+            echo -e "${YELLOW}Tip: run 'diagnostics' first to check readiness${NC}"
             exit 0
             ;;
         *)
-            echo -e "${RED}❌ Неизвестный тест: $1${NC}"
-            echo "Запустите './test_ytdlp.sh help' для списка доступных тестов"
+            echo -e "${RED}❌ Unknown test: $1${NC}"
+            echo "Run './test_ytdlp.sh help' for the list"
             exit 1
             ;;
     esac
-else
-    # Если аргументов нет - запускаем быструю диагностику
-    echo -e "${YELLOW}💡 Не указан тест - запускаем полную диагностику${NC}"
-    echo -e "${YELLOW}   Для списка доступных тестов: ./test_ytdlp.sh help${NC}\n"
-    run_test "test_full_diagnostics"
+    exit 0
 fi
 
-echo -e "\n${BLUE}"
-echo "╔════════════════════════════════════════════════════════════════╗"
-echo "║                  ТЕСТИРОВАНИЕ ЗАВЕРШЕНО                        ║"
-echo "╚════════════════════════════════════════════════════════════════╝"
-echo -e "${NC}"
-
+# Default: full diagnostics
+print_banner
+echo -e "${YELLOW}💡 No test specified - running full diagnostics${NC}"
+echo -e "${YELLOW}   For list: ./test_ytdlp.sh help${NC}\n"
+run_test test_full_diagnostics
+print_banner

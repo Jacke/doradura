@@ -1,87 +1,64 @@
-# 🛠️ Исправление базы данных на Railway
+# 🛠️ Fixing the Railway Database
 
-## Проблема
+## Problem
 ```
 [ERROR] Failed to get user: no such column: send_as_document
 ```
-
-База данных на Railway создана старой версией кода и не содержит новых колонок.
+The Railway database was created from an older version and is missing new columns.
 
 ---
 
-## ✅ РЕШЕНИЕ 1: Пересоздать БД (Рекомендуется)
+## ✅ Solution 1: Recreate the DB (Recommended)
 
-### Способ A: Через Railway Dashboard
-
-1. **Подключитесь к контейнеру:**
-   - Railway Dashboard → Ваш проект
-   - Deployments → Latest → три точки (⋮)
-   - **"Open Shell"** или **"SSH"**
-
-2. **Удалите старую БД:**
+### Method A: Via Railway Dashboard
+1. **Open a shell in the container:**
+   - Railway Dashboard → your project
+   - Deployments → Latest → kebab menu (⋮)
+   - **Open Shell** / **SSH**
+2. **Delete the old DB:**
    ```bash
    rm -f /app/database.sqlite
    rm -f /app/database.sqlite-shm
    rm -f /app/database.sqlite-wal
    ```
+3. **Restart the service:** Settings → Restart Deployment
+4. **A fresh DB will be created with the correct schema.**
 
-3. **Перезапустите сервис:**
-   - Settings → Restart Deployment
-
-4. **БД создастся заново с правильной схемой**
-
-### Способ B: Через переменную окружения
-
-Добавьте временную переменную для пересоздания БД:
-
+### Method B: Via an env var
+Add a temporary env var to force recreation:
 1. Railway Dashboard → Variables
-2. Добавьте:
+2. Add:
    ```
    Name: RESET_DATABASE
    Value: true
    ```
-
-3. Обновите код для обработки этой переменной (см. ниже)
+3. Update code to act on this variable (see below).
 
 ---
 
-## ✅ РЕШЕНИЕ 2: Запустить миграции вручную
+## ✅ Solution 2: Run migrations manually
 
-### 1. Добавьте скрипт миграции
-
-Создайте файл `migrate_db.sh`:
-
+### 1) Add a migration script
+Create `migrate_db.sh`:
 ```bash
 #!/bin/bash
 # Railway database migration script
-
 DB_PATH="${DATABASE_URL:-/app/database.sqlite}"
 
 echo "Running database migrations..."
 
-# Подключаемся к БД и запускаем миграцию
-sqlite3 "$DB_PATH" <<EOF
+sqlite3 "$DB_PATH" <<EOSQL
 -- Add missing columns if they don't exist
-
--- Check and add send_as_document
 ALTER TABLE users ADD COLUMN send_as_document INTEGER DEFAULT 0;
-
--- Check and add send_audio_as_document
 ALTER TABLE users ADD COLUMN send_audio_as_document INTEGER DEFAULT 0;
-
--- Check and add subscription_expires_at
 ALTER TABLE users ADD COLUMN subscription_expires_at DATETIME DEFAULT NULL;
-
--- Check and add telegram_charge_id
 ALTER TABLE users ADD COLUMN telegram_charge_id TEXT DEFAULT NULL;
-
-EOF
+EOSQL
 
 echo "Migrations completed!"
 ```
 
-### 2. Запустите в Railway Shell
-
+### 2) Run in Railway Shell
 ```bash
 chmod +x migrate_db.sh
 ./migrate_db.sh
@@ -89,53 +66,39 @@ chmod +x migrate_db.sh
 
 ---
 
-## ✅ РЕШЕНИЕ 3: Синхронизировать локальную БД с Railway
+## ✅ Solution 3: Sync local DB to Railway
+**Not recommended for production**, but acceptable for testing.
 
-**НЕ РЕКОМЕНДУЕТСЯ для production**, но для тестирования:
-
-### Вариант А: Экспорт/Импорт через SQL
-
-1. **Локально экспортируйте схему:**
+### Option A: Export/Import via SQL
+1. **Export schema locally:**
    ```bash
    sqlite3 database.sqlite .schema > schema.sql
    ```
-
-2. **Добавьте в git:**
+2. **Commit it:**
    ```bash
    git add schema.sql
    git commit -m "Add database schema"
    git push
    ```
-
-3. **На Railway импортируйте:**
+3. **Import on Railway:**
    ```bash
-   # В Railway Shell
    sqlite3 /app/database.sqlite < schema.sql
    ```
 
-### Вариант Б: Dockerfile с автоматической миграцией
-
-Обновите `Dockerfile` чтобы всегда запускать миграции при старте:
-
+### Option B: Dockerfile with auto-migration
+Update `Dockerfile` to always run migrations at startup:
 ```dockerfile
-# В runtime stage, после COPY
+# In runtime stage, after COPY
 COPY migration.sql ./
 
-# Создайте скрипт запуска
 RUN echo '#!/bin/bash\n\
-# Initialize database if needed\n\
 if [ ! -f /app/database.sqlite ]; then\n\
   sqlite3 /app/database.sqlite < /app/migration.sql\n\
 fi\n\
-\n\
-# Run migrations\n\
-sqlite3 /app/database.sqlite <<EOF\n\
--- Safely add missing columns\n\
+sqlite3 /app/database.sqlite <<EOSQL\n\
 ALTER TABLE users ADD COLUMN IF NOT EXISTS send_as_document INTEGER DEFAULT 0;\n\
 ALTER TABLE users ADD COLUMN IF NOT EXISTS send_audio_as_document INTEGER DEFAULT 0;\n\
-EOF\n\
-\n\
-# Start bot\n\
+EOSQL\n\
 exec /app/doradura\n\
 ' > /app/start.sh && chmod +x /app/start.sh
 
@@ -144,143 +107,89 @@ CMD ["/app/start.sh"]
 
 ---
 
-## 🎯 РЕКОМЕНДУЕМОЕ РЕШЕНИЕ
+## 🎯 Recommended path
+Rust already has `migrate_schema()` in `src/storage/db.rs`. SQLite, however, does not support `ALTER TABLE ADD COLUMN IF NOT EXISTS`—so existing DBs miss the new columns.
 
-### Добавьте проверку миграций в код
-
-Rust код уже имеет функцию `migrate_schema()` в `src/storage/db.rs`.
-
-Проблема в том, что SQLite не поддерживает `ALTER TABLE ADD COLUMN IF NOT EXISTS`.
-
-### Обновим migrate_schema:
-
-Код уже правильный! Проблема в том, что **миграция НЕ запускается** для существующей БД.
-
-**Решение:** Пересоздать БД на Railway.
+**Best fix:** recreate the DB on Railway.
 
 ---
 
-## 🚀 БЫСТРОЕ ИСПРАВЛЕНИЕ (5 минут)
+## 🚀 Quick fix (5 minutes)
 
-### Шаг 1: Добавьте скрипт в Dockerfile
-
-Обновим Dockerfile для автоматического запуска миграций:
-
+### Step 1: Add a startup script in Dockerfile
 ```dockerfile
-# После COPY migration.sql ./
-# Создаём startup script
 RUN echo '#!/bin/bash\n\
 set -e\n\
-\n\
-# Check if database exists\n\
 if [ -f /app/database.sqlite ]; then\n\
   echo "Database exists, running migrations..."\n\
-  # Миграции будут запущены в Rust коде\n\
 else\n\
   echo "Creating new database..."\n\
   sqlite3 /app/database.sqlite < /app/migration.sql\n\
 fi\n\
-\n\
-echo "Starting bot..."\n\
 exec /app/doradura "$@"\n\
 ' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 
 CMD ["/app/entrypoint.sh"]
 ```
 
-### Шаг 2: Или просто удалите БД на Railway
-
-Самый простой способ:
-
-1. **Railway Dashboard → Settings → Restart Deployment**
-
-2. **Или в Shell:**
+### Step 2: Or simply delete the DB on Railway
+1. Railway Dashboard → Settings → Restart Deployment
+2. Or in Shell:
    ```bash
    rm /app/database.sqlite && exit
    ```
-
-3. **Railway перезапустится и создаст новую БД**
+3. Railway restarts and creates a fresh DB.
 
 ---
 
-## 📊 Проверка после исправления
-
-В логах должно быть:
-
+## 📊 Post-fix check
+Logs should show:
 ```
 [INFO] Creating new database...
 [INFO] Running migrations...
 [INFO] Database initialized successfully
 [INFO] Starting bot...
 ```
-
-Без ошибок:
-```
-✅ No "no such column" errors
-✅ Bot starts successfully
-✅ /start command works
-```
+And no errors like "no such column".
 
 ---
 
-## 💾 Сохранение данных (если нужно)
-
-Если в БД есть важные данные пользователей:
-
-### 1. Экспортируйте данные:
-
-```bash
-# В Railway Shell
-sqlite3 /app/database.sqlite <<EOF
+## 💾 If you must keep existing data
+1. **Export:**
+   ```bash
+   sqlite3 /app/database.sqlite <<EOSQL
 .mode csv
 .output /tmp/users_backup.csv
 SELECT * FROM users;
 .quit
-EOF
-```
-
-### 2. Сохраните локально через `railway` CLI
-
-```bash
-railway run sqlite3 /app/database.sqlite .dump > backup.sql
-```
-
-### 3. После пересоздания БД импортируйте:
-
-```bash
-railway run sqlite3 /app/database.sqlite < backup.sql
-```
+EOSQL
+   ```
+2. **Backup via CLI:** `railway run sqlite3 /app/database.sqlite .dump > backup.sql`
+3. **Restore after recreation:** `railway run sqlite3 /app/database.sqlite < backup.sql`
 
 ---
 
-## ⚠️ ВАЖНО
+## ⚠️ Important
+Do **not** commit `database.sqlite`.
+- Contains user data
+- Can be large
+- Already git-ignored
 
-**НЕ добавляйте `database.sqlite` в git!**
-
-База данных:
-- Содержит пользовательские данные
-- Может быть большой
-- Должна быть в `.gitignore`
-
-Вместо этого:
-- ✅ Используйте `migration.sql` (уже в git)
-- ✅ Используйте автоматические миграции в коде
-- ✅ Используйте Railway Volumes для persistence
+Use `migration.sql` + code-based migrations + Railway volumes instead.
 
 ---
 
-## 🎯 Итоговый план действий
+## 🎯 Final action plan
+**Option 1 (fast):**
+1) Railway Dashboard → Open Shell
+2) `rm /app/database.sqlite`
+3) Restart Deployment
+4) ✅ Done
 
-**ВАРИАНТ 1 (Быстрый):**
-1. Railway Dashboard → Open Shell
-2. `rm /app/database.sqlite`
-3. Settings → Restart Deployment
-4. ✅ Готово!
+**Option 2 (automatic):**
+1) Update Dockerfile (see above)
+2) Commit & push
+3) Railway rebuilds and fixes itself
+4) ✅ Done
 
-**ВАРИАНТ 2 (Автоматический):**
-1. Обновите Dockerfile (см. выше)
-2. Commit & Push
-3. Railway пересоберёт и всё исправит
-4. ✅ Готово!
-
-Рекомендую **Вариант 1** - быстрее и проще! 🚀
+Recommended: **Option 1** for speed. 🚀

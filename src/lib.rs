@@ -16,6 +16,7 @@
 
 pub mod core;
 pub mod download;
+pub mod i18n;
 pub mod storage;
 pub mod telegram;
 

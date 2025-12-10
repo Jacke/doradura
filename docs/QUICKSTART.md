@@ -1,169 +1,100 @@
-# 🚀 Быстрый старт с YouTube cookies
+# 🚀 Quickstart with YouTube Cookies
 
-## ✅ Cookies уже настроены!
+## ✅ Cookies are already set up
 
-Файл `youtube_cookies.txt` уже создан и готов к использованию.
+The `youtube_cookies.txt` file is created and ready to use.
 
-## Запуск бота
+## Run the bot
 
-### Вариант 1: Использовать переменную окружения
+### Option 1: Environment variable
 
 ```bash
-# Установить переменную окружения
+# Set the env var
 export YTDL_COOKIES_FILE=youtube_cookies.txt
 
-# Запустить бота
+# Run the bot
 cargo run --release
 ```
 
-### Вариант 2: Использовать .env файл (рекомендуется)
+### Option 2: .env file (recommended)
 
 ```bash
-# 1. Создать .env файл из примера
+# 1. Create .env from the example
 cp .env.example .env
 
-# 2. Отредактировать .env и добавить TELOXIDE_TOKEN
+# 2. Edit .env and add TELOXIDE_TOKEN
 nano .env
 
-# 3. Убедиться, что YTDL_COOKIES_FILE=youtube_cookies.txt есть в .env
+# 3. Make sure YTDL_COOKIES_FILE=youtube_cookies.txt is present
 
-# 4. Запустить бота
+# 4. Run the bot
 cargo run --release
 ```
 
-### Вариант 3: Inline при запуске
+### Option 3: Inline at startup
 
 ```bash
 YTDL_COOKIES_FILE=youtube_cookies.txt cargo run --release
 ```
 
-## 🔍 Проверка настроек
+## 🔍 Verify the setup
 
-Проверить, что cookies работают:
+Check that cookies work:
 
 ```bash
-# Тест с yt-dlp
+# Test with yt-dlp
 yt-dlp --cookies youtube_cookies.txt --print "%(title)s" "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 ```
 
-Если выводится название видео - всё работает! ✅
+If the video title is printed, you're good to go. ✅
 
-## ⚠️ Важные замечания
+## ⚠️ Important notes
 
-### Безопасность cookies
+### Cookie security
 
-- ✅ Файл `youtube_cookies.txt` уже в `.gitignore`
-- ✅ Права доступа установлены: `600` (только владелец может читать)
-- ❌ **НИКОГДА** не публикуй cookies в открытом доступе!
-- 🔄 Обновляй cookies каждые 2-4 недели
+- ✅ `youtube_cookies.txt` is already in `.gitignore`
+- ✅ Permissions set to `600` (owner read/write only)
+- ❌ **NEVER** publish cookies publicly
+- 🔄 Refresh cookies every 2–4 weeks
 
-### Когда cookies устареют
+### When cookies expire
 
-Симптомы:
-- Ошибка "Sign in to confirm you're not a bot"
-- Ошибка "This video is unavailable"
+Symptoms:
+- Error: "Sign in to confirm you're not a bot"
+- Error: "This video is unavailable"
 
-Решение:
+Fix:
 
-#### Способ 1: Обновить через расширение браузера
+#### Method 1: Refresh via browser extension
 
-1. Установи [Get cookies.txt LOCALLY](https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc)
-2. Зайди на YouTube.com
-3. Экспортируй cookies → сохрани как `youtube_cookies.txt`
-4. Перезапусти бота
+1. Install [Get cookies.txt LOCALLY](https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc)
+2. Open YouTube.com
+3. Export cookies → save as `youtube_cookies.txt`
+4. Restart the bot
 
-#### Способ 2: Использовать браузер автоматически
+#### Method 2: Use the browser automatically
 
 ```bash
-# 1. Установить зависимости
+# 1. Install deps
 pip3 install keyring pycryptodomex
 
-# 2. Удалить переменную окружения для файла
-unset YTDL_COOKIES_FILE
+# 2. Download the helper script
+curl -o get_cookies.py https://raw.githubusercontent.com/yt-dlp/yt-dlp/master/devscripts/get-cookies.py
 
-# 3. Установить браузер
-export YTDL_COOKIES_BROWSER=firefox  # или chrome
+# 3. Extract cookies
+yt-dlp --cookies-from-browser chrome --cookies cookies.txt https://www.youtube.com/watch?v=dQw4w9WgXcQ
 
-# 4. Перезапустить бота
-cargo run --release
+# 4. Replace youtube_cookies.txt
+mv cookies.txt youtube_cookies.txt
 ```
 
-## 📝 Логи
+#### Method 3: Manual export
 
-Проверить, используются ли cookies:
-
-```bash
-# Запустить бота и следить за логами
-cargo run --release 2>&1 | grep -i cookie
-```
-
-Должны видеть:
-```
-Using cookies from file: youtube_cookies.txt
-```
-
-## 🆘 Проблемы?
-
-### Ошибка "Sign in to confirm you're not a bot"
-
-**Решение:**
-1. Обнови cookies (см. выше)
-2. Проверь, что файл существует: `ls -la youtube_cookies.txt`
-3. Проверь переменную окружения: `echo $YTDL_COOKIES_FILE`
-
-### Ошибка "No such file or directory: youtube_cookies.txt"
-
-**Решение:**
-```bash
-# Использовать абсолютный путь
-export YTDL_COOKIES_FILE=/Users/stan/Dev/_PROJ/doradura/youtube_cookies.txt
-```
-
-Или добавь в `.env`:
-```bash
-YTDL_COOKIES_FILE=/Users/stan/Dev/_PROJ/doradura/youtube_cookies.txt
-```
-
-### Cookies работают, но видео не скачивается
-
-**Возможные причины:**
-- Видео с ограничениями (возрастные, региональные)
-- Видео удалено/приватное
-- Проблемы с сетью
-
-**Проверка:**
-```bash
-# Тестируй напрямую
-yt-dlp --cookies youtube_cookies.txt URL_VIDEO
-```
-
-## 📊 Мониторинг
-
-```bash
-# Следить за логами в реальном времени
-tail -f logs/bot.log | grep -E "(cookie|youtube|download)"
-```
-
-## 🔄 Автообновление cookies (опционально)
-
-Создай cron job для автоматического обновления:
-
-```bash
-# Открыть crontab
-crontab -e
-
-# Добавить задачу (обновлять каждые 2 недели)
-0 0 */14 * * /path/to/update_cookies.sh
-```
-
-Где `update_cookies.sh`:
-```bash
-#!/bin/bash
-# Экспортировать cookies из Firefox
-yt-dlp --cookies-from-browser firefox --skip-download --write-cookies youtube_cookies.txt "https://youtube.com"
-```
+1. Open YouTube in the browser where you're signed in.
+2. Export cookies to a `cookies.txt` format file.
+3. Save it as `youtube_cookies.txt` in the project root.
+4. Restart the bot.
 
 ---
 
-**Готово!** Бот настроен и готов к работе! 🎉
-
+Happy downloading! 🎵

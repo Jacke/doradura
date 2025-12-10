@@ -1,235 +1,31 @@
-# 🎉 Создана система тестирования для yt-dlp
+# Test Summary
 
-## ✅ Что сделано
+A concise record of the yt-dlp integration tests and fixes.
 
-### 1. Интеграционные тесты (`tests/ytdlp_integration_test.rs`)
+## Scope
+- Environment diagnostics (yt-dlp, ffmpeg, cookies).
+- Metadata retrieval.
+- Audio download.
+- Error handling for invalid URLs.
+- Different quality/bitrate combinations.
 
-Создан полноценный набор интеграционных тестов:
+## Results
+- Diagnostics pass on the reference environment.
+- Metadata and audio download tests succeed with fresh cookies.
+- Invalid URL tests correctly return errors.
+- Quality-selection tests confirm proper mapping to available formats.
 
-- ✅ **test_ytdlp_installed** - Проверка установки yt-dlp, ffmpeg, ffprobe
-- ✅ **test_ytdlp_version** - Проверка версии yt-dlp
-- ✅ **test_cookies_configuration** - Проверка конфигурации cookies
-- ✅ **test_ytdlp_get_metadata** - Получение метаданных видео (требует интернет)
-- ✅ **test_ytdlp_download_audio** - Полный тест скачивания аудио (требует интернет) ⭐
-- ✅ **test_ytdlp_invalid_url** - Тест обработки невалидных URL
-- ✅ **test_ytdlp_different_qualities** - Тест разных битрейтов
-- ✅ **test_full_diagnostics** - Комплексная диагностика системы
+## Known caveats
+- Tests requiring internet are marked `#[ignore]`; run them manually with `--ignored`.
+- Cookies must be present for YouTube; stale cookies will cause failures.
 
-### 2. Скрипты для удобного запуска
-
-- **`test_ytdlp.sh`** - Удобный скрипт для запуска тестов
-  ```bash
-  ./test_ytdlp.sh diagnostics  # Диагностика системы
-  ./test_ytdlp.sh download     # Тест скачивания
-  ./test_ytdlp.sh help        # Список всех команд
-  ```
-
-- **`run_tests_with_cookies.sh`** - Автоматическая настройка cookies и запуск тестов
-  ```bash
-  ./run_tests_with_cookies.sh
-  ```
-
-### 3. Документация
-
-- **`TESTING.md`** - Полное руководство по тестированию
-- **`QUICK_FIX.md`** - Быстрое решение проблем со скачиванием (5 минут)
-- **`tests/README.md`** - Краткий справочник по тестам
-- **`TEST_SUMMARY.md`** (этот файл) - Итоговый отчет
-
-### 4. Исправлена критическая проблема в коде
-
-**Проблема:** YouTube теперь требует PO Token для iOS клиента, что вызывало ошибку:
-```
-ERROR: [youtube] Please sign in
-WARNING: ios client requires a GVS PO Token
-```
-
-**Решение:** Изменен player_client с `web,ios` на `android`:
-
-Обновлены файлы:
-- `src/downloader.rs` (3 места - metadata, audio, video)
-- `tests/ytdlp_integration_test.rs`
-
-**Результат:** Скачивание теперь работает стабильно! ✅
-
-## 📊 Результаты тестирования
-
-### Диагностика системы
-
-```
-✅ yt-dlp: Установлен (версия 2025.10.22)
-✅ ffmpeg: Установлен (версия 7.1.1)
-✅ ffprobe: Установлен
-✅ Cookies: Настроены (youtube_cookies.txt, 1954 байт)
-✅ Система готова к работе!
-```
-
-### Тест скачивания
-
-```
-✅ Тест успешно пройден
-✅ Файл создан: test_audio.mp3
-✅ Размер: 208 КБ
-⏱️ Время: 15 секунд
-🎵 Видео: "Me at the zoo" (первое видео YouTube)
-```
-
-## 🚀 Как использовать
-
-### Быстрый старт
-
-1. **Проверьте систему:**
-   ```bash
-   ./test_ytdlp.sh diagnostics
-   ```
-
-2. **Если cookies не настроены:**
-   ```bash
-   # Следуйте инструкции
-   cat QUICK_FIX.md
-   ```
-
-3. **Запустите тест скачивания:**
-   ```bash
-   YTDL_COOKIES_FILE=./youtube_cookies.txt ./test_ytdlp.sh download
-   ```
-
-4. **Если все ОК - запускайте бота:**
-   ```bash
-   YTDL_COOKIES_FILE=./youtube_cookies.txt cargo run --release
-   ```
-
-### Регулярное использование
-
+## How to rerun
 ```bash
-# Добавьте в ~/.zshrc для постоянного использования:
-export YTDL_COOKIES_FILE=/Users/stan/Dev/_PROJ/doradura/youtube_cookies.txt
-
-# Теперь просто:
-./test_ytdlp.sh download
-cargo run --release
+cargo test --test ytdlp_integration_test test_full_diagnostics -- --nocapture
+cargo test --test ytdlp_integration_test --ignored -- --nocapture --test-threads=1
 ```
 
-## 🐛 Найденные и исправленные проблемы
-
-### 1. ❌ PO Token Required (исправлено ✅)
-
-**До:**
-```
-ERROR: ios client requires a GVS PO Token
-```
-
-**После:**
-```
-✅ Используется android клиент (не требует PO Token)
-✅ Скачивание работает
-```
-
-### 2. ❌ Cookies не настроены (решено ✅)
-
-**Проблема:** YouTube требует аутентификацию
-
-**Решение:**
-1. Экспортировали cookies из браузера
-2. Установили переменную `YTDL_COOKIES_FILE`
-3. Создан скрипт для автоматической настройки
-
-## 📈 Статистика
-
-- **Тестов создано:** 8
-- **Строк кода тестов:** ~600
-- **Строк документации:** ~800
-- **Скриптов:** 2
-- **Файлов документации:** 4
-- **Исправлено критических багов:** 1 (player_client)
-
-## 🎯 Следующие шаги
-
-1. **Запустите бота с исправлениями:**
-   ```bash
-   YTDL_COOKIES_FILE=./youtube_cookies.txt cargo run --release
-   ```
-
-2. **Попробуйте скачать видео через бота**
-
-3. **Если возникнут ошибки:**
-   - Запустите `./test_ytdlp.sh diagnostics`
-   - Проверьте что cookies актуальны
-   - Обновите yt-dlp: `pip3 install -U yt-dlp`
-
-4. **Для постоянного использования добавьте в ~/.zshrc:**
-   ```bash
-   echo 'export YTDL_COOKIES_FILE=/Users/stan/Dev/_PROJ/doradura/youtube_cookies.txt' >> ~/.zshrc
-   source ~/.zshrc
-   ```
-
-## 💡 Полезные команды
-
-```bash
-# Диагностика
-./test_ytdlp.sh diagnostics
-
-# Полный тест скачивания
-YTDL_COOKIES_FILE=./youtube_cookies.txt ./test_ytdlp.sh download
-
-# Запуск бота
-YTDL_COOKIES_FILE=./youtube_cookies.txt cargo run --release
-
-# Обновление yt-dlp
-pip3 install -U yt-dlp
-
-# Проверка версии
-yt-dlp --version
-
-# Прямой тест скачивания (debug)
-YTDL_COOKIES_FILE=./youtube_cookies.txt yt-dlp \
-  --cookies ./youtube_cookies.txt \
-  --extractor-args "youtube:player_client=android" \
-  --get-title \
-  "https://www.youtube.com/watch?v=jNQXAC9IVRw"
-```
-
-## 📚 Дополнительная информация
-
-- **Полное руководство:** `TESTING.md`
-- **Быстрое решение:** `QUICK_FIX.md`
-- **Настройка cookies на macOS:** `MACOS_COOKIES_FIX.md`
-- **Справочник по тестам:** `tests/README.md`
-
-## ✨ Что изменилось в коде
-
-### `src/downloader.rs`
-
-**Было:**
-```rust
-let player_client = if use_cookies {
-    "youtube:player_client=web,ios,tv_embedded"
-} else {
-    "youtube:player_client=android,web"
-};
-```
-
-**Стало:**
-```rust
-// Используем android клиент который не требует PO Token
-// Android работает стабильнее и не требует дополнительных токенов
-let player_client = "youtube:player_client=android";
-```
-
-Это изменение применено в 3 местах:
-1. `get_metadata_from_ytdlp` (получение метаданных)
-2. `download_audio_file_with_progress` (скачивание аудио)
-3. `download_video_file_with_progress` (скачивание видео)
-
-## 🎊 Итог
-
-**Система тестирования готова и работает!** 🎉
-
-Теперь вы можете:
-- ✅ Проверять работоспособность скачивания
-- ✅ Диагностировать проблемы
-- ✅ Скачивать видео через бота
-- ✅ Быстро находить и исправлять ошибки
-
-**Критический баг с PO Token исправлен** - скачивание работает стабильно! 🚀
-
+## Follow-up items
+- Add more edge cases (long videos, region restrictions).
+- Consider automating cookie refresh for CI-like environments.
+- Collect metrics on download duration during tests for baseline tracking.

@@ -3,8 +3,10 @@ use crate::core::error::AppError;
 use crate::core::rate_limiter::RateLimiter;
 use crate::core::utils::pluralize_seconds;
 use crate::download::queue::DownloadQueue;
+use crate::i18n;
 use crate::storage::db::{self, DbPool};
 use crate::telegram::preview::{get_preview_metadata, send_preview};
+use fluent_templates::fluent_bundle::FluentArgs;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::sync::Arc;
@@ -39,25 +41,25 @@ pub async fn handle_rate_limit(
     msg: &Message,
     rate_limiter: &RateLimiter,
     plan: &str,
+    db_pool: &Arc<DbPool>,
 ) -> ResponseResult<bool> {
+    let lang = i18n::user_lang_from_pool(db_pool, msg.chat.id.0);
     if rate_limiter.is_rate_limited(msg.chat.id, plan).await {
         if let Some(remaining_time) = rate_limiter.get_remaining_time(msg.chat.id).await {
             let remaining_seconds = remaining_time.as_secs();
-            bot.send_message(
-                msg.chat.id,
-                format!(
-                    "Я Дора, чай закончился и я не смогу скачать тебе трек сейчас. Попробуй попозже через {} {}.",
-                    remaining_seconds,
-                    pluralize_seconds(remaining_seconds)
-                ),
-            )
-            .await?;
+            let unit = if lang.language.as_str() == "ru" {
+                pluralize_seconds(remaining_seconds).to_string()
+            } else {
+                i18n::t(&lang, "common.seconds")
+            };
+            let mut args = FluentArgs::new();
+            args.set("time", remaining_seconds as i64);
+            args.set("unit", unit);
+            let text = i18n::t_args(&lang, "commands.rate_limited_with_eta", &args);
+            bot.send_message(msg.chat.id, text).await?;
         } else {
-            bot.send_message(
-                msg.chat.id,
-                "Я Дора, чай закончился и я не смогу скачать тебе трек сейчас. Попробуй попозже.",
-            )
-            .await?;
+            let text = i18n::t(&lang, "commands.rate_limited");
+            bot.send_message(msg.chat.id, text).await?;
         }
         return Ok(false);
     }
@@ -96,6 +98,8 @@ pub async fn handle_message(
     rate_limiter: Arc<RateLimiter>,
     db_pool: Arc<DbPool>,
 ) -> ResponseResult<Option<db::User>> {
+    let lang = i18n::user_lang_from_pool(&db_pool, msg.chat.id.0);
+
     if let Some(text) = msg.text() {
         log::debug!("handle_message: {:?}", text);
         if text.starts_with("/start") || text.starts_with("/help") {
@@ -126,7 +130,7 @@ pub async fn handle_message(
             // Check rate limit before processing URLs
             let plan = user_info.as_ref().map(|u| u.plan.as_str()).unwrap_or("free");
             let plan_string = plan.to_string();
-            if !handle_rate_limit(&bot, &msg, &rate_limiter, &plan_string).await? {
+            if !handle_rate_limit(&bot, &msg, &rate_limiter, &plan_string, &db_pool).await? {
                 return Ok(user_info);
             }
 
@@ -174,12 +178,15 @@ pub async fn handle_message(
                 }
 
                 if valid_urls.is_empty() {
-                    bot.send_message(msg.chat.id, "Извини, я не смогла распознать ни одной корректной ссылки. Пожалуйста, пришли мне корректные ссылки на поддерживаемые сервисы (YouTube, SoundCloud, VK, TikTok, Instagram, Twitch, Spotify и другие).").await?;
+                    bot.send_message(msg.chat.id, i18n::t(&lang, "commands.invalid_group_links"))
+                        .await?;
                     return Ok(user_info);
                 }
 
                 // Send confirmation message
-                let confirmation_msg = format!("✅ Добавлено {} треков в очередь!", valid_urls.len());
+                let mut args = FluentArgs::new();
+                args.set("count", valid_urls.len() as i64);
+                let confirmation_msg = i18n::t_args(&lang, "commands.group_added", &args);
                 let status_message = bot.send_message(msg.chat.id, &confirmation_msg).await?;
 
                 // Process each URL - get metadata and add to queue
@@ -187,22 +194,23 @@ pub async fn handle_message(
                 let bot_clone = bot.clone();
                 let db_pool_clone = db_pool.clone();
                 let chat_id = msg.chat.id;
+                let lang_clone = lang.clone();
 
                 tokio::spawn(async move {
                     let mut status_text = confirmation_msg.clone();
                     status_text.push_str("\n\n");
 
-                    // Получаем connection для получения настроек пользователя
+                    // Get a DB connection to read user settings
                     let conn = match db::get_connection(&db_pool_clone) {
                         Ok(c) => c,
                         Err(_) => {
-                            // Если не удалось получить connection, используем дефолтные значения
+                            // If we cannot get a connection, fall back to defaults
                             for (idx, url) in valid_urls.iter().enumerate() {
                                 match get_preview_metadata(url, Some(&format), None).await {
                                     Ok(metadata) => {
                                         let display_title = metadata.display_title();
 
-                                        // Проверяем размер файла
+                                        // Check the file size
                                         let status_marker = if let Some(filesize) = metadata.filesize {
                                             let max_size = if format == "mp4" {
                                                 config::validation::max_video_size_bytes()
@@ -211,12 +219,12 @@ pub async fn handle_message(
                                             };
 
                                             if filesize > max_size {
-                                                "❌ Слишком большой"
+                                                i18n::t(&lang_clone, "commands.status_too_large")
                                             } else {
-                                                "⏳ В очереди"
+                                                i18n::t(&lang_clone, "commands.status_in_queue")
                                             }
                                         } else {
-                                            "⏳ В очереди"
+                                            i18n::t(&lang_clone, "commands.status_in_queue")
                                         };
 
                                         status_text.push_str(&format!(
@@ -228,9 +236,10 @@ pub async fn handle_message(
                                     }
                                     Err(_) => {
                                         status_text.push_str(&format!(
-                                            "{}. {} [❌ Ошибка]\n",
+                                            "{}. {} [{}]\n",
                                             idx + 1,
-                                            url.as_str().chars().take(50).collect::<String>()
+                                            url.as_str().chars().take(50).collect::<String>(),
+                                            i18n::t(&lang_clone, "commands.status_error")
                                         ));
                                     }
                                 }
@@ -241,7 +250,7 @@ pub async fn handle_message(
 
                     for (idx, url) in valid_urls.iter().enumerate() {
                         // Get metadata for preview
-                        // Получаем качество видео для превью (для групповых загрузок)
+                        // Get video quality for preview (for group downloads)
                         let video_quality_for_preview = if format == "mp4" {
                             match db::get_user_video_quality(&conn, chat_id.0) {
                                 Ok(q) => Some(q),
@@ -255,7 +264,7 @@ pub async fn handle_message(
                             Ok(metadata) => {
                                 let display_title = metadata.display_title();
 
-                                // Проверяем размер файла для групповых загрузок
+                                // Check file size for group downloads
                                 let status_marker = if let Some(filesize) = metadata.filesize {
                                     let max_size = if format == "mp4" {
                                         config::validation::max_video_size_bytes()
@@ -264,12 +273,12 @@ pub async fn handle_message(
                                     };
 
                                     if filesize > max_size {
-                                        "❌ Слишком большой"
+                                        i18n::t(&lang_clone, "commands.status_too_large")
                                     } else {
-                                        "⏳ В очереди"
+                                        i18n::t(&lang_clone, "commands.status_in_queue")
                                     }
                                 } else {
-                                    "⏳ В очереди"
+                                    i18n::t(&lang_clone, "commands.status_in_queue")
                                 };
 
                                 status_text.push_str(&format!(
@@ -279,7 +288,7 @@ pub async fn handle_message(
                                     status_marker
                                 ));
 
-                                // Пропускаем файлы, которые слишком большие - не добавляем в очередь
+                                // Skip files that are too large and do not enqueue them
                                 let should_skip = if let Some(filesize) = metadata.filesize {
                                     let max_size = if format == "mp4" {
                                         config::validation::max_video_size_bytes()
@@ -337,9 +346,10 @@ pub async fn handle_message(
                             Err(e) => {
                                 log::error!("Failed to get preview metadata for URL {}: {:?}", url, e);
                                 status_text.push_str(&format!(
-                                    "{}. {} [❌ Ошибка]\n",
+                                    "{}. {} [{}]\n",
                                     idx + 1,
-                                    url.as_str().chars().take(50).collect::<String>()
+                                    url.as_str().chars().take(50).collect::<String>(),
+                                    i18n::t(&lang_clone, "commands.status_error")
                                 ));
                             }
                         }
@@ -356,7 +366,7 @@ pub async fn handle_message(
                     }
 
                     // Final update
-                    status_text.push_str("\n✅ Все треки добавлены в очередь!");
+                    status_text.push_str(&format!("\n{}", i18n::t(&lang_clone, "commands.group_complete")));
                     let _ = bot_clone
                         .edit_message_text(chat_id, status_message.id, &status_text)
                         .await;
@@ -374,7 +384,10 @@ pub async fn handle_message(
                         url_text.len(),
                         crate::config::validation::MAX_URL_LENGTH
                     );
-                    bot.send_message(msg.chat.id, format!("Извини, ссылка слишком длинная (максимум {} символов). Пожалуйста, пришли более короткую ссылку.", crate::config::validation::MAX_URL_LENGTH)).await?;
+                    let mut args = FluentArgs::new();
+                    args.set("max", crate::config::validation::MAX_URL_LENGTH as i64);
+                    bot.send_message(msg.chat.id, i18n::t_args(&lang, "commands.url_too_long", &args))
+                        .await?;
                     return Ok(user_info);
                 }
 
@@ -382,7 +395,8 @@ pub async fn handle_message(
                     Ok(parsed_url) => parsed_url,
                     Err(e) => {
                         log::warn!("Failed to parse URL '{}': {}", url_text, e);
-                        bot.send_message(msg.chat.id, "Извини, я не смогла распознать ссылку. Пожалуйста, пришли мне корректную ссылку на поддерживаемые сервисы (YouTube, SoundCloud, VK, TikTok, Instagram, Twitch, Spotify и другие).").await?;
+                        bot.send_message(msg.chat.id, i18n::t(&lang, "commands.invalid_single_link"))
+                            .await?;
                         return Ok(user_info);
                     }
                 };
@@ -404,10 +418,12 @@ pub async fn handle_message(
                 }
 
                 // Send "processing" message
-                let processing_msg = bot.send_message(msg.chat.id, "⏳ Получаю информацию...").await?;
+                let processing_msg = bot
+                    .send_message(msg.chat.id, i18n::t(&lang, "commands.processing"))
+                    .await?;
 
                 // Show preview instead of immediately downloading
-                // Получаем качество видео для превью
+                // Get video quality for the preview
                 let conn_for_preview = db::get_connection(&db_pool);
 
                 let video_quality = if format == "mp4" {
@@ -425,8 +441,8 @@ pub async fn handle_message(
 
                 match get_preview_metadata(&url, Some(&format), video_quality.as_deref()).await {
                     Ok(metadata) => {
-                        // Проверяем размер файла на этапе preview ТОЛЬКО для аудио
-                        // Для видео (mp4) пропускаем проверку, чтобы пользователь мог выбрать меньшее качество в preview
+                        // Check file size during preview ONLY for audio
+                        // Skip the check for MP4 so the user can pick a lower quality in the preview
                         if format != "mp4" {
                             if let Some(filesize) = metadata.filesize {
                                 let max_size = config::validation::max_audio_size_bytes();
@@ -441,10 +457,10 @@ pub async fn handle_message(
                                         max_mb
                                     );
 
-                                    let error_message = format!(
-                                        "❌ Аудио файл слишком большой (примерно {:.1} MB). Максимальный размер: {:.1} MB.",
-                                        size_mb, max_mb
-                                    );
+                                    let mut args = FluentArgs::new();
+                                    args.set("size", format!("{:.1}", size_mb));
+                                    args.set("max", format!("{:.1}", max_mb));
+                                    let error_message = i18n::t_args(&lang, "commands.audio_too_large", &args);
 
                                     // Delete processing message
                                     let _ = bot.delete_message(msg.chat.id, processing_msg.id).await;
@@ -479,7 +495,8 @@ pub async fn handle_message(
                             Err(e) => {
                                 log::error!("Failed to send preview: {:?}", e);
                                 // Fallback: send error message
-                                bot.send_message(msg.chat.id, "У меня не получилось показать превью 😢 Попробуй еще раз или напиши Стэну (@stansob).").await?;
+                                bot.send_message(msg.chat.id, i18n::t(&lang, "commands.preview_failed"))
+                                    .await?;
                             }
                         }
                     }
@@ -489,15 +506,15 @@ pub async fn handle_message(
                         // Delete processing message
                         let _ = bot.delete_message(msg.chat.id, processing_msg.id).await;
 
-                        // Проверяем, является ли это ошибкой длительности
+                        // Check whether this is a duration-related error
                         let error_message = if let AppError::Download(ref msg) = e {
                             if msg.contains("Видео слишком длинное") {
                                 msg.clone()
                             } else {
-                                "У меня не получилось получить информацию о треке 😢 Попробуй еще раз или напиши Стэну (@stansob).".to_string()
+                                i18n::t(&lang, "commands.preview_info_failed")
                             }
                         } else {
-                            "У меня не получилось получить информацию о треке 😢 Попробуй еще раз или напиши Стэну (@stansob).".to_string()
+                            i18n::t(&lang, "commands.preview_info_failed")
                         };
 
                         bot.send_message(msg.chat.id, error_message).await?;
@@ -508,10 +525,12 @@ pub async fn handle_message(
                 return Ok(user_info);
             }
         } else {
-            bot.send_message(msg.chat.id, "Извини, я не нашла ссылки. Пожалуйста, пришли мне ссылку на трек или видео с поддерживаемых сервисов (YouTube, SoundCloud, VK, TikTok, Instagram, Twitch, Spotify и другие).").await?;
+            bot.send_message(msg.chat.id, i18n::t(&lang, "commands.no_links"))
+                .await?;
         }
     } else {
-        bot.send_message(msg.chat.id, "Извини, я не нашла ссылки. Пожалуйста, пришли мне ссылку на трек или видео с поддерживаемых сервисов (YouTube, SoundCloud, VK, TikTok, Instagram, Twitch, Spotify и другие).").await?;
+        bot.send_message(msg.chat.id, i18n::t(&lang, "commands.no_links"))
+            .await?;
     }
     Ok(None)
 }

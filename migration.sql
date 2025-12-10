@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS users (
     download_subtitles INTEGER DEFAULT 0,
     video_quality TEXT DEFAULT 'best',
     audio_bitrate TEXT DEFAULT '320k',
+    language TEXT DEFAULT 'ru',
     subscription_expires_at DATETIME DEFAULT NULL
 );
 
@@ -126,3 +127,6 @@ CREATE TABLE IF NOT EXISTS audio_effect_sessions (
 CREATE INDEX IF NOT EXISTS idx_audio_sessions_user_id ON audio_effect_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_audio_sessions_expires_at ON audio_effect_sessions(expires_at);
 CREATE INDEX IF NOT EXISTS idx_audio_sessions_msg_id ON audio_effect_sessions(original_message_id);
+
+-- Migration: add user language preference (safe to fail if already applied)
+ALTER TABLE users ADD COLUMN language TEXT DEFAULT 'ru';
