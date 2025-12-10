@@ -9,6 +9,7 @@ use teloxide::types::Message;
 use tokio::signal;
 use tokio::time::{interval, sleep};
 
+use doradura::i18n;
 // Use library modules
 use doradura::core::{
     config, export, history, init_logger, log_cookies_configuration,
@@ -30,11 +31,12 @@ use doradura::telegram::webapp::run_webapp_server;
 use doradura::telegram::{
     create_bot, handle_admin_command, handle_backup_command, handle_info_command, handle_menu_callback, handle_message,
     handle_setplan_command, handle_users_command, is_message_addressed_to_bot, send_random_voice_message,
-    setup_bot_commands, show_enhanced_main_menu, show_main_menu, Command, WebAppAction, WebAppData,
+    setup_all_language_commands, setup_chat_bot_commands, show_enhanced_main_menu, show_main_menu, Command,
+    WebAppAction, WebAppData,
 };
 use export::show_export_menu;
 use history::show_history;
-use stats::{show_global_stats, show_user_stats};
+use stats::show_user_stats;
 use std::env;
 use subscription::show_subscription_info;
 
@@ -87,8 +89,8 @@ async fn main() -> Result<()> {
     let bot_id = bot_info.id;
     log::info!("Bot username: {:?}, Bot ID: {}", bot_username, bot_id);
 
-    // Set up bot commands
-    setup_bot_commands(&bot).await?;
+    // Set up bot commands for all languages
+    setup_all_language_commands(&bot).await?;
 
     // Create database connection pool
     let db_pool =
@@ -321,8 +323,26 @@ async fn main() -> Result<()> {
                             }
                             match cmd {
                                 Command::Start => {
+                                    if let Ok(conn) = get_connection(&db_pool) {
+                                        let chat_id = msg.chat.id.0;
+                                        if let Ok(None) = get_user(&conn, chat_id) {
+                                            let username = msg.from.as_ref().and_then(|u| u.username.clone());
+                                            log::info!(
+                                                "Creating user on /start: chat_id={}, username={:?}",
+                                                chat_id,
+                                                username
+                                            );
+                                            if let Err(e) = create_user(&conn, chat_id, username) {
+                                                log::warn!("Failed to create user on /start: {}", e);
+                                            }
+                                        }
+                                    }
                                     // Show enhanced main menu
                                     let _ = show_enhanced_main_menu(&bot, msg.chat.id, db_pool.clone()).await;
+                                    let lang = i18n::user_lang_from_pool(&db_pool, msg.chat.id.0);
+                                    if let Err(e) = setup_chat_bot_commands(&bot, msg.chat.id, &lang).await {
+                                        log::warn!("Failed to set chat-specific commands: {}", e);
+                                    }
 
                                     // Send random voice message in background
                                     let bot_voice = bot.clone();
@@ -331,7 +351,7 @@ async fn main() -> Result<()> {
                                         send_random_voice_message(bot_voice, chat_id_voice).await;
                                     });
                                 }
-                                Command::Mode => {
+                                Command::Settings => {
                                     let _ = show_main_menu(&bot, msg.chat.id, db_pool).await;
                                 }
                                 Command::Info => {
@@ -350,9 +370,6 @@ async fn main() -> Result<()> {
                                         Ok(_) => log::info!("Stats sent successfully"),
                                         Err(e) => log::error!("Failed to show user stats: {:?}", e),
                                     }
-                                }
-                                Command::Global => {
-                                    let _ = show_global_stats(&bot, msg.chat.id, db_pool).await;
                                 }
                                 Command::Export => {
                                     let _ = show_export_menu(&bot, msg.chat.id, db_pool).await;

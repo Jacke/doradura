@@ -338,6 +338,39 @@ fn probe_video_metadata(path: &str) -> Option<(u32, Option<u32>, Option<u32>)> {
     Some((duration, width, height))
 }
 
+/// Формирует yt-dlp format-строку, отдавая приоритет H.264/AAC (avc1/mp4a), чтобы Telegram корректно воспроизводил видео.
+/// Добавляем деградацию по высоте, чтобы при отсутствии avc1 на запрошенном качестве взять более низкое, но совместимое.
+fn build_telegram_safe_format(requested_height: Option<u32>) -> String {
+    // Список высот для последовательных попыток (убираем дубликаты).
+    let mut heights = vec![1080, 720, 480, 360, 240];
+    if let Some(h) = requested_height {
+        if !heights.contains(&h) {
+            heights.insert(0, h);
+        } else {
+            // Перемещаем запрошенную высоту в начало для приоритета.
+            heights.retain(|&v| v != h);
+            heights.insert(0, h);
+        }
+    }
+
+    let mut parts: Vec<String> = Vec::new();
+
+    for h in heights {
+        let filt = format!("[height<={h}]");
+        // Сначала максимально совместимые связки H.264 + AAC.
+        parts.push(format!("bv*{filt}[vcodec^=avc1]+ba[acodec^=mp4a]"));
+        // Альтернатива: явные mp4/m4a треки.
+        parts.push(format!("bv*{filt}[vcodec^=avc1][ext=mp4]+ba[ext=m4a]"));
+    }
+
+    // Фолбэки, если ничего из avc1/mp4a не нашлось.
+    parts.push("bestvideo[ext=mp4]+bestaudio[ext=m4a]".to_string());
+    parts.push("best[ext=mp4]".to_string());
+    parts.push("best".to_string());
+
+    parts.join("/")
+}
+
 /// Конвертирует WebP изображение в JPEG используя ffmpeg
 ///
 /// Args: webp_bytes - байты WebP изображения
@@ -2699,14 +2732,14 @@ pub async fn download_and_send_video(
             // Добавляем fallback на best для случаев когда доступны готовые комбинированные форматы
             // Синтаксис "format1/format2/format3" позволяет yt-dlp выбрать первый доступный формат
             let format_arg = match video_quality.as_deref() {
-                Some("1080p") => "bestvideo[height<=1080]+bestaudio/best[height<=1080]/bestvideo[height<=720]+bestaudio/best[height<=720]/best/worst",
-                Some("720p") => "bestvideo[height<=720]+bestaudio/best[height<=720]/bestvideo[height<=480]+bestaudio/best[height<=480]/best/worst",
-                Some("480p") => "bestvideo[height<=480]+bestaudio/best[height<=480]/bestvideo[height<=360]+bestaudio/best[height<=360]/best/worst",
-                Some("360p") => "bestvideo[height<=360]+bestaudio/best[height<=360]/best/worst",
-                _ => "bestvideo+bestaudio/best/worst", // Сначала пробуем объединить лучшее видео с аудио, потом готовое best
+                Some("1080p") => build_telegram_safe_format(Some(1080)),
+                Some("720p") => build_telegram_safe_format(Some(720)),
+                Some("480p") => build_telegram_safe_format(Some(480)),
+                Some("360p") => build_telegram_safe_format(Some(360)),
+                _ => build_telegram_safe_format(None), // приоритет avc1/mp4a без ограничения по высоте
             };
 
-            log::info!("Using video format with fallback chain: {}", format_arg);
+            log::info!("Using Telegram-safe video format chain: {}", format_arg);
 
             // Step 2.5: Check estimated file size before downloading
             // Пытаемся получить размер файла для выбранного формата
@@ -2858,7 +2891,7 @@ pub async fn download_and_send_video(
             }
 
             // Step 3: Download with real-time progress updates
-            let (mut progress_rx, mut download_handle) = download_video_file_with_progress(&url, &download_path, format_arg).await?;
+            let (mut progress_rx, mut download_handle) = download_video_file_with_progress(&url, &download_path, &format_arg).await?;
 
             // Показываем начальный прогресс 0%
             let _ = progress_msg.update(&bot_clone, DownloadStatus::Downloading {

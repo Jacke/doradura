@@ -1,3 +1,4 @@
+use crate::core::config::admin::ADMIN_USERNAME;
 use crate::core::export::handle_export;
 use crate::core::history::handle_history_callback;
 use crate::core::rate_limiter::RateLimiter;
@@ -6,6 +7,7 @@ use crate::download::queue::{DownloadQueue, DownloadTask};
 use crate::i18n;
 use crate::storage::cache;
 use crate::storage::db::{self, DbPool};
+use crate::telegram::setup_chat_bot_commands;
 use fluent_templates::fluent_bundle::FluentArgs;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -1246,10 +1248,23 @@ pub async fn handle_menu_callback(
                     .any(|(code, _)| code.eq_ignore_ascii_case(lang_code))
                 {
                     if let Ok(conn) = db::get_connection(&db_pool) {
+                        if let Ok(None) = db::get_user(&conn, chat_id.0) {
+                            log::info!(
+                                "Creating user before setting language: chat_id={}, username={:?}",
+                                chat_id.0,
+                                q.from.username
+                            );
+                            if let Err(e) = db::create_user(&conn, chat_id.0, q.from.username.clone()) {
+                                log::warn!("Failed to create user before setting language: {}", e);
+                            }
+                        }
                         let _ = db::set_user_language(&conn, chat_id.0, lang_code);
                     }
 
                     let new_lang = i18n::lang_from_code(lang_code);
+                    if let Err(e) = setup_chat_bot_commands(&bot, chat_id, &new_lang).await {
+                        log::warn!("Failed to set chat-specific commands for lang {}: {}", lang_code, e);
+                    }
                     let _ = bot
                         .answer_callback_query(callback_id.clone())
                         .text(i18n::t(&new_lang, "menu.language_saved"))
@@ -1849,7 +1864,8 @@ pub async fn handle_menu_callback(
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
 
                 // Check administrator privileges
-                let is_admin = q.from.username.as_ref().map(|u| u == "stansob").unwrap_or(false);
+                let admin_username = ADMIN_USERNAME.as_str();
+                let is_admin = !admin_username.is_empty() && q.from.username.as_deref() == Some(admin_username);
 
                 if !is_admin {
                     bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
@@ -3030,7 +3046,17 @@ async fn show_current_settings_detail(
 /// * `chat_id` - User's chat ID
 /// * `message_id` - ID of message to edit
 async fn show_help_menu(bot: &Bot, chat_id: ChatId, message_id: MessageId) -> ResponseResult<()> {
-    let text = "❓ *Помощь и FAQ*\n\n\
+    let admin_line = if ADMIN_USERNAME.is_empty() {
+        "*Нужна помощь?*\nНапиши администратору.".to_string()
+    } else {
+        format!(
+            "*Нужна помощь?*\nНапиши @{} \\(администратор\\)",
+            escape_markdown(ADMIN_USERNAME.as_str())
+        )
+    };
+
+    let text = format!(
+        "❓ *Помощь и FAQ*\n\n\
         *Как пользоваться ботом?*\n\
         Просто отправь мне ссылку на видео или трек с YouTube, SoundCloud, VK, TikTok, Instagram или других сервисов\\.\n\n\
         *Какие форматы поддерживаются?*\n\
@@ -3043,8 +3069,9 @@ async fn show_help_menu(bot: &Bot, chat_id: ChatId, message_id: MessageId) -> Re
         Используй кнопку \"⚙️ Настройки загрузки\" в главном меню\\.\n\n\
         *Какие сервисы поддерживаются?*\n\
         YouTube, SoundCloud, VK, TikTok, Instagram, Twitch, Spotify и многие другие\\! Полный список в разделе \"🌐 Доступные сервисы\"\\.\n\n\
-        *Нужна помощь?*\n\
-        Напиши @stansob \\(администратор\\)";
+        {}",
+        admin_line
+    );
 
     let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
         "🔙 Назад в меню".to_string(),
