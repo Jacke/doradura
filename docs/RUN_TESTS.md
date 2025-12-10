@@ -1,175 +1,79 @@
-# 🧪 Запуск тестов скачивания
+# 🧪 Download Testing Guide
 
-## TL;DR - Быстрые команды
+## TL;DR — quick commands
 
 ```bash
-# 1. Диагностика системы (запустите ПЕРВЫМ)
+# 1. System diagnostics (run FIRST)
 ./test_ytdlp.sh diagnostics
 
-# 2. Если cookies не настроены - автоматическая настройка
+# 2. If cookies are not set up — automatic setup
 ./run_tests_with_cookies.sh
 
-# 3. Тест скачивания (с интернетом)
+# 3. Download test (requires internet)
 YTDL_COOKIES_FILE=./youtube_cookies.txt ./test_ytdlp.sh download
 
-# 4. Запуск бота с исправлениями
+# 4. Run the bot with fixes
 YTDL_COOKIES_FILE=./youtube_cookies.txt cargo run --release
 ```
 
-## 📋 Что было сделано
+## 📋 What changed
 
-### ✅ Создана система интеграционных тестов
+### ✅ Integration test suite
+- 8 tests to verify functionality
+- Automatic diagnostics
+- Detailed error messages with fixes
 
-- 8 тестов для проверки работоспособности
-- Автоматическая диагностика проблем
-- Детальные сообщения об ошибках с решениями
+### ✅ Critical bug fixed
 
-### ✅ Исправлен критический баг
-
-**Проблема:**
+**Problem:**
 ```
 ERROR: [youtube] Please sign in
 WARNING: ios client requires a GVS PO Token
 ```
 
-**Решение:**
-- Изменен `player_client` с `web,ios` на `android`
-- Android клиент не требует PO Token
-- Работает стабильно с cookies
+**Fix:**
+- Switched `player_client` from `web,ios` to `android`
+- Android client does not require a PO Token
+- Stable when using cookies
 
-### ✅ Создана документация
+### ✅ Documentation
+- `TESTING.md` — full guide
+- `QUICK_FIX.md` — 5-minute fix
+- `TEST_SUMMARY.md` — detailed report
+- This file — quick instructions
 
-- `TESTING.md` - Полное руководство
-- `QUICK_FIX.md` - Решение за 5 минут
-- `TEST_SUMMARY.md` - Детальный отчет
-- Этот файл - краткая инструкция
+## 🎯 Available tests
 
-## 🎯 Доступные тесты
+| Command | What it checks        | Internet |
+|---------|-----------------------|----------|
+| `diagnostics` | System check           | ❌ |
+| `download`    | Audio download         | ✅ |
+| `metadata`    | Metadata retrieval     | ✅ |
+| `invalid`     | Error handling         | ✅ |
+| `all-basic`   | Everything offline     | ❌ |
+| `all`         | Full suite             | ✅ |
 
-| Команда | Что тестирует | Интернет |
-|---------|---------------|----------|
-| `diagnostics` | Проверка системы | ❌ |
-| `download` | Скачивание аудио | ✅ |
-| `metadata` | Получение метаданных | ✅ |
-| `invalid` | Обработка ошибок | ✅ |
-| `all-basic` | Все без интернета | ❌ |
-| `all` | Все тесты | ✅ |
+Full list: `./test_ytdlp.sh help`
 
-Полный список: `./test_ytdlp.sh help`
+## ⚡ Usage examples
 
-## ⚡ Примеры использования
-
-### Быстрая проверка системы
+### Offline basic suite
 ```bash
-./test_ytdlp.sh diagnostics
+./test_ytdlp.sh all-basic
 ```
 
-Покажет:
-- ✅/❌ Что установлено
-- ✅/❌ Версии
-- ✅/❌ Cookies настроены
-- ✅/❌ Готовность к работе
-
-### Полный тест скачивания
+### Full suite with cookies
 ```bash
-YTDL_COOKIES_FILE=./youtube_cookies.txt ./test_ytdlp.sh download
+YTDL_COOKIES_FILE=./youtube_cookies.txt ./test_ytdlp.sh all
 ```
 
-Скачает тестовое видео и покажет:
-- ✅ Успех или ❌ ошибку с объяснением
-- 📊 Размер файла
-- ⏱️ Время скачивания
-
-### Запуск бота
+### Single test run
 ```bash
-# С cookies
-YTDL_COOKIES_FILE=./youtube_cookies.txt cargo run --release
-
-# Или добавьте в ~/.zshrc:
-export YTDL_COOKIES_FILE=/Users/stan/Dev/_PROJ/doradura/youtube_cookies.txt
+./test_ytdlp.sh metadata
 ```
 
-## 🐛 Решение проблем
-
-### Cookies не настроены
-
-**Симптом:**
-```
-❌ Cookies не настроены
-```
-
-**Решение:**
-```bash
-# Автоматическая настройка
-./run_tests_with_cookies.sh
-
-# Или вручную (см. QUICK_FIX.md)
-```
-
-### Скачивание не работает
-
-**Симптом:**
-```
-ERROR: Please sign in
-ERROR: No video formats found
-```
-
-**Решение:**
-```bash
-# 1. Проверьте cookies
-ls -lh youtube_cookies.txt  # Файл должен существовать и не быть пустым
-
-# 2. Установите переменную
-export YTDL_COOKIES_FILE=./youtube_cookies.txt
-
-# 3. Обновите yt-dlp
-pip3 install -U yt-dlp
-
-# 4. Запустите тест
-./test_ytdlp.sh download
-```
-
-### yt-dlp не найден
-
-**Симптом:**
-```
-❌ yt-dlp: НЕ УСТАНОВЛЕН
-```
-
-**Решение:**
-```bash
-pip3 install yt-dlp
-```
-
-## 📊 Результат тестирования
-
-После исправлений:
-
-```
-╔════════════════════════════════════════════╗
-║  ✅ yt-dlp: 2025.10.22                    ║
-║  ✅ ffmpeg: 7.1.1                         ║
-║  ✅ Cookies: Настроены                    ║
-║  ✅ Тест скачивания: УСПЕШНО              ║
-║  ✅ Размер: 208 КБ за 15 секунд           ║
-╚════════════════════════════════════════════╝
-```
-
-## 📚 Полная документация
-
-- **`TESTING.md`** - Полное руководство по тестированию (все детали)
-- **`QUICK_FIX.md`** - Быстрое решение проблем со скачиванием (5 минут)
-- **`TEST_SUMMARY.md`** - Детальный отчет о проделанной работе
-- **`tests/README.md`** - Справочник по тестам
-- **`MACOS_COOKIES_FIX.md`** - Настройка cookies для macOS
-
-## 🎉 Готово!
-
-Система тестирования работает, критический баг исправлен.
-
-**Следующий шаг:** Запустите бота и попробуйте скачать видео!
-
-```bash
-YTDL_COOKIES_FILE=./youtube_cookies.txt cargo run --release
-```
-
+## 🧠 Tips
+- Always run `diagnostics` first to catch environment issues.
+- Keep `youtube_cookies.txt` fresh.
+- Use `run_tests_with_cookies.sh` if cookies are missing.
+- Prefer release mode for realistic performance: `cargo run --release`.

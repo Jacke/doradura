@@ -1,117 +1,100 @@
 #!/bin/bash
-
-# Скрипт для запуска локального Telegram Bot API сервера
-# Использование: ./start_local_bot_api.sh
+# Script to run a local Telegram Bot API server
+# Usage: ./start_local_bot_api.sh
 
 set -e
 
-# Цвета для вывода
-RED='\033[0;31m'
 GREEN='\033[0;32m'
+RED='\033[0;31m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-echo -e "${GREEN}🚀 Запуск локального Telegram Bot API сервера${NC}"
+echo -e "${GREEN}🚀 Starting local Telegram Bot API server${NC}"
 
-# Проверяем наличие Docker
-if ! command -v docker &> /dev/null; then
-    echo -e "${RED}❌ Docker не установлен!${NC}"
-    echo "Установите Docker: https://docs.docker.com/get-docker/"
+# Check Docker
+if ! command -v docker &>/dev/null; then
+    echo -e "${RED}❌ Docker not installed!${NC}"
+    echo "Install Docker: https://docs.docker.com/get-docker/"
     exit 1
 fi
 
-# Проверяем наличие docker-compose
-if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
-    echo -e "${RED}❌ docker-compose не установлен!${NC}"
+# Check docker-compose
+if ! command -v docker-compose &>/dev/null; then
+    echo -e "${RED}❌ docker-compose not installed!${NC}"
+    echo "Install docker-compose"
     exit 1
 fi
 
-# Проверяем наличие .env файла с API_ID и API_HASH
+# Check .env.bot-api
 if [ ! -f .env.bot-api ]; then
-    echo -e "${YELLOW}⚠️  Файл .env.bot-api не найден${NC}"
-    echo "Создаю шаблон .env.bot-api..."
-    cat > .env.bot-api << EOF
-# Telegram API credentials
-# Получите их на https://my.telegram.org
-API_ID=YOUR_API_ID_HERE
-API_HASH=YOUR_API_HASH_HERE
-EOF
-    echo -e "${YELLOW}📝 Пожалуйста, заполните .env.bot-api своими данными:${NC}"
-    echo "   1. Откройте https://my.telegram.org"
-    echo "   2. Получите API_ID и API_HASH"
-    echo "   3. Отредактируйте .env.bot-api"
+    echo -e "${YELLOW}⚠️  .env.bot-api not found${NC}"
+    echo "Creating template .env.bot-api..."
+    cat <<'ENV' > .env.bot-api
+API_ID=
+API_HASH=
+ENV
+    echo -e "${YELLOW}📝 Please fill .env.bot-api with your data:${NC}"
+    echo "   1. Open https://my.telegram.org"
+    echo "   2. Get API_ID and API_HASH"
+    echo "   3. Edit .env.bot-api"
     exit 1
 fi
 
-# Загружаем переменные окружения
+# Load env
+set -a
 source .env.bot-api
+set +a
 
-# Проверяем, что API_ID и API_HASH установлены
-if [ "$API_ID" == "YOUR_API_ID_HERE" ] || [ -z "$API_ID" ]; then
-    echo -e "${RED}❌ API_ID не установлен в .env.bot-api${NC}"
+# Verify API_ID and API_HASH
+if [ -z "$API_ID" ]; then
+    echo -e "${RED}❌ API_ID not set in .env.bot-api${NC}"
+    exit 1
+fi
+if [ -z "$API_HASH" ]; then
+    echo -e "${RED}❌ API_HASH not set in .env.bot-api${NC}"
     exit 1
 fi
 
-if [ "$API_HASH" == "YOUR_API_HASH_HERE" ] || [ -z "$API_HASH" ]; then
-    echo -e "${RED}❌ API_HASH не установлен в .env.bot-api${NC}"
-    exit 1
-fi
-
-# Проверяем, не запущен ли уже контейнер
-if docker ps | grep -q telegram-bot-api; then
-    echo -e "${YELLOW}⚠️  Контейнер telegram-bot-api уже запущен${NC}"
-    echo "Остановить и перезапустить? (y/n)"
-    read -r answer
-    if [ "$answer" == "y" ] || [ "$answer" == "Y" ]; then
-        echo "Останавливаю существующий контейнер..."
+# Check running container
+if docker ps --format '{{.Names}}' | grep -q '^telegram-bot-api$'; then
+    echo -e "${YELLOW}⚠️  Container telegram-bot-api already running${NC}"
+    read -p "Stop and restart? (y/n) " ans
+    if [[ "$ans" =~ ^[Yy]$ ]]; then
+        echo "Stopping existing container..."
         docker-compose -f docker-compose.bot-api.yml down
     else
-        echo "Выход..."
+        echo "Exit..."
         exit 0
     fi
 fi
 
-# Создаем директорию для данных
+# Create data dir
 mkdir -p bot-api-data
 
-# Запускаем сервер
-echo -e "${GREEN}📦 Запускаю Docker контейнер...${NC}"
-if docker compose version &> /dev/null; then
-    docker compose -f docker-compose.bot-api.yml up -d
-else
-    docker-compose -f docker-compose.bot-api.yml up -d
-fi
+# Start server
+echo -e "${GREEN}📦 Starting Docker container...${NC}"
+docker-compose -f docker-compose.bot-api.yml up -d
 
-# Ждем запуска сервера
-echo -e "${YELLOW}⏳ Ожидание запуска сервера (10 секунд)...${NC}"
+# Wait for server
+echo -e "${YELLOW}⏳ Waiting 10 seconds for server start...${NC}"
 sleep 10
 
-# Проверяем статус
-if docker ps | grep -q telegram-bot-api; then
-    echo -e "${GREEN}✅ Сервер запущен!${NC}"
-    echo ""
-    echo "📋 Информация:"
-    echo "   - URL: http://localhost:8081"
-    echo "   - Логи: docker logs -f telegram-bot-api"
-    echo "   - Остановка: docker-compose -f docker-compose.bot-api.yml down"
-    echo ""
-    echo "🔧 Настройте бота:"
-    echo "   export BOT_API_URL=http://localhost:8081"
-    echo "   или добавьте в .env:"
-    echo "   BOT_API_URL=http://localhost:8081"
-    echo ""
-    
-    # Проверяем доступность сервера
-    echo -e "${YELLOW}🔍 Проверяю доступность сервера...${NC}"
-    if curl -s http://localhost:8081/health > /dev/null 2>&1; then
-        echo -e "${GREEN}✅ Сервер доступен!${NC}"
-    else
-        echo -e "${YELLOW}⚠️  Сервер запущен, но healthcheck не отвечает${NC}"
-        echo "   Это нормально, если сервер еще загружается. Подождите немного."
-    fi
+# Health check
+if curl -s http://localhost:8081/bot$TELOXIDE_TOKEN/getMe >/dev/null; then
+    echo -e "${GREEN}✅ Server is up!${NC}"
+    echo "📋 Info:"
+    echo "   - Logs: docker logs -f telegram-bot-api"
+    echo "   - Stop: docker-compose -f docker-compose.bot-api.yml down"
+    echo "🔧 Configure bot:"
+    echo "   set TELOXIDE_API_URL=http://localhost:8081"
+    echo "   or add to .env:"
+    echo "      TELOXIDE_API_URL=http://localhost:8081"
 else
-    echo -e "${RED}❌ Не удалось запустить сервер${NC}"
-    echo "Проверьте логи: docker logs telegram-bot-api"
-    exit 1
+    echo -e "${YELLOW}⚠️  Server started but healthcheck did not respond${NC}"
+    echo "   It may still be initializing; wait a bit."
+    if ! docker ps --format '{{.Names}}' | grep -q '^telegram-bot-api$'; then
+        echo -e "${RED}❌ Failed to start server${NC}"
+        echo "Check logs: docker logs telegram-bot-api"
+        exit 1
+    fi
 fi
-

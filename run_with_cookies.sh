@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Скрипт для запуска бота с cookies
-# Использование: ./run_with_cookies.sh
+# Script to run the bot with YouTube cookies
+# Usage: ./run_with_cookies.sh
 
 set -e
 
@@ -9,53 +9,52 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COOKIES_FILE="${SCRIPT_DIR}/youtube_cookies.txt"
 
 echo "======================================"
-echo "🚀 Запуск бота с YouTube cookies"
+echo "🚀 Starting bot with YouTube cookies"
 echo "======================================"
 echo ""
 
-# Проверка 1: Файл cookies существует
+# Check 1: cookies file exists
 if [ ! -f "$COOKIES_FILE" ]; then
-    echo "❌ Файл cookies не найден: $COOKIES_FILE"
+    echo "❌ Cookies file not found: $COOKIES_FILE"
     echo ""
-    echo "Создай файл с cookies. См. YOUTUBE_COOKIES.md"
+    echo "Create a cookies file. See YOUTUBE_COOKIES.md"
     exit 1
 fi
 
-echo "✅ Файл cookies найден: $COOKIES_FILE"
+echo "✅ Cookies file found: $COOKIES_FILE"
 echo ""
 
-# Проверка 2: Права доступа
+# Check 2: permissions
 PERMS=$(stat -f "%OLp" "$COOKIES_FILE" 2>/dev/null || stat -c "%a" "$COOKIES_FILE" 2>/dev/null)
 if [ "$PERMS" != "600" ]; then
-    echo "⚠️  Права доступа: $PERMS (рекомендуется: 600)"
-    echo "   Установка безопасных прав..."
+    echo "⚠️  Permissions: $PERMS (recommended: 600)"
+    echo "   Setting secure permissions..."
     chmod 600 "$COOKIES_FILE"
-    echo "   ✅ Права установлены: 600"
+    echo "   ✅ Permissions set to 600"
 fi
 echo ""
 
-# Проверка 3: Тестирование cookies
-echo "🔍 Тестирование cookies с yt-dlp..."
+# Check 3: test cookies
+echo "🔍 Testing cookies with yt-dlp..."
 if yt-dlp --cookies "$COOKIES_FILE" --print "%(title)s" "https://www.youtube.com/watch?v=dQw4w9WgXcQ" &>/dev/null; then
-    echo "✅ Cookies работают!"
+    echo "✅ Cookies are valid!"
 else
-    echo "⚠️  Не удалось проверить cookies с yt-dlp"
-    echo "   Бот будет запущен, но могут быть проблемы с YouTube"
+    echo "⚠️  Could not validate cookies with yt-dlp"
+    echo "   Bot will start, but YouTube may fail"
 fi
 echo ""
 
-# Установка переменной окружения
+# Export env var
 export YTDL_COOKIES_FILE="$COOKIES_FILE"
 
 echo "======================================"
-echo "Запуск бота..."
+echo "Starting bot..."
 echo "======================================"
 echo ""
-echo "Переменные окружения:"
+echo "Environment variables:"
 echo "  YTDL_COOKIES_FILE=$YTDL_COOKIES_FILE"
 echo ""
 
-# Запуск бота
+# Run bot
 cd "$SCRIPT_DIR"
 cargo run --release
-

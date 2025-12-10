@@ -3,16 +3,16 @@ use crate::storage::db::DbPool;
 use std::sync::Arc;
 use teloxide::prelude::*;
 
-/// Отправляет уведомление администратору об ошибке задачи
+/// Sends a notification to the administrator about a task failure.
 ///
 /// # Arguments
 ///
-/// * `bot` - Экземпляр бота для отправки сообщений
-/// * `db_pool` - Пул соединений с БД для поиска ChatId администратора
-/// * `task_id` - ID задачи
-/// * `user_id` - ID пользователя, чья задача упала
-/// * `url` - URL задачи
-/// * `error_message` - Сообщение об ошибке
+/// * `bot` - Bot instance used to send messages
+/// * `db_pool` - Connection pool used to find the administrator ChatId
+/// * `task_id` - Task ID
+/// * `user_id` - ID of the user whose task failed
+/// * `url` - Task URL
+/// * `error_message` - Error message
 pub async fn notify_admin_task_failed(
     bot: Bot,
     db_pool: Arc<DbPool>,
@@ -21,10 +21,10 @@ pub async fn notify_admin_task_failed(
     url: &str,
     error_message: &str,
 ) {
-    // Пытаемся найти ChatId администратора по username
+    // Try to find the admin's ChatId by username
     let admin_chat_id = match crate::storage::db::get_connection(&db_pool) {
         Ok(conn) => {
-            // Ищем пользователя с username = ADMIN_USERNAME
+            // Look for a user with username = ADMIN_USERNAME
             match crate::storage::db::get_all_users(&conn) {
                 Ok(users) => users
                     .iter()
@@ -43,7 +43,7 @@ pub async fn notify_admin_task_failed(
     };
 
     if let Some(chat_id) = admin_chat_id {
-        // Экранируем специальные символы для MarkdownV2
+        // Escape special characters for MarkdownV2
         let escaped_error = error_message
             .replace("_", "\\_")
             .replace("*", "\\*")

@@ -1,71 +1,61 @@
-# 🍎 Исправление проблемы с Cookies на macOS
+# 🍎 macOS Cookie Fix
 
-## 🔴 Проблема:
+## 🔴 Problem
+On macOS, **Chrome and Safari require special permissions** to access cookies:
+- **Chrome:** needs Keychain access to decrypt v10 cookies
+- **Safari:** needs Full Disk Access to read `~/Library/Containers/com.apple.Safari/`
 
-На macOS **Chrome и Safari требуют специальных прав** для доступа к cookies:
-- **Chrome:** Требует доступ к Keychain (расшифровка v10 cookies)
-- **Safari:** Требует Full Disk Access для чтения `~/Library/Containers/com.apple.Safari/`
-
-**Симптомы:**
+**Symptoms:**
 ```
 [WARN] ⚠️  NO COOKIES CONFIGURED!
 [ERROR] Operation not permitted: '/Users/stan/Library/Containers/com.apple.Safari/...'
 ```
-или
+or
 ```
 Extracted 0 cookies from chrome (8136 could not be decrypted)
 ERROR: Only images are available for download
 ```
 
-Из-за этого в обычном окружении cookies **не извлекаются**, и бот видит только картинки вместо видео.
+Because of this, cookies are **not extracted** and the bot only sees images instead of videos.
 
 ---
 
-## ✅ Решение: Экспорт cookies в файл
+## ✅ Solution: Export cookies to a file
+An exported cookies file **does not require special permissions** and works perfectly.
 
-Экспортированный файл cookies **не требует специальных прав** и работает идеально.
+### Step 1: Install the browser extension
 
-### Шаг 1: Установи расширение для браузера
+**Chrome:**
+1. Open https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc
+2. Click "Add to Chrome"
 
-**Для Chrome:**
-1. Открой: https://chrome.google.com/webstore/detail/get-cookiestxt-locally/cclelndahbckbenkjhflpdbgdldlbecc
-2. Нажми "Add to Chrome"
+**Firefox:**
+1. Open https://addons.mozilla.org/en-US/firefox/addon/cookies-txt/
+2. Click "Add to Firefox"
 
-**Для Firefox:**
-1. Открой: https://addons.mozilla.org/en-US/firefox/addon/cookies-txt/
-2. Нажми "Add to Firefox"
+### Step 2: Sign in to YouTube
+1. Open https://youtube.com
+2. Sign in to your Google account
+3. Play any video to ensure cookies are saved
 
-### Шаг 2: Залогинься на YouTube
+### Step 3: Export cookies
+1. On the YouTube page, click the extension icon.
+2. Click "Export" / "Download".
+3. Save the file as `youtube_cookies.txt`.
 
-1. Открой YouTube: https://youtube.com
-2. Войди в свой Google аккаунт
-3. Посмотри любое видео (чтобы cookies сохранились)
-
-### Шаг 3: Экспортируй cookies
-
-1. **На странице YouTube** нажми на иконку расширения
-2. Нажми "Export" или "Download"
-3. Сохрани файл как `youtube_cookies.txt`
-
-### Шаг 4: Скопируй файл в директорию проекта
+### Step 4: Copy the file into the project directory
 
 ```bash
-# Переименуй и скопируй файл
 mv ~/Downloads/youtube.com_cookies.txt /Users/stan/Dev/_PROJ/doradura/youtube_cookies.txt
-
-# Установи безопасные права доступа
 chmod 600 /Users/stan/Dev/_PROJ/doradura/youtube_cookies.txt
 ```
 
-### Шаг 5: Запусти бота со скриптом
-
+### Step 5: Run the bot with the script
 ```bash
 cd /Users/stan/Dev/_PROJ/doradura
 ./run_with_cookies.sh
 ```
-
-Или вручную:
-
+Or manually:
 ```bash
 cd /Users/stan/Dev/_PROJ/doradura
 export YTDL_COOKIES_FILE=youtube_cookies.txt
@@ -74,23 +64,16 @@ cargo run --release
 
 ---
 
-## 🔍 Проверка работы:
-
+## 🔍 Verify
 ```bash
-# Проверь, что файл существует
 ls -la /Users/stan/Dev/_PROJ/doradura/youtube_cookies.txt
-
-# Проверь, что yt-dlp может использовать cookies
 yt-dlp --cookies youtube_cookies.txt --print "%(title)s" "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 ```
-
-Если команда вывела название видео - **всё работает!** ✅
+If the title prints, **everything works** ✅
 
 ---
 
-## 📋 Что будет в логах:
-
-При запуске бот покажет:
+## 📋 What the logs show
 ```
 [INFO] Using cookies from file: youtube_cookies.txt
 [DEBUG] Using player_client: web,ios,tv_embedded (cookies enabled)
@@ -98,64 +81,46 @@ yt-dlp --cookies youtube_cookies.txt --print "%(title)s" "https://www.youtube.co
 
 ---
 
-## ⚠️ Важно:
-
-1. **Cookies устаревают через 2-4 недели** - нужно будет переэкспортировать
-2. **НЕ коммитить файл в git** - он уже в `.gitignore`
-3. **Безопасность:** `chmod 600 youtube_cookies.txt` (только владелец может читать)
-
----
-
-## 🎯 Почему это работает:
-
-| Метод | macOS Sandbox | Требует прав |
-|-------|---------------|--------------|
-| Chrome cookies | ❌ Не работает | Keychain access |
-| Safari cookies | ❌ Не работает | File access |
-| **Файл cookies** | ✅ **Работает** | **Нет** |
-
-Файл cookies - это обычный текстовый файл, который не требует специальных прав доступа.
+## ⚠️ Important
+1. **Cookies expire every 2–4 weeks** — re-export as needed.
+2. **Do not commit the file** — it's already in `.gitignore`.
+3. **Security:** `chmod 600 youtube_cookies.txt` (owner read/write only).
 
 ---
 
-## 🆘 Если не работает:
+## 🎯 Why this works
 
-### 1. Проверь формат файла
+| Method          | macOS sandbox | Needs extra rights |
+|-----------------|---------------|--------------------|
+| Chrome cookies  | ❌ Works poorly | Keychain access    |
+| Safari cookies  | ❌ Works poorly | File access        |
+| **Cookies file**| ✅ **Works**     | **No**             |
 
-Файл должен начинаться с:
+A cookies file is plain text and does not require special permissions.
+
+---
+
+## 🆘 If it still fails
+1. Check the file format — it must start with:
 ```
 # Netscape HTTP Cookie File
 ```
-
-### 2. Проверь, что ты залогинен
-
-Открой YouTube в том же браузере и убедись, что ты залогинен.
-
-### 3. Попробуй другой браузер
-
-Если Chrome не работает, попробуй Firefox.
-
-### 4. Переэкспортируй cookies
-
-Иногда cookies устаревают - просто экспортируй их заново.
+2. Make sure you're signed in to YouTube in the same browser.
+3. Try another browser if Chrome fails.
+4. Re-export cookies if they are stale.
 
 ---
 
-## 🚀 Готово!
-
-Теперь бот будет работать с YouTube без проблем! 🎉
-
-**Следующий шаг:** Перезапусти бота и попробуй скачать то видео снова:
+## 🚀 Done!
+Restart the bot and try downloading the video again:
 ```bash
 ./run_with_cookies.sh
 ```
 
 ---
 
-## 💡 Бот теперь подсказывает сам!
-
-При запуске **без cookies** на macOS бот покажет понятное предупреждение:
-
+## 💡 The bot now warns you
+When you start **without cookies** on macOS you will see:
 ```
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⚠️  NO COOKIES CONFIGURED!
@@ -175,6 +140,4 @@ YouTube downloads will fail with 'bot detection' or 'only images' errors!
    4. Run: ./run_with_cookies.sh
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
-
-Так что теперь ты всегда будешь знать, что нужно сделать! 🎯
-
+Now you always know what to do. 🎯
