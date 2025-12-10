@@ -1,321 +1,43 @@
 # 🧪 Staging Environment
 
-## Концепция
+## Concept
+Staging is a separate bot instance for testing new features before releasing to production.
 
-**Staging** (промежуточная среда) - это отдельная копия бота для тестирования новых фич перед релизом в production.
+## 📊 Test vs Staging vs Canary
+| Type | When to use | Who uses it | Data |
+|------|-------------|-------------|------|
+| **Test** | Automated tests, CI/CD | Developers | Fake/mocked |
+| **Staging** | Manual testing of new features | Devs + QA | Realistic data |
+| **Canary** | Gradual rollout to % of users | Production users | Production data |
 
----
+For this bot:
+- **Production bot:** main token for all users
+- **Staging bot:** test token for validating new features
 
-## 📊 Разница между Test / Stage / Canary
+## 🚀 How to use Staging
 
-| Тип | Когда использовать | Кто использует | Данные |
-|-----|-------------------|----------------|--------|
-| **Test** | Автоматические тесты, CI/CD | Разработчики | Фейковые/моковые |
-| **Staging** | Ручное тестирование новых фич | Разработчики + тестировщики | Реальные или близкие к ним |
-| **Canary** | Постепенный релиз на % пользователей | Продакшн пользователи | Production данные |
-
-**Для нашего бота:**
-- **Production bot**: 6310079371:AAH... - основной бот для всех пользователей
-- **Staging bot**: 8224275354:AAF... - тестовый бот для проверки новых функций
-
----
-
-## 🚀 Как использовать Staging
-
-### 1. Запустить staging бота локально
-
+### 1) Run staging bot locally
 ```bash
 ./run_staging.sh
 ```
-
-Или вручную:
-
+Or manually:
 ```bash
-# Экспортировать staging переменные
 export $(grep -v '^#' .env.staging | xargs)
-
-# Запустить
 cargo run --release
 ```
 
-### 2. Что происходит
-
-- ✅ Использует staging bot token (8224275354:AAF...)
-- ✅ Отдельная база данных: `database_staging.sqlite`
-- ✅ Отдельная папка загрузок: `~/downloads/dora-staging`
-- ✅ Отдельный порт для webapp: `8081` (production использует `8080`)
-
-### 3. Тестирование новых фич
-
-1. **Разработайте фичу** в коде
-2. **Запустите staging бота**: `./run_staging.sh`
-3. **Протестируйте** в Telegram через staging бота
-4. **Если все работает** → деплойте в production
-5. **Если нашли баги** → исправьте и повторите
-
----
-
-## 📋 Файлы конфигурации
-
-### Production
-
-- **Скрипт запуска**: `./run_production.sh`
-- **Конфиг**: `.env`
-- **Bot Token**: `TELOXIDE_TOKEN=6310079371:AAH...`
-- **База данных**: `database.sqlite` (в git)
-- **Папка загрузок**: `~/downloads/dora-files`
-- **Порт webapp**: `8080`
-
-### Staging
-
-- **Скрипт запуска**: `./run_staging.sh`
-- **Конфиг**: `.env.staging`
-- **Bot Token**: `TELOXIDE_TOKEN=8224275354:AAFB...`
-- **База данных**: `database_staging.sqlite` (НЕ в git)
-- **Папка загрузок**: `~/downloads/dora-staging`
-- **Порт webapp**: `8081`
-
----
-
-## 🔄 Рабочий процесс
-
-### Типичный workflow для новой фичи
-
-```bash
-# 1. Создайте ветку для фичи
-git checkout -b feature/new-awesome-feature
-
-# 2. Разработайте код
-# ... пишете код ...
-
-# 3. Запустите staging бота
-./run_staging.sh
-
-# 4. Откройте staging бота в Telegram (@your_staging_bot)
-# Протестируйте функционал
-
-# 5. Если нашли баги
-# - Остановите бота (Ctrl+C)
-# - Исправьте код
-# - Повторите шаг 3
-
-# 6. Когда всё работает
-git add .
-git commit -m "feat: add awesome new feature"
-git checkout main
-git merge feature/new-awesome-feature
-
-# 7. Деплой в production
-git push
-# Railway автоматически задеплоит на production бота
-```
-
----
-
-## 🎯 Примеры использования
-
-### Пример 1: Тестирование нового формата скачивания
-
-```bash
-# 1. Добавили новый формат в код (например, FLAC)
-# 2. Запустите staging
-./run_staging.sh
-
-# 3. В Telegram (staging bot):
-/start
-/settings
-# Выберите формат FLAC
-# Попробуйте скачать аудио
-# Проверьте, что всё работает
-
-# 4. Если работает → деплой в production
-```
-
-### Пример 2: Тестирование изменений в базе данных
-
-```bash
-# 1. Изменили схему БД (добавили новую колонку)
-# 2. Обновите migration.sql
-# 3. Удалите staging БД чтобы создать новую
-rm database_staging.sqlite
-
-# 4. Запустите staging
-./run_staging.sh
-# БД создастся с новой схемой
-
-# 5. Протестируйте функционал
-# 6. Если работает → обновите production БД через миграцию
-```
-
----
-
-## 🔧 Полезные команды
-
-### Просмотр staging базы данных
-
-```bash
-# Показать пользователей
-sqlite3 database_staging.sqlite "SELECT * FROM users"
-
-# Показать историю загрузок
-sqlite3 database_staging.sqlite "SELECT * FROM download_history LIMIT 10"
-
-# Схема БД
-sqlite3 database_staging.sqlite .schema
-```
-
-### Очистка staging данных
-
-```bash
-# Удалить БД
-rm database_staging.sqlite
-
-# Очистить загрузки
-rm -rf ~/downloads/dora-staging/*
-
-# Полная очистка
-rm database_staging.sqlite database_staging.sqlite-*
-rm -rf ~/downloads/dora-staging/
-```
-
-### Копирование production БД в staging (для тестирования с реальными данными)
-
-```bash
-# Создать копию production БД
-cp database.sqlite database_staging.sqlite
-
-# Теперь staging использует копию production данных
-./run_staging.sh
-```
-
----
-
-## 📦 Деплой staging на Railway (опционально)
-
-Если хотите запустить staging бота на Railway:
-
-### Вариант 1: Отдельный Railway проект
-
-1. **Создайте новый проект** в Railway Dashboard
-2. **Добавьте переменные окружения:**
-   ```
-   TELOXIDE_TOKEN=8224275354:AAFB__G9OXj6UWKbDMFmv0mSD8zjk4Jzivw
-   YTDL_COOKIES_FILE=youtube_cookies.txt
-   DATABASE_URL=database_staging.sqlite
-   WEBAPP_PORT=8081
-   ```
-3. **Используйте тот же Dockerfile**
-4. **Деплойте** через git или railway CLI
-
-### Вариант 2: Railway Environments
-
-Railway поддерживает несколько environments (Production, Staging, etc):
-
-1. Railway Dashboard → Settings → Environments
-2. **Create Environment**: "Staging"
-3. **Добавьте staging переменные** в Staging environment
-4. **Деплой** автоматически пойдёт в оба окружения
-
----
-
-## ⚠️ Важные заметки
-
-### 1. База данных staging НЕ в git
-
-Staging БД **не хранится в git**, только production:
-
-```gitignore
-# .gitignore
-database.sqlite           # ❌ Не игнорируется (в git)
-database_staging.sqlite   # ✅ Игнорируется (НЕ в git)
-database_test.sqlite      # ✅ Игнорируется (НЕ в git)
-```
-
-**Причина**: Staging БД содержит тестовые данные и часто пересоздаётся.
-
-### 2. Разные Telegram боты
-
-Production и Staging - это **разные боты** в Telegram:
-
-- Production: @your_prod_bot (6310079371:AAH...)
-- Staging: @your_staging_bot (8224275354:AAFB...)
-
-**Пользователям нужно добавить оба бота** чтобы тестировать в staging.
-
-### 3. Переменные окружения
-
-Убедитесь что используете правильный `.env` файл:
-
-```bash
-# ✅ Production
-export $(grep -v '^#' .env | xargs)
-
-# ✅ Staging
-export $(grep -v '^#' .env.staging | xargs)
-
-# ❌ Не смешивайте!
-```
-
----
-
-## 🎓 Best Practices
-
-### 1. Всегда тестируйте в staging перед production
-
-```bash
-# ❌ Плохо
-git commit -m "feat: new feature"
-git push  # → Сразу в production
-
-# ✅ Хорошо
-./run_staging.sh  # → Сначала протестировать
-# Проверить функционал
-git push  # → Потом в production
-```
-
-### 2. Используйте отдельные данные для staging
-
-```bash
-# Не копируйте production данные в staging без необходимости
-# Создавайте тестовых пользователей в staging
-```
-
-### 3. Очищайте staging регулярно
-
-```bash
-# Раз в неделю
-rm database_staging.sqlite
-rm -rf ~/downloads/dora-staging/*
-```
-
-### 4. Документируйте изменения
-
-```bash
-# Коммит с описанием что тестировали
-git commit -m "feat: add FLAC format support (tested in staging)"
-```
-
----
-
-## 🚀 Быстрый старт
-
-**Первый запуск staging:**
-
-```bash
-# 1. Дайте права на выполнение скриптам
-chmod +x run_staging.sh run_production.sh
-
-# 2. Запустите staging
-./run_staging.sh
-
-# 3. Откройте Telegram и найдите staging бота
-# (используйте токен 8224275354:AAFB... для получения @username)
-
-# 4. Отправьте /start
-
-# 5. Тестируйте фичи!
-```
-
----
-
-**Готово! Теперь у вас есть полноценная staging среда для безопасного тестирования.** 🎉
+### 2) Deploy staging to Railway
+- Use a separate Railway project or service.
+- Set env vars from `.env.staging`.
+- Ensure DB is separate from production (different volume/file).
+
+### 3) Test checklist
+- Verify /start, /mode, downloads, Mini App, subscriptions (if enabled).
+- Check logs for errors.
+- Keep cookies fresh if testing YouTube.
+
+## 🎯 Best practices
+- Never point staging at the production database.
+- Use a distinct bot token and admin IDs.
+- Clean up staging DB periodically.
+- Clearly label staging bot to avoid user confusion.

@@ -41,6 +41,9 @@ dotenvy = "0.15"
 base64 = "0.22.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+fluent-templates = "0.8"
+unic-langid = "0.9"
+refinery = { version = "0.8", features = ["rusqlite"] }
 axum = "0.7"
 tower = "0.4"
 tower-http = { version = "0.5", features = ["fs", "cors"] }

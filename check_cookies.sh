@@ -1,80 +1,59 @@
 #!/bin/bash
 
-# Скрипт для проверки настройки YouTube cookies для yt-dlp
-# Использование: ./check_cookies.sh [browser]
-# Пример: ./check_cookies.sh firefox
+# Script to verify YouTube cookies for yt-dlp
+# Usage: ./check_cookies.sh [browser]
+# Example: ./check_cookies.sh firefox
 
-set -e
+BROWSER=${1:-chrome}
 
-BROWSER=${1:-${YTDL_COOKIES_BROWSER:-chrome}}
-TEST_URL="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+echo "Checking YouTube cookies for yt-dlp"
 
-echo "======================================"
-echo "Проверка YouTube cookies для yt-dlp"
-echo "======================================"
-echo ""
-
-# Проверка 1: yt-dlp установлен
-echo "✓ Проверка 1: yt-dlp установлен"
-if ! command -v yt-dlp &> /dev/null; then
-    echo "  ❌ yt-dlp не найден. Установи: pip3 install yt-dlp"
+# Check 1: yt-dlp installed
+if ! command -v yt-dlp &>/dev/null; then
+    echo "  ❌ yt-dlp not found. Install: pip3 install yt-dlp"
     exit 1
 fi
-echo "  ✅ yt-dlp найден: $(which yt-dlp)"
-echo ""
+echo "  ✅ yt-dlp found: $(which yt-dlp)"
 
-# Проверка 2: Python зависимости
-echo "✓ Проверка 2: Python зависимости"
-if python3 -c "import keyring" 2>/dev/null; then
-    echo "  ✅ keyring установлен"
+# Check 2: Python deps
+if python3 -c "import keyring" &>/dev/null; then
+    echo "  ✅ keyring installed"
 else
-    echo "  ⚠️  keyring не установлен (может не работать с Chrome/Chromium)"
-    echo "     Установи: pip3 install keyring"
+    echo "  ⚠️  keyring not installed (may be needed for Chrome/Chromium)"
+    echo "     Install: pip3 install keyring"
 fi
 
-if python3 -c "import Cryptodome" 2>/dev/null || python3 -c "import Crypto" 2>/dev/null; then
-    echo "  ✅ pycryptodomex установлен"
+if python3 -c "import Cryptodome" &>/dev/null; then
+    echo "  ✅ pycryptodomex installed"
 else
-    echo "  ⚠️  pycryptodomex не установлен (может не работать с Chrome/Chromium)"
-    echo "     Установи: pip3 install pycryptodomex"
+    echo "  ⚠️  pycryptodomex not installed (may be needed for Chrome/Chromium)"
+    echo "     Install: pip3 install pycryptodomex"
 fi
-echo ""
 
-# Проверка 3: Браузер
-echo "✓ Проверка 3: Тестирование с браузером '${BROWSER}'"
-echo "  Попытка получить название видео с YouTube..."
-echo ""
-
-if yt-dlp --cookies-from-browser "${BROWSER}" --print "%(title)s" "${TEST_URL}" 2>/dev/null; then
-    echo ""
-    echo "  ✅✅✅ Отлично! Cookies работают с браузером '${BROWSER}'!"
-    echo ""
-    echo "Бот готов к работе с YouTube. Просто запусти:"
+# Check 3: Browser
+echo "✓ Check 3: Testing with browser '${BROWSER}'"
+echo "  Trying to read a YouTube title..."
+if yt-dlp --cookies-from-browser "$BROWSER" --print "%(title)s" "https://www.youtube.com/watch?v=dQw4w9WgXcQ" &>/dev/null; then
+    echo "  ✅✅✅ Great! Cookies work with browser '${BROWSER}'!"
+    echo "Bot is ready for YouTube. Run:"
     echo "  export YTDL_COOKIES_BROWSER=${BROWSER}"
     echo "  cargo run --release"
+    echo ""
+    echo "If using fish shell:"
+    echo "  set -x YTDL_COOKIES_BROWSER ${BROWSER}"
 else
-    echo ""
-    echo "  ❌ Не удалось получить cookies из '${BROWSER}'"
-    echo ""
-    echo "Возможные решения:"
-    echo ""
-    echo "1. Попробуй Firefox (работает лучше всего):"
+    echo "  ❌ Could not get cookies from '${BROWSER}'"
+    echo "Possible fixes:"
+    echo "1. Try Firefox (most reliable):"
     echo "   ./check_cookies.sh firefox"
-    echo ""
-    echo "2. Убедись, что браузер установлен и ты заходил на YouTube"
-    echo ""
-    echo "3. Попробуй другие браузеры:"
-    echo "   - chrome"
-    echo "   - firefox"
-    echo "   - safari (только macOS)"
-    echo "   - brave"
-    echo ""
-    echo "4. Экспортируй cookies вручную (см. YOUTUBE_COOKIES.md)"
-    echo ""
+    echo "2. Ensure the browser is installed and logged into YouTube"
+    echo "3. Try other browsers:"
+    echo "   ./check_cookies.sh chrome"
+    echo "   ./check_cookies.sh brave"
+    echo "   ./check_cookies.sh edge"
+    echo "   - safari (macOS only)"
+    echo "4. Export cookies manually (see YOUTUBE_COOKIES.md)"
     exit 1
 fi
 
-echo "======================================"
-echo "Все проверки пройдены! 🎉"
-echo "======================================"
-
+echo "All checks passed! 🎉"

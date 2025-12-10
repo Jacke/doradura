@@ -3,20 +3,23 @@ use crate::core::history::handle_history_callback;
 use crate::core::rate_limiter::RateLimiter;
 use crate::core::subscription::{create_subscription_invoice, show_subscription_info};
 use crate::download::queue::{DownloadQueue, DownloadTask};
+use crate::i18n;
 use crate::storage::cache;
 use crate::storage::db::{self, DbPool};
+use fluent_templates::fluent_bundle::FluentArgs;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, MessageId};
 use teloxide::RequestError;
+use unic_langid::LanguageIdentifier;
 use url::Url;
 
-/// Экранирует специальные символы для MarkdownV2
+/// Escapes special characters for MarkdownV2.
 ///
-/// В Telegram MarkdownV2 требуется экранировать следующие символы:
+/// Telegram MarkdownV2 requires escaping these characters:
 /// _ * [ ] ( ) ~ ` > # + - = | { } . !
 ///
-/// Важно: обратный слеш должен экранироваться первым, чтобы избежать повторного экранирования
+/// Important: escape the backslash first to avoid double escaping.
 fn escape_markdown(text: &str) -> String {
     let mut result = String::with_capacity(text.len() * 2);
 
@@ -80,29 +83,30 @@ async fn edit_caption_or_text(
     }
 }
 
-/// Показывает главное меню настроек режима загрузки.
+/// Shows the main settings menu for the download mode.
 ///
-/// Отображает меню с инлайн-кнопками для выбора типа загрузки и просмотра доступных сервисов.
+/// Displays inline buttons to choose the download type and view supported services.
 ///
 /// # Arguments
 ///
-/// * `bot` - Экземпляр Telegram бота
-/// * `chat_id` - ID чата пользователя
-/// * `db_pool` - Пул соединений с базой данных
+/// * `bot` - Telegram bot instance
+/// * `chat_id` - User chat ID
+/// * `db_pool` - Database connection pool
 ///
 /// # Returns
 ///
-/// Возвращает `ResponseResult<Message>` с отправленным сообщением или ошибку.
+/// Returns `ResponseResult<Message>` with the sent message or an error.
 ///
 /// # Errors
 ///
-/// Возвращает ошибку если не удалось получить соединение с БД или отправить сообщение.
+/// Returns an error if the database connection or sending the message fails.
 pub async fn show_main_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
     let conn = db::get_connection(&db_pool)
         .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
     let format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
     let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
     let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
+    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
 
     let format_emoji = match format.as_str() {
         "mp3" => "🎵 MP3",
@@ -129,16 +133,23 @@ pub async fn show_main_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) ->
         _ => "320 kbps",
     };
 
+    let mut download_type_args = FluentArgs::new();
+    download_type_args.set("format", format_emoji);
+    let mut quality_args = FluentArgs::new();
+    quality_args.set("quality", quality_emoji);
+    let mut bitrate_args = FluentArgs::new();
+    bitrate_args.set("bitrate", bitrate_display);
+
     let keyboard = InlineKeyboardMarkup::new(vec![
         vec![InlineKeyboardButton::callback(
-            format!("📥 Тип загрузки: {}", format_emoji),
+            i18n::t_args(&lang, "menu.download_type_button", &download_type_args),
             "mode:download_type",
         )],
         vec![InlineKeyboardButton::callback(
             if format == "mp4" {
-                format!("🎬 Качество видео: {}", quality_emoji)
+                i18n::t_args(&lang, "menu.video_quality_button", &quality_args)
             } else {
-                format!("🎵 Битрейт аудио: {}", bitrate_display)
+                i18n::t_args(&lang, "menu.audio_bitrate_button", &bitrate_args)
             },
             if format == "mp4" {
                 "mode:video_quality"
@@ -147,40 +158,41 @@ pub async fn show_main_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) ->
             },
         )],
         vec![InlineKeyboardButton::callback(
-            "🌐 Доступные сервисы".to_string(),
+            i18n::t(&lang, "menu.services_button"),
             "mode:services",
         )],
         vec![InlineKeyboardButton::callback(
-            "💳 Моя подписка".to_string(),
+            i18n::t(&lang, "menu.subscription_button"),
             "mode:subscription",
+        )],
+        vec![InlineKeyboardButton::callback(
+            i18n::t(&lang, "menu.language_button"),
+            "mode:language",
         )],
     ]);
 
-    bot.send_message(
-        chat_id,
-        "🎵 *Дора \\- Режимы Загрузки*\n\nВыбери, что хочешь настроить\\!",
-    )
-    .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-    .reply_markup(keyboard)
-    .await
+    bot.send_message(chat_id, i18n::t(&lang, "menu.title"))
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .reply_markup(keyboard)
+        .await
 }
 
-/// Показывает меню выбора типа загрузки.
+/// Shows the download type menu.
 ///
-/// Отображает меню с доступными форматами (MP3, MP4, SRT, TXT) и отмечает текущий выбор пользователя.
+/// Displays available formats (MP3, MP4, SRT, TXT) and marks the current choice.
 ///
 /// # Arguments
 ///
-/// * `bot` - Экземпляр Telegram бота
-/// * `chat_id` - ID чата пользователя
-/// * `message_id` - ID сообщения для редактирования
-/// * `db_pool` - Пул соединений с базой данных
-/// * `url_id` - Опциональный ID URL из preview (если меню открыто из preview)
-/// * `preview_msg_id` - Опциональный ID preview сообщения для удаления при изменении формата
+/// * `bot` - Telegram bot instance
+/// * `chat_id` - User chat ID
+/// * `message_id` - ID of the message to edit
+/// * `db_pool` - Database connection pool
+/// * `url_id` - Optional preview URL ID when opened from preview
+/// * `preview_msg_id` - Optional preview message ID to delete when changing the format
 ///
 /// # Returns
 ///
-/// Возвращает `ResponseResult<()>` или ошибку при редактировании сообщения.
+/// Returns `ResponseResult<()>` or an error while editing the message.
 pub async fn show_download_type_menu(
     bot: &Bot,
     chat_id: ChatId,
@@ -192,8 +204,9 @@ pub async fn show_download_type_menu(
     let conn = db::get_connection(&db_pool)
         .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
     let current_format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
+    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
 
-    // Формируем callback данные с url_id и preview_msg_id если они есть
+    // Build callback data with url_id and preview_msg_id when they are present
     let format_callback = |format: &str| {
         if let Some(id) = url_id {
             if let Some(preview_id) = preview_msg_id {
@@ -266,7 +279,10 @@ pub async fn show_download_type_menu(
                 format_callback("txt"),
             ),
         ],
-        vec![InlineKeyboardButton::callback("🔙 Назад".to_string(), back_callback)],
+        vec![InlineKeyboardButton::callback(
+            i18n::t(&lang, "common.back"),
+            back_callback,
+        )],
     ]);
 
     let format_display = match current_format.as_str() {
@@ -279,35 +295,34 @@ pub async fn show_download_type_menu(
     };
 
     let escaped_format = escape_markdown(format_display);
+    let mut args = FluentArgs::new();
+    args.set("format", escaped_format.clone());
     edit_caption_or_text(
         bot,
         chat_id,
         message_id,
-        format!(
-            "Выбери формат для скачивания\\:\n\n*Текущий формат\\: {}*",
-            escaped_format
-        ),
+        i18n::t_args(&lang, "menu.download_type_title", &args),
         Some(keyboard),
     )
     .await?;
     Ok(())
 }
 
-/// Отправляет меню выбора типа загрузки как новое текстовое сообщение.
+/// Sends the download type menu as a new text message.
 ///
-/// Используется когда нужно отправить меню вместо редактирования существующего сообщения
-/// (например, когда исходное сообщение содержит медиа и не может быть отредактировано).
+/// Used when we need to send a menu instead of editing an existing message
+/// (for example, when the original message contains media and cannot be edited).
 ///
 /// # Arguments
 ///
-/// * `bot` - Экземпляр Telegram бота
-/// * `chat_id` - ID чата пользователя
-/// * `db_pool` - Пул соединений с базой данных
-/// * `url_id` - Опциональный ID URL из preview (если меню открыто из preview)
+/// * `bot` - Telegram bot instance
+/// * `chat_id` - User chat ID
+/// * `db_pool` - Database connection pool
+/// * `url_id` - Optional preview URL ID when opened from preview
 ///
 /// # Returns
 ///
-/// Возвращает `ResponseResult<()>` или ошибку при отправке сообщения.
+/// Returns `ResponseResult<()>` or an error when sending the message.
 pub async fn send_download_type_menu_as_new(
     bot: &Bot,
     chat_id: ChatId,
@@ -318,8 +333,9 @@ pub async fn send_download_type_menu_as_new(
     let conn = db::get_connection(&db_pool)
         .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
     let current_format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
+    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
 
-    // Формируем callback данные с url_id и preview_msg_id если они есть
+    // Build callback data with url_id and preview_msg_id when they are present
     let format_callback = |format: &str| {
         if let Some(id) = url_id {
             if let Some(preview_id) = preview_msg_id {
@@ -392,7 +408,10 @@ pub async fn send_download_type_menu_as_new(
                 format_callback("txt"),
             ),
         ],
-        vec![InlineKeyboardButton::callback("🔙 Назад".to_string(), back_callback)],
+        vec![InlineKeyboardButton::callback(
+            i18n::t(&lang, "common.back"),
+            back_callback,
+        )],
     ]);
 
     let format_display = match current_format.as_str() {
@@ -404,34 +423,30 @@ pub async fn send_download_type_menu_as_new(
         _ => "🎵 MP3",
     };
     let escaped_format = escape_markdown(format_display);
-    bot.send_message(
-        chat_id,
-        format!(
-            "Выбери формат для скачивания\\:\n\n*Текущий формат\\: {}*",
-            escaped_format
-        ),
-    )
-    .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-    .reply_markup(keyboard)
-    .await?;
+    let mut args = FluentArgs::new();
+    args.set("format", escaped_format.clone());
+    bot.send_message(chat_id, i18n::t_args(&lang, "menu.download_type_title", &args))
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .reply_markup(keyboard)
+        .await?;
     Ok(())
 }
 
-/// Показывает меню выбора качества видео.
+/// Shows the video quality selection menu.
 ///
-/// Отображает меню с доступными качествами (1080p, 720p, 480p, 360p, best) и отмечает текущий выбор пользователя.
+/// Displays available qualities (1080p, 720p, 480p, 360p, best) and marks the current choice.
 ///
 /// # Arguments
 ///
-/// * `bot` - Экземпляр Telegram бота
-/// * `chat_id` - ID чата пользователя
-/// * `message_id` - ID сообщения для редактирования
-/// * `db_pool` - Пул соединений с базой данных
-/// * `url_id` - Опциональный ID URL из preview (если меню открыто из preview)
+/// * `bot` - Telegram bot instance
+/// * `chat_id` - User chat ID
+/// * `message_id` - ID of the message to edit
+/// * `db_pool` - Database connection pool
+/// * `url_id` - Optional preview URL ID when opened from preview
 ///
 /// # Returns
 ///
-/// Возвращает `ResponseResult<()>` или ошибку при редактировании сообщения.
+/// Returns `ResponseResult<()>` or an error while editing the message.
 pub async fn show_video_quality_menu(
     bot: &Bot,
     chat_id: ChatId,
@@ -443,6 +458,7 @@ pub async fn show_video_quality_menu(
         .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
     let current_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
     let send_as_document = db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0);
+    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
 
     let keyboard = InlineKeyboardMarkup::new(vec![
         vec![
@@ -496,15 +512,14 @@ pub async fn show_video_quality_menu(
         )],
         vec![InlineKeyboardButton::callback(
             if send_as_document == 0 {
-                "📹 Отправка: Media ✓"
+                i18n::t(&lang, "menu.send_video_media")
             } else {
-                "📄 Отправка: Document ✓"
-            }
-            .to_string(),
+                i18n::t(&lang, "menu.send_video_document")
+            },
             "send_type:toggle",
         )],
         vec![InlineKeyboardButton::callback(
-            "🔙 Назад".to_string(),
+            i18n::t(&lang, "common.back"),
             url_id.map_or_else(|| "back:main".to_string(), |id| format!("back:main:preview:{}", id)),
         )],
     ]);
@@ -518,42 +533,42 @@ pub async fn show_video_quality_menu(
     };
 
     let send_type_display = if send_as_document == 0 {
-        "📹 Media"
+        i18n::t(&lang, "menu.send_type_media")
     } else {
-        "📄 Document"
+        i18n::t(&lang, "menu.send_type_document")
     };
 
     let escaped_quality = escape_markdown(quality_display);
-    let escaped_send_type = escape_markdown(send_type_display);
+    let escaped_send_type = escape_markdown(&send_type_display);
+    let mut args = FluentArgs::new();
+    args.set("quality", escaped_quality.clone());
+    args.set("send_type", escaped_send_type.clone());
     edit_caption_or_text(
         bot,
         chat_id,
         message_id,
-        format!(
-            "Выбери качество видео\\:\n\n*Текущее качество\\: {}*\n*Тип отправки\\: {}*",
-            escaped_quality, escaped_send_type
-        ),
+        i18n::t_args(&lang, "menu.video_quality_title", &args),
         Some(keyboard),
     )
     .await?;
     Ok(())
 }
 
-/// Показывает меню выбора битрейта аудио.
+/// Shows the audio bitrate selection menu.
 ///
-/// Отображает меню с доступными битрейтами (128kbps, 192kbps, 256kbps, 320kbps) и отмечает текущий выбор пользователя.
+/// Displays available bitrates (128kbps, 192kbps, 256kbps, 320kbps) and marks the current choice.
 ///
 /// # Arguments
 ///
-/// * `bot` - Экземпляр Telegram бота
-/// * `chat_id` - ID чата пользователя
-/// * `message_id` - ID сообщения для редактирования
-/// * `db_pool` - Пул соединений с базой данных
-/// * `url_id` - Опциональный ID URL из preview (если меню открыто из preview)
+/// * `bot` - Telegram bot instance
+/// * `chat_id` - User chat ID
+/// * `message_id` - ID of the message to edit
+/// * `db_pool` - Database connection pool
+/// * `url_id` - Optional preview URL ID when opened from preview
 ///
 /// # Returns
 ///
-/// Возвращает `ResponseResult<()>` или ошибку при редактировании сообщения.
+/// Returns `ResponseResult<()>` or an error while editing the message.
 pub async fn show_audio_bitrate_menu(
     bot: &Bot,
     chat_id: ChatId,
@@ -565,6 +580,7 @@ pub async fn show_audio_bitrate_menu(
         .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
     let current_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
     let send_audio_as_document = db::get_user_send_audio_as_document(&conn, chat_id.0).unwrap_or(0);
+    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
 
     let keyboard = InlineKeyboardMarkup::new(vec![
         vec![
@@ -609,94 +625,166 @@ pub async fn show_audio_bitrate_menu(
         ],
         vec![InlineKeyboardButton::callback(
             if send_audio_as_document == 0 {
-                "🎵 Отправка: Media ✓"
+                i18n::t(&lang, "menu.send_audio_media")
             } else {
-                "📄 Отправка: Document ✓"
-            }
-            .to_string(),
+                i18n::t(&lang, "menu.send_audio_document")
+            },
             "audio_send_type:toggle",
         )],
         vec![InlineKeyboardButton::callback(
-            "🔙 Назад".to_string(),
+            i18n::t(&lang, "common.back"),
             url_id.map_or_else(|| "back:main".to_string(), |id| format!("back:main:preview:{}", id)),
         )],
     ]);
 
     let send_type_display = if send_audio_as_document == 0 {
-        "🎵 Media"
+        i18n::t(&lang, "menu.send_type_media")
     } else {
-        "📄 Document"
+        i18n::t(&lang, "menu.send_type_document")
     };
 
     let escaped_bitrate = escape_markdown(&current_bitrate);
-    let escaped_send_type = escape_markdown(send_type_display);
+    let escaped_send_type = escape_markdown(&send_type_display);
+    let mut args = FluentArgs::new();
+    args.set("bitrate", escaped_bitrate.clone());
+    args.set("send_type", escaped_send_type.clone());
 
     edit_caption_or_text(
         bot,
         chat_id,
         message_id,
-        format!(
-            "Выбери битрейт для аудио\\:\n\n*Текущий битрейт\\: {}*\n*Тип отправки\\: {}*",
-            escaped_bitrate, escaped_send_type
-        ),
+        i18n::t_args(&lang, "menu.audio_bitrate_title", &args),
         Some(keyboard),
     )
     .await?;
     Ok(())
 }
 
-/// Показывает меню с информацией о поддерживаемых сервисах.
+/// Shows information about supported services.
 ///
-/// Отображает список доступных сервисов (YouTube, SoundCloud) и поддерживаемых форматов.
+/// Displays the list of available services (YouTube, SoundCloud) and supported formats.
 ///
 /// # Arguments
 ///
-/// * `bot` - Экземпляр Telegram бота
-/// * `chat_id` - ID чата пользователя
-/// * `message_id` - ID сообщения для редактирования
+/// * `bot` - Telegram bot instance
+/// * `chat_id` - User chat ID
+/// * `message_id` - ID of the message to edit
 ///
 /// # Returns
 ///
-/// Возвращает `ResponseResult<()>` или ошибку при редактировании сообщения.
-pub async fn show_services_menu(bot: &Bot, chat_id: ChatId, message_id: MessageId) -> ResponseResult<()> {
+/// Returns `ResponseResult<()>` or an error while editing the message.
+pub async fn show_services_menu(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    lang: &LanguageIdentifier,
+) -> ResponseResult<()> {
     let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
-        "🔙 Назад".to_string(),
+        i18n::t(lang, "common.back"),
         "back:enhanced_main",
     )]]);
 
-    let text = "🌐 *Поддерживаемые сервисы*\n\n\
-        🎥 *YouTube*\n\
-        • MP3 \\(Аудио\\)\n\
-        • MP4 \\(Видео\\)\n\
-        • SRT \\(Субтитры\\)\n\
-        • TXT \\(Текстовые субтитры\\)\n\n\
-        🎵 *SoundCloud*\n\
-        • MP3 \\(Аудио\\)\n\n\
-        📱 *VK \\(ВКонтакте\\)*\n\
-        • MP3 \\(Аудио\\)\n\
-        • MP4 \\(Видео\\)\n\n\
-        🎬 *TikTok*\n\
-        • MP3 \\(Аудио\\)\n\
-        • MP4 \\(Видео\\)\n\n\
-        📸 *Instagram*\n\
-        • MP3 \\(Аудио из Reels\\)\n\
-        • MP4 \\(Видео Reels\\)\n\n\
-        🎮 *Twitch*\n\
-        • MP4 \\(Клипы\\)\n\n\
-        🎧 *Spotify*\n\
-        • MP3 \\(Аудио\\)\n\n\
-        И многие другие сервисы, которые я поддерживаю\\!\n\n\
-        Просто отправь мне ссылку на трек или видео\\! ❤️‍🔥";
-
-    edit_caption_or_text(bot, chat_id, message_id, text.to_string(), Some(keyboard)).await?;
+    edit_caption_or_text(
+        bot,
+        chat_id,
+        message_id,
+        i18n::t(lang, "menu.services_text"),
+        Some(keyboard),
+    )
+    .await?;
     Ok(())
+}
+
+/// Shows the language selection menu.
+pub async fn show_language_menu(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    db_pool: Arc<DbPool>,
+    url_id: Option<&str>,
+) -> ResponseResult<()> {
+    let conn = db::get_connection(&db_pool)
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+    let current_lang_code = db::get_user_language(&conn, chat_id.0).unwrap_or_else(|_| "ru".to_string());
+    let lang = i18n::lang_from_code(&current_lang_code);
+
+    let mut buttons = Vec::new();
+    for (code, name) in i18n::SUPPORTED_LANGS.iter() {
+        let flag = match *code {
+            "en" => "🇺🇸",
+            "ru" => "🇷🇺",
+            "fr" => "🇫🇷",
+            "de" => "🇩🇪",
+            _ => "🏳️",
+        };
+        let label = if current_lang_code.eq_ignore_ascii_case(code) {
+            format!("{} {} ✓", flag, name)
+        } else {
+            format!("{} {}", flag, name)
+        };
+        let callback = if let Some(id) = url_id {
+            format!("language:set:{}:{}", code, id)
+        } else {
+            format!("language:set:{}", code)
+        };
+        buttons.push(vec![InlineKeyboardButton::callback(label, callback)]);
+    }
+
+    buttons.push(vec![InlineKeyboardButton::callback(
+        i18n::t(&lang, "common.back"),
+        url_id
+            .map(|id| format!("back:preview:{}", id))
+            .unwrap_or_else(|| "back:main".to_string()),
+    )]);
+
+    let keyboard = InlineKeyboardMarkup::new(buttons);
+    bot.edit_message_text(chat_id, message_id, i18n::t(&lang, "menu.language_prompt"))
+        .reply_markup(keyboard)
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .await?;
+    Ok(())
+}
+
+fn build_enhanced_menu(
+    lang: &LanguageIdentifier,
+    format_emoji: &str,
+    quality_line: &str,
+    plan_display: &str,
+) -> (String, InlineKeyboardMarkup) {
+    let mut args = FluentArgs::new();
+    args.set("format", format_emoji);
+    args.set("quality", quality_line);
+    args.set("plan", plan_display);
+
+    let text = i18n::t_args(lang, "menu.enhanced_text", &args);
+
+    let keyboard = InlineKeyboardMarkup::new(vec![
+        vec![
+            InlineKeyboardButton::callback(i18n::t(lang, "menu.button_settings"), "main:settings"),
+            InlineKeyboardButton::callback(i18n::t(lang, "menu.button_current"), "main:current"),
+        ],
+        vec![
+            InlineKeyboardButton::callback(i18n::t(lang, "menu.button_stats"), "main:stats"),
+            InlineKeyboardButton::callback(i18n::t(lang, "menu.button_history"), "main:history"),
+        ],
+        vec![
+            InlineKeyboardButton::callback(i18n::t(lang, "menu.services_button"), "main:services"),
+            InlineKeyboardButton::callback(i18n::t(lang, "menu.button_subscription"), "main:subscription"),
+        ],
+        vec![
+            InlineKeyboardButton::callback(i18n::t(lang, "menu.language_button"), "mode:language"),
+            InlineKeyboardButton::callback(i18n::t(lang, "menu.button_help"), "main:help"),
+        ],
+    ]);
+
+    (text, keyboard)
 }
 
 // Edit message to show main menu (for callbacks that need to edit existing message)
 // Args: bot - telegram bot instance, chat_id - user's chat ID, message_id - ID of message to edit, db_pool - database connection pool
 // Functionality: Edits existing message to show main mode menu
-// url_id - Опциональный ID URL из preview (если меню открыто из preview)
-// preview_msg_id - Опциональный ID preview сообщения для удаления при изменении формата
+// url_id - Optional preview URL ID (when the menu is opened from preview)
+// preview_msg_id - Optional preview message ID to delete when changing the format
 async fn edit_main_menu(
     bot: &Bot,
     chat_id: ChatId,
@@ -710,6 +798,7 @@ async fn edit_main_menu(
     let format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
     let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
     let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
+    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
 
     let format_emoji = match format.as_str() {
         "mp3" => "🎵 MP3",
@@ -736,7 +825,7 @@ async fn edit_main_menu(
         _ => "320 kbps",
     };
 
-    // Формируем callback данные с url_id если он есть
+    // Build callback data with url_id when it is provided
     let mode_callback = |mode: &str| {
         if let Some(id) = url_id {
             format!("mode:{}:preview:{}", mode, id)
@@ -745,16 +834,23 @@ async fn edit_main_menu(
         }
     };
 
+    let mut download_type_args = FluentArgs::new();
+    download_type_args.set("format", format_emoji);
+    let mut quality_args = FluentArgs::new();
+    quality_args.set("quality", quality_emoji);
+    let mut bitrate_args = FluentArgs::new();
+    bitrate_args.set("bitrate", bitrate_display);
+
     let mut keyboard_rows = vec![
         vec![InlineKeyboardButton::callback(
-            format!("📥 Тип загрузки: {}", format_emoji),
+            i18n::t_args(&lang, "menu.download_type_button", &download_type_args),
             mode_callback("download_type"),
         )],
         vec![InlineKeyboardButton::callback(
             if format == "mp4" || format == "mp4+mp3" {
-                format!("🎬 Качество видео: {}", quality_emoji)
+                i18n::t_args(&lang, "menu.video_quality_button", &quality_args)
             } else {
-                format!("🎵 Битрейт аудио: {}", bitrate_display)
+                i18n::t_args(&lang, "menu.audio_bitrate_button", &bitrate_args)
             },
             if format == "mp4" || format == "mp4+mp3" {
                 mode_callback("video_quality")
@@ -763,52 +859,49 @@ async fn edit_main_menu(
             },
         )],
         vec![InlineKeyboardButton::callback(
-            "🌐 Доступные сервисы".to_string(),
+            i18n::t(&lang, "menu.services_button"),
             mode_callback("services"),
         )],
         vec![InlineKeyboardButton::callback(
-            "💳 Моя подписка".to_string(),
+            i18n::t(&lang, "menu.subscription_button"),
             mode_callback("subscription"),
+        )],
+        vec![InlineKeyboardButton::callback(
+            i18n::t(&lang, "menu.language_button"),
+            mode_callback("language"),
         )],
     ];
 
-    // Добавляем кнопку "Назад" если меню открыто из preview
+    // Add a Back button when the menu is opened from preview
     if let Some(id) = url_id {
         keyboard_rows.push(vec![InlineKeyboardButton::callback(
-            "🔙 Назад к превью".to_string(),
+            i18n::t(&lang, "menu.back_to_preview"),
             format!("back:preview:{}", id),
         )]);
     }
 
     let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
 
-    edit_caption_or_text(
-        bot,
-        chat_id,
-        message_id,
-        "🎵 *Дора \\- Режимы Загрузки*\n\nВыбери, что хочешь настроить\\!".to_string(),
-        Some(keyboard),
-    )
-    .await?;
+    edit_caption_or_text(bot, chat_id, message_id, i18n::t(&lang, "menu.title"), Some(keyboard)).await?;
     Ok(())
 }
 
-/// Отправляет главное меню настроек как новое текстовое сообщение.
+/// Sends the main settings menu as a new text message.
 ///
-/// Используется когда нужно отправить меню вместо редактирования существующего сообщения
-/// (например, когда исходное сообщение содержит медиа и не может быть отредактировано).
+/// Used when we need to send a menu instead of editing an existing message
+/// (for example, when the original message contains media and cannot be edited).
 ///
 /// # Arguments
 ///
-/// * `bot` - Экземпляр Telegram бота
-/// * `chat_id` - ID чата пользователя
-/// * `db_pool` - Пул соединений с базой данных
-/// * `url_id` - Опциональный ID URL из preview (если меню открыто из preview)
-/// * `preview_msg_id` - Опциональный ID preview сообщения для удаления при изменении формата
+/// * `bot` - Telegram bot instance
+/// * `chat_id` - User chat ID
+/// * `db_pool` - Database connection pool
+/// * `url_id` - Optional preview URL ID when opened from preview
+/// * `preview_msg_id` - Optional preview message ID to delete when changing the format
 ///
 /// # Returns
 ///
-/// Возвращает `ResponseResult<()>` или ошибку при отправке сообщения.
+/// Returns `ResponseResult<()>` or an error when sending the message.
 pub async fn send_main_menu_as_new(
     bot: &Bot,
     chat_id: ChatId,
@@ -821,6 +914,7 @@ pub async fn send_main_menu_as_new(
     let format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
     let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
     let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
+    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
 
     let format_emoji = match format.as_str() {
         "mp3" => "🎵 MP3",
@@ -847,7 +941,7 @@ pub async fn send_main_menu_as_new(
         _ => "320 kbps",
     };
 
-    // Формируем callback данные с url_id и preview_msg_id если они есть
+    // Build callback data with url_id and preview_msg_id when they are present
     let mode_callback = |mode: &str| {
         if let Some(id) = url_id {
             if let Some(preview_id) = preview_msg_id {
@@ -860,16 +954,23 @@ pub async fn send_main_menu_as_new(
         }
     };
 
+    let mut download_type_args = FluentArgs::new();
+    download_type_args.set("format", format_emoji);
+    let mut quality_args = FluentArgs::new();
+    quality_args.set("quality", quality_emoji);
+    let mut bitrate_args = FluentArgs::new();
+    bitrate_args.set("bitrate", bitrate_display);
+
     let mut keyboard_rows = vec![
         vec![InlineKeyboardButton::callback(
-            format!("📥 Тип загрузки: {}", format_emoji),
+            i18n::t_args(&lang, "menu.download_type_button", &download_type_args),
             mode_callback("download_type"),
         )],
         vec![InlineKeyboardButton::callback(
             if format == "mp4" || format == "mp4+mp3" {
-                format!("🎬 Качество видео: {}", quality_emoji)
+                i18n::t_args(&lang, "menu.video_quality_button", &quality_args)
             } else {
-                format!("🎵 Битрейт аудио: {}", bitrate_display)
+                i18n::t_args(&lang, "menu.audio_bitrate_button", &bitrate_args)
             },
             if format == "mp4" || format == "mp4+mp3" {
                 mode_callback("video_quality")
@@ -878,16 +979,20 @@ pub async fn send_main_menu_as_new(
             },
         )],
         vec![InlineKeyboardButton::callback(
-            "🌐 Доступные сервисы".to_string(),
+            i18n::t(&lang, "menu.services_button"),
             mode_callback("services"),
         )],
         vec![InlineKeyboardButton::callback(
-            "💳 Моя подписка".to_string(),
+            i18n::t(&lang, "menu.subscription_button"),
             mode_callback("subscription"),
+        )],
+        vec![InlineKeyboardButton::callback(
+            i18n::t(&lang, "menu.language_button"),
+            mode_callback("language"),
         )],
     ];
 
-    // Добавляем кнопку "Назад" если меню открыто из preview
+    // Add a Back button when the menu is opened from preview
     if let Some(id) = url_id {
         let back_callback = if let Some(preview_id) = preview_msg_id {
             format!("back:preview:{}:{}", id, preview_id.0)
@@ -895,48 +1000,45 @@ pub async fn send_main_menu_as_new(
             format!("back:preview:{}", id)
         };
         keyboard_rows.push(vec![InlineKeyboardButton::callback(
-            "🔙 Назад к превью".to_string(),
+            i18n::t(&lang, "menu.back_to_preview"),
             back_callback,
         )]);
     }
 
     let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
 
-    bot.send_message(
-        chat_id,
-        "🎵 *Дора \\- Режимы Загрузки*\n\nВыбери, что хочешь настроить\\!",
-    )
-    .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-    .reply_markup(keyboard)
-    .await?;
+    bot.send_message(chat_id, i18n::t(&lang, "menu.title"))
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .reply_markup(keyboard)
+        .await?;
     Ok(())
 }
 
-/// Обрабатывает callback-запросы от инлайн-клавиатур меню.
+/// Handles callback queries from the menu inline keyboards.
 ///
-/// Обрабатывает нажатия на кнопки меню и обновляет настройки пользователя или переключает между меню.
+/// Processes button presses, updates user settings, or switches between menus.
 ///
 /// # Arguments
 ///
-/// * `bot` - Экземпляр Telegram бота
-/// * `q` - Callback query для обработки
-/// * `db_pool` - Пул соединений с базой данных
-/// * `download_queue` - Очередь загрузок
+/// * `bot` - Telegram bot instance
+/// * `q` - Callback query to process
+/// * `db_pool` - Database connection pool
+/// * `download_queue` - Download queue
 /// * `rate_limiter` - Rate limiter
 ///
 /// # Returns
 ///
-/// Возвращает `ResponseResult<()>` или ошибку при обработке callback.
+/// Returns `ResponseResult<()>` or an error while processing the callback.
 ///
 /// # Supported Callbacks
 ///
-/// - `mode:download_type` - Переход к меню выбора формата
-/// - `mode:services` - Показ информации о сервисах
-/// - `back:main` - Возврат к главному меню
-/// - `format:mp3|mp4|srt|txt` - Установка формата загрузки
-/// - `dl:format:url_id` - Начать загрузку с указанным форматом (url_id - короткий ID из кэша)
-/// - `pv:set:url_id` - Показать настройки для превью
-/// - `pv:cancel:url_id` - Отменить превью
+/// - `mode:download_type` - Go to the format selection menu
+/// - `mode:services` - Show information about supported services
+/// - `back:main` - Return to the main menu
+/// - `format:mp3|mp4|srt|txt` - Set the download format
+/// - `dl:format:url_id` - Start a download with the specified format (url_id is the short cache ID)
+/// - `pv:set:url_id` - Show settings for the preview message
+/// - `pv:cancel:url_id` - Cancel the preview
 pub async fn handle_menu_callback(
     bot: Bot,
     q: CallbackQuery,
@@ -953,6 +1055,7 @@ pub async fn handle_menu_callback(
         let message_id = q.message.as_ref().map(|m| m.id());
 
         if let (Some(chat_id), Some(message_id)) = (chat_id, message_id) {
+            let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
             // Handle audio effects callbacks first
             if data.starts_with("ae:") {
                 // Reconstruct CallbackQuery for audio effects handler
@@ -1003,10 +1106,13 @@ pub async fn handle_menu_callback(
                         show_audio_bitrate_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), url_id).await?;
                     }
                     "services" => {
-                        show_services_menu(&bot, chat_id, message_id).await?;
+                        show_services_menu(&bot, chat_id, message_id, &lang).await?;
+                    }
+                    "language" => {
+                        show_language_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), url_id).await?;
                     }
                     "subscription" => {
-                        // Удаляем старое сообщение и показываем информацию о подписке
+                        // Delete the old message and show subscription info
                         let _ = bot.delete_message(chat_id, message_id).await;
                         let _ = show_subscription_info(&bot, chat_id, Arc::clone(&db_pool)).await;
                     }
@@ -1037,7 +1143,7 @@ pub async fn handle_menu_callback(
                     }
                     "services" => {
                         // Edit message to show services
-                        show_services_menu(&bot, chat_id, message_id).await?;
+                        show_services_menu(&bot, chat_id, message_id, &lang).await?;
                     }
                     "subscription" => {
                         // Delete current message and show subscription info
@@ -1059,7 +1165,7 @@ pub async fn handle_menu_callback(
                 match plan {
                     "premium" | "vip" => {
                         log::info!("✅ Valid plan '{}', creating invoice for chat_id={}", plan, chat_id.0);
-                        // Создаем инвойс для оплаты через Telegram Stars
+                        // Create an invoice for payment through Telegram Stars
                         match create_subscription_invoice(&bot, chat_id, plan).await {
                             Ok(msg) => {
                                 log::info!(
@@ -1094,7 +1200,7 @@ pub async fn handle_menu_callback(
                 // Remove "subscription:" prefix
                 match action {
                     "cancel" => {
-                        // Отменяем подписку пользователя
+                        // Cancel the user's subscription
                         match crate::core::subscription::cancel_subscription(&bot, chat_id.0, Arc::clone(&db_pool))
                             .await
                         {
@@ -1108,7 +1214,7 @@ pub async fn handle_menu_callback(
                                     .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                                     .await;
 
-                                // Обновляем меню подписки
+                                // Refresh the subscription menu
                                 let _ = bot.delete_message(chat_id, message_id).await;
                                 let _ = show_subscription_info(&bot, chat_id, Arc::clone(&db_pool)).await;
                             }
@@ -1130,6 +1236,35 @@ pub async fn handle_menu_callback(
                             .await?;
                     }
                 }
+            } else if let Some(lang_data) = data.strip_prefix("language:set:") {
+                let mut parts = lang_data.split(':');
+                let lang_code = parts.next().unwrap_or("ru");
+                let preview_url_id = parts.next();
+
+                if i18n::SUPPORTED_LANGS
+                    .iter()
+                    .any(|(code, _)| code.eq_ignore_ascii_case(lang_code))
+                {
+                    if let Ok(conn) = db::get_connection(&db_pool) {
+                        let _ = db::set_user_language(&conn, chat_id.0, lang_code);
+                    }
+
+                    let new_lang = i18n::lang_from_code(lang_code);
+                    let _ = bot
+                        .answer_callback_query(callback_id.clone())
+                        .text(i18n::t(&new_lang, "menu.language_saved"))
+                        .await;
+
+                    if preview_url_id.is_some() {
+                        edit_main_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), preview_url_id, None).await?;
+                    } else {
+                        edit_enhanced_main_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
+                    }
+                } else {
+                    bot.answer_callback_query(callback_id)
+                        .text(i18n::t(&lang, "menu.language_invalid"))
+                        .await?;
+                }
             } else if let Some(quality) = data.strip_prefix("quality:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
                 // Remove "quality:" prefix
@@ -1150,14 +1285,14 @@ pub async fn handle_menu_callback(
                 let conn = db::get_connection(&db_pool)
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
-                // Получаем текущее значение и переключаем
+                // Get the current value and toggle it
                 let current_value = db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0);
                 let new_value = if current_value == 0 { 1 } else { 0 };
 
                 db::set_user_send_as_document(&conn, chat_id.0, new_value)
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
-                // Обновляем меню
+                // Refresh the menu
                 show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
             } else if let Some(bitrate) = data.strip_prefix("bitrate:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
@@ -1174,19 +1309,19 @@ pub async fn handle_menu_callback(
                 let conn = db::get_connection(&db_pool)
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
-                // Получаем текущее значение и переключаем
+                // Get the current value and toggle it
                 let current_value = db::get_user_send_audio_as_document(&conn, chat_id.0).unwrap_or(0);
                 let new_value = if current_value == 0 { 1 } else { 0 };
 
                 db::set_user_send_audio_as_document(&conn, chat_id.0, new_value)
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
-                // Обновляем меню
+                // Refresh the menu
                 show_audio_bitrate_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
             } else if data.starts_with("video_send_type:toggle:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
 
-                // Извлекаем url_id из callback data: video_send_type:toggle:url_id
+                // Extract url_id from callback data: video_send_type:toggle:url_id
                 let parts: Vec<&str> = data.split(':').collect();
                 if parts.len() >= 3 {
                     let url_id = parts[2];
@@ -1194,11 +1329,11 @@ pub async fn handle_menu_callback(
                     let conn = db::get_connection(&db_pool)
                         .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
-                    // Получаем текущее значение и переключаем
+                    // Get the current value and toggle it
                     let current_value = db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0);
                     let new_value = if current_value == 0 { 1 } else { 0 };
 
-                    // Логируем изменение
+                    // Log the change
                     log::info!(
                         "🔄 Video send type toggled for user {}: {} -> {} ({})",
                         chat_id.0,
@@ -1210,21 +1345,21 @@ pub async fn handle_menu_callback(
                     db::set_user_send_as_document(&conn, chat_id.0, new_value)
                         .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
-                    // Получаем текущую клавиатуру из сообщения и обновляем только toggle кнопку
+                    // Get the current keyboard from the message and update only the toggle button
                     if let Some(teloxide::types::MaybeInaccessibleMessage::Regular(regular_msg)) = q.message.as_ref() {
-                        // Получаем текущую клавиатуру
+                        // Get the current keyboard
                         if let Some(keyboard) = regular_msg.reply_markup() {
-                            // Клонируем клавиатуру и обновляем toggle кнопку
+                            // Clone the keyboard and update the toggle button
                             let mut new_buttons = keyboard.inline_keyboard.clone();
 
-                            // Находим и обновляем toggle кнопку (ищем кнопку с callback video_send_type:toggle)
+                            // Find and update the toggle button (looking for callback video_send_type:toggle)
                             for row in &mut new_buttons {
                                 for button in row {
                                     if let teloxide::types::InlineKeyboardButtonKind::CallbackData(ref cb_data) =
                                         button.kind
                                     {
                                         if cb_data.starts_with("video_send_type:toggle:") {
-                                            // Обновляем текст кнопки
+                                            // Update the button text
                                             button.text = if new_value == 0 {
                                                 "📹 Отправка: Media ✓".to_string()
                                             } else {
@@ -1236,7 +1371,7 @@ pub async fn handle_menu_callback(
                                 }
                             }
 
-                            // Обновляем только клавиатуру, не трогая текст и изображение
+                            // Update only the keyboard without touching text or media
                             let new_keyboard = teloxide::types::InlineKeyboardMarkup::new(new_buttons);
                             let _ = bot
                                 .edit_message_reply_markup(chat_id, message_id)
@@ -1463,17 +1598,17 @@ pub async fn handle_menu_callback(
                 }
             } else if data.starts_with("dl:") {
                 // Don't answer immediately - we'll answer after processing
-                // Format: dl:format:url_id (старый формат)
-                // Format: dl:format:quality:url_id (новый формат для видео с выбором качества)
+                // Format: dl:format:url_id (legacy format)
+                // Format: dl:format:quality:url_id (new format for video with quality selection)
                 let parts: Vec<&str> = data.split(':').collect();
 
                 if parts.len() >= 3 {
                     let format = parts[1];
                     let url_id = if parts.len() == 3 {
-                        // Старый формат: dl:format:url_id
+                        // Legacy format: dl:format:url_id
                         parts[2]
                     } else if parts.len() == 4 {
-                        // Новый формат: dl:format:quality:url_id
+                        // New format: dl:format:quality:url_id
                         parts[3]
                     } else {
                         log::warn!("Invalid dl callback format: {}", data);
@@ -1483,9 +1618,9 @@ pub async fn handle_menu_callback(
                         return Ok(());
                     };
 
-                    // Извлекаем качество если указано (новый формат)
+                    // Extract quality if provided (new format)
                     let selected_quality = if parts.len() == 4 && format == "mp4" {
-                        Some(parts[2].to_string()) // quality из dl:mp4:quality:url_id
+                        Some(parts[2].to_string()) // quality from dl:mp4:quality:url_id
                     } else {
                         None
                     };
@@ -1517,14 +1652,14 @@ pub async fn handle_menu_callback(
                                         return Ok(());
                                     }
 
-                                    // Игнорируем ошибки answer_callback_query (может быть "query is too old" при двойном клике)
+                                    // Ignore answer_callback_query errors (can be "query is too old" on double click)
                                     let _ = bot.answer_callback_query(callback_id.clone()).await;
 
                                     rate_limiter.update_rate_limit(chat_id, &plan).await;
 
-                                    // Обрабатываем формат "mp4+mp3" - добавляем 2 задачи в очередь
+                                    // Handle "mp4+mp3" by adding two tasks to the queue
                                     if format == "mp4+mp3" {
-                                        // Задача 1: MP4 (видео)
+                                        // Task 1: MP4 (video)
                                         let video_quality = if let Some(quality) = selected_quality {
                                             Some(quality)
                                         } else {
@@ -1540,12 +1675,12 @@ pub async fn handle_menu_callback(
                                             true, // is_video = true
                                             "mp4".to_string(),
                                             video_quality,
-                                            None, // audio_bitrate для видео не нужен
+                                            None, // audio_bitrate is not needed for video
                                             &plan,
                                         );
                                         download_queue.add_task(task_mp4, Some(Arc::clone(&db_pool))).await;
 
-                                        // Задача 2: MP3 (аудио)
+                                        // Task 2: MP3 (audio)
                                         let audio_bitrate = Some(
                                             db::get_user_audio_bitrate(&conn, chat_id.0)
                                                 .unwrap_or_else(|_| "320k".to_string()),
@@ -1556,7 +1691,7 @@ pub async fn handle_menu_callback(
                                             None,  // Callback doesn't have original user message
                                             false, // is_video = false
                                             "mp3".to_string(),
-                                            None, // video_quality для аудио не нужен
+                                            None, // video_quality is not needed for audio
                                             audio_bitrate,
                                             &plan,
                                         );
@@ -1567,13 +1702,13 @@ pub async fn handle_menu_callback(
                                             chat_id.0
                                         );
                                     } else {
-                                        // Обычная обработка для одного формата
+                                        // Regular handling for a single format
                                         let video_quality = if format == "mp4" {
                                             if let Some(quality) = selected_quality {
-                                                // Качество выбрано пользователем из preview
+                                                // Quality chosen by the user from preview
                                                 Some(quality)
                                             } else {
-                                                // Используем настройки пользователя
+                                                // Use the user's saved settings
                                                 Some(
                                                     db::get_user_video_quality(&conn, chat_id.0)
                                                         .unwrap_or_else(|_| "best".to_string()),
@@ -1713,7 +1848,7 @@ pub async fn handle_menu_callback(
                 // Handle admin panel callbacks
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
 
-                // Проверка прав администратора
+                // Check administrator privileges
                 let is_admin = q.from.username.as_ref().map(|u| u == "stansob").unwrap_or(false);
 
                 if !is_admin {
@@ -1723,7 +1858,7 @@ pub async fn handle_menu_callback(
                 }
 
                 if let Some(user_id_str) = data.strip_prefix("admin:user:") {
-                    // Показываем меню управления конкретным пользователем
+                    // Show the management menu for a specific user
                     // Remove "admin:user:" prefix
 
                     if let Ok(user_id) = user_id_str.parse::<i64>() {
@@ -1755,7 +1890,7 @@ pub async fn handle_menu_callback(
                                             String::new()
                                         };
 
-                                        // Создаем клавиатуру с действиями
+                                        // Build an action keyboard
                                         use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
 
                                         let keyboard = InlineKeyboardMarkup::new(vec![
@@ -1809,7 +1944,7 @@ pub async fn handle_menu_callback(
                         }
                     }
                 } else if data.starts_with("admin:setplan:") {
-                    // Изменяем план пользователя
+                    // Change the user's plan
                     let parts: Vec<&str> = data.split(':').collect();
                     if parts.len() == 4 {
                         if let Ok(user_id) = parts[2].parse::<i64>() {
@@ -1830,7 +1965,7 @@ pub async fn handle_menu_callback(
                                                 _ => "Free",
                                             };
 
-                                            // Отправляем уведомление пользователю
+                                            // Send a notification to the user
                                             let user_chat_id = teloxide::types::ChatId(user_id);
                                             let _ = bot
                                                 .send_message(
@@ -1869,7 +2004,7 @@ pub async fn handle_menu_callback(
                         }
                     }
                 } else if data == "admin:back" {
-                    // Возвращаемся к списку пользователей
+                    // Return to the user list
                     match db::get_connection(&db_pool) {
                         Ok(conn) => match db::get_all_users(&conn) {
                             Ok(users) => {
@@ -2617,17 +2752,27 @@ async fn process_audio_effects(
 ///
 /// Returns `ResponseResult<Message>` with the sent message or an error.
 pub async fn show_enhanced_main_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-    let format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
-    let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
-    let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
-
-    // Get user plan from database
-    let plan = match db::get_user(&conn, chat_id.0) {
-        Ok(Some(user)) => user.plan,
-        _ => "free".to_string(),
+    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let (format, video_quality, audio_bitrate, plan) = match db::get_connection(&db_pool) {
+        Ok(conn) => {
+            let format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
+            let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
+            let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
+            let plan = match db::get_user(&conn, chat_id.0) {
+                Ok(Some(user)) => user.plan,
+                _ => "free".to_string(),
+            };
+            (format, video_quality, audio_bitrate, plan)
+        }
+        Err(e) => {
+            log::error!("Failed to get DB connection for enhanced menu: {}", e);
+            (
+                "mp3".to_string(),
+                "best".to_string(),
+                "320k".to_string(),
+                "free".to_string(),
+            )
+        }
     };
 
     // Format emoji
@@ -2649,7 +2794,9 @@ pub async fn show_enhanced_main_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<Db
             "360p" => "360p",
             _ => "Best",
         };
-        format!("🎬 Качество: {}", quality_display)
+        let mut args = FluentArgs::new();
+        args.set("value", quality_display);
+        i18n::t_args(&lang, "menu.quality_line", &args)
     } else {
         let bitrate_display = match audio_bitrate.as_str() {
             "128k" => "128 kbps",
@@ -2658,45 +2805,19 @@ pub async fn show_enhanced_main_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<Db
             "320k" => "320 kbps",
             _ => "320 kbps",
         };
-        format!("🎵 Битрейт: {}", bitrate_display)
+        let mut args = FluentArgs::new();
+        args.set("value", bitrate_display);
+        i18n::t_args(&lang, "menu.bitrate_line", &args)
     };
 
     // Plan display
     let plan_display = match plan.as_str() {
-        "premium" => "Premium ⭐",
-        "vip" => "VIP 💎",
-        _ => "Free",
+        "premium" => i18n::t(&lang, "menu.plan_premium"),
+        "vip" => i18n::t(&lang, "menu.plan_vip"),
+        _ => i18n::t(&lang, "menu.plan_free"),
     };
 
-    let text = format!(
-        "Хэй\\! Я Дора ❤️‍🔥\n\n\
-        Просто отправь мне ссылку, и я скачаю тебе видео или трек\\!\n\n\
-        *Твои текущие настройки:*\n\
-        📥 Формат: {}\n\
-        {}\n\
-        💎 План: {}\n\n\
-        Выбери действие ниже или отправь ссылку прямо сейчас\\!",
-        format_emoji, quality_line, plan_display
-    );
-
-    let keyboard = InlineKeyboardMarkup::new(vec![
-        vec![
-            InlineKeyboardButton::callback("⚙️ Настройки загрузки".to_string(), "main:settings"),
-            InlineKeyboardButton::callback("🎬 Мои настройки".to_string(), "main:current"),
-        ],
-        vec![
-            InlineKeyboardButton::callback("📊 Моя статистика".to_string(), "main:stats"),
-            InlineKeyboardButton::callback("📜 История загрузок".to_string(), "main:history"),
-        ],
-        vec![
-            InlineKeyboardButton::callback("🌐 Доступные сервисы".to_string(), "main:services"),
-            InlineKeyboardButton::callback("💎 Подписка".to_string(), "main:subscription"),
-        ],
-        vec![InlineKeyboardButton::callback(
-            "❓ Помощь и FAQ".to_string(),
-            "main:help",
-        )],
-    ]);
+    let (text, keyboard) = build_enhanced_menu(&lang, format_emoji, &quality_line, &plan_display);
 
     bot.send_message(chat_id, text)
         .parse_mode(teloxide::types::ParseMode::MarkdownV2)
@@ -2720,16 +2841,27 @@ async fn edit_enhanced_main_menu(
     message_id: MessageId,
     db_pool: Arc<DbPool>,
 ) -> ResponseResult<()> {
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-    let format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
-    let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
-    let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
-
-    let plan = match db::get_user(&conn, chat_id.0) {
-        Ok(Some(user)) => user.plan,
-        _ => "free".to_string(),
+    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let (format, video_quality, audio_bitrate, plan) = match db::get_connection(&db_pool) {
+        Ok(conn) => {
+            let format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
+            let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
+            let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
+            let plan = match db::get_user(&conn, chat_id.0) {
+                Ok(Some(user)) => user.plan,
+                _ => "free".to_string(),
+            };
+            (format, video_quality, audio_bitrate, plan)
+        }
+        Err(e) => {
+            log::error!("Failed to get DB connection for enhanced menu: {}", e);
+            (
+                "mp3".to_string(),
+                "best".to_string(),
+                "320k".to_string(),
+                "free".to_string(),
+            )
+        }
     };
 
     let format_emoji = match format.as_str() {
@@ -2749,7 +2881,9 @@ async fn edit_enhanced_main_menu(
             "360p" => "360p",
             _ => "Best",
         };
-        format!("🎬 Качество: {}", quality_display)
+        let mut args = FluentArgs::new();
+        args.set("value", quality_display);
+        i18n::t_args(&lang, "menu.quality_line", &args)
     } else {
         let bitrate_display = match audio_bitrate.as_str() {
             "128k" => "128 kbps",
@@ -2758,44 +2892,18 @@ async fn edit_enhanced_main_menu(
             "320k" => "320 kbps",
             _ => "320 kbps",
         };
-        format!("🎵 Битрейт: {}", bitrate_display)
+        let mut args = FluentArgs::new();
+        args.set("value", bitrate_display);
+        i18n::t_args(&lang, "menu.bitrate_line", &args)
     };
 
     let plan_display = match plan.as_str() {
-        "premium" => "Premium ⭐",
-        "vip" => "VIP 💎",
-        _ => "Free",
+        "premium" => i18n::t(&lang, "menu.plan_premium"),
+        "vip" => i18n::t(&lang, "menu.plan_vip"),
+        _ => i18n::t(&lang, "menu.plan_free"),
     };
 
-    let text = format!(
-        "Хэй\\! Я Дора ❤️‍🔥\n\n\
-        Просто отправь мне ссылку, и я скачаю тебе видео или трек\\!\n\n\
-        *Твои текущие настройки:*\n\
-        📥 Формат: {}\n\
-        {}\n\
-        💎 План: {}\n\n\
-        Выбери действие ниже или отправь ссылку прямо сейчас\\!",
-        format_emoji, quality_line, plan_display
-    );
-
-    let keyboard = InlineKeyboardMarkup::new(vec![
-        vec![
-            InlineKeyboardButton::callback("⚙️ Настройки загрузки".to_string(), "main:settings"),
-            InlineKeyboardButton::callback("🎬 Мои настройки".to_string(), "main:current"),
-        ],
-        vec![
-            InlineKeyboardButton::callback("📊 Моя статистика".to_string(), "main:stats"),
-            InlineKeyboardButton::callback("📜 История загрузок".to_string(), "main:history"),
-        ],
-        vec![
-            InlineKeyboardButton::callback("🌐 Доступные сервисы".to_string(), "main:services"),
-            InlineKeyboardButton::callback("💎 Подписка".to_string(), "main:subscription"),
-        ],
-        vec![InlineKeyboardButton::callback(
-            "❓ Помощь и FAQ".to_string(),
-            "main:help",
-        )],
-    ]);
+    let (text, keyboard) = build_enhanced_menu(&lang, format_emoji, &quality_line, &plan_display);
 
     edit_caption_or_text(bot, chat_id, message_id, text, Some(keyboard)).await
 }

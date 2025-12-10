@@ -1,32 +1,28 @@
-# Быстрый старт Telegram Mini App
+# Telegram Mini App Quickstart
 
-## Что получилось
+## Overview
+A basic Telegram Mini App for the Doradura bot with:
+- 🎵 MP3 downloads (128k, 192k, 320k)
+- 🎬 MP4 downloads (360p, 480p, 720p, 1080p)
+- 📝 Subtitle downloads (SRT)
+- 🎨 Telegram dark-theme support
+- ⚡ Works inside Telegram without opening a browser
 
-Создан базовый Telegram Mini App для бота Doradura с следующими возможностями:
-
-- 🎵 Скачивание аудио в формате MP3 (128k, 192k, 320k)
-- 🎬 Скачивание видео в формате MP4 (360p, 480p, 720p, 1080p)
-- 📝 Скачивание субтитров (SRT)
-- 🎨 Красивый интерфейс с поддержкой темной темы Telegram
-- ⚡ Работает прямо внутри Telegram без выхода в браузер
-
-## Структура файлов
-
+## File structure
 ```
 webapp/
 ├── static/
-│   ├── index.html    # Главная страница Mini App
-│   └── app.js        # JavaScript логика
-└── README.md         # Подробная документация
+│   ├── index.html    # Main Mini App page
+│   └── app.js        # JavaScript logic
+└── README.md         # Detailed docs
 
-src/telegram/webapp.rs  # Backend для веб-сервера
-src/main.rs             # Интеграция с ботом
+src/telegram/webapp.rs  # Backend web server
+src/main.rs             # Bot integration
 ```
 
-## Быстрый запуск (для локальной разработки)
+## Quick local run
 
-### 1. Установи ngrok
-
+### 1) Install ngrok
 ```bash
 # macOS
 brew install ngrok
@@ -37,208 +33,26 @@ tar xvzf ngrok-v3-stable-linux-amd64.tgz
 sudo mv ngrok /usr/local/bin/
 ```
 
-### 2. Запусти бота с Mini App
-
-В первом терминале:
-
+### 2) Run the bot with Mini App
+In terminal 1:
 ```bash
-# Установи зависимости
 cargo build
-
-# Запусти бота с веб-сервером на порту 8080
 WEBAPP_PORT=8080 cargo run
 ```
 
-### 3. Создай HTTPS туннель через ngrok
-
-Во втором терминале:
-
+### 3) Create HTTPS tunnel via ngrok
+In terminal 2:
 ```bash
 ngrok http 8080
 ```
+Copy the URL like `https://abc123.ngrok.io`.
 
-Ngrok выдаст тебе URL типа `https://abc123.ngrok.io` - скопируй его!
+### 4) Configure Telegram Mini App
+- Set the Mini App URL to the ngrok URL.
+- If using Telegram Stars/Payments, configure allowed origins accordingly.
 
-### 4. Настрой переменную окружения
+### 5) Test
+- Open your bot → launch the Mini App → download a sample audio/video.
+- Watch logs for any errors.
 
-Останови бота (Ctrl+C) и перезапусти с ngrok URL:
-
-```bash
-WEBAPP_PORT=8080 WEBAPP_URL=https://abc123.ngrok.io cargo run
-```
-
-### 5. Настрой Mini App в BotFather
-
-1. Открой [@BotFather](https://t.me/BotFather)
-2. Отправь `/mybots`
-3. Выбери своего бота
-4. Нажми "Bot Settings" → "Menu Button"
-5. Нажми "Configure menu button"
-6. Введи название: `🚀 Mini App`
-7. Введи URL: `https://abc123.ngrok.io` (твой ngrok URL)
-
-### 6. Тестируй!
-
-1. Открой своего бота в Telegram
-2. Отправь `/start`
-3. Увидишь кнопку "💡 Попробуй новый Mini App для удобного скачивания!"
-4. Нажми на неё - откроется Mini App!
-
-**Также Mini App доступно через:**
-- Кнопку меню (☰) рядом с полем ввода сообщения
-- Команду `/start`
-
-## Быстрый запуск (для production)
-
-### 1. Настрой домен и HTTPS
-
-У тебя должен быть:
-- Домен (например, `miniapp.doradura.com`)
-- SSL сертификат (Let's Encrypt)
-- Nginx для reverse proxy
-
-### 2. Настрой Nginx
-
-```nginx
-server {
-    listen 443 ssl;
-    server_name miniapp.doradura.com;
-
-    ssl_certificate /etc/letsencrypt/live/miniapp.doradura.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/miniapp.doradura.com/privkey.pem;
-
-    location / {
-        proxy_pass http://localhost:8080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-### 3. Добавь переменные окружения
-
-В твоём `.env` файле:
-
-```bash
-WEBAPP_PORT=8080
-WEBAPP_URL=https://miniapp.doradura.com
-```
-
-### 4. Запусти бота
-
-```bash
-cargo run --release
-```
-
-### 5. Настрой в BotFather
-
-Как в пункте 5 из локальной разработки, но используй свой production URL.
-
-## Как это работает
-
-1. **Пользователь открывает Mini App** через кнопку в боте
-2. **Telegram загружает** веб-страницу с твоего сервера
-3. **Пользователь вводит ссылку** и выбирает параметры
-4. **JavaScript отправляет данные** боту через `Telegram.WebApp.sendData()`
-5. **Бот получает данные** как `web_app_data` message
-6. **Бот создаёт задачу** и добавляет её в очередь загрузки
-7. **Файл скачивается** и отправляется пользователю
-
-## Архитектура
-
-```
-┌─────────────┐
-│  Telegram   │  Пользователь нажимает кнопку
-│   Client    │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────────┐
-│   Web Browser   │  Загружает webapp/static/index.html
-│  (внутри TG)    │
-└────────┬────────┘
-         │
-         │ Telegram.WebApp.sendData(json)
-         │
-         ▼
-┌──────────────────┐
-│  Telegram Bot    │  Получает web_app_data
-│   (main.rs)      │
-└────────┬─────────┘
-         │
-         │ Создаёт задачу
-         │
-         ▼
-┌──────────────────┐
-│ Download Queue   │  Обрабатывает и скачивает
-└──────────────────┘
-```
-
-## Что дальше?
-
-### Улучшения UI
-
-- Добавь превью видео перед скачиванием
-- Добавь историю последних загрузок
-- Добавь выбор языка субтитров
-- Добавь preview thumbnail
-
-### Новые функции
-
-- Пакетная загрузка (несколько ссылок)
-- Плейлисты
-- Расписание загрузок
-- Поделиться с друзьями
-
-### Технические улучшения
-
-- Добавь WebSocket для real-time статуса
-- Добавь offline mode с Service Worker
-- Добавь аналитику использования
-- Добавь rate limiting на фронтенде
-
-## Troubleshooting
-
-### Mini App не открывается
-
-```bash
-# Проверь что веб-сервер запущен
-curl http://localhost:8080
-# Должен вернуть HTML страницу
-
-# Проверь логи бота
-tail -f app.log | grep webapp
-```
-
-### Данные не отправляются боту
-
-Открой Developer Tools в браузере внутри Telegram:
-- Telegram Desktop: Right Click → Inspect Element
-- Telegram Web: F12
-
-Проверь Console на ошибки JavaScript.
-
-### Ошибка CORS
-
-Проверь что `tower-http` настроен правильно в `Cargo.toml`:
-
-```toml
-tower-http = { version = "0.5", features = ["fs", "cors"] }
-```
-
-## Документация
-
-Подробная документация находится в [webapp/README.md](webapp/README.md)
-
-## Полезные ссылки
-
-- [Telegram Mini Apps Docs](https://core.telegram.org/bots/webapps)
-- [Telegram Web App SDK](https://telegram.org/js/telegram-web-app.js)
-- [BotFather](https://t.me/BotFather)
-- [ngrok](https://ngrok.com/)
-
-## Лицензия
-
-MIT
+For production, replace ngrok with your domain and set `WEBAPP_URL`/`WEBAPP_PORT` env vars in Railway.

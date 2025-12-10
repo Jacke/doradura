@@ -1,172 +1,82 @@
-# Как исправить "Unknown Track" в названиях видео
+# Fixing the "Unknown Track" Filename Issue
 
-## 🎯 Быстрое решение
-
-Видео скачиваются с названием "Unknown Track.mp4"? **Просто перезапустите бота!**
+## 🎯 Quick fix
+Videos download as `Unknown Track.mp4`? **Restart the bot.**
 
 ```bash
-# 1. Остановите бота (Ctrl+C или)
-pkill -f doradura
-
-# 2. Пересоберите
+pkill -f doradura   # or Ctrl+C
 cargo build --release
-
-# 3. Запустите снова
 ./target/release/doradura
 ```
 
-**Готово!** ✨ Теперь все видео будут получать правильные названия.
+## 🤔 Why it happens
+Metadata is cached in memory for 24 hours. If an old run cached "Unknown Track", it stays there until the cache expires or the process restarts.
 
----
-
-## 🤔 Почему так происходит?
-
-**Кэш метаданных** хранит названия видео в памяти на 24 часа.
-
-```
-Старый код (с ошибкой) → "Unknown Track" → сохранено в кэше ⏰ 24ч
-Новый код (исправленный) → кэш все еще содержит "Unknown Track" ❌
-```
-
-**Решение:** Кэш хранится в памяти → перезапуск очищает его → новые названия! ✅
-
----
-
-## 📋 Подробная диагностика
-
-### Шаг 1: Включите отладочные логи
-
+## 📋 Diagnostics
+1. Enable debug logs:
 ```bash
 export RUST_LOG=doradura=debug
 ./target/release/doradura
 ```
+2. Download a video and check logs.
 
-### Шаг 2: Скачайте видео и проверьте логи
-
-Вы должны увидеть:
-
-**✅ ПРАВИЛЬНО (после исправления):**
+**Healthy:**
 ```
 [INFO] Successfully got metadata for video - title: 'Real Video Title', artist: ''
-[DEBUG] Generating filename: title='Real Video Title' (len=16), artist='' (len=0), ext='mp4'
 [INFO] Generated filename for video: 'Real Video Title.mp4'
 ```
 
-**❌ ПРОБЛЕМА (старый кэш):**
+**Problem (old cache):**
 ```
-[DEBUG] Metadata cache hit for URL: https://...
-[DEBUG] Generating filename: title='' (len=0), artist='' (len=0), ext='mp4'
+[DEBUG] Metadata cache hit for URL: ...
 [WARN] Both title and artist are empty, using 'Unknown.mp4'
 ```
+If you see a cache hit with empty title → restart to clear cache.
 
-Если видите "Metadata cache hit" → это старый кэш! Перезапустите бота.
+## 🛠️ Other options
+- `./clear_cache.sh` — cleanup script.
+- Wait 24 hours — cache expires automatically.
+- Try a video never downloaded before — it will not be cached.
 
----
+## 🔍 Validation after restart
+1. Download any video.
+2. Check the filename in `~/downloads/`.
+3. Logs should show the real title.
 
-## 🛠️ Альтернативные решения
-
-### Вариант 1: Скрипт очистки
-
-```bash
-./clear_cache.sh
-```
-
-### Вариант 2: Ждать 24 часа
-
-Кэш автоматически истечет через сутки.
-
-### Вариант 3: Попробовать другое видео
-
-Видео, которые никогда не скачивались, не закэшированы и получат правильное название сразу.
-
----
-
-## 🔍 Проверка что всё работает
-
-После перезапуска:
-
-1. **Скачайте любое видео**
-2. **Проверьте имя файла** в папке `~/downloads/`
-3. **Проверьте логи** - должны видеть реальное название
-
-Примеры правильных названий:
+Examples of correct names:
 ```
 ✅ How to Code in Rust - Tutorial.mp4
-✅ Дорадура - Новый трек (2024).mp4
-✅ Python для начинающих.mp4
+✅ Doradura - New Track (2024).mp4
+```
+If you still see `Unknown.mp4`, the bot was not fully restarted.
+
+## 💡 Code changes that fixed it
+1. **Metadata retrieval** (`src/downloader.rs`)
+   - Uses `--print "%(title)s"` instead of `--get-title`.
+   - Returns an error instead of falling back to "Unknown Track".
+2. **Filename handling** (`src/utils.rs`)
+   - Escapes special characters correctly, supports Cyrillic.
+3. **Logging**
+   - Detailed logs for metadata, filename generation, and cache behavior.
+
+## 📞 If the issue persists
+- Ensure only one bot process is running: `ps aux | grep doradura`.
+- Check yt-dlp version: `yt-dlp --version`.
+- Confirm cookies are configured.
+- Test yt-dlp directly:
+```bash
+yt-dlp --print "%(title)s" "https://youtube.com/watch?v=VIDEO_ID"
 ```
 
-Если видите:
-```
-❌ Unknown.mp4
-❌ Unknown Track.mp4
-```
+## 📚 Related docs
+- `CACHE_ISSUE.md` — cache details
+- `FILENAME_FIX.md` — metadata fixes
+- `SESSION_SUMMARY.md` — change summary
 
-→ Кэш еще не очистился. Убедитесь, что бот был **полностью перезапущен**.
+## ✅ Checklist
+- [ ] Bot stopped
+- [ ] Rebuilt (`cargo build --release`)
+- [ ] Bot restarted
+- [ ] Test download renamed correctly
 
----
-
-## 💡 Что изменилось в коде
-
-1. **Улучшено получение метаданных** (`src/downloader.rs`)
-   - Использует `--print "%(title)s"` вместо `--get-title`
-   - Возвращает ошибку вместо fallback "Unknown Track"
-
-2. **Улучшена обработка имён файлов** (`src/utils.rs`)
-   - Корректно экранирует специальные символы
-   - Поддерживает кириллицу
-
-3. **Добавлено подробное логирование**
-   - Логи получения метаданных
-   - Логи генерации имён файлов
-   - Логи работы кэша
-
----
-
-## 📞 Если проблема осталась
-
-1. **Проверьте, что бот действительно перезапустился:**
-   ```bash
-   ps aux | grep doradura
-   ```
-   Должен быть только один процесс с новым PID.
-
-2. **Проверьте версию yt-dlp:**
-   ```bash
-   yt-dlp --version
-   ```
-   Должна быть последняя версия.
-
-3. **Проверьте cookies:**
-   ```bash
-   grep "cookies" /path/to/logs
-   ```
-   Должны быть настроены cookies для YouTube.
-
-4. **Протестируйте yt-dlp напрямую:**
-   ```bash
-   yt-dlp --print "%(title)s" "https://youtube.com/watch?v=VIDEO_ID"
-   ```
-   Должно вывести правильное название.
-
----
-
-## 📚 Дополнительная информация
-
-- **CACHE_ISSUE.md** - Подробное объяснение проблемы с кэшем
-- **FILENAME_FIX.md** - Описание исправлений в получении метаданных
-- **SESSION_SUMMARY.md** - Полное резюме всех изменений
-
----
-
-## ✅ Чек-лист
-
-- [ ] Остановил бота (`pkill -f doradura` или Ctrl+C)
-- [ ] Пересобрал проект (`cargo build --release`)
-- [ ] Запустил бота снова
-- [ ] Скачал тестовое видео
-- [ ] Проверил имя файла в `~/downloads/`
-- [ ] Видео имеет правильное название ✨
-
-**Готово!** Наслаждайтесь правильными названиями! 🎉
-
+Enjoy proper filenames! 🎉

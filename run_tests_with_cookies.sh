@@ -1,60 +1,46 @@
 #!/bin/bash
-# Скрипт для запуска тестов с cookies
+
+# Script to run tests with cookies
 # Usage: ./run_tests_with_cookies.sh
 
 set -e
 
-# Получаем абсолютный путь к директории проекта
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COOKIES_FILE="${PROJECT_DIR}/youtube_cookies.txt"
 
-# Цвета
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║         ЗАПУСК ТЕСТОВ С COOKIES                                ║${NC}"
-echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${NC}"
-echo ""
+clear
+printf "${GREEN}║         RUNNING TESTS WITH COOKIES                               ║${NC}\n"
 
-# Проверяем наличие файла cookies
+# Check cookies file
 if [ ! -f "$COOKIES_FILE" ]; then
-    echo -e "${RED}❌ ОШИБКА: Файл cookies не найден: ${COOKIES_FILE}${NC}"
-    echo ""
-    echo "Следуйте инструкции в QUICK_FIX.md для экспорта cookies"
+    printf "${RED}❌ ERROR: Cookies file not found: ${COOKIES_FILE}${NC}\n"
+    echo "See QUICK_FIX.md for export instructions"
     exit 1
 fi
 
-# Проверяем что файл не пустой
+# Ensure file is not empty
 if [ ! -s "$COOKIES_FILE" ]; then
-    echo -e "${RED}❌ ОШИБКА: Файл cookies пустой: ${COOKIES_FILE}${NC}"
-    echo ""
-    echo "Экспортируйте cookies заново (см. QUICK_FIX.md)"
+    printf "${RED}❌ ERROR: Cookies file is empty: ${COOKIES_FILE}${NC}\n"
+    echo "Re-export cookies (see QUICK_FIX.md)"
     exit 1
 fi
 
-echo -e "${GREEN}✅ Найден файл cookies: ${COOKIES_FILE}${NC}"
-echo -e "${GREEN}✅ Размер файла: $(du -h "$COOKIES_FILE" | cut -f1)${NC}"
-echo ""
+printf "${GREEN}✅ Found cookies file: ${COOKIES_FILE}${NC}\n"
+printf "${GREEN}✅ File size: $(du -h "$COOKIES_FILE" | cut -f1)${NC}\n"
 
-# Устанавливаем переменную окружения
+# Set env var
 export YTDL_COOKIES_FILE="$COOKIES_FILE"
+printf "${YELLOW}▶ Set env: YTDL_COOKIES_FILE=${COOKIES_FILE}${NC}\n"
 
-echo -e "${YELLOW}▶ Установлена переменная: YTDL_COOKIES_FILE=${COOKIES_FILE}${NC}"
-echo ""
-
-# Запускаем тесты
-echo -e "${YELLOW}▶ Запуск диагностики...${NC}"
-echo ""
-
+# Run tests
+printf "${YELLOW}▶ Running diagnostics...${NC}\n"
 ./test_ytdlp.sh diagnostics
 
-echo ""
-echo -e "${GREEN}╔════════════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║  Если видите '✅ Файл существует' - cookies настроены!         ║${NC}"
-echo -e "${GREEN}║  Теперь можете запустить тест скачивания:                      ║${NC}"
-echo -e "${GREEN}║  YTDL_COOKIES_FILE=${COOKIES_FILE} ./test_ytdlp.sh download     ║${NC}"
-echo -e "${GREEN}╚════════════════════════════════════════════════════════════════╝${NC}"
-
+printf "${GREEN}║  If you see '✅ File exists' - cookies are configured!          ║${NC}\n"
+printf "${GREEN}║  You can now run the download test:                             ║${NC}\n"
+printf "${GREEN}║     ./test_ytdlp.sh download                                    ║${NC}\n"

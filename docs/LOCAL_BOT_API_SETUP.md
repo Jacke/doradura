@@ -1,34 +1,31 @@
-# 🚀 Настройка локального Telegram Bot API сервера
+# 🚀 Local Telegram Bot API Server Setup
 
-Локальный Bot API сервер позволяет:
-- ✅ Отправлять файлы до **2 ГБ** (вместо 50 МБ)
-- ✅ Уменьшить сетевые задержки
-- ✅ Больше гибкости в настройке вебхуков
+Running a local Bot API server allows you to:
+- ✅ Send files up to **2 GB** (vs 50 MB via public API)
+- ✅ Reduce network latency
+- ✅ Gain more control over webhooks
 
-## 📋 Требования
+## 📋 Requirements
+1. **API ID and API Hash** from Telegram
+2. **Docker** (recommended) or a C++ toolchain to build from source
 
-1. **API ID и API Hash** от Telegram
-2. **Docker** (рекомендуется) или компилятор C++ для сборки из исходников
+## 🔑 Step 1: Get API ID and API Hash
+1. Go to https://my.telegram.org
+2. Sign in with your phone number
+3. Open **API development tools**
+4. Create a new app (or reuse an existing one)
+5. Copy `api_id` and `api_hash`
 
-## 🔑 Шаг 1: Получение API ID и API Hash
+## 🐳 Step 2: Install with Docker (recommended)
 
-1. Перейдите на https://my.telegram.org
-2. Войдите с вашим номером телефона
-3. Перейдите в раздел **API development tools**
-4. Создайте новое приложение (или используйте существующее)
-5. Скопируйте `api_id` и `api_hash`
-
-## 🐳 Шаг 2: Установка через Docker (рекомендуется)
-
-### Быстрый старт
-
-1. Создайте файл `.env.bot-api` с вашими данными:
+### Quick start
+1. Create `.env.bot-api` with your credentials:
 ```bash
 API_ID=YOUR_API_ID
 API_HASH=YOUR_API_HASH
 ```
 
-2. Запустите сервер:
+2. Run the server:
 ```bash
 docker run -d \
   --name telegram-bot-api \
@@ -38,186 +35,89 @@ docker run -d \
   aiogram/telegram-bot-api:latest
 ```
 
-3. Проверьте, что сервер работает:
+3. Check status:
 ```bash
-curl http://localhost:8081/botYOUR_BOT_TOKEN/getMe
+docker logs -f telegram-bot-api
 ```
 
-### Использование docker-compose (удобнее)
+4. API endpoint: `http://localhost:8081/bot<TELEGRAM_BOT_TOKEN>/METHOD`
 
-Создайте файл `docker-compose.bot-api.yml`:
+### Useful options
+- `-p 8081:8081` — expose port
+- `-v ./bot-api-data:/var/lib/telegram-bot-api` — persistent data
+- `-e TELEGRAM_STAT=1` — enable stats endpoint
 
-```yaml
-version: '3.8'
+## 🛠 Step 3: Configure the bot to use the local API
 
-services:
-  telegram-bot-api:
-    image: aiogram/telegram-bot-api:latest
-    container_name: telegram-bot-api
-    restart: unless-stopped
-    ports:
-      - "8081:8081"
-    environment:
-      - API_ID=${API_ID}
-      - API_HASH=${API_HASH}
-    volumes:
-      - ./bot-api-data:/var/lib/telegram-bot-api
-    command: --local --api-id=${API_ID} --api-hash=${API_HASH} --http-port=8081
-```
-
-Запуск:
+Set the environment variable:
 ```bash
-# Запустить
-docker-compose -f docker-compose.bot-api.yml up -d
-
-# Остановить
-docker-compose -f docker-compose.bot-api.yml down
-
-# Просмотр логов
-docker-compose -f docker-compose.bot-api.yml logs -f
+export TELOXIDE_API_URL=http://localhost:8081
+```
+Or add to `.env`:
+```
+TELOXIDE_API_URL=http://localhost:8081
 ```
 
-## 📦 Шаг 3: Установка из исходников (альтернатива)
+Then restart the bot:
+```bash
+cargo run --release
+```
 
-Если Docker недоступен, можно собрать из исходников:
+## ⚙️ Step 4: Webhooks (optional)
+
+If using webhooks instead of long polling:
+```bash
+export TELOXIDE_WEBHOOK_URL=https://your-domain.com/webhook
+export TELOXIDE_API_URL=http://localhost:8081
+```
+Ensure your HTTP server forwards Telegram updates to the webhook path.
+
+## 🧪 Step 5: Verify
 
 ```bash
-# Клонируем репозиторий
-git clone --recursive https://github.com/tdlib/telegram-bot-api.git
-cd telegram-bot-api
-
-# Собираем
-mkdir build
-cd build
-cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX:PATH=.. ..
-cmake --build . --target install
-
-# Запускаем
-cd ..
-./bin/telegram-bot-api \
-  --local \
-  --api-id=YOUR_API_ID \
-  --api-hash=YOUR_API_HASH \
-  --http-port=8081
+curl "http://localhost:8081/bot<TELEGRAM_BOT_TOKEN>/getMe"
+```
+Expected:
+```json
+{
+  "ok": true,
+  "result": {
+    "id": 123,
+    "is_bot": true,
+    "first_name": "Doradura",
+    ...
+  }
+}
 ```
 
-## ⚙️ Шаг 4: Настройка бота
+## 🧹 Maintenance
+- Monitor logs: `docker logs -f telegram-bot-api`
+- Update image: `docker pull aiogram/telegram-bot-api:latest && docker restart telegram-bot-api`
+- Remove container: `docker rm -f telegram-bot-api`
 
-После запуска локального сервера, настройте переменную окружения:
+## 🧭 Building from source (alternative)
 
+If you prefer to build manually:
+1. Clone https://github.com/tdlib/telegram-bot-api
+2. Install dependencies (cmake, g++, openssl, zlib, etc.)
+3. Build:
 ```bash
-# В .env файле или при запуске бота
-export BOT_API_URL=http://localhost:8081
+cmake -DCMAKE_BUILD_TYPE=Release .
+cmake --build . --target telegram-bot-api -- -j4
 ```
-
-Или добавьте в `.env`:
-```env
-BOT_API_URL=http://localhost:8081
-```
-
-## ✅ Проверка работы
-
-1. **Проверьте сервер:**
+4. Run:
 ```bash
-curl http://localhost:8081/botYOUR_BOT_TOKEN/getMe
+./telegram-bot-api --api-id=<API_ID> --api-hash=<API_HASH> --http-port=8081 --dir=./bot-api-data
 ```
 
-2. **Проверьте логи бота:**
-При запуске бота вы должны увидеть:
-```
-[INFO] Local Bot API server detected (BOT_API_URL=http://localhost:8081), using 2 GB limit
-```
+## 🔒 Security tips
+- Keep `api_id` and `api_hash` private.
+- Restrict access to port 8081 (firewall or reverse proxy).
+- Do not expose the local API publicly without protection.
 
-3. **Проверьте отправку файла:**
-Попробуйте скачать видео размером больше 50 МБ - должно работать!
+## 🧾 Troubleshooting
+- Port already in use → change `-p 8081:8081` or free the port.
+- `401 Unauthorized` → verify bot token.
+- Slow responses → check Docker resources or host load.
 
-## 🔧 Дополнительные настройки
-
-### Изменение порта
-
-По умолчанию используется порт `8081`. Чтобы изменить:
-
-```bash
-# В docker-compose
-ports:
-  - "9000:9000"  # Внешний:Внутренний
-
-# В команде запуска
---http-port=9000
-
-# В .env бота
-BOT_API_URL=http://localhost:9000
-```
-
-### Настройка для production
-
-Для production рекомендуется:
-- Использовать HTTPS (через reverse proxy, например nginx)
-- Настроить firewall
-- Использовать systemd для автозапуска
-
-Пример systemd сервиса (`/etc/systemd/system/telegram-bot-api.service`):
-
-```ini
-[Unit]
-Description=Telegram Bot API Server
-After=network.target
-
-[Service]
-Type=simple
-User=your-user
-WorkingDirectory=/path/to/telegram-bot-api
-ExecStart=/path/to/telegram-bot-api/bin/telegram-bot-api \
-  --local \
-  --api-id=YOUR_API_ID \
-  --api-hash=YOUR_API_HASH \
-  --http-port=8081
-Restart=always
-
-[Install]
-WantedBy=multi-user.target
-```
-
-## 📚 Полезные ссылки
-
-- [Официальная документация Telegram Bot API](https://core.telegram.org/bots/api#using-a-local-bot-api-server)
-- [Репозиторий telegram-bot-api](https://github.com/tdlib/telegram-bot-api)
-- [Docker образ aiogram/telegram-bot-api](https://hub.docker.com/r/aiogram/telegram-bot-api)
-
-## 🐛 Решение проблем
-
-### Сервер не запускается
-
-1. Проверьте, что порт 8081 свободен:
-```bash
-lsof -i :8081
-```
-
-2. Проверьте логи:
-```bash
-docker logs telegram-bot-api
-```
-
-### Бот не подключается к локальному серверу
-
-1. Убедитесь, что `BOT_API_URL` установлена правильно
-2. Проверьте, что сервер доступен:
-```bash
-curl http://localhost:8081/botYOUR_BOT_TOKEN/getMe
-```
-
-3. Проверьте firewall/iptables
-
-### Файлы все еще блокируются на 50 МБ
-
-1. Убедитесь, что `BOT_API_URL` установлена и не указывает на `api.telegram.org`
-2. Проверьте логи бота - должно быть сообщение о детекции локального сервера
-3. Перезапустите бота после изменения `BOT_API_URL`
-
-## 💡 Рекомендации
-
-- Используйте Docker для простоты развертывания
-- Храните `API_ID` и `API_HASH` в безопасном месте (не коммитьте в git!)
-- Используйте `.env` файл для конфигурации
-- Настройте резервное копирование данных сервера (папка `bot-api-data`)
-
+Happy self-hosting! 🎉

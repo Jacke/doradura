@@ -1,75 +1,46 @@
 #!/bin/bash
-
-# Скрипт для обновления yt-dlp до последней версии
-# Использование: ./update_ytdlp.sh
+# Script to update yt-dlp to the latest version
+# Usage: ./update_ytdlp.sh
 
 set -e
 
-echo "======================================"
-echo "🔄 Обновление yt-dlp"
-echo "======================================"
-echo ""
+echo "🔄 Updating yt-dlp"
 
-# Проверка текущей версии
-echo "Текущая версия:"
-yt-dlp --version || echo "yt-dlp не установлен"
-echo ""
+echo "Current version:"
+yt-dlp --version || echo "yt-dlp not installed"
 
-# Попытка обновления через самого yt-dlp
-echo "Попытка обновления через yt-dlp -U..."
-if yt-dlp -U 2>&1 | tee /tmp/ytdlp_update.log; then
-    echo ""
-    echo "✅ Обновление через yt-dlp -U успешно!"
+echo "Trying yt-dlp -U..."
+if yt-dlp -U; then
+    echo "✅ Updated via yt-dlp -U successfully!"
 else
-    echo ""
-    echo "⚠️  Не удалось обновить через yt-dlp -U"
-    echo ""
-    echo "Попытка обновления через pip3..."
-    
-    # Попытка через pip3
-    if pip3 install -U yt-dlp --break-system-packages 2>&1; then
-        echo "✅ Обновление через pip3 успешно!"
+    echo "⚠️  Failed to update via yt-dlp -U"
+    echo "Trying pip3..."
+    if pip3 install -U yt-dlp; then
+        echo "✅ Updated via pip3 successfully!"
     else
-        echo ""
-        echo "⚠️  Не удалось обновить через pip3"
-        echo ""
-        echo "Попытка через pip..."
-        
-        # Попытка через pip
-        if pip install -U yt-dlp --break-system-packages 2>&1; then
-            echo "✅ Обновление через pip успешно!"
+        echo "⚠️  Failed via pip3"
+        echo "Trying pip..."
+        if pip install -U yt-dlp; then
+            echo "✅ Updated via pip successfully!"
         else
-            echo ""
-            echo "❌ Не удалось обновить yt-dlp"
-            echo ""
-            echo "Ручная установка:"
-            echo "  macOS: brew upgrade yt-dlp"
-            echo "  Linux: sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp"
-            echo "         sudo chmod a+rx /usr/local/bin/yt-dlp"
-            exit 1
+            echo "❌ Failed to update yt-dlp"
+            echo "Manual install: https://github.com/yt-dlp/yt-dlp#installation"
         fi
     fi
 fi
 
-echo ""
-echo "======================================"
-echo "Новая версия:"
-yt-dlp --version
-echo "======================================"
-echo ""
+echo "New version:"
+yt-dlp --version || true
 
-# Тестирование с cookies
-echo "🧪 Тестирование с YouTube..."
-if [ -f "youtube_cookies.txt" ]; then
-    if yt-dlp --cookies youtube_cookies.txt --extractor-args "youtube:player_client=android,web" --print "%(title)s" "https://www.youtube.com/watch?v=dQw4w9WgXcQ" &>/dev/null; then
-        echo "✅ YouTube работает с новой версией!"
+echo "🧪 Testing YouTube..."
+if [ -f youtube_cookies.txt ]; then
+    if yt-dlp --cookies youtube_cookies.txt --print "%(title)s" "https://www.youtube.com/watch?v=dQw4w9WgXcQ" &>/dev/null; then
+        echo "✅ YouTube works with the new version!"
     else
-        echo "⚠️  Проблемы с YouTube, но yt-dlp обновлен"
+        echo "⚠️  Issues with YouTube, but yt-dlp updated"
     fi
 else
-    echo "ℹ️  Файл youtube_cookies.txt не найден, пропуск теста"
+    echo "ℹ️  youtube_cookies.txt not found, skipping test"
 fi
 
-echo ""
-echo "✅ Готово! Перезапусти бота для применения изменений."
-
+echo "✅ Done! Restart the bot to apply changes."

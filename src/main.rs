@@ -1,7 +1,6 @@
 use anyhow::Result;
 use dotenvy::dotenv;
 use dptree::di::DependencyMap;
-use std::fs::read_to_string;
 use std::sync::Arc;
 use std::time::Duration;
 use teloxide::dispatching::{Dispatcher, UpdateFilterExt};
@@ -95,24 +94,13 @@ async fn main() -> Result<()> {
     let db_pool =
         Arc::new(create_pool("database.sqlite").map_err(|e| anyhow::anyhow!("Failed to create database pool: {}", e))?);
 
-    // Read and apply the migration.sql file
-    let migration_sql = read_to_string("migration.sql")?;
-    let conn = get_connection(&db_pool).map_err(|e| anyhow::anyhow!("Failed to get database connection: {}", e))?;
-    // Execute migration, but don't fail if some steps already exist
-    if let Err(e) = conn.execute_batch(&migration_sql) {
-        log::warn!(
-            "Some migration steps failed (this is normal if tables/columns already exist): {}",
-            e
-        );
-    }
-
     // Start audio effects cleanup task
     doradura::download::audio_effects::start_cleanup_task(Arc::clone(&db_pool));
 
     let rate_limiter = Arc::new(RateLimiter::new());
     let download_queue = Arc::new(DownloadQueue::new());
 
-    // Не восстанавливаем failed задачи при запуске - пользователь должен сам повторить запрос
+    // Do not restore failed tasks on startup; users should retry manually
     // recover_failed_tasks(&download_queue, &db_pool).await;
 
     // Start Mini App web server if WEBAPP_PORT is set
@@ -189,7 +177,7 @@ async fn main() -> Result<()> {
 
     // Create a dispatcher to handle both commands and plain messages
     let handler = dptree::entry()
-        // Обработчик Web App Data - должен быть ПЕРВЫМ для обработки данных из Mini App
+        // Web App Data handler must run FIRST to process Mini App data
         .branch(
             Update::filter_message()
                 .filter(|msg: Message| msg.web_app_data().is_some())
@@ -206,7 +194,7 @@ async fn main() -> Result<()> {
                                 let data_str = &web_app_data.data;
                                 log::debug!("Web App Data: {}", data_str);
 
-                                // Создаем пользователя если его нет
+                                // Create the user if they don't exist
                                 match get_connection(&db_pool) {
                                     Ok(conn) => {
                                         let chat_id = msg.chat.id.0;
@@ -217,7 +205,7 @@ async fn main() -> Result<()> {
                                     Err(e) => log::error!("Failed to get DB connection: {}", e),
                                 }
 
-                                // Пытаемся распарсить как новый формат с action
+                                // Try to parse as the new format with an action field
                                 if let Ok(action_data) = serde_json::from_str::<WebAppAction>(data_str) {
                                     log::info!("Parsed Web App Action: {:?}", action_data);
 
@@ -249,11 +237,11 @@ async fn main() -> Result<()> {
                                         }
                                     }
                                 }
-                                // Если не получилось как action, пытаемся как старый формат WebAppData
+                                // If action parsing fails, fall back to the legacy WebAppData format
                                 else if let Ok(app_data) = serde_json::from_str::<WebAppData>(data_str) {
                                     log::info!("Parsed Web App Data (legacy): {:?}", app_data);
 
-                                    // Парсим URL и добавляем задачу в очередь
+                                    // Parse the URL and add a task to the queue
                                     match url::Url::parse(&app_data.url) {
                                         Ok(url) => {
                                             let is_video = app_data.format == "mp4";
@@ -300,7 +288,7 @@ async fn main() -> Result<()> {
                     }
                 })
         )
-        // ВАЖНО: Обработчик successful_payment должен быть ВТОРЫМ, до обработки обычных сообщений
+        // IMPORTANT: successful_payment handler must be SECOND, before regular message handling
         .branch(
             Update::filter_message()
                 .filter(|msg: Message| msg.successful_payment().is_some())
@@ -310,7 +298,7 @@ async fn main() -> Result<()> {
                         let db_pool = Arc::clone(&db_pool);
                         async move {
                             log::info!("Received successful_payment message");
-                            // Используем централизованный обработчик платежей с поддержкой рекуррентных подписок
+                            // Use the centralized payment handler with recurring subscription support
                             if let Err(e) = subscription::handle_successful_payment(&bot, &msg, Arc::clone(&db_pool)).await {
                                 log::error!("Failed to handle successful payment: {:?}", e);
                             }
@@ -479,9 +467,9 @@ async fn main() -> Result<()> {
 
                     log::info!("Received pre_checkout_query: id={}, payload={}", query_id, payload);
 
-                    // Проверяем payload
+                    // Validate the payload
                     if payload.starts_with("subscription:") {
-                        // Одобряем платеж
+                        // Approve the payment
                         match bot.answer_pre_checkout_query(query_id.clone(), true).await {
                             Ok(_) => {
                                 log::info!("✅ Pre-checkout query approved for payload: {}", payload);
@@ -491,7 +479,7 @@ async fn main() -> Result<()> {
                             }
                         }
                     } else {
-                        // Отклоняем неизвестный платеж
+                        // Reject unknown payment types
                         match bot.answer_pre_checkout_query(query_id.clone(), false)
                             .error_message("Неизвестный тип платежа")
                             .await {
@@ -559,8 +547,8 @@ async fn main() -> Result<()> {
             let bot_clone = bot.clone();
             let handler_clone = handler.clone();
 
-            // Создаем новый dispatcher в отдельной задаче для изоляции паники
-            // Паника "TX is dead" будет перехвачена через JoinHandle
+            // Create a new dispatcher in a separate task to isolate panics
+            // "TX is dead" panics will be caught via the JoinHandle
             let handle = tokio::spawn(async move {
                 Dispatcher::builder(bot_clone, handler_clone)
                     .dependencies(DependencyMap::new())
@@ -571,12 +559,12 @@ async fn main() -> Result<()> {
 
             match handle.await {
                 Ok(()) => {
-                    // Dispatcher завершился нормально
+                    // Dispatcher finished normally
                     log::info!("Dispatcher shutdown gracefully");
                     break;
                 }
                 Err(join_err) => {
-                    // Задача была отменена или паника
+                    // Task was cancelled or panicked
                     if join_err.is_panic() {
                         let panic_msg = join_err.to_string();
                         log::error!("Dispatcher panicked: {}", panic_msg);
@@ -620,17 +608,14 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-/// Проверяет, адресовано ли сообщение боту
+/// Recovers failed tasks from the database and adds them back to the queue.
 ///
-/// # Параметры
-/// - `msg`: сообщение для проверки
-/// - `bot_username`: username бота (без @)
-/// - `bot_id`: ID бота
+/// Logs detailed information about each failed task before re-queuing it to
+/// make debugging easier.
 ///
-/// # Возвращает
-/// - `true` если сообщение адресовано боту (личный чат, упоминание бота, ответ на сообщение бота)
-///
-/// Recovers failed tasks from the database and adds them back to the queue
+/// # Parameters
+/// - `queue`: download queue that receives recovered tasks
+/// - `db_pool`: database pool used to fetch failed tasks
 #[allow(dead_code)]
 async fn recover_failed_tasks(queue: &Arc<DownloadQueue>, db_pool: &Arc<db::DbPool>) {
     match get_connection(db_pool) {
@@ -647,7 +632,7 @@ async fn recover_failed_tasks(queue: &Arc<DownloadQueue>, db_pool: &Arc<db::DbPo
                     log::info!("🔄 Found {} failed task(s) in database", task_count);
                     log::info!("═══════════════════════════════════════════════════════════");
 
-                    // Логируем детальную информацию о каждой failed задаче
+                    // Log detailed information about each failed task
                     for (idx, task_entry) in failed_tasks.iter().enumerate() {
                         let priority_str = match task_entry.priority {
                             2 => "HIGH",
@@ -694,7 +679,7 @@ async fn recover_failed_tasks(queue: &Arc<DownloadQueue>, db_pool: &Arc<db::DbPo
                     let mut recovered_count = 0;
 
                     for task_entry in failed_tasks {
-                        // Конвертируем TaskQueueEntry в DownloadTask
+                        // Convert TaskQueueEntry into a DownloadTask
                         let priority = match task_entry.priority {
                             2 => queue::TaskPriority::High,
                             1 => queue::TaskPriority::Medium,
@@ -716,7 +701,7 @@ async fn recover_failed_tasks(queue: &Arc<DownloadQueue>, db_pool: &Arc<db::DbPo
                             priority,
                         };
 
-                        // Добавляем задачу обратно в очередь
+                        // Add the task back to the queue
                         queue.add_task(download_task, Some(Arc::clone(db_pool))).await;
                         recovered_count += 1;
                         log::info!(
@@ -770,7 +755,7 @@ async fn process_queue(
                     Ok(p) => p,
                     Err(e) => {
                         log::error!("Failed to acquire semaphore permit for task {}: {}", task.id, e);
-                        // Помечаем задачу как failed
+                        // Mark the task as failed
                         if let Ok(conn) = db::get_connection(&db_pool) {
                             let _ =
                                 db::mark_task_failed(&conn, &task.id, &format!("Failed to acquire semaphore: {}", e));
@@ -784,7 +769,7 @@ async fn process_queue(
                     semaphore.available_permits()
                 );
 
-                // Помечаем задачу как processing
+                // Mark the task as processing
                 if let Ok(conn) = db::get_connection(&db_pool) {
                     if let Err(e) = db::mark_task_processing(&conn, &task.id) {
                         log::warn!("Failed to mark task {} as processing: {}", task.id, e);
@@ -796,10 +781,10 @@ async fn process_queue(
                     Err(e) => {
                         log::error!("Invalid URL for task {}: {} - {}", task.id, task.url, e);
                         let error_msg = format!("Invalid URL: {}", e);
-                        // Помечаем задачу как failed
+                        // Mark the task as failed
                         if let Ok(conn) = db::get_connection(&db_pool) {
                             let _ = db::mark_task_failed(&conn, &task.id, &error_msg);
-                            // Уведомляем администратора
+                            // Notify the administrator
                             notify_admin_task_failed(
                                 bot.clone(),
                                 Arc::clone(&db_pool),
@@ -867,7 +852,7 @@ async fn process_queue(
 
                 match result {
                     Ok(_) => {
-                        // Помечаем задачу как completed
+                        // Mark the task as completed
                         if let Ok(conn) = db::get_connection(&db_pool) {
                             if let Err(e) = db::mark_task_completed(&conn, &task_id) {
                                 log::warn!("Failed to mark task {} as completed: {}", task_id, e);
@@ -884,12 +869,12 @@ async fn process_queue(
                             error_msg
                         );
 
-                        // Помечаем задачу как failed
+                        // Mark the task as failed
                         if let Ok(conn) = db::get_connection(&db_pool) {
                             if let Err(db_err) = db::mark_task_failed(&conn, &task_id, &error_msg) {
                                 log::error!("Failed to mark task {} as failed in DB: {}", task_id, db_err);
                             } else {
-                                // Уведомляем администратора только если задача не превысила лимит попыток
+                                // Notify the administrator only if the task has not exceeded retry limits
                                 if let Ok(conn) = db::get_connection(&db_pool) {
                                     if let Ok(Some(task_entry)) = db::get_task_by_id(&conn, &task_id) {
                                         if task_entry.retry_count < config::admin::MAX_TASK_RETRIES {

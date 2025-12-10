@@ -3,6 +3,7 @@
 pub mod backup;
 pub mod cache;
 pub mod db;
+pub mod migrations;
 
 // Re-exports for convenience
 pub use db::{create_pool, get_connection, DbConnection, DbPool};

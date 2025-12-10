@@ -153,15 +153,15 @@ function hydrateUserMeta() {
 }
 
 function checkAdminAccess() {
-    // Проверяем, является ли пользователь админом
-    // ADMIN_IDS должны быть определены в конфигурации сервера
-    // Здесь мы просто проверяем наличие вкладки админа в настройках
+    // Check if the user is an admin
+    // ADMIN_IDS must be defined on the server side
+    // Here we simply check for the presence of the admin tab in settings
     fetchSettings().then(settings => {
         if (settings?.is_admin) {
             refs.adminNavBtn.style.display = 'block';
         }
     }).catch(() => {
-        // Если не админ, ничего не делаем
+        // Do nothing if not admin
     });
 }
 
@@ -175,14 +175,14 @@ function setupNavigation() {
                 screen.classList.toggle('active', isActive);
             });
 
-            // Показываем главную кнопку только на главном экране
+            // Show the main button only on the main screen
             if (target === 'home') {
                 tg.MainButton.show();
             } else {
                 tg.MainButton.hide();
             }
 
-            // Загружаем данные админа при открытии вкладки
+            // Load admin data when the tab opens
             if (target === 'admin') {
                 loadAdminData();
             }
@@ -259,13 +259,13 @@ function setupUpgradeButtons() {
 function handleUpgradeRequest(plan) {
     const planName = PLAN_CONFIG[plan]?.label ?? plan;
 
-    // Показываем подтверждение перед отправкой
+    // Show confirmation before sending
     tg.showConfirm(
         `Подключить тариф ${planName}?\n\nБот отправит вам информацию о подключении подписки.`,
         (confirmed) => {
             if (confirmed) {
-                // Отправляем данные боту через Web App API
-                // Бот получит это в виде web_app_data
+                // Send data to the bot via Web App API
+                // The bot receives this as web_app_data
                 tg.sendData(JSON.stringify({
                     action: 'upgrade_plan',
                     plan: plan
@@ -380,7 +380,7 @@ function updatePlanUI(planKey) {
         .map((feature) => `<li>${feature}</li>`)
         .join('');
 
-    // Показываем кнопку отмены подписки только для Premium и VIP
+    // Show cancel subscription button only for Premium and VIP
     if (normalized === 'premium' || normalized === 'vip') {
         refs.cancelSubscriptionBtn.style.display = 'block';
     } else {
@@ -426,7 +426,7 @@ async function handleCancelSubscription() {
         return;
     }
 
-    // Подтверждение отмены
+    // Cancellation confirmation
     tg.showConfirm(
         `Отменить подписку ${PLAN_CONFIG[currentPlan]?.label ?? currentPlan}? Вы перейдете на бесплатный план.`,
         async (confirmed) => {
@@ -617,7 +617,7 @@ function renderQueue() {
 
     refs.queueEmpty.hidden = true;
 
-    // Сортируем: сначала processing, потом pending по позиции
+    // Sort: processing first, then pending by position
     const sortedQueue = [...state.queue].sort((a, b) => {
         if (a.status === 'processing' && b.status !== 'processing') return -1;
         if (a.status !== 'processing' && b.status === 'processing') return 1;
@@ -693,7 +693,7 @@ async function fetchServices() {
 
 async function fetchQueue() {
     try {
-        // Показываем индикатор обновления
+        // Show refresh indicator
         if (refs.queueUpdateIndicator) {
             refs.queueUpdateIndicator.style.opacity = '0.6';
         }
@@ -702,7 +702,7 @@ async function fetchQueue() {
         state.queue = queue;
         renderQueue();
 
-        // Скрываем индикатор обновления
+        // Hide refresh indicator
         setTimeout(() => {
             if (refs.queueUpdateIndicator) {
                 refs.queueUpdateIndicator.style.opacity = '0';
@@ -824,7 +824,7 @@ function truncateUrl(url, max = 28) {
 
 async function loadAdminData() {
     try {
-        // Загружаем административную статистику
+        // Load admin statistics
         const adminStats = await apiFetch('/api/admin/stats');
         renderAdminStats(adminStats);
     } catch (error) {
@@ -836,18 +836,18 @@ async function loadAdminData() {
 function renderAdminStats(stats) {
     if (!stats) return;
 
-    // Основная статистика
+    // Primary stats
     refs.adminTotalUsers.textContent = formatNumber(stats.total_users ?? 0);
     refs.adminTotalDownloads.textContent = formatNumber(stats.total_downloads ?? 0);
     refs.adminActiveQueue.textContent = formatNumber(stats.active_queue ?? 0);
     refs.adminTotalSize.textContent = formatBytes(stats.total_size ?? 0);
 
-    // Распределение по планам
+    // Plan distribution
     refs.adminPlanFree.textContent = formatNumber(stats.plans?.free ?? 0);
     refs.adminPlanPremium.textContent = formatNumber(stats.plans?.premium ?? 0);
     refs.adminPlanVip.textContent = formatNumber(stats.plans?.vip ?? 0);
 
-    // Очередь (если есть данные)
+    // Queue (when data is present)
     if (stats.queue && stats.queue.length > 0) {
         refs.adminQueueEmpty.hidden = true;
         refs.adminQueueList.innerHTML = stats.queue

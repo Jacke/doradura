@@ -1,95 +1,100 @@
-# 💳 Система подписок и реферальная программа
+# 💳 Subscription System and Referral Program
 
-## 📋 Содержание
-1. [Система подписок](#система-подписок)
-2. [Реферальная программа](#реферальная-программа)
-3. [Интеграция с Telegram Stars](#интеграция-с-telegram-stars)
-4. [Схема базы данных](#схема-базы-данных)
-5. [API и команды](#api-и-команды)
-6. [Обработка ошибок](#обработка-ошибок)
-
----
-
-## 💳 Система подписок
-
-### Обзор
-
-Система подписок позволяет пользователям получать расширенные возможности бота через платные тарифы. Оплата осуществляется через **Telegram Stars** - встроенную систему микроплатежей Telegram.
-
-### Тарифные планы
-
-#### 🌟 Free (бесплатный)
-
-**Характеристики:**
-- ⏱️ **Интервал между запросами:** 30 секунд
-- 📥 **Лимит загрузок:** максимум 5 загрузок в день
-- 📦 **Максимальный размер файла:** до 49 MB
-- 🎵 **Форматы:** базовые (MP3, MP4)
-- ⚙️ **Качество:** фиксированное (без выбора)
-
-**Использование:**
-- Для новых пользователей по умолчанию
-- Автоматически присваивается при регистрации
-- Не требует оплаты
+## 📋 Contents
+1. [Subscription system](#subscription-system)
+2. [Referral program](#referral-program)
+3. [Telegram Stars integration](#telegram-stars-integration)
+4. [Database schema](#database-schema)
+5. [API and commands](#api-and-commands)
+6. [Error handling](#error-handling)
+7. [Background jobs](#background-jobs)
+8. [Metrics](#metrics)
+9. [Implementation roadmap](#implementation-roadmap)
+10. [Notes](#notes)
+11. [Resources](#resources)
 
 ---
 
-#### ⭐ Premium (₽299/мес или эквивалент в Stars)
+## 💳 Subscription System
 
-**Стоимость:** ~299 Telegram Stars (конвертация зависит от курса)
+### Overview
 
-**Характеристики:**
-- ⏱️ **Интервал между запросами:** 10 секунд
-- 📥 **Лимит загрузок:** неограниченные загрузки
-- 📦 **Максимальный размер файла:** до 100 MB
-- 🎵 **Форматы:** все форматы + выбор качества
-- 🎬 **Качество видео:** выбор (best, 1080p, 720p, 480p, 360p)
-- 🎧 **Битрейт аудио:** выбор (128k, 192k, 256k, 320k)
-- ⚡ **Приоритет:** приоритетная очередь
-- 📚 **История загрузок:** полный доступ
-- ⭐ **Избранное:** возможность сохранять треки
+The subscription system gives users paid tiers with expanded capabilities. Payments are handled through **Telegram Stars**, the in-app micro-payment system.
 
-**Преимущества:**
-- Значительное снижение времени ожидания между запросами
-- Доступ ко всем форматам и качеству
-- Приоритетная обработка в очереди
-- Сохранение истории загрузок
+### Plans
 
----
+#### 🌟 Free (no charge)
 
-#### 👑 VIP (₽999/мес или эквивалент в Stars)
+**Characteristics:**
+- ⏱️ **Request interval:** 30 seconds
+- 📥 **Daily download limit:** up to 5
+- 📦 **Max file size:** up to 49 MB
+- 🎵 **Formats:** basics (MP3, MP4)
+- ⚙️ **Quality:** fixed (no selection)
 
-**Стоимость:** ~999 Telegram Stars (конвертация зависит от курса)
-
-**Характеристики:**
-- ⏱️ **Интервал между запросами:** 5 секунд
-- 📥 **Лимит загрузок:** неограниченные загрузки
-- 📦 **Максимальный размер файла:** до 200 MB
-- 🎵 **Форматы:** все форматы + выбор качества
-- 🎬 **Качество видео:** выбор (best, 1080p, 720p, 480p, 360p)
-- 🎧 **Битрейт аудио:** выбор (128k, 192k, 256k, 320k)
-- ⚡ **Приоритет:** максимальный приоритет в очереди
-- 📚 **История загрузок:** полный доступ
-- ⭐ **Избранное:** возможность сохранять треки
-- 🎯 **Рекомендации:** персональные рекомендации на основе истории
-- 📋 **Плейлисты:** поддержка плейлистов до 100 треков
-- 🎤 **Голосовые команды:** управление через голосовые сообщения
-
-**Преимущества:**
-- Минимальное время ожидания между запросами
-- Максимальный размер файлов
-- Максимальный приоритет в очереди
-- Расширенные функции (плейлисты, голосовые команды)
-- Ранний доступ к новым функциям
+**Usage:**
+- Default for new users
+- Assigned automatically at registration
+- No payment required
 
 ---
 
-### Логика работы подписок
+#### ⭐ Premium (~₽299/month or equivalent in Stars)
 
-#### Проверка статуса подписки
+**Price:** ~299 Telegram Stars (depends on exchange rate)
+
+**Characteristics:**
+- ⏱️ **Request interval:** 10 seconds
+- 📥 **Downloads:** unlimited
+- 📦 **Max file size:** up to 100 MB
+- 🎵 **Formats:** all formats + quality selection
+- 🎬 **Video quality:** best, 1080p, 720p, 480p, 360p
+- 🎧 **Audio bitrate:** 128k, 192k, 256k, 320k
+- ⚡ **Priority:** priority queue
+- 📚 **History:** full access
+- ⭐ **Favorites:** save tracks
+
+**Benefits:**
+- Lower wait time between requests
+- Access to all formats and qualities
+- Priority processing in the queue
+- Download history preserved
+
+---
+
+#### 👑 VIP (~₽999/month or equivalent in Stars)
+
+**Price:** ~999 Telegram Stars (depends on exchange rate)
+
+**Characteristics:**
+- ⏱️ **Request interval:** 5 seconds
+- 📥 **Downloads:** unlimited
+- 📦 **Max file size:** up to 200 MB
+- 🎵 **Formats:** all formats + quality selection
+- 🎬 **Video quality:** best, 1080p, 720p, 480p, 360p
+- 🎧 **Audio bitrate:** 128k, 192k, 256k, 320k
+- ⚡ **Priority:** highest queue priority
+- 📚 **History:** full access
+- ⭐ **Favorites:** save tracks
+- 🎯 **Recommendations:** personalized suggestions based on history
+- 📋 **Playlists:** playlists up to 100 tracks
+- 🎤 **Voice commands:** control via voice messages
+
+**Benefits:**
+- Minimal wait time between requests
+- Maximum file sizes
+- Highest queue priority
+- Extended functionality (playlists, voice commands)
+- Early access to new features
+
+---
+
+### Subscription logic
+
+#### Status check
 
 ```rust
-// Псевдокод логики проверки
+// Subscription status pseudo-code
 fn check_subscription_status(user: &User) -> SubscriptionStatus {
     if user.subscription_expires_at > now() {
         match user.plan {
@@ -98,153 +103,51 @@ fn check_subscription_status(user: &User) -> SubscriptionStatus {
             _ => SubscriptionStatus::Active(Plan::Free),
         }
     } else {
-        // Подписка истекла, возврат к Free
+        // Subscription expired; revert to Free
         SubscriptionStatus::Expired
     }
 }
 ```
 
-#### Автоматическое обновление плана
+#### Automatic plan downgrade/renewal
 
-При истечении подписки:
-1. План пользователя автоматически меняется на `free`
-2. Отправляется уведомление пользователю за 3 дня до истечения
-3. Отправляется уведомление в день истечения
-4. После истечения - уведомление о продлении
+When a subscription expires:
+1. Plan is automatically set to `free`.
+2. Notify the user 3 days before expiration.
+3. Notify the user on the day of expiration.
+4. After expiration, send a renewal prompt.
 
-#### Ограничения по планам
+#### Plan limits example
 
 ```rust
-// Пример структуры ограничений
+// Example limits structure
 struct PlanLimits {
     rate_limit_seconds: u64,
-    daily_download_limit: Option<u32>,
+    daily_download_limit: u32,
     max_file_size_mb: u32,
-    allowed_formats: Vec<String>,
-    queue_priority: u8,
 }
 ```
 
-**Реализация:**
-- **Rate Limiting:** через `RateLimiter` с разными интервалами для каждого плана
-- **Daily Limits:** счетчик загрузок в таблице `daily_downloads`
-- **File Size:** проверка размера файла перед отправкой
-- **Queue Priority:** приоритет в очереди загрузок (VIP > Premium > Free)
+---
+
+## 🤝 Referral Program
+
+- Every user has a unique referral link: `https://t.me/your_bot?start=ref_<id>`
+- Bonuses can be given in days of Premium for both referrer and friend.
+- Protect against self-invites and duplicates.
+
+**Suggested rewards:**
+- Referrer: +1 day Premium per invite
+- Referred user: +3 days Premium on first signup
 
 ---
 
-## 🎁 Реферальная программа
+## ⭐ Telegram Stars Integration
 
-### Обзор
-
-Реферальная программа позволяет пользователям приглашать друзей и получать бонусы за приглашения. Это стимулирует рост пользовательской базы и повышает engagement.
-
-### Механика работы
-
-#### Генерация реферальной ссылки
-
-Каждый пользователь получает уникальную реферальную ссылку:
-```
-https://t.me/your_bot?start=ref_<user_telegram_id>
-```
-
-**Формат:**
-- `ref_` - префикс реферальной ссылки
-- `<user_telegram_id>` - Telegram ID пользователя-реферера
-
-#### Процесс регистрации по реферальной ссылке
-
-1. **Новый пользователь переходит по ссылке**
-   - Бот получает параметр `start=ref_<referrer_id>`
-   - Сохраняет информацию о реферере
-
-2. **Регистрация нового пользователя**
-   - Создается запись в таблице `users`
-   - Создается запись в таблице `referrals` с указанием реферера
-   - Начисляются бонусы обеим сторонам
-
-3. **Начисление бонусов**
-   - **Реферер:** +1 день Premium за каждого приглашенного друга
-   - **Реферал:** +3 дня Premium при регистрации
-
-#### Статистика рефералов
-
-Пользователь может просмотреть:
-- Общее количество приглашенных друзей
-- Количество активных рефералов (с действующей подпиской)
-- История начисленных бонусов
-- Прогресс до следующего бонуса
-
----
-
-### Бонусная система
-
-#### Для реферера
-
-**Начисление:**
-- +1 день Premium за каждого приглашенного друга
-- Бонусы суммируются (например, 5 друзей = 5 дней Premium)
-- Бонусы добавляются к текущей подписке (если есть)
-- Если подписки нет, бонусы сохраняются и активируются при покупке Premium/VIP
-
-**Ограничения:**
-- Один реферал может быть засчитан только один раз
-- Бонусы начисляются только при первой регистрации реферала
-- Защита от самоприглашений (нельзя пригласить сам себя)
-
-#### Для реферала
-
-**Начисление:**
-- +3 дня Premium при регистрации по реферальной ссылке
-- Активация сразу после регистрации
-- Если у реферала уже есть Premium/VIP, дни добавляются к текущей подписке
-
-**Условия:**
-- Бонус начисляется только при первой регистрации
-- Нельзя использовать несколько реферальных ссылок
-
----
-
-## 🌟 Интеграция с Telegram Stars
-
-### Обзор
-
-Telegram Stars - это встроенная система микроплатежей Telegram, которая позволяет пользователям оплачивать товары и услуги прямо в чате без внешних платежных систем.
-
-### Преимущества Telegram Stars
-
-1. **Удобство:** оплата прямо в Telegram
-2. **Безопасность:** встроенная система Telegram
-3. **Быстрота:** мгновенные транзакции
-4. **Низкие комиссии:** минимизация затрат на обработку платежей
-5. **Глобальность:** работает во всех странах
-
-### Реализация платежей
-
-#### Создание инвойса
+### Handling a successful payment
 
 ```rust
-// Пример создания инвойса для Premium подписки
-use teloxide::types::{LabeledPrice, InlineKeyboardMarkup, InlineKeyboardButton};
-
-async fn create_premium_invoice(bot: &Bot, user_id: ChatId) -> ResponseResult<()> {
-    let title = "Premium подписка - 1 месяц";
-    let description = "Неограниченные загрузки, приоритетная очередь, все форматы";
-    let payload = format!("subscription:premium:{}", user_id.0);
-    let currency = "XTR"; // Telegram Stars
-    let prices = vec![LabeledPrice::new("Premium подписка", 29900)]; // 299 Stars в центах/минимальных единицах
-    
-    bot.send_invoice(user_id, title, description, payload, None, currency, prices)
-        .await?;
-    
-    Ok(())
-}
-```
-
-#### Обработка успешного платежа
-
-```rust
-// Обработка события успешной оплаты
+// Handling successful_payment
 async fn handle_successful_payment(
     bot: &Bot,
     msg: &Message,
@@ -252,64 +155,62 @@ async fn handle_successful_payment(
 ) -> ResponseResult<()> {
     if let Some(payment) = &msg.successful_payment {
         let payload = &payment.invoice_payload;
-        
-        // Парсинг payload: "subscription:premium:123456789"
+
+        // Payload example: "subscription:premium:123456789"
         if payload.starts_with("subscription:") {
             let parts: Vec<&str> = payload.split(':').collect();
             if parts.len() == 3 {
-                let plan = parts[1]; // "premium" или "vip"
+                let plan = parts[1]; // "premium" or "vip"
                 let user_id: i64 = parts[2].parse().unwrap_or(0);
-                
-                // Активация подписки
+
+                // Activate the subscription
                 activate_subscription(db_pool, user_id, plan, 30).await?;
-                
-                // Отправка подтверждения
+
+                // Send confirmation
                 bot.send_message(
                     msg.chat.id,
-                    format!("✅ Подписка {} активирована на 30 дней!", plan)
-                ).await?;
+                    format!("✅ Subscription {} activated for 30 days!", plan),
+                )
+                .await?;
             }
         }
     }
-    
+
     Ok(())
 }
 ```
 
-#### Конвертация валют
+### Currency conversion
 
-**Важно:** Telegram Stars имеют свой курс конвертации. Необходимо:
+**Important:** Telegram Stars have their own exchange rate.
 
-1. **Определить курс Stars к местной валюте**
-   - Использовать официальный API Telegram или биржи
-   - Обновлять курс регулярно (например, раз в день)
+1. **Determine the rate to local currency**
+   - Use the official Telegram API or an exchange feed.
+   - Refresh regularly (for example, daily).
 
-2. **Динамическое ценообразование**
+2. **Dynamic pricing**
    ```rust
-   // Пример функции конвертации
+   // Conversion example
    fn convert_to_stars(price_rub: u32) -> u32 {
-       // Примерный курс: 1 Star ≈ 1 RUB (нужно обновлять)
-       // Учитывать комиссию Telegram (~5%)
+       // Approximate rate: 1 Star ≈ 1 RUB (must be updated)
+       // Include Telegram fee (~5%)
        let stars = price_rub as f64 * 1.05;
        stars.ceil() as u32
    }
    ```
 
-3. **Отображение цены пользователю**
-   - Показывать цену в Stars
-   - Дополнительно показывать примерную стоимость в местной валюте
-   - Указывать срок действия подписки
+3. **Display to the user**
+   - Show the price in Stars.
+   - Optionally show an approximate local currency value.
+   - Indicate subscription duration.
 
 ---
 
-## 🗄️ Схема базы данных
+## 🗄️ Database Schema
 
-### Таблицы
-
-#### Таблица `users` (расширение)
+### `users` table extensions
 
 ```sql
--- Добавление полей для подписок
 ALTER TABLE users ADD COLUMN subscription_expires_at DATETIME;
 ALTER TABLE users ADD COLUMN subscription_starts_at DATETIME;
 ALTER TABLE users ADD COLUMN subscription_auto_renew BOOLEAN DEFAULT 0;
@@ -317,14 +218,14 @@ ALTER TABLE users ADD COLUMN referral_code TEXT UNIQUE;
 ALTER TABLE users ADD COLUMN referred_by INTEGER;
 ```
 
-**Поля:**
-- `subscription_expires_at` - дата истечения подписки (NULL для Free)
-- `subscription_starts_at` - дата начала текущей подписки
-- `subscription_auto_renew` - автоматическое продление (0/1)
-- `referral_code` - уникальный реферальный код пользователя
-- `referred_by` - Telegram ID пользователя, который пригласил (NULL если не приглашен)
+**Fields:**
+- `subscription_expires_at` — expiration date (NULL for Free)
+- `subscription_starts_at` — start date of the current subscription
+- `subscription_auto_renew` — auto-renew flag (0/1)
+- `referral_code` — unique referral code
+- `referred_by` — Telegram ID of the inviter (NULL if none)
 
-#### Таблица `subscriptions`
+### `subscriptions` table
 
 ```sql
 CREATE TABLE IF NOT EXISTS subscriptions (
@@ -334,7 +235,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     starts_at DATETIME NOT NULL,
     expires_at DATETIME NOT NULL,
     payment_method TEXT, -- 'stars', 'other'
-    payment_amount INTEGER, -- сумма в Stars
+    payment_amount INTEGER, -- amount in Stars
     payment_transaction_id TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(telegram_id)
@@ -344,21 +245,21 @@ CREATE INDEX idx_subscriptions_user_id ON subscriptions(user_id);
 CREATE INDEX idx_subscriptions_expires_at ON subscriptions(expires_at);
 ```
 
-**Назначение:**
-- История всех подписок пользователя
-- Отслеживание платежей
-- Аудит и аналитика
+**Purpose:**
+- History of all user subscriptions
+- Payment tracking
+- Auditing and analytics
 
-#### Таблица `referrals`
+### `referrals` table
 
 ```sql
 CREATE TABLE IF NOT EXISTS referrals (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    referrer_id INTEGER NOT NULL, -- кто пригласил
-    referred_id INTEGER NOT NULL, -- кого пригласили
-    bonus_applied BOOLEAN DEFAULT 0, -- применен ли бонус
-    referrer_bonus_days INTEGER DEFAULT 0, -- дни бонуса для реферера
-    referred_bonus_days INTEGER DEFAULT 0, -- дни бонуса для реферала
+    referrer_id INTEGER NOT NULL, -- who invited
+    referred_id INTEGER NOT NULL, -- who was invited
+    bonus_applied BOOLEAN DEFAULT 0,
+    referrer_bonus_days INTEGER DEFAULT 0,
+    referred_bonus_days INTEGER DEFAULT 0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (referrer_id) REFERENCES users(telegram_id),
     FOREIGN KEY (referred_id) REFERENCES users(telegram_id),
@@ -369,12 +270,12 @@ CREATE INDEX idx_referrals_referrer_id ON referrals(referrer_id);
 CREATE INDEX idx_referrals_referred_id ON referrals(referred_id);
 ```
 
-**Назначение:**
-- Отслеживание реферальных связей
-- Учет начисленных бонусов
-- Защита от дублирования (UNIQUE constraint)
+**Purpose:**
+- Track referral relationships
+- Record applied bonuses
+- Prevent duplicates (UNIQUE constraint)
 
-#### Таблица `daily_downloads`
+### `daily_downloads` table
 
 ```sql
 CREATE TABLE IF NOT EXISTS daily_downloads (
@@ -389,52 +290,51 @@ CREATE TABLE IF NOT EXISTS daily_downloads (
 CREATE INDEX idx_daily_downloads_user_date ON daily_downloads(user_id, download_date);
 ```
 
-**Назначение:**
-- Отслеживание лимита загрузок для Free плана
-- Сброс счетчика ежедневно
-- Проверка перед каждой загрузкой
+**Purpose:**
+- Enforce the Free plan download limit
+- Reset counters daily
+- Check before each download
 
 ---
 
-### Функции базы данных
+### DB helper queries
 
-#### Проверка активной подписки
+#### Check active subscription
 
 ```sql
--- Получить активную подписку пользователя
-SELECT plan, expires_at 
-FROM users 
-WHERE telegram_id = ? 
+SELECT plan, expires_at
+FROM users
+WHERE telegram_id = ?
   AND (subscription_expires_at IS NULL OR subscription_expires_at > datetime('now'));
 ```
 
-#### Добавление дней к подписке
+#### Add days to a subscription
 
 ```sql
--- Добавить дни к текущей подписке (если активна)
-UPDATE users 
+-- Extend current subscription (if active)
+UPDATE users
 SET subscription_expires_at = datetime(subscription_expires_at, '+' || ? || ' days')
-WHERE telegram_id = ? 
+WHERE telegram_id = ?
   AND subscription_expires_at > datetime('now');
 
--- Создать новую подписку (если не активна)
-UPDATE users 
+-- Create a new subscription (if inactive)
+UPDATE users
 SET plan = ?,
     subscription_starts_at = datetime('now'),
     subscription_expires_at = datetime('now', '+' || ? || ' days')
-WHERE telegram_id = ? 
+WHERE telegram_id = ?
   AND (subscription_expires_at IS NULL OR subscription_expires_at <= datetime('now'));
 ```
 
-#### Получение статистики рефералов
+#### Referral stats
 
 ```sql
--- Количество рефералов пользователя
-SELECT COUNT(*) 
-FROM referrals 
+-- Referral count
+SELECT COUNT(*)
+FROM referrals
 WHERE referrer_id = ?;
 
--- Активные рефералы (с действующей подпиской)
+-- Active referrals (with active subscription)
 SELECT COUNT(DISTINCT r.referred_id)
 FROM referrals r
 JOIN users u ON r.referred_id = u.telegram_id
@@ -444,100 +344,94 @@ WHERE r.referrer_id = ?
 
 ---
 
-## 🔌 API и команды
+## 🔌 API and Commands
 
-### Команды бота
+### `/subscribe` — purchase a subscription
 
-#### `/subscribe` - Покупка подписки
+**Description:** Shows available plans and lets the user pick one.
 
-**Описание:** Отображает доступные тарифы и позволяет выбрать план для покупки.
+**Behavior:**
+1. Display the current plan.
+2. Show available plans (Premium, VIP).
+3. Highlight benefits of each plan.
+4. Render inline buttons to choose a plan.
+5. When a plan is chosen, create an invoice for payment.
 
-**Функционал:**
-1. Показывает текущий план пользователя
-2. Отображает доступные тарифы (Premium, VIP)
-3. Показывает преимущества каждого плана
-4. Создает inline-кнопки для выбора плана
-5. При выборе плана - создает инвойс для оплаты
-
-**Пример ответа:**
+**Response example:**
 ```
-💳 Подписки Doradura
+💳 Doradura Subscriptions
 
-📊 Твой текущий план: Free
-📅 Действует до: бессрочно
+📊 Your current plan: Free
+📅 Valid until: unlimited
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-⭐ Premium - 299 Stars/мес
-• 10 секунд между запросами
-• Неограниченные загрузки
-• Файлы до 100 MB
-• Все форматы + выбор качества
-• Приоритетная очередь
+⭐ Premium - 299 Stars/month
+• 10 seconds between requests
+• Unlimited downloads
+• Files up to 100 MB
+• All formats + quality selection
+• Priority queue
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-👑 VIP - 999 Stars/мес
-• 5 секунд между запросами
-• Неограниченные загрузки
-• Файлы до 200 MB
-• Все форматы + выбор качества
-• Максимальный приоритет
-• Плейлисты до 100 треков
-• Голосовые команды
+👑 VIP - 999 Stars/month
+• 5 seconds between requests
+• Unlimited downloads
+• Files up to 200 MB
+• All formats + quality selection
+• Highest priority
+• Playlists up to 100 tracks
+• Voice commands
 
-[⭐ Premium] [👑 VIP] [📊 Статистика]
+[⭐ Premium] [👑 VIP] [📊 Stats]
 ```
 
-**Обработка:**
+**Handler skeleton:**
 ```rust
 async fn handle_subscribe_command(
     bot: &Bot,
     msg: &Message,
     db_pool: &DbPool,
 ) -> ResponseResult<()> {
-    // Получить текущий план пользователя
     let user = get_user_from_db(db_pool, msg.chat.id.0).await?;
-    
-    // Отправить меню подписок
     send_subscription_menu(bot, msg.chat.id, &user).await?;
-    
     Ok(())
 }
 ```
 
-#### `/referral` - Реферальная программа
+### `/referral` — referral program
 
-**Описание:** Показывает реферальную ссылку и статистику рефералов.
+**Description:** Shows the referral link and referral statistics.
 
-**Функционал:**
-1. Генерирует или показывает реферальную ссылку
-2. Отображает количество приглашенных друзей
-3. Показывает начисленные бонусы
-4. Предоставляет кнопку для быстрого копирования ссылки
+**Behavior:**
+1. Generate or show the referral link.
+2. Display number of invited friends.
+3. Show earned bonuses.
+4. Provide a quick copy button.
 
-**Пример ответа:**
+**Response example:**
 ```
-🎁 Реферальная программа
+🎁 Referral Program
 
-📎 Твоя реферальная ссылка:
+📎 Your referral link:
 https://t.me/your_bot?start=ref_123456789
 
-📊 Статистика:
-👥 Приглашено друзей: 5
-⭐ Начислено дней Premium: 5
-🎯 До следующего бонуса: +1 друг
+📊 Stats:
+👥 Invited friends: 5
+⭐ Premium days earned: 5
+🎯 Until next bonus: +1 friend
 
-💡 Как это работает:
-• Отправь ссылку другу
-• Друг регистрируется по ссылке
-• Ты получаешь +1 день Premium
-• Друг получает +3 дня Premium
+💡 How it works:
+• Send the link to a friend
+• They register via the link
+• You get +1 day of Premium
+• They get +3 days of Premium
 
-[📋 Копировать ссылку] [📊 Подробная статистика]
+[📋 Copy link] [📊 Detailed stats]
 ```
 
-**Обработка:**
+**Handler skeleton:**
 ```rust
 async fn handle_referral_command(
     bot: &Bot,
@@ -545,301 +439,266 @@ async fn handle_referral_command(
     db_pool: &DbPool,
 ) -> ResponseResult<()> {
     let user_id = msg.chat.id.0;
-    
-    // Получить или создать реферальный код
+
     let referral_code = get_or_create_referral_code(db_pool, user_id).await?;
-    let referral_link = format!("https://t.me/your_bot?start=ref_{}", user_id);
-    
-    // Получить статистику рефералов
+    let referral_link = format!("https://t.me/your_bot?start=ref_{}", referral_code);
+
     let stats = get_referral_stats(db_pool, user_id).await?;
-    
-    // Отправить сообщение со статистикой
+
     send_referral_info(bot, msg.chat.id, &referral_link, &stats).await?;
-    
+
     Ok(())
 }
 ```
 
-#### Callback обработчики
+### Callback handlers
 
-**Выбор плана подписки:**
+**Pick a subscription plan:**
 ```rust
-// Callback: "subscribe:premium" или "subscribe:vip"
+// Callback: "subscribe:premium" or "subscribe:vip"
 async fn handle_subscription_callback(
     bot: &Bot,
     callback: &CallbackQuery,
     plan: &str,
 ) -> ResponseResult<()> {
     let user_id = callback.from.id;
-    
-    // Создать инвойс для оплаты
     create_subscription_invoice(bot, user_id, plan).await?;
-    
     Ok(())
 }
 ```
 
-**Обработка успешного платежа:**
+**Handle successful payment:**
 ```rust
-// Обработка события successful_payment
 async fn handle_payment(
     bot: &Bot,
     msg: &Message,
     db_pool: &DbPool,
 ) -> ResponseResult<()> {
     if let Some(payment) = &msg.successful_payment {
-        // Активировать подписку
         activate_subscription_from_payment(db_pool, payment).await?;
-        
-        // Отправить подтверждение
         bot.send_message(
             msg.chat.id,
-            "✅ Подписка успешно активирована! Спасибо за поддержку! 🎉"
-        ).await?;
+            "✅ Subscription activated! Thanks for the support! 🎉",
+        )
+        .await?;
     }
-    
+
     Ok(())
 }
 ```
 
 ---
 
-## ⚠️ Обработка ошибок
+## ⚠️ Error Handling
 
-### Типичные ошибки и решения
+### Typical issues
 
-#### Ошибка оплаты
+#### Payment failure
 
-**Ситуация:** Пользователь не может оплатить подписку
+**Scenario:** User cannot complete the payment.
 
-**Обработка:**
+**Response:**
 ```
-❌ Не удалось обработать платеж
+❌ Failed to process payment
 
-💡 Возможные причины:
-• Недостаточно Stars на балансе
-• Проблемы с платежной системой Telegram
-• Истек срок действия инвойса
+💡 Possible reasons:
+• Not enough Stars
+• Telegram payment service issues
+• Invoice expired
 
-🔄 Что делать:
-• Проверь баланс Stars
-• Попробуй оплатить еще раз
-• Обратись в поддержку: @support_bot
+🔄 What to do:
+• Check your Stars balance
+• Try again
+• Contact support: @support_bot
 
-[🔄 Повторить оплату] [💬 Поддержка]
+[🔄 Retry] [💬 Support]
 ```
 
-#### Истечение подписки
+#### Subscription expiration
 
-**Ситуация:** Подписка пользователя истекает
+**Scenario:** A user subscription is expiring.
 
-**Уведомления:**
-1. **За 3 дня до истечения:**
+**Notifications:**
+1. **3 days before expiration:**
    ```
-   ⚠️ Твоя Premium подписка истекает через 3 дня
-   
-   📅 Дата истечения: 15.01.2024
-   
-   Чтобы продолжить пользоваться всеми преимуществами, продли подписку!
-   
-   [💳 Продлить подписку]
-   ```
+   ⚠️ Your Premium subscription expires in 3 days
 
-2. **В день истечения:**
-   ```
-   ⏰ Твоя Premium подписка истекла
-   
-   Ты автоматически переведен на Free план.
-   Хочешь продлить подписку?
-   
-   [💳 Продлить подписку] [📊 Сравнить планы]
+   📅 Expiration date: 2024-01-15
+
+   To keep all benefits, renew now!
+
+   [💳 Renew subscription]
    ```
 
-#### Ошибка реферальной программы
+2. **On the expiration day:**
+   ```
+   ⏰ Your Premium subscription has expired
 
-**Ситуация:** Реферальная ссылка не работает или бонусы не начислены
+   You were moved to the Free plan.
+   Want to renew?
 
-**Обработка:**
+   [💳 Renew] [📊 Compare plans]
+   ```
+
+#### Referral program errors
+
+**Scenario:** Referral link does not work or bonuses were not applied.
+
+**Response:**
 ```
-❌ Ошибка при начислении бонуса
+❌ Failed to apply referral bonus
 
-💡 Возможные причины:
-• Пользователь уже был зарегистрирован ранее
-• Техническая ошибка системы
+💡 Possible reasons:
+• User was already registered
+• Technical error
 
-🔄 Что делать:
-• Проверь, что друг использовал правильную ссылку
-• Обратись в поддержку: @support_bot
+🔄 What to do:
+• Make sure the friend used the correct link
+• Contact support: @support_bot
 
-[💬 Поддержка]
+[💬 Support]
 ```
 
 ---
 
-## 🔄 Автоматические задачи
+## 🔄 Background Jobs
 
-### Периодические проверки
+### Subscription checks
 
-#### Проверка истекающих подписок
+**Frequency:** every 6 hours
 
-**Частота:** каждые 6 часов
-
-**Логика:**
 ```rust
 async fn check_expiring_subscriptions(db_pool: &DbPool, bot: &Bot) {
-    // Найти подписки, истекающие через 3 дня
     let expiring_soon = get_subscriptions_expiring_in(db_pool, 3).await;
-    
+
     for subscription in expiring_soon {
-        // Отправить уведомление
         send_expiration_warning(bot, subscription.user_id, 3).await;
     }
-    
-    // Найти истекшие подписки
+
     let expired = get_expired_subscriptions(db_pool).await;
-    
+
     for subscription in expired {
-        // Понизить план до Free
         downgrade_to_free(db_pool, subscription.user_id).await;
-        // Отправить уведомление
         send_expiration_notice(bot, subscription.user_id).await;
     }
 }
 ```
 
-#### Сброс дневных лимитов
+### Reset daily limits
 
-**Частота:** ежедневно в 00:00 UTC
+**Frequency:** daily at 00:00 UTC
 
-**Логика:**
 ```rust
 async fn reset_daily_limits(db_pool: &DbPool) {
-    // Удалить записи старше 1 дня
-    // Или обнулить счетчики для Free пользователей
     reset_daily_download_counters(db_pool).await;
 }
 ```
 
-#### Применение реферальных бонусов
+### Apply referral bonuses
 
-**Частота:** при каждой регистрации по реферальной ссылке
+**Frequency:** on each registration via referral link
 
-**Логика:**
 ```rust
 async fn apply_referral_bonuses(
     db_pool: &DbPool,
     referrer_id: i64,
     referred_id: i64,
 ) -> Result<()> {
-    // Проверить, что реферал новый (не был зарегистрирован ранее)
     if is_new_user(db_pool, referred_id).await? {
-        // Создать запись о реферале
         create_referral_record(db_pool, referrer_id, referred_id).await?;
-        
-        // Начислить бонусы
-        add_premium_days(db_pool, referrer_id, 1).await?; // +1 день рефереру
-        add_premium_days(db_pool, referred_id, 3).await?; // +3 дня рефералу
-        
-        // Отправить уведомления
+        add_premium_days(db_pool, referrer_id, 1).await?; // +1 day to referrer
+        add_premium_days(db_pool, referred_id, 3).await?; // +3 days to friend
         notify_referral_bonus(bot, referrer_id, referred_id).await?;
     }
-    
+
     Ok(())
 }
 ```
 
 ---
 
-## 📊 Метрики и аналитика
+## 📊 Metrics
 
-### Отслеживаемые метрики
+### Tracked metrics
 
-1. **Конверсия подписок:**
-   - Количество просмотров `/subscribe`
-   - Количество созданных инвойсов
-   - Количество успешных оплат
-   - Конверсия: оплаты / просмотры
+1. **Subscription conversion:**
+   - `/subscribe` views
+   - Invoices created
+   - Successful payments
+   - Conversion = payments / views
 
-2. **Реферальная программа:**
-   - Количество реферальных ссылок
-   - Количество регистраций по ссылкам
-   - Среднее количество рефералов на пользователя
-   - Конверсия рефералов в платящих пользователей
+2. **Referral program:**
+   - Number of referral links
+   - Registrations via links
+   - Average referrals per user
+   - Referral-to-paying conversion
 
-3. **Удержание подписчиков:**
-   - Процент продлений подписок
-   - Средняя длительность подписки
-   - Churn rate (процент отписок)
+3. **Subscriber retention:**
+   - Renewal percentage
+   - Average subscription duration
+   - Churn rate
 
-4. **Монетизация:**
-   - Общий доход в Stars
-   - Средний чек
-   - Lifetime Value (LTV) пользователя
-
----
-
-## 🚀 Реализация
-
-### Этапы внедрения
-
-#### Этап 1: Подготовка базы данных
-- [ ] Создать миграции для новых таблиц
-- [ ] Добавить поля в таблицу `users`
-- [ ] Создать индексы для производительности
-
-#### Этап 2: Базовый функционал подписок
-- [ ] Реализовать команду `/subscribe`
-- [ ] Интегрировать Telegram Stars API
-- [ ] Реализовать обработку платежей
-- [ ] Добавить проверку статуса подписки в rate limiter
-
-#### Этап 3: Реферальная программа
-- [ ] Реализовать команду `/referral`
-- [ ] Генерация реферальных ссылок
-- [ ] Обработка регистрации по ссылке
-- [ ] Начисление бонусов
-
-#### Этап 4: Автоматизация
-- [ ] Реализовать проверку истекающих подписок
-- [ ] Настроить уведомления
-- [ ] Добавить сброс дневных лимитов
-
-#### Этап 5: Тестирование
-- [ ] Тестирование оплаты через Stars
-- [ ] Тестирование реферальной программы
-- [ ] Тестирование автоматических задач
-- [ ] Нагрузочное тестирование
+4. **Monetization:**
+   - Total revenue in Stars
+   - Average check
+   - User lifetime value (LTV)
 
 ---
 
-## 📝 Примечания
+## 🚀 Implementation Roadmap
 
-### Конвертация валют
+### Phase 1: Database preparation
+- [ ] Create migrations for new tables
+- [ ] Add fields to `users`
+- [ ] Add performance indexes
 
-Telegram Stars имеют плавающий курс. Рекомендуется:
-- Использовать актуальный курс при создании инвойсов
-- Обновлять курс регулярно (минимум раз в день)
-- Учитывать комиссию Telegram при расчете цены
+### Phase 2: Core subscription features
+- [ ] Implement `/subscribe`
+- [ ] Integrate Telegram Stars API
+- [ ] Handle payments
+- [ ] Add subscription checks in the rate limiter
 
-### Безопасность
+### Phase 3: Referral program
+- [ ] Implement `/referral`
+- [ ] Generate referral links
+- [ ] Handle registrations via links
+- [ ] Apply bonuses
 
-- Проверять подлинность платежей через Telegram API
-- Валидировать все входящие данные
-- Защита от SQL-инъекций (использовать параметризованные запросы)
-- Защита от самоприглашений в реферальной программе
+### Phase 4: Automation
+- [ ] Check expiring subscriptions
+- [ ] Set up notifications
+- [ ] Reset daily limits
 
-### Масштабирование
-
-При росте пользовательской базы:
-- Рассмотреть переход на PostgreSQL для подписок
-- Кэширование статусов подписок в Redis
-- Асинхронная обработка платежей через очереди
+### Phase 5: Testing
+- [ ] Payment flow with Stars
+- [ ] Referral program
+- [ ] Background jobs
+- [ ] Load testing
 
 ---
 
-## 📚 Дополнительные ресурсы
+## 📝 Notes
 
-- [Telegram Bot API - Payments](https://core.telegram.org/bots/api#payments)
+### Currency conversion
+- Use up-to-date rates when creating invoices.
+- Refresh rates regularly (at least daily).
+- Include the Telegram fee when calculating price.
+
+### Security
+- Verify payment authenticity via Telegram API.
+- Validate all incoming data.
+- Protect against SQL injection (parameterized queries).
+- Prevent self-invites in the referral program.
+
+### Scaling
+- Consider PostgreSQL for subscription data as traffic grows.
+- Cache subscription statuses in Redis.
+- Handle payments asynchronously via queues.
+
+---
+
+## 📚 Resources
+
+- [Telegram Bot API — Payments](https://core.telegram.org/bots/api#payments)
 - [Telegram Stars Documentation](https://core.telegram.org/bots/api#stars)
-- [Telegram Bot API - Inline Keyboard](https://core.telegram.org/bots/api#inlinekeyboardmarkup)
-
+- [Telegram Bot API — Inline Keyboard](https://core.telegram.org/bots/api#inlinekeyboardmarkup)
