@@ -1,0 +1,19 @@
+FROM aiogram/telegram-bot-api:latest
+
+# Environment variables for API credentials
+ENV TELEGRAM_API_ID=""
+ENV TELEGRAM_API_HASH=""
+ENV TELEGRAM_HTTP_PORT="8081"
+
+# Expose the HTTP port
+EXPOSE ${TELEGRAM_HTTP_PORT}
+
+# Create entrypoint script
+RUN echo '#!/bin/sh' > /entrypoint.sh && \
+    echo 'exec telegram-bot-api --local \' >> /entrypoint.sh && \
+    echo '  --api-id=${TELEGRAM_API_ID} \' >> /entrypoint.sh && \
+    echo '  --api-hash=${TELEGRAM_API_HASH} \' >> /entrypoint.sh && \
+    echo '  --http-port=${TELEGRAM_HTTP_PORT}' >> /entrypoint.sh && \
+    chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
