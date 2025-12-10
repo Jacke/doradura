@@ -1,0 +1,17 @@
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile.bot-api.secure"
+
+[deploy]
+numReplicas = 1
+sleepApplication = false
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+healthcheckPath = "/"
+healthcheckTimeout = 100
+
+[env]
+# These are hardcoded in the Dockerfile, but keeping for reference
+# API_ID = ""
+# API_HASH = ""
+# HTTP_PORT = "8081"
