@@ -174,8 +174,136 @@ pub mod admin {
     pub static ADMIN_USERNAME: Lazy<String> =
         Lazy::new(|| env::var("ADMIN_USERNAME").unwrap_or_else(|_| String::new()));
 
+    /// Admin user ID for direct messages (feedback, notifications)
+    /// Read from ADMIN_USER_ID environment variable
+    /// Defaults to 0 if not set (no admin notifications)
+    pub static ADMIN_USER_ID: Lazy<i64> =
+        Lazy::new(|| env::var("ADMIN_USER_ID").ok().and_then(|s| s.parse().ok()).unwrap_or(0));
+
     /// Maximum retry attempts for failed tasks before giving up
     pub const MAX_TASK_RETRIES: i32 = 5;
+}
+
+/// Subscription pricing configuration
+pub mod subscription {
+    use once_cell::sync::Lazy;
+    use std::env;
+
+    /// Price for Premium subscription in Telegram Stars (charged every 30 days)
+    /// Read from PREMIUM_PRICE_STARS environment variable
+    /// Default: 1 Star
+    pub static PREMIUM_PRICE_STARS: Lazy<u32> = Lazy::new(|| {
+        env::var("PREMIUM_PRICE_STARS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1)
+    });
+
+    /// Price for VIP subscription in Telegram Stars (charged every 30 days)
+    /// Read from VIP_PRICE_STARS environment variable
+    /// Default: 2 Stars
+    pub static VIP_PRICE_STARS: Lazy<u32> = Lazy::new(|| {
+        env::var("VIP_PRICE_STARS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(2)
+    });
+
+    /// Subscription period in seconds (30 days)
+    pub const SUBSCRIPTION_PERIOD_SECONDS: u32 = 2592000; // 30 days
+}
+
+/// Metrics and monitoring configuration
+pub mod metrics {
+    use once_cell::sync::Lazy;
+    use std::env;
+
+    /// Enable metrics collection and HTTP server
+    /// Read from METRICS_ENABLED environment variable
+    /// Default: true
+    pub static ENABLED: Lazy<bool> = Lazy::new(|| {
+        env::var("METRICS_ENABLED")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(true)
+    });
+
+    /// Port for metrics HTTP server
+    /// Read from METRICS_PORT environment variable
+    /// Default: 9090
+    pub static PORT: Lazy<u16> = Lazy::new(|| {
+        env::var("METRICS_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(9090)
+    });
+
+    /// Prometheus URL (for documentation/reference)
+    /// Read from PROMETHEUS_URL environment variable
+    pub static PROMETHEUS_URL: Lazy<String> =
+        Lazy::new(|| env::var("PROMETHEUS_URL").unwrap_or_else(|_| "http://prometheus:9090".to_string()));
+}
+
+/// Alert configuration
+pub mod alerts {
+    use once_cell::sync::Lazy;
+    use std::env;
+
+    /// Enable alerting system
+    /// Read from ALERTS_ENABLED environment variable
+    /// Default: true
+    pub static ENABLED: Lazy<bool> = Lazy::new(|| {
+        env::var("ALERTS_ENABLED")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(true)
+    });
+
+    /// Error rate threshold percentage for triggering alerts
+    /// Read from ALERT_ERROR_RATE_THRESHOLD environment variable
+    /// Default: 5.0%
+    pub static ERROR_RATE_THRESHOLD: Lazy<f64> = Lazy::new(|| {
+        env::var("ALERT_ERROR_RATE_THRESHOLD")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(5.0)
+    });
+
+    /// Queue depth threshold for triggering alerts
+    /// Read from ALERT_QUEUE_DEPTH_THRESHOLD environment variable
+    /// Default: 50 tasks
+    pub static QUEUE_DEPTH_THRESHOLD: Lazy<usize> = Lazy::new(|| {
+        env::var("ALERT_QUEUE_DEPTH_THRESHOLD")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(50)
+    });
+
+    /// Retry rate threshold percentage for triggering alerts
+    /// Read from ALERT_RETRY_RATE_THRESHOLD environment variable
+    /// Default: 30.0%
+    pub static RETRY_RATE_THRESHOLD: Lazy<f64> = Lazy::new(|| {
+        env::var("ALERT_RETRY_RATE_THRESHOLD")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30.0)
+    });
+}
+
+/// Analytics cache configuration
+pub mod analytics {
+    use once_cell::sync::Lazy;
+    use std::env;
+
+    /// Update interval for analytics cache in seconds
+    /// Read from ANALYTICS_CACHE_UPDATE_INTERVAL environment variable
+    /// Default: 300 seconds (5 minutes)
+    pub static CACHE_UPDATE_INTERVAL_SECS: Lazy<u64> = Lazy::new(|| {
+        env::var("ANALYTICS_CACHE_UPDATE_INTERVAL")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(300)
+    });
 }
 
 /// Validation configuration

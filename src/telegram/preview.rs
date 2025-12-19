@@ -662,6 +662,8 @@ pub async fn send_preview(
     old_preview_msg_id: Option<MessageId>,
     db_pool: Arc<DbPool>,
 ) -> ResponseResult<Message> {
+    let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
+
     // Формируем текст превью с экранированием
     let escaped_title = escape_markdown(&metadata.display_title());
     let mut text = format!("🎵 *{}*\n\n", escaped_title);
@@ -686,7 +688,7 @@ pub async fn send_preview(
                             format!("{} B", size)
                         }
                     } else {
-                        "Неизвестно".to_string()
+                        crate::i18n::t(&lang, "common.unknown")
                     };
                     let resolution_str = format_info
                         .resolution
@@ -824,6 +826,8 @@ pub async fn update_preview_message(
     default_quality: Option<&str>,
     db_pool: Arc<DbPool>,
 ) -> ResponseResult<()> {
+    let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
+
     // Формируем текст превью с экранированием (копия логики из send_preview)
     let escaped_title = escape_markdown(&metadata.display_title());
     let mut text = format!("🎵 *{}*\n\n", escaped_title);
@@ -848,7 +852,7 @@ pub async fn update_preview_message(
                             format!("{} B", size)
                         }
                     } else {
-                        "Неизвестно".to_string()
+                        crate::i18n::t(&lang, "common.unknown")
                     };
                     let resolution_str = format_info
                         .resolution

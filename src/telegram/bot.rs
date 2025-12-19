@@ -26,6 +26,10 @@ pub enum Command {
     Info,
     #[command(description = "история загрузок")]
     History,
+    #[command(description = "мои загрузки")]
+    Downloads,
+    #[command(description = "мои вырезки")]
+    Cuts,
     #[command(description = "личная статистика")]
     Stats,
     #[command(description = "экспорт истории")]
@@ -38,22 +42,41 @@ pub enum Command {
     Users,
     #[command(description = "изменить план пользователя (только для администратора)")]
     Setplan,
+    #[command(description = "посмотреть транзакции Stars (только для администратора)")]
+    Transactions,
     #[command(description = "панель управления пользователями (только для администратора)")]
     Admin,
+    #[command(description = "просмотр всех платежей (только для администратора)")]
+    Charges,
+    #[command(description = "скачать файл из Telegram по file_id (только для администратора)")]
+    DownloadTg,
+    #[command(description = "список отправленных файлов с file_id (только для администратора)")]
+    SentFiles,
+    #[command(description = "аналитика и метрики (только для администратора)")]
+    Analytics,
+    #[command(description = "состояние системы (только для администратора)")]
+    Health,
+    #[command(description = "детальные метрики (только для администратора)")]
+    Metrics,
+    #[command(description = "финансовая аналитика (только для администратора)")]
+    Revenue,
 }
 
 const BOT_COMMAND_DEFINITIONS: &[(&str, &str)] = &[
     ("start", "bot_commands.start"),
     ("settings", "bot_commands.settings"),
     ("info", "bot_commands.info"),
-    ("history", "bot_commands.history"),
-    ("stats", "bot_commands.stats"),
-    ("global", "bot_commands.global"),
-    ("export", "bot_commands.export"),
-    ("backup", "bot_commands.backup"),
+    ("downloads", "bot_commands.downloads"),
+    ("cuts", "bot_commands.cuts"),
+    //("history", "bot_commands.history"),
+    //("stats", "bot_commands.stats"),
+    //("global", "bot_commands.global"),
+    //("export", "bot_commands.export"),
+    //("backup", "bot_commands.backup"),
     ("plan", "bot_commands.plan"),
-    ("users", "bot_commands.users"),
-    ("setplan", "bot_commands.setplan"),
+    //("users", "bot_commands.users"),
+    //("setplan", "bot_commands.setplan"),
+    //("transactions", "bot_commands.transactions"),
 ];
 
 fn build_bot_commands(lang: &LanguageIdentifier) -> Vec<BotCommand> {

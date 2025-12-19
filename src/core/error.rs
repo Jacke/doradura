@@ -1,3 +1,4 @@
+use crate::core::metrics;
 use thiserror::Error;
 
 /// Centralized error types for the application
@@ -78,5 +79,74 @@ impl From<String> for AppError {
 impl From<&str> for AppError {
     fn from(err: &str) -> Self {
         AppError::Download(err.to_string())
+    }
+}
+
+impl AppError {
+    /// Returns the error category for metrics tracking
+    ///
+    /// Categorizes errors into types for monitoring and alerting.
+    pub fn category(&self) -> &'static str {
+        match self {
+            AppError::Database(_) | AppError::DatabasePool(_) => "database",
+            AppError::Telegram(_) => "telegram_api",
+            AppError::Download(_) => "download",
+            AppError::Http(_) | AppError::HttpStatus(_) => "http",
+            AppError::Io(_) => "io",
+            AppError::Url(_) => "url_parsing",
+            AppError::Validation(_) => "validation",
+            AppError::AudioEffect(_) => "audio_effect",
+            AppError::Anyhow(_) => "other",
+        }
+    }
+
+    /// Tracks this error in metrics
+    ///
+    /// Increments the error counter for this error category.
+    /// Should be called when errors occur to maintain accurate error metrics.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use doradura::core::error::AppError;
+    ///
+    /// fn process_download() -> Result<(), AppError> {
+    ///     // ... download logic ...
+    ///     Err(AppError::Download("Failed to download".to_string()))
+    /// }
+    ///
+    /// match process_download() {
+    ///     Ok(_) => println!("Success"),
+    ///     Err(e) => {
+    ///         e.track(); // Track error in metrics
+    ///         eprintln!("Error: {}", e);
+    ///     }
+    /// }
+    /// ```
+    pub fn track(&self) {
+        let category = self.category();
+        metrics::ERRORS_TOTAL.with_label_values(&[category]).inc();
+        log::debug!("Error tracked in metrics: category={}, error={}", category, self);
+    }
+
+    /// Tracks this error and returns self for chaining
+    ///
+    /// Convenience method that tracks the error and returns it,
+    /// allowing for error tracking in Result chains.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use doradura::core::error::AppError;
+    ///
+    /// fn process() -> Result<(), AppError> {
+    ///     some_operation().map_err(|e| e.track_and_return())?;
+    ///     Ok(())
+    /// }
+    /// # fn some_operation() -> Result<(), AppError> { Ok(()) }
+    /// ```
+    pub fn track_and_return(self) -> Self {
+        self.track();
+        self
     }
 }

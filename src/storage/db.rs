@@ -24,12 +24,59 @@ pub struct User {
     pub send_as_document: i32,
     /// Тип отправки аудио: 0 = Media (send_audio), 1 = Document (send_document)
     pub send_audio_as_document: i32,
-    /// Дата истечения подписки (None для Free или бессрочных подписок)
+    /// Дата истечения подписки (из таблицы subscriptions)
     pub subscription_expires_at: Option<String>,
-    /// Telegram payment charge ID для управления подписками через Bot API
+    /// Telegram payment charge ID (из таблицы subscriptions)
     pub telegram_charge_id: Option<String>,
     /// Предпочитаемый язык пользователя (IETF tag, например, "ru", "en-US")
     pub language: String,
+    /// Флаг рекуррентной подписки (автопродление) из таблицы subscriptions
+    pub is_recurring: bool,
+    /// Флаг вшивания субтитров в видео (0 - отключено, 1 - включено)
+    pub burn_subtitles: i32,
+}
+
+/// Структура с данными подписки пользователя.
+#[derive(Debug, Clone)]
+pub struct Subscription {
+    pub user_id: i64,
+    pub plan: String,
+    pub expires_at: Option<String>,
+    pub telegram_charge_id: Option<String>,
+    pub is_recurring: bool,
+}
+
+/// Структура с данными платежа (charge) из Telegram Stars.
+/// Хранит полную информацию о платеже для бухгалтерии.
+#[derive(Debug, Clone)]
+pub struct Charge {
+    pub id: i64,
+    pub user_id: i64,
+    pub plan: String,
+    pub telegram_charge_id: String,
+    pub provider_charge_id: Option<String>,
+    pub currency: String,
+    pub total_amount: i64,
+    pub invoice_payload: String,
+    pub is_recurring: bool,
+    pub is_first_recurring: bool,
+    pub subscription_expiration_date: Option<String>,
+    pub payment_date: String,
+    pub created_at: String,
+}
+
+/// Структура с данными отзыва пользователя.
+#[derive(Debug, Clone)]
+pub struct FeedbackMessage {
+    pub id: i64,
+    pub user_id: i64,
+    pub username: Option<String>,
+    pub first_name: String,
+    pub message: String,
+    pub status: String,
+    pub admin_reply: Option<String>,
+    pub created_at: String,
+    pub replied_at: Option<String>,
 }
 
 impl User {
@@ -155,11 +202,52 @@ pub fn get_connection_legacy() -> Result<Connection> {
 /// Возвращает ошибку если пользователь с таким ID уже существует или произошла ошибка БД.
 pub fn create_user(conn: &DbConnection, telegram_id: i64, username: Option<String>) -> Result<()> {
     conn.execute(
-        "INSERT INTO users (telegram_id, username, download_format, download_subtitles, video_quality, audio_bitrate, language, send_as_document, send_audio_as_document, telegram_charge_id) VALUES (?1, ?2, 'mp3', 0, 'best', '320k', 'ru', 0, 0, NULL)",
+        "INSERT INTO users (telegram_id, username, download_format, download_subtitles, video_quality, audio_bitrate, language, send_as_document, send_audio_as_document) VALUES (?1, ?2, 'mp3', 0, 'best', '320k', 'en', 0, 0)",
         [
             &telegram_id as &dyn rusqlite::ToSql,
             &username as &dyn rusqlite::ToSql,
         ],
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO subscriptions (user_id, plan) VALUES (?1, 'free')",
+        [&telegram_id as &dyn rusqlite::ToSql],
+    )?;
+    Ok(())
+}
+
+/// Создает нового пользователя в базе данных с указанным языком.
+///
+/// # Arguments
+///
+/// * `conn` - Соединение с базой данных
+/// * `telegram_id` - Telegram ID пользователя
+/// * `username` - Имя пользователя (опционально)
+/// * `language` - Код языка (например, "ru", "en", "fr", "de")
+///
+/// # Returns
+///
+/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+///
+/// # Errors
+///
+/// Возвращает ошибку если пользователь с таким ID уже существует или произошла ошибка БД.
+pub fn create_user_with_language(
+    conn: &DbConnection,
+    telegram_id: i64,
+    username: Option<String>,
+    language: &str,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO users (telegram_id, username, download_format, download_subtitles, video_quality, audio_bitrate, language, send_as_document, send_audio_as_document) VALUES (?1, ?2, 'mp3', 0, 'best', '320k', ?3, 0, 0)",
+        [
+            &telegram_id as &dyn rusqlite::ToSql,
+            &username as &dyn rusqlite::ToSql,
+            &language as &dyn rusqlite::ToSql,
+        ],
+    )?;
+    conn.execute(
+        "INSERT OR IGNORE INTO subscriptions (user_id, plan) VALUES (?1, 'free')",
+        [&telegram_id as &dyn rusqlite::ToSql],
     )?;
     Ok(())
 }
@@ -176,7 +264,26 @@ pub fn create_user(conn: &DbConnection, telegram_id: i64, username: Option<Strin
 /// Возвращает `Ok(Some(User))` если пользователь найден, `Ok(None)` если не найден,
 /// или ошибку базы данных.
 pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
-    let mut stmt = conn.prepare("SELECT telegram_id, username, plan, download_format, download_subtitles, video_quality, audio_bitrate, language, send_as_document, send_audio_as_document, subscription_expires_at, telegram_charge_id FROM users WHERE telegram_id = ?")?;
+    let mut stmt = conn.prepare(
+        "SELECT
+            u.telegram_id,
+            u.username,
+            COALESCE(s.plan, u.plan) as plan,
+            u.download_format,
+            u.download_subtitles,
+            u.video_quality,
+            u.audio_bitrate,
+            u.language,
+            u.send_as_document,
+            u.send_audio_as_document,
+            s.expires_at as subscription_expires_at,
+            s.telegram_charge_id as telegram_charge_id,
+            COALESCE(s.is_recurring, 0) as is_recurring,
+            COALESCE(u.burn_subtitles, 0) as burn_subtitles
+        FROM users u
+        LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
+        WHERE u.telegram_id = ?",
+    )?;
     let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
 
     if let Some(row) = rows.next()? {
@@ -190,8 +297,10 @@ pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
         let language: String = row.get(7).unwrap_or_else(|_| "ru".to_string());
         let send_as_document: i32 = row.get(8).unwrap_or(0);
         let send_audio_as_document: i32 = row.get(9).unwrap_or(0);
-        let subscription_expires_at: Option<String> = row.get(10).ok();
-        let telegram_charge_id: Option<String> = row.get(11).ok();
+        let subscription_expires_at: Option<String> = row.get(10)?;
+        let telegram_charge_id: Option<String> = row.get(11)?;
+        let is_recurring: bool = row.get::<_, i32>(12).unwrap_or(0) != 0;
+        let burn_subtitles: i32 = row.get(13).unwrap_or(0);
 
         Ok(Some(User {
             telegram_id,
@@ -206,6 +315,8 @@ pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
             send_audio_as_document,
             subscription_expires_at,
             telegram_charge_id,
+            is_recurring,
+            burn_subtitles,
         }))
     } else {
         Ok(None)
@@ -224,6 +335,14 @@ pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
 ///
 /// Возвращает `Ok(())` при успехе или ошибку базы данных.
 pub fn update_user_plan(conn: &DbConnection, telegram_id: i64, plan: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO subscriptions (user_id, plan)
+         VALUES (?1, ?2)
+         ON CONFLICT(user_id) DO UPDATE SET
+            plan = excluded.plan,
+            updated_at = CURRENT_TIMESTAMP",
+        [&telegram_id as &dyn rusqlite::ToSql, &plan as &dyn rusqlite::ToSql],
+    )?;
     conn.execute(
         "UPDATE users SET plan = ?1 WHERE telegram_id = ?2",
         [&plan as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
@@ -252,13 +371,35 @@ pub fn update_user_plan_with_expiry(
     if let Some(days_count) = days {
         // Устанавливаем дату окончания на N дней вперед от текущей даты
         conn.execute(
-            "UPDATE users SET plan = ?1, subscription_expires_at = datetime('now', '+' || ?2 || ' days') WHERE telegram_id = ?3",
-            [&plan as &dyn rusqlite::ToSql, &days_count as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
+            "INSERT INTO subscriptions (user_id, plan, expires_at)
+             VALUES (?1, ?2, datetime('now', '+' || ?3 || ' days'))
+             ON CONFLICT(user_id) DO UPDATE SET
+                plan = excluded.plan,
+                expires_at = excluded.expires_at,
+                updated_at = CURRENT_TIMESTAMP",
+            [
+                &telegram_id as &dyn rusqlite::ToSql,
+                &plan as &dyn rusqlite::ToSql,
+                &days_count as &dyn rusqlite::ToSql,
+            ],
+        )?;
+        conn.execute(
+            "UPDATE users SET plan = ?1 WHERE telegram_id = ?2",
+            [&plan as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
         )?;
     } else {
         // Для free плана или бессрочных подписок, убираем дату окончания
         conn.execute(
-            "UPDATE users SET plan = ?1, subscription_expires_at = NULL WHERE telegram_id = ?2",
+            "INSERT INTO subscriptions (user_id, plan, expires_at)
+             VALUES (?1, ?2, NULL)
+             ON CONFLICT(user_id) DO UPDATE SET
+                plan = excluded.plan,
+                expires_at = NULL,
+                updated_at = CURRENT_TIMESTAMP",
+            [&telegram_id as &dyn rusqlite::ToSql, &plan as &dyn rusqlite::ToSql],
+        )?;
+        conn.execute(
+            "UPDATE users SET plan = ?1 WHERE telegram_id = ?2",
             [&plan as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
         )?;
     }
@@ -275,19 +416,51 @@ pub fn update_user_plan_with_expiry(
 ///
 /// Возвращает количество обновленных пользователей.
 pub fn expire_old_subscriptions(conn: &DbConnection) -> Result<usize> {
-    let count = conn.execute(
-        "UPDATE users SET plan = 'free', subscription_expires_at = NULL
-         WHERE subscription_expires_at IS NOT NULL
-         AND subscription_expires_at < datetime('now')
-         AND plan != 'free'",
+    let expired_user_ids = {
+        let mut stmt = conn.prepare(
+            "SELECT user_id FROM subscriptions
+             WHERE expires_at IS NOT NULL
+             AND expires_at < datetime('now')
+             AND plan != 'free'",
+        )?;
+        let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+
+        let mut ids = Vec::new();
+        for row in rows {
+            ids.push(row?);
+        }
+        ids
+    };
+
+    if expired_user_ids.is_empty() {
+        return Ok(0);
+    }
+
+    conn.execute(
+        "UPDATE subscriptions
+         SET plan = 'free',
+             expires_at = NULL,
+             telegram_charge_id = NULL,
+             is_recurring = 0,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE user_id IN (
+             SELECT user_id FROM subscriptions
+             WHERE expires_at IS NOT NULL
+               AND expires_at < datetime('now')
+               AND plan != 'free'
+         )",
         [],
     )?;
 
-    if count > 0 {
-        log::info!("Expired {} subscription(s)", count);
+    for user_id in &expired_user_ids {
+        conn.execute("UPDATE users SET plan = 'free' WHERE telegram_id = ?1", [user_id])?;
     }
 
-    Ok(count)
+    if !expired_user_ids.is_empty() {
+        log::info!("Expired {} subscription(s)", expired_user_ids.len());
+    }
+
+    Ok(expired_user_ids.len())
 }
 
 /// Логирует запрос пользователя в историю запросов.
@@ -387,6 +560,49 @@ pub fn set_user_download_subtitles(conn: &DbConnection, telegram_id: i64, enable
     let value = if enabled { 1 } else { 0 };
     conn.execute(
         "UPDATE users SET download_subtitles = ?1 WHERE telegram_id = ?2",
+        [&value as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
+    )?;
+    Ok(())
+}
+
+/// Получает настройку вшивания субтитров в видео.
+///
+/// # Arguments
+///
+/// * `conn` - Соединение с базой данных
+/// * `telegram_id` - Telegram ID пользователя
+///
+/// # Returns
+///
+/// Возвращает `Ok(true)` если вшивание включено, `Ok(false)` если отключено,
+/// или ошибку базы данных.
+pub fn get_user_burn_subtitles(conn: &DbConnection, telegram_id: i64) -> Result<bool> {
+    let mut stmt = conn.prepare("SELECT COALESCE(burn_subtitles, 0) FROM users WHERE telegram_id = ?")?;
+    let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
+
+    if let Some(row) = rows.next()? {
+        let burn_subtitles: i32 = row.get(0)?;
+        Ok(burn_subtitles == 1)
+    } else {
+        Ok(false)
+    }
+}
+
+/// Устанавливает настройку вшивания субтитров в видео.
+///
+/// # Arguments
+///
+/// * `conn` - Соединение с базой данных
+/// * `telegram_id` - Telegram ID пользователя
+/// * `enabled` - Включить (`true`) или отключить (`false`) вшивание субтитров
+///
+/// # Returns
+///
+/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+pub fn set_user_burn_subtitles(conn: &DbConnection, telegram_id: i64, enabled: bool) -> Result<()> {
+    let value = if enabled { 1 } else { 0 };
+    conn.execute(
+        "UPDATE users SET burn_subtitles = ?1 WHERE telegram_id = ?2",
         [&value as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
     )?;
     Ok(())
@@ -600,6 +816,26 @@ pub struct DownloadHistoryEntry {
     pub downloaded_at: String,
     /// Telegram file_id (опционально)
     pub file_id: Option<String>,
+    /// Автор трека/видео (опционально)
+    pub author: Option<String>,
+    /// Размер файла в байтах (опционально)
+    pub file_size: Option<i64>,
+    /// Длительность в секундах (опционально)
+    pub duration: Option<i64>,
+    /// Качество видео (опционально, для mp4)
+    pub video_quality: Option<String>,
+    /// Битрейт аудио (опционально, для mp3)
+    pub audio_bitrate: Option<String>,
+    /// Bot API base URL used when saving this entry (optional, for debugging)
+    pub bot_api_url: Option<String>,
+    /// Whether a local Bot API server was used (0/1, optional for older rows)
+    pub bot_api_is_local: Option<i64>,
+}
+
+fn current_bot_api_info() -> (Option<String>, i64) {
+    let url = std::env::var("BOT_API_URL").ok();
+    let is_local = url.as_deref().map(|u| !u.contains("api.telegram.org")).unwrap_or(false);
+    (url, if is_local { 1 } else { 0 })
 }
 
 /// Сохраняет запись в историю загрузок.
@@ -612,6 +848,11 @@ pub struct DownloadHistoryEntry {
 /// * `title` - Название трека/видео
 /// * `format` - Формат загрузки (mp3, mp4, srt, txt)
 /// * `file_id` - Telegram file_id, если контент был отправлен в Telegram (опционально)
+/// * `author` - Автор трека/видео (опционально)
+/// * `file_size` - Размер файла в байтах (опционально)
+/// * `duration` - Длительность в секундах (опционально)
+/// * `video_quality` - Качество видео (опционально)
+/// * `audio_bitrate` - Битрейт аудио (опционально)
 ///
 /// # Returns
 ///
@@ -623,10 +864,33 @@ pub fn save_download_history(
     title: &str,
     format: &str,
     file_id: Option<&str>,
+    author: Option<&str>,
+    file_size: Option<i64>,
+    duration: Option<i64>,
+    video_quality: Option<&str>,
+    audio_bitrate: Option<&str>,
 ) -> Result<()> {
+    let (bot_api_url, bot_api_is_local) = current_bot_api_info();
     conn.execute(
-        "INSERT INTO download_history (user_id, url, title, format, file_id) VALUES (?1, ?2, ?3, ?4, ?5)",
-        rusqlite::params![telegram_id, url, title, format, file_id],
+        "INSERT INTO download_history (
+            user_id, url, title, format, file_id, author, file_size, duration, video_quality, audio_bitrate,
+            bot_api_url, bot_api_is_local
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        rusqlite::params![
+            telegram_id,
+            url,
+            title,
+            format,
+            file_id,
+            author,
+            file_size,
+            duration,
+            video_quality,
+            audio_bitrate,
+            bot_api_url,
+            bot_api_is_local
+        ],
     )?;
     Ok(())
 }
@@ -649,7 +913,9 @@ pub fn get_download_history(
 ) -> Result<Vec<DownloadHistoryEntry>> {
     let limit = limit.unwrap_or(20);
     let mut stmt = conn.prepare(
-        "SELECT id, url, title, format, downloaded_at, file_id FROM download_history
+        "SELECT id, url, title, format, downloaded_at, file_id, author, file_size, duration, video_quality, audio_bitrate,
+                bot_api_url, bot_api_is_local
+         FROM download_history
          WHERE user_id = ? ORDER BY downloaded_at DESC LIMIT ?",
     )?;
     let rows = stmt.query_map(rusqlite::params![telegram_id, limit], |row| {
@@ -660,6 +926,75 @@ pub fn get_download_history(
             format: row.get(3)?,
             downloaded_at: row.get(4)?,
             file_id: row.get(5)?,
+            author: row.get(6)?,
+            file_size: row.get(7)?,
+            duration: row.get(8)?,
+            video_quality: row.get(9)?,
+            audio_bitrate: row.get(10)?,
+            bot_api_url: row.get(11)?,
+            bot_api_is_local: row.get(12)?,
+        })
+    })?;
+
+    let mut entries = Vec::new();
+    for row in rows {
+        entries.push(row?);
+    }
+    Ok(entries)
+}
+
+/// Структура, представляющая файл с file_id для администратора.
+#[derive(Debug, Clone)]
+pub struct SentFile {
+    /// ID записи
+    pub id: i64,
+    /// Telegram ID пользователя
+    pub user_id: i64,
+    /// Username пользователя (если доступен)
+    pub username: Option<String>,
+    /// URL загруженного контента
+    pub url: String,
+    /// Название файла
+    pub title: String,
+    /// Формат файла (mp3, mp4, srt, txt)
+    pub format: String,
+    /// Дата и время загрузки
+    pub downloaded_at: String,
+    /// Telegram file_id
+    pub file_id: String,
+}
+
+/// Получает список файлов с file_id для администратора.
+///
+/// # Arguments
+///
+/// * `conn` - Соединение с базой данных
+/// * `limit` - Максимальное количество записей (по умолчанию 50)
+///
+/// # Returns
+///
+/// Возвращает `Ok(Vec<SentFile>)` с записями файлов или ошибку базы данных.
+/// Возвращает только файлы, у которых есть file_id.
+pub fn get_sent_files(conn: &DbConnection, limit: Option<i32>) -> Result<Vec<SentFile>> {
+    let limit = limit.unwrap_or(50);
+    let mut stmt = conn.prepare(
+        "SELECT dh.id, dh.user_id, u.username, dh.url, dh.title, dh.format, dh.downloaded_at, dh.file_id
+         FROM download_history dh
+         LEFT JOIN users u ON dh.user_id = u.telegram_id
+         WHERE dh.file_id IS NOT NULL
+         ORDER BY dh.downloaded_at DESC
+         LIMIT ?",
+    )?;
+    let rows = stmt.query_map([limit], |row| {
+        Ok(SentFile {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            username: row.get(2)?,
+            url: row.get(3)?,
+            title: row.get(4)?,
+            format: row.get(5)?,
+            downloaded_at: row.get(6)?,
+            file_id: row.get(7)?,
         })
     })?;
 
@@ -708,7 +1043,9 @@ pub fn get_download_history_entry(
     entry_id: i64,
 ) -> Result<Option<DownloadHistoryEntry>> {
     let mut stmt = conn.prepare(
-        "SELECT id, url, title, format, downloaded_at, file_id FROM download_history
+        "SELECT id, url, title, format, downloaded_at, file_id, author, file_size, duration, video_quality, audio_bitrate,
+                bot_api_url, bot_api_is_local
+         FROM download_history
          WHERE id = ?1 AND user_id = ?2",
     )?;
     let mut rows = stmt.query_map(rusqlite::params![entry_id, telegram_id], |row| {
@@ -719,6 +1056,13 @@ pub fn get_download_history_entry(
             format: row.get(3)?,
             downloaded_at: row.get(4)?,
             file_id: row.get(5)?,
+            author: row.get(6)?,
+            file_size: row.get(7)?,
+            duration: row.get(8)?,
+            video_quality: row.get(9)?,
+            audio_bitrate: row.get(10)?,
+            bot_api_url: row.get(11)?,
+            bot_api_is_local: row.get(12)?,
         })
     })?;
 
@@ -898,7 +1242,9 @@ pub fn get_global_stats(conn: &DbConnection) -> Result<GlobalStats> {
 /// Получает всю историю загрузок пользователя для экспорта
 pub fn get_all_download_history(conn: &DbConnection, telegram_id: i64) -> Result<Vec<DownloadHistoryEntry>> {
     let mut stmt = conn.prepare(
-        "SELECT id, url, title, format, downloaded_at, file_id FROM download_history
+        "SELECT id, url, title, format, downloaded_at, file_id, author, file_size, duration, video_quality, audio_bitrate,
+                bot_api_url, bot_api_is_local
+         FROM download_history
          WHERE user_id = ? ORDER BY downloaded_at DESC",
     )?;
     let rows = stmt.query_map(rusqlite::params![telegram_id], |row| {
@@ -909,6 +1255,13 @@ pub fn get_all_download_history(conn: &DbConnection, telegram_id: i64) -> Result
             format: row.get(3)?,
             downloaded_at: row.get(4)?,
             file_id: row.get(5)?,
+            author: row.get(6)?,
+            file_size: row.get(7)?,
+            duration: row.get(8)?,
+            video_quality: row.get(9)?,
+            audio_bitrate: row.get(10)?,
+            bot_api_url: row.get(11)?,
+            bot_api_is_local: row.get(12)?,
         })
     })?;
 
@@ -917,6 +1270,70 @@ pub fn get_all_download_history(conn: &DbConnection, telegram_id: i64) -> Result
         entries.push(row?);
     }
     Ok(entries)
+}
+
+/// Получает отфильтрованную историю загрузок для команды /downloads
+///
+/// Возвращает только файлы с file_id (успешно отправленные) и только mp3/mp4 (исключая субтитры).
+/// Поддерживает фильтрацию по типу файла и поиск по названию/автору.
+pub fn get_download_history_filtered(
+    conn: &DbConnection,
+    user_id: i64,
+    file_type_filter: Option<&str>,
+    search_text: Option<&str>,
+) -> Result<Vec<DownloadHistoryEntry>> {
+    let mut query = String::from(
+        "SELECT id, url, title, format, downloaded_at, file_id, author, file_size,
+         duration, video_quality, audio_bitrate, bot_api_url, bot_api_is_local
+         FROM download_history WHERE user_id = ?",
+    );
+
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id)];
+
+    // Only show files with file_id (successfully sent files)
+    query.push_str(" AND file_id IS NOT NULL");
+
+    // Only show mp3/mp4 (exclude subtitles)
+    query.push_str(" AND (format = 'mp3' OR format = 'mp4')");
+
+    if let Some(ft) = file_type_filter {
+        query.push_str(" AND format = ?");
+        params.push(Box::new(ft.to_string()));
+    }
+
+    if let Some(search) = search_text {
+        query.push_str(" AND (title LIKE ? OR author LIKE ?)");
+        let search_pattern = format!("%{}%", search);
+        params.push(Box::new(search_pattern.clone()));
+        params.push(Box::new(search_pattern));
+    }
+
+    query.push_str(" ORDER BY downloaded_at DESC");
+
+    let mut stmt = conn.prepare(&query)?;
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
+    let downloads = stmt
+        .query_map(params_refs.as_slice(), |row| {
+            Ok(DownloadHistoryEntry {
+                id: row.get(0)?,
+                url: row.get(1)?,
+                title: row.get(2)?,
+                format: row.get(3)?,
+                downloaded_at: row.get(4)?,
+                file_id: row.get(5)?,
+                author: row.get(6)?,
+                file_size: row.get(7)?,
+                duration: row.get(8)?,
+                video_quality: row.get(9)?,
+                audio_bitrate: row.get(10)?,
+                bot_api_url: row.get(11)?,
+                bot_api_is_local: row.get(12)?,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    Ok(downloads)
 }
 
 /// Получает список всех пользователей из базы данных.
@@ -929,7 +1346,26 @@ pub fn get_all_download_history(conn: &DbConnection, telegram_id: i64) -> Result
 ///
 /// Возвращает `Ok(Vec<User>)` со всеми пользователями или ошибку базы данных.
 pub fn get_all_users(conn: &DbConnection) -> Result<Vec<User>> {
-    let mut stmt = conn.prepare("SELECT telegram_id, username, plan, download_format, download_subtitles, video_quality, audio_bitrate, language, send_as_document, send_audio_as_document, subscription_expires_at, telegram_charge_id FROM users ORDER BY telegram_id")?;
+    let mut stmt = conn.prepare(
+        "SELECT
+            u.telegram_id,
+            u.username,
+            COALESCE(s.plan, u.plan) as plan,
+            u.download_format,
+            u.download_subtitles,
+            u.video_quality,
+            u.audio_bitrate,
+            u.language,
+            u.send_as_document,
+            u.send_audio_as_document,
+            s.expires_at as subscription_expires_at,
+            s.telegram_charge_id as telegram_charge_id,
+            COALESCE(s.is_recurring, 0) as is_recurring,
+            COALESCE(u.burn_subtitles, 0) as burn_subtitles
+        FROM users u
+        LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
+        ORDER BY u.telegram_id",
+    )?;
     let rows = stmt.query_map([], |row| {
         Ok(User {
             telegram_id: row.get(0)?,
@@ -942,8 +1378,10 @@ pub fn get_all_users(conn: &DbConnection) -> Result<Vec<User>> {
             language: row.get(7).unwrap_or_else(|_| "ru".to_string()),
             send_as_document: row.get(8).unwrap_or(0),
             send_audio_as_document: row.get(9).unwrap_or(0),
-            subscription_expires_at: row.get(10).ok(),
-            telegram_charge_id: row.get(11).ok(),
+            subscription_expires_at: row.get(10)?,
+            telegram_charge_id: row.get(11)?,
+            is_recurring: row.get::<_, i32>(12).unwrap_or(0) != 0,
+            burn_subtitles: row.get(13).unwrap_or(0),
         })
     })?;
 
@@ -1389,4 +1827,782 @@ pub fn delete_expired_audio_sessions(
 pub fn delete_audio_effect_session(conn: &DbConnection, session_id: &str) -> Result<()> {
     conn.execute("DELETE FROM audio_effect_sessions WHERE id = ?1", [session_id])?;
     Ok(())
+}
+
+// ==================== Video Clip Sessions ====================
+
+#[derive(Debug, Clone)]
+pub struct VideoClipSession {
+    pub id: String,
+    pub user_id: i64,
+    pub source_download_id: i64,
+    pub source_kind: String,
+    pub source_id: i64,
+    pub original_url: String,
+    pub output_kind: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+pub fn upsert_video_clip_session(conn: &DbConnection, session: &VideoClipSession) -> Result<()> {
+    conn.execute("DELETE FROM video_clip_sessions WHERE user_id = ?1", [session.user_id])?;
+    conn.execute(
+        "INSERT INTO video_clip_sessions (
+            id, user_id, source_download_id, source_kind, source_id, original_url, output_kind, created_at, expires_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        rusqlite::params![
+            session.id,
+            session.user_id,
+            session.source_download_id,
+            session.source_kind,
+            session.source_id,
+            session.original_url,
+            session.output_kind,
+            session.created_at.to_rfc3339(),
+            session.expires_at.to_rfc3339(),
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn get_active_video_clip_session(conn: &DbConnection, user_id: i64) -> Result<Option<VideoClipSession>> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut stmt = conn.prepare(
+        "SELECT id, user_id, source_download_id, source_kind, source_id, original_url, output_kind, created_at, expires_at
+         FROM video_clip_sessions
+         WHERE user_id = ?1 AND expires_at > ?2
+         ORDER BY created_at DESC
+         LIMIT 1",
+    )?;
+    let mut rows = stmt.query(rusqlite::params![user_id, now])?;
+    if let Some(row) = rows.next()? {
+        let source_download_id: i64 = row.get(2)?;
+        let source_kind: Option<String> = row.get(3)?;
+        let source_id: Option<i64> = row.get(4)?;
+        let original_url: Option<String> = row.get(5)?;
+        let output_kind: Option<String> = row.get(6)?;
+        let created_at: String = row.get(7)?;
+        let expires_at: String = row.get(8)?;
+        let resolved_source_kind = source_kind.unwrap_or_else(|| "download".to_string());
+        let resolved_source_id = source_id.unwrap_or(source_download_id);
+        let resolved_original_url = original_url.unwrap_or_default();
+        let resolved_output_kind = output_kind.unwrap_or_else(|| "cut".to_string());
+        Ok(Some(VideoClipSession {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            source_download_id,
+            source_kind: resolved_source_kind,
+            source_id: resolved_source_id,
+            original_url: resolved_original_url,
+            output_kind: resolved_output_kind,
+            created_at: chrono::DateTime::parse_from_rfc3339(&created_at)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now()),
+            expires_at: chrono::DateTime::parse_from_rfc3339(&expires_at)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now() + chrono::Duration::minutes(10)),
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn delete_video_clip_session_by_user(conn: &DbConnection, user_id: i64) -> Result<()> {
+    conn.execute("DELETE FROM video_clip_sessions WHERE user_id = ?1", [user_id])?;
+    Ok(())
+}
+
+// ==================== Cuts ====================
+
+#[derive(Debug, Clone)]
+pub struct CutEntry {
+    pub id: i64,
+    pub user_id: i64,
+    pub original_url: String,
+    pub source_kind: String,
+    pub source_id: i64,
+    pub output_kind: String,
+    pub segments_json: String,
+    pub segments_text: String,
+    pub title: String,
+    pub created_at: String,
+    pub file_id: Option<String>,
+    pub file_size: Option<i64>,
+    pub duration: Option<i64>,
+    pub video_quality: Option<String>,
+}
+
+pub fn create_cut(
+    conn: &DbConnection,
+    user_id: i64,
+    original_url: &str,
+    source_kind: &str,
+    source_id: i64,
+    output_kind: &str,
+    segments_json: &str,
+    segments_text: &str,
+    title: &str,
+    file_id: Option<&str>,
+    file_size: Option<i64>,
+    duration: Option<i64>,
+    video_quality: Option<&str>,
+) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO cuts (
+            user_id, original_url, source_kind, source_id, output_kind, segments_json, segments_text,
+            title, file_id, file_size, duration, video_quality
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+        rusqlite::params![
+            user_id,
+            original_url,
+            source_kind,
+            source_id,
+            output_kind,
+            segments_json,
+            segments_text,
+            title,
+            file_id,
+            file_size,
+            duration,
+            video_quality,
+        ],
+    )?;
+    Ok(conn.last_insert_rowid())
+}
+
+pub fn get_cuts(conn: &DbConnection, user_id: i64, limit: Option<i32>) -> Result<Vec<CutEntry>> {
+    let limit = limit.unwrap_or(50);
+    let mut stmt = conn.prepare(
+        "SELECT id, user_id, original_url, source_kind, source_id, output_kind, segments_json, segments_text,
+                title, created_at, file_id, file_size, duration, video_quality
+         FROM cuts
+         WHERE user_id = ?1
+         ORDER BY created_at DESC
+         LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![user_id, limit], |row| {
+        Ok(CutEntry {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            original_url: row.get(2)?,
+            source_kind: row.get(3)?,
+            source_id: row.get(4)?,
+            output_kind: row.get(5)?,
+            segments_json: row.get(6)?,
+            segments_text: row.get(7)?,
+            title: row.get(8)?,
+            created_at: row.get(9)?,
+            file_id: row.get(10)?,
+            file_size: row.get(11)?,
+            duration: row.get(12)?,
+            video_quality: row.get(13)?,
+        })
+    })?;
+
+    rows.collect::<Result<Vec<_>>>()
+}
+
+pub fn get_cuts_count(conn: &DbConnection, user_id: i64) -> Result<i64> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM cuts WHERE user_id = ?1",
+        rusqlite::params![user_id],
+        |row| row.get(0),
+    )
+}
+
+pub fn get_cuts_page(conn: &DbConnection, user_id: i64, limit: i64, offset: i64) -> Result<Vec<CutEntry>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, user_id, original_url, source_kind, source_id, output_kind, segments_json, segments_text,
+                title, created_at, file_id, file_size, duration, video_quality
+         FROM cuts
+         WHERE user_id = ?1
+         ORDER BY created_at DESC
+         LIMIT ?2 OFFSET ?3",
+    )?;
+    let rows = stmt.query_map(rusqlite::params![user_id, limit, offset], |row| {
+        Ok(CutEntry {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            original_url: row.get(2)?,
+            source_kind: row.get(3)?,
+            source_id: row.get(4)?,
+            output_kind: row.get(5)?,
+            segments_json: row.get(6)?,
+            segments_text: row.get(7)?,
+            title: row.get(8)?,
+            created_at: row.get(9)?,
+            file_id: row.get(10)?,
+            file_size: row.get(11)?,
+            duration: row.get(12)?,
+            video_quality: row.get(13)?,
+        })
+    })?;
+
+    rows.collect::<Result<Vec<_>>>()
+}
+
+pub fn get_cut_entry(conn: &DbConnection, user_id: i64, cut_id: i64) -> Result<Option<CutEntry>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, user_id, original_url, source_kind, source_id, output_kind, segments_json, segments_text,
+                title, created_at, file_id, file_size, duration, video_quality
+         FROM cuts
+         WHERE id = ?1 AND user_id = ?2",
+    )?;
+    let mut rows = stmt.query(rusqlite::params![cut_id, user_id])?;
+    if let Some(row) = rows.next()? {
+        Ok(Some(CutEntry {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            original_url: row.get(2)?,
+            source_kind: row.get(3)?,
+            source_id: row.get(4)?,
+            output_kind: row.get(5)?,
+            segments_json: row.get(6)?,
+            segments_text: row.get(7)?,
+            title: row.get(8)?,
+            created_at: row.get(9)?,
+            file_id: row.get(10)?,
+            file_size: row.get(11)?,
+            duration: row.get(12)?,
+            video_quality: row.get(13)?,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+// ==================== Subscription Management ====================
+
+/// Получает запись подписки пользователя из таблицы subscriptions.
+pub fn get_subscription(conn: &DbConnection, telegram_id: i64) -> Result<Option<Subscription>> {
+    let mut stmt = conn.prepare(
+        "SELECT user_id, plan, expires_at, telegram_charge_id, is_recurring
+         FROM subscriptions
+         WHERE user_id = ?1",
+    )?;
+    let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
+
+    if let Some(row) = rows.next()? {
+        Ok(Some(Subscription {
+            user_id: row.get(0)?,
+            plan: row.get(1)?,
+            expires_at: row.get::<_, Option<String>>(2)?,
+            telegram_charge_id: row.get::<_, Option<String>>(3)?,
+            is_recurring: row.get::<_, i32>(4).unwrap_or(0) != 0,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Обновляет данные подписки пользователя при успешном платеже.
+///
+/// # Arguments
+///
+/// * `conn` - Соединение с базой данных
+/// * `telegram_id` - Telegram ID пользователя
+/// * `plan` - Новый план пользователя (например, "premium", "vip")
+/// * `charge_id` - Telegram payment charge ID из успешного платежа
+/// * `subscription_expires_at` - Дата истечения подписки (Unix timestamp или ISO 8601 строка)
+/// * `is_recurring` - Флаг рекуррентной подписки (автопродление)
+///
+/// # Returns
+///
+/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+pub fn update_subscription_data(
+    conn: &DbConnection,
+    telegram_id: i64,
+    plan: &str,
+    charge_id: &str,
+    subscription_expires_at: &str,
+    is_recurring: bool,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO subscriptions (user_id, plan, expires_at, telegram_charge_id, is_recurring)
+         VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(user_id) DO UPDATE SET
+            plan = excluded.plan,
+            expires_at = excluded.expires_at,
+            telegram_charge_id = excluded.telegram_charge_id,
+            is_recurring = excluded.is_recurring,
+            updated_at = CURRENT_TIMESTAMP",
+        [
+            &telegram_id as &dyn rusqlite::ToSql,
+            &plan as &dyn rusqlite::ToSql,
+            &subscription_expires_at as &dyn rusqlite::ToSql,
+            &charge_id as &dyn rusqlite::ToSql,
+            &(if is_recurring { 1 } else { 0 }) as &dyn rusqlite::ToSql,
+        ],
+    )?;
+    conn.execute(
+        "UPDATE users SET plan = ?1 WHERE telegram_id = ?2",
+        [&plan as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
+    )?;
+    Ok(())
+}
+
+/// Проверяет, активна ли подписка пользователя.
+///
+/// # Arguments
+///
+/// * `conn` - Соединение с базой данных
+/// * `telegram_id` - Telegram ID пользователя
+///
+/// # Returns
+///
+/// Возвращает `Ok(true)` если подписка активна, `Ok(false)` если нет или истекла.
+pub fn is_subscription_active(conn: &DbConnection, telegram_id: i64) -> Result<bool> {
+    let subscription = get_subscription(conn, telegram_id)?;
+
+    let Some(subscription) = subscription else {
+        return Ok(false);
+    };
+
+    if subscription.plan == "free" {
+        return Ok(false);
+    }
+
+    if let Some(expires_at) = subscription.expires_at {
+        let mut stmt = conn.prepare("SELECT datetime('now') < datetime(?1)")?;
+        let is_active: bool = stmt.query_row([&expires_at], |row| row.get(0))?;
+        Ok(is_active)
+    } else {
+        Ok(true)
+    }
+}
+
+/// Отменяет подписку пользователя (сбрасывает флаг is_recurring).
+///
+/// # Arguments
+///
+/// * `conn` - Соединение с базой данных
+/// * `telegram_id` - Telegram ID пользователя
+///
+/// # Returns
+///
+/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+///
+/// # Note
+///
+/// Эта функция только убирает флаг автопродления. Пользователь сохраняет
+/// доступ до даты истечения подписки (subscription_expires_at).
+pub fn cancel_subscription(conn: &DbConnection, telegram_id: i64) -> Result<()> {
+    conn.execute(
+        "INSERT INTO subscriptions (user_id, plan, is_recurring)
+         VALUES (?1, 'free', 0)
+         ON CONFLICT(user_id) DO UPDATE SET
+            is_recurring = 0,
+            updated_at = CURRENT_TIMESTAMP",
+        [&telegram_id as &dyn rusqlite::ToSql],
+    )?;
+    conn.execute(
+        "UPDATE users SET plan = 'free' WHERE telegram_id = ?1",
+        [&telegram_id as &dyn rusqlite::ToSql],
+    )?;
+    Ok(())
+}
+
+/// Получает информацию о статусе подписки пользователя.
+///
+/// # Returns
+///
+/// Возвращает кортеж: (plan, expires_at, is_recurring, is_active)
+pub type SubscriptionStatus = (String, Option<String>, bool, bool);
+
+pub fn get_subscription_status(conn: &DbConnection, telegram_id: i64) -> Result<Option<SubscriptionStatus>> {
+    let subscription = get_subscription(conn, telegram_id)?;
+
+    if let Some(subscription) = subscription {
+        let is_active = is_subscription_active(conn, telegram_id)?;
+        Ok(Some((
+            subscription.plan,
+            subscription.expires_at,
+            subscription.is_recurring,
+            is_active,
+        )))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Сохраняет информацию о платеже (charge) в базу данных.
+///
+/// # Arguments
+///
+/// * `conn` - Соединение с базой данных
+/// * `user_id` - Telegram ID пользователя
+/// * `plan` - План подписки ("premium" или "vip")
+/// * `telegram_charge_id` - ID платежа из Telegram
+/// * `provider_charge_id` - ID платежа от провайдера (опционально)
+/// * `currency` - Валюта платежа (например, "XTR" для Stars)
+/// * `total_amount` - Общая сумма платежа
+/// * `invoice_payload` - Payload инвойса
+/// * `is_recurring` - Флаг рекуррентной подписки
+/// * `is_first_recurring` - Флаг первого платежа рекуррентной подписки
+/// * `subscription_expiration_date` - Дата истечения подписки
+///
+/// # Returns
+///
+/// Возвращает `Result<i64>` с ID созданной записи или ошибку.
+pub fn save_charge(
+    conn: &DbConnection,
+    user_id: i64,
+    plan: &str,
+    telegram_charge_id: &str,
+    provider_charge_id: Option<&str>,
+    currency: &str,
+    total_amount: i64,
+    invoice_payload: &str,
+    is_recurring: bool,
+    is_first_recurring: bool,
+    subscription_expiration_date: Option<&str>,
+) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO charges (
+            user_id, plan, telegram_charge_id, provider_charge_id, currency,
+            total_amount, invoice_payload, is_recurring, is_first_recurring,
+            subscription_expiration_date
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        rusqlite::params![
+            user_id,
+            plan,
+            telegram_charge_id,
+            provider_charge_id,
+            currency,
+            total_amount,
+            invoice_payload,
+            is_recurring as i32,
+            is_first_recurring as i32,
+            subscription_expiration_date,
+        ],
+    )?;
+
+    Ok(conn.last_insert_rowid())
+}
+
+/// Получает все charges для конкретного пользователя.
+///
+/// # Arguments
+///
+/// * `conn` - Соединение с базой данных
+/// * `user_id` - Telegram ID пользователя
+///
+/// # Returns
+///
+/// Возвращает `Result<Vec<Charge>>` со списком всех платежей пользователя.
+pub fn get_user_charges(conn: &DbConnection, user_id: i64) -> Result<Vec<Charge>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, user_id, plan, telegram_charge_id, provider_charge_id, currency,
+                total_amount, invoice_payload, is_recurring, is_first_recurring,
+                subscription_expiration_date, payment_date, created_at
+         FROM charges
+         WHERE user_id = ?1
+         ORDER BY payment_date DESC",
+    )?;
+
+    let charges = stmt.query_map([user_id], |row| {
+        Ok(Charge {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            plan: row.get(2)?,
+            telegram_charge_id: row.get(3)?,
+            provider_charge_id: row.get(4)?,
+            currency: row.get(5)?,
+            total_amount: row.get(6)?,
+            invoice_payload: row.get(7)?,
+            is_recurring: row.get::<_, i32>(8)? != 0,
+            is_first_recurring: row.get::<_, i32>(9)? != 0,
+            subscription_expiration_date: row.get(10)?,
+            payment_date: row.get(11)?,
+            created_at: row.get(12)?,
+        })
+    })?;
+
+    charges.collect()
+}
+
+/// Получает все charges из базы данных с возможностью фильтрации и пагинации.
+///
+/// # Arguments
+///
+/// * `conn` - Соединение с базой данных
+/// * `plan_filter` - Фильтр по плану (None = все планы)
+/// * `limit` - Максимальное количество записей (None = все)
+/// * `offset` - Смещение для пагинации
+///
+/// # Returns
+///
+/// Возвращает `Result<Vec<Charge>>` со списком всех платежей.
+pub fn get_all_charges(
+    conn: &DbConnection,
+    plan_filter: Option<&str>,
+    limit: Option<i64>,
+    offset: i64,
+) -> Result<Vec<Charge>> {
+    let query = if let Some(plan) = plan_filter {
+        format!(
+            "SELECT id, user_id, plan, telegram_charge_id, provider_charge_id, currency,
+                    total_amount, invoice_payload, is_recurring, is_first_recurring,
+                    subscription_expiration_date, payment_date, created_at
+             FROM charges
+             WHERE plan = '{}'
+             ORDER BY payment_date DESC
+             LIMIT {} OFFSET {}",
+            plan,
+            limit.unwrap_or(-1),
+            offset
+        )
+    } else {
+        format!(
+            "SELECT id, user_id, plan, telegram_charge_id, provider_charge_id, currency,
+                    total_amount, invoice_payload, is_recurring, is_first_recurring,
+                    subscription_expiration_date, payment_date, created_at
+             FROM charges
+             ORDER BY payment_date DESC
+             LIMIT {} OFFSET {}",
+            limit.unwrap_or(-1),
+            offset
+        )
+    };
+
+    let mut stmt = conn.prepare(&query)?;
+
+    let charges = stmt.query_map([], |row| {
+        Ok(Charge {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            plan: row.get(2)?,
+            telegram_charge_id: row.get(3)?,
+            provider_charge_id: row.get(4)?,
+            currency: row.get(5)?,
+            total_amount: row.get(6)?,
+            invoice_payload: row.get(7)?,
+            is_recurring: row.get::<_, i32>(8)? != 0,
+            is_first_recurring: row.get::<_, i32>(9)? != 0,
+            subscription_expiration_date: row.get(10)?,
+            payment_date: row.get(11)?,
+            created_at: row.get(12)?,
+        })
+    })?;
+
+    charges.collect()
+}
+
+/// Получает статистику по платежам.
+///
+/// # Arguments
+///
+/// * `conn` - Соединение с базой данных
+///
+/// # Returns
+///
+/// Возвращает кортеж (total_charges, total_amount, premium_count, vip_count, recurring_count).
+pub fn get_charges_stats(conn: &DbConnection) -> Result<(i64, i64, i64, i64, i64)> {
+    let mut stmt = conn.prepare(
+        "SELECT
+            COUNT(*) as total_charges,
+            SUM(total_amount) as total_amount,
+            SUM(CASE WHEN plan = 'premium' THEN 1 ELSE 0 END) as premium_count,
+            SUM(CASE WHEN plan = 'vip' THEN 1 ELSE 0 END) as vip_count,
+            SUM(CASE WHEN is_recurring = 1 THEN 1 ELSE 0 END) as recurring_count
+         FROM charges",
+    )?;
+
+    stmt.query_row([], |row| {
+        Ok((
+            row.get(0)?,
+            row.get::<_, Option<i64>>(1)?.unwrap_or(0),
+            row.get(2)?,
+            row.get(3)?,
+            row.get(4)?,
+        ))
+    })
+}
+
+/// Сохраняет отзыв пользователя в базу данных.
+///
+/// # Arguments
+///
+/// * `conn` - Соединение с базой данных
+/// * `user_id` - Telegram ID пользователя
+/// * `username` - Username пользователя (опционально)
+/// * `first_name` - Имя пользователя
+/// * `message` - Текст отзыва
+///
+/// # Returns
+///
+/// Возвращает `Result<i64>` с ID созданной записи или ошибку.
+pub fn save_feedback(
+    conn: &DbConnection,
+    user_id: i64,
+    username: Option<&str>,
+    first_name: &str,
+    message: &str,
+) -> Result<i64> {
+    conn.execute(
+        "INSERT INTO feedback_messages (user_id, username, first_name, message, status)
+         VALUES (?1, ?2, ?3, ?4, 'new')",
+        rusqlite::params![user_id, username, first_name, message],
+    )?;
+
+    Ok(conn.last_insert_rowid())
+}
+
+/// Получает все отзывы с возможностью фильтрации по статусу.
+///
+/// # Arguments
+///
+/// * `conn` - Соединение с базой данных
+/// * `status_filter` - Фильтр по статусу ("new", "read", "replied", None = все)
+/// * `limit` - Максимальное количество записей (None = все)
+/// * `offset` - Смещение для пагинации
+///
+/// # Returns
+///
+/// Возвращает `Result<Vec<FeedbackMessage>>` со списком отзывов.
+pub fn get_feedback_messages(
+    conn: &DbConnection,
+    status_filter: Option<&str>,
+    limit: Option<i64>,
+    offset: i64,
+) -> Result<Vec<FeedbackMessage>> {
+    let query = if let Some(status) = status_filter {
+        format!(
+            "SELECT id, user_id, username, first_name, message, status,
+                    admin_reply, created_at, replied_at
+             FROM feedback_messages
+             WHERE status = '{}'
+             ORDER BY created_at DESC
+             LIMIT {} OFFSET {}",
+            status,
+            limit.unwrap_or(-1),
+            offset
+        )
+    } else {
+        format!(
+            "SELECT id, user_id, username, first_name, message, status,
+                    admin_reply, created_at, replied_at
+             FROM feedback_messages
+             ORDER BY created_at DESC
+             LIMIT {} OFFSET {}",
+            limit.unwrap_or(-1),
+            offset
+        )
+    };
+
+    let mut stmt = conn.prepare(&query)?;
+
+    let messages = stmt.query_map([], |row| {
+        Ok(FeedbackMessage {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            username: row.get(2)?,
+            first_name: row.get(3)?,
+            message: row.get(4)?,
+            status: row.get(5)?,
+            admin_reply: row.get(6)?,
+            created_at: row.get(7)?,
+            replied_at: row.get(8)?,
+        })
+    })?;
+
+    messages.collect()
+}
+
+/// Получает отзывы конкретного пользователя.
+///
+/// # Arguments
+///
+/// * `conn` - Соединение с базой данных
+/// * `user_id` - Telegram ID пользователя
+///
+/// # Returns
+///
+/// Возвращает `Result<Vec<FeedbackMessage>>` со списком отзывов пользователя.
+pub fn get_user_feedback(conn: &DbConnection, user_id: i64) -> Result<Vec<FeedbackMessage>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, user_id, username, first_name, message, status,
+                admin_reply, created_at, replied_at
+         FROM feedback_messages
+         WHERE user_id = ?1
+         ORDER BY created_at DESC",
+    )?;
+
+    let messages = stmt.query_map([user_id], |row| {
+        Ok(FeedbackMessage {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            username: row.get(2)?,
+            first_name: row.get(3)?,
+            message: row.get(4)?,
+            status: row.get(5)?,
+            admin_reply: row.get(6)?,
+            created_at: row.get(7)?,
+            replied_at: row.get(8)?,
+        })
+    })?;
+
+    messages.collect()
+}
+
+/// Обновляет статус отзыва.
+///
+/// # Arguments
+///
+/// * `conn` - Соединение с базой данных
+/// * `feedback_id` - ID отзыва
+/// * `status` - Новый статус ("new", "read", "replied")
+///
+/// # Returns
+///
+/// Возвращает `Result<()>` или ошибку.
+pub fn update_feedback_status(conn: &DbConnection, feedback_id: i64, status: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE feedback_messages SET status = ?1 WHERE id = ?2",
+        rusqlite::params![status, feedback_id],
+    )?;
+    Ok(())
+}
+
+/// Добавляет ответ администратора на отзыв.
+///
+/// # Arguments
+///
+/// * `conn` - Соединение с базой данных
+/// * `feedback_id` - ID отзыва
+/// * `reply` - Текст ответа
+///
+/// # Returns
+///
+/// Возвращает `Result<()>` или ошибку.
+pub fn add_feedback_reply(conn: &DbConnection, feedback_id: i64, reply: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE feedback_messages
+         SET admin_reply = ?1, status = 'replied', replied_at = CURRENT_TIMESTAMP
+         WHERE id = ?2",
+        rusqlite::params![reply, feedback_id],
+    )?;
+    Ok(())
+}
+
+/// Получает статистику по отзывам.
+///
+/// # Arguments
+///
+/// * `conn` - Соединение с базой данных
+///
+/// # Returns
+///
+/// Возвращает кортеж (total_feedback, new_count, read_count, replied_count).
+pub fn get_feedback_stats(conn: &DbConnection) -> Result<(i64, i64, i64, i64)> {
+    let mut stmt = conn.prepare(
+        "SELECT
+            COUNT(*) as total_feedback,
+            SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) as new_count,
+            SUM(CASE WHEN status = 'read' THEN 1 ELSE 0 END) as read_count,
+            SUM(CASE WHEN status = 'replied' THEN 1 ELSE 0 END) as replied_count
+         FROM feedback_messages",
+    )?;
+
+    stmt.query_row([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
 }

@@ -91,6 +91,8 @@ pub async fn show_history_page(
     db_pool: Arc<DbPool>,
     page: usize,
 ) -> ResponseResult<Message> {
+    let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
+
     let conn = db::get_connection(&db_pool)
         .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
@@ -100,7 +102,7 @@ pub async fn show_history_page(
         Err(e) => {
             log::error!("Failed to get download history: {}", e);
             return bot
-                .send_message(chat_id, "У меня не получилось загрузить историю 😢 Попробуй позже\\.")
+                .send_message(chat_id, crate::i18n::t(&lang, "history.load_failed"))
                 .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                 .await;
         }
@@ -231,10 +233,12 @@ pub async fn handle_history_callback(
     download_queue: Arc<crate::download::queue::DownloadQueue>,
     rate_limiter: Arc<crate::core::rate_limiter::RateLimiter>,
 ) -> ResponseResult<()> {
+    let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
+
     let parts: Vec<&str> = data.splitn(3, ':').collect();
     if parts.len() < 3 {
         bot.answer_callback_query(callback_id)
-            .text("Ошибка: неверный формат данных")
+            .text(crate::i18n::t(&lang, "history.invalid_format"))
             .await?;
         return Ok(());
     }
@@ -263,7 +267,7 @@ pub async fn handle_history_callback(
                 Err(e) => {
                     log::error!("Failed to parse page number: {}", e);
                     bot.answer_callback_query(callback_id)
-                        .text("Ошибка: неверный номер страницы")
+                        .text(crate::i18n::t(&lang, "history.invalid_page"))
                         .await?;
                 }
             }
@@ -309,7 +313,7 @@ pub async fn handle_history_callback(
                                 Ok(_) => {
                                     log::info!("Successfully resent file using file_id for entry {}", entry_id);
                                     bot.answer_callback_query(callback_id.clone())
-                                        .text("Файл отправлен!")
+                                        .text(crate::i18n::t(&lang, "history.file_sent"))
                                         .await?;
                                     file_sent = true;
 
@@ -353,11 +357,15 @@ pub async fn handle_history_callback(
                             if rate_limiter.is_rate_limited(chat_id, &plan).await {
                                 if let Some(remaining_time) = rate_limiter.get_remaining_time(chat_id).await {
                                     let remaining_seconds = remaining_time.as_secs();
+                                    let mut args = fluent_templates::fluent_bundle::FluentArgs::new();
+                                    args.set("seconds", remaining_seconds);
                                     bot.answer_callback_query(callback_id)
-                                        .text(format!("Подожди {} секунд", remaining_seconds))
+                                        .text(crate::i18n::t_args(&lang, "commands.wait_seconds", &args))
                                         .await?;
                                 } else {
-                                    bot.answer_callback_query(callback_id).text("Подожди немного").await?;
+                                    bot.answer_callback_query(callback_id)
+                                        .text(crate::i18n::t(&lang, "commands.wait"))
+                                        .await?;
                                 }
                                 return Ok(());
                             }
@@ -415,7 +423,7 @@ pub async fn handle_history_callback(
                         Err(e) => {
                             log::error!("Failed to parse URL: {}", e);
                             bot.answer_callback_query(callback_id)
-                                .text("Ошибка: неверная ссылка")
+                                .text(crate::i18n::t(&lang, "commands.invalid_url"))
                                 .await?;
                         }
                     }
@@ -423,7 +431,7 @@ pub async fn handle_history_callback(
                 None => {
                     log::warn!("URL not found in cache for id: {} (expired or invalid)", url_id);
                     bot.answer_callback_query(callback_id)
-                        .text("Ссылка устарела, попробуйте снова")
+                        .text(crate::i18n::t(&lang, "commands.link_expired"))
                         .await?;
                 }
             }
@@ -450,12 +458,14 @@ pub async fn handle_history_callback(
                             }
                         }
                         Ok(false) => {
-                            bot.answer_callback_query(callback_id).text("Запись не найдена").await?;
+                            bot.answer_callback_query(callback_id)
+                                .text(crate::i18n::t(&lang, "history.entry_not_found"))
+                                .await?;
                         }
                         Err(e) => {
                             log::error!("Failed to delete history entry: {}", e);
                             bot.answer_callback_query(callback_id)
-                                .text("Ошибка при удалении")
+                                .text(crate::i18n::t(&lang, "history.delete_failed"))
                                 .await?;
                         }
                     }
@@ -463,14 +473,14 @@ pub async fn handle_history_callback(
                 Err(e) => {
                     log::error!("Failed to parse entry ID: {}", e);
                     bot.answer_callback_query(callback_id)
-                        .text("Ошибка: неверный ID записи")
+                        .text(crate::i18n::t(&lang, "history.invalid_id"))
                         .await?;
                 }
             }
         }
         _ => {
             bot.answer_callback_query(callback_id)
-                .text("Неизвестное действие")
+                .text(crate::i18n::t(&lang, "history.unknown_action"))
                 .await?;
         }
     }
