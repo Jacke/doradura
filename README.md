@@ -65,8 +65,15 @@ cp .env.example .env
 
 ```bash
 cargo build --release
-cargo run
+
+# Run the bot (default mode)
+./target/release/doradura run
+
+# Or use cargo
+cargo run -- run
 ```
+
+> **💡 Note:** The bot now supports CLI commands. See [CLI_USAGE.md](CLI_USAGE.md) for all available commands including `run-staging`, `run-with-cookies`, and `refresh-metadata`.
 
 ### Environment Variables
 
@@ -258,6 +265,7 @@ tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
 - [IMPROVEMENTS.md](docs/IMPROVEMENTS.md)
 - [LOCAL_BOT_API_SETUP.md](docs/LOCAL_BOT_API_SETUP.md)
 - [MACOS_COOKIES_FIX.md](docs/MACOS_COOKIES_FIX.md)
+- **[TELEGRAM_FILE_DOWNLOAD.md](TELEGRAM_FILE_DOWNLOAD.md)** - Admin feature for downloading files from Telegram
 - [OPTIMIZATION_OPPORTUNITIES.md](docs/OPTIMIZATION_OPPORTUNITIES.md)
 - [OPTIMIZATION_REALISTIC_ANALYSIS.md](docs/OPTIMIZATION_REALISTIC_ANALYSIS.md)
 - [PROGRESS_BAR_FIX.md](docs/PROGRESS_BAR_FIX.md)
