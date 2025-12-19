@@ -1,122 +1,89 @@
-# 🚀 Quick Download Fix
+# 🚨 Quick Fix – Railway Variables
 
-## ❌ Problem
+## Problem
+Bot fails because required variables are missing in Railway.
+
+## ⚡ 2-minute fix
+
+### Step 1: Open Railway Dashboard
+1. Go to https://railway.app
+2. Sign in
+3. Open your project (e.g., **doradura-bot**)
+
+### Step 2: Add variables
+1. Click **Variables** in the left menu.
+2. Click **+ New Variable**.
+3. Add the first variable:
+   - Name: `TELOXIDE_TOKEN`
+   - Value: `<your_bot_token>`
+4. Click **+ New Variable** again.
+5. Add the second variable:
+   - Name: `YTDL_COOKIES_FILE`
+   - Value: `youtube_cookies.txt`
+6. Click **Add/Save**.
+
+### Step 3: Wait for restart
+Railway auto-restarts the bot in ~10–30 seconds.
+
+### Step 4: Check logs
+1. In the same project, click **Deployments**.
+2. Open the latest active deployment.
+3. Click **View Logs**.
+4. Wait 1–2 minutes.
+
+You should see lines showing the token and cookies path are set (no warnings about missing vars).
+
+## 📱 Test
+1. Open Telegram.
+2. Find your bot.
+3. Send `/start`.
+4. Try downloading something from YouTube.
+
+**Done!** 🎉
+
+## 🖼️ Quick visual cue
 ```
-ERROR: [youtube] Please sign in. Use --cookies-from-browser or --cookies
+├── Your project (doradura-bot)
+│   ├── Variables  ← add them here
 ```
-**Cause:** YouTube requires cookies for downloads.
 
-## ✅ Fix (5 minutes)
+## 📋 Copy/paste values
+### Variable 1
+```
+Name: TELOXIDE_TOKEN
+Value: <your_bot_token_from_BotFather>
+```
+### Variable 2
+```
+Name: YTDL_COOKIES_FILE
+Value: youtube_cookies.txt
+```
 
-### Step 1: Export cookies from the browser
-
-1. **Install** the "Get cookies.txt LOCALLY" extension (Chrome/Firefox):
-   - Chrome: https://chrome.google.com/webstore (search for "Get cookies.txt LOCALLY")
-   - Firefox: https://addons.mozilla.org
-2. **Sign in to YouTube** in the browser.
-3. **Export cookies:**
-   - Open youtube.com
-   - Click the extension icon
-   - Press "Export" → "Current domain (youtube.com)"
-   - Save as `youtube_cookies.txt` in the project root
-
-### Step 2: Set the environment variable
-
+## ❓ If Dashboard is not working
+### Alternative: Railway CLI
+If Railway CLI is set up and linked:
 ```bash
-# Set the env var
-export YTDL_COOKIES_FILE=./youtube_cookies.txt
+# 1. Ensure you are in the correct directory
+cd /path/to/project
 
-# Or add it to ~/.zshrc to persist:
-echo 'export YTDL_COOKIES_FILE=/Users/stan/Dev/_PROJ/doradura/youtube_cookies.txt' >> ~/.zshrc
-source ~/.zshrc
+# 2. Connect to the project
+railway link
+
+# 3. Set variables
+railway variables --set "TELOXIDE_TOKEN=<your_bot_token>"
+railway variables --set "YTDL_COOKIES_FILE=youtube_cookies.txt"
+
+# 4. Verify
+railway variables
+
+# 5. Restart
+railway up
 ```
 
-### Step 3: Verify
+## ✅ How to confirm it works
+Logs should show:
+**✅ GOOD:** no warnings about missing `TELOXIDE_TOKEN` or cookies; bot starts.
+**❌ BAD:** warnings like `YTDL_COOKIES_FILE not set` or token errors.
 
-```bash
-# Run diagnostics
-./test_ytdlp.sh diagnostics
-
-# Expect:
-# ✅ Using cookies file: ./youtube_cookies.txt
-# ✅ File exists
-```
-
-### Step 4: Download test
-
-```bash
-# Requires internet
-./test_ytdlp.sh download
-
-# On success:
-# ✅ File created: "/tmp/doradura_ytdlp_tests/test_audio.mp3"
-# ✅ File size: 245632 bytes
-```
-
-### Step 5: Restart the bot
-
-```bash
-cargo run --release
-```
-
-## 📝 Alternative (Linux)
-
-If you're on Linux, you can extract cookies directly from the browser:
-
-```bash
-pip3 install keyring pycryptodomex
-export YTDL_COOKIES_BROWSER=chrome
-./test_ytdlp.sh diagnostics
-```
-
-⚠️ **Does NOT work on macOS** because it requires Full Disk Access.
-
-## 🔍 Check current status
-
-```bash
-./test_ytdlp.sh diagnostics
-```
-
-The output shows:
-- ✅ What's installed
-- ✅ Versions
-- ✅/❌ Whether cookies are set up
-- ✅/❌ Whether the system is ready
-
-## 📚 More docs
-- `TESTING.md` — full testing guide
-- `MACOS_COOKIES_FIX.md` — detailed macOS instructions
-- `YOUTUBE_COOKIES.md` — general cookie notes
-
-## ⚡ Common issues
-
-### "Cookies file not found"
-```bash
-ls -lh youtube_cookies.txt
-# If missing, re-export (Step 1)
-```
-
-### "Cookies expired"
-Cookies last ~1 year. Re-export if errors appear.
-
-### "Download test fails"
-```bash
-# Check:
-1. export YTDL_COOKIES_FILE=./youtube_cookies.txt
-2. ls -lh youtube_cookies.txt
-3. ./test_ytdlp.sh diagnostics
-
-# If still failing, update yt-dlp:
-pip3 install -U yt-dlp
-```
-
-## 🎯 Quick checklist
-
-- [ ] Installed "Get cookies.txt LOCALLY"
-- [ ] Signed in to YouTube
-- [ ] Exported cookies → `youtube_cookies.txt`
-- [ ] File in project root: `ls youtube_cookies.txt` ✅
-- [ ] Set env var: `export YTDL_COOKIES_FILE=./youtube_cookies.txt`
-- [ ] Diagnostics succeed: `./test_ytdlp.sh diagnostics` ✅
-- [ ] Download test succeeds: `./test_ytdlp.sh download` ✅
-- [ ] Restarted bot: `cargo run --release`
+## 💡 Tip
+The Railway Dashboard is simpler and more reliable than CLI for adding vars. This fix takes 2 minutes—do it now! 🚀
