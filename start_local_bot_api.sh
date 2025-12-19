@@ -86,9 +86,9 @@ if curl -s http://localhost:8081/bot$TELOXIDE_TOKEN/getMe >/dev/null; then
     echo "   - Logs: docker logs -f telegram-bot-api"
     echo "   - Stop: docker-compose -f docker-compose.bot-api.yml down"
     echo "🔧 Configure bot:"
-    echo "   set TELOXIDE_API_URL=http://localhost:8081"
+    echo "   set BOT_API_URL=http://localhost:8081"
     echo "   or add to .env:"
-    echo "      TELOXIDE_API_URL=http://localhost:8081"
+    echo "      BOT_API_URL=http://localhost:8081"
 else
     echo -e "${YELLOW}⚠️  Server started but healthcheck did not respond${NC}"
     echo "   It may still be initializing; wait a bit."
