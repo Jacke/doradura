@@ -1,3 +1,4 @@
+use crate::core::metrics;
 use crate::storage::db::{save_task_to_queue, DbPool};
 use chrono::{DateTime, Utc};
 use log::info; // Использование логирования вместо println
@@ -278,6 +279,16 @@ impl DownloadQueue {
         }
 
         *queue = new_queue;
+
+        // Update queue depth metrics by priority
+        let low_count = queue.iter().filter(|t| t.priority == TaskPriority::Low).count();
+        let medium_count = queue.iter().filter(|t| t.priority == TaskPriority::Medium).count();
+        let high_count = queue.iter().filter(|t| t.priority == TaskPriority::High).count();
+
+        metrics::update_queue_depth("low", low_count);
+        metrics::update_queue_depth("medium", medium_count);
+        metrics::update_queue_depth("high", high_count);
+        metrics::update_queue_depth_total(queue.len());
     }
 
     /// Извлекает и возвращает первую задачу из очереди (с учетом приоритета).
@@ -310,7 +321,21 @@ impl DownloadQueue {
                 queue.front().map(|t| t.priority)
             );
         }
-        queue.pop_front()
+        let task = queue.pop_front();
+
+        // Update queue depth metrics after removing task
+        if task.is_some() {
+            let low_count = queue.iter().filter(|t| t.priority == TaskPriority::Low).count();
+            let medium_count = queue.iter().filter(|t| t.priority == TaskPriority::Medium).count();
+            let high_count = queue.iter().filter(|t| t.priority == TaskPriority::High).count();
+
+            metrics::update_queue_depth("low", low_count);
+            metrics::update_queue_depth("medium", medium_count);
+            metrics::update_queue_depth("high", high_count);
+            metrics::update_queue_depth_total(queue.len());
+        }
+
+        task
     }
 
     /// Получает позицию задачи пользователя в очереди

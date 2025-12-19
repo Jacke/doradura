@@ -90,6 +90,18 @@ pub fn language_name(code: &str) -> &str {
         .unwrap_or("Unknown")
 }
 
+/// Checks if a language code is supported by the bot.
+/// Returns the normalized language code if supported, None otherwise.
+pub fn is_language_supported(code: &str) -> Option<&'static str> {
+    // Normalize the code (e.g., "en-US" -> "en", "ru-RU" -> "ru")
+    let normalized = code.split('-').next().unwrap_or(code).to_lowercase();
+
+    SUPPORTED_LANGS
+        .iter()
+        .find(|(c, _)| c.eq_ignore_ascii_case(&normalized))
+        .map(|(c, _)| *c)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -111,5 +123,31 @@ mod tests {
         // Should contain actual newlines, not literal \n
         assert!(text.contains('\n'));
         assert!(!text.contains("\\n"));
+    }
+
+    #[test]
+    fn test_is_language_supported() {
+        // Test supported languages
+        assert_eq!(is_language_supported("en"), Some("en"));
+        assert_eq!(is_language_supported("ru"), Some("ru"));
+        assert_eq!(is_language_supported("fr"), Some("fr"));
+        assert_eq!(is_language_supported("de"), Some("de"));
+
+        // Test with language variants (should normalize to base language)
+        assert_eq!(is_language_supported("en-US"), Some("en"));
+        assert_eq!(is_language_supported("en-GB"), Some("en"));
+        assert_eq!(is_language_supported("ru-RU"), Some("ru"));
+        assert_eq!(is_language_supported("fr-FR"), Some("fr"));
+        assert_eq!(is_language_supported("de-DE"), Some("de"));
+
+        // Test case insensitivity
+        assert_eq!(is_language_supported("EN"), Some("en"));
+        assert_eq!(is_language_supported("RU"), Some("ru"));
+
+        // Test unsupported languages
+        assert_eq!(is_language_supported("es"), None);
+        assert_eq!(is_language_supported("it"), None);
+        assert_eq!(is_language_supported("ja"), None);
+        assert_eq!(is_language_supported("unknown"), None);
     }
 }

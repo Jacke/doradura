@@ -1,13 +1,15 @@
 use crate::core::config;
 use crate::core::error::AppError;
+use crate::core::metrics;
 use crate::core::rate_limiter::RateLimiter;
 use crate::core::utils::{escape_filename, sanitize_filename};
 use crate::download::progress::{DownloadStatus, ProgressMessage};
 use crate::download::ytdlp_errors::{
-    analyze_ytdlp_error, get_error_message, get_fix_recommendations, should_notify_admin,
+    analyze_ytdlp_error, get_error_message, get_fix_recommendations, should_notify_admin, YtDlpErrorType,
 };
 use crate::storage::cache;
 use crate::storage::db::{self as db, save_download_history, DbPool};
+use crate::telegram::notifications::notify_admin_text;
 use chrono::{DateTime, Utc};
 use rand::Rng;
 use regex::Regex;
@@ -91,6 +93,19 @@ fn detect_image_format(bytes: &[u8]) -> ImageFormat {
     }
 
     ImageFormat::Unknown
+}
+
+fn truncate_tail_utf8(text: &str, max_bytes: usize) -> String {
+    if text.len() <= max_bytes {
+        return text.to_string();
+    }
+
+    let mut start = text.len() - max_bytes;
+    while start < text.len() && !text.is_char_boundary(start) {
+        start += 1;
+    }
+
+    format!("…\n{}", &text[start..])
 }
 
 /// Проверяет формат файла cookies (должен быть Netscape HTTP Cookie File)
@@ -667,7 +682,11 @@ fn find_actual_downloaded_file(expected_path: &str) -> Result<String, AppError> 
 /// Получить метаданные от yt-dlp (быстрее чем HTTP парсинг)
 /// Использует async команду чтобы не блокировать runtime
 /// Проверяет кэш перед запросом к yt-dlp
-async fn get_metadata_from_ytdlp(url: &Url) -> Result<(String, String), AppError> {
+async fn get_metadata_from_ytdlp(
+    admin_bot: Option<&Bot>,
+    user_chat_id: Option<ChatId>,
+    url: &Url,
+) -> Result<(String, String), AppError> {
     // Проверяем кэш, но игнорируем "Unknown Track" и "NA" в artist
     if let Some((title, artist)) = cache::get_cached_metadata(url).await {
         if title.trim() != "Unknown Track" && !title.trim().is_empty() {
@@ -745,6 +764,16 @@ async fn get_metadata_from_ytdlp(url: &Url) -> Result<(String, String), AppError
         let stderr = String::from_utf8_lossy(&title_output.stderr);
         let error_type = analyze_ytdlp_error(&stderr);
 
+        // Record error metric
+        let error_category = match error_type {
+            YtDlpErrorType::InvalidCookies => "invalid_cookies",
+            YtDlpErrorType::BotDetection => "bot_detection",
+            YtDlpErrorType::VideoUnavailable => "video_unavailable",
+            YtDlpErrorType::NetworkError => "network",
+            YtDlpErrorType::Unknown => "ytdlp_unknown",
+        };
+        metrics::record_error(error_category, "metadata");
+
         // Логируем детальную информацию об ошибке
         log::error!("yt-dlp failed to get metadata, error type: {:?}", error_type);
         log::error!("yt-dlp stderr: {}", stderr);
@@ -753,9 +782,25 @@ async fn get_metadata_from_ytdlp(url: &Url) -> Result<(String, String), AppError
         let recommendations = get_fix_recommendations(&error_type);
         log::error!("{}", recommendations);
 
-        // Если нужно уведомить администратора, логируем это
+        // Если нужно уведомить администратора — шлём детализацию в Telegram админу
         if should_notify_admin(&error_type) {
             log::warn!("⚠️  This error requires administrator attention!");
+            if let Some(bot) = admin_bot {
+                let mut text = String::new();
+                text.push_str("YTDLP ERROR (metadata)\n");
+                if let Some(chat_id) = user_chat_id {
+                    text.push_str(&format!("user_chat_id: {}\n", chat_id.0));
+                }
+                text.push_str(&format!("url: {}\n", url));
+                text.push_str(&format!("error_type: {:?}\n\n", error_type));
+                text.push_str("command:\n");
+                text.push_str(&command_str);
+                text.push_str("\n\nstderr:\n");
+                text.push_str(&stderr);
+                text.push_str("\n\nrecommendations:\n");
+                text.push_str(&recommendations);
+                notify_admin_text(bot, &text).await;
+            }
         }
 
         // Возвращаем пользовательское сообщение об ошибке
@@ -1096,6 +1141,8 @@ fn download_audio_file(url: &Url, download_path: &str) -> Result<Option<u32>, Ap
 
 /// Скачивает аудио с отслеживанием прогресса через channel
 async fn download_audio_file_with_progress(
+    admin_bot: Bot,
+    user_chat_id: ChatId,
     url: &Url,
     download_path: &str,
     bitrate: Option<String>,
@@ -1110,6 +1157,7 @@ async fn download_audio_file_with_progress(
     let url_str = url.to_string();
     let download_path_clone = download_path.to_string();
     let bitrate_str = bitrate.unwrap_or_else(|| "320k".to_string());
+    let runtime_handle = tokio::runtime::Handle::current();
 
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -1167,11 +1215,13 @@ async fn download_audio_file_with_progress(
 
         // Собираем stderr для анализа ошибок
         let stderr_lines = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let stdout_lines = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
 
         // Объединяем оба потока
         use std::thread;
         let tx_clone = tx.clone();
         let stderr_lines_clone = Arc::clone(&stderr_lines);
+        let stdout_lines_clone = Arc::clone(&stdout_lines);
 
         if let Some(stderr_stream) = stderr {
             thread::spawn(move || {
@@ -1182,6 +1232,9 @@ async fn download_audio_file_with_progress(
                         // Сохраняем строку для анализа ошибок
                         if let Ok(mut lines) = stderr_lines_clone.lock() {
                             lines.push(line_str.clone());
+                            if lines.len() > 200 {
+                                lines.remove(0);
+                            }
                         }
                         if let Some(progress_info) = parse_progress(&line_str) {
                             log::info!("Parsed progress from stderr: {}%", progress_info.percent);
@@ -1197,6 +1250,12 @@ async fn download_audio_file_with_progress(
             for line in reader.lines() {
                 if let Ok(line_str) = line {
                     log::debug!("yt-dlp stdout: {}", line_str);
+                    if let Ok(mut lines) = stdout_lines_clone.lock() {
+                        lines.push(line_str.clone());
+                        if lines.len() > 200 {
+                            lines.remove(0);
+                        }
+                    }
                     if let Some(progress_info) = parse_progress(&line_str) {
                         let _ = tx.send(progress_info);
                     }
@@ -1215,9 +1274,24 @@ async fn download_audio_file_with_progress(
             } else {
                 String::new()
             };
+            let stdout_text = if let Ok(lines) = stdout_lines.lock() {
+                lines.join("\n")
+            } else {
+                String::new()
+            };
 
             if !stderr_text.is_empty() {
                 let error_type = analyze_ytdlp_error(&stderr_text);
+
+                // Record error metric
+                let error_category = match error_type {
+                    YtDlpErrorType::InvalidCookies => "invalid_cookies",
+                    YtDlpErrorType::BotDetection => "bot_detection",
+                    YtDlpErrorType::VideoUnavailable => "video_unavailable",
+                    YtDlpErrorType::NetworkError => "network",
+                    YtDlpErrorType::Unknown => "ytdlp_unknown",
+                };
+                metrics::record_error(error_category, "audio_download");
 
                 // Логируем детальную информацию об ошибке
                 log::error!("yt-dlp download failed, error type: {:?}", error_type);
@@ -1227,9 +1301,23 @@ async fn download_audio_file_with_progress(
                 let recommendations = get_fix_recommendations(&error_type);
                 log::error!("{}", recommendations);
 
-                // Если нужно уведомить администратора, логируем это
+                // Если нужно уведомить администратора — отправляем детализацию (stdout/stderr) админу
                 if should_notify_admin(&error_type) {
                     log::warn!("⚠️  This error requires administrator attention!");
+                    let admin_message = format!(
+                        "YTDLP ERROR (audio download)\nuser_chat_id: {}\nurl: {}\nerror_type: {:?}\n\ncommand:\n{}\n\nstdout (tail):\n{}\n\nstderr (tail):\n{}\n\nrecommendations:\n{}",
+                        user_chat_id.0,
+                        url_str,
+                        error_type,
+                        command_str,
+                        truncate_tail_utf8(&stdout_text, 6000),
+                        truncate_tail_utf8(&stderr_text, 6000),
+                        recommendations
+                    );
+                    let bot_for_admin = admin_bot.clone();
+                    runtime_handle.spawn(async move {
+                        notify_admin_text(&bot_for_admin, &admin_message).await;
+                    });
                 }
 
                 // Возвращаем пользовательское сообщение об ошибке
@@ -1247,6 +1335,8 @@ async fn download_audio_file_with_progress(
 
 /// Скачивает видео с отслеживанием прогресса через channel
 async fn download_video_file_with_progress(
+    admin_bot: Bot,
+    user_chat_id: ChatId,
     url: &Url,
     download_path: &str,
     format_arg: &str,
@@ -1261,6 +1351,7 @@ async fn download_video_file_with_progress(
     let url_str = url.to_string();
     let download_path_clone = download_path.to_string();
     let format_arg_clone = format_arg.to_string();
+    let runtime_handle = tokio::runtime::Handle::current();
 
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
@@ -1316,11 +1407,13 @@ async fn download_video_file_with_progress(
 
         // Собираем stderr для анализа ошибок
         let stderr_lines = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let stdout_lines = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
 
         // Объединяем оба потока
         use std::thread;
         let tx_clone = tx.clone();
         let stderr_lines_clone = Arc::clone(&stderr_lines);
+        let stdout_lines_clone = Arc::clone(&stdout_lines);
 
         if let Some(stderr_stream) = stderr {
             thread::spawn(move || {
@@ -1331,6 +1424,9 @@ async fn download_video_file_with_progress(
                         // Сохраняем строку для анализа ошибок
                         if let Ok(mut lines) = stderr_lines_clone.lock() {
                             lines.push(line_str.clone());
+                            if lines.len() > 200 {
+                                lines.remove(0);
+                            }
                         }
                         if let Some(progress_info) = parse_progress(&line_str) {
                             log::info!("Parsed progress from stderr: {}%", progress_info.percent);
@@ -1346,6 +1442,12 @@ async fn download_video_file_with_progress(
             for line in reader.lines() {
                 if let Ok(line_str) = line {
                     log::debug!("yt-dlp stdout: {}", line_str);
+                    if let Ok(mut lines) = stdout_lines_clone.lock() {
+                        lines.push(line_str.clone());
+                        if lines.len() > 200 {
+                            lines.remove(0);
+                        }
+                    }
                     if let Some(progress_info) = parse_progress(&line_str) {
                         let _ = tx.send(progress_info);
                     }
@@ -1364,9 +1466,24 @@ async fn download_video_file_with_progress(
             } else {
                 String::new()
             };
+            let stdout_text = if let Ok(lines) = stdout_lines.lock() {
+                lines.join("\n")
+            } else {
+                String::new()
+            };
 
             if !stderr_text.is_empty() {
                 let error_type = analyze_ytdlp_error(&stderr_text);
+
+                // Record error metric
+                let error_category = match error_type {
+                    YtDlpErrorType::InvalidCookies => "invalid_cookies",
+                    YtDlpErrorType::BotDetection => "bot_detection",
+                    YtDlpErrorType::VideoUnavailable => "video_unavailable",
+                    YtDlpErrorType::NetworkError => "network",
+                    YtDlpErrorType::Unknown => "ytdlp_unknown",
+                };
+                metrics::record_error(error_category, "video_download");
 
                 // Логируем детальную информацию об ошибке
                 log::error!("yt-dlp download failed, error type: {:?}", error_type);
@@ -1376,9 +1493,23 @@ async fn download_video_file_with_progress(
                 let recommendations = get_fix_recommendations(&error_type);
                 log::error!("{}", recommendations);
 
-                // Если нужно уведомить администратора, логируем это
+                // Если нужно уведомить администратора — отправляем детализацию (stdout/stderr) админу
                 if should_notify_admin(&error_type) {
                     log::warn!("⚠️  This error requires administrator attention!");
+                    let admin_message = format!(
+                        "YTDLP ERROR (video download)\nuser_chat_id: {}\nurl: {}\nerror_type: {:?}\n\ncommand:\n{}\n\nstdout (tail):\n{}\n\nstderr (tail):\n{}\n\nrecommendations:\n{}",
+                        user_chat_id.0,
+                        url_str,
+                        error_type,
+                        command_str,
+                        truncate_tail_utf8(&stdout_text, 6000),
+                        truncate_tail_utf8(&stderr_text, 6000),
+                        recommendations
+                    );
+                    let bot_for_admin = admin_bot.clone();
+                    runtime_handle.spawn(async move {
+                        notify_admin_text(&bot_for_admin, &admin_message).await;
+                    });
                 }
 
                 // Возвращаем пользовательское сообщение об ошибке
@@ -1444,9 +1575,33 @@ pub async fn download_and_send_audio(
         let mut progress_msg = ProgressMessage::new(chat_id);
         let start_time = std::time::Instant::now();
 
+        // Get user plan for metrics
+        let user_plan = if let Some(ref pool) = db_pool_clone {
+            if let Ok(conn) = db::get_connection(pool) {
+                db::get_user(&conn, chat_id.0)
+                    .ok()
+                    .flatten()
+                    .map(|u| u.plan)
+                    .unwrap_or_else(|| "free".to_string())
+            } else {
+                "free".to_string()
+            }
+        } else {
+            "free".to_string()
+        };
+
+        // Record format request for metrics
+        metrics::record_format_request("mp3", &user_plan);
+
+        // Start metrics timer for this download
+        let quality = audio_bitrate.as_deref().unwrap_or("default");
+        let timer = metrics::DOWNLOAD_DURATION_SECONDS
+            .with_label_values(&["mp3", quality])
+            .start_timer();
+
         let result: Result<(), AppError> = async {
             // Step 1: Get metadata and show starting status
-            let (title, artist) = match get_metadata_from_ytdlp(&url).await {
+            let (title, artist) = match get_metadata_from_ytdlp(Some(&bot_clone), Some(chat_id), &url).await {
                 Ok(meta) => meta,
                 Err(e) => {
                     log::error!("Failed to get metadata: {:?}", e);
@@ -1488,8 +1643,14 @@ pub async fn download_and_send_audio(
             let download_path = shellexpand::tilde(&full_path).into_owned();
 
             // Step 2: Download with real-time progress updates
-            let (mut progress_rx, mut download_handle) =
-                download_audio_file_with_progress(&url, &download_path, audio_bitrate.clone()).await?;
+            let (mut progress_rx, mut download_handle) = download_audio_file_with_progress(
+                bot_clone.clone(),
+                chat_id,
+                &url,
+                &download_path,
+                audio_bitrate.clone(),
+            )
+            .await?;
 
             // Показываем начальный прогресс 0%
             let _ = progress_msg
@@ -1612,7 +1773,7 @@ pub async fn download_and_send_audio(
             };
 
             // Step 5: Send audio with retry logic and get the sent message
-            let sent_message = send_audio_with_retry(
+            let (sent_message, file_size) = send_audio_with_retry(
                 &bot_clone,
                 chat_id,
                 &download_path,
@@ -1754,13 +1915,28 @@ pub async fn download_and_send_audio(
                         .map(|a| a.file.id.0.clone())
                         .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
 
+                    // Extract author from display_title or use artist variable
+                    let author_opt = if !artist.trim().is_empty() {
+                        Some(artist.as_str())
+                    } else {
+                        None
+                    };
+
+                    // Get audio bitrate from config
+                    let bitrate = audio_bitrate.as_deref().unwrap_or("320k");
+
                     if let Err(e) = save_download_history(
                         &conn,
                         chat_id.0,
                         url.as_str(),
-                        display_title.as_ref(),
+                        title.as_str(), // Just the title without artist
                         "mp3",
                         file_id.as_deref(),
+                        author_opt,
+                        Some(file_size as i64),
+                        Some(duration as i64),
+                        None, // video_quality (N/A for mp3)
+                        Some(bitrate),
                     ) {
                         log::warn!("Failed to save download history: {}", e);
                     }
@@ -1819,9 +1995,22 @@ pub async fn download_and_send_audio(
         match result {
             Ok(_) => {
                 log::info!("Audio download completed successfully for chat {}", chat_id);
+                // Record successful download
+                timer.observe_duration();
+                metrics::record_download_success("mp3", quality);
             }
             Err(e) => {
                 log::error!("An error occurred during audio download for chat {}: {:?}", chat_id, e);
+                // Record failed download
+                timer.observe_duration();
+                let error_type = if e.to_string().contains("too large") {
+                    "file_too_large"
+                } else if e.to_string().contains("timed out") {
+                    "timeout"
+                } else {
+                    "other"
+                };
+                metrics::record_download_failure("mp3", error_type);
 
                 // Определяем тип ошибки и формируем полезное сообщение
                 let error_str = e.to_string();
@@ -1885,7 +2074,7 @@ async fn send_file_with_retry<F, Fut>(
     title: &str,
     file_type: &str,
     send_fn: F,
-) -> Result<Message, AppError>
+) -> Result<(Message, u64), AppError>
 where
     F: Fn(Bot, ChatId, String) -> Fut,
     Fut: std::future::Future<Output = ResponseResult<Message>>,
@@ -2078,7 +2267,7 @@ where
                 // будет обновлено в основной функции до Success/Completed
                 log::debug!("File sent successfully, progress message will be updated by caller");
 
-                return Ok(msg);
+                return Ok((msg, file_size));
             }
             Err(e) if attempt < max_attempts => {
                 let error_str = e.to_string();
@@ -2127,6 +2316,10 @@ where
                     chat_id,
                     e
                 );
+
+                // Record telegram error metric
+                metrics::record_error("telegram", "send_file");
+
                 let error_msg = match file_type {
                     "video" => format!("У меня не получилось отправить тебе видео 🥲 попробуй как-нибудь позже. Все {} попытки не удались: {}", max_attempts, e),
                     _ => format!("Failed to send {} file after {} attempts: {}", file_type, max_attempts, e),
@@ -2151,7 +2344,7 @@ async fn send_audio_with_retry(
     progress_msg: &mut ProgressMessage,
     caption: &str,
     send_as_document: bool,
-) -> Result<Message, AppError> {
+) -> Result<(Message, u64), AppError> {
     if send_as_document {
         log::info!("User preference: sending audio as document");
         let caption_clone = caption.to_string();
@@ -2220,7 +2413,7 @@ async fn send_video_with_retry(
     title: &str,
     thumbnail_url: Option<&str>,
     send_as_document: bool,
-) -> Result<Message, AppError> {
+) -> Result<(Message, u64), AppError> {
     // Получаем метаданные видео для корректной отправки в Telegram
     let video_metadata = probe_video_metadata(download_path);
 
@@ -2598,9 +2791,33 @@ pub async fn download_and_send_video(
         let mut progress_msg = ProgressMessage::new(chat_id);
         let start_time = std::time::Instant::now();
 
+        // Get user plan for metrics
+        let user_plan = if let Some(ref pool) = db_pool_clone {
+            if let Ok(conn) = db::get_connection(pool) {
+                db::get_user(&conn, chat_id.0)
+                    .ok()
+                    .flatten()
+                    .map(|u| u.plan)
+                    .unwrap_or_else(|| "free".to_string())
+            } else {
+                "free".to_string()
+            }
+        } else {
+            "free".to_string()
+        };
+
+        // Record format request for metrics
+        metrics::record_format_request("mp4", &user_plan);
+
+        // Start metrics timer for video download
+        let quality = video_quality.as_deref().unwrap_or("default");
+        let timer = metrics::DOWNLOAD_DURATION_SECONDS
+            .with_label_values(&["mp4", quality])
+            .start_timer();
+
         let result: Result<(), AppError> = async {
             // Step 1: Get metadata and show starting status
-            let (title, artist) = match get_metadata_from_ytdlp(&url).await {
+            let (title, artist) = match get_metadata_from_ytdlp(Some(&bot_clone), Some(chat_id), &url).await {
                 Ok(meta) => {
                     log::info!("Successfully got metadata for video - title: '{}', artist: '{}'", meta.0, meta.1);
                     meta
@@ -2891,7 +3108,8 @@ pub async fn download_and_send_video(
             }
 
             // Step 3: Download with real-time progress updates
-            let (mut progress_rx, mut download_handle) = download_video_file_with_progress(&url, &download_path, &format_arg).await?;
+            let (mut progress_rx, mut download_handle) =
+                download_video_file_with_progress(bot_clone.clone(), chat_id, &url, &download_path, &format_arg).await?;
 
             // Показываем начальный прогресс 0%
             let _ = progress_msg.update(&bot_clone, DownloadStatus::Downloading {
@@ -3021,6 +3239,117 @@ pub async fn download_and_send_video(
                 }
             }
 
+            // Step 3.7: Check if we need to burn subtitles into video
+            let actual_file_path = if let Some(ref pool) = db_pool_clone {
+                match db::get_connection(pool) {
+                    Ok(conn) => {
+                        let download_subs = db::get_user_download_subtitles(&conn, chat_id.0).unwrap_or(false);
+                        let burn_subs = db::get_user_burn_subtitles(&conn, chat_id.0).unwrap_or(false);
+
+                        log::info!("📝 User {} subtitle settings: download_subs={}, burn_subs={}",
+                            chat_id.0, download_subs, burn_subs);
+
+                        if download_subs && burn_subs {
+                            log::info!("🔥 User requested burned subtitles - downloading subtitles and burning into video");
+
+                            // Download subtitles first
+                            let subtitle_path = format!("{}/{}_subs.srt",
+                                &*config::DOWNLOAD_FOLDER,
+                                safe_filename.trim_end_matches(".mp4"));
+
+                            log::info!("📥 Downloading subtitles to: {}", subtitle_path);
+
+                            // Download subtitles using yt-dlp
+                            let ytdl_bin = &*config::YTDL_BIN;
+                            let mut subtitle_args: Vec<&str> = vec![
+                                "--write-subs",
+                                "--write-auto-subs",
+                                "--sub-lang", "en,ru",
+                                "--sub-format", "srt",
+                                "--convert-subs", "srt",
+                                "--skip-download",
+                                "--output", &subtitle_path,
+                                "--no-playlist",
+                            ];
+                            add_cookies_args(&mut subtitle_args);
+                            subtitle_args.push(url.as_str());
+
+                            log::info!("🎬 Running yt-dlp for subtitles: {} {}", ytdl_bin, subtitle_args.join(" "));
+
+                            let subtitle_output = TokioCommand::new(ytdl_bin)
+                                .args(&subtitle_args)
+                                .output()
+                                .await;
+
+                            match subtitle_output {
+                                Ok(output) if output.status.success() => {
+                                    // Find the actual subtitle file (yt-dlp may add language suffix)
+                                    let subtitle_file = std::fs::read_dir(&*config::DOWNLOAD_FOLDER)
+                                        .ok()
+                                        .and_then(|entries| {
+                                            entries
+                                                .filter_map(Result::ok)
+                                                .find(|entry| {
+                                                    let name = entry.file_name();
+                                                    let name_str = name.to_string_lossy();
+                                                    name_str.contains(safe_filename.trim_end_matches(".mp4"))
+                                                        && name_str.ends_with(".srt")
+                                                })
+                                                .map(|entry| entry.path().display().to_string())
+                                        });
+
+                                    if let Some(sub_file) = subtitle_file {
+                                        log::info!("✅ Subtitles downloaded successfully: {}", sub_file);
+
+                                        // Burn subtitles into video
+                                        let output_with_subs = format!("{}_with_subs.mp4",
+                                            actual_file_path.trim_end_matches(".mp4"));
+
+                                        log::info!("🔥 Burning subtitles into video: {} -> {}",
+                                            actual_file_path, output_with_subs);
+
+                                        match burn_subtitles_into_video(&actual_file_path, &sub_file, &output_with_subs).await {
+                                            Ok(_) => {
+                                                log::info!("✅ Successfully burned subtitles into video");
+
+                                                // Delete original video and subtitle file
+                                                let _ = std::fs::remove_file(&actual_file_path);
+                                                let _ = std::fs::remove_file(&sub_file);
+
+                                                output_with_subs
+                                            }
+                                            Err(e) => {
+                                                log::error!("❌ Failed to burn subtitles: {}. Using original video.", e);
+                                                // Cleanup subtitle file
+                                                let _ = std::fs::remove_file(&sub_file);
+                                                actual_file_path
+                                            }
+                                        }
+                                    } else {
+                                        log::warn!("⚠️ Subtitles not found after download. Using original video.");
+                                        actual_file_path
+                                    }
+                                }
+                                Ok(output) => {
+                                    log::warn!("⚠️ yt-dlp failed to download subtitles: {}",
+                                        String::from_utf8_lossy(&output.stderr));
+                                    actual_file_path
+                                }
+                                Err(e) => {
+                                    log::warn!("⚠️ Failed to execute yt-dlp for subtitles: {}", e);
+                                    actual_file_path
+                                }
+                            }
+                        } else {
+                            actual_file_path
+                        }
+                    }
+                    Err(_) => actual_file_path
+                }
+            } else {
+                actual_file_path
+            };
+
             // Step 4: Get user preference for send_as_document
             let send_as_document = if let Some(ref pool) = db_pool_clone {
                 match db::get_connection(pool) {
@@ -3048,7 +3377,7 @@ pub async fn download_and_send_video(
             log::info!("📤 Calling send_video_with_retry with send_as_document={} for user {}", send_as_document, chat_id.0);
 
             // Step 5: Send video with retry logic and animation
-            let sent_message = send_video_with_retry(&bot_clone, chat_id, &actual_file_path, &mut progress_msg, caption.as_ref(), thumbnail_url.as_deref(), send_as_document).await?;
+            let (sent_message, file_size) = send_video_with_retry(&bot_clone, chat_id, &actual_file_path, &mut progress_msg, caption.as_ref(), thumbnail_url.as_deref(), send_as_document).await?;
 
             // Сразу после успешной отправки обновляем сообщение прогресса до Success
             // чтобы убрать застрявшее состояние "Uploading: 99%"
@@ -3064,7 +3393,29 @@ pub async fn download_and_send_video(
                     let file_id = sent_message.video().map(|v| v.file.id.0.clone())
                         .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
 
-                    if let Err(e) = save_download_history(&conn, chat_id.0, url.as_str(), display_title.as_ref(), "mp4", file_id.as_deref()) {
+                    // Extract author from display_title or use artist variable
+                    let author_opt = if !artist.trim().is_empty() {
+                        Some(artist.as_str())
+                    } else {
+                        None
+                    };
+
+                    // Get video duration from metadata
+                    let duration = probe_video_metadata(&actual_file_path).map(|(d, _, _)| d as i64);
+
+                    if let Err(e) = save_download_history(
+                        &conn,
+                        chat_id.0,
+                        url.as_str(),
+                        title.as_str(),  // Just the title without artist
+                        "mp4",
+                        file_id.as_deref(),
+                        author_opt,
+                        Some(file_size as i64),
+                        duration,
+                        Some(quality),
+                        None,  // audio_bitrate (N/A for mp4)
+                    ) {
                         log::warn!("Failed to save download history: {}", e);
                     }
                 }
@@ -3107,6 +3458,26 @@ pub async fn download_and_send_video(
 
             Ok(())
         }.await;
+
+        // Record metrics based on result
+        match &result {
+            Ok(_) => {
+                log::info!("Video download completed successfully for chat {}", chat_id);
+                timer.observe_duration();
+                metrics::record_download_success("mp4", quality);
+            }
+            Err(e) => {
+                timer.observe_duration();
+                let error_type = if e.to_string().contains("too large") {
+                    "file_too_large"
+                } else if e.to_string().contains("timed out") {
+                    "timeout"
+                } else {
+                    "other"
+                };
+                metrics::record_download_failure("mp4", error_type);
+            }
+        }
 
         if let Err(e) = result {
             log::error!("An error occurred during video download for chat {}: {:?}", chat_id, e);
@@ -3227,9 +3598,33 @@ pub async fn download_and_send_subtitles(
         let mut progress_msg = ProgressMessage::new(chat_id);
         let start_time = std::time::Instant::now();
 
+        // Get user plan for metrics
+        let user_plan = if let Some(ref pool) = db_pool_clone {
+            if let Ok(conn) = db::get_connection(pool) {
+                db::get_user(&conn, chat_id.0)
+                    .ok()
+                    .flatten()
+                    .map(|u| u.plan)
+                    .unwrap_or_else(|| "free".to_string())
+            } else {
+                "free".to_string()
+            }
+        } else {
+            "free".to_string()
+        };
+
+        // Record format request for metrics
+        let format = subtitle_format.as_str();
+        metrics::record_format_request(format, &user_plan);
+
+        // Start metrics timer for subtitles download
+        let timer = metrics::DOWNLOAD_DURATION_SECONDS
+            .with_label_values(&[format, "default"])
+            .start_timer();
+
         let result: Result<(), AppError> = async {
             // Step 1: Get metadata
-            let (title, _) = match get_metadata_from_ytdlp(&url).await {
+            let (title, _) = match get_metadata_from_ytdlp(Some(&bot_clone), Some(chat_id), &url).await {
                 Ok(meta) => meta,
                 Err(e) => {
                     log::error!("Failed to get metadata: {:?}", e);
@@ -3310,53 +3705,27 @@ pub async fn download_and_send_subtitles(
 
                 if let Some(found) = found_file {
                     // Send the found file
-                    let sent_message = bot_clone
+                    let _sent_message = bot_clone
                         .send_document(chat_id, InputFile::file(&found))
                         .await
                         .map_err(|e| AppError::Download(format!("Failed to send document: {}", e)))?;
 
-                    // Save to download history after successful send
-                    if let Some(ref pool) = db_pool_clone {
-                        if let Ok(conn) = crate::storage::db::get_connection(pool) {
-                            let file_id = sent_message.document().map(|d| d.file.id.0.clone());
-                            if let Err(e) = save_download_history(
-                                &conn,
-                                chat_id.0,
-                                url.as_str(),
-                                display_title.as_ref(),
-                                &subtitle_format,
-                                file_id.as_deref(),
-                            ) {
-                                log::warn!("Failed to save download history: {}", e);
-                            }
-                        }
-                    }
+                    // NOTE: Subtitles are not saved to download_history as they won't appear in /downloads
+                    // (We only save mp3/mp4 with file_id for the /downloads command)
+                    // Subtitle tracking is intentionally disabled per requirements
                 } else {
                     return Err(AppError::Download("Subtitle file not found".to_string()));
                 }
             } else {
                 // Send the file
-                let sent_message = bot_clone
+                let _sent_message = bot_clone
                     .send_document(chat_id, InputFile::file(&download_path))
                     .await
                     .map_err(|e| AppError::Download(format!("Failed to send document: {}", e)))?;
 
-                // Save to download history after successful send
-                if let Some(ref pool) = db_pool_clone {
-                    if let Ok(conn) = crate::storage::db::get_connection(pool) {
-                        let file_id = sent_message.document().map(|d| d.file.id.0.clone());
-                        if let Err(e) = save_download_history(
-                            &conn,
-                            chat_id.0,
-                            url.as_str(),
-                            display_title.as_ref(),
-                            &subtitle_format,
-                            file_id.as_deref(),
-                        ) {
-                            log::warn!("Failed to save download history: {}", e);
-                        }
-                    }
-                }
+                // NOTE: Subtitles are not saved to download_history as they won't appear in /downloads
+                // (We only save mp3/mp4 with file_id for the /downloads command)
+                // Subtitle tracking is intentionally disabled per requirements
             }
 
             // Calculate elapsed time
@@ -3425,6 +3794,24 @@ pub async fn download_and_send_subtitles(
         }
         .await;
 
+        // Record metrics based on result
+        match &result {
+            Ok(_) => {
+                log::info!("Subtitle download completed successfully for chat {}", chat_id);
+                timer.observe_duration();
+                metrics::record_download_success(format, "default");
+            }
+            Err(e) => {
+                timer.observe_duration();
+                let error_type = if e.to_string().contains("timed out") {
+                    "timeout"
+                } else {
+                    "other"
+                };
+                metrics::record_download_failure(format, error_type);
+            }
+        }
+
         if let Err(e) = result {
             log::error!(
                 "An error occurred during subtitle download for chat {}: {:?}",
@@ -3446,6 +3833,114 @@ pub async fn download_and_send_subtitles(
                 .await;
         }
     });
+    Ok(())
+}
+
+// ==================== Subtitle Burning ====================
+
+/// Burns (hardcodes) subtitles into a video file using ffmpeg
+///
+/// # Arguments
+///
+/// * `video_path` - Path to the source video file
+/// * `subtitle_path` - Path to the subtitle file (SRT format)
+/// * `output_path` - Path where the output video with burned subtitles will be saved
+///
+/// # Returns
+///
+/// Returns `Ok(())` on success or an `AppError` on failure.
+///
+/// # Example
+///
+/// ```no_run
+/// # use doradura::core::error::AppError;
+/// # use doradura::download::downloader::burn_subtitles_into_video;
+/// # async fn run() -> Result<(), AppError> {
+/// burn_subtitles_into_video("video.mp4", "subtitles.srt", "video_with_subs.mp4").await?;
+/// # Ok(())
+/// # }
+/// ```
+pub async fn burn_subtitles_into_video(
+    video_path: &str,
+    subtitle_path: &str,
+    output_path: &str,
+) -> Result<(), AppError> {
+    log::info!(
+        "🔥 Burning subtitles into video: {} + {} -> {}",
+        video_path,
+        subtitle_path,
+        output_path
+    );
+
+    // Проверяем наличие исходных файлов
+    if !std::path::Path::new(video_path).exists() {
+        return Err(AppError::Download(format!("Video file not found: {}", video_path)));
+    }
+    if !std::path::Path::new(subtitle_path).exists() {
+        return Err(AppError::Download(format!(
+            "Subtitle file not found: {}",
+            subtitle_path
+        )));
+    }
+
+    // Escape путь к субтитрам для ffmpeg filter
+    // Важно: ffmpeg требует экранирования специальных символов в пути
+    let escaped_subtitle_path = subtitle_path
+        .replace("\\", "\\\\")
+        .replace(":", "\\:")
+        .replace("'", "\\'");
+
+    // Команда ffmpeg для вшивания субтитров
+    // Используем фильтр subtitles для наложения субтитров на видео
+    // -c:v libx264 - используем H.264 кодек для видео
+    // -c:a copy - копируем аудио без перекодирования
+    // -preset fast - быстрая скорость кодирования
+    let mut cmd = TokioCommand::new("ffmpeg");
+    cmd.arg("-i")
+        .arg(video_path)
+        .arg("-vf")
+        .arg(format!("subtitles='{}'", escaped_subtitle_path))
+        .arg("-c:v")
+        .arg("libx264")
+        .arg("-c:a")
+        .arg("copy")
+        .arg("-preset")
+        .arg("fast")
+        .arg("-y") // Перезаписывать выходной файл если существует
+        .arg(output_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    log::info!(
+        "🎬 Running ffmpeg command: ffmpeg -i {} -vf subtitles='{}' -c:v libx264 -c:a copy -preset fast -y {}",
+        video_path,
+        escaped_subtitle_path,
+        output_path
+    );
+
+    let output = cmd
+        .output()
+        .await
+        .map_err(|e| AppError::Download(format!("Failed to execute ffmpeg: {}", e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        log::error!("❌ ffmpeg failed to burn subtitles: {}", stderr);
+        return Err(AppError::Download(format!(
+            "ffmpeg failed to burn subtitles: {}",
+            stderr
+        )));
+    }
+
+    // Проверяем что выходной файл был создан
+    if !std::path::Path::new(output_path).exists() {
+        return Err(AppError::Download(format!(
+            "Output video file was not created: {}",
+            output_path
+        )));
+    }
+
+    log::info!("✅ Successfully burned subtitles into video: {}", output_path);
     Ok(())
 }
 
