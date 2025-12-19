@@ -7,16 +7,12 @@
 - Keep it short: each task <= 140 characters, no Markdown links.
 - If you need a new section, add it at the end of the file.
 
-## Summary
-- Weekly focus: ...
-- Key outcomes: ...
-- Risks/blockers: ...
-
 ## Now
 - [ ] ...
 
 ## Next
-- [ ] ...
+- [ ] When user selects a file (from /downloads) he can see the info of the file and perform modification, such as increase speed, or cut the file to a specific duration. it also could cut multiple sections of the file.
+- [ ]
 
 ## Backlog
 - [ ] ...
@@ -31,13 +27,3 @@
 - [x] Add detailed format logging to /info command for debugging
 - [x] Fix video format detection to include video-only formats with audio size estimation
 - [x] Update format selectors to use bestvideo+bestaudio for proper video/audio merging
-
-## Decision Log
-
-- 2025-12-07 - Added youtube:player_client=default,web_safari,web_embedded to handle SABR streaming and nsig extraction failures
-
-## Blockers
-- 2024-... - ...
-
-## Ideas and Notes
-- ...
