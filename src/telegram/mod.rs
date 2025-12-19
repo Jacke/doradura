@@ -1,9 +1,13 @@
 //! Telegram bot integration and handlers
 
 pub mod admin;
+pub mod analytics;
 pub mod bot;
 pub mod cache;
 pub mod commands;
+pub mod cuts;
+pub mod downloads;
+pub mod feedback;
 pub mod menu;
 pub mod notifications;
 pub mod preview;
@@ -14,11 +18,13 @@ pub mod webapp_auth;
 
 // Re-exports for convenience
 pub use admin::{
-    escape_markdown, handle_admin_command, handle_backup_command, handle_setplan_command, handle_users_command,
-    is_admin,
+    download_file_from_telegram, escape_markdown, handle_admin_command, handle_backup_command, handle_charges_command,
+    handle_download_tg_command, handle_sent_files_command, handle_setplan_command, handle_transactions_command,
+    handle_users_command, is_admin,
 };
+pub use analytics::{handle_analytics_command, handle_health_command, handle_metrics_command, handle_revenue_command};
 pub use bot::{create_bot, is_message_addressed_to_bot, setup_all_language_commands, setup_chat_bot_commands, Command};
 pub use commands::{handle_info_command, handle_message};
-pub use menu::{handle_menu_callback, show_enhanced_main_menu, show_main_menu};
+pub use menu::{handle_menu_callback, show_enhanced_main_menu, show_language_selection_menu, show_main_menu};
 pub use voice::{send_random_voice_message, send_voice_with_waveform, VOICE_FILES};
 pub use webapp::{create_webapp_router, run_webapp_server, WebAppAction, WebAppData};
