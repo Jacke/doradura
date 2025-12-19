@@ -1,0 +1,200 @@
+# Prometheus Alert Rules for Doradura Bot
+
+groups:
+  - name: doradura_bot_alerts
+    interval: 30s
+    rules:
+      # ========================================
+      # CRITICAL ALERTS
+      # ========================================
+
+      # Высокий процент ошибок
+      - alert: HighErrorRate
+        expr: |
+          (
+            sum(rate(doradura_download_failure_total[5m]))
+            /
+            sum(rate(doradura_download_success_total[5m]) + rate(doradura_download_failure_total[5m]))
+          ) * 100 > 10
+        for: 5m
+        labels:
+          severity: critical
+          component: downloads
+        annotations:
+          summary: "High download error rate detected"
+          description: "Error rate is {{ $value | humanize }}% (threshold: 10%)"
+
+      # Очередь переполнена
+      - alert: QueueBackup
+        expr: doradura_queue_depth > 100
+        for: 5m
+        labels:
+          severity: critical
+          component: queue
+        annotations:
+          summary: "Download queue is backing up"
+          description: "Queue depth is {{ $value }} tasks (threshold: 100)"
+
+      # Бот не работает (нет метрик)
+      - alert: BotDown
+        expr: up{job="doradura-bot"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          component: system
+        annotations:
+          summary: "Doradura bot is down"
+          description: "Bot has been unreachable for 2 minutes"
+
+      # yt-dlp не работает
+      - alert: YtdlpFailures
+        expr: |
+          sum(rate(doradura_errors_total{category="ytdlp"}[5m])) > 0.5
+        for: 3m
+        labels:
+          severity: critical
+          component: ytdlp
+        annotations:
+          summary: "yt-dlp is experiencing failures"
+          description: "yt-dlp error rate: {{ $value | humanize }} errors/sec"
+
+      # ========================================
+      # WARNING ALERTS
+      # ========================================
+
+      # Медленные загрузки
+      - alert: SlowDownloads
+        expr: |
+          histogram_quantile(0.95,
+            rate(doradura_download_duration_seconds_bucket[5m])
+          ) > 60
+        for: 10m
+        labels:
+          severity: warning
+          component: performance
+        annotations:
+          summary: "Downloads are slow"
+          description: "95th percentile download time is {{ $value | humanize }}s (threshold: 60s)"
+
+      # Низкий success rate
+      - alert: LowSuccessRate
+        expr: |
+          (
+            sum(rate(doradura_download_success_total[10m]))
+            /
+            sum(rate(doradura_download_success_total[10m]) + rate(doradura_download_failure_total[10m]))
+          ) * 100 < 90
+        for: 10m
+        labels:
+          severity: warning
+          component: downloads
+        annotations:
+          summary: "Download success rate is low"
+          description: "Success rate is {{ $value | humanize }}% (threshold: 90%)"
+
+      # Много повторных попыток
+      - alert: HighRetryRate
+        expr: |
+          sum(rate(doradura_errors_total{category="retry"}[5m])) > 1
+        for: 5m
+        labels:
+          severity: warning
+          component: reliability
+        annotations:
+          summary: "High retry rate detected"
+          description: "Retry rate: {{ $value | humanize }} retries/sec"
+
+      # Падение активных пользователей
+      - alert: LowDailyActiveUsers
+        expr: |
+          doradura_daily_active_users < 10 and hour() > 8 and hour() < 22
+        for: 30m
+        labels:
+          severity: warning
+          component: engagement
+        annotations:
+          summary: "Low daily active users"
+          description: "Only {{ $value }} active users today"
+
+      # ========================================
+      # BUSINESS METRICS ALERTS
+      # ========================================
+
+      # Ошибки платежей
+      - alert: PaymentFailures
+        expr: |
+          sum(rate(doradura_errors_total{category="payment"}[5m])) > 0
+        for: 1m
+        labels:
+          severity: critical
+          component: payments
+        annotations:
+          summary: "Payment failures detected"
+          description: "{{ $value | humanize }} payment errors/sec"
+
+      # Низкая конверсия
+      - alert: LowConversionRate
+        expr: |
+          (
+            sum(rate(doradura_new_subscriptions_total[1h]))
+            /
+            sum(rate(doradura_command_usage_total{command="start"}[1h]))
+          ) * 100 < 1
+        for: 2h
+        labels:
+          severity: warning
+          component: business
+        annotations:
+          summary: "Low conversion rate"
+          description: "Conversion rate is {{ $value | humanize }}% (threshold: 1%)"
+
+      # Много отмен подписок
+      - alert: HighCancellationRate
+        expr: |
+          sum(rate(doradura_subscription_cancellations_total[1h])) > 5
+        for: 1h
+        labels:
+          severity: warning
+          component: business
+        annotations:
+          summary: "High subscription cancellation rate"
+          description: "{{ $value | humanize }} cancellations per hour"
+
+  # ========================================
+  # RECORDING RULES (для производительности запросов)
+  # ========================================
+  - name: doradura_recording_rules
+    interval: 30s
+    rules:
+      # Success rate за последние 5 минут
+      - record: doradura:download_success_rate:5m
+        expr: |
+          sum(rate(doradura_download_success_total[5m]))
+          /
+          sum(rate(doradura_download_success_total[5m]) + rate(doradura_download_failure_total[5m]))
+
+      # Error rate за последние 5 минут
+      - record: doradura:error_rate:5m
+        expr: |
+          sum(rate(doradura_download_failure_total[5m]))
+          /
+          sum(rate(doradura_download_success_total[5m]) + rate(doradura_download_failure_total[5m]))
+
+      # Средняя длительность загрузки
+      - record: doradura:download_duration:avg:5m
+        expr: |
+          histogram_quantile(0.5,
+            rate(doradura_download_duration_seconds_bucket[5m])
+          )
+
+      # 95-й перцентиль длительности загрузки
+      - record: doradura:download_duration:p95:5m
+        expr: |
+          histogram_quantile(0.95,
+            rate(doradura_download_duration_seconds_bucket[5m])
+          )
+
+      # Общее количество загрузок в секунду
+      - record: doradura:downloads:rate:5m
+        expr: |
+          sum(rate(doradura_download_success_total[5m]) + rate(doradura_download_failure_total[5m]))

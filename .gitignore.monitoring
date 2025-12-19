@@ -1,0 +1,19 @@
+# Prometheus & Grafana data directories
+prometheus/data/
+grafana/data/
+alertmanager/data/
+
+# Grafana databases
+grafana/*.db
+
+# Prometheus data
+prometheus_data/
+grafana_data/
+alertmanager_data/
+
+# Grafana secrets
+grafana/grafana.ini
+
+# Temporary files
+*.tmp
+*.log
