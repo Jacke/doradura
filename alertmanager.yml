@@ -1,0 +1,53 @@
+# AlertManager configuration for Doradura Bot
+
+global:
+  resolve_timeout: 5m
+
+# Настройка маршрутизации алертов
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 12h
+  receiver: 'telegram'
+
+  routes:
+    # Критические алерты - отправляются немедленно
+    - match:
+        severity: critical
+      receiver: 'telegram-critical'
+      group_wait: 0s
+      repeat_interval: 4h
+
+    # Warning алерты - группируются
+    - match:
+        severity: warning
+      receiver: 'telegram-warnings'
+      group_wait: 30s
+      repeat_interval: 24h
+
+# Настройка получателей
+receivers:
+  # Telegram notifications (требует telegram-bot для AlertManager)
+  - name: 'telegram'
+    webhook_configs:
+      - url: 'http://localhost:8080/alerts'  # Ваш бот может принимать webhooks
+        send_resolved: true
+
+  - name: 'telegram-critical'
+    webhook_configs:
+      - url: 'http://localhost:8080/alerts/critical'
+        send_resolved: true
+
+  - name: 'telegram-warnings'
+    webhook_configs:
+      - url: 'http://localhost:8080/alerts/warnings'
+        send_resolved: true
+
+# Подавление дублирующих алертов
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'cluster', 'service']
