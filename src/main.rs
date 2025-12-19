@@ -1,9 +1,8 @@
 use anyhow::Result;
 use dotenvy::dotenv;
-use dptree::di::DependencyMap;
 use std::sync::Arc;
 use std::time::Duration;
-use teloxide::dispatching::{Dispatcher, UpdateFilterExt};
+use teloxide::dispatching::UpdateFilterExt;
 use teloxide::prelude::*;
 use teloxide::types::Message;
 use tokio::signal;
@@ -804,10 +803,20 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
             // Create a new dispatcher in a separate task to isolate panics
             // "TX is dead" panics will be caught via the JoinHandle
             let handle = tokio::spawn(async move {
+                use teloxide::prelude::*;
+                use teloxide::update_listeners::Polling;
+
+                // Create polling listener that drops pending updates on start
+                let listener = Polling::builder(bot_clone.clone()).drop_pending_updates().build();
+
                 Dispatcher::builder(bot_clone, handler_clone)
                     .dependencies(DependencyMap::new())
+                    .enable_ctrlc_handler()
                     .build()
-                    .dispatch()
+                    .dispatch_with_listener(
+                        listener,
+                        LoggingErrorHandler::with_custom_text("An error from the update listener"),
+                    )
                     .await
             });
 
