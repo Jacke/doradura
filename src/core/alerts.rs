@@ -14,7 +14,7 @@ use crate::core::{config, metrics};
 use crate::storage::db::{self, DbPool};
 use crate::telegram::admin;
 use chrono::{DateTime, Duration, Utc};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{ChatId, ParseMode};
@@ -154,6 +154,13 @@ impl Alert {
     }
 }
 
+/// Record of a download attempt (success or failure)
+#[derive(Debug, Clone)]
+struct DownloadRecord {
+    timestamp: DateTime<Utc>,
+    is_success: bool,
+}
+
 /// Alert manager for monitoring metrics and sending notifications
 pub struct AlertManager {
     /// Telegram bot instance
@@ -166,6 +173,10 @@ pub struct AlertManager {
     last_alert_time: Arc<Mutex<HashMap<AlertType, DateTime<Utc>>>>,
     /// Currently active alerts (for resolution detection)
     active_alerts: Arc<Mutex<HashMap<AlertType, Alert>>>,
+    /// Recent download attempts for time-windowed error rate calculation
+    recent_downloads: Arc<Mutex<VecDeque<DownloadRecord>>>,
+    /// Last known counter values for delta calculation
+    last_counter_values: Arc<Mutex<(f64, f64)>>, // (downloads, errors)
 }
 
 impl AlertManager {
@@ -177,6 +188,8 @@ impl AlertManager {
             db_pool,
             last_alert_time: Arc::new(Mutex::new(HashMap::new())),
             active_alerts: Arc::new(Mutex::new(HashMap::new())),
+            recent_downloads: Arc::new(Mutex::new(VecDeque::new())),
+            last_counter_values: Arc::new(Mutex::new((0.0, 0.0))),
         }
     }
 
@@ -312,33 +325,78 @@ impl AlertManager {
     async fn check_error_rate(&self) -> Result<(), String> {
         use prometheus::core::Collector;
 
-        // Get total downloads and errors
-        let mut total_downloads = 0.0;
-        let mut total_errors = 0.0;
+        // Get current counter values
+        let mut current_downloads = 0.0;
+        let mut current_errors = 0.0;
 
         // Sum all download successes
         for mf in metrics::DOWNLOAD_SUCCESS_TOTAL.collect() {
             for m in mf.get_metric() {
-                total_downloads += m.get_counter().get_value();
+                current_downloads += m.get_counter().get_value();
             }
         }
 
         // Sum all download failures
         for mf in metrics::DOWNLOAD_FAILURE_TOTAL.collect() {
             for m in mf.get_metric() {
-                total_errors += m.get_counter().get_value();
+                current_errors += m.get_counter().get_value();
             }
         }
 
-        let total_requests = total_downloads + total_errors;
+        // Update recent downloads buffer
+        let mut recent = self.recent_downloads.lock().await;
+        let now = Utc::now();
+        let one_hour_ago = now - Duration::hours(1);
 
-        if total_requests < 10.0 {
+        // Remove downloads older than 1 hour
+        while let Some(record) = recent.front() {
+            if record.timestamp < one_hour_ago {
+                recent.pop_front();
+            } else {
+                break;
+            }
+        }
+
+        // Add new records (calculate delta from last check)
+        let mut last_values = self.last_counter_values.lock().await;
+        let (last_downloads, last_errors) = *last_values;
+
+        let new_downloads = (current_downloads - last_downloads).max(0.0);
+        let new_errors = (current_errors - last_errors).max(0.0);
+
+        // Add success records
+        for _ in 0..(new_downloads as u64) {
+            recent.push_back(DownloadRecord {
+                timestamp: now,
+                is_success: true,
+            });
+        }
+
+        // Add failure records
+        for _ in 0..(new_errors as u64) {
+            recent.push_back(DownloadRecord {
+                timestamp: now,
+                is_success: false,
+            });
+        }
+
+        // Update last known values
+        *last_values = (current_downloads, current_errors);
+        drop(last_values);
+
+        // Calculate error rate for last hour
+        let total_recent = recent.len();
+        if total_recent < 10 {
             // Not enough data yet
+            drop(recent);
             return Ok(());
         }
 
-        let error_rate = (total_errors / total_requests) * 100.0;
+        let errors_recent = recent.iter().filter(|r| !r.is_success).count();
+        let error_rate = (errors_recent as f64 / total_recent as f64) * 100.0;
         let threshold = *config::alerts::ERROR_RATE_THRESHOLD;
+
+        drop(recent); // Release lock
 
         if error_rate > threshold {
             let alert = Alert::new(
@@ -346,8 +404,8 @@ impl AlertManager {
                 Severity::Critical,
                 "High Error Rate Detected".to_string(),
                 format!(
-                    "Current: {:.1}% (threshold: {:.1}%)\nAffected: {}/{} downloads",
-                    error_rate, threshold, total_errors as u64, total_requests as u64
+                    "Current (last hour): {:.1}% (threshold: {:.1}%)\nAffected: {}/{} downloads",
+                    error_rate, threshold, errors_recent, total_recent
                 ),
                 Some("Recent performance issues detected. Check logs for details.".to_string()),
             );

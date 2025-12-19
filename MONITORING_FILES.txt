@@ -1,0 +1,61 @@
+📁 Структура Файлов Системы Мониторинга
+═══════════════════════════════════════════════════════════════
+
+doradura/
+│
+├── 📄 docker-compose.monitoring.yml      # Docker Compose стек
+├── 📄 prometheus.yml                     # Конфигурация Prometheus
+├── 📄 alertmanager.yml                   # Конфигурация AlertManager
+├── 📄 .gitignore                         # Обновлен (monitoring data)
+│
+├── 📁 prometheus/
+│   └── 📁 rules/
+│       └── 📄 doradura_alerts.yml        # Alert + Recording rules
+│
+├── 📁 grafana/
+│   ├── 📁 provisioning/
+│   │   ├── 📁 datasources/
+│   │   │   └── 📄 prometheus.yml         # Auto-provision Prometheus
+│   │   └── 📁 dashboards/
+│   │       └── 📄 default.yml            # Auto-provision dashboards
+│   └── 📁 dashboards/
+│       └── 📄 doradura_overview.json     # Основной дашборд (9 панелей)
+│
+├── 📁 monitoring/
+│   └── 📄 README.md                      # Обзор системы мониторинга
+│
+├── 📁 scripts/
+│   ├── 🔧 start-monitoring.sh            # Запуск стека (executable)
+│   ├── 🔧 stop-monitoring.sh             # Остановка стека (executable)
+│   └── 🔧 check-metrics.sh               # Health check (executable)
+│
+└── 📚 Документация:
+    ├── 📄 QUICKSTART_MONITORING.md       # Быстрый старт (3 команды)
+    ├── 📄 MONITORING_SETUP.md            # Полное руководство (500+ строк)
+    ├── 📄 MONITORING_ARCHITECTURE.md     # Диаграммы + техническая архитектура
+    └── 📄 SUMMARY_MONITORING.md          # Итоги + примеры
+
+════════════════════════════════════════════════════════════════
+
+📊 Статистика:
+   • Конфигурационные файлы: 8
+   • Скрипты: 3
+   • Документация: 5
+   • Всего файлов: 16
+
+🎯 Основные компоненты:
+   ✅ Prometheus (сбор метрик)
+   ✅ Grafana (визуализация)
+   ✅ AlertManager (оповещения)
+   ✅ Auto-provisioning (zero-config setup)
+   ✅ Полная документация
+
+🚀 Запуск:
+   ./scripts/start-monitoring.sh
+
+📖 Документация:
+   Начните с: QUICKSTART_MONITORING.md
+   Подробно:   MONITORING_SETUP.md
+   Архитектура: MONITORING_ARCHITECTURE.md
+
+════════════════════════════════════════════════════════════════
