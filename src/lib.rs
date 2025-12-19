@@ -14,9 +14,11 @@
 //! - `download`: Download management and processing
 //! - `telegram`: Telegram bot integration and handlers
 
+pub mod cli;
 pub mod core;
 pub mod download;
 pub mod i18n;
+pub mod metadata_refresh;
 pub mod storage;
 pub mod telegram;
 
