@@ -17,15 +17,6 @@ pub enum YtDlpErrorType {
     Unknown,
 }
 
-fn admin_contact_line() -> Option<String> {
-    let admin_username = crate::core::config::admin::ADMIN_USERNAME.as_str();
-    if admin_username.is_empty() {
-        None
-    } else {
-        Some(format!("\nОбратись к @{}.", admin_username))
-    }
-}
-
 /// Анализирует stderr yt-dlp и определяет тип ошибки
 ///
 /// # Параметры
@@ -92,42 +83,18 @@ pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
 /// # Возвращает
 /// - `String`: сообщение для пользователя
 pub fn get_error_message(error_type: &YtDlpErrorType) -> String {
-    let contact = admin_contact_line();
     match error_type {
         YtDlpErrorType::InvalidCookies => {
-            let mut text = "❌ Cookies для YouTube устарели или недействительны.\n\n\
-            Пожалуйста, обнови cookies."
-                .to_string();
-            if let Some(contact_line) = &contact {
-                text.push_str(contact_line);
-            }
-            text
+            "❌ Временная проблема с YouTube.\n\nПопробуй другое видео или повтори попытку позже.".to_string()
         }
         YtDlpErrorType::BotDetection => {
-            let mut text = "❌ YouTube заблокировал запрос (обнаружен бот).\n\n\
-            Проблема решается обновлением cookies."
-                .to_string();
-            if let Some(contact_line) = &contact {
-                text.push_str(contact_line);
-            }
-            text
+            "❌ YouTube заблокировал запрос.\n\nПопробуй другое видео или повтори попытку позже.".to_string()
         }
-        YtDlpErrorType::VideoUnavailable => "❌ Видео недоступно.\n\n\
-            Возможные причины:\n\
-            • Видео приватное или удалено\n\
-            • Региональные ограничения\n\
-            • Видео заблокировано автором"
-            .to_string(),
-        YtDlpErrorType::NetworkError => "❌ Проблема с сетью при получении данных.".to_string(),
-        YtDlpErrorType::Unknown => {
-            let mut text = "❌ Не удалось получить данные о видео.\n\n\
-            Проверь, что ссылка корректна и видео доступно."
-                .to_string();
-            if let Some(contact_line) = &contact {
-                text.push_str(contact_line);
-            }
-            text
+        YtDlpErrorType::VideoUnavailable => {
+            "❌ Видео недоступно.\n\nВозможно оно приватное, удалено или заблокировано в твоём регионе.".to_string()
         }
+        YtDlpErrorType::NetworkError => "❌ Проблема с сетью.\n\nПопробуй ещё раз через минуту.".to_string(),
+        YtDlpErrorType::Unknown => "❌ Не удалось скачать видео.\n\nПроверь, что ссылка корректна.".to_string(),
     }
 }
 
@@ -144,7 +111,7 @@ pub fn should_notify_admin(error_type: &YtDlpErrorType) -> bool {
         YtDlpErrorType::BotDetection => true,
         YtDlpErrorType::VideoUnavailable => false,
         YtDlpErrorType::NetworkError => false,
-        YtDlpErrorType::Unknown => false,
+        YtDlpErrorType::Unknown => true,
     }
 }
 

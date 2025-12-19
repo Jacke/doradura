@@ -11,7 +11,7 @@ use crate::telegram::setup_chat_bot_commands;
 use fluent_templates::fluent_bundle::FluentArgs;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, MessageId};
+use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode};
 use teloxide::RequestError;
 use unic_langid::LanguageIdentifier;
 use url::Url;
@@ -460,9 +460,11 @@ pub async fn show_video_quality_menu(
         .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
     let current_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
     let send_as_document = db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0);
+    let download_subs = db::get_user_download_subtitles(&conn, chat_id.0).unwrap_or(false);
+    let burn_subs = db::get_user_burn_subtitles(&conn, chat_id.0).unwrap_or(false);
     let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
 
-    let keyboard = InlineKeyboardMarkup::new(vec![
+    let mut keyboard_rows = vec![
         vec![
             InlineKeyboardButton::callback(
                 if current_quality == "1080p" {
@@ -520,11 +522,30 @@ pub async fn show_video_quality_menu(
             },
             "send_type:toggle",
         )],
-        vec![InlineKeyboardButton::callback(
-            i18n::t(&lang, "common.back"),
-            url_id.map_or_else(|| "back:main".to_string(), |id| format!("back:main:preview:{}", id)),
-        )],
-    ]);
+    ];
+
+    // Добавляем кнопку для burn_subtitles только если download_subtitles включен
+    if download_subs {
+        let mut burn_args = FluentArgs::new();
+        let status = if burn_subs {
+            i18n::t(&lang, "menu.burn_subtitles_on")
+        } else {
+            i18n::t(&lang, "menu.burn_subtitles_off")
+        };
+        burn_args.set("status", status);
+
+        keyboard_rows.push(vec![InlineKeyboardButton::callback(
+            i18n::t_args(&lang, "menu.burn_subtitles_button", &burn_args),
+            "video:toggle_burn_subs",
+        )]);
+    }
+
+    keyboard_rows.push(vec![InlineKeyboardButton::callback(
+        i18n::t(&lang, "common.back"),
+        url_id.map_or_else(|| "back:main".to_string(), |id| format!("back:main:preview:{}", id)),
+    )]);
+
+    let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
 
     let quality_display = match current_quality.as_str() {
         "1080p" => "🎬 1080p (Full HD)",
@@ -747,6 +768,45 @@ pub async fn show_language_menu(
     Ok(())
 }
 
+/// Shows language selection menu for new users during onboarding.
+///
+/// Sends a new message with language selection buttons without a back button.
+/// This is used during the /start flow for users who haven't selected a language yet.
+///
+/// # Arguments
+///
+/// * `bot` - Telegram bot instance
+/// * `chat_id` - User chat ID
+///
+/// # Returns
+///
+/// Returns `ResponseResult<Message>` with the sent message or an error.
+pub async fn show_language_selection_menu(bot: &Bot, chat_id: ChatId) -> ResponseResult<Message> {
+    // Use default language (ru) for the welcome message since user hasn't selected yet
+    let lang = i18n::lang_from_code("ru");
+
+    let mut buttons = Vec::new();
+    for (code, name) in i18n::SUPPORTED_LANGS.iter() {
+        let flag = match *code {
+            "en" => "🇺🇸",
+            "ru" => "🇷🇺",
+            "fr" => "🇫🇷",
+            "de" => "🇩🇪",
+            _ => "🏳️",
+        };
+        let label = format!("{} {}", flag, name);
+        // Use special callback for new user language selection
+        let callback = format!("language:select_new:{}", code);
+        buttons.push(vec![InlineKeyboardButton::callback(label, callback)]);
+    }
+
+    let keyboard = InlineKeyboardMarkup::new(buttons);
+    bot.send_message(chat_id, i18n::t(&lang, "menu.welcome_new_user"))
+        .reply_markup(keyboard)
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .await
+}
+
 fn build_enhanced_menu(
     lang: &LanguageIdentifier,
     format_emoji: &str,
@@ -775,7 +835,7 @@ fn build_enhanced_menu(
         ],
         vec![
             InlineKeyboardButton::callback(i18n::t(lang, "menu.language_button"), "mode:language"),
-            InlineKeyboardButton::callback(i18n::t(lang, "menu.button_help"), "main:help"),
+            InlineKeyboardButton::callback(i18n::t(lang, "menu.button_feedback"), "main:feedback"),
         ],
     ]);
 
@@ -1157,6 +1217,11 @@ pub async fn handle_menu_callback(
                         // Edit message to show help
                         show_help_menu(&bot, chat_id, message_id).await?;
                     }
+                    "feedback" => {
+                        // Delete current message and send feedback prompt
+                        let _ = bot.delete_message(chat_id, message_id).await;
+                        let _ = crate::telegram::feedback::send_feedback_prompt(&bot, chat_id, &lang).await;
+                    }
                     _ => {}
                 }
             } else if let Some(plan) = data.strip_prefix("subscribe:") {
@@ -1222,11 +1287,16 @@ pub async fn handle_menu_callback(
                             }
                             Err(e) => {
                                 log::error!("Failed to cancel subscription: {}", e);
+
+                                // Check if subscription is already non-recurring
+                                let message = if e.contains("already non-recurring") {
+                                    "ℹ️ У тебя разовая подписка без автопродления\\. Она будет действовать до конца оплаченного периода\\."
+                                } else {
+                                    "❌ Не удалось отменить подписку\\. Попробуй позже или обратись к администратору\\."
+                                };
+
                                 let _ = bot
-                                    .send_message(
-                                        chat_id,
-                                        "❌ Не удалось отменить подписку\\. Попробуй позже или обратись к администратору\\.",
-                                    )
+                                    .send_message(chat_id, message)
                                     .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                                     .await;
                             }
@@ -1237,6 +1307,51 @@ pub async fn handle_menu_callback(
                             .text("Неизвестное действие")
                             .await?;
                     }
+                }
+            } else if let Some(lang_code) = data.strip_prefix("language:select_new:") {
+                // Handle language selection for new users (during onboarding)
+                if i18n::SUPPORTED_LANGS
+                    .iter()
+                    .any(|(code, _)| code.eq_ignore_ascii_case(lang_code))
+                {
+                    if let Ok(conn) = db::get_connection(&db_pool) {
+                        let username = q.from.username.clone();
+                        // Create user with selected language
+                        if let Err(e) = db::create_user_with_language(&conn, chat_id.0, username, lang_code) {
+                            log::warn!("Failed to create user with language: {}", e);
+                        } else {
+                            log::info!(
+                                "New user created with language: chat_id={}, language={}",
+                                chat_id.0,
+                                lang_code
+                            );
+                        }
+                    }
+
+                    let new_lang = i18n::lang_from_code(lang_code);
+                    if let Err(e) = setup_chat_bot_commands(&bot, chat_id, &new_lang).await {
+                        log::warn!("Failed to set chat-specific commands for lang {}: {}", lang_code, e);
+                    }
+                    let _ = bot
+                        .answer_callback_query(callback_id.clone())
+                        .text(i18n::t(&new_lang, "menu.language_saved"))
+                        .await;
+
+                    // Delete language selection message and show main menu
+                    let _ = bot.delete_message(chat_id, message_id).await;
+                    let _ = show_enhanced_main_menu(&bot, chat_id, Arc::clone(&db_pool)).await;
+
+                    // Send random voice message in background
+                    let bot_voice = bot.clone();
+                    let chat_id_voice = chat_id;
+                    tokio::spawn(async move {
+                        crate::telegram::voice::send_random_voice_message(bot_voice, chat_id_voice).await;
+                    });
+                } else {
+                    let fallback_lang = i18n::lang_from_code("ru");
+                    bot.answer_callback_query(callback_id)
+                        .text(i18n::t(&fallback_lang, "menu.language_invalid"))
+                        .await?;
                 }
             } else if let Some(lang_data) = data.strip_prefix("language:set:") {
                 let mut parts = lang_data.split(':');
@@ -1306,6 +1421,27 @@ pub async fn handle_menu_callback(
 
                 db::set_user_send_as_document(&conn, chat_id.0, new_value)
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+
+                // Refresh the menu
+                show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
+            } else if data == "video:toggle_burn_subs" {
+                let _ = bot.answer_callback_query(callback_id.clone()).await;
+                let conn = db::get_connection(&db_pool)
+                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+
+                // Get the current value and toggle it
+                let current_value = db::get_user_burn_subtitles(&conn, chat_id.0).unwrap_or(false);
+                let new_value = !current_value;
+
+                db::set_user_burn_subtitles(&conn, chat_id.0, new_value)
+                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+
+                log::info!(
+                    "User {} toggled burn_subtitles: {} -> {}",
+                    chat_id.0,
+                    current_value,
+                    new_value
+                );
 
                 // Refresh the menu
                 show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
@@ -1859,6 +1995,96 @@ pub async fn handle_menu_callback(
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
                 // Remove "export:" prefix
                 handle_export(&bot, chat_id, format, Arc::clone(&db_pool)).await?;
+            } else if data.starts_with("analytics:") {
+                // Handle analytics callback buttons
+                let _ = bot.answer_callback_query(callback_id.clone()).await;
+
+                // Check administrator privileges
+                let admin_username = ADMIN_USERNAME.as_str();
+                let is_admin = !admin_username.is_empty() && q.from.username.as_deref() == Some(admin_username);
+
+                if !is_admin {
+                    bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
+                        .await?;
+                    return Ok(());
+                }
+
+                match data.as_str() {
+                    "analytics:refresh" => {
+                        // Re-generate and update analytics dashboard
+                        use crate::telegram::analytics::generate_analytics_dashboard;
+                        let dashboard = generate_analytics_dashboard(&db_pool).await;
+
+                        let keyboard = InlineKeyboardMarkup::new(vec![
+                            vec![
+                                InlineKeyboardButton::callback("🔄 Обновить", "analytics:refresh"),
+                                InlineKeyboardButton::callback("📊 Детали", "analytics:details"),
+                            ],
+                            vec![InlineKeyboardButton::callback("🔙 Закрыть", "analytics:close")],
+                        ]);
+
+                        bot.edit_message_text(chat_id, message_id, dashboard)
+                            .parse_mode(ParseMode::MarkdownV2)
+                            .reply_markup(keyboard)
+                            .await?;
+                    }
+                    "analytics:details" => {
+                        // Show detailed metrics menu
+                        let details_text = "📊 *Детальные Метрики*\n\nВыберите категорию:";
+                        let keyboard = InlineKeyboardMarkup::new(vec![
+                            vec![InlineKeyboardButton::callback("⚡ Performance", "metrics:performance")],
+                            vec![InlineKeyboardButton::callback("💰 Business", "metrics:business")],
+                            vec![InlineKeyboardButton::callback("👥 Engagement", "metrics:engagement")],
+                            vec![InlineKeyboardButton::callback("🔙 Назад", "analytics:refresh")],
+                        ]);
+
+                        bot.edit_message_text(chat_id, message_id, details_text)
+                            .parse_mode(ParseMode::MarkdownV2)
+                            .reply_markup(keyboard)
+                            .await?;
+                    }
+                    "analytics:close" => {
+                        // Delete the message
+                        let _ = bot.delete_message(chat_id, message_id).await;
+                    }
+                    _ => {}
+                }
+            } else if data.starts_with("metrics:") {
+                // Handle detailed metrics category callbacks
+                let _ = bot.answer_callback_query(callback_id.clone()).await;
+
+                // Check administrator privileges
+                let admin_username = ADMIN_USERNAME.as_str();
+                let is_admin = !admin_username.is_empty() && q.from.username.as_deref() == Some(admin_username);
+
+                if !is_admin {
+                    bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
+                        .await?;
+                    return Ok(());
+                }
+
+                let category = data.strip_prefix("metrics:").unwrap_or("");
+
+                use crate::telegram::analytics::generate_metrics_report;
+                let metrics_text = generate_metrics_report(&db_pool, Some(category.to_string())).await;
+
+                let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+                    "🔙 К общей панели",
+                    "analytics:refresh",
+                )]]);
+
+                bot.edit_message_text(chat_id, message_id, metrics_text)
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .reply_markup(keyboard)
+                    .await?;
+            } else if data.starts_with("downloads:") {
+                // Handle downloads callback queries
+                use crate::telegram::downloads::handle_downloads_callback;
+                handle_downloads_callback(&bot, callback_id.clone(), chat_id, message_id, &data, db_pool.clone())
+                    .await?;
+            } else if data.starts_with("cuts:") {
+                use crate::telegram::cuts::handle_cuts_callback;
+                handle_cuts_callback(&bot, callback_id.clone(), chat_id, message_id, &data, db_pool.clone()).await?;
             } else if data.starts_with("admin:") {
                 // Handle admin panel callbacks
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
@@ -1895,13 +2121,22 @@ pub async fn handle_menu_callback(
                                         };
 
                                         let sub_status = if user.telegram_charge_id.is_some() {
-                                            "💫 Активная подписка"
+                                            if user.is_recurring {
+                                                "💫🔄 Активная подписка \\(автопродление\\)"
+                                            } else {
+                                                "💫 Активная подписка \\(разовая\\)"
+                                            }
                                         } else {
                                             "🔒 Нет подписки"
                                         };
 
                                         let expires_info = if let Some(expires) = &user.subscription_expires_at {
-                                            format!("\n📅 Истекает: {}", expires)
+                                            let escaped_expires = expires.replace("-", "\\-").replace(":", "\\:");
+                                            if user.is_recurring {
+                                                format!("\n📅 Следующее списание: {}", escaped_expires)
+                                            } else {
+                                                format!("\n📅 Истекает: {}", escaped_expires)
+                                            }
                                         } else {
                                             String::new()
                                         };
