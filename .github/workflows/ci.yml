@@ -22,6 +22,18 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg python3-pip
+          pip3 install yt-dlp
+
+      - name: Verify dependencies
+        run: |
+          ffmpeg -version
+          ffprobe -version
+          yt-dlp --version
+
       - name: Run tests
         run: cargo test --verbose
 
