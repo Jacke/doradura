@@ -106,6 +106,98 @@ pub async fn handle_message(
             return Ok(None);
         }
 
+        // Video clip sessions (from /downloads or /cuts -> ✂️ Вырезка)
+        if !text.trim().starts_with('/') {
+            if let Ok(conn) = db::get_connection(&db_pool) {
+                if let Ok(Some(session)) = db::get_active_video_clip_session(&conn, msg.chat.id.0) {
+                    let trimmed = text.trim();
+                    if is_cancel_text(trimmed) {
+                        let _ = db::delete_video_clip_session_by_user(&conn, msg.chat.id.0);
+                        bot.send_message(msg.chat.id, "✂️ Вырезка отменена.").await.ok();
+                        return Ok(None);
+                    }
+
+                    // Get video duration from source
+                    let video_duration = match session.source_kind.as_str() {
+                        "download" => db::get_download_history_entry(&conn, msg.chat.id.0, session.source_id)
+                            .ok()
+                            .flatten()
+                            .and_then(|d| d.duration),
+                        "cut" => db::get_cut_entry(&conn, msg.chat.id.0, session.source_id)
+                            .ok()
+                            .flatten()
+                            .and_then(|c| c.duration),
+                        _ => None,
+                    };
+
+                    if let Some((segments, segments_text, speed)) = parse_segments_spec(trimmed, video_duration) {
+                        let _ = db::delete_video_clip_session_by_user(&conn, msg.chat.id.0);
+
+                        let bot_clone = bot.clone();
+                        let db_pool_clone = db_pool.clone();
+                        let chat_id = msg.chat.id;
+                        tokio::spawn(async move {
+                            if let Err(e) = process_video_clip(
+                                bot_clone,
+                                db_pool_clone,
+                                chat_id,
+                                session,
+                                segments,
+                                segments_text,
+                                speed,
+                            )
+                            .await
+                            {
+                                log::warn!("Failed to process video clip: {}", e);
+                            }
+                        });
+
+                        return Ok(None);
+                    } else {
+                        let extra_note = if session.output_kind == "video_note" {
+                            "\n\n💡 Если длительность превысит 60 секунд \\(лимит Telegram для кружков\\), видео будет автоматически обрезано\\."
+                        } else {
+                            ""
+                        };
+                        bot.send_message(
+                            msg.chat.id,
+                            format!(
+                                "❌ Не понял интервалы\\.\n\nОтправь в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\nПример: `00:10-00:25, 01:00-01:10`\n\nИли команды: `full`, `first30`, `last30`, `middle30`\\.\n\n💡 Можно добавить скорость: `first30 2x`, `full 1\\.5x`\\.\n\nИли напиши `отмена`\\.{extra_note}",
+                            ),
+                        )
+                        .parse_mode(ParseMode::MarkdownV2)
+                        .await
+                        .ok();
+                        return Ok(None);
+                    }
+                }
+            }
+        }
+
+        // Check if user is waiting to provide feedback
+        if crate::telegram::feedback::is_waiting_for_feedback(msg.chat.id.0).await {
+            // Get user info for admin notification
+            let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
+            let first_name = msg.from.as_ref().map(|u| u.first_name.as_str()).unwrap_or("Unknown");
+
+            // Send feedback to admin
+            let _ = crate::telegram::feedback::notify_admin_feedback(
+                &bot,
+                msg.chat.id.0,
+                username,
+                first_name,
+                text,
+                db_pool.clone(),
+            )
+            .await;
+
+            // Send confirmation to user and return to main menu
+            let _ = crate::telegram::feedback::send_feedback_confirmation(&bot, msg.chat.id, &lang).await;
+            let _ = crate::telegram::show_enhanced_main_menu(&bot, msg.chat.id, db_pool.clone()).await;
+
+            return Ok(None);
+        }
+
         // Use cached regex for better performance - find all URLs
         let urls: Vec<&str> = URL_REGEX.find_iter(text).map(|m| m.as_str()).collect();
 
@@ -508,7 +600,12 @@ pub async fn handle_message(
 
                         // Check whether this is a duration-related error
                         let error_message = if let AppError::Download(ref msg) = e {
-                            if msg.contains("Видео слишком длинное") {
+                            // If it's already translated error (from preview), use it
+                            if msg.contains("слишком длинное")
+                                || msg.contains("too long")
+                                || msg.contains("zu lang")
+                                || msg.contains("trop long")
+                            {
                                 msg.clone()
                             } else {
                                 i18n::t(&lang, "commands.preview_info_failed")
@@ -535,6 +632,615 @@ pub async fn handle_message(
     Ok(None)
 }
 
+fn is_cancel_text(text: &str) -> bool {
+    let lower = text.trim().to_lowercase();
+    matches!(lower.as_str(), "отмена" | "cancel" | "/cancel" | "❌" | "x")
+}
+
+fn parse_command_segment(text: &str, video_duration: Option<i64>) -> Option<(i64, i64, String)> {
+    let normalized = text.trim().to_lowercase();
+
+    // Strip speed modifiers if present (e.g., "first30 2x", "full speed1.5")
+    // We'll just parse the segment here, speed will be handled separately
+    let segment_part = normalized.split_whitespace().next().unwrap_or(&normalized);
+
+    // full - всё видео
+    if segment_part == "full" {
+        let duration = video_duration?;
+        let end = duration.min(60); // Для кружков максимум 60 секунд
+        return Some((0, end, format!("00:00-{}", format_timestamp(end))));
+    }
+
+    // first<N> - первые N секунд (first30, first15, etc.)
+    if let Some(num_str) = segment_part.strip_prefix("first") {
+        if let Ok(secs) = num_str.parse::<i64>() {
+            if secs > 0 && secs <= 60 {
+                return Some((0, secs, format!("00:00-{}", format_timestamp(secs))));
+            }
+        }
+    }
+
+    // last<N> - последние N секунд (last30, last15, etc.)
+    if let Some(num_str) = segment_part.strip_prefix("last") {
+        if let Ok(secs) = num_str.parse::<i64>() {
+            let duration = video_duration?;
+            if secs > 0 && secs <= 60 && secs <= duration {
+                let start = (duration - secs).max(0);
+                return Some((
+                    start,
+                    duration,
+                    format!("{}-{}", format_timestamp(start), format_timestamp(duration)),
+                ));
+            }
+        }
+    }
+
+    // middle<N> - N секунд из середины (middle30, middle15, etc.)
+    if let Some(num_str) = segment_part.strip_prefix("middle") {
+        if let Ok(secs) = num_str.parse::<i64>() {
+            let duration = video_duration?;
+            if secs > 0 && secs <= 60 && secs <= duration {
+                let start = ((duration - secs) / 2).max(0);
+                let end = start + secs;
+                return Some((
+                    start,
+                    end,
+                    format!("{}-{}", format_timestamp(start), format_timestamp(end)),
+                ));
+            }
+        }
+    }
+
+    None
+}
+
+fn parse_time_range_secs(text: &str) -> Option<(i64, i64)> {
+    let normalized = text.trim().replace(['—', '–', '−'], "-").replace(' ', "");
+    let (start_str, end_str) = normalized.split_once('-')?;
+    let start = parse_timestamp_secs(start_str)?;
+    let end = parse_timestamp_secs(end_str)?;
+    if end <= start {
+        return None;
+    }
+    Some((start, end))
+}
+
+fn parse_timestamp_secs(text: &str) -> Option<i64> {
+    let parts: Vec<&str> = text.split(':').collect();
+    match parts.len() {
+        2 => {
+            let minutes: i64 = parts[0].parse().ok()?;
+            let seconds: i64 = parts[1].parse().ok()?;
+            if minutes < 0 || !(0..60).contains(&seconds) {
+                return None;
+            }
+            Some(minutes * 60 + seconds)
+        }
+        3 => {
+            let hours: i64 = parts[0].parse().ok()?;
+            let minutes: i64 = parts[1].parse().ok()?;
+            let seconds: i64 = parts[2].parse().ok()?;
+            if hours < 0 || minutes < 0 || !(0..60).contains(&minutes) || !(0..60).contains(&seconds) {
+                return None;
+            }
+            Some(hours * 3600 + minutes * 60 + seconds)
+        }
+        _ => None,
+    }
+}
+
+fn format_timestamp(secs: i64) -> String {
+    let secs = secs.max(0);
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    if h > 0 {
+        format!("{h:02}:{m:02}:{s:02}")
+    } else {
+        format!("{m:02}:{s:02}")
+    }
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+struct CutSegment {
+    start_secs: i64,
+    end_secs: i64,
+}
+
+fn parse_segments_spec(text: &str, video_duration: Option<i64>) -> Option<(Vec<CutSegment>, String, Option<f32>)> {
+    let normalized = text.trim().replace(['—', '–', '−'], "-");
+
+    // Extract speed modifier from anywhere in the text (e.g., "first30 2x", "1.5x full", "speed2 middle30")
+    let speed = parse_speed_modifier(&normalized);
+
+    let raw_parts: Vec<&str> = normalized
+        .split([',', ';', '\n'])
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if raw_parts.is_empty() {
+        return None;
+    }
+
+    let mut segments = Vec::new();
+    let mut pretty_parts = Vec::new();
+    for part in raw_parts {
+        // Try parsing as command first (full, first30, last30, etc.)
+        if let Some((start_secs, end_secs, pretty)) = parse_command_segment(part, video_duration) {
+            segments.push(CutSegment { start_secs, end_secs });
+            pretty_parts.push(pretty);
+        } else if let Some((start_secs, end_secs)) = parse_time_range_secs(part) {
+            // Fall back to time range parsing
+            segments.push(CutSegment { start_secs, end_secs });
+            pretty_parts.push(format!(
+                "{}-{}",
+                format_timestamp(start_secs),
+                format_timestamp(end_secs)
+            ));
+        } else {
+            return None; // Invalid format
+        }
+    }
+
+    Some((segments, pretty_parts.join(", "), speed))
+}
+
+fn parse_speed_modifier(text: &str) -> Option<f32> {
+    let lower = text.to_lowercase();
+
+    // Look for patterns like: "2x", "1.5x", "speed2", "speed1.5", "x2", "x1.5"
+    for word in lower.split_whitespace() {
+        // "2x", "1.5x"
+        if let Some(num_str) = word.strip_suffix('x') {
+            if let Ok(speed) = num_str.parse::<f32>() {
+                if speed > 0.0 && speed <= 2.0 {
+                    return Some(speed);
+                }
+            }
+        }
+        // "x2", "x1.5"
+        if let Some(num_str) = word.strip_prefix('x') {
+            if let Ok(speed) = num_str.parse::<f32>() {
+                if speed > 0.0 && speed <= 2.0 {
+                    return Some(speed);
+                }
+            }
+        }
+        // "speed2", "speed1.5"
+        if let Some(num_str) = word.strip_prefix("speed") {
+            if let Ok(speed) = num_str.parse::<f32>() {
+                if speed > 0.0 && speed <= 2.0 {
+                    return Some(speed);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+async fn process_video_clip(
+    bot: Bot,
+    db_pool: Arc<DbPool>,
+    chat_id: ChatId,
+    session: db::VideoClipSession,
+    segments: Vec<CutSegment>,
+    segments_text: String,
+    speed: Option<f32>,
+) -> Result<(), AppError> {
+    use tokio::process::Command;
+
+    let total_len: i64 = segments.iter().map(|s| (s.end_secs - s.start_secs).max(0)).sum();
+    let is_video_note = session.output_kind == "video_note";
+    let max_len_secs = if is_video_note { 60 } else { 60 * 10 };
+
+    // For video notes, truncate segments to fit within 60 seconds and notify user
+    let (adjusted_segments, truncated) = if is_video_note && total_len > max_len_secs {
+        let mut adjusted = Vec::new();
+        let mut accumulated = 0i64;
+
+        for seg in &segments {
+            let seg_len = seg.end_secs - seg.start_secs;
+            if accumulated >= max_len_secs {
+                break; // Already reached limit
+            }
+
+            if accumulated + seg_len <= max_len_secs {
+                // Segment fits completely
+                adjusted.push(*seg);
+                accumulated += seg_len;
+            } else {
+                // Partial segment to fill remaining time
+                let remaining = max_len_secs - accumulated;
+                adjusted.push(CutSegment {
+                    start_secs: seg.start_secs,
+                    end_secs: seg.start_secs + remaining,
+                });
+                break;
+            }
+        }
+
+        (adjusted, true)
+    } else if !is_video_note && total_len > max_len_secs {
+        // For regular cuts, reject if too long
+        bot.send_message(chat_id, "❌ Слишком длинная вырезка (макс. 10 минут).")
+            .await
+            .ok();
+        return Ok(());
+    } else {
+        (segments.clone(), false)
+    };
+
+    // Calculate actual length after truncation
+    let actual_total_len: i64 = adjusted_segments
+        .iter()
+        .map(|s| (s.end_secs - s.start_secs).max(0))
+        .sum();
+
+    // Notify user if segments were truncated
+    if truncated {
+        bot.send_message(
+            chat_id,
+            format!(
+                "⚠️ Запрошенная длительность {} секунд превышает лимит Telegram для кружков (60 сек).\n\n✂️ Будет использовано первые {} секунд.",
+                total_len, actual_total_len
+            ),
+        ).await.ok();
+    }
+
+    let conn = db::get_connection(&db_pool)?;
+    let (file_id, original_url, base_title, video_quality) = match session.source_kind.as_str() {
+        "download" => {
+            let download = match db::get_download_history_entry(&conn, chat_id.0, session.source_id)? {
+                Some(d) => d,
+                None => {
+                    bot.send_message(chat_id, "❌ Не нашёл этот файл в истории.").await.ok();
+                    return Ok(());
+                }
+            };
+            if download.format != "mp4" {
+                bot.send_message(chat_id, "❌ Вырезка доступна только для MP4.")
+                    .await
+                    .ok();
+                return Ok(());
+            }
+            let fid = match download.file_id.clone() {
+                Some(fid) => fid,
+                None => {
+                    bot.send_message(chat_id, "❌ У этого файла нет file_id для обработки.")
+                        .await
+                        .ok();
+                    return Ok(());
+                }
+            };
+            (fid, download.url, download.title, download.video_quality)
+        }
+        "cut" => {
+            let cut = match db::get_cut_entry(&conn, chat_id.0, session.source_id)? {
+                Some(c) => c,
+                None => {
+                    bot.send_message(chat_id, "❌ Не нашёл эту вырезку.").await.ok();
+                    return Ok(());
+                }
+            };
+            let fid = match cut.file_id.clone() {
+                Some(fid) => fid,
+                None => {
+                    bot.send_message(chat_id, "❌ У этой вырезки нет file_id для обработки.")
+                        .await
+                        .ok();
+                    return Ok(());
+                }
+            };
+            (
+                fid,
+                if !cut.original_url.is_empty() {
+                    cut.original_url
+                } else {
+                    session.original_url.clone()
+                },
+                cut.title,
+                cut.video_quality,
+            )
+        }
+        _ => {
+            bot.send_message(chat_id, "❌ Неизвестный источник вырезки.").await.ok();
+            return Ok(());
+        }
+    };
+
+    let status_msg = if let Some(spd) = speed {
+        if is_video_note {
+            format!("⭕️ Делаю кружок: {}… (скорость {}x)", segments_text, spd)
+        } else {
+            format!("✂️ Вырезаю: {}… (скорость {}x)", segments_text, spd)
+        }
+    } else if is_video_note {
+        format!("⭕️ Делаю кружок: {}…", segments_text)
+    } else {
+        format!("✂️ Вырезаю: {}…", segments_text)
+    };
+
+    let status = bot.send_message(chat_id, status_msg).await?;
+
+    let temp_dir = std::path::PathBuf::from("/tmp/doradura_clip");
+    tokio::fs::create_dir_all(&temp_dir).await.ok();
+
+    let input_path = temp_dir.join(format!("input_{}_{}.mp4", chat_id.0, session.source_id));
+    let output_path = temp_dir.join(format!(
+        "{}_{}_{}.mp4",
+        if is_video_note { "circle" } else { "cut" },
+        chat_id.0,
+        uuid::Uuid::new_v4()
+    ));
+
+    let _ = crate::telegram::download_file_from_telegram(&bot, &file_id, Some(input_path.clone()))
+        .await
+        .map_err(AppError::from)?;
+
+    let base_filter_av = build_cut_filter(&adjusted_segments, true);
+    let base_filter_v = build_cut_filter(&adjusted_segments, false);
+
+    // Apply speed modification if requested
+    let (filter_av, filter_v, map_v_label, map_a_label, crf) = if is_video_note {
+        let video_note_post = "scale=640:640:force_original_aspect_ratio=increase,crop=640:640,format=yuv420p";
+
+        if let Some(spd) = speed {
+            // Apply speed change: setpts for video, atempo for audio
+            let setpts_factor = 1.0 / spd;
+            let atempo_filter = if spd > 2.0 {
+                format!("atempo=2.0,atempo={}", spd / 2.0)
+            } else if spd < 0.5 {
+                format!("atempo=0.5,atempo={}", spd / 0.5)
+            } else {
+                format!("atempo={}", spd)
+            };
+
+            (
+                format!(
+                    "{base_filter_av};[v]setpts={}*PTS,{video_note_post}[vout];[a]{atempo_filter}[aout]",
+                    setpts_factor
+                ),
+                format!(
+                    "{base_filter_v};[v]setpts={}*PTS,{video_note_post}[vout]",
+                    setpts_factor
+                ),
+                "[vout]",
+                "[aout]",
+                "28",
+            )
+        } else {
+            (
+                format!("{base_filter_av};[v]{video_note_post}[vout]"),
+                format!("{base_filter_v};[v]{video_note_post}[vout]"),
+                "[vout]",
+                "[a]",
+                "28",
+            )
+        }
+    } else if let Some(spd) = speed {
+        let setpts_factor = 1.0 / spd;
+        let atempo_filter = if spd > 2.0 {
+            format!("atempo=2.0,atempo={}", spd / 2.0)
+        } else if spd < 0.5 {
+            format!("atempo=0.5,atempo={}", spd / 0.5)
+        } else {
+            format!("atempo={}", spd)
+        };
+
+        (
+            format!(
+                "{base_filter_av};[v]setpts={}*PTS[vout];[a]{atempo_filter}[aout]",
+                setpts_factor
+            ),
+            format!("{base_filter_v};[v]setpts={}*PTS[vout]", setpts_factor),
+            "[vout]",
+            "[aout]",
+            "23",
+        )
+    } else {
+        (base_filter_av, base_filter_v, "[v]", "[a]", "23")
+    };
+
+    log::info!("🎬 Starting ffmpeg with filter: {}", filter_av);
+    log::info!("🎬 Input: {:?}, Output: {:?}", input_path, output_path);
+
+    let output = Command::new("ffmpeg")
+        .arg("-hide_banner")
+        .arg("-loglevel")
+        .arg("info")  // Changed from "error" to "info" for debugging
+        .arg("-i")
+        .arg(&input_path)
+        .arg("-filter_complex")
+        .arg(&filter_av)
+        .arg("-map")
+        .arg(map_v_label)
+        .arg("-map")
+        .arg(map_a_label)
+        .arg("-c:v")
+        .arg("libx264")
+        .arg("-preset")
+        .arg("fast")
+        .arg("-crf")
+        .arg(crf)
+        .arg("-c:a")
+        .arg("aac")
+        .arg("-b:a")
+        .arg("192k")
+        .arg("-movflags")
+        .arg("+faststart")
+        .arg("-y")
+        .arg(&output_path)
+        .output()
+        .await
+        .map_err(AppError::from)?;
+
+    log::info!("✅ ffmpeg processing completed with status: {}", output.status);
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let retry_output = Command::new("ffmpeg")
+            .arg("-hide_banner")
+            .arg("-loglevel")
+            .arg("error")
+            .arg("-i")
+            .arg(&input_path)
+            .arg("-filter_complex")
+            .arg(&filter_v)
+            .arg("-map")
+            .arg(map_v_label)
+            .arg("-c:v")
+            .arg("libx264")
+            .arg("-preset")
+            .arg("fast")
+            .arg("-crf")
+            .arg(crf)
+            .arg("-movflags")
+            .arg("+faststart")
+            .arg("-y")
+            .arg(&output_path)
+            .output()
+            .await
+            .map_err(AppError::from)?;
+
+        if !retry_output.status.success() {
+            let stderr2 = String::from_utf8_lossy(&retry_output.stderr);
+            bot.delete_message(chat_id, status.id).await.ok();
+            bot.send_message(chat_id, format!("❌ ffmpeg error: {}\n{}", stderr, stderr2))
+                .await
+                .ok();
+            tokio::fs::remove_file(&input_path).await.ok();
+            tokio::fs::remove_file(&output_path).await.ok();
+            return Ok(());
+        }
+    }
+
+    let file_size = tokio::fs::metadata(&output_path)
+        .await
+        .map(|m| m.len() as i64)
+        .unwrap_or(0);
+
+    let (output_kind, clip_title) = if is_video_note {
+        ("video_note", format!("{} [circle {}]", base_title, segments_text))
+    } else {
+        ("clip", format!("{} [cut {}]", base_title, segments_text))
+    };
+
+    let sent = if is_video_note {
+        match bot
+            .send_video_note(chat_id, teloxide::types::InputFile::file(output_path.clone()))
+            .duration(actual_total_len.max(1) as u32)
+            .length(640)
+            .await
+        {
+            Ok(m) => m,
+            Err(e) => {
+                bot.delete_message(chat_id, status.id).await.ok();
+                let msg = if e.to_string().to_lowercase().contains("file is too big") {
+                    "❌ Кружок получился слишком большим для Telegram. Уменьши интервал.".to_string()
+                } else {
+                    format!("❌ Не удалось отправить кружок: {e}")
+                };
+                bot.send_message(chat_id, msg).await.ok();
+                tokio::fs::remove_file(&input_path).await.ok();
+                tokio::fs::remove_file(&output_path).await.ok();
+                return Ok(());
+            }
+        }
+    } else {
+        match bot
+            .send_video(chat_id, teloxide::types::InputFile::file(output_path.clone()))
+            .caption(&clip_title)
+            .await
+        {
+            Ok(m) => m,
+            Err(e) => {
+                bot.delete_message(chat_id, status.id).await.ok();
+                bot.send_message(chat_id, format!("❌ Не удалось отправить вырезку: {e}"))
+                    .await
+                    .ok();
+                tokio::fs::remove_file(&input_path).await.ok();
+                tokio::fs::remove_file(&output_path).await.ok();
+                return Ok(());
+            }
+        }
+    };
+
+    if is_video_note {
+        bot.send_message(chat_id, clip_title.clone()).await.ok();
+    }
+
+    if !original_url.trim().is_empty() {
+        bot.send_message(chat_id, original_url.clone()).await.ok();
+    }
+    bot.delete_message(chat_id, status.id).await.ok();
+
+    let sent_file_id = if is_video_note {
+        sent.video_note().map(|v| v.file.id.0.clone())
+    } else {
+        sent.video()
+            .map(|v| v.file.id.0.clone())
+            .or_else(|| sent.document().map(|d| d.file.id.0.clone()))
+    };
+
+    if let Some(fid) = sent_file_id {
+        let segments_json = serde_json::to_string(&segments).unwrap_or_else(|_| "[]".to_string());
+        let _ = db::create_cut(
+            &conn,
+            chat_id.0,
+            &original_url,
+            &session.source_kind,
+            session.source_id,
+            output_kind,
+            &segments_json,
+            &segments_text,
+            &clip_title,
+            Some(&fid),
+            Some(file_size),
+            Some(actual_total_len.max(1)),
+            video_quality.as_deref(),
+        );
+    }
+
+    tokio::fs::remove_file(&input_path).await.ok();
+    tokio::fs::remove_file(&output_path).await.ok();
+
+    Ok(())
+}
+
+fn build_cut_filter(segments: &[CutSegment], with_audio: bool) -> String {
+    let mut parts = Vec::new();
+    for (i, seg) in segments.iter().enumerate() {
+        parts.push(format!(
+            "[0:v]trim=start={}:end={},setpts=PTS-STARTPTS[v{}]",
+            seg.start_secs, seg.end_secs, i
+        ));
+        if with_audio {
+            parts.push(format!(
+                "[0:a]atrim=start={}:end={},asetpts=PTS-STARTPTS[a{}]",
+                seg.start_secs, seg.end_secs, i
+            ));
+        }
+    }
+
+    let n = segments.len();
+    let mut concat_inputs = String::new();
+    for i in 0..n {
+        concat_inputs.push_str(&format!("[v{}]", i));
+        if with_audio {
+            concat_inputs.push_str(&format!("[a{}]", i));
+        }
+    }
+
+    if with_audio {
+        parts.push(format!("{}concat=n={}:v=1:a=1[v][a]", concat_inputs, n));
+    } else {
+        parts.push(format!("{}concat=n={}:v=1:a=0[v]", concat_inputs, n));
+    }
+
+    parts.join(";")
+}
+
 /// Handle /info command to show available formats for a URL
 ///
 /// Parses URL from command text and displays detailed information about available formats,
@@ -556,7 +1262,7 @@ pub async fn handle_message(
 /// - Displays available video formats with quality and sizes
 /// - Shows audio format information
 /// - Sends formatted message to user
-pub async fn handle_info_command(bot: Bot, msg: Message) -> ResponseResult<()> {
+pub async fn handle_info_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>) -> ResponseResult<()> {
     log::info!("════════════════════════════════════════════════════════");
     log::info!("📋 /info command called");
     log::info!("Chat ID: {}", msg.chat.id);
@@ -571,11 +1277,9 @@ pub async fn handle_info_command(bot: Bot, msg: Message) -> ResponseResult<()> {
 
         if parts.len() < 2 {
             log::warn!("⚠️  No URL provided, sending usage instructions");
+            let lang = i18n::user_lang_from_pool(&db_pool, msg.chat.id.0);
             match bot
-                .send_message(
-                    msg.chat.id,
-                    "Использование: /info <URL>\n\nПример:\n/info https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-                )
+                .send_message(msg.chat.id, i18n::t(&lang, "commands.info_usage"))
                 .await
             {
                 Ok(_) => log::info!("✅ Usage message sent successfully"),
@@ -595,11 +1299,9 @@ pub async fn handle_info_command(bot: Bot, msg: Message) -> ResponseResult<()> {
             }
             Err(e) => {
                 log::error!("❌ Failed to parse URL '{}': {}", url_text, e);
+                let lang = i18n::user_lang_from_pool(&db_pool, msg.chat.id.0);
                 match bot
-                    .send_message(
-                        msg.chat.id,
-                        "Некорректная ссылка. Пожалуйста, пришли корректную ссылку.",
-                    )
+                    .send_message(msg.chat.id, i18n::t(&lang, "commands.invalid_url"))
                     .await
                 {
                     Ok(_) => log::info!("✅ Error message sent successfully"),

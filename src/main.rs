@@ -9,10 +9,12 @@ use teloxide::types::Message;
 use tokio::signal;
 use tokio::time::{interval, sleep};
 
+use doradura::cli::{Cli, Commands};
 use doradura::i18n;
+use doradura::metadata_refresh;
 // Use library modules
 use doradura::core::{
-    config, export, history, init_logger, log_cookies_configuration,
+    alerts, config, export, history, init_logger, log_cookies_configuration,
     rate_limiter::{self, RateLimiter},
     stats, subscription,
 };
@@ -26,11 +28,13 @@ use doradura::storage::db::{
     self as db, create_user, expire_old_subscriptions, get_failed_tasks, get_user, log_request,
 };
 use doradura::storage::{create_pool, get_connection};
-use doradura::telegram::notifications::notify_admin_task_failed;
+use doradura::telegram::notifications::{notify_admin_task_failed, notify_admin_text};
 use doradura::telegram::webapp::run_webapp_server;
 use doradura::telegram::{
-    create_bot, handle_admin_command, handle_backup_command, handle_info_command, handle_menu_callback, handle_message,
-    handle_setplan_command, handle_users_command, is_message_addressed_to_bot, send_random_voice_message,
+    create_bot, handle_admin_command, handle_analytics_command, handle_backup_command, handle_charges_command,
+    handle_download_tg_command, handle_health_command, handle_info_command, handle_menu_callback, handle_message,
+    handle_metrics_command, handle_revenue_command, handle_sent_files_command, handle_setplan_command,
+    handle_transactions_command, handle_users_command, is_message_addressed_to_bot, send_random_voice_message,
     setup_all_language_commands, setup_chat_bot_commands, show_enhanced_main_menu, show_main_menu, Command,
     WebAppAction, WebAppData,
 };
@@ -42,13 +46,15 @@ use subscription::show_subscription_info;
 
 /// Main entry point for the Telegram bot
 ///
-/// Initializes logging, database connection pool, rate limiter, download queue,
-/// and starts the Telegram bot dispatcher.
+/// Parses CLI arguments and dispatches to appropriate subcommand.
 ///
 /// # Errors
 /// Returns an error if initialization fails (logging, database, bot creation).
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Parse CLI arguments
+    let cli = Cli::parse_args();
+
     // Set up global panic handler to catch panics in dispatcher
     // This allows us to log the panic and continue working instead of terminating
     std::panic::set_hook(Box::new(|panic_info| {
@@ -67,7 +73,71 @@ async fn main() -> Result<()> {
     // Load environment variables from .env if present
     let _ = dotenv();
 
+    // Dispatch to appropriate command
+    match cli.command {
+        Some(Commands::Run { webhook }) => {
+            log::info!("Running bot in normal mode (webhook: {})", webhook);
+            run_bot(webhook).await
+        }
+        Some(Commands::RunStaging { webhook }) => {
+            log::info!("Running bot in staging mode (webhook: {})", webhook);
+            // Load staging environment variables
+            if let Err(e) = dotenvy::from_filename(".env.staging") {
+                log::warn!("Failed to load .env.staging: {}", e);
+            }
+            run_bot(webhook).await
+        }
+        Some(Commands::RunWithCookies { cookies, webhook }) => {
+            log::info!("Running bot with cookies refresh (webhook: {})", webhook);
+            if let Some(cookies_path) = cookies {
+                unsafe {
+                    env::set_var("YOUTUBE_COOKIES_PATH", cookies_path);
+                }
+            }
+            run_bot(webhook).await
+        }
+        Some(Commands::RefreshMetadata {
+            limit,
+            dry_run,
+            verbose,
+        }) => {
+            log::info!(
+                "Refreshing metadata (limit: {:?}, dry_run: {}, verbose: {})",
+                limit,
+                dry_run,
+                verbose
+            );
+            run_metadata_refresh(limit, dry_run, verbose).await
+        }
+        None => {
+            // No command specified - default to running the bot
+            log::info!("No command specified, running bot in default mode");
+            run_bot(false).await
+        }
+    }
+}
+
+/// Run the metadata refresh command
+async fn run_metadata_refresh(limit: Option<usize>, dry_run: bool, verbose: bool) -> Result<()> {
+    // Create database pool
+    let db_pool =
+        Arc::new(create_pool("database.sqlite").map_err(|e| anyhow::anyhow!("Failed to create database pool: {}", e))?);
+
+    // Get bot token
+    let bot_token = env::var("BOT_TOKEN").map_err(|_| anyhow::anyhow!("BOT_TOKEN environment variable not set"))?;
+
+    // Run metadata refresh
+    metadata_refresh::refresh_missing_metadata(db_pool, bot_token, limit, dry_run, verbose).await?;
+
+    Ok(())
+}
+
+/// Run the Telegram bot
+async fn run_bot(use_webhook: bool) -> Result<()> {
     log::info!("Starting bot...");
+
+    // Initialize metrics registry
+    doradura::core::metrics::init_metrics();
 
     // Log cookies configuration at startup
     log_cookies_configuration();
@@ -104,6 +174,43 @@ async fn main() -> Result<()> {
 
     // Do not restore failed tasks on startup; users should retry manually
     // recover_failed_tasks(&download_queue, &db_pool).await;
+
+    // Start metrics HTTP server if enabled
+    if *config::metrics::ENABLED {
+        let metrics_port = *config::metrics::PORT;
+        log::info!("Starting metrics server on port {}", metrics_port);
+
+        tokio::spawn(async move {
+            if let Err(e) = doradura::core::metrics_server::start_metrics_server(metrics_port).await {
+                log::error!("Metrics server error: {}", e);
+            }
+        });
+
+        // Start background task to update bot uptime counter every 60 seconds
+        tokio::spawn(async {
+            let mut interval = interval(Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                doradura::core::metrics::BOT_UPTIME_SECONDS.inc_by(60.0);
+            }
+        });
+    } else {
+        log::info!("Metrics collection disabled (METRICS_ENABLED=false)");
+    }
+
+    // Start internal alert monitoring (sends Telegram alerts to admin based on metrics thresholds)
+    if *config::alerts::ENABLED {
+        let admin_user_id = *config::admin::ADMIN_USER_ID;
+        if admin_user_id == 0 {
+            log::warn!("Alerts enabled but ADMIN_USER_ID is not set; skipping alert monitor startup");
+        } else {
+            let _alert_manager =
+                alerts::start_alert_monitor(bot.clone(), ChatId(admin_user_id), Arc::clone(&db_pool)).await;
+            log::info!("Internal alert monitor started");
+        }
+    } else {
+        log::info!("Alerting disabled (ALERTS_ENABLED=false)");
+    }
 
     // Start Mini App web server if WEBAPP_PORT is set
     if let Ok(webapp_port_str) = env::var("WEBAPP_PORT") {
@@ -214,18 +321,16 @@ async fn main() -> Result<()> {
                                     match action_data.action.as_str() {
                                         "upgrade_plan" => {
                                             if let Some(plan) = action_data.plan {
+                                                let lang = i18n::user_lang_from_pool(&db_pool, msg.chat.id.0);
                                                 let plan_name = match plan.as_str() {
                                                     "premium" => "Premium",
                                                     "vip" => "VIP",
-                                                    _ => "неизвестный",
+                                                    _ => "Unknown",
                                                 };
 
-                                                let message = format!(
-                                                    "🚀 *Подключение тарифа {}*\n\n\
-                                                    Для подключения подписки используйте команду /plan и выберите нужный тариф.\n\n\
-                                                    Там вы сможете ознакомиться с условиями и оплатить подписку.",
-                                                    plan_name
-                                                );
+                                                let mut args = fluent_templates::fluent_bundle::FluentArgs::new();
+                                                args.set("plan", plan_name);
+                                                let message = i18n::t_args(&lang, "subscription.upgrade_prompt", &args);
 
                                                 let _ = bot.send_message(msg.chat.id, message)
                                                     .parse_mode(teloxide::types::ParseMode::MarkdownV2)
@@ -303,6 +408,14 @@ async fn main() -> Result<()> {
                             // Use the centralized payment handler with recurring subscription support
                             if let Err(e) = subscription::handle_successful_payment(&bot, &msg, Arc::clone(&db_pool)).await {
                                 log::error!("Failed to handle successful payment: {:?}", e);
+                                notify_admin_text(
+                                    &bot,
+                                    &format!(
+                                        "PAYMENT HANDLER ERROR\nchat_id: {}\nerror: {:?}",
+                                        msg.chat.id.0, e
+                                    ),
+                                )
+                                .await;
                             }
                             respond(())
                         }
@@ -323,46 +436,127 @@ async fn main() -> Result<()> {
                             }
                             match cmd {
                                 Command::Start => {
-                                    if let Ok(conn) = get_connection(&db_pool) {
+                                    // Check if user exists
+                                    let user_exists = if let Ok(conn) = get_connection(&db_pool) {
                                         let chat_id = msg.chat.id.0;
-                                        if let Ok(None) = get_user(&conn, chat_id) {
-                                            let username = msg.from.as_ref().and_then(|u| u.username.clone());
+                                        matches!(get_user(&conn, chat_id), Ok(Some(_)))
+                                    } else {
+                                        false
+                                    };
+
+                                    if user_exists {
+                                        // Existing user - show enhanced main menu
+                                        let _ = show_enhanced_main_menu(&bot, msg.chat.id, db_pool.clone()).await;
+                                        let lang = i18n::user_lang_from_pool(&db_pool, msg.chat.id.0);
+                                        if let Err(e) = setup_chat_bot_commands(&bot, msg.chat.id, &lang).await {
+                                            log::warn!("Failed to set chat-specific commands: {}", e);
+                                        }
+
+                                        // Send random voice message in background
+                                        let bot_voice = bot.clone();
+                                        let chat_id_voice = msg.chat.id;
+                                        tokio::spawn(async move {
+                                            send_random_voice_message(bot_voice, chat_id_voice).await;
+                                        });
+                                    } else {
+                                        // New user - try to auto-detect language from Telegram profile
+                                        let detected_lang = msg.from
+                                            .as_ref()
+                                            .and_then(|user| user.language_code.as_deref())
+                                            .and_then(|code| i18n::is_language_supported(code));
+
+                                        if let Some(lang_code) = detected_lang {
+                                            // Supported language detected - create user with auto-detected language
                                             log::info!(
-                                                "Creating user on /start: chat_id={}, username={:?}",
-                                                chat_id,
-                                                username
+                                                "New user on /start: chat_id={}, auto-detected language: {}",
+                                                msg.chat.id.0,
+                                                lang_code
                                             );
-                                            if let Err(e) = create_user(&conn, chat_id, username) {
-                                                log::warn!("Failed to create user on /start: {}", e);
+
+                                            if let Ok(conn) = get_connection(&db_pool) {
+                                                let username = msg.from.as_ref().and_then(|u| u.username.clone());
+                                                if let Err(e) = db::create_user_with_language(&conn, msg.chat.id.0, username, lang_code) {
+                                                    log::warn!("Failed to create user with auto-detected language: {}", e);
+                                                }
                                             }
+
+                                            // Show enhanced main menu in detected language
+                                            let _ = show_enhanced_main_menu(&bot, msg.chat.id, db_pool.clone()).await;
+                                            let lang = i18n::lang_from_code(lang_code);
+                                            if let Err(e) = setup_chat_bot_commands(&bot, msg.chat.id, &lang).await {
+                                                log::warn!("Failed to set chat-specific commands: {}", e);
+                                            }
+
+                                            // Send random voice message in background
+                                            let bot_voice = bot.clone();
+                                            let chat_id_voice = msg.chat.id;
+                                            tokio::spawn(async move {
+                                                send_random_voice_message(bot_voice, chat_id_voice).await;
+                                            });
+                                        } else {
+                                            // No language detected or unsupported - show language selection menu
+                                            log::info!(
+                                                "New user on /start: chat_id={}, no supported language detected, showing language selection",
+                                                msg.chat.id.0
+                                            );
+                                            use doradura::telegram::show_language_selection_menu;
+                                            let _ = show_language_selection_menu(&bot, msg.chat.id).await;
                                         }
                                     }
-                                    // Show enhanced main menu
-                                    let _ = show_enhanced_main_menu(&bot, msg.chat.id, db_pool.clone()).await;
-                                    let lang = i18n::user_lang_from_pool(&db_pool, msg.chat.id.0);
-                                    if let Err(e) = setup_chat_bot_commands(&bot, msg.chat.id, &lang).await {
-                                        log::warn!("Failed to set chat-specific commands: {}", e);
-                                    }
-
-                                    // Send random voice message in background
-                                    let bot_voice = bot.clone();
-                                    let chat_id_voice = msg.chat.id;
-                                    tokio::spawn(async move {
-                                        send_random_voice_message(bot_voice, chat_id_voice).await;
-                                    });
                                 }
                                 Command::Settings => {
                                     let _ = show_main_menu(&bot, msg.chat.id, db_pool).await;
                                 }
                                 Command::Info => {
                                     log::info!("⚡ Command::Info matched, calling handle_info_command");
-                                    match handle_info_command(bot.clone(), msg.clone()).await {
+                                    match handle_info_command(bot.clone(), msg.clone(), db_pool.clone()).await {
                                         Ok(_) => log::info!("✅ handle_info_command completed successfully"),
                                         Err(e) => log::error!("❌ handle_info_command failed: {:?}", e),
                                     }
                                 }
                                 Command::History => {
                                     let _ = show_history(&bot, msg.chat.id, db_pool).await;
+                                }
+                                Command::Downloads => {
+                                    log::info!("⚡ Command::Downloads matched");
+                                    // Parse command arguments for filter/search
+                                    let message_text = msg.text().unwrap_or("");
+                                    let args: Vec<&str> = message_text.split_whitespace().collect();
+
+                                    let (filter, search) = if args.len() > 1 {
+                                        match args[1].to_lowercase().as_str() {
+                                            "mp3" => (Some("mp3".to_string()), None),
+                                            "mp4" => (Some("mp4".to_string()), None),
+                                            _ => {
+                                                // Everything after /downloads is a search query
+                                                let search_query = args[1..].join(" ");
+                                                (None, Some(search_query))
+                                            }
+                                        }
+                                    } else {
+                                        (None, None)
+                                    };
+
+                                    log::info!("📥 Showing downloads page with filter={:?}, search={:?}", filter, search);
+                                    use doradura::telegram::downloads::show_downloads_page;
+                                    match show_downloads_page(&bot, msg.chat.id, db_pool.clone(), 0, filter, search).await {
+                                        Ok(_) => log::info!("✅ Downloads page shown successfully"),
+                                        Err(e) => log::error!("❌ Failed to show downloads page: {:?}", e),
+                                    }
+                                }
+                                Command::Cuts => {
+                                    let message_text = msg.text().unwrap_or("");
+                                    let args: Vec<&str> = message_text.split_whitespace().collect();
+                                    let page = if args.len() > 1 {
+                                        args[1].parse::<usize>().unwrap_or(0)
+                                    } else {
+                                        0
+                                    };
+                                    use doradura::telegram::cuts::show_cuts_page;
+                                    match show_cuts_page(&bot, msg.chat.id, db_pool.clone(), page).await {
+                                        Ok(_) => log::info!("✅ Cuts page shown successfully"),
+                                        Err(e) => log::error!("❌ Failed to show cuts page: {:?}", e),
+                                    }
                                 }
                                 Command::Stats => {
                                     log::info!("Stats command called for user {}", msg.chat.id);
@@ -390,9 +584,42 @@ async fn main() -> Result<()> {
                                     let message_text = msg.text().unwrap_or("");
                                     let _ = handle_setplan_command(&bot, msg.chat.id, username, message_text, db_pool.clone()).await;
                                 }
+                                Command::Transactions => {
+                                    let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
+                                    let _ = handle_transactions_command(&bot, msg.chat.id, username).await;
+                                }
                                 Command::Admin => {
                                     let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
                                     let _ = handle_admin_command(&bot, msg.chat.id, username, db_pool.clone()).await;
+                                }
+                                Command::Charges => {
+                                    let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
+                                    let message_text = msg.text().unwrap_or("");
+                                    // Extract arguments after "/charges "
+                                    let args = message_text.strip_prefix("/charges").unwrap_or("").trim();
+                                    let _ = handle_charges_command(&bot, msg.chat.id, username, db_pool.clone(), args).await;
+                                }
+                                Command::DownloadTg => {
+                                    let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
+                                    let message_text = msg.text().unwrap_or("");
+                                    let _ = handle_download_tg_command(&bot, msg.chat.id, username, message_text).await;
+                                }
+                                Command::SentFiles => {
+                                    let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
+                                    let message_text = msg.text().unwrap_or("");
+                                    let _ = handle_sent_files_command(&bot, msg.chat.id, username, db_pool.clone(), message_text).await;
+                                }
+                                Command::Analytics => {
+                                    let _ = handle_analytics_command(bot.clone(), msg.clone(), db_pool.clone()).await;
+                                }
+                                Command::Health => {
+                                    let _ = handle_health_command(bot.clone(), msg.clone(), db_pool.clone()).await;
+                                }
+                                Command::Metrics => {
+                                    let _ = handle_metrics_command(bot.clone(), msg.clone(), db_pool.clone(), None).await;
+                                }
+                                Command::Revenue => {
+                                    let _ = handle_revenue_command(bot.clone(), msg.clone(), db_pool.clone()).await;
                                 }
                             }
                             respond(())
@@ -478,37 +705,43 @@ async fn main() -> Result<()> {
         }))
         .branch(
             Update::filter_pre_checkout_query().endpoint({
-                move |bot: Bot, query: teloxide::types::PreCheckoutQuery| async move {
-                    let query_id = query.id;
-                    let payload = query.invoice_payload;
+                let db_pool = Arc::clone(&db_pool);
+                move |bot: Bot, query: teloxide::types::PreCheckoutQuery| {
+                    let db_pool = Arc::clone(&db_pool);
+                    async move {
+                        let query_id = query.id;
+                        let payload = query.invoice_payload;
+                        let user_id = query.from.id.0;
 
-                    log::info!("Received pre_checkout_query: id={}, payload={}", query_id, payload);
+                        log::info!("Received pre_checkout_query: id={}, payload={}", query_id, payload);
 
-                    // Validate the payload
-                    if payload.starts_with("subscription:") {
-                        // Approve the payment
-                        match bot.answer_pre_checkout_query(query_id.clone(), true).await {
-                            Ok(_) => {
-                                log::info!("✅ Pre-checkout query approved for payload: {}", payload);
+                        // Validate the payload
+                        if payload.starts_with("subscription:") {
+                            // Approve the payment
+                            match bot.answer_pre_checkout_query(query_id.clone(), true).await {
+                                Ok(_) => {
+                                    log::info!("✅ Pre-checkout query approved for payload: {}", payload);
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to answer pre_checkout_query: {:?}", e);
+                                }
                             }
-                            Err(e) => {
-                                log::error!("Failed to answer pre_checkout_query: {:?}", e);
+                        } else {
+                            // Reject unknown payment types
+                            let lang = i18n::user_lang_from_pool(&db_pool, user_id as i64);
+                            match bot.answer_pre_checkout_query(query_id.clone(), false)
+                                .error_message(i18n::t(&lang, "payment.unknown_type"))
+                                .await {
+                                Ok(_) => {
+                                    log::info!("Pre-checkout query rejected for payload: {}", payload);
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to answer pre_checkout_query: {:?}", e);
+                                }
                             }
                         }
-                    } else {
-                        // Reject unknown payment types
-                        match bot.answer_pre_checkout_query(query_id.clone(), false)
-                            .error_message("Неизвестный тип платежа")
-                            .await {
-                            Ok(_) => {
-                                log::info!("Pre-checkout query rejected for payload: {}", payload);
-                            }
-                            Err(e) => {
-                                log::error!("Failed to answer pre_checkout_query: {:?}", e);
-                            }
-                        }
+                        respond(())
                     }
-                    respond(())
                 }
             })
         )
@@ -527,7 +760,11 @@ async fn main() -> Result<()> {
         }));
 
     // Check if webhook mode is enabled
-    let webhook_url = env::var("WEBHOOK_URL").ok();
+    let webhook_url = if use_webhook {
+        env::var("WEBHOOK_URL").ok()
+    } else {
+        None
+    };
 
     if let Some(url) = webhook_url {
         // Webhook mode
@@ -809,6 +1046,7 @@ async fn process_queue(
                                 task.chat_id.0,
                                 &task.url,
                                 &error_msg,
+                                None,
                             )
                             .await;
                         }
@@ -902,6 +1140,7 @@ async fn process_queue(
                                                 task_chat_id.0,
                                                 &task_url,
                                                 &error_msg,
+                                                None,
                                             )
                                             .await;
                                         }
