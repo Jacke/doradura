@@ -43,10 +43,14 @@ pub async fn show_downloads_page(
     let conn = db::get_connection(&db_pool)
         .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
-    // Get filtered downloads (only mp3/mp4 with file_id)
-    let all_downloads =
+    // Get filtered downloads
+    let all_downloads = if file_type_filter.as_deref() == Some("edit") {
+        db::get_cuts_history_filtered(&conn, chat_id.0, search_text.as_deref())
+            .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+    } else {
         db::get_download_history_filtered(&conn, chat_id.0, file_type_filter.as_deref(), search_text.as_deref())
-            .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+            .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+    };
 
     if all_downloads.is_empty() {
         let empty_msg = if file_type_filter.is_some() || search_text.is_some() {
@@ -70,8 +74,18 @@ pub async fn show_downloads_page(
 
     // Show active filters
     if let Some(ref ft) = file_type_filter {
-        let icon = if ft == "mp3" { "🎵" } else { "🎬" };
-        text.push_str(&format!("Фильтр: {} {}\n\n", icon, ft.to_uppercase()));
+        let icon = match ft.as_str() {
+            "mp3" => "🎵",
+            "mp4" => "🎬",
+            "edit" => "✂️",
+            _ => "📄",
+        };
+        let filter_name = if ft == "edit" {
+            "Отрезки".to_string()
+        } else {
+            ft.to_uppercase()
+        };
+        text.push_str(&format!("Фильтр: {} {}\n\n", icon, filter_name));
     }
     if let Some(ref search) = search_text {
         text.push_str(&format!("🔍 Поиск: \"{}\"\n\n", search));
@@ -79,7 +93,12 @@ pub async fn show_downloads_page(
 
     // List downloads
     for download in page_downloads {
-        let icon = if download.format == "mp3" { "🎵" } else { "🎬" };
+        let icon = match download.format.as_str() {
+            "mp3" => "🎵",
+            "mp4" => "🎬",
+            "edit" => "✂️",
+            _ => "📄",
+        };
         let title = if let Some(ref author) = download.author {
             format!("{} - {}", author, download.title)
         } else {
@@ -146,7 +165,11 @@ pub async fn show_downloads_page(
         );
         keyboard_rows.push(vec![InlineKeyboardButton::callback(
             button_text,
-            format!("downloads:resend:{}", download.id),
+            if download.format == "edit" {
+                format!("downloads:resend_cut:{}", download.id)
+            } else {
+                format!("downloads:resend:{}", download.id)
+            },
         )]);
     }
 
@@ -207,6 +230,13 @@ pub async fn show_downloads_page(
         filter_row.push(InlineKeyboardButton::callback(
             "🎬 MP4".to_string(),
             format!("downloads:filter:mp4:{}", search_text.as_deref().unwrap_or("")),
+        ));
+    }
+
+    if file_type_filter.as_deref() != Some("edit") {
+        filter_row.push(InlineKeyboardButton::callback(
+            "✂️ Отрезки".to_string(),
+            format!("downloads:filter:edit:{}", search_text.as_deref().unwrap_or("")),
         ));
     }
 
@@ -308,21 +338,16 @@ pub async fn handle_downloads_callback(
                 log::error!("📥 Failed to get DB connection: {}", e);
                 teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
             })?;
-            log::info!("📥 Got DB connection");
 
             if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id).map_err(|e| {
                 log::error!("📥 Failed to get download entry: {}", e);
                 teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
             })? {
-                log::info!("📥 Found download: {:?}", download);
-                log::info!("📥 file_id: {:?}, format: {}", download.file_id, download.format);
                 if download.file_id.is_some() {
-                    log::info!("📥 Building options menu");
                     // Show options: resend as audio/document/video
                     let mut options = Vec::new();
 
                     if download.format == "mp3" {
-                        log::info!("📥 Format is mp3");
                         options.push(vec![
                             InlineKeyboardButton::callback(
                                 "🎵 Как аудио".to_string(),
@@ -333,6 +358,24 @@ pub async fn handle_downloads_callback(
                                 format!("downloads:send:document:{}", download_id),
                             ),
                         ]);
+                        options.push(vec![
+                            InlineKeyboardButton::callback(
+                                "✂️ Вырезка".to_string(),
+                                format!("downloads:clip:{}", download_id),
+                            ),
+                            InlineKeyboardButton::callback(
+                                "⭕️ Кружок".to_string(),
+                                format!("downloads:circle:{}", download_id),
+                            ),
+                            InlineKeyboardButton::callback(
+                                "🔔 Сделать рингтон".to_string(),
+                                format!("downloads:iphone_ringtone:{}", download_id),
+                            ),
+                        ]);
+                        options.push(vec![InlineKeyboardButton::callback(
+                            "⚙️ Изменить скорость".to_string(),
+                            format!("downloads:speed:{}", download_id),
+                        )]);
                     } else {
                         options.push(vec![
                             InlineKeyboardButton::callback(
@@ -354,10 +397,14 @@ pub async fn handle_downloads_callback(
                                 format!("downloads:circle:{}", download_id),
                             ),
                             InlineKeyboardButton::callback(
-                                "⚙️ Изменить скорость".to_string(),
-                                format!("downloads:speed:{}", download_id),
+                                "🔔 Сделать рингтон".to_string(),
+                                format!("downloads:iphone_ringtone:{}", download_id),
                             ),
                         ]);
+                        options.push(vec![InlineKeyboardButton::callback(
+                            "⚙️ Изменить скорость".to_string(),
+                            format!("downloads:speed:{}", download_id),
+                        )]);
                     }
 
                     options.push(vec![InlineKeyboardButton::callback(
@@ -378,12 +425,83 @@ pub async fn handle_downloads_callback(
                 }
             }
         }
+        "resend_cut" => {
+            log::info!("📥 Handling resend_cut action");
+            if parts.len() < 3 {
+                log::warn!("📥 Not enough parts for resend_cut");
+                return Ok(());
+            }
+            let cut_id = parts[2].parse::<i64>().unwrap_or(0);
+            log::info!("📥 Cut ID: {}", cut_id);
+
+            let conn = db::get_connection(&db_pool).map_err(|e| {
+                log::error!("📥 Failed to get DB connection: {}", e);
+                teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+            })?;
+
+            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id).map_err(|e| {
+                log::error!("📥 Failed to get cut entry: {}", e);
+                teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+            })? {
+                log::info!("📥 Found cut: {:?}", cut);
+                if cut.file_id.is_some() {
+                    let mut options = Vec::new();
+
+                    // Cuts are usually MP4
+                    options.push(vec![
+                        InlineKeyboardButton::callback(
+                            "🎬 Как видео".to_string(),
+                            format!("downloads:send_cut:video:{}", cut_id),
+                        ),
+                        InlineKeyboardButton::callback(
+                            "📎 Как документ".to_string(),
+                            format!("downloads:send_cut:document:{}", cut_id),
+                        ),
+                    ]);
+
+                    options.push(vec![
+                        InlineKeyboardButton::callback(
+                            "✂️ Вырезка".to_string(),
+                            format!("downloads:clip_cut:{}", cut_id),
+                        ),
+                        InlineKeyboardButton::callback(
+                            "⭕️ Кружок".to_string(),
+                            format!("downloads:circle_cut:{}", cut_id),
+                        ),
+                        InlineKeyboardButton::callback(
+                            "🔔 Сделать рингтон".to_string(),
+                            format!("downloads:iphone_ringtone_cut:{}", cut_id),
+                        ),
+                    ]);
+
+                    options.push(vec![InlineKeyboardButton::callback(
+                        "⚙️ Изменить скорость".to_string(),
+                        format!("downloads:speed_cut:{}", cut_id),
+                    )]);
+
+                    options.push(vec![InlineKeyboardButton::callback(
+                        "❌ Отмена".to_string(),
+                        "downloads:cancel".to_string(),
+                    )]);
+
+                    let keyboard = InlineKeyboardMarkup::new(options);
+
+                    bot.send_message(
+                        chat_id,
+                        format!("Как отправить отрезок *{}*?", escape_markdown(&cut.title)),
+                    )
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .reply_markup(keyboard)
+                    .await?;
+                    bot.send_message(chat_id, cut.original_url.clone()).await.ok();
+                }
+            }
+        }
         "send" => {
-            // Actually send the file in chosen format
             if parts.len() < 4 {
                 return Ok(());
             }
-            let send_type = parts[2]; // "audio", "video", "document"
+            let send_type = parts[2];
             let download_id = parts[3].parse::<i64>().unwrap_or(0);
 
             let conn = db::get_connection(&db_pool)
@@ -407,12 +525,11 @@ pub async fn handle_downloads_callback(
                     } else {
                         "doradura.mp4"
                     };
-                    let title_with_author = if let Some(ref author) = download.author {
+                    let caption = if let Some(ref author) = download.author {
                         format!("{} - {}", author, download.title)
                     } else {
                         download.title.clone()
                     };
-                    let caption = title_with_author;
 
                     let send_result = match send_type {
                         "audio" => {
@@ -423,6 +540,65 @@ pub async fn handle_downloads_callback(
                             .caption(caption.clone())
                             .await
                         }
+                        "video" => {
+                            bot.send_video(
+                                chat_id,
+                                teloxide::types::InputFile::file_id(teloxide::types::FileId(telegram_file_id.clone())),
+                            )
+                            .caption(caption.clone())
+                            .await
+                        }
+                        "document" => {
+                            send_document_forced(bot, chat_id, &telegram_file_id, upload_file_name, caption.clone())
+                                .await
+                        }
+                        _ => {
+                            bot.delete_message(chat_id, status_msg.id).await.ok();
+                            return Ok(());
+                        }
+                    };
+
+                    match send_result {
+                        Ok(_) => {
+                            bot.delete_message(chat_id, status_msg.id).await.ok();
+                            bot.delete_message(chat_id, message_id).await.ok();
+                        }
+                        Err(e) => {
+                            bot.delete_message(chat_id, status_msg.id).await.ok();
+                            bot.send_message(chat_id, format!("❌ Не удалось отправить файл: {e}"))
+                                .await
+                                .ok();
+                        }
+                    }
+                }
+            }
+        }
+        "send_cut" => {
+            if parts.len() < 4 {
+                return Ok(());
+            }
+            let send_type = parts[2];
+            let cut_id = parts[3].parse::<i64>().unwrap_or(0);
+
+            let conn = db::get_connection(&db_pool)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+
+            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+            {
+                if let Some(fid) = cut.file_id {
+                    let status_text = match send_type {
+                        "video" => "⏳ Готовлю отправку как видео…",
+                        "document" => "⏳ Готовлю отправку как документ…",
+                        _ => "⏳ Готовлю отправку…",
+                    };
+                    let status_msg = bot.send_message(chat_id, status_text).await?;
+
+                    let telegram_file_id = fid;
+                    let upload_file_name = "doradura_edit.mp4";
+                    let caption = cut.title;
+
+                    let send_result = match send_type {
                         "video" => {
                             bot.send_video(
                                 chat_id,
@@ -448,42 +624,6 @@ pub async fn handle_downloads_callback(
                             bot.delete_message(chat_id, message_id).await.ok();
                         }
                         Err(e) => {
-                            if send_type == "document" && is_file_too_big_error(&e) {
-                                log::warn!("Document send failed due to size (download_id={}): {}", download_id, e);
-
-                                let video_fallback = bot
-                                    .send_video(
-                                        chat_id,
-                                        teloxide::types::InputFile::file_id(teloxide::types::FileId(
-                                            telegram_file_id.clone(),
-                                        )),
-                                    )
-                                    .caption(caption.clone())
-                                    .await;
-
-                                bot.delete_message(chat_id, status_msg.id).await.ok();
-                                bot.delete_message(chat_id, message_id).await.ok();
-
-                                match video_fallback {
-                                    Ok(_) => {
-                                        bot.send_message(
-			                                            chat_id,
-			                                            "⚠️ Не смог отправить как документ: Telegram отклонил файл по размеру.\nОтправил как видео.\n\nЕсли нужен именно документ — сделай ✂️ вырезку поменьше и отправь её как документ.",
-			                                        )
-			                                        .await
-			                                        .ok();
-                                    }
-                                    Err(e2) => {
-                                        bot.send_message(
-                                            chat_id,
-                                            format!("❌ Не удалось отправить файл даже как видео: {e2}"),
-                                        )
-                                        .await
-                                        .ok();
-                                    }
-                                }
-                                return Ok(());
-                            }
                             bot.delete_message(chat_id, status_msg.id).await.ok();
                             bot.send_message(chat_id, format!("❌ Не удалось отправить файл: {e}"))
                                 .await
@@ -500,7 +640,6 @@ pub async fn handle_downloads_callback(
             let download_id = parts[2].parse::<i64>().unwrap_or(0);
             let conn = db::get_connection(&db_pool)
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
             if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id)
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
@@ -518,7 +657,6 @@ pub async fn handle_downloads_callback(
                         .ok();
                     return Ok(());
                 }
-
                 let session = crate::storage::db::VideoClipSession {
                     id: uuid::Uuid::new_v4().to_string(),
                     user_id: chat_id.0,
@@ -533,21 +671,52 @@ pub async fn handle_downloads_callback(
                 crate::storage::db::upsert_video_clip_session(&conn, &session).map_err(|e| {
                     teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
-
                 let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
                     "❌ Отмена".to_string(),
                     "downloads:clip_cancel".to_string(),
                 )]]);
-
-                bot.send_message(
-	                    chat_id,
-	                    "✂️ Отправь интервалы для вырезки в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\n\nПример: `00:10-00:25, 01:00-01:10`",
-	                )
-	                .parse_mode(ParseMode::MarkdownV2)
-	                .reply_markup(keyboard)
-	                .await?;
-
+                bot.send_message(chat_id, "✂️ Отправь интервалы для вырезки в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\n\nПример: `00:10-00:25, 01:00-01:10`").parse_mode(ParseMode::MarkdownV2).reply_markup(keyboard).await?;
                 bot.send_message(chat_id, download.url.clone()).await.ok();
+                bot.delete_message(chat_id, message_id).await.ok();
+            }
+        }
+        "clip_cut" => {
+            if parts.len() < 3 {
+                return Ok(());
+            }
+            let cut_id = parts[2].parse::<i64>().unwrap_or(0);
+            let conn = db::get_connection(&db_pool)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+            {
+                if cut.file_id.is_none() {
+                    bot.send_message(chat_id, "❌ Не удалось найти file\\_id для этого файла\\.")
+                        .parse_mode(ParseMode::MarkdownV2)
+                        .await
+                        .ok();
+                    return Ok(());
+                }
+                let session = crate::storage::db::VideoClipSession {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    user_id: chat_id.0,
+                    source_download_id: 0, // Not applicable for cut-from-cut
+                    source_kind: "cut".to_string(),
+                    source_id: cut_id,
+                    original_url: cut.original_url.clone(),
+                    output_kind: "cut".to_string(),
+                    created_at: chrono::Utc::now(),
+                    expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                };
+                crate::storage::db::upsert_video_clip_session(&conn, &session).map_err(|e| {
+                    teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+                })?;
+                let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+                    "❌ Отмена".to_string(),
+                    "downloads:clip_cancel".to_string(),
+                )]]);
+                bot.send_message(chat_id, "✂️ Отправь интервалы для вырезки в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\n\nПример: `00:10-00:25, 01:00-01:10`").parse_mode(ParseMode::MarkdownV2).reply_markup(keyboard).await?;
+                bot.send_message(chat_id, cut.original_url.clone()).await.ok();
                 bot.delete_message(chat_id, message_id).await.ok();
             }
         }
@@ -558,7 +727,6 @@ pub async fn handle_downloads_callback(
             let download_id = parts[2].parse::<i64>().unwrap_or(0);
             let conn = db::get_connection(&db_pool)
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
             if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id)
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
@@ -576,7 +744,6 @@ pub async fn handle_downloads_callback(
                         .ok();
                     return Ok(());
                 }
-
                 let session = crate::storage::db::VideoClipSession {
                     id: uuid::Uuid::new_v4().to_string(),
                     user_id: chat_id.0,
@@ -591,21 +758,92 @@ pub async fn handle_downloads_callback(
                 crate::storage::db::upsert_video_clip_session(&conn, &session).map_err(|e| {
                     teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
-
                 let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
                     "❌ Отмена".to_string(),
                     "downloads:clip_cancel".to_string(),
                 )]]);
-
-                bot.send_message(
-	                    chat_id,
-	                    "⭕️ Отправь интервалы для кружка в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\n\nИли используй команды:\n• `full` \\- всё видео\n• `first30` \\- первые 30 секунд\n• `last30` \\- последние 30 секунд\n• `middle30` \\- 30 секунд из середины\n\n💡 Можно добавить скорость: `first30 2x`, `full 1\\.5x`\n\n💡 Если длительность превысит 60 секунд \\(лимит Telegram\\), видео будет автоматически обрезано\\.\n\nПример: `00:10-00:25` или `first30 2x`",
-	                )
-	                .parse_mode(ParseMode::MarkdownV2)
-	                .reply_markup(keyboard)
-	                .await?;
-
+                bot.send_message(chat_id, "⭕️ Отправь интервалы для кружка в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\n\nИли используй команды:\n• `full` \\- всё видео\n• `first30` \\- первые 30 секунд\n• `last30` \\- последние 30 секунд\n• `middle30` \\- 30 секунд из середины\n\n💡 Можно добавить скорость: `first30 2x`, `full 1\\.5x`\n\n💡 Если длительность превысит 60 секунд \\(лимит Telegram\\), видео будет автоматически обрезано\\.\n\nПример: `00:10-00:25` или `first30 2x`").parse_mode(ParseMode::MarkdownV2).reply_markup(keyboard).await?;
                 bot.send_message(chat_id, download.url.clone()).await.ok();
+                bot.delete_message(chat_id, message_id).await.ok();
+            }
+        }
+        "circle_cut" => {
+            if parts.len() < 3 {
+                return Ok(());
+            }
+            let cut_id = parts[2].parse::<i64>().unwrap_or(0);
+            let conn = db::get_connection(&db_pool)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+            {
+                if cut.file_id.is_none() {
+                    bot.send_message(chat_id, "❌ Не удалось найти file\\_id для этого файла\\.")
+                        .parse_mode(ParseMode::MarkdownV2)
+                        .await
+                        .ok();
+                    return Ok(());
+                }
+                let session = crate::storage::db::VideoClipSession {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    user_id: chat_id.0,
+                    source_download_id: 0,
+                    source_kind: "cut".to_string(),
+                    source_id: cut_id,
+                    original_url: cut.original_url.clone(),
+                    output_kind: "video_note".to_string(),
+                    created_at: chrono::Utc::now(),
+                    expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                };
+                crate::storage::db::upsert_video_clip_session(&conn, &session).map_err(|e| {
+                    teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+                })?;
+                let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+                    "❌ Отмена".to_string(),
+                    "downloads:clip_cancel".to_string(),
+                )]]);
+                bot.send_message(chat_id, "⭕️ Отправь интервалы для кружка в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\n\nПример: `00:10-00:25` или `first30 2x`").parse_mode(ParseMode::MarkdownV2).reply_markup(keyboard).await?;
+                bot.send_message(chat_id, cut.original_url.clone()).await.ok();
+                bot.delete_message(chat_id, message_id).await.ok();
+            }
+        }
+        "iphone_ringtone_cut" => {
+            if parts.len() < 3 {
+                return Ok(());
+            }
+            let cut_id = parts[2].parse::<i64>().unwrap_or(0);
+            let conn = db::get_connection(&db_pool)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+            {
+                if cut.file_id.is_none() {
+                    bot.send_message(chat_id, "❌ Не удалось найти file\\_id для этого файла\\.")
+                        .parse_mode(ParseMode::MarkdownV2)
+                        .await
+                        .ok();
+                    return Ok(());
+                }
+                let session = crate::storage::db::VideoClipSession {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    user_id: chat_id.0,
+                    source_download_id: 0, // Not applicable for cut-from-cut
+                    source_kind: "cut".to_string(),
+                    source_id: cut_id,
+                    original_url: cut.original_url.clone(),
+                    output_kind: "iphone_ringtone".to_string(),
+                    created_at: chrono::Utc::now(),
+                    expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                };
+                crate::storage::db::upsert_video_clip_session(&conn, &session).map_err(|e| {
+                    teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+                })?;
+                let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+                    "❌ Отмена".to_string(),
+                    "downloads:clip_cancel".to_string(),
+                )]]);
+                bot.send_message(chat_id, "🔔 Отправь интервалы для рингтона в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\n\n💡 Если длительность превысит 40 секунд \\(лимит iOS\\), аудио будет автоматически обрезано\\.\n\nПример: `00:10-00:25`").parse_mode(ParseMode::MarkdownV2).reply_markup(keyboard).await?;
+                bot.send_message(chat_id, cut.original_url.clone()).await.ok();
                 bot.delete_message(chat_id, message_id).await.ok();
             }
         }
@@ -616,15 +854,12 @@ pub async fn handle_downloads_callback(
             bot.delete_message(chat_id, message_id).await.ok();
         }
         "speed" => {
-            // Show speed options
             if parts.len() < 3 {
                 return Ok(());
             }
             let download_id = parts[2].parse::<i64>().unwrap_or(0);
-
             let conn = db::get_connection(&db_pool)
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
             if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id)
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
@@ -662,9 +897,7 @@ pub async fn handle_downloads_callback(
                         "downloads:cancel".to_string(),
                     )],
                 ];
-
                 let keyboard = InlineKeyboardMarkup::new(speed_options);
-
                 bot.send_message(
                     chat_id,
                     format!("⚙️ Выбери скорость для *{}*", escape_markdown(&download.title)),
@@ -673,32 +906,79 @@ pub async fn handle_downloads_callback(
                 .reply_markup(keyboard)
                 .await?;
                 bot.send_message(chat_id, download.url.clone()).await.ok();
-
-                // Delete the previous options message
+                bot.delete_message(chat_id, message_id).await.ok();
+            }
+        }
+        "speed_cut" => {
+            if parts.len() < 3 {
+                return Ok(());
+            }
+            let cut_id = parts[2].parse::<i64>().unwrap_or(0);
+            let conn = db::get_connection(&db_pool)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+            {
+                let speed_options = vec![
+                    vec![
+                        InlineKeyboardButton::callback(
+                            "0.5x".to_string(),
+                            format!("downloads:apply_speed_cut:0.5:{}", cut_id),
+                        ),
+                        InlineKeyboardButton::callback(
+                            "0.75x".to_string(),
+                            format!("downloads:apply_speed_cut:0.75:{}", cut_id),
+                        ),
+                        InlineKeyboardButton::callback(
+                            "1.0x".to_string(),
+                            format!("downloads:apply_speed_cut:1.0:{}", cut_id),
+                        ),
+                    ],
+                    vec![
+                        InlineKeyboardButton::callback(
+                            "1.25x".to_string(),
+                            format!("downloads:apply_speed_cut:1.25:{}", cut_id),
+                        ),
+                        InlineKeyboardButton::callback(
+                            "1.5x".to_string(),
+                            format!("downloads:apply_speed_cut:1.5:{}", cut_id),
+                        ),
+                        InlineKeyboardButton::callback(
+                            "2.0x".to_string(),
+                            format!("downloads:apply_speed_cut:2.0:{}", cut_id),
+                        ),
+                    ],
+                    vec![InlineKeyboardButton::callback(
+                        "❌ Отмена".to_string(),
+                        "downloads:cancel".to_string(),
+                    )],
+                ];
+                let keyboard = InlineKeyboardMarkup::new(speed_options);
+                bot.send_message(
+                    chat_id,
+                    format!("⚙️ Выбери скорость для отрезка *{}*", escape_markdown(&cut.title)),
+                )
+                .parse_mode(ParseMode::MarkdownV2)
+                .reply_markup(keyboard)
+                .await?;
+                bot.send_message(chat_id, cut.original_url.clone()).await.ok();
                 bot.delete_message(chat_id, message_id).await.ok();
             }
         }
         "apply_speed" => {
-            // Apply speed change and process video
             if parts.len() < 4 {
                 return Ok(());
             }
             let speed_str = parts[2];
             let download_id = parts[3].parse::<i64>().unwrap_or(0);
-
             let speed: f32 = speed_str.parse().unwrap_or(1.0);
-
             let conn = db::get_connection(&db_pool)
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
             if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id)
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 if let Some(file_id) = download.file_id {
-                    // Delete the speed selection message
                     bot.delete_message(chat_id, message_id).await.ok();
-
-                    // Send processing message
                     let processing_msg = bot
                         .send_message(
                             chat_id,
@@ -709,20 +989,17 @@ pub async fn handle_downloads_callback(
                         )
                         .parse_mode(ParseMode::MarkdownV2)
                         .await?;
-
                     match change_video_speed(bot, chat_id, &file_id, speed, &download.title).await {
                         Ok((sent_message, file_size)) => {
                             bot.delete_message(chat_id, processing_msg.id).await.ok();
                             bot.send_message(chat_id, download.url.clone()).await.ok();
-
                             let new_title = format!("{} [speed {}x]", download.title, speed_str);
                             let new_duration = download.duration.map(|d| ((d as f32) / speed).round().max(1.0) as i64);
-
                             let new_file_id = sent_message
                                 .video()
                                 .map(|v| v.file.id.0.clone())
-                                .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
-
+                                .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()))
+                                .or_else(|| sent_message.audio().map(|a| a.file.id.0.clone()));
                             if let Some(fid) = new_file_id {
                                 let _ = db::save_download_history(
                                     &conn,
@@ -736,12 +1013,102 @@ pub async fn handle_downloads_callback(
                                     new_duration,
                                     download.video_quality.as_deref(),
                                     None,
+                                    None,
+                                    None,
                                 );
                             }
                         }
                         Err(e) => {
                             bot.delete_message(chat_id, processing_msg.id).await.ok();
                             bot.send_message(chat_id, format!("❌ Ошибка при обработке видео: {}", e))
+                                .await
+                                .ok();
+                        }
+                    }
+                }
+            }
+        }
+        "apply_speed_cut" => {
+            if parts.len() < 4 {
+                return Ok(());
+            }
+            let speed_str = parts[2];
+            let cut_id = parts[3].parse::<i64>().unwrap_or(0);
+            let speed: f32 = speed_str.parse().unwrap_or(1.0);
+            let conn = db::get_connection(&db_pool)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+            {
+                if let Some(file_id) = cut.file_id {
+                    bot.delete_message(chat_id, message_id).await.ok();
+                    let processing_msg = bot.send_message(chat_id, format!("⚙️ Обрабатываю отрезок со скоростью {}x\\.\\.\\.  \nЭто может занять несколько минут\\.", speed_str.replace(".", "\\.")))
+                        .parse_mode(ParseMode::MarkdownV2).await?;
+                    match change_video_speed(bot, chat_id, &file_id, speed, &cut.title).await {
+                        Ok((sent_message, file_size)) => {
+                            bot.delete_message(chat_id, processing_msg.id).await.ok();
+                            bot.send_message(chat_id, cut.original_url.clone()).await.ok();
+                            // Note: Speed change of a cut produces a new cut?
+                            // For simplicity, we could save it to download_history or as a new cut.
+                            // Existing change_video_speed logic for downloads saves to download_history.
+                            // Let's do the same for consistency.
+                            let new_title = format!("{} [speed {}x]", cut.title, speed_str);
+                            let new_duration = cut.duration.map(|d| ((d as f32) / speed).round().max(1.0) as i64);
+                            let new_file_id = sent_message
+                                .video()
+                                .map(|v| v.file.id.0.clone())
+                                .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()))
+                                .or_else(|| sent_message.audio().map(|a| a.file.id.0.clone()));
+                            if let Some(fid) = new_file_id {
+                                let _ = db::save_download_history(
+                                    &conn,
+                                    chat_id.0,
+                                    &cut.original_url,
+                                    &new_title,
+                                    "mp4",
+                                    Some(&fid),
+                                    None,
+                                    Some(file_size),
+                                    new_duration,
+                                    cut.video_quality.as_deref(),
+                                    None,
+                                    None,
+                                    None,
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            bot.delete_message(chat_id, processing_msg.id).await.ok();
+                            bot.send_message(chat_id, format!("❌ Ошибка при обработке видео: {}", e))
+                                .await
+                                .ok();
+                        }
+                    }
+                }
+            }
+        }
+        "iphone_ringtone" => {
+            if parts.len() < 3 {
+                return Ok(());
+            }
+            let download_id = parts[2].parse::<i64>().unwrap_or(0);
+            let conn = db::get_connection(&db_pool)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+
+            if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+            {
+                if let Some(file_id) = download.file_id {
+                    let lang = crate::i18n::user_lang(&conn, chat_id.0);
+                    bot.delete_message(chat_id, message_id).await.ok();
+                    let processing_msg = bot.send_message(chat_id, "⏳ Готовлю рингтон...").await?;
+                    match handle_iphone_ringtone(bot, chat_id, &file_id, &download.title, &lang).await {
+                        Ok(_) => {
+                            bot.delete_message(chat_id, processing_msg.id).await.ok();
+                        }
+                        Err(e) => {
+                            bot.delete_message(chat_id, processing_msg.id).await.ok();
+                            bot.send_message(chat_id, format!("❌ Ошибка при создании рингтона: {}", e))
                                 .await
                                 .ok();
                         }
@@ -986,6 +1353,49 @@ async fn change_video_speed(
     fs::remove_file(&output_path).await.ok();
 
     Ok((sent, file_size))
+}
+
+async fn handle_iphone_ringtone(
+    bot: &Bot,
+    chat_id: ChatId,
+    file_id: &str,
+    title: &str,
+    lang: &unic_langid::LanguageIdentifier,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use std::path::PathBuf;
+    use tokio::fs;
+
+    // Create temp directory
+    let temp_dir = PathBuf::from("/tmp/doradura_ringtone");
+    fs::create_dir_all(&temp_dir).await?;
+
+    // Save input file
+    let input_filename = format!("ringtone_in_{}_{}", chat_id.0, uuid::Uuid::new_v4());
+    let input_path = temp_dir.join(&input_filename);
+
+    crate::telegram::download_file_from_telegram(bot, file_id, Some(input_path.clone()))
+        .await
+        .map_err(|e| format!("Failed to download file from Telegram: {}", e))?;
+
+    // Output file path
+    let output_path = temp_dir.join(format!("{}.m4r", title.replace("/", "_")));
+
+    // Convert to ringtone (first 30 seconds)
+    crate::download::ringtone::create_iphone_ringtone(&input_path, &output_path, 0, 30)?;
+
+    // Send the ringtone as a document (required for iOS to recognize it)
+    let caption = crate::i18n::t(lang, "history.iphone_ringtone_instructions");
+
+    bot.send_document(chat_id, teloxide::types::InputFile::file(output_path.clone()))
+        .caption(caption)
+        .parse_mode(ParseMode::MarkdownV2)
+        .await?;
+
+    // Cleanup temp files
+    fs::remove_file(&input_path).await.ok();
+    fs::remove_file(&output_path).await.ok();
+
+    Ok(())
 }
 
 /// Escape markdown special characters
