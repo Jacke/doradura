@@ -5,6 +5,7 @@ pub mod downloader;
 pub mod fetch;
 pub mod progress;
 pub mod queue;
+pub mod ringtone;
 pub mod ytdlp;
 pub mod ytdlp_errors;
 
