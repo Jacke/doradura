@@ -42,6 +42,30 @@ pub static DOWNLOAD_FOLDER: Lazy<String> = Lazy::new(|| {
     })
 });
 
+/// Database file path
+/// Read from DATABASE_PATH environment variable
+/// Default: database.sqlite
+pub static DATABASE_PATH: Lazy<String> =
+    Lazy::new(|| env::var("DATABASE_PATH").unwrap_or_else(|_| "database.sqlite".to_string()));
+
+/// Log file path
+/// Read from LOG_FILE_PATH environment variable
+/// Default: app.log
+pub static LOG_FILE_PATH: Lazy<String> =
+    Lazy::new(|| env::var("LOG_FILE_PATH").unwrap_or_else(|_| "app.log".to_string()));
+
+/// Bot token
+/// Read from BOT_TOKEN or TELOXIDE_TOKEN environment variable
+pub static BOT_TOKEN: Lazy<String> = Lazy::new(|| {
+    env::var("BOT_TOKEN")
+        .or_else(|_| env::var("TELOXIDE_TOKEN"))
+        .unwrap_or_else(|_| String::new())
+});
+
+/// Webhook URL for Telegram updates
+/// Read from WEBHOOK_URL environment variable
+pub static WEBHOOK_URL: Lazy<Option<String>> = Lazy::new(|| env::var("WEBHOOK_URL").ok());
+
 /// Rate limiting configuration
 pub mod rate_limit {
     use super::Duration;

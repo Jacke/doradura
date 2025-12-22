@@ -1937,6 +1937,8 @@ pub async fn download_and_send_audio(
                         Some(duration as i64),
                         None, // video_quality (N/A for mp3)
                         Some(bitrate),
+                        None,
+                        None,
                     ) {
                         log::warn!("Failed to save download history: {}", e);
                     }
@@ -3374,52 +3376,87 @@ pub async fn download_and_send_video(
                 .unwrap_or(0);
             log::info!("📦 Final merged video file size (before sending): {:.2} MB", final_file_size as f64 / (1024.0 * 1024.0));
 
-            log::info!("📤 Calling send_video_with_retry with send_as_document={} for user {}", send_as_document, chat_id.0);
+            // Step 5: Send video (with splitting if necessary and Local Bot API is used)
+            let is_local_bot_api = std::env::var("BOT_API_URL")
+                .map(|url| !url.contains("api.telegram.org"))
+                .unwrap_or(false);
 
-            // Step 5: Send video with retry logic and animation
-            let (sent_message, file_size) = send_video_with_retry(&bot_clone, chat_id, &actual_file_path, &mut progress_msg, caption.as_ref(), thumbnail_url.as_deref(), send_as_document).await?;
+            // Use splitting only if it's Local Bot API and file is > 1.9GB
+            // For standard API, yt-dlp already ensures the file is small enough or it fails earlier
+            let target_part_size = 1900 * 1024 * 1024; // 1.9 GB
 
-            // Сразу после успешной отправки обновляем сообщение прогресса до Success
+            let video_parts = if is_local_bot_api && final_file_size > target_part_size {
+                log::info!("Video size exceeds 1.9GB and Local Bot API is used - splitting into parts");
+                split_video_into_parts(&actual_file_path, target_part_size).await?
+            } else {
+                vec![actual_file_path.clone()]
+            };
+
+            let mut first_part_db_id = None;
+            let total_parts = video_parts.len();
+
+            for (idx, part_path) in video_parts.iter().enumerate() {
+                let part_index = (idx + 1) as i32;
+                let current_caption = if total_parts > 1 {
+                    format!("{} (Part {}/{})", caption, part_index, total_parts)
+                } else {
+                    caption.as_ref().to_string()
+                };
+
+                log::info!("📤 Sending video part {}/{} ({}): {}", part_index, total_parts, part_path, current_caption);
+
+                // Send video with retry logic and animation
+                let (sent_message, file_size) = send_video_with_retry(&bot_clone, chat_id, part_path, &mut progress_msg, &current_caption, thumbnail_url.as_deref(), send_as_document).await?;
+
+                // Save to download history after successful send
+                if let Some(ref pool) = db_pool_clone {
+                    if let Ok(conn) = crate::storage::db::get_connection(pool) {
+                        let file_id = sent_message.video().map(|v| v.file.id.0.clone())
+                            .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
+
+                        let author_opt = if !artist.trim().is_empty() {
+                            Some(artist.as_str())
+                        } else {
+                            None
+                        };
+
+                        let duration = probe_video_metadata(part_path).map(|(d, _, _)| d as i64);
+
+                        let db_id = save_download_history(
+                            &conn,
+                            chat_id.0,
+                            url.as_str(),
+                            title.as_str(),  // Just the title without artist
+                            "mp4",
+                            file_id.as_deref(),
+                            author_opt,
+                            Some(file_size as i64),
+                            duration,
+                            Some(quality),
+                            None,  // audio_bitrate (N/A for mp4)
+                            first_part_db_id,
+                            if total_parts > 1 { Some(part_index) } else { None },
+                        );
+
+                        match db_id {
+                            Ok(id) => {
+                                if first_part_db_id.is_none() && total_parts > 1 {
+                                    first_part_db_id = Some(id);
+                                }
+                            }
+                            Err(e) => log::warn!("Failed to save download history for part {}: {}", part_index, e),
+                        }
+                    }
+                }
+            }
+
+            // Сразу после успешной отправки всех частей обновляем сообщение прогресса до Success
             // чтобы убрать застрявшее состояние "Uploading: 99%"
             let _ = progress_msg.update(&bot_clone, DownloadStatus::Success {
                 title: display_title.as_ref().to_string(),
                 elapsed_secs,
                 file_format: Some("mp4".to_string()),
             }).await;
-
-            // Save to download history after successful send
-            if let Some(ref pool) = db_pool_clone {
-                if let Ok(conn) = crate::storage::db::get_connection(pool) {
-                    let file_id = sent_message.video().map(|v| v.file.id.0.clone())
-                        .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
-
-                    // Extract author from display_title or use artist variable
-                    let author_opt = if !artist.trim().is_empty() {
-                        Some(artist.as_str())
-                    } else {
-                        None
-                    };
-
-                    // Get video duration from metadata
-                    let duration = probe_video_metadata(&actual_file_path).map(|(d, _, _)| d as i64);
-
-                    if let Err(e) = save_download_history(
-                        &conn,
-                        chat_id.0,
-                        url.as_str(),
-                        title.as_str(),  // Just the title without artist
-                        "mp4",
-                        file_id.as_deref(),
-                        author_opt,
-                        Some(file_size as i64),
-                        duration,
-                        Some(quality),
-                        None,  // audio_bitrate (N/A for mp4)
-                    ) {
-                        log::warn!("Failed to save download history: {}", e);
-                    }
-                }
-            }
 
             // Add eyes emoji reaction to the original message if message_id is available
             if let Some(msg_id) = message_id {
@@ -3445,7 +3482,17 @@ pub async fn download_and_send_video(
             });
 
             tokio::time::sleep(config::download::cleanup_delay()).await;
-            // Удаляем фактический файл, который был скачан и отправлен
+
+            // Cleanup all parts if splitting was performed
+            if total_parts > 1 {
+                for part_path in &video_parts {
+                    if let Err(e) = fs::remove_file(part_path) {
+                        log::warn!("Failed to delete video part {}: {}", part_path, e);
+                    }
+                }
+            }
+
+            // Удаляем фактический файл, который был скачан и (возможно) разделен
             if let Err(e) = fs::remove_file(&actual_file_path) {
                 log::warn!("Failed to delete actual file {}: {}", actual_file_path, e);
             }
@@ -3853,6 +3900,90 @@ pub async fn download_and_send_subtitles(
 /// # Example
 ///
 /// ```no_run
+/// Splits a large video file into playable segments using ffmpeg.
+/// This is used when the file exceeds Telegram's upload limits.
+pub async fn split_video_into_parts(path: &str, target_part_size_bytes: u64) -> Result<Vec<String>, AppError> {
+    log::info!("Checking if video needs splitting: {}", path);
+    let file_size = fs::metadata(path)
+        .map_err(|e| AppError::Download(format!("Failed to get file size: {}", e)))?
+        .len();
+
+    if file_size <= target_part_size_bytes {
+        log::info!(
+            "Video size {} is within limit {}, no splitting needed",
+            file_size,
+            target_part_size_bytes
+        );
+        return Ok(vec![path.to_string()]);
+    }
+
+    let metadata =
+        probe_video_metadata(path).ok_or_else(|| AppError::Download(format!("Failed to probe video: {}", path)))?;
+    let duration = metadata.0 as f64;
+
+    // Use slightly smaller parts to be safe (e.g. 5% buffer)
+    let safe_target = (target_part_size_bytes as f64 * 0.95) as u64;
+    let num_parts = (file_size as f64 / safe_target as f64).ceil() as u64;
+    let segment_duration = duration / num_parts as f64;
+
+    log::info!(
+        "Splitting video (size: {} MB, duration: {}s) into {} parts, ~{:.2}s each",
+        file_size / 1024 / 1024,
+        duration,
+        num_parts,
+        segment_duration
+    );
+
+    let output_pattern = format!("{}_part_%03d.mp4", path.trim_end_matches(".mp4"));
+
+    let output = TokioCommand::new("ffmpeg")
+        .args([
+            "-i",
+            path,
+            "-f",
+            "segment",
+            "-segment_time",
+            &segment_duration.to_string(),
+            "-c",
+            "copy", // Use stream copy for speed
+            "-map",
+            "0",
+            "-reset_timestamps",
+            "1",
+            &output_pattern,
+        ])
+        .output()
+        .await
+        .map_err(|e| AppError::Download(format!("Failed to execute ffmpeg split: {}", e)))?;
+
+    if !output.status.success() {
+        return Err(AppError::Download(format!(
+            "ffmpeg split failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )));
+    }
+
+    // Find all created parts
+    let mut parts = Vec::new();
+    let parent_dir = Path::new(path).parent().unwrap_or_else(|| Path::new("."));
+    let file_stem = Path::new(path)
+        .file_stem()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    for entry in fs::read_dir(parent_dir).map_err(|e| AppError::Download(e.to_string()))? {
+        let entry = entry.map_err(|e| AppError::Download(e.to_string()))?;
+        let name = entry.file_name().to_string_lossy().to_string();
+        if name.starts_with(&file_stem) && name.contains("_part_") && name.ends_with(".mp4") {
+            parts.push(entry.path().to_string_lossy().to_string());
+        }
+    }
+    parts.sort();
+
+    log::info!("Successfully split video into {} parts", parts.len());
+    Ok(parts)
+}
+
 /// # use doradura::core::error::AppError;
 /// # use doradura::download::downloader::burn_subtitles_into_video;
 /// # async fn run() -> Result<(), AppError> {
