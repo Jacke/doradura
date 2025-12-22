@@ -67,7 +67,7 @@ async fn main() -> Result<()> {
     }));
 
     // Initialize logger (console + file)
-    init_logger("app.log")?;
+    init_logger(&config::LOG_FILE_PATH)?;
 
     // Load environment variables from .env if present
     let _ = dotenv();
@@ -119,11 +119,15 @@ async fn main() -> Result<()> {
 /// Run the metadata refresh command
 async fn run_metadata_refresh(limit: Option<usize>, dry_run: bool, verbose: bool) -> Result<()> {
     // Create database pool
-    let db_pool =
-        Arc::new(create_pool("database.sqlite").map_err(|e| anyhow::anyhow!("Failed to create database pool: {}", e))?);
+    let db_pool = Arc::new(
+        create_pool(&config::DATABASE_PATH).map_err(|e| anyhow::anyhow!("Failed to create database pool: {}", e))?,
+    );
 
     // Get bot token
-    let bot_token = env::var("BOT_TOKEN").map_err(|_| anyhow::anyhow!("BOT_TOKEN environment variable not set"))?;
+    let bot_token = config::BOT_TOKEN.to_string();
+    if bot_token.is_empty() {
+        return Err(anyhow::anyhow!("BOT_TOKEN environment variable not set"));
+    }
 
     // Run metadata refresh
     metadata_refresh::refresh_missing_metadata(db_pool, bot_token, limit, dry_run, verbose).await?;
@@ -162,8 +166,9 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
     setup_all_language_commands(&bot).await?;
 
     // Create database connection pool
-    let db_pool =
-        Arc::new(create_pool("database.sqlite").map_err(|e| anyhow::anyhow!("Failed to create database pool: {}", e))?);
+    let db_pool = Arc::new(
+        create_pool(&config::DATABASE_PATH).map_err(|e| anyhow::anyhow!("Failed to create database pool: {}", e))?,
+    );
 
     // Start audio effects cleanup task
     doradura::download::audio_effects::start_cleanup_task(Arc::clone(&db_pool));
@@ -250,7 +255,7 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
     ));
 
     // Start automatic backup scheduler (daily backups)
-    let db_path = "database.sqlite".to_string();
+    let db_path = config::DATABASE_PATH.to_string();
     tokio::spawn(async move {
         let mut interval = interval(Duration::from_secs(24 * 60 * 60)); // 24 hours
         loop {
@@ -759,11 +764,7 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
         }));
 
     // Check if webhook mode is enabled
-    let webhook_url = if use_webhook {
-        env::var("WEBHOOK_URL").ok()
-    } else {
-        None
-    };
+    let webhook_url = if use_webhook { config::WEBHOOK_URL.clone() } else { None };
 
     if let Some(url) = webhook_url {
         // Webhook mode

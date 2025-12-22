@@ -12,6 +12,8 @@ use teloxide::types::{
     InlineKeyboardButton, InlineKeyboardMarkup, ParseMode, Seconds, TransactionPartner, TransactionPartnerUserKind,
 };
 
+use crate::core::config;
+
 use crate::core::config::admin::ADMIN_USERNAME;
 use crate::storage::backup::{create_backup, list_backups};
 use crate::storage::db::{get_all_users, get_connection, update_user_plan, update_user_plan_with_expiry, DbPool};
@@ -251,7 +253,7 @@ pub async fn handle_backup_command(bot: &Bot, chat_id: ChatId, username: Option<
         return Ok(());
     }
 
-    match create_backup("database.sqlite") {
+    match create_backup(&config::DATABASE_PATH) {
         Ok(backup_path) => {
             let backups = list_backups().unwrap_or_default();
             bot.send_message(
