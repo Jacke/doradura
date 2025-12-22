@@ -832,10 +832,17 @@ async fn process_video_clip(
 
     let total_len: i64 = segments.iter().map(|s| (s.end_secs - s.start_secs).max(0)).sum();
     let is_video_note = session.output_kind == "video_note";
-    let max_len_secs = if is_video_note { 60 } else { 60 * 10 };
+    let is_ringtone = session.output_kind == "iphone_ringtone";
+    let max_len_secs = if is_video_note {
+        60
+    } else if is_ringtone {
+        30
+    } else {
+        60 * 10
+    };
 
-    // For video notes, truncate segments to fit within 60 seconds and notify user
-    let (adjusted_segments, truncated) = if is_video_note && total_len > max_len_secs {
+    // For video notes and ringtones, truncate segments to fit within limit and notify user
+    let (adjusted_segments, truncated) = if (is_video_note || is_ringtone) && total_len > max_len_secs {
         let mut adjusted = Vec::new();
         let mut accumulated = 0i64;
 
@@ -861,8 +868,8 @@ async fn process_video_clip(
         }
 
         (adjusted, true)
-    } else if !is_video_note && total_len > max_len_secs {
-        // For regular cuts, reject if too long
+    } else if !is_video_note && !is_ringtone && total_len > 600 {
+        // For regular cuts, reject if too long (10 min)
         bot.send_message(chat_id, "❌ Слишком длинная вырезка (макс. 10 минут).")
             .await
             .ok();
@@ -879,11 +886,16 @@ async fn process_video_clip(
 
     // Notify user if segments were truncated
     if truncated {
+        let limit_text = if is_ringtone {
+            "для рингтонов (30 сек)"
+        } else {
+            "для кружков (60 сек)"
+        };
         bot.send_message(
             chat_id,
             format!(
-                "⚠️ Запрошенная длительность {} секунд превышает лимит Telegram для кружков (60 сек).\n\n✂️ Будет использовано первые {} секунд.",
-                total_len, actual_total_len
+                "⚠️ Запрошенная длительность {} секунд превышает лимит Telegram {}.\n\n✂️ Будет использовано первые {} секунд.",
+                total_len, limit_text, actual_total_len
             ),
         ).await.ok();
     }
@@ -952,11 +964,15 @@ async fn process_video_clip(
     let status_msg = if let Some(spd) = speed {
         if is_video_note {
             format!("⭕️ Делаю кружок: {}… (скорость {}x)", segments_text, spd)
+        } else if is_ringtone {
+            format!("🔔 Делаю рингтон: {}… (скорость {}x)", segments_text, spd)
         } else {
             format!("✂️ Вырезаю: {}… (скорость {}x)", segments_text, spd)
         }
     } else if is_video_note {
         format!("⭕️ Делаю кружок: {}…", segments_text)
+    } else if is_ringtone {
+        format!("🔔 Делаю рингтон: {}…", segments_text)
     } else {
         format!("✂️ Вырезаю: {}…", segments_text)
     };
@@ -968,18 +984,56 @@ async fn process_video_clip(
 
     let input_path = temp_dir.join(format!("input_{}_{}.mp4", chat_id.0, session.source_id));
     let output_path = temp_dir.join(format!(
-        "{}_{}_{}.mp4",
-        if is_video_note { "circle" } else { "cut" },
+        "{}_{}_{}.{}",
+        if is_video_note {
+            "circle"
+        } else if is_ringtone {
+            "ringtone"
+        } else {
+            "cut"
+        },
         chat_id.0,
-        uuid::Uuid::new_v4()
+        uuid::Uuid::new_v4(),
+        if is_ringtone { "m4r" } else { "mp4" }
     ));
 
     let _ = crate::telegram::download_file_from_telegram(&bot, &file_id, Some(input_path.clone()))
         .await
         .map_err(AppError::from)?;
 
-    let base_filter_av = build_cut_filter(&adjusted_segments, true);
-    let base_filter_v = build_cut_filter(&adjusted_segments, false);
+    // Probe file for video stream
+    let probe_output = Command::new("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=codec_type",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+        ])
+        .arg(&input_path)
+        .output()
+        .await
+        .map_err(AppError::from)?;
+    let has_video = !probe_output.stdout.is_empty();
+
+    if is_video_note && !has_video {
+        bot.delete_message(chat_id, status.id).await.ok();
+        bot.send_message(chat_id, "❌ Для создания кружка нужно видео.")
+            .await
+            .ok();
+        tokio::fs::remove_file(&input_path).await.ok();
+        return Ok(());
+    }
+
+    let base_filter_av = build_cut_filter(&adjusted_segments, has_video, true);
+    let base_filter_v = if has_video {
+        build_cut_filter(&adjusted_segments, true, false)
+    } else {
+        String::new()
+    };
 
     // Apply speed modification if requested
     let (filter_av, filter_v, map_v_label, map_a_label, crf) = if is_video_note {
@@ -1018,6 +1072,29 @@ async fn process_video_clip(
                 "28",
             )
         }
+    } else if is_ringtone {
+        let atempo_filter = if let Some(spd) = speed {
+            if spd > 2.0 {
+                format!("atempo=2.0,atempo={}", spd / 2.0)
+            } else if spd < 0.5 {
+                format!("atempo=0.5,atempo={}", spd / 0.5)
+            } else {
+                format!("atempo={}", spd)
+            }
+        } else {
+            "atempo=1.0".to_string()
+        };
+        // If !has_video, base_filter_av outputs only [a]. If has_video, [v][a].
+        // Ringtone uses input [a] for atempo.
+        // We need to match output of base_filter
+
+        (
+            format!("{base_filter_av};{}[a]{atempo_filter}[aout]", ""), // standard [a] is output by build_cut_filter
+            String::new(),
+            "[v]",
+            "[aout]",
+            "23",
+        )
     } else if let Some(spd) = speed {
         let setpts_factor = 1.0 / spd;
         let atempo_filter = if spd > 2.0 {
@@ -1028,16 +1105,26 @@ async fn process_video_clip(
             format!("atempo={}", spd)
         };
 
-        (
-            format!(
-                "{base_filter_av};[v]setpts={}*PTS[vout];[a]{atempo_filter}[aout]",
-                setpts_factor
-            ),
-            format!("{base_filter_v};[v]setpts={}*PTS[vout]", setpts_factor),
-            "[vout]",
-            "[aout]",
-            "23",
-        )
+        if has_video {
+            (
+                format!(
+                    "{base_filter_av};[v]setpts={}*PTS[vout];[a]{atempo_filter}[aout]",
+                    setpts_factor
+                ),
+                format!("{base_filter_v};[v]setpts={}*PTS[vout]", setpts_factor),
+                "[vout]",
+                "[aout]",
+                "23",
+            )
+        } else {
+            (
+                format!("{base_filter_av};[a]{atempo_filter}[aout]"),
+                String::new(),
+                "",
+                "[aout]",
+                "23",
+            )
+        }
     } else {
         (base_filter_av, base_filter_v, "[v]", "[a]", "23")
     };
@@ -1045,35 +1132,49 @@ async fn process_video_clip(
     log::info!("🎬 Starting ffmpeg with filter: {}", filter_av);
     log::info!("🎬 Input: {:?}, Output: {:?}", input_path, output_path);
 
-    let output = Command::new("ffmpeg")
-        .arg("-hide_banner")
+    let mut cmd = Command::new("ffmpeg");
+    cmd.arg("-hide_banner")
         .arg("-loglevel")
-        .arg("info")  // Changed from "error" to "info" for debugging
+        .arg("info")
         .arg("-i")
-        .arg(&input_path)
-        .arg("-filter_complex")
-        .arg(&filter_av)
-        .arg("-map")
-        .arg(map_v_label)
-        .arg("-map")
-        .arg(map_a_label)
-        .arg("-c:v")
-        .arg("libx264")
-        .arg("-preset")
-        .arg("fast")
-        .arg("-crf")
-        .arg(crf)
-        .arg("-c:a")
-        .arg("aac")
-        .arg("-b:a")
-        .arg("192k")
-        .arg("-movflags")
-        .arg("+faststart")
-        .arg("-y")
-        .arg(&output_path)
-        .output()
-        .await
-        .map_err(AppError::from)?;
+        .arg(&input_path);
+
+    if is_ringtone {
+        // For ringtone we only care about audio
+        cmd.arg("-filter_complex")
+            .arg(&filter_av)
+            .arg("-map")
+            .arg(map_a_label)
+            .arg("-c:a")
+            .arg("aac")
+            .arg("-b:a")
+            .arg("192k")
+            .arg("-f")
+            .arg("ipod");
+    } else {
+        cmd.arg("-filter_complex").arg(&filter_av);
+        if has_video {
+            cmd.arg("-map").arg(map_v_label);
+        }
+        cmd.arg("-map").arg(map_a_label);
+
+        if has_video {
+            cmd.arg("-c:v")
+                .arg("libx264")
+                .arg("-preset")
+                .arg("fast")
+                .arg("-crf")
+                .arg(crf);
+        }
+        cmd.arg("-c:a")
+            .arg("aac")
+            .arg("-b:a")
+            .arg("192k")
+            .arg("-movflags")
+            .arg("+faststart");
+    }
+
+    let output = cmd.arg("-y").arg(&output_path).output().await.map_err(AppError::from)?;
 
     log::info!("✅ ffmpeg processing completed with status: {}", output.status);
 
@@ -1122,9 +1223,34 @@ async fn process_video_clip(
 
     let (output_kind, clip_title) = if is_video_note {
         ("video_note", format!("{} [circle {}]", base_title, segments_text))
+    } else if is_ringtone {
+        ("ringtone", format!("{} [ringtone {}]", base_title, segments_text))
     } else {
         ("clip", format!("{} [cut {}]", base_title, segments_text))
     };
+
+    // Check output file before sending
+    if !output_path.exists() {
+        log::error!("❌ Output file does not exist: {:?}", output_path);
+        bot.delete_message(chat_id, status.id).await.ok();
+        bot.send_message(chat_id, "❌ Ошибка: выходной файл не был создан")
+            .await
+            .ok();
+        tokio::fs::remove_file(&input_path).await.ok();
+        return Ok(());
+    }
+
+    let output_size = tokio::fs::metadata(&output_path)
+        .await
+        .ok()
+        .map(|m| m.len())
+        .unwrap_or(0);
+    log::info!(
+        "📤 Sending {} (size: {} bytes, duration: {}s)",
+        if is_video_note { "video note" } else { "video" },
+        output_size,
+        actual_total_len
+    );
 
     let sent = if is_video_note {
         match bot
@@ -1135,6 +1261,7 @@ async fn process_video_clip(
         {
             Ok(m) => m,
             Err(e) => {
+                log::error!("❌ Failed to send video note: {}", e);
                 bot.delete_message(chat_id, status.id).await.ok();
                 let msg = if e.to_string().to_lowercase().contains("file is too big") {
                     "❌ Кружок получился слишком большим для Telegram. Уменьши интервал.".to_string()
@@ -1147,7 +1274,27 @@ async fn process_video_clip(
                 return Ok(());
             }
         }
-    } else {
+    } else if is_ringtone {
+        let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+        let instructions = i18n::t(&lang, "history.iphone_ringtone_instructions");
+        match bot
+            .send_document(chat_id, teloxide::types::InputFile::file(output_path.clone()))
+            .caption(format!("{}\n\n{}", clip_title, instructions))
+            .parse_mode(ParseMode::MarkdownV2)
+            .await
+        {
+            Ok(m) => m,
+            Err(e) => {
+                bot.delete_message(chat_id, status.id).await.ok();
+                bot.send_message(chat_id, format!("❌ Не удалось отправить рингтон: {e}"))
+                    .await
+                    .ok();
+                tokio::fs::remove_file(&input_path).await.ok();
+                tokio::fs::remove_file(&output_path).await.ok();
+                return Ok(());
+            }
+        }
+    } else if has_video {
         match bot
             .send_video(chat_id, teloxide::types::InputFile::file(output_path.clone()))
             .caption(&clip_title)
@@ -1157,6 +1304,23 @@ async fn process_video_clip(
             Err(e) => {
                 bot.delete_message(chat_id, status.id).await.ok();
                 bot.send_message(chat_id, format!("❌ Не удалось отправить вырезку: {e}"))
+                    .await
+                    .ok();
+                tokio::fs::remove_file(&input_path).await.ok();
+                tokio::fs::remove_file(&output_path).await.ok();
+                return Ok(());
+            }
+        }
+    } else {
+        match bot
+            .send_audio(chat_id, teloxide::types::InputFile::file(output_path.clone()))
+            .caption(&clip_title)
+            .await
+        {
+            Ok(m) => m,
+            Err(e) => {
+                bot.delete_message(chat_id, status.id).await.ok();
+                bot.send_message(chat_id, format!("❌ Не удалось отправить аудио: {e}"))
                     .await
                     .ok();
                 tokio::fs::remove_file(&input_path).await.ok();
@@ -1177,10 +1341,13 @@ async fn process_video_clip(
 
     let sent_file_id = if is_video_note {
         sent.video_note().map(|v| v.file.id.0.clone())
+    } else if is_ringtone {
+        sent.document().map(|d| d.file.id.0.clone())
     } else {
         sent.video()
             .map(|v| v.file.id.0.clone())
             .or_else(|| sent.document().map(|d| d.file.id.0.clone()))
+            .or_else(|| sent.audio().map(|a| a.file.id.0.clone()))
     };
 
     if let Some(fid) = sent_file_id {
@@ -1208,13 +1375,15 @@ async fn process_video_clip(
     Ok(())
 }
 
-fn build_cut_filter(segments: &[CutSegment], with_audio: bool) -> String {
+fn build_cut_filter(segments: &[CutSegment], with_video: bool, with_audio: bool) -> String {
     let mut parts = Vec::new();
     for (i, seg) in segments.iter().enumerate() {
-        parts.push(format!(
-            "[0:v]trim=start={}:end={},setpts=PTS-STARTPTS[v{}]",
-            seg.start_secs, seg.end_secs, i
-        ));
+        if with_video {
+            parts.push(format!(
+                "[0:v]trim=start={}:end={},setpts=PTS-STARTPTS[v{}]",
+                seg.start_secs, seg.end_secs, i
+            ));
+        }
         if with_audio {
             parts.push(format!(
                 "[0:a]atrim=start={}:end={},asetpts=PTS-STARTPTS[a{}]",
@@ -1226,17 +1395,26 @@ fn build_cut_filter(segments: &[CutSegment], with_audio: bool) -> String {
     let n = segments.len();
     let mut concat_inputs = String::new();
     for i in 0..n {
-        concat_inputs.push_str(&format!("[v{}]", i));
+        if with_video {
+            concat_inputs.push_str(&format!("[v{}]", i));
+        }
         if with_audio {
             concat_inputs.push_str(&format!("[a{}]", i));
         }
     }
 
-    if with_audio {
-        parts.push(format!("{}concat=n={}:v=1:a=1[v][a]", concat_inputs, n));
-    } else {
-        parts.push(format!("{}concat=n={}:v=1:a=0[v]", concat_inputs, n));
-    }
+    let v_count = if with_video { 1 } else { 0 };
+    let a_count = if with_audio { 1 } else { 0 };
+    let output_labels = format!(
+        "{}{}",
+        if with_video { "[v]" } else { "" },
+        if with_audio { "[a]" } else { "" }
+    );
+
+    parts.push(format!(
+        "{}concat=n={}:v={}:a={}{}",
+        concat_inputs, n, v_count, a_count, output_labels
+    ));
 
     parts.join(";")
 }

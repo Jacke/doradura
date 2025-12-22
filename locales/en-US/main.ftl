@@ -188,6 +188,8 @@ history =
     .entry_not_found = Entry not found
     .delete_failed = Delete failed
     .invalid_id = Error: invalid entry ID
+    .iphone_ringtone_button = 🔔 Create Ringtone
+    .iphone_ringtone_instructions = 🔔 *Your ringtone is ready\!*\n\n1\. Save this file to the *Files* app\.\n2\. Open the *GarageBand* app\.\n3\. Tap the `+` icon and choose *Audio Recorder*\.\n4\. Switch to tracks view mode \(icon in the top left\)\.\n5\. Tap the loops icon \(top right\), select the *Files* tab, and add your ringtone\.\n6\. Save the project, then long-press it and choose *Share* → *Ringtone*\.\n\n💡 _Now you can set it in iPhone Settings\!_
     .unknown_action = Unknown action
 
 stats =
