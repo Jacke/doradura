@@ -16,7 +16,7 @@ pub async fn refresh_missing_metadata(
     // Query for entries with file_id but missing metadata
     let query = r#"
         SELECT id, url, title, format, downloaded_at, file_id, author, file_size,
-               duration, video_quality, audio_bitrate, bot_api_url, bot_api_is_local
+               duration, video_quality, audio_bitrate, bot_api_url, bot_api_is_local, source_id, part_index
         FROM download_history
         WHERE file_id IS NOT NULL
         AND (format = 'mp3' OR format = 'mp4')
@@ -42,6 +42,8 @@ pub async fn refresh_missing_metadata(
             audio_bitrate: row.get(10)?,
             bot_api_url: row.get(11).ok(),
             bot_api_is_local: row.get(12).ok(),
+            source_id: row.get(13).ok(),
+            part_index: row.get(14).ok(),
         })
     })?;
 
