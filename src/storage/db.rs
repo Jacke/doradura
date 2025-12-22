@@ -830,6 +830,10 @@ pub struct DownloadHistoryEntry {
     pub bot_api_url: Option<String>,
     /// Whether a local Bot API server was used (0/1, optional for older rows)
     pub bot_api_is_local: Option<i64>,
+    /// ID исходного файла (для разбитых видео)
+    pub source_id: Option<i64>,
+    /// Номер части (для разбитых видео)
+    pub part_index: Option<i32>,
 }
 
 fn current_bot_api_info() -> (Option<String>, i64) {
@@ -853,10 +857,12 @@ fn current_bot_api_info() -> (Option<String>, i64) {
 /// * `duration` - Длительность в секундах (опционально)
 /// * `video_quality` - Качество видео (опционально)
 /// * `audio_bitrate` - Битрейт аудио (опционально)
+/// * `source_id` - ID исходного файла (для разбитых видео)
+/// * `part_index` - Номер части (для разбитых видео)
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+/// Возвращает `Ok(id)` при успехе (ID вставленной записи) или ошибку базы данных.
 pub fn save_download_history(
     conn: &DbConnection,
     telegram_id: i64,
@@ -869,14 +875,16 @@ pub fn save_download_history(
     duration: Option<i64>,
     video_quality: Option<&str>,
     audio_bitrate: Option<&str>,
-) -> Result<()> {
+    source_id: Option<i64>,
+    part_index: Option<i32>,
+) -> Result<i64> {
     let (bot_api_url, bot_api_is_local) = current_bot_api_info();
     conn.execute(
         "INSERT INTO download_history (
             user_id, url, title, format, file_id, author, file_size, duration, video_quality, audio_bitrate,
-            bot_api_url, bot_api_is_local
+            bot_api_url, bot_api_is_local, source_id, part_index
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
         rusqlite::params![
             telegram_id,
             url,
@@ -889,10 +897,12 @@ pub fn save_download_history(
             video_quality,
             audio_bitrate,
             bot_api_url,
-            bot_api_is_local
+            bot_api_is_local,
+            source_id,
+            part_index
         ],
     )?;
-    Ok(())
+    Ok(conn.last_insert_rowid())
 }
 
 /// Получает последние N записей истории загрузок пользователя.
@@ -914,7 +924,7 @@ pub fn get_download_history(
     let limit = limit.unwrap_or(20);
     let mut stmt = conn.prepare(
         "SELECT id, url, title, format, downloaded_at, file_id, author, file_size, duration, video_quality, audio_bitrate,
-                bot_api_url, bot_api_is_local
+                bot_api_url, bot_api_is_local, source_id, part_index
          FROM download_history
          WHERE user_id = ? ORDER BY downloaded_at DESC LIMIT ?",
     )?;
@@ -933,6 +943,8 @@ pub fn get_download_history(
             audio_bitrate: row.get(10)?,
             bot_api_url: row.get(11)?,
             bot_api_is_local: row.get(12)?,
+            source_id: row.get(13)?,
+            part_index: row.get(14)?,
         })
     })?;
 
@@ -1044,7 +1056,7 @@ pub fn get_download_history_entry(
 ) -> Result<Option<DownloadHistoryEntry>> {
     let mut stmt = conn.prepare(
         "SELECT id, url, title, format, downloaded_at, file_id, author, file_size, duration, video_quality, audio_bitrate,
-                bot_api_url, bot_api_is_local
+                bot_api_url, bot_api_is_local, source_id, part_index
          FROM download_history
          WHERE id = ?1 AND user_id = ?2",
     )?;
@@ -1063,6 +1075,8 @@ pub fn get_download_history_entry(
             audio_bitrate: row.get(10)?,
             bot_api_url: row.get(11)?,
             bot_api_is_local: row.get(12)?,
+            source_id: row.get(13)?,
+            part_index: row.get(14)?,
         })
     })?;
 
@@ -1243,7 +1257,7 @@ pub fn get_global_stats(conn: &DbConnection) -> Result<GlobalStats> {
 pub fn get_all_download_history(conn: &DbConnection, telegram_id: i64) -> Result<Vec<DownloadHistoryEntry>> {
     let mut stmt = conn.prepare(
         "SELECT id, url, title, format, downloaded_at, file_id, author, file_size, duration, video_quality, audio_bitrate,
-                bot_api_url, bot_api_is_local
+                bot_api_url, bot_api_is_local, source_id, part_index
          FROM download_history
          WHERE user_id = ? ORDER BY downloaded_at DESC",
     )?;
@@ -1262,6 +1276,8 @@ pub fn get_all_download_history(conn: &DbConnection, telegram_id: i64) -> Result
             audio_bitrate: row.get(10)?,
             bot_api_url: row.get(11)?,
             bot_api_is_local: row.get(12)?,
+            source_id: row.get(13)?,
+            part_index: row.get(14)?,
         })
     })?;
 
@@ -1284,7 +1300,7 @@ pub fn get_download_history_filtered(
 ) -> Result<Vec<DownloadHistoryEntry>> {
     let mut query = String::from(
         "SELECT id, url, title, format, downloaded_at, file_id, author, file_size,
-         duration, video_quality, audio_bitrate, bot_api_url, bot_api_is_local
+         duration, video_quality, audio_bitrate, bot_api_url, bot_api_is_local, source_id, part_index
          FROM download_history WHERE user_id = ?",
     );
 
@@ -1329,11 +1345,65 @@ pub fn get_download_history_filtered(
                 audio_bitrate: row.get(10)?,
                 bot_api_url: row.get(11)?,
                 bot_api_is_local: row.get(12)?,
+                source_id: row.get(13)?,
+                part_index: row.get(14)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
     Ok(downloads)
+}
+
+/// Получает отфильтрованную историю отрезов для команды /downloads
+pub fn get_cuts_history_filtered(
+    conn: &DbConnection,
+    user_id: i64,
+    search_text: Option<&str>,
+) -> Result<Vec<DownloadHistoryEntry>> {
+    let mut query = String::from(
+        "SELECT id, original_url, title, output_kind, created_at, file_id, file_size,
+         duration, video_quality FROM cuts WHERE user_id = ?",
+    );
+
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(user_id)];
+
+    // Only show files with file_id
+    query.push_str(" AND file_id IS NOT NULL");
+
+    if let Some(search) = search_text {
+        query.push_str(" AND title LIKE ?");
+        let search_pattern = format!("%{}%", search);
+        params.push(Box::new(search_pattern));
+    }
+
+    query.push_str(" ORDER BY created_at DESC");
+
+    let mut stmt = conn.prepare(&query)?;
+    let params_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
+    let cuts = stmt
+        .query_map(params_refs.as_slice(), |row| {
+            Ok(DownloadHistoryEntry {
+                id: row.get(0)?,
+                url: row.get(1)?,
+                title: row.get(2)?,
+                format: String::from("edit"), // Marker for UI
+                downloaded_at: row.get(4)?,
+                file_id: row.get(5)?,
+                author: None,
+                file_size: row.get(6)?,
+                duration: row.get(7)?,
+                video_quality: row.get(8)?,
+                audio_bitrate: None,
+                bot_api_url: None,
+                bot_api_is_local: None,
+                source_id: None,
+                part_index: None,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    Ok(cuts)
 }
 
 /// Получает список всех пользователей из базы данных.
