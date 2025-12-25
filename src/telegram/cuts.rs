@@ -473,10 +473,13 @@ pub async fn handle_cuts_callback(
                     }
                     Err(e) => {
                         bot.delete_message(chat_id, processing.id).await.ok();
-                        bot.send_message(chat_id, format!("❌ Ошибка при обработке видео: {}", e))
-                            .await
-                            .ok();
-                        // Notify admin about the error
+                        bot.send_message(
+                            chat_id,
+                            "❌ Не удалось обработать видео. Администратор получил уведомление о проблеме.",
+                        )
+                        .await
+                        .ok();
+                        // Notify admin about the error with full details
                         crate::telegram::notifications::notify_admin_video_error(
                             bot,
                             chat_id.0,
