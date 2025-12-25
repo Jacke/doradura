@@ -146,6 +146,7 @@ pub async fn handle_cuts_callback(
     message_id: MessageId,
     data: &str,
     db_pool: Arc<DbPool>,
+    username: Option<String>,
 ) -> ResponseResult<()> {
     bot.answer_callback_query(callback_id).await?;
 
@@ -475,6 +476,15 @@ pub async fn handle_cuts_callback(
                         bot.send_message(chat_id, format!("❌ Ошибка при обработке видео: {}", e))
                             .await
                             .ok();
+                        // Notify admin about the error
+                        crate::telegram::notifications::notify_admin_video_error(
+                            bot,
+                            chat_id.0,
+                            username.as_deref(),
+                            &e.to_string(),
+                            &format!("cut_speed: {}x on '{}'", speed_str, cut.title),
+                        )
+                        .await;
                     }
                 }
             }
