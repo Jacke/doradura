@@ -13,14 +13,21 @@ use crate::telegram::notifications::notify_admin_text;
 use chrono::{DateTime, Utc};
 use rand::Rng;
 use regex::Regex;
+use std::collections::HashMap;
 use std::fs;
-use std::io::{BufRead, BufReader};
-use std::path::Path;
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 use teloxide::prelude::*;
 use teloxide::types::{InputFile, ParseMode};
+use teloxide::RequestError;
+use tokio::fs::File as TokioFile;
+use tokio::io::{AsyncRead, ReadBuf};
 use tokio::process::Command as TokioCommand;
 use tokio::time::timeout;
 use url::Url;
@@ -51,6 +58,15 @@ fn extract_retry_after(error_str: &str) -> Option<u64> {
     }
 
     None
+}
+
+/// Detects timeout/network errors that can be ambiguous for send status.
+fn is_timeout_or_network_error(error_str: &str) -> bool {
+    let lower = error_str.to_lowercase();
+    lower.contains("timeout")
+        || lower.contains("timed out")
+        || lower.contains("network error")
+        || lower.contains("error sending request")
 }
 
 /// Определяет формат изображения по магическим байтам
@@ -93,6 +109,205 @@ fn detect_image_format(bytes: &[u8]) -> ImageFormat {
     }
 
     ImageFormat::Unknown
+}
+
+const DEFAULT_BOT_API_LOG_PATH: &str = "bot-api-data/logs/telegram-bot-api.log";
+const DEFAULT_BOT_API_LOG_TAIL_BYTES: u64 = 4 * 1024 * 1024;
+
+#[derive(Clone)]
+struct UploadProgress {
+    bytes_sent: Arc<AtomicU64>,
+}
+
+impl UploadProgress {
+    fn new() -> Self {
+        Self {
+            bytes_sent: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    fn add_bytes(&self, bytes: usize) {
+        self.bytes_sent.fetch_add(bytes as u64, Ordering::Relaxed);
+    }
+
+    fn bytes_sent(&self) -> u64 {
+        self.bytes_sent.load(Ordering::Relaxed)
+    }
+}
+
+struct ProgressReader<R> {
+    inner: R,
+    progress: UploadProgress,
+}
+
+impl<R: AsyncRead + Unpin> AsyncRead for ProgressReader<R> {
+    fn poll_read(mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<std::io::Result<()>> {
+        let before = buf.filled().len();
+        let poll = Pin::new(&mut self.inner).poll_read(cx, buf);
+        if let Poll::Ready(Ok(())) = &poll {
+            let after = buf.filled().len();
+            if after > before {
+                self.progress.add_bytes(after - before);
+            }
+        }
+        poll
+    }
+}
+
+async fn input_file_with_progress(path: &str, progress: UploadProgress) -> Result<InputFile, RequestError> {
+    log::info!("Upload wrapper: opening file for upload: {}", path);
+    let file = TokioFile::open(path)
+        .await
+        .map_err(|err| RequestError::Io(Arc::new(err)))?;
+    let reader = ProgressReader { inner: file, progress };
+    let file_name = Path::new(path).file_name().and_then(|name| name.to_str());
+    let mut input_file = InputFile::read(reader);
+    if let Some(name) = file_name {
+        log::info!("Upload wrapper: using file name {}", name);
+        input_file = input_file.file_name(name.to_string());
+    }
+    Ok(input_file)
+}
+
+fn read_log_tail(path: &PathBuf, max_bytes: u64) -> Result<String, std::io::Error> {
+    let mut file = std::fs::File::open(path)?;
+    let len = file.metadata()?.len();
+    if len > max_bytes {
+        file.seek(SeekFrom::End(-(max_bytes as i64)))?;
+    } else {
+        file.seek(SeekFrom::Start(0))?;
+    }
+    let mut buf = String::new();
+    file.read_to_string(&mut buf)?;
+    Ok(buf)
+}
+
+fn is_local_bot_api() -> Option<String> {
+    let bot_api_url = std::env::var("BOT_API_URL").ok()?;
+    if bot_api_url.contains("api.telegram.org") {
+        None
+    } else {
+        Some(bot_api_url)
+    }
+}
+
+fn log_bot_api_speed_for_file(download_path: &str) {
+    let bot_api_url = match is_local_bot_api() {
+        Some(url) => url,
+        None => return,
+    };
+
+    let file_name = match Path::new(download_path).file_name().and_then(|name| name.to_str()) {
+        Some(name) => name.to_string(),
+        None => return,
+    };
+
+    let log_path = std::env::var("BOT_API_LOG_PATH").unwrap_or_else(|_| DEFAULT_BOT_API_LOG_PATH.to_string());
+    let log_path = PathBuf::from(log_path);
+    let tail_bytes = std::env::var("BOT_API_LOG_TAIL_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_BOT_API_LOG_TAIL_BYTES);
+
+    let content = match read_log_tail(&log_path, tail_bytes) {
+        Ok(data) => data,
+        Err(e) => {
+            log::warn!("Local Bot API log read failed: {} ({})", log_path.display(), e);
+            return;
+        }
+    };
+
+    let start_re =
+        match Regex::new(r"\[(\d+\.\d+)\].*Query (0x[0-9a-f]+): .*method:\s*([a-z_]+).*\[name:([^]]+)\]\[size:(\d+)\]")
+        {
+            Ok(re) => re,
+            Err(_) => return,
+        };
+    let response_re = match Regex::new(r"\[(\d+\.\d+)\].*Query (0x[0-9a-f]+): \[method:([a-z_]+)\]") {
+        Ok(re) => re,
+        Err(_) => return,
+    };
+
+    #[derive(Clone)]
+    struct Entry {
+        method: String,
+        name: String,
+        size: u64,
+        start_time: f64,
+        response_time: Option<f64>,
+    }
+
+    let mut entries: HashMap<String, Entry> = HashMap::new();
+    for line in content.lines() {
+        if let Some(caps) = start_re.captures(line) {
+            let time = caps.get(1).and_then(|v| v.as_str().parse::<f64>().ok());
+            let query_id = caps.get(2).map(|v| v.as_str().to_string());
+            let method = caps.get(3).map(|v| v.as_str().to_string());
+            let name = caps.get(4).map(|v| v.as_str().to_string());
+            let size = caps.get(5).and_then(|v| v.as_str().parse::<u64>().ok());
+
+            if let (Some(time), Some(query_id), Some(method), Some(name), Some(size)) =
+                (time, query_id, method, name, size)
+            {
+                entries.insert(
+                    query_id,
+                    Entry {
+                        method,
+                        name,
+                        size,
+                        start_time: time,
+                        response_time: None,
+                    },
+                );
+            }
+        }
+
+        if let Some(caps) = response_re.captures(line) {
+            let time = caps.get(1).and_then(|v| v.as_str().parse::<f64>().ok());
+            let query_id = caps.get(2).map(|v| v.as_str().to_string());
+            if let (Some(time), Some(query_id)) = (time, query_id) {
+                if let Some(entry) = entries.get_mut(&query_id) {
+                    entry.response_time = Some(time);
+                }
+            }
+        }
+    }
+
+    let mut best: Option<Entry> = None;
+    for entry in entries.values() {
+        if entry.name != file_name {
+            continue;
+        }
+        if entry.response_time.is_none() {
+            continue;
+        }
+        let replace = match &best {
+            Some(current) => entry.response_time.unwrap_or(0.0) > current.response_time.unwrap_or(0.0),
+            None => true,
+        };
+        if replace {
+            best = Some(entry.clone());
+        }
+    }
+
+    if let Some(entry) = best {
+        if let Some(response_time) = entry.response_time {
+            let duration = response_time - entry.start_time;
+            if duration > 0.0 {
+                let size_mb = entry.size as f64 / (1024.0 * 1024.0);
+                let speed_mbs = size_mb / duration;
+                log::info!(
+                    "Local Bot API speed: method={}, file={}, size={:.1} MB, duration={:.1}s, speed={:.2} MB/s, api_url={}",
+                    entry.method,
+                    entry.name,
+                    size_mb,
+                    duration,
+                    speed_mbs,
+                    bot_api_url
+                );
+            }
+        }
+    }
 }
 
 fn truncate_tail_utf8(text: &str, max_bytes: usize) -> String {
@@ -2078,11 +2293,12 @@ async fn send_file_with_retry<F, Fut>(
     send_fn: F,
 ) -> Result<(Message, u64), AppError>
 where
-    F: Fn(Bot, ChatId, String) -> Fut,
+    F: Fn(Bot, ChatId, String, UploadProgress) -> Fut,
     Fut: std::future::Future<Output = ResponseResult<Message>>,
 {
     let max_attempts = config::retry::MAX_ATTEMPTS;
     let download_path = download_path.to_string();
+    let mut timeout_retry_used = false;
 
     // Validate file size before sending
     let file_size = fs::metadata(&download_path)
@@ -2109,6 +2325,14 @@ where
             size_mb, max_mb
         )));
     }
+
+    log::info!(
+        "Preparing upload for {}: file_size={} bytes, max_size={} bytes, path={}",
+        file_type,
+        file_size,
+        max_size,
+        download_path
+    );
 
     // Send chat action "Uploading document..." before sending file
     use teloxide::types::ChatAction;
@@ -2138,16 +2362,20 @@ where
         let file_type_clone = file_type.to_string();
         let upload_start = std::time::Instant::now();
         let bot_for_action = bot.clone();
+        let upload_progress = UploadProgress::new();
+        let upload_progress_clone = upload_progress.clone();
         let progress_handle = tokio::spawn(async move {
             let mut update_count = 0u32;
             let mut last_progress = 0u8;
             let mut last_eta = Option::<u64>::None;
             let mut consecutive_99_updates = 0u32;
             let mut last_action_time = std::time::Instant::now();
+            let mut logged_complete = false;
 
             loop {
                 let elapsed = upload_start.elapsed();
                 let elapsed_secs = elapsed.as_secs();
+                let elapsed_secs_f64 = elapsed.as_secs_f64();
 
                 // Отправляем ChatAction каждые 4 секунды для поддержания статуса "uploading"
                 // Telegram показывает ChatAction только 5 секунд, поэтому нужно повторять
@@ -2162,30 +2390,71 @@ where
                     last_action_time = std::time::Instant::now();
                 }
 
-                // Рассчитываем примерный прогресс на основе времени и размера файла
-                // Предполагаем среднюю скорость отправки: 5-10 MB/s для больших файлов, 10-20 MB/s для маленьких
-                let estimated_speed_mbps = if file_size_clone > 50 * 1024 * 1024 {
-                    // Для больших файлов (>50MB) - медленнее
-                    5.0 + (update_count as f64 * 0.1).min(5.0) // от 5 до 10 MB/s
+                let actual_uploaded = upload_progress_clone.bytes_sent();
+                let (progress, eta_seconds, current_size, speed_mbs) = if actual_uploaded > 0 {
+                    let progress = ((actual_uploaded as f64 / file_size_clone as f64) * 100.0) as u8;
+                    let progress = progress.min(99);
+                    let speed_mbs = if elapsed_secs_f64 > 0.0 {
+                        Some(actual_uploaded as f64 / (1024.0 * 1024.0) / elapsed_secs_f64)
+                    } else {
+                        None
+                    };
+                    let remaining_bytes = file_size_clone.saturating_sub(actual_uploaded);
+                    let eta_seconds = match speed_mbs {
+                        Some(speed) if speed > 0.0 && remaining_bytes > 0 => {
+                            Some((remaining_bytes as f64 / (speed * 1024.0 * 1024.0)) as u64)
+                        }
+                        _ => None,
+                    };
+                    (
+                        progress,
+                        eta_seconds,
+                        Some(actual_uploaded.min(file_size_clone)),
+                        speed_mbs,
+                    )
                 } else {
-                    // Для маленьких файлов - быстрее
-                    10.0 + (update_count as f64 * 0.2).min(10.0) // от 10 до 20 MB/s
+                    // Рассчитываем примерный прогресс на основе времени и размера файла
+                    // Предполагаем среднюю скорость отправки: 5-10 MB/s для больших файлов, 10-20 MB/s для маленьких
+                    let estimated_speed_mbps = if file_size_clone > 50 * 1024 * 1024 {
+                        // Для больших файлов (>50MB) - медленнее
+                        5.0 + (update_count as f64 * 0.1).min(5.0) // от 5 до 10 MB/s
+                    } else {
+                        // Для маленьких файлов - быстрее
+                        10.0 + (update_count as f64 * 0.2).min(10.0) // от 10 до 20 MB/s
+                    };
+
+                    let estimated_uploaded = (estimated_speed_mbps * 1024.0 * 1024.0 * elapsed_secs as f64) as u64;
+                    let progress = if estimated_uploaded >= file_size_clone {
+                        99 // Максимум 99% пока не завершится реальная отправка
+                    } else {
+                        ((estimated_uploaded as f64 / file_size_clone as f64) * 100.0) as u8
+                    };
+
+                    // Рассчитываем ETA
+                    let remaining_bytes = file_size_clone.saturating_sub(estimated_uploaded);
+                    let eta_seconds = if estimated_speed_mbps > 0.0 && remaining_bytes > 0 {
+                        Some((remaining_bytes as f64 / (estimated_speed_mbps * 1024.0 * 1024.0)) as u64)
+                    } else {
+                        None
+                    };
+
+                    (
+                        progress,
+                        eta_seconds,
+                        Some(estimated_uploaded.min(file_size_clone)),
+                        None,
+                    )
                 };
 
-                let estimated_uploaded = (estimated_speed_mbps * 1024.0 * 1024.0 * elapsed_secs as f64) as u64;
-                let progress = if estimated_uploaded >= file_size_clone {
-                    99 // Максимум 99% пока не завершится реальная отправка
-                } else {
-                    ((estimated_uploaded as f64 / file_size_clone as f64) * 100.0) as u8
-                };
-
-                // Рассчитываем ETA
-                let remaining_bytes = file_size_clone.saturating_sub(estimated_uploaded);
-                let eta_seconds = if estimated_speed_mbps > 0.0 && remaining_bytes > 0 {
-                    Some((remaining_bytes as f64 / (estimated_speed_mbps * 1024.0 * 1024.0)) as u64)
-                } else {
-                    None
-                };
+                if actual_uploaded >= file_size_clone && !logged_complete {
+                    log::info!(
+                        "Upload stream finished locally: sent={} bytes, total={} bytes, elapsed={}s",
+                        actual_uploaded,
+                        file_size_clone,
+                        elapsed_secs
+                    );
+                    logged_complete = true;
+                }
 
                 // Проверяем, изменился ли прогресс или ETA
                 let progress_changed = progress != last_progress;
@@ -2219,13 +2488,24 @@ where
                                 title: title_clone.clone(),
                                 dots: 0,                          // Не используем точки, используем прогресс
                                 progress: Some(progress.min(99)), // Не показываем 100% пока не завершится
+                                speed_mbs,
                                 eta_seconds,
-                                current_size: Some(estimated_uploaded.min(file_size_clone)),
+                                current_size,
                                 total_size: Some(file_size_clone),
                                 file_format,
                             },
                         )
                         .await;
+
+                    log::info!(
+                        "Upload status: progress={}%, sent={:?}, total={} bytes, speed_mbs={:?}, eta={:?}s, elapsed={}s",
+                        progress.min(99),
+                        current_size,
+                        file_size_clone,
+                        speed_mbs,
+                        eta_seconds,
+                        elapsed_secs
+                    );
 
                     last_progress = progress;
                     last_eta = eta_seconds;
@@ -2246,10 +2526,30 @@ where
             }
         });
 
-        let response = send_fn(bot.clone(), chat_id, download_path.clone()).await;
+        log::info!(
+            "Starting Telegram upload request: type={}, attempt={}, path={}",
+            file_type,
+            attempt,
+            download_path
+        );
+        let request_start = std::time::Instant::now();
+        let response = send_fn(bot.clone(), chat_id, download_path.clone(), upload_progress).await;
+        log_bot_api_speed_for_file(&download_path);
+        log::info!(
+            "Telegram upload request finished: type={}, attempt={}, elapsed={}s, result={}",
+            file_type,
+            attempt,
+            request_start.elapsed().as_secs(),
+            if response.is_ok() { "ok" } else { "err" }
+        );
 
         // Останавливаем отслеживание прогресса
         progress_handle.abort();
+        log::info!(
+            "Upload progress tracker stopped: type={}, attempt={}",
+            file_type,
+            attempt
+        );
 
         // Небольшая задержка, чтобы убедиться, что анимация точно остановилась
         tokio::time::sleep(config::animation::stop_delay()).await;
@@ -2290,13 +2590,36 @@ where
 
                 // Проверяем, не является ли это ошибкой таймаута
                 // Если это timeout или network error, возможно файл уже отправлен
-                let is_timeout_or_network = error_str.contains("timeout")
-                    || error_str.contains("network error")
-                    || error_str.contains("error sending request");
+                let is_timeout_or_network = is_timeout_or_network_error(&error_str);
 
                 if is_timeout_or_network {
-                    log::warn!("Attempt {}/{} failed for chat {} with timeout/network error: {}. This may indicate the file was actually sent but response timed out. Will retry once more to confirm.",
-                        attempt, max_attempts, chat_id, e);
+                    if timeout_retry_used {
+                        log::warn!(
+                            "Attempt {}/{} failed for chat {} with timeout/network error after retry: {}. Skipping further retries to avoid duplicates.",
+                            attempt,
+                            max_attempts,
+                            chat_id,
+                            e
+                        );
+                        metrics::record_error("telegram", "send_file");
+                        let error_msg = match file_type {
+                            "video" => format!(
+                                "У меня не получилось отправить тебе видео 🥲 попробуй как-нибудь позже. Ошибка: {}",
+                                e
+                            ),
+                            _ => format!("Failed to send {} file after timeout/network retry: {}", file_type, e),
+                        };
+                        return Err(AppError::Download(error_msg));
+                    }
+
+                    log::warn!(
+                        "Attempt {}/{} failed for chat {} with timeout/network error: {}. This may indicate the file was actually sent but response timed out. Will retry once more to confirm.",
+                        attempt,
+                        max_attempts,
+                        chat_id,
+                        e
+                    );
+                    timeout_retry_used = true;
                     // Для timeout/network ошибок делаем более длинную задержку
                     tokio::time::sleep(Duration::from_secs(5)).await;
                 } else {
@@ -2357,10 +2680,11 @@ async fn send_audio_with_retry(
             progress_msg,
             "",
             "audio",
-            move |bot, chat_id, path| {
+            move |bot, chat_id, path, progress| {
                 let caption_clone = caption_clone.clone();
                 async move {
-                    bot.send_document(chat_id, InputFile::file(path))
+                    let input_file = input_file_with_progress(&path, progress).await?;
+                    bot.send_document(chat_id, input_file)
                         .caption(&caption_clone)
                         .parse_mode(ParseMode::MarkdownV2)
                         .await
@@ -2377,11 +2701,12 @@ async fn send_audio_with_retry(
             progress_msg,
             "",
             "audio",
-            move |bot, chat_id, path| {
+            move |bot, chat_id, path, progress| {
                 let duration = duration;
                 let caption_clone = caption_clone.clone();
                 async move {
-                    bot.send_audio(chat_id, InputFile::file(path))
+                    let input_file = input_file_with_progress(&path, progress).await?;
+                    bot.send_audio(chat_id, input_file)
                         .caption(&caption_clone)
                         .parse_mode(ParseMode::MarkdownV2)
                         .duration(duration)
@@ -2614,10 +2939,11 @@ async fn send_video_with_retry(
             progress_msg,
             title,
             "video",
-            move |bot, chat_id, path| {
+            move |bot, chat_id, path, progress| {
                 let title_for_doc = title_for_doc.clone();
                 async move {
-                    bot.send_document(chat_id, InputFile::file(path))
+                    let input_file = input_file_with_progress(&path, progress).await?;
+                    bot.send_document(chat_id, input_file)
                         .caption(&title_for_doc)
                         .parse_mode(ParseMode::MarkdownV2)
                         .await
@@ -2641,7 +2967,7 @@ async fn send_video_with_retry(
         progress_msg,
         title,
         "video",
-        move |bot, chat_id, path| {
+        move |bot, chat_id, path, progress| {
             let duration_clone = duration_clone;
             let width_clone = width_clone;
             let height_clone = height_clone;
@@ -2650,8 +2976,9 @@ async fn send_video_with_retry(
             let title_clone = title_clone.clone();
 
             async move {
+                let input_file = input_file_with_progress(&path, progress).await?;
                 let mut video_msg = bot
-                    .send_video(chat_id, InputFile::file(path))
+                    .send_video(chat_id, input_file)
                     .caption(&title_clone)
                     .parse_mode(ParseMode::MarkdownV2);
 
@@ -2730,6 +3057,15 @@ async fn send_video_with_retry(
 
     // Если отправка как видео не удалась и файл > 50 MB, пробуем как document
     if result.is_err() && use_document_fallback {
+        if let Err(AppError::Download(ref msg)) = result {
+            if is_timeout_or_network_error(msg) {
+                log::warn!(
+                    "send_video failed with timeout/network error; skipping send_document fallback to avoid duplicates"
+                );
+                return result;
+            }
+        }
+
         log::info!("send_video failed, trying send_document as fallback for large file");
         let title_for_fallback = title.to_string();
         return send_file_with_retry(
@@ -2739,10 +3075,11 @@ async fn send_video_with_retry(
             progress_msg,
             title,
             "video",
-            move |bot, chat_id, path| {
+            move |bot, chat_id, path, progress| {
                 let title_for_fallback = title_for_fallback.clone();
                 async move {
-                    bot.send_document(chat_id, InputFile::file(path))
+                    let input_file = input_file_with_progress(&path, progress).await?;
+                    bot.send_document(chat_id, input_file)
                         .caption(&title_for_fallback)
                         .parse_mode(ParseMode::MarkdownV2)
                         .await

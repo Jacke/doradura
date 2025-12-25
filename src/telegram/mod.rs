@@ -18,9 +18,9 @@ pub mod webapp_auth;
 
 // Re-exports for convenience
 pub use admin::{
-    download_file_from_telegram, escape_markdown, handle_admin_command, handle_backup_command, handle_charges_command,
-    handle_download_tg_command, handle_sent_files_command, handle_setplan_command, handle_transactions_command,
-    handle_users_command, is_admin,
+    download_file_from_telegram, escape_markdown, handle_admin_command, handle_backup_command,
+    handle_botapi_speed_command, handle_charges_command, handle_download_tg_command, handle_sent_files_command,
+    handle_setplan_command, handle_transactions_command, handle_users_command, is_admin,
 };
 pub use analytics::{handle_analytics_command, handle_health_command, handle_metrics_command, handle_revenue_command};
 pub use bot::{create_bot, is_message_addressed_to_bot, setup_all_language_commands, setup_chat_bot_commands, Command};
