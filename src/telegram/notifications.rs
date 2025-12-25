@@ -53,6 +53,26 @@ pub async fn notify_admin_text(bot: &Bot, text: &str) {
     send_plain_text_chunks(bot, ChatId(admin_id), text).await;
 }
 
+/// Sends a notification to admin about video processing error
+pub async fn notify_admin_video_error(bot: &Bot, user_id: i64, username: Option<&str>, error: &str, context: &str) {
+    let admin_id = *ADMIN_USER_ID;
+    if admin_id == 0 {
+        log::warn!("ADMIN_USER_ID not configured; admin notification skipped");
+        return;
+    }
+
+    let username_str = username.unwrap_or("unknown");
+    let message = format!(
+        "⚠️ *Ошибка обработки видео*\n\n\
+        👤 User: @{} (ID: {})\n\
+        📝 Context: {}\n\n\
+        ❌ Error:\n```\n{}\n```",
+        username_str, user_id, context, error
+    );
+
+    send_plain_text_chunks(bot, ChatId(admin_id), &message).await;
+}
+
 /// Sends a notification to the administrator about a task failure.
 ///
 /// # Arguments
