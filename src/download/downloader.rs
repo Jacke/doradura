@@ -4257,6 +4257,13 @@ pub async fn download_and_send_subtitles(
 /// # Example
 ///
 /// ```no_run
+/// # use doradura::download::downloader::burn_subtitles_into_video;
+/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// burn_subtitles_into_video("input.mp4", "subtitles.srt", "output.mp4").await?;
+/// # Ok(())
+/// # }
+/// ```
+///
 /// Splits a large video file into playable segments using ffmpeg.
 /// This is used when the file exceeds Telegram's upload limits.
 pub async fn split_video_into_parts(path: &str, target_part_size_bytes: u64) -> Result<Vec<String>, AppError> {
