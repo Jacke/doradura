@@ -2526,22 +2526,48 @@ where
             }
         });
 
-        log::info!(
-            "Starting Telegram upload request: type={}, attempt={}, path={}",
-            file_type,
-            attempt,
-            download_path
-        );
+        // Логируем детали запроса для отладки (особенно для локального Bot API)
+        let is_local_api = std::env::var("BOT_API_URL").is_ok();
+        if is_local_api {
+            log::info!(
+                "🔵 [LOCAL API] Starting Telegram upload request: type={}, attempt={}, chat_id={}, file_size={}MB, path={}",
+                file_type,
+                attempt,
+                chat_id,
+                file_size / (1024 * 1024),
+                download_path
+            );
+        } else {
+            log::info!(
+                "Starting Telegram upload request: type={}, attempt={}, path={}",
+                file_type,
+                attempt,
+                download_path
+            );
+        }
         let request_start = std::time::Instant::now();
         let response = send_fn(bot.clone(), chat_id, download_path.clone(), upload_progress).await;
         log_bot_api_speed_for_file(&download_path);
-        log::info!(
-            "Telegram upload request finished: type={}, attempt={}, elapsed={}s, result={}",
-            file_type,
-            attempt,
-            request_start.elapsed().as_secs(),
-            if response.is_ok() { "ok" } else { "err" }
-        );
+
+        // Детальное логирование результата для локального API
+        if is_local_api {
+            log::info!(
+                "🔵 [LOCAL API] Telegram upload request finished: type={}, attempt={}, chat_id={}, elapsed={}s, result={}",
+                file_type,
+                attempt,
+                chat_id,
+                request_start.elapsed().as_secs(),
+                if response.is_ok() { "ok" } else { "err" }
+            );
+        } else {
+            log::info!(
+                "Telegram upload request finished: type={}, attempt={}, elapsed={}s, result={}",
+                file_type,
+                attempt,
+                request_start.elapsed().as_secs(),
+                if response.is_ok() { "ok" } else { "err" }
+            );
+        }
 
         // Останавливаем отслеживание прогресса
         progress_handle.abort();
@@ -2597,14 +2623,25 @@ where
                     // так как файл скорее всего уже отправлен на сервер и обрабатывается.
                     // Telegram может обрабатывать большие видео 5-15 минут после загрузки.
                     if file_size > 50 * 1024 * 1024 && attempt == 1 {
-                        log::warn!(
-                            "Attempt {}/{} failed for chat {} with timeout for large file ({}MB): {}. File is likely uploaded and processing server-side. Sending notification to user.",
-                            attempt,
-                            max_attempts,
-                            chat_id,
-                            file_size / (1024 * 1024),
-                            e
-                        );
+                        if is_local_api {
+                            log::warn!(
+                                "🔵 [LOCAL API] Attempt {}/{} failed for chat {} with timeout for large file ({}MB). File is likely uploaded and processing server-side. PREVENTING RETRY to avoid duplicates. Error: {}",
+                                attempt,
+                                max_attempts,
+                                chat_id,
+                                file_size / (1024 * 1024),
+                                e
+                            );
+                        } else {
+                            log::warn!(
+                                "Attempt {}/{} failed for chat {} with timeout for large file ({}MB): {}. File is likely uploaded and processing server-side. Sending notification to user.",
+                                attempt,
+                                max_attempts,
+                                chat_id,
+                                file_size / (1024 * 1024),
+                                e
+                            );
+                        }
                         metrics::record_error("telegram", "send_file_timeout");
 
                         // Отправляем уведомление пользователю
