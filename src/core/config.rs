@@ -120,8 +120,8 @@ pub mod download {
 pub mod retry {
     use super::Duration;
 
-    /// Maximum number of retry attempts for sending files
-    pub const MAX_ATTEMPTS: u32 = 3;
+    /// Maximum number of retry attempts for sending files (disabled - only 1 attempt)
+    pub const MAX_ATTEMPTS: u32 = 1;
 
     /// Delay between retry attempts (in seconds)
     pub const RETRY_DELAY_SECS: u64 = 10;
