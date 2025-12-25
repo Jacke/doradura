@@ -552,7 +552,7 @@ pub async fn show_video_quality_menu(
         "720p" => "🎬 720p (HD)",
         "480p" => "🎬 480p (SD)",
         "360p" => "🎬 360p (Low)",
-        _ => "🎬 Best (Авто)",
+        _ => "🎬 Best (Auto)",
     };
 
     let send_type_display = if send_as_document == 0 {
@@ -2080,11 +2080,28 @@ pub async fn handle_menu_callback(
             } else if data.starts_with("downloads:") {
                 // Handle downloads callback queries
                 use crate::telegram::downloads::handle_downloads_callback;
-                handle_downloads_callback(&bot, callback_id.clone(), chat_id, message_id, &data, db_pool.clone())
-                    .await?;
+                handle_downloads_callback(
+                    &bot,
+                    callback_id.clone(),
+                    chat_id,
+                    message_id,
+                    &data,
+                    db_pool.clone(),
+                    q.from.username.clone(),
+                )
+                .await?;
             } else if data.starts_with("cuts:") {
                 use crate::telegram::cuts::handle_cuts_callback;
-                handle_cuts_callback(&bot, callback_id.clone(), chat_id, message_id, &data, db_pool.clone()).await?;
+                handle_cuts_callback(
+                    &bot,
+                    callback_id.clone(),
+                    chat_id,
+                    message_id,
+                    &data,
+                    db_pool.clone(),
+                    q.from.username.clone(),
+                )
+                .await?;
             } else if data.starts_with("admin:") {
                 // Handle admin panel callbacks
                 let _ = bot.answer_callback_query(callback_id.clone()).await;

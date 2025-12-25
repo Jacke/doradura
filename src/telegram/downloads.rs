@@ -273,6 +273,7 @@ pub async fn handle_downloads_callback(
     message_id: MessageId,
     data: &str,
     db_pool: Arc<DbPool>,
+    username: Option<String>,
 ) -> ResponseResult<()> {
     log::info!("📥 handle_downloads_callback called with data: {}", data);
     bot.answer_callback_query(callback_id).await?;
@@ -1023,6 +1024,15 @@ pub async fn handle_downloads_callback(
                             bot.send_message(chat_id, format!("❌ Ошибка при обработке видео: {}", e))
                                 .await
                                 .ok();
+                            // Notify admin about the error
+                            crate::telegram::notifications::notify_admin_video_error(
+                                bot,
+                                chat_id.0,
+                                username.as_deref(),
+                                &e.to_string(),
+                                &format!("apply_speed: {}x on '{}'", speed_str, download.title),
+                            )
+                            .await;
                         }
                     }
                 }
@@ -1082,6 +1092,15 @@ pub async fn handle_downloads_callback(
                             bot.send_message(chat_id, format!("❌ Ошибка при обработке видео: {}", e))
                                 .await
                                 .ok();
+                            // Notify admin about the error
+                            crate::telegram::notifications::notify_admin_video_error(
+                                bot,
+                                chat_id.0,
+                                username.as_deref(),
+                                &e.to_string(),
+                                &format!("apply_speed_cut: {}x on '{}'", speed_str, cut.title),
+                            )
+                            .await;
                         }
                     }
                 }
