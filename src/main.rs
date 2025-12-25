@@ -30,12 +30,12 @@ use doradura::storage::{create_pool, get_connection};
 use doradura::telegram::notifications::{notify_admin_task_failed, notify_admin_text};
 use doradura::telegram::webapp::run_webapp_server;
 use doradura::telegram::{
-    create_bot, handle_admin_command, handle_analytics_command, handle_backup_command, handle_charges_command,
-    handle_download_tg_command, handle_health_command, handle_info_command, handle_menu_callback, handle_message,
-    handle_metrics_command, handle_revenue_command, handle_sent_files_command, handle_setplan_command,
-    handle_transactions_command, handle_users_command, is_message_addressed_to_bot, send_random_voice_message,
-    setup_all_language_commands, setup_chat_bot_commands, show_enhanced_main_menu, show_main_menu, Command,
-    WebAppAction, WebAppData,
+    create_bot, handle_admin_command, handle_analytics_command, handle_backup_command, handle_botapi_speed_command,
+    handle_charges_command, handle_download_tg_command, handle_health_command, handle_info_command,
+    handle_menu_callback, handle_message, handle_metrics_command, handle_revenue_command, handle_sent_files_command,
+    handle_setplan_command, handle_transactions_command, handle_users_command, is_message_addressed_to_bot,
+    send_random_voice_message, setup_all_language_commands, setup_chat_bot_commands, show_enhanced_main_menu,
+    show_main_menu, Command, WebAppAction, WebAppData,
 };
 use export::show_export_menu;
 use history::show_history;
@@ -625,6 +625,10 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
                                 Command::Revenue => {
                                     let _ = handle_revenue_command(bot.clone(), msg.clone(), db_pool.clone()).await;
                                 }
+                                Command::BotApiSpeed => {
+                                    let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
+                                    let _ = handle_botapi_speed_command(&bot, msg.chat.id, username).await;
+                                }
                             }
                             respond(())
                         }
@@ -861,12 +865,6 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
                 sleep(config::retry::dispatcher_delay()).await;
             }
         }
-    }
-
-    tokio::select! {
-        _ = signal::ctrl_c() => {
-            log::info!("Shutting down gracefully...");
-        },
     }
 
     Ok(())

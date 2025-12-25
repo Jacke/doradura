@@ -60,6 +60,11 @@ pub enum Command {
     Metrics,
     #[command(description = "финансовая аналитика (только для администратора)")]
     Revenue,
+    #[command(
+        rename = "botapi_speed",
+        description = "скорость загрузки через локальный Bot API (только для администратора)"
+    )]
+    BotApiSpeed,
 }
 
 const BOT_COMMAND_DEFINITIONS: &[(&str, &str)] = &[

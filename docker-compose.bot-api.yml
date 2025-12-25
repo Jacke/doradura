@@ -7,12 +7,21 @@ services:
     restart: unless-stopped
     ports:
       - "8081:8081"
+      - "8082:8082"
     environment:
       - TELEGRAM_API_ID=${API_ID}
       - TELEGRAM_API_HASH=${API_HASH}
       - TELEGRAM_LOCAL=1
+      - TELEGRAM_STAT=1
+      - TELEGRAM_VERBOSITY=4
+      - TELEGRAM_LOG_FILE=/var/lib/telegram-bot-api/logs/telegram-bot-api.log
     volumes:
       - ./bot-api-data:/var/lib/telegram-bot-api
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8081/health"]
       interval: 30s
