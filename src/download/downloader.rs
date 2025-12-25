@@ -2593,6 +2593,25 @@ where
                 let is_timeout_or_network = is_timeout_or_network_error(&error_str);
 
                 if is_timeout_or_network {
+                    // Для больших файлов (>100MB) не делаем retry при timeout,
+                    // так как файл скорее всего уже отправлен на сервер и обрабатывается
+                    if file_size > 100 * 1024 * 1024 {
+                        log::warn!(
+                            "Attempt {}/{} failed for chat {} with timeout for large file ({}MB): {}. Skipping retry to avoid duplicates as file is likely already uploaded and processing.",
+                            attempt,
+                            max_attempts,
+                            chat_id,
+                            file_size / (1024 * 1024),
+                            e
+                        );
+                        metrics::record_error("telegram", "send_file_timeout");
+                        let error_msg = match file_type {
+                            "video" => "Видео успешно загружено на сервер Telegram и обрабатывается. Оно появится в чате через несколько минут (обработка больших файлов может занять до 10-15 минут).".to_string(),
+                            _ => format!("Large file uploaded to Telegram and processing (timeout after {} bytes transferred)", file_size),
+                        };
+                        return Err(AppError::Download(error_msg));
+                    }
+
                     if timeout_retry_used {
                         log::warn!(
                             "Attempt {}/{} failed for chat {} with timeout/network error after retry: {}. Skipping further retries to avoid duplicates.",
