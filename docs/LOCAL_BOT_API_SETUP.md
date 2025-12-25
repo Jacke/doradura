@@ -45,7 +45,9 @@ docker logs -f telegram-bot-api
 ### Useful options
 - `-p 8081:8081` — expose port
 - `-v ./bot-api-data:/var/lib/telegram-bot-api` — persistent data
-- `-e TELEGRAM_STAT=1` — enable stats endpoint
+- `-e TELEGRAM_STAT=1` — enable stats endpoint (exposes port 8082 by default)
+- `-e TELEGRAM_VERBOSITY=4` — verbose logging
+- `-e TELEGRAM_LOG_FILE=/var/lib/telegram-bot-api/logs/telegram-bot-api.log` — write logs to file inside container
 
 ## 🛠 Step 3: Configure the bot to use the local API
 

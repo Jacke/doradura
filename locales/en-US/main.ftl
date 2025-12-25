@@ -228,11 +228,11 @@ export =
     .send_failed = Failed to send file\\.
 
 preview =
-    .video_too_long = Video is too long ({$hours}h {$minutes}min)\\. Maximum duration: 3 hours\\.
+    .video_too_long = Video is too long ({$hours}h {$minutes}min)\\. Maximum duration: 4 hours\\.
     .duration = ⏱️ Duration: {$duration}\n
     .formats_header = \n📹 *Available formats:*\n
     .format_item = • {$quality}: {$size}{$fps}\n
-    .choose_action = \nChoose an action\\:
+    .choose_action = \nChoose a format\\:
     .download_button = 📥 Download ({$format})
     .download_mp3 = 📥 Download (MP3)
     .download_mp4_mp3 = 📥 Download (MP4 + MP3)

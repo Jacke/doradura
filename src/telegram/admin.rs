@@ -6,13 +6,21 @@
 //! - Markdown escaping utilities
 
 use anyhow::Result;
+use regex::Regex;
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use teloxide::prelude::*;
 use teloxide::types::{
     InlineKeyboardButton, InlineKeyboardMarkup, ParseMode, Seconds, TransactionPartner, TransactionPartnerUserKind,
 };
 
 use crate::core::config;
+
+// Type alias for query tracking data: (start_time, size, method, response_time)
+type QueryData = (Option<f64>, Option<u64>, Option<String>, Option<f64>);
 
 use crate::core::config::admin::ADMIN_USERNAME;
 use crate::storage::backup::{create_backup, list_backups};
@@ -22,6 +30,8 @@ use url::Url;
 
 /// Maximum message length for Telegram (with margin)
 const MAX_MESSAGE_LENGTH: usize = 4000;
+const DEFAULT_BOT_API_LOG_PATH: &str = "bot-api-data/logs/telegram-bot-api.log";
+const DEFAULT_BOT_API_LOG_TAIL_BYTES: u64 = 2 * 1024 * 1024;
 
 /// Check if user is admin
 pub fn is_admin(username: Option<&str>) -> bool {
@@ -78,6 +88,208 @@ fn format_subscription_period_for_log(period: &Seconds) -> String {
     let days = seconds as f64 / 86_400.0;
     let months = days / 30.0;
     format!("{seconds} seconds (~{days:.2} days, ~{months:.2} months)")
+}
+
+fn read_log_tail(path: &PathBuf, max_bytes: u64) -> Result<String, std::io::Error> {
+    let mut file = File::open(path)?;
+    let len = file.metadata()?.len();
+    if len > max_bytes {
+        file.seek(SeekFrom::End(-(max_bytes as i64)))?;
+    } else {
+        file.seek(SeekFrom::Start(0))?;
+    }
+
+    let mut buf = String::new();
+    file.read_to_string(&mut buf)?;
+    Ok(buf)
+}
+
+fn is_local_bot_api(bot_api_url: &str) -> bool {
+    !bot_api_url.contains("api.telegram.org")
+}
+
+struct BotApiUploadStat {
+    method: String,
+    size_bytes: u64,
+    duration_secs: f64,
+    response_time: f64,
+}
+
+struct BotApiUploadPending {
+    method: String,
+    size_bytes: u64,
+    start_time: f64,
+}
+
+/// Handle /botapi_speed command - show upload speed stats from local Bot API logs (admin only)
+pub async fn handle_botapi_speed_command(bot: &Bot, chat_id: ChatId, username: Option<&str>) -> Result<()> {
+    if !is_admin(username) {
+        bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
+            .await?;
+        return Ok(());
+    }
+
+    let bot_api_url = match std::env::var("BOT_API_URL") {
+        Ok(url) => url,
+        Err(_) => {
+            bot.send_message(chat_id, "⚠️ BOT_API_URL не задан. Локальный Bot API не используется.")
+                .await?;
+            return Ok(());
+        }
+    };
+
+    if !is_local_bot_api(&bot_api_url) {
+        bot.send_message(
+            chat_id,
+            "⚠️ Используется официальный Bot API. Локальные логи недоступны.",
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let log_path = std::env::var("BOT_API_LOG_PATH").unwrap_or_else(|_| DEFAULT_BOT_API_LOG_PATH.to_string());
+    let log_path = PathBuf::from(log_path);
+
+    let tail_bytes = std::env::var("BOT_API_LOG_TAIL_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_BOT_API_LOG_TAIL_BYTES);
+
+    let content = match read_log_tail(&log_path, tail_bytes) {
+        Ok(data) => data,
+        Err(e) => {
+            bot.send_message(
+                chat_id,
+                format!("❌ Не удалось прочитать лог Bot API: {} ({})", log_path.display(), e),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    let start_re = Regex::new(r"\[(\d+\.\d+)\].*Query (0x[0-9a-f]+): .*method:\s*([a-z_]+).*\[size:(\d+)\]")
+        .map_err(|e| anyhow::anyhow!("Failed to compile start regex: {}", e))?;
+    let response_re = Regex::new(r"\[(\d+\.\d+)\].*Query (0x[0-9a-f]+): \[method:([a-z_]+)\]")
+        .map_err(|e| anyhow::anyhow!("Failed to compile response regex: {}", e))?;
+
+    let mut queries: HashMap<String, QueryData> = HashMap::new();
+
+    for line in content.lines() {
+        if let Some(caps) = start_re.captures(line) {
+            let time = caps.get(1).and_then(|v| v.as_str().parse::<f64>().ok());
+            let query_id = caps.get(2).map(|v| v.as_str().to_string());
+            let method = caps.get(3).map(|v| v.as_str().to_string());
+            let size = caps.get(4).and_then(|v| v.as_str().parse::<u64>().ok());
+
+            if let (Some(time), Some(query_id), Some(method), Some(size)) = (time, query_id, method, size) {
+                let entry = queries.entry(query_id).or_insert((None, None, None, None));
+                entry.0 = Some(time);
+                entry.1 = Some(size);
+                entry.2 = Some(method);
+            }
+        }
+
+        if let Some(caps) = response_re.captures(line) {
+            let time = caps.get(1).and_then(|v| v.as_str().parse::<f64>().ok());
+            let query_id = caps.get(2).map(|v| v.as_str().to_string());
+
+            if let (Some(time), Some(query_id)) = (time, query_id) {
+                let entry = queries.entry(query_id).or_insert((None, None, None, None));
+                entry.3 = Some(time);
+            }
+        }
+    }
+
+    let mut completed = Vec::new();
+    let mut pending = Vec::new();
+    for (_id, (start, size, method, response)) in queries {
+        match (start, size, method, response) {
+            (Some(start_time), Some(size_bytes), Some(method), Some(response_time)) => {
+                let duration = response_time - start_time;
+                if duration > 0.0 {
+                    completed.push(BotApiUploadStat {
+                        method,
+                        size_bytes,
+                        duration_secs: duration,
+                        response_time,
+                    });
+                }
+            }
+            (Some(start_time), Some(size_bytes), Some(method), None) => {
+                pending.push(BotApiUploadPending {
+                    method,
+                    size_bytes,
+                    start_time,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    completed.sort_by(|a, b| {
+        b.response_time
+            .partial_cmp(&a.response_time)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    pending.sort_by(|a, b| {
+        b.start_time
+            .partial_cmp(&a.start_time)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut text = String::new();
+    text.push_str("📡 *Bot API upload speed*");
+    text.push_str(&format!("\nURL: `{}`", escape_markdown(&bot_api_url)));
+    text.push_str(&format!(
+        "\nЛог: `{}`\n",
+        escape_markdown(&log_path.display().to_string())
+    ));
+
+    if completed.is_empty() && pending.is_empty() {
+        text.push_str("\nНет записей send* в последнем логе.");
+        bot.send_message(chat_id, text)
+            .parse_mode(ParseMode::MarkdownV2)
+            .await?;
+        return Ok(());
+    }
+
+    if !completed.is_empty() {
+        text.push_str("\n\n✅ *Последние завершённые:*");
+        for stat in completed.iter().take(5) {
+            let size_mb = stat.size_bytes as f64 / (1024.0 * 1024.0);
+            let speed_mbs = size_mb / stat.duration_secs;
+            text.push_str(&format!(
+                "\n• {}: {:.1} MB за {:.1} c \\(~{:.2} MB/s\\)",
+                escape_markdown(&stat.method),
+                size_mb,
+                stat.duration_secs,
+                speed_mbs
+            ));
+        }
+    }
+
+    if !pending.is_empty() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+        text.push_str("\n\n⏳ *В процессе:*");
+        for stat in pending.iter().take(3) {
+            let size_mb = stat.size_bytes as f64 / (1024.0 * 1024.0);
+            let elapsed = (now - stat.start_time).max(0.0);
+            text.push_str(&format!(
+                "\n• {}: {:.1} MB, уже {:.0} c",
+                escape_markdown(&stat.method),
+                size_mb,
+                elapsed
+            ));
+        }
+    }
+
+    bot.send_message(chat_id, text)
+        .parse_mode(ParseMode::MarkdownV2)
+        .await?;
+    Ok(())
 }
 
 fn format_transaction_partner_for_log(partner: &TransactionPartner) -> String {

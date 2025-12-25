@@ -4,8 +4,8 @@ TMP/
 app.log
 bot.log
 *.log
-# Database - production tracked in git for Railway sync
-# database.sqlite (production - tracked)
+# Database files
+database.sqlite
 database_staging.sqlite
 database_test.sqlite
 database.sqlite-shm

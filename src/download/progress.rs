@@ -40,6 +40,8 @@ pub enum DownloadStatus {
         dots: u8,
         /// Примерный прогресс отправки в процентах (0-100, опционально)
         progress: Option<u8>,
+        /// Скорость отправки в MB/s (опционально)
+        speed_mbs: Option<f64>,
         /// Примерное время до завершения в секундах (опционально)
         eta_seconds: Option<u64>,
         /// Текущий размер в байтах (опционально)
@@ -192,6 +194,7 @@ impl DownloadStatus {
                 title,
                 dots,
                 progress,
+                speed_mbs,
                 eta_seconds,
                 current_size,
                 total_size,
@@ -221,6 +224,11 @@ impl DownloadStatus {
                         "\\.".repeat(dots_count)
                     };
                     s.push_str(&dots_str);
+                }
+
+                if let Some(speed) = speed_mbs {
+                    s.push_str("\n\n⚡ Скорость: ");
+                    s.push_str(&format!("{:.1} MB/s", speed).replace('.', "\\."));
                 }
 
                 // Добавляем ETA если доступно

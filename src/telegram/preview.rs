@@ -18,6 +18,16 @@ use url::Url;
 use crate::telegram::cache::PREVIEW_CACHE;
 use crate::telegram::types::{PreviewMetadata, VideoFormatInfo};
 
+const MAX_VIDEO_FORMAT_SIZE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+fn filter_video_formats_by_size(formats: &[VideoFormatInfo]) -> Vec<VideoFormatInfo> {
+    formats
+        .iter()
+        .filter(|format| format.size_bytes.is_none_or(|size| size <= MAX_VIDEO_FORMAT_SIZE_BYTES))
+        .cloned()
+        .collect()
+}
+
 /// Получает метаданные из JSON ответа yt-dlp
 ///
 /// Использует --dump-json для получения всех метаданных за один вызов
@@ -220,14 +230,14 @@ pub async fn get_preview_metadata(
         .and_then(|d| d.parse::<f64>().ok())
         .map(|d| d as u32);
 
-    // Проверяем длительность видео: максимум 3 часа (10800 секунд)
+    // Проверяем длительность видео: максимум 4 часа (14400 секунд)
     if let Some(dur) = duration {
-        const MAX_DURATION_SECONDS: u32 = 10800; // 3 часа
+        const MAX_DURATION_SECONDS: u32 = 14400; // 4 часа
         if dur > MAX_DURATION_SECONDS {
             let hours = dur / 3600;
             let minutes = (dur % 3600) / 60;
             return Err(AppError::Download(format!(
-                "Видео слишком длинное ({}ч {}мин). Максимальная длительность: 3 часа.",
+                "Видео слишком длинное ({}ч {}мин). Максимальная длительность: 4 часа.",
                 hours, minutes
             )));
         }
@@ -673,9 +683,14 @@ pub async fn send_preview(
         text.push_str(&format!("⏱️ Длительность: {}\n", escape_markdown(&duration_str)));
     }
 
+    let filtered_formats = metadata
+        .video_formats
+        .as_ref()
+        .map(|formats| filter_video_formats_by_size(formats));
+
     // Для видео показываем список форматов с размерами
     if default_format == "mp4" || default_format == "mp4+mp3" {
-        if let Some(formats) = &metadata.video_formats {
+        if let Some(formats) = &filtered_formats {
             if !formats.is_empty() {
                 text.push_str("\n📹 *Доступные форматы:*\n");
                 for format_info in formats {
@@ -713,7 +728,7 @@ pub async fn send_preview(
         text.push_str(&format!("\n📝 {}\n", escape_markdown(desc)));
     }
 
-    text.push_str("\nВыбери действие\\:");
+    text.push_str("\nВыбери формат\\:");
 
     // Удаляем старое preview сообщение если указано
     if let Some(old_msg_id) = old_preview_msg_id {
@@ -743,7 +758,7 @@ pub async fn send_preview(
     // Получаем message_id нового preview сообщения (будет установлен после отправки)
     // Пока используем временное значение 0, потом обновим после отправки
     let keyboard = if default_format == "mp4" || default_format == "mp4+mp3" {
-        if let Some(formats) = &metadata.video_formats {
+        if let Some(formats) = &filtered_formats {
             if formats.is_empty() {
                 log::warn!(
                     "video_formats is Some but empty, using fallback button for {}",
@@ -837,9 +852,14 @@ pub async fn update_preview_message(
         text.push_str(&format!("⏱️ Длительность: {}\n", escape_markdown(&duration_str)));
     }
 
+    let filtered_formats = metadata
+        .video_formats
+        .as_ref()
+        .map(|formats| filter_video_formats_by_size(formats));
+
     // Для видео показываем список форматов с размерами
     if default_format == "mp4" || default_format == "mp4+mp3" {
-        if let Some(formats) = &metadata.video_formats {
+        if let Some(formats) = &filtered_formats {
             if !formats.is_empty() {
                 text.push_str("\n📹 *Доступные форматы:*\n");
                 for format_info in formats {
@@ -877,7 +897,7 @@ pub async fn update_preview_message(
         text.push_str(&format!("\n📝 {}\n", escape_markdown(desc)));
     }
 
-    text.push_str("\nВыбери действие\\:");
+    text.push_str("\nВыбери формат\\:");
 
     // Создаем inline клавиатуру
     // Сохраняем URL в кэше и получаем короткий ID
@@ -897,7 +917,7 @@ pub async fn update_preview_message(
     };
 
     let keyboard = if default_format == "mp4" || default_format == "mp4+mp3" {
-        if let Some(formats) = &metadata.video_formats {
+        if let Some(formats) = &filtered_formats {
             if formats.is_empty() {
                 create_fallback_keyboard(default_format, default_quality, &url_id)
             } else {
