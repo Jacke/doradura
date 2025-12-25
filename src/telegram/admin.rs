@@ -19,9 +19,6 @@ use teloxide::types::{
 
 use crate::core::config;
 
-// Type alias for query tracking data: (start_time, size, method, response_time)
-type QueryData = (Option<f64>, Option<u64>, Option<String>, Option<f64>);
-
 use crate::core::config::admin::ADMIN_USERNAME;
 use crate::storage::backup::{create_backup, list_backups};
 use crate::storage::db::{get_all_users, get_connection, update_user_plan, update_user_plan_with_expiry, DbPool};
@@ -32,6 +29,14 @@ use url::Url;
 const MAX_MESSAGE_LENGTH: usize = 4000;
 const DEFAULT_BOT_API_LOG_PATH: &str = "bot-api-data/logs/telegram-bot-api.log";
 const DEFAULT_BOT_API_LOG_TAIL_BYTES: u64 = 2 * 1024 * 1024;
+
+#[derive(Default)]
+struct QueryData {
+    start_time: Option<f64>,
+    size_bytes: Option<u64>,
+    method: Option<String>,
+    response_time: Option<f64>,
+}
 
 /// Check if user is admin
 pub fn is_admin(username: Option<&str>) -> bool {
@@ -182,10 +187,10 @@ pub async fn handle_botapi_speed_command(bot: &Bot, chat_id: ChatId, username: O
             let size = caps.get(4).and_then(|v| v.as_str().parse::<u64>().ok());
 
             if let (Some(time), Some(query_id), Some(method), Some(size)) = (time, query_id, method, size) {
-                let entry = queries.entry(query_id).or_insert((None, None, None, None));
-                entry.0 = Some(time);
-                entry.1 = Some(size);
-                entry.2 = Some(method);
+                let entry = queries.entry(query_id).or_default();
+                entry.start_time = Some(time);
+                entry.size_bytes = Some(size);
+                entry.method = Some(method);
             }
         }
 
@@ -194,16 +199,16 @@ pub async fn handle_botapi_speed_command(bot: &Bot, chat_id: ChatId, username: O
             let query_id = caps.get(2).map(|v| v.as_str().to_string());
 
             if let (Some(time), Some(query_id)) = (time, query_id) {
-                let entry = queries.entry(query_id).or_insert((None, None, None, None));
-                entry.3 = Some(time);
+                let entry = queries.entry(query_id).or_default();
+                entry.response_time = Some(time);
             }
         }
     }
 
     let mut completed = Vec::new();
     let mut pending = Vec::new();
-    for (_id, (start, size, method, response)) in queries {
-        match (start, size, method, response) {
+    for (_id, entry) in queries {
+        match (entry.start_time, entry.size_bytes, entry.method, entry.response_time) {
             (Some(start_time), Some(size_bytes), Some(method), Some(response_time)) => {
                 let duration = response_time - start_time;
                 if duration > 0.0 {
