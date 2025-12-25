@@ -2598,7 +2598,7 @@ where
                     // Telegram может обрабатывать большие видео 5-15 минут после загрузки.
                     if file_size > 50 * 1024 * 1024 && attempt == 1 {
                         log::warn!(
-                            "Attempt {}/{} failed for chat {} with timeout for large file ({}MB): {}. Skipping retry to avoid duplicates as file is likely already uploaded and processing.",
+                            "Attempt {}/{} failed for chat {} with timeout for large file ({}MB): {}. File is likely uploaded and processing server-side. Sending notification to user.",
                             attempt,
                             max_attempts,
                             chat_id,
@@ -2606,11 +2606,28 @@ where
                             e
                         );
                         metrics::record_error("telegram", "send_file_timeout");
-                        let error_msg = match file_type {
-                            "video" => "Видео успешно загружено на сервер Telegram и обрабатывается. Оно появится в чате через несколько минут (обработка больших файлов может занять до 10-15 минут).".to_string(),
-                            _ => format!("Large file uploaded to Telegram and processing (timeout after {} bytes transferred)", file_size),
+
+                        // Отправляем уведомление пользователю
+                        let notification_msg = match file_type {
+                            "video" => "✅ Видео успешно загружено на сервер Telegram и обрабатывается.\n\n⏳ Оно появится в чате через несколько минут.\n\n💡 Обработка больших файлов может занять до 10-15 минут.",
+                            _ => "File uploaded to Telegram and is being processed. It will appear in chat shortly.",
                         };
-                        return Err(AppError::Download(error_msg));
+
+                        // Отправляем уведомление и возвращаем его как "успешное" сообщение
+                        match bot.send_message(chat_id, notification_msg).await {
+                            Ok(sent_msg) => {
+                                log::info!("Sent processing notification to user for chat {}", chat_id);
+                                return Ok((sent_msg, file_size));
+                            }
+                            Err(send_err) => {
+                                log::error!("Failed to send processing notification: {}", send_err);
+                                // Даже если не удалось отправить уведомление, не делаем retry загрузки файла
+                                return Err(AppError::Download(format!(
+                                    "File uploaded but processing notification failed: {}",
+                                    send_err
+                                )));
+                            }
+                        }
                     }
 
                     if timeout_retry_used {
