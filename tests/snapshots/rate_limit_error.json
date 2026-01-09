@@ -1,0 +1,65 @@
+{
+  "name": "rate_limit_error",
+  "version": "1.0",
+  "recorded_at": "2026-01-04T14:45:00Z",
+  "interactions": [
+    [
+      {
+        "method": "POST",
+        "path": "/sendMessage",
+        "body": {
+          "chat_id": 123456789,
+          "text": "⏰ Превышен лимит запросов. Попробуй снова через 45 секунд.\n\n💎 Хочешь скачивать больше? Оформи подписку: /plan",
+          "reply_to_message_id": 101
+        },
+        "timestamp": 1736001900
+      },
+      {
+        "status": 200,
+        "body": {
+          "ok": true,
+          "result": {
+            "message_id": 47,
+            "from": {
+              "id": 987654321,
+              "is_bot": true,
+              "first_name": "DoraDura",
+              "username": "doradura_bot"
+            },
+            "chat": {
+              "id": 123456789,
+              "first_name": "Test",
+              "username": "testuser",
+              "type": "private"
+            },
+            "date": 1736001900,
+            "text": "⏰ Превышен лимит запросов. Попробуй снова через 45 секунд.\n\n💎 Хочешь скачивать больше? Оформи подписку: /plan",
+            "reply_to_message": {
+              "message_id": 101,
+              "from": {
+                "id": 123456789,
+                "is_bot": false,
+                "first_name": "Test"
+              },
+              "chat": {
+                "id": 123456789,
+                "type": "private"
+              },
+              "date": 1736001895,
+              "text": "https://youtube.com/watch?v=example"
+            }
+          }
+        },
+        "headers": {
+          "content-type": "application/json"
+        }
+      }
+    ]
+  ],
+  "metadata": {
+    "description": "User hits rate limit and receives error message with remaining time",
+    "error_type": "rate_limit",
+    "user_id": "123456789",
+    "remaining_seconds": "45"
+  }
+}
