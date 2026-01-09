@@ -1,0 +1,91 @@
+{
+  "name": "start_command",
+  "version": "1.0",
+  "recorded_at": "2026-01-04T12:00:00Z",
+  "interactions": [
+    [
+      {
+        "method": "POST",
+        "path": "/sendMessage",
+        "body": {
+          "chat_id": 123456789,
+          "text": "🎵 Привет! Я помогу тебе скачать музыку и видео с YouTube и других платформ.\n\n📝 Просто отправь мне ссылку на видео или трек!",
+          "parse_mode": "Markdown",
+          "reply_markup": {
+            "inline_keyboard": [
+              [
+                {
+                  "text": "ℹ️ Информация",
+                  "callback_data": "menu:info"
+                },
+                {
+                  "text": "⚙️ Настройки",
+                  "callback_data": "menu:settings"
+                }
+              ],
+              [
+                {
+                  "text": "📥 Мои загрузки",
+                  "callback_data": "menu:downloads"
+                }
+              ]
+            ]
+          }
+        },
+        "timestamp": 1735992000
+      },
+      {
+        "status": 200,
+        "body": {
+          "ok": true,
+          "result": {
+            "message_id": 42,
+            "from": {
+              "id": 987654321,
+              "is_bot": true,
+              "first_name": "DoraDura",
+              "username": "doradura_bot"
+            },
+            "chat": {
+              "id": 123456789,
+              "first_name": "Test",
+              "username": "testuser",
+              "type": "private"
+            },
+            "date": 1735992000,
+            "text": "🎵 Привет! Я помогу тебе скачать музыку и видео с YouTube и других платформ.\n\n📝 Просто отправь мне ссылку на видео или трек!",
+            "reply_markup": {
+              "inline_keyboard": [
+                [
+                  {
+                    "text": "ℹ️ Информация",
+                    "callback_data": "menu:info"
+                  },
+                  {
+                    "text": "⚙️ Настройки",
+                    "callback_data": "menu:settings"
+                  }
+                ],
+                [
+                  {
+                    "text": "📥 Мои загрузки",
+                    "callback_data": "menu:downloads"
+                  }
+                ]
+              ]
+            }
+          }
+        },
+        "headers": {
+          "content-type": "application/json",
+          "connection": "keep-alive"
+        }
+      }
+    ]
+  ],
+  "metadata": {
+    "description": "User sends /start command and receives welcome message with inline keyboard",
+    "user_id": "123456789",
+    "command": "/start"
+  }
+}
