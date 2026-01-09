@@ -20,6 +20,8 @@ COPY c_code ./c_code
 
 # Copy source code
 COPY src ./src
+COPY locales ./locales
+COPY migrations ./migrations
 COPY migration.sql ./
 
 # Build the application
