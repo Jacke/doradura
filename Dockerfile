@@ -68,7 +68,15 @@ echo "Database initialization..."
 # Use DATABASE_URL if provided, else default to /data/database.sqlite
 DB_PATH=${DATABASE_URL:-/data/database.sqlite}
 DB_DIR=$(dirname "$DB_PATH")
-mkdir -p "$DB_DIR"
+
+mkdir -p "$DB_DIR" || true
+if ! touch "$DB_DIR/.rw_test" 2>/dev/null; then
+  echo "⚠️  Database directory not writable: $DB_DIR. Falling back to /app/database.sqlite"
+  DB_PATH="/app/database.sqlite"
+  DB_DIR="/app"
+  mkdir -p "$DB_DIR"
+fi
+rm -f "$DB_DIR/.rw_test"
 
 if [ -f "$DB_PATH" ]; then
   echo "✅ Using existing database at $DB_PATH"
@@ -88,9 +96,9 @@ exec /app/doradura "$@"
 EOF
 
 # Create necessary directories and non-root user
-RUN mkdir -p downloads logs backups && \
+RUN mkdir -p downloads logs backups /data && \
     useradd -m -u 1000 botuser && \
-    chown -R botuser:botuser /app
+    chown -R botuser:botuser /app /data
 
 USER botuser
 
