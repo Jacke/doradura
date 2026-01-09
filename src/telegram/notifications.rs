@@ -1,5 +1,4 @@
-use crate::core::config::admin::ADMIN_USERNAME;
-use crate::core::config::admin::ADMIN_USER_ID;
+use crate::core::config::admin::{ADMIN_IDS, ADMIN_USER_ID};
 use crate::storage::db::DbPool;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -42,22 +41,34 @@ async fn send_plain_text_chunks(bot: &Bot, chat_id: ChatId, text: &str) {
     }
 }
 
-/// Sends a plain-text message to the configured admin (uses `ADMIN_USER_ID`).
+fn admin_chat_ids() -> Vec<ChatId> {
+    if !ADMIN_IDS.is_empty() {
+        return ADMIN_IDS.iter().copied().map(ChatId).collect();
+    }
+    if *ADMIN_USER_ID != 0 {
+        return vec![ChatId(*ADMIN_USER_ID)];
+    }
+    Vec::new()
+}
+
+/// Sends a plain-text message to the configured admins (uses `ADMIN_IDS` or `ADMIN_USER_ID`).
 pub async fn notify_admin_text(bot: &Bot, text: &str) {
-    let admin_id = *ADMIN_USER_ID;
-    if admin_id == 0 {
-        log::warn!("ADMIN_USER_ID not configured; admin notification skipped");
+    let admin_chat_ids = admin_chat_ids();
+    if admin_chat_ids.is_empty() {
+        log::warn!("ADMIN_IDS/ADMIN_USER_ID not configured; admin notification skipped");
         return;
     }
 
-    send_plain_text_chunks(bot, ChatId(admin_id), text).await;
+    for chat_id in admin_chat_ids {
+        send_plain_text_chunks(bot, chat_id, text).await;
+    }
 }
 
 /// Sends a notification to admin about video processing error
 pub async fn notify_admin_video_error(bot: &Bot, user_id: i64, username: Option<&str>, error: &str, context: &str) {
-    let admin_id = *ADMIN_USER_ID;
-    if admin_id == 0 {
-        log::warn!("ADMIN_USER_ID not configured; admin notification skipped");
+    let admin_chat_ids = admin_chat_ids();
+    if admin_chat_ids.is_empty() {
+        log::warn!("ADMIN_IDS/ADMIN_USER_ID not configured; admin notification skipped");
         return;
     }
 
@@ -70,7 +81,9 @@ pub async fn notify_admin_video_error(bot: &Bot, user_id: i64, username: Option<
         username_str, user_id, context, error
     );
 
-    send_plain_text_chunks(bot, ChatId(admin_id), &message).await;
+    for chat_id in admin_chat_ids {
+        send_plain_text_chunks(bot, chat_id, &message).await;
+    }
 }
 
 /// Sends a notification to the administrator about a task failure.
@@ -85,36 +98,20 @@ pub async fn notify_admin_video_error(bot: &Bot, user_id: i64, username: Option<
 /// * `error_message` - Error message
 pub async fn notify_admin_task_failed(
     bot: Bot,
-    db_pool: Arc<DbPool>,
+    _db_pool: Arc<DbPool>,
     task_id: &str,
     user_id: i64,
     url: &str,
     error_message: &str,
     details: Option<&str>,
 ) {
-    // Prefer direct admin id configuration; fallback to DB lookup by username.
-    let admin_chat_id = if *ADMIN_USER_ID != 0 {
-        Some(ChatId(*ADMIN_USER_ID))
-    } else {
-        match crate::storage::db::get_connection(&db_pool) {
-            Ok(conn) => match crate::storage::db::get_all_users(&conn) {
-                Ok(users) => users
-                    .iter()
-                    .find(|u| u.username.as_deref() == Some(ADMIN_USERNAME.as_str()))
-                    .map(|u| teloxide::types::ChatId(u.telegram_id)),
-                Err(e) => {
-                    log::error!("Failed to get users for admin notification: {}", e);
-                    None
-                }
-            },
-            Err(e) => {
-                log::error!("Failed to get DB connection for admin notification: {}", e);
-                None
-            }
-        }
-    };
+    let admin_chat_ids = admin_chat_ids();
+    if admin_chat_ids.is_empty() {
+        log::warn!("ADMIN_IDS/ADMIN_USER_ID not configured; admin notification skipped");
+        return;
+    }
 
-    if let Some(chat_id) = admin_chat_id {
+    for chat_id in admin_chat_ids {
         // Escape special characters for MarkdownV2
         let escaped_error = crate::telegram::admin::escape_markdown(error_message);
         let escaped_url = crate::telegram::admin::escape_markdown(url);
@@ -143,11 +140,5 @@ pub async fn notify_admin_task_failed(
             let details_message = format!("Details for task {} (user {}):\n{}", task_id, user_id, details);
             send_plain_text_chunks(&bot, chat_id, &details_message).await;
         }
-    } else {
-        log::warn!(
-            "Admin user '{}' not found in database. Notification not sent for task {}",
-            ADMIN_USERNAME.as_str(),
-            task_id
-        );
     }
 }

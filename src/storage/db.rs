@@ -1899,6 +1899,68 @@ pub fn delete_audio_effect_session(conn: &DbConnection, session_id: &str) -> Res
     Ok(())
 }
 
+// ==================== Audio Cut Sessions ====================
+
+#[derive(Debug, Clone)]
+pub struct AudioCutSession {
+    pub id: String,
+    pub user_id: i64,
+    pub audio_session_id: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+pub fn upsert_audio_cut_session(conn: &DbConnection, session: &AudioCutSession) -> Result<()> {
+    conn.execute("DELETE FROM audio_cut_sessions WHERE user_id = ?1", [session.user_id])?;
+    conn.execute(
+        "INSERT INTO audio_cut_sessions (
+            id, user_id, audio_session_id, created_at, expires_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![
+            session.id,
+            session.user_id,
+            session.audio_session_id,
+            session.created_at.to_rfc3339(),
+            session.expires_at.to_rfc3339(),
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn get_active_audio_cut_session(conn: &DbConnection, user_id: i64) -> Result<Option<AudioCutSession>> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut stmt = conn.prepare(
+        "SELECT id, user_id, audio_session_id, created_at, expires_at
+         FROM audio_cut_sessions
+         WHERE user_id = ?1 AND expires_at > ?2
+         ORDER BY created_at DESC
+         LIMIT 1",
+    )?;
+    let mut rows = stmt.query(rusqlite::params![user_id, now])?;
+    if let Some(row) = rows.next()? {
+        let created_at: String = row.get(3)?;
+        let expires_at: String = row.get(4)?;
+        Ok(Some(AudioCutSession {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            audio_session_id: row.get(2)?,
+            created_at: chrono::DateTime::parse_from_rfc3339(&created_at)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now()),
+            expires_at: chrono::DateTime::parse_from_rfc3339(&expires_at)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now() + chrono::Duration::minutes(10)),
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn delete_audio_cut_session_by_user(conn: &DbConnection, user_id: i64) -> Result<()> {
+    conn.execute("DELETE FROM audio_cut_sessions WHERE user_id = ?1", [user_id])?;
+    Ok(())
+}
+
 // ==================== Video Clip Sessions ====================
 
 #[derive(Debug, Clone)]

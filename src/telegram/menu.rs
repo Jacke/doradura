@@ -7,6 +7,7 @@ use crate::download::queue::{DownloadQueue, DownloadTask};
 use crate::i18n;
 use crate::storage::cache;
 use crate::storage::db::{self, DbPool};
+use crate::telegram::admin;
 use crate::telegram::setup_chat_bot_commands;
 use fluent_templates::fluent_bundle::FluentArgs;
 use std::sync::Arc;
@@ -15,6 +16,7 @@ use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, MessageId, Par
 use teloxide::RequestError;
 use unic_langid::LanguageIdentifier;
 use url::Url;
+use uuid::Uuid;
 
 /// Escapes special characters for MarkdownV2.
 ///
@@ -87,7 +89,7 @@ async fn edit_caption_or_text(
 
 /// Shows the main settings menu for the download mode.
 ///
-/// Displays inline buttons to choose the download type and view supported services.
+/// Displays inline buttons for video quality, audio bitrate, and supported services.
 ///
 /// # Arguments
 ///
@@ -105,19 +107,9 @@ async fn edit_caption_or_text(
 pub async fn show_main_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
     let conn = db::get_connection(&db_pool)
         .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-    let format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
     let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
     let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
     let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
-
-    let format_emoji = match format.as_str() {
-        "mp3" => "🎵 MP3",
-        "mp4" => "🎬 MP4",
-        "mp4+mp3" => "🎬🎵 MP4 + MP3",
-        "srt" => "📝 SRT",
-        "txt" => "📄 TXT",
-        _ => "🎵 MP3",
-    };
 
     let quality_emoji = match video_quality.as_str() {
         "1080p" => "🎬 1080p",
@@ -135,8 +127,6 @@ pub async fn show_main_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) ->
         _ => "320 kbps",
     };
 
-    let mut download_type_args = FluentArgs::new();
-    download_type_args.set("format", format_emoji);
     let mut quality_args = FluentArgs::new();
     quality_args.set("quality", quality_emoji);
     let mut bitrate_args = FluentArgs::new();
@@ -144,20 +134,12 @@ pub async fn show_main_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) ->
 
     let keyboard = InlineKeyboardMarkup::new(vec![
         vec![InlineKeyboardButton::callback(
-            i18n::t_args(&lang, "menu.download_type_button", &download_type_args),
-            "mode:download_type",
+            i18n::t_args(&lang, "menu.video_quality_button", &quality_args),
+            "mode:video_quality",
         )],
         vec![InlineKeyboardButton::callback(
-            if format == "mp4" {
-                i18n::t_args(&lang, "menu.video_quality_button", &quality_args)
-            } else {
-                i18n::t_args(&lang, "menu.audio_bitrate_button", &bitrate_args)
-            },
-            if format == "mp4" {
-                "mode:video_quality"
-            } else {
-                "mode:audio_bitrate"
-            },
+            i18n::t_args(&lang, "menu.audio_bitrate_button", &bitrate_args),
+            "mode:audio_bitrate",
         )],
         vec![InlineKeyboardButton::callback(
             i18n::t(&lang, "menu.services_button"),
@@ -857,19 +839,9 @@ async fn edit_main_menu(
 ) -> ResponseResult<()> {
     let conn = db::get_connection(&db_pool)
         .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-    let format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
     let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
     let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
     let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
-
-    let format_emoji = match format.as_str() {
-        "mp3" => "🎵 MP3",
-        "mp4" => "🎬 MP4",
-        "mp4+mp3" => "🎬🎵 MP4 + MP3",
-        "srt" => "📝 SRT",
-        "txt" => "📄 TXT",
-        _ => "🎵 MP3",
-    };
 
     let quality_emoji = match video_quality.as_str() {
         "1080p" => "🎬 1080p",
@@ -896,8 +868,6 @@ async fn edit_main_menu(
         }
     };
 
-    let mut download_type_args = FluentArgs::new();
-    download_type_args.set("format", format_emoji);
     let mut quality_args = FluentArgs::new();
     quality_args.set("quality", quality_emoji);
     let mut bitrate_args = FluentArgs::new();
@@ -905,20 +875,12 @@ async fn edit_main_menu(
 
     let mut keyboard_rows = vec![
         vec![InlineKeyboardButton::callback(
-            i18n::t_args(&lang, "menu.download_type_button", &download_type_args),
-            mode_callback("download_type"),
+            i18n::t_args(&lang, "menu.video_quality_button", &quality_args),
+            mode_callback("video_quality"),
         )],
         vec![InlineKeyboardButton::callback(
-            if format == "mp4" || format == "mp4+mp3" {
-                i18n::t_args(&lang, "menu.video_quality_button", &quality_args)
-            } else {
-                i18n::t_args(&lang, "menu.audio_bitrate_button", &bitrate_args)
-            },
-            if format == "mp4" || format == "mp4+mp3" {
-                mode_callback("video_quality")
-            } else {
-                mode_callback("audio_bitrate")
-            },
+            i18n::t_args(&lang, "menu.audio_bitrate_button", &bitrate_args),
+            mode_callback("audio_bitrate"),
         )],
         vec![InlineKeyboardButton::callback(
             i18n::t(&lang, "menu.services_button"),
@@ -973,19 +935,9 @@ pub async fn send_main_menu_as_new(
 ) -> ResponseResult<()> {
     let conn = db::get_connection(&db_pool)
         .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-    let format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
     let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
     let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
     let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
-
-    let format_emoji = match format.as_str() {
-        "mp3" => "🎵 MP3",
-        "mp4" => "🎬 MP4",
-        "mp4+mp3" => "🎬🎵 MP4 + MP3",
-        "srt" => "📝 SRT",
-        "txt" => "📄 TXT",
-        _ => "🎵 MP3",
-    };
 
     let quality_emoji = match video_quality.as_str() {
         "1080p" => "🎬 1080p",
@@ -1016,8 +968,6 @@ pub async fn send_main_menu_as_new(
         }
     };
 
-    let mut download_type_args = FluentArgs::new();
-    download_type_args.set("format", format_emoji);
     let mut quality_args = FluentArgs::new();
     quality_args.set("quality", quality_emoji);
     let mut bitrate_args = FluentArgs::new();
@@ -1025,20 +975,12 @@ pub async fn send_main_menu_as_new(
 
     let mut keyboard_rows = vec![
         vec![InlineKeyboardButton::callback(
-            i18n::t_args(&lang, "menu.download_type_button", &download_type_args),
-            mode_callback("download_type"),
+            i18n::t_args(&lang, "menu.video_quality_button", &quality_args),
+            mode_callback("video_quality"),
         )],
         vec![InlineKeyboardButton::callback(
-            if format == "mp4" || format == "mp4+mp3" {
-                i18n::t_args(&lang, "menu.video_quality_button", &quality_args)
-            } else {
-                i18n::t_args(&lang, "menu.audio_bitrate_button", &bitrate_args)
-            },
-            if format == "mp4" || format == "mp4+mp3" {
-                mode_callback("video_quality")
-            } else {
-                mode_callback("audio_bitrate")
-            },
+            i18n::t_args(&lang, "menu.audio_bitrate_button", &bitrate_args),
+            mode_callback("audio_bitrate"),
         )],
         vec![InlineKeyboardButton::callback(
             i18n::t(&lang, "menu.services_button"),
@@ -1118,7 +1060,23 @@ pub async fn handle_menu_callback(
 
         if let (Some(chat_id), Some(message_id)) = (chat_id, message_id) {
             let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
-            // Handle audio effects callbacks first
+            // Handle audio cut/effects callbacks first
+            if data.starts_with("ac:") {
+                // Reconstruct CallbackQuery for audio cut handler
+                let ac_query = CallbackQuery {
+                    id: callback_id.clone(),
+                    from: q.from.clone(),
+                    message: message_clone,
+                    inline_message_id: q.inline_message_id.clone(),
+                    chat_instance: q.chat_instance.clone(),
+                    data: data_clone,
+                    game_short_name: q.game_short_name.clone(),
+                };
+                if let Err(e) = handle_audio_cut_callback(bot.clone(), ac_query, Arc::clone(&db_pool)).await {
+                    log::error!("Audio cut callback error: {}", e);
+                }
+                return Ok(());
+            }
             if data.starts_with("ae:") {
                 // Reconstruct CallbackQuery for audio effects handler
                 let ae_query = CallbackQuery {
@@ -2000,8 +1958,7 @@ pub async fn handle_menu_callback(
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
 
                 // Check administrator privileges
-                let admin_username = ADMIN_USERNAME.as_str();
-                let is_admin = !admin_username.is_empty() && q.from.username.as_deref() == Some(admin_username);
+                let is_admin = i64::try_from(q.from.id.0).ok().map(admin::is_admin).unwrap_or(false);
 
                 if !is_admin {
                     bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
@@ -2054,8 +2011,7 @@ pub async fn handle_menu_callback(
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
 
                 // Check administrator privileges
-                let admin_username = ADMIN_USERNAME.as_str();
-                let is_admin = !admin_username.is_empty() && q.from.username.as_deref() == Some(admin_username);
+                let is_admin = i64::try_from(q.from.id.0).ok().map(admin::is_admin).unwrap_or(false);
 
                 if !is_admin {
                     bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
@@ -2107,8 +2063,7 @@ pub async fn handle_menu_callback(
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
 
                 // Check administrator privileges
-                let admin_username = ADMIN_USERNAME.as_str();
-                let is_admin = !admin_username.is_empty() && q.from.username.as_deref() == Some(admin_username);
+                let is_admin = i64::try_from(q.from.id.0).ok().map(admin::is_admin).unwrap_or(false);
 
                 if !is_admin {
                     bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
@@ -2345,6 +2300,110 @@ pub async fn handle_menu_callback(
     Ok(())
 }
 
+// ==================== Audio Cut ====================
+
+async fn handle_audio_cut_callback(bot: Bot, q: CallbackQuery, db_pool: Arc<DbPool>) -> ResponseResult<()> {
+    let callback_id = q.id.clone();
+    let data = q.data.clone().unwrap_or_default();
+    let chat_id = q.message.as_ref().map(|m| m.chat().id);
+    let message_id = q.message.as_ref().map(|m| m.id());
+
+    if let (Some(chat_id), Some(message_id)) = (chat_id, message_id) {
+        let parts: Vec<&str> = data.split(':').collect();
+        if parts.len() < 2 {
+            bot.answer_callback_query(callback_id).await?;
+            return Ok(());
+        }
+
+        let action = parts[1];
+        let conn = db::get_connection(&db_pool)
+            .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+        if !db::is_premium_or_vip(&conn, chat_id.0)
+            .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+        {
+            bot.answer_callback_query(callback_id)
+                .text("⭐ Эта функция доступна только Premium/VIP подписчикам")
+                .show_alert(true)
+                .await?;
+            return Ok(());
+        }
+
+        match action {
+            "open" => {
+                let session_id = if let Some(session_id) = parts.get(2) {
+                    *session_id
+                } else {
+                    bot.answer_callback_query(callback_id)
+                        .text("❌ Неверный запрос")
+                        .await?;
+                    return Ok(());
+                };
+                let session = match db::get_audio_effect_session(&conn, session_id)
+                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+                {
+                    Some(session) => session,
+                    None => {
+                        bot.answer_callback_query(callback_id)
+                            .text("❌ Сессия не найдена")
+                            .show_alert(true)
+                            .await?;
+                        return Ok(());
+                    }
+                };
+
+                if session.is_expired() {
+                    bot.answer_callback_query(callback_id)
+                        .text("❌ Сессия истекла (24 часа). Скачайте трек заново.")
+                        .show_alert(true)
+                        .await?;
+                    return Ok(());
+                }
+
+                let now = chrono::Utc::now();
+                let cut_session = db::AudioCutSession {
+                    id: Uuid::new_v4().to_string(),
+                    user_id: chat_id.0,
+                    audio_session_id: session_id.to_string(),
+                    created_at: now,
+                    expires_at: now + chrono::Duration::minutes(10),
+                };
+                db::upsert_audio_cut_session(&conn, &cut_session)
+                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+
+                bot.answer_callback_query(callback_id).await?;
+
+                if let Err(e) = bot.edit_message_reply_markup(chat_id, message_id).await {
+                    log::warn!("Failed to remove buttons from audio message: {}", e);
+                }
+
+                let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+                    "❌ Отмена".to_string(),
+                    "ac:cancel".to_string(),
+                )]]);
+
+                crate::telegram::send_message_markdown_v2(
+                    &bot,
+                    chat_id,
+                    "✂️ Отправь интервалы для вырезки аудио в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\n\nПример: `00:10-00:25, 01:00-01:10`\n\nИли напиши `отмена`\\.",
+                    Some(keyboard),
+                )
+                .await?;
+            }
+            "cancel" => {
+                db::delete_audio_cut_session_by_user(&conn, chat_id.0)
+                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+                bot.answer_callback_query(callback_id).await?;
+                let _ = bot.delete_message(chat_id, message_id).await;
+            }
+            _ => {
+                bot.answer_callback_query(callback_id).await?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
 // ==================== Audio Effects UI ====================
 
 /// Create audio effects keyboard with pitch and tempo controls
@@ -2357,37 +2416,54 @@ fn create_audio_effects_keyboard(
 ) -> InlineKeyboardMarkup {
     use teloxide::types::InlineKeyboardButton;
 
-    // Pitch buttons row
-    let pitch_values = [-2, -1, 0, 1, 2];
-    let pitch_row: Vec<InlineKeyboardButton> = pitch_values
-        .iter()
-        .map(|&value| {
-            let marker = if current_pitch == value { " ✓" } else { "" };
-            let label = if value > 0 {
-                format!("Pitch: +{}{}", value, marker)
-            } else {
-                format!("Pitch: {}{}", value, marker)
-            };
-            InlineKeyboardButton::callback(label, format!("ae:pitch:{}:{}", session_id, value))
-        })
-        .collect();
+    let build_pitch_row = |values: &[i8]| -> Vec<InlineKeyboardButton> {
+        values
+            .iter()
+            .map(|&value| {
+                let marker = if current_pitch == value { " ✓" } else { "" };
+                let prefix = if value >= 0 { "P+" } else { "P" };
+                let label = format!("{}{}{}", prefix, value.abs(), marker);
+                InlineKeyboardButton::callback(label, format!("ae:pitch:{}:{}", session_id, value))
+            })
+            .collect()
+    };
 
-    // Tempo buttons row
-    let tempo_values = [0.5, 0.75, 1.0, 1.5, 2.0];
-    let tempo_row: Vec<InlineKeyboardButton> = tempo_values
-        .iter()
-        .map(|&value| {
-            let marker = if (current_tempo - value).abs() < 0.01 {
-                " ✓"
-            } else {
-                ""
-            };
-            let label = format!("Tempo: {}x{}", value, marker);
-            InlineKeyboardButton::callback(label, format!("ae:tempo:{}:{}", session_id, value))
-        })
-        .collect();
+    let pitch_rows = vec![build_pitch_row(&[-3, -2, -1]), build_pitch_row(&[0, 1, 2, 3])];
 
-    // Action buttons row
+    let build_tempo_row = |values: &[f32]| -> Vec<InlineKeyboardButton> {
+        values
+            .iter()
+            .map(|&value| {
+                let marker = if (current_tempo - value).abs() < 0.01 {
+                    " ✓"
+                } else {
+                    ""
+                };
+                InlineKeyboardButton::callback(
+                    format!("T{}x{}", value, marker),
+                    format!("ae:tempo:{}:{}", session_id, value),
+                )
+            })
+            .collect()
+    };
+
+    let tempo_rows = vec![build_tempo_row(&[0.5, 0.75]), build_tempo_row(&[1.0, 1.25, 1.5, 2.0])];
+
+    let build_bass_row = |values: &[i8]| -> Vec<InlineKeyboardButton> {
+        values
+            .iter()
+            .map(|&value| {
+                let marker = if current_bass == value { " ✓" } else { "" };
+                InlineKeyboardButton::callback(
+                    format!("B{:+}{}", value, marker),
+                    format!("ae:bass:{}:{:+}", session_id, value),
+                )
+            })
+            .collect()
+    };
+
+    let bass_rows = vec![build_bass_row(&[-6, -3, 0]), build_bass_row(&[3, 6])];
+
     let action_row = vec![
         InlineKeyboardButton::callback("✅ Apply Changes", format!("ae:apply:{}", session_id)),
         InlineKeyboardButton::callback("🔄 Reset", format!("ae:reset:{}", session_id)),
@@ -2398,23 +2474,9 @@ fn create_audio_effects_keyboard(
         format!("ae:skip:{}", session_id),
     )];
 
-    // Bass buttons row (dB)
-    let bass_values = [-6, -3, 0, 3, 6];
-    let bass_row: Vec<InlineKeyboardButton> = bass_values
-        .iter()
-        .map(|&value| {
-            let marker = if current_bass == value { " ✓" } else { "" };
-            InlineKeyboardButton::callback(
-                format!("Bass {:+}{}", value, marker),
-                format!("ae:bass:{}:{:+}", session_id, value),
-            )
-        })
-        .collect();
-
-    // Neural morph row
     let morph_row = vec![InlineKeyboardButton::callback(
         format!(
-            "🤖 Morph: {}",
+            "🤖 M: {}",
             match current_morph {
                 crate::download::audio_effects::MorphProfile::None => "Off",
                 crate::download::audio_effects::MorphProfile::Soft => "Soft",
@@ -2426,7 +2488,15 @@ fn create_audio_effects_keyboard(
         format!("ae:morph:{}", session_id),
     )];
 
-    InlineKeyboardMarkup::new(vec![pitch_row, tempo_row, bass_row, morph_row, action_row, skip_row])
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+    rows.extend(pitch_rows);
+    rows.extend(tempo_rows);
+    rows.extend(bass_rows);
+    rows.push(morph_row);
+    rows.push(action_row);
+    rows.push(skip_row);
+
+    InlineKeyboardMarkup::new(rows)
 }
 
 /// Show audio effects editor by sending a new message
@@ -2450,7 +2520,7 @@ async fn show_audio_effects_editor(
     let text = format!(
         "🎵 *Audio Effects Editor*\n\
         Title: {}\n\
-        Current: Pitch {} \\| Tempo {}x \\| Bass {} \\| Morph {}\n\n\
+        Current: P {} \\| T {}x \\| B {} \\| M {}\n\n\
         Adjust pitch, tempo, bass, morph preset, then press Apply\\.",
         escape_markdown(&session.title),
         pitch_str,
@@ -2466,6 +2536,8 @@ async fn show_audio_effects_editor(
         session.bass_gain_db,
         session.morph_profile,
     );
+
+    bot.send_message(chat_id, "P = Pitch • T = Tempo • B = Bass").await?;
 
     bot.send_message(chat_id, text)
         .parse_mode(teloxide::types::ParseMode::MarkdownV2)
@@ -2497,7 +2569,7 @@ async fn update_audio_effects_editor(
     let text = format!(
         "🎵 *Audio Effects Editor*\n\
         Title: {}\n\
-        Current: Pitch {} \\| Tempo {}x \\| Bass {} \\| Morph {}\n\n\
+        Current: P {} \\| T {}x \\| B {} \\| M {}\n\n\
         Adjust pitch, tempo, bass, morph preset, then press Apply\\.",
         escape_markdown(&session.title),
         pitch_str,

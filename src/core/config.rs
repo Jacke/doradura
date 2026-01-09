@@ -181,6 +181,29 @@ pub mod network {
     }
 }
 
+/// Downsub gRPC configuration
+pub static DOWNSUB_GRPC_ENDPOINT: Lazy<Option<String>> = Lazy::new(|| {
+    env::var("DOWNSUB_GRPC_ENDPOINT").ok().and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed.to_string())
+        }
+    })
+});
+
+pub mod downsub {
+    use super::Duration;
+
+    /// Default timeout for Downsub gRPC requests (seconds)
+    pub const TIMEOUT_SECS: u64 = 10;
+
+    pub fn timeout() -> Duration {
+        Duration::from_secs(TIMEOUT_SECS)
+    }
+}
+
 /// Progress message configuration
 pub mod progress {
     /// Delay before clearing success message (in seconds)
@@ -192,6 +215,21 @@ pub mod admin {
     use once_cell::sync::Lazy;
     use std::env;
 
+    fn parse_admin_ids(raw: &str) -> Vec<i64> {
+        raw.split([',', ' ', '\n', '\t'])
+            .filter_map(|part| part.trim().parse::<i64>().ok())
+            .collect()
+    }
+
+    /// Admin user IDs (comma-separated)
+    /// Read from ADMIN_IDS environment variable
+    pub static ADMIN_IDS: Lazy<Vec<i64>> = Lazy::new(|| {
+        env::var("ADMIN_IDS")
+            .ok()
+            .map(|raw| parse_admin_ids(&raw))
+            .unwrap_or_default()
+    });
+
     /// Admin username for notifications
     /// Read from ADMIN_USERNAME environment variable
     /// Defaults to empty string if not set (no admin access)
@@ -199,10 +237,15 @@ pub mod admin {
         Lazy::new(|| env::var("ADMIN_USERNAME").unwrap_or_else(|_| String::new()));
 
     /// Admin user ID for direct messages (feedback, notifications)
-    /// Read from ADMIN_USER_ID environment variable
+    /// Read from ADMIN_USER_ID or fallback to first ADMIN_IDS entry
     /// Defaults to 0 if not set (no admin notifications)
-    pub static ADMIN_USER_ID: Lazy<i64> =
-        Lazy::new(|| env::var("ADMIN_USER_ID").ok().and_then(|s| s.parse().ok()).unwrap_or(0));
+    pub static ADMIN_USER_ID: Lazy<i64> = Lazy::new(|| {
+        env::var("ADMIN_USER_ID")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .or_else(|| ADMIN_IDS.first().copied())
+            .unwrap_or(0)
+    });
 
     /// Maximum retry attempts for failed tasks before giving up
     pub const MAX_TASK_RETRIES: i32 = 5;

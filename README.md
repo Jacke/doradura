@@ -84,6 +84,7 @@ TELOXIDE_TOKEN=your_telegram_bot_token_here
 ADMIN_USERNAME=your_telegram_username  # Admin user (without @) for /admin, /users, /setplan commands
 YTDL_BIN=yt-dlp  # Optional: override default youtube-dl
 BOT_API_URL=http://localhost:8081  # Optional: use local Bot API server (allows files up to 2GB)
+DOWNSUB_GRPC_ENDPOINT=http://localhost:50051  # Optional: gRPC endpoint for Downsub summarization/subtitles
 
 # YouTube Cookies (required for YouTube downloads)
 # Option 1: Automatic extraction from browser (Linux/Windows recommended)
@@ -144,7 +145,10 @@ Once running, interact with the bot on Telegram:
 - `/help` - Display bot commands
 - `/settings` - View your settings
 - `/tasks` - Check active downloads
+- `/downsub summary <URL> [lang=<code>]` - Ask your Downsub service for a summary/highlights for a link
+- `/downsub subtitles <URL> [format=<srt|vtt>] [lang=<code>]` - Fetch subtitles via Downsub and receive them as a document
 
+The `/downsub` commands only work if you set `DOWNSUB_GRPC_ENDPOINT` to a running Downsub gRPC server (local calls only).
 ### Examples
 
 ```

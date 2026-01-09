@@ -21,8 +21,8 @@ pub async fn handle_analytics_command(bot: Bot, msg: Message, db_pool: Arc<DbPoo
     let chat_id = msg.chat.id;
 
     // Check if user is admin
-    let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
-    if !admin::is_admin(username) {
+    let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+    if !admin::is_admin(user_id) {
         bot.send_message(chat_id, "❌ Эта команда доступна только администраторам.")
             .await?;
         return Ok(());
@@ -62,8 +62,8 @@ pub async fn handle_health_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>)
     let chat_id = msg.chat.id;
 
     // Check if user is admin
-    let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
-    if !admin::is_admin(username) {
+    let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+    if !admin::is_admin(user_id) {
         bot.send_message(chat_id, "❌ Эта команда доступна только администраторам.")
             .await?;
         return Ok(());
@@ -96,8 +96,8 @@ pub async fn handle_metrics_command(
     let chat_id = msg.chat.id;
 
     // Check if user is admin
-    let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
-    if !admin::is_admin(username) {
+    let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+    if !admin::is_admin(user_id) {
         bot.send_message(chat_id, "❌ Эта команда доступна только администраторам.")
             .await?;
         return Ok(());
@@ -132,8 +132,8 @@ pub async fn handle_revenue_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>
     let chat_id = msg.chat.id;
 
     // Check if user is admin
-    let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
-    if !admin::is_admin(username) {
+    let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+    if !admin::is_admin(user_id) {
         bot.send_message(chat_id, "❌ Эта команда доступна только администраторам.")
             .await?;
         return Ok(());
