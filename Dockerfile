@@ -95,6 +95,16 @@ fi
 
 export DATABASE_URL="$DB_PATH"
 
+# Write YouTube cookies from env if provided (base64)
+if [ -n "$YTDL_COOKIES_B64" ]; then
+  COOKIES_PATH=${YTDL_COOKIES_FILE:-/data/youtube_cookies.txt}
+  COOKIES_DIR=$(dirname "$COOKIES_PATH")
+  mkdir -p "$COOKIES_DIR"
+  echo "$YTDL_COOKIES_B64" | base64 -d > "$COOKIES_PATH"
+  export YTDL_COOKIES_FILE="$COOKIES_PATH"
+  echo "✅ Wrote YouTube cookies to $COOKIES_PATH"
+fi
+
 # Run any pending migrations from Rust code
 echo "Ready to start bot (migrations will run if needed)"
 
