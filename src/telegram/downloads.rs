@@ -582,6 +582,13 @@ pub async fn handle_downloads_callback(
                                     log::warn!("Failed to add audio tools buttons: {}", e);
                                 }
                             }
+                            if (send_type == "video" || send_type == "document") && download.format == "mp4" {
+                                if let Err(e) =
+                                    add_video_cut_button_from_history(bot, chat_id, sent_message.id, download_id).await
+                                {
+                                    log::warn!("Failed to add video cut button: {}", e);
+                                }
+                            }
                             bot.delete_message(chat_id, message_id).await.ok();
                         }
                         Err(e) => {
@@ -1220,6 +1227,25 @@ async fn add_audio_tools_buttons_from_history(
         InlineKeyboardButton::callback("🎛️ Edit Audio", format!("ae:open:{}", session_id)),
         InlineKeyboardButton::callback("✂️ Cut Audio", format!("ac:open:{}", session_id)),
     ]]);
+
+    bot.edit_message_reply_markup(chat_id, message_id)
+        .reply_markup(keyboard)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+async fn add_video_cut_button_from_history(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    download_id: i64,
+) -> Result<(), String> {
+    let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+        "✂️ Cut Video",
+        format!("downloads:clip:{}", download_id),
+    )]]);
 
     bot.edit_message_reply_markup(chat_id, message_id)
         .reply_markup(keyboard)
