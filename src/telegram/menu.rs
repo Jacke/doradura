@@ -8,6 +8,7 @@ use crate::i18n;
 use crate::storage::cache;
 use crate::storage::db::{self, DbPool};
 use crate::telegram::admin;
+use crate::telegram::cache as tg_cache;
 use crate::telegram::setup_chat_bot_commands;
 use fluent_templates::fluent_bundle::FluentArgs;
 use std::sync::Arc;
@@ -1739,6 +1740,7 @@ pub async fn handle_menu_callback(
                         Some(url_str) => {
                             match Url::parse(&url_str) {
                                 Ok(url) => {
+                                    let original_message_id = tg_cache::get_link_message_id(&url_str).await;
                                     // Get user preferences for quality/bitrate and plan
                                     let conn = db::get_connection(&db_pool).map_err(|e| {
                                         RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
@@ -1780,7 +1782,7 @@ pub async fn handle_menu_callback(
                                         let task_mp4 = DownloadTask::from_plan(
                                             url.as_str().to_string(),
                                             chat_id,
-                                            None, // Callback doesn't have original user message
+                                            original_message_id,
                                             true, // is_video = true
                                             "mp4".to_string(),
                                             video_quality,
@@ -1797,7 +1799,7 @@ pub async fn handle_menu_callback(
                                         let task_mp3 = DownloadTask::from_plan(
                                             url.as_str().to_string(),
                                             chat_id,
-                                            None,  // Callback doesn't have original user message
+                                            original_message_id,
                                             false, // is_video = false
                                             "mp3".to_string(),
                                             None, // video_quality is not needed for audio
@@ -1840,7 +1842,7 @@ pub async fn handle_menu_callback(
                                         let task = DownloadTask::from_plan(
                                             url.as_str().to_string(),
                                             chat_id,
-                                            None, // Callback doesn't have original user message
+                                            original_message_id,
                                             is_video,
                                             format.to_string(),
                                             video_quality,
