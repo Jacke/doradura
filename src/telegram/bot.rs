@@ -24,6 +24,8 @@ pub enum Command {
     Settings,
     #[command(description = "показать информацию о доступных форматах")]
     Info,
+    #[command(description = "запросить суммари и субтитры через Downsub")]
+    Downsub,
     #[command(description = "история загрузок")]
     History,
     #[command(description = "мои загрузки")]
@@ -56,6 +58,11 @@ pub enum Command {
     Analytics,
     #[command(description = "состояние системы (только для администратора)")]
     Health,
+    #[command(
+        rename = "downsub_health",
+        description = "проверка Downsub gRPC (только для администратора)"
+    )]
+    DownsubHealth,
     #[command(description = "детальные метрики (только для администратора)")]
     Metrics,
     #[command(description = "финансовая аналитика (только для администратора)")]
@@ -71,6 +78,8 @@ const BOT_COMMAND_DEFINITIONS: &[(&str, &str)] = &[
     ("start", "bot_commands.start"),
     ("settings", "bot_commands.settings"),
     ("info", "bot_commands.info"),
+    ("downsub", "bot_commands.downsub"),
+    // ("downsub_health", "bot_commands.downsub_health"),
     ("downloads", "bot_commands.downloads"),
     ("cuts", "bot_commands.cuts"),
     //("history", "bot_commands.history"),

@@ -14,8 +14,10 @@ use tower_http::services::ServeDir;
 use crate::core::rate_limiter::RateLimiter;
 use crate::download::{queue::DownloadTask, DownloadQueue};
 use crate::storage::db::{self, DbPool};
+use crate::telegram::admin;
 use crate::telegram::preview;
 use crate::telegram::webapp_auth;
+use std::time::{Duration, Instant};
 
 // ============================================================================
 // СТРУКТУРЫ ДАННЫХ ДЛЯ API
@@ -207,6 +209,7 @@ pub struct WebAppState {
     pub download_queue: Arc<DownloadQueue>,
     pub rate_limiter: Arc<RateLimiter>,
     pub bot_token: String,
+    pub start_time: Instant,
 }
 
 // ============================================================================
@@ -257,6 +260,24 @@ fn format_duration(seconds: u32) -> String {
     }
 }
 
+fn format_uptime(duration: Duration) -> String {
+    let total_secs = duration.as_secs();
+    let days = total_secs / 86_400;
+    let hours = (total_secs % 86_400) / 3_600;
+    let minutes = (total_secs % 3_600) / 60;
+    let seconds = total_secs % 60;
+
+    if days > 0 {
+        format!("{}d {}h {}m {}s", days, hours, minutes, seconds)
+    } else if hours > 0 {
+        format!("{}h {}m {}s", hours, minutes, seconds)
+    } else if minutes > 0 {
+        format!("{}m {}s", minutes, seconds)
+    } else {
+        format!("{}s", seconds)
+    }
+}
+
 // ============================================================================
 // ERROR HANDLING
 // ============================================================================
@@ -304,6 +325,7 @@ pub fn create_webapp_router(
         download_queue,
         rate_limiter,
         bot_token,
+        start_time: Instant::now(),
     };
 
     // CORS для Mini App
@@ -353,10 +375,13 @@ pub async fn run_webapp_server(
 // ============================================================================
 
 /// Health check endpoint
-async fn health_check() -> impl IntoResponse {
+async fn health_check(State(state): State<Arc<WebAppState>>) -> impl IntoResponse {
+    let uptime = state.start_time.elapsed();
     Json(serde_json::json!({
         "status": "ok",
-        "service": "doradura-webapp"
+        "service": "doradura-webapp",
+        "uptime_seconds": uptime.as_secs(),
+        "uptime_human": format_uptime(uptime)
     }))
 }
 
@@ -546,7 +571,7 @@ async fn handle_get_settings(
         .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
     // Проверяем, является ли пользователь админом
-    let is_admin = user.username.as_deref() == Some(crate::core::config::admin::ADMIN_USERNAME.as_str());
+    let is_admin = admin::is_admin(user_id);
 
     Ok(Json(UserSettings {
         download_format: user.download_format().to_string(),
@@ -772,11 +797,11 @@ async fn handle_get_admin_stats(
     let conn = db::get_connection(&state.db_pool).map_err(|e| AppError::Internal(format!("DB error: {}", e)))?;
 
     // Проверяем, является ли пользователь админом
-    let user = db::get_user(&conn, user_id)
+    let _user = db::get_user(&conn, user_id)
         .map_err(|e| AppError::Internal(format!("Failed to get user: {}", e)))?
         .ok_or_else(|| AppError::NotFound("User not found".to_string()))?;
 
-    let is_admin = user.username.as_deref() == Some(crate::core::config::admin::ADMIN_USERNAME.as_str());
+    let is_admin = admin::is_admin(user_id);
     if !is_admin {
         return Err(AppError::Unauthorized("Admin access required".to_string()));
     }

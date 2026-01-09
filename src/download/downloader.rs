@@ -2073,11 +2073,16 @@ pub async fn download_and_send_audio(
                                         tokio::spawn(async move {
                                             use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
 
-                                            let keyboard =
-                                                InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
-                                                    "🎛️ Edit Audio (Pitch/Tempo)",
+                                            let keyboard = InlineKeyboardMarkup::new(vec![vec![
+                                                InlineKeyboardButton::callback(
+                                                    "🎛️ Edit Audio",
                                                     format!("ae:open:{}", session_id_clone),
-                                                )]]);
+                                                ),
+                                                InlineKeyboardButton::callback(
+                                                    "✂️ Cut Audio",
+                                                    format!("ac:open:{}", session_id_clone),
+                                                ),
+                                            ]]);
 
                                             log::info!(
                                                 "Audio effects: attempting to add button to message {}",
