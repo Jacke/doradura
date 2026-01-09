@@ -560,8 +560,28 @@ pub async fn handle_downloads_callback(
                     };
 
                     match send_result {
-                        Ok(_) => {
+                        Ok(sent_message) => {
                             bot.delete_message(chat_id, status_msg.id).await.ok();
+                            if send_type == "audio" && download.format == "mp3" {
+                                let duration = sent_message
+                                    .audio()
+                                    .map(|a| a.duration.seconds())
+                                    .or_else(|| download.duration.map(|d| d.max(0) as u32))
+                                    .unwrap_or(0);
+                                if let Err(e) = add_audio_tools_buttons_from_history(
+                                    bot,
+                                    Arc::clone(&db_pool),
+                                    chat_id,
+                                    sent_message.id,
+                                    &telegram_file_id,
+                                    caption.clone(),
+                                    duration,
+                                )
+                                .await
+                                {
+                                    log::warn!("Failed to add audio tools buttons: {}", e);
+                                }
+                            }
                             bot.delete_message(chat_id, message_id).await.ok();
                         }
                         Err(e) => {
@@ -1155,6 +1175,58 @@ pub async fn handle_downloads_callback(
 
 fn request_error_from_text(text: String) -> teloxide::RequestError {
     teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(text)))
+}
+
+async fn add_audio_tools_buttons_from_history(
+    bot: &Bot,
+    db_pool: Arc<DbPool>,
+    chat_id: ChatId,
+    message_id: MessageId,
+    telegram_file_id: &str,
+    title: String,
+    duration: u32,
+) -> Result<(), String> {
+    use crate::core::config;
+    use crate::download::audio_effects::{self, AudioEffectSession};
+    use std::path::Path;
+
+    let conn = db::get_connection(&db_pool).map_err(|e| e.to_string())?;
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let session_file_path_raw = audio_effects::get_original_file_path(&session_id, &config::DOWNLOAD_FOLDER);
+    let session_file_path = shellexpand::tilde(&session_file_path_raw).into_owned();
+    if let Some(parent) = Path::new(&session_file_path).parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(|e| e.to_string())?;
+    }
+
+    crate::telegram::download_file_from_telegram(
+        bot,
+        telegram_file_id,
+        Some(std::path::PathBuf::from(&session_file_path)),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let session = AudioEffectSession::new(
+        session_id.clone(),
+        chat_id.0,
+        session_file_path,
+        message_id.0,
+        title,
+        duration,
+    );
+    db::create_audio_effect_session(&conn, &session).map_err(|e| e.to_string())?;
+
+    let keyboard = InlineKeyboardMarkup::new(vec![vec![
+        InlineKeyboardButton::callback("🎛️ Edit Audio", format!("ae:open:{}", session_id)),
+        InlineKeyboardButton::callback("✂️ Cut Audio", format!("ac:open:{}", session_id)),
+    ]]);
+
+    bot.edit_message_reply_markup(chat_id, message_id)
+        .reply_markup(keyboard)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
 }
 
 fn is_file_too_big_error(e: &teloxide::RequestError) -> bool {

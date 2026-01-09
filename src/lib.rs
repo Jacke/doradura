@@ -17,10 +17,15 @@
 pub mod cli;
 pub mod core;
 pub mod download;
+pub mod downsub;
 pub mod i18n;
 pub mod metadata_refresh;
 pub mod storage;
 pub mod telegram;
+
+// Testing utilities (only available in tests and test binaries)
+#[cfg(test)]
+pub mod testing;
 
 // Re-export commonly used types for convenience
 pub use core::{config, BotError};

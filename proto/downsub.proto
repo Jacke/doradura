@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package downsub.v1;
+
+message UserContext {
+  int64 telegram_id = 1;
+  string phone = 2;
+}
+
+message MediaReference {
+  string url = 1;
+  string title = 2;
+}
+
+message SummaryRequest {
+  UserContext user = 1;
+  MediaReference media = 2;
+  string language = 3;
+  int32 max_length_tokens = 4;
+}
+
+message SummarySection {
+  string title = 1;
+  string text = 2;
+}
+
+message SummaryResponse {
+  string summary = 1;
+  repeated string highlights = 2;
+  repeated SummarySection sections = 3;
+}
+
+message SubtitlesRequest {
+  UserContext user = 1;
+  MediaReference media = 2;
+  string language = 3;
+  string format = 4;
+}
+
+message SubtitleSegment {
+  int64 start_ms = 1;
+  int64 end_ms = 2;
+  string text = 3;
+  string speaker = 4;
+}
+
+message SubtitlesResponse {
+  string raw_subtitles = 1;
+  string format = 2;
+  repeated SubtitleSegment segments = 3;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  string status = 1;
+  string version = 2;
+  string message = 3;
+  string uptime = 4;
+}
+
+service DownsubService {
+  rpc GetSummary(SummaryRequest) returns (SummaryResponse);
+  rpc GetSubtitles(SubtitlesRequest) returns (SubtitlesResponse);
+  rpc CheckHealth(HealthRequest) returns (HealthResponse);
+}

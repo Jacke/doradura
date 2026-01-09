@@ -22,6 +22,7 @@ use doradura::download::ytdlp::{self as ytdlp};
 use doradura::download::{
     download_and_send_audio, download_and_send_subtitles, download_and_send_video, DownloadQueue,
 };
+use doradura::downsub::DownsubGateway;
 use doradura::storage::backup::create_backup;
 use doradura::storage::db::{
     self as db, create_user, expire_old_subscriptions, get_failed_tasks, get_user, log_request,
@@ -31,11 +32,11 @@ use doradura::telegram::notifications::{notify_admin_task_failed, notify_admin_t
 use doradura::telegram::webapp::run_webapp_server;
 use doradura::telegram::{
     create_bot, handle_admin_command, handle_analytics_command, handle_backup_command, handle_botapi_speed_command,
-    handle_charges_command, handle_download_tg_command, handle_health_command, handle_info_command,
-    handle_menu_callback, handle_message, handle_metrics_command, handle_revenue_command, handle_sent_files_command,
-    handle_setplan_command, handle_transactions_command, handle_users_command, is_message_addressed_to_bot,
-    send_random_voice_message, setup_all_language_commands, setup_chat_bot_commands, show_enhanced_main_menu,
-    show_main_menu, Command, WebAppAction, WebAppData,
+    handle_charges_command, handle_download_tg_command, handle_downsub_command, handle_downsub_health_command,
+    handle_health_command, handle_info_command, handle_menu_callback, handle_message, handle_metrics_command,
+    handle_revenue_command, handle_sent_files_command, handle_setplan_command, handle_transactions_command,
+    handle_users_command, is_message_addressed_to_bot, send_random_voice_message, setup_all_language_commands,
+    setup_chat_bot_commands, show_enhanced_main_menu, show_main_menu, Command, WebAppAction, WebAppData,
 };
 use export::show_export_menu;
 use history::show_history;
@@ -175,6 +176,15 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
 
     let rate_limiter = Arc::new(RateLimiter::new());
     let download_queue = Arc::new(DownloadQueue::new());
+    let downsub_gateway = Arc::new(DownsubGateway::from_env().await);
+    if downsub_gateway.is_available() {
+        log::info!(
+            "Downsub gRPC gateway enabled ({})",
+            config::DOWNSUB_GRPC_ENDPOINT.as_deref().unwrap_or("<unknown>")
+        );
+    } else {
+        log::info!("Downsub gRPC gateway disabled (DOWNSUB_GRPC_ENDPOINT unset or unreachable)");
+    }
 
     // Do not restore failed tasks on startup; users should retry manually
     // recover_failed_tasks(&download_queue, &db_pool).await;
@@ -431,8 +441,10 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
                 .filter_command::<Command>()
                 .endpoint({
                     let db_pool = Arc::clone(&db_pool);
+                    let downsub_gateway = Arc::clone(&downsub_gateway);
                     move |bot: Bot, msg: Message, cmd: Command| {
                         let db_pool = Arc::clone(&db_pool);
+                        let downsub_gateway = Arc::clone(&downsub_gateway);
                         async move {
                             log::info!("🎯 Received command: {:?} from chat {}", cmd, msg.chat.id);
                             if let Some(text) = msg.text() {
@@ -518,6 +530,15 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
                                         Err(e) => log::error!("❌ handle_info_command failed: {:?}", e),
                                     }
                                 }
+                                Command::Downsub => {
+                                    let _ = handle_downsub_command(
+                                        bot.clone(),
+                                        msg.clone(),
+                                        db_pool.clone(),
+                                        downsub_gateway.clone(),
+                                    )
+                                    .await;
+                                }
                                 Command::History => {
                                     let _ = show_history(&bot, msg.chat.id, db_pool).await;
                                 }
@@ -573,51 +594,110 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
                                     let _ = show_export_menu(&bot, msg.chat.id, db_pool).await;
                                 }
                                 Command::Backup => {
-                                    let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
-                                    let _ = handle_backup_command(&bot, msg.chat.id, username).await;
+                                    let user_id = msg
+                                        .from
+                                        .as_ref()
+                                        .and_then(|u| i64::try_from(u.id.0).ok())
+                                        .unwrap_or(0);
+                                    let _ = handle_backup_command(&bot, msg.chat.id, user_id).await;
                                 }
                                 Command::Plan => {
                                     let _ = show_subscription_info(&bot, msg.chat.id, db_pool).await;
                                 }
                                 Command::Users => {
                                     let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
-                                    let _ = handle_users_command(&bot, msg.chat.id, username, db_pool.clone()).await;
+                                    let user_id = msg
+                                        .from
+                                        .as_ref()
+                                        .and_then(|u| i64::try_from(u.id.0).ok())
+                                        .unwrap_or(0);
+                                    let _ = handle_users_command(&bot, msg.chat.id, username, user_id, db_pool.clone()).await;
                                 }
                                 Command::Setplan => {
-                                    let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
+                                    let user_id = msg
+                                        .from
+                                        .as_ref()
+                                        .and_then(|u| i64::try_from(u.id.0).ok())
+                                        .unwrap_or(0);
                                     let message_text = msg.text().unwrap_or("");
-                                    let _ = handle_setplan_command(&bot, msg.chat.id, username, message_text, db_pool.clone()).await;
+                                    let _ =
+                                        handle_setplan_command(&bot, msg.chat.id, user_id, message_text, db_pool.clone())
+                                            .await;
                                 }
                                 Command::Transactions => {
-                                    let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
-                                    let _ = handle_transactions_command(&bot, msg.chat.id, username).await;
+                                    let user_id = msg
+                                        .from
+                                        .as_ref()
+                                        .and_then(|u| i64::try_from(u.id.0).ok())
+                                        .unwrap_or(0);
+                                    let _ = handle_transactions_command(&bot, msg.chat.id, user_id).await;
                                 }
                                 Command::Admin => {
-                                    let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
-                                    let _ = handle_admin_command(&bot, msg.chat.id, username, db_pool.clone()).await;
+                                    let user_id = msg
+                                        .from
+                                        .as_ref()
+                                        .and_then(|u| i64::try_from(u.id.0).ok())
+                                        .unwrap_or(0);
+                                    let _ = handle_admin_command(&bot, msg.chat.id, user_id, db_pool.clone()).await;
                                 }
                                 Command::Charges => {
-                                    let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
+                                    let user_id = msg
+                                        .from
+                                        .as_ref()
+                                        .and_then(|u| i64::try_from(u.id.0).ok())
+                                        .unwrap_or(0);
                                     let message_text = msg.text().unwrap_or("");
                                     // Extract arguments after "/charges "
                                     let args = message_text.strip_prefix("/charges").unwrap_or("").trim();
-                                    let _ = handle_charges_command(&bot, msg.chat.id, username, db_pool.clone(), args).await;
+                                    let _ = handle_charges_command(&bot, msg.chat.id, user_id, db_pool.clone(), args).await;
                                 }
                                 Command::DownloadTg => {
+                                    let user_id = msg
+                                        .from
+                                        .as_ref()
+                                        .and_then(|u| i64::try_from(u.id.0).ok())
+                                        .unwrap_or(0);
                                     let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
                                     let message_text = msg.text().unwrap_or("");
-                                    let _ = handle_download_tg_command(&bot, msg.chat.id, username, message_text).await;
+                                    let _ = handle_download_tg_command(&bot, msg.chat.id, user_id, username, message_text).await;
                                 }
                                 Command::SentFiles => {
+                                    let user_id = msg
+                                        .from
+                                        .as_ref()
+                                        .and_then(|u| i64::try_from(u.id.0).ok())
+                                        .unwrap_or(0);
                                     let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
                                     let message_text = msg.text().unwrap_or("");
-                                    let _ = handle_sent_files_command(&bot, msg.chat.id, username, db_pool.clone(), message_text).await;
+                                    let _ = handle_sent_files_command(
+                                        &bot,
+                                        msg.chat.id,
+                                        user_id,
+                                        username,
+                                        db_pool.clone(),
+                                        message_text,
+                                    )
+                                    .await;
                                 }
                                 Command::Analytics => {
                                     let _ = handle_analytics_command(bot.clone(), msg.clone(), db_pool.clone()).await;
                                 }
                                 Command::Health => {
                                     let _ = handle_health_command(bot.clone(), msg.clone(), db_pool.clone()).await;
+                                }
+                                Command::DownsubHealth => {
+                                    let user_id = msg
+                                        .from
+                                        .as_ref()
+                                        .and_then(|u| i64::try_from(u.id.0).ok())
+                                        .unwrap_or(0);
+                                    let _ = handle_downsub_health_command(
+                                        &bot,
+                                        msg.chat.id,
+                                        user_id,
+                                        downsub_gateway.clone(),
+                                    )
+                                    .await;
                                 }
                                 Command::Metrics => {
                                     let _ = handle_metrics_command(bot.clone(), msg.clone(), db_pool.clone(), None).await;
@@ -626,8 +706,12 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
                                     let _ = handle_revenue_command(bot.clone(), msg.clone(), db_pool.clone()).await;
                                 }
                                 Command::BotApiSpeed => {
-                                    let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
-                                    let _ = handle_botapi_speed_command(&bot, msg.chat.id, username).await;
+                                    let user_id = msg
+                                        .from
+                                        .as_ref()
+                                        .and_then(|u| i64::try_from(u.id.0).ok())
+                                        .unwrap_or(0);
+                                    let _ = handle_botapi_speed_command(&bot, msg.chat.id, user_id).await;
                                 }
                             }
                             respond(())

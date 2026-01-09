@@ -3,6 +3,7 @@ use crate::core::error::AppError;
 use crate::core::rate_limiter::RateLimiter;
 use crate::core::utils::pluralize_seconds;
 use crate::download::queue::DownloadQueue;
+use crate::downsub::{DownsubError, DownsubGateway};
 use crate::i18n;
 use crate::storage::db::{self, DbPool};
 use crate::telegram::preview::{get_preview_metadata, send_preview};
@@ -11,7 +12,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::ParseMode;
+use teloxide::types::{InputFile, ParseMode};
 use url::Url;
 
 /// Cached regex for matching URLs
@@ -104,6 +105,77 @@ pub async fn handle_message(
         log::debug!("handle_message: {:?}", text);
         if text.starts_with("/start") || text.starts_with("/help") {
             return Ok(None);
+        }
+
+        // Audio cut sessions (from "Cut Audio" button)
+        if !text.trim().starts_with('/') {
+            if let Ok(conn) = db::get_connection(&db_pool) {
+                if let Ok(Some(session)) = db::get_active_audio_cut_session(&conn, msg.chat.id.0) {
+                    let trimmed = text.trim();
+                    if is_cancel_text(trimmed) {
+                        let _ = db::delete_audio_cut_session_by_user(&conn, msg.chat.id.0);
+                        bot.send_message(msg.chat.id, "✂️ Вырезка аудио отменена.").await.ok();
+                        return Ok(None);
+                    }
+
+                    let audio_session = match db::get_audio_effect_session(&conn, &session.audio_session_id) {
+                        Ok(Some(audio_session)) => audio_session,
+                        Ok(None) => {
+                            let _ = db::delete_audio_cut_session_by_user(&conn, msg.chat.id.0);
+                            bot.send_message(msg.chat.id, "❌ Сессия аудио истекла. Скачайте трек заново.")
+                                .await
+                                .ok();
+                            return Ok(None);
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to load audio session for cut: {}", e);
+                            return Ok(None);
+                        }
+                    };
+                    if audio_session.is_expired() {
+                        let _ = db::delete_audio_cut_session_by_user(&conn, msg.chat.id.0);
+                        bot.send_message(msg.chat.id, "❌ Сессия аудио истекла. Скачайте трек заново.")
+                            .await
+                            .ok();
+                        return Ok(None);
+                    }
+
+                    let audio_duration = Some(audio_session.duration as i64);
+                    if let Some((segments, segments_text)) = parse_audio_segments_spec(trimmed, audio_duration) {
+                        let _ = db::delete_audio_cut_session_by_user(&conn, msg.chat.id.0);
+
+                        let bot_clone = bot.clone();
+                        let db_pool_clone = db_pool.clone();
+                        let chat_id = msg.chat.id;
+                        tokio::spawn(async move {
+                            if let Err(e) = process_audio_cut(
+                                bot_clone,
+                                db_pool_clone,
+                                chat_id,
+                                audio_session,
+                                segments,
+                                segments_text,
+                            )
+                            .await
+                            {
+                                log::warn!("Failed to process audio cut: {}", e);
+                            }
+                        });
+
+                        return Ok(None);
+                    } else {
+                        crate::telegram::send_message_markdown_v2(
+                            &bot,
+                            msg.chat.id,
+                            "❌ Не понял интервалы\\.\n\nОтправь в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\n\nПример: `00:10-00:25, 01:00-01:10`\n\nИли напиши `отмена`\\.",
+                            None,
+                        )
+                        .await
+                        .ok();
+                        return Ok(None);
+                    }
+                }
+            }
         }
 
         // Video clip sessions (from /downloads or /cuts -> ✂️ Вырезка)
@@ -785,6 +857,42 @@ fn parse_segments_spec(text: &str, video_duration: Option<i64>) -> Option<(Vec<C
     Some((segments, pretty_parts.join(", "), speed))
 }
 
+fn parse_audio_segments_spec(text: &str, audio_duration: Option<i64>) -> Option<(Vec<CutSegment>, String)> {
+    let normalized = text.trim();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    let raw_parts: Vec<&str> = normalized
+        .split([',', ';', '\n'])
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+        .collect();
+    if raw_parts.is_empty() {
+        return None;
+    }
+
+    let mut segments = Vec::new();
+    let mut pretty_parts = Vec::new();
+    for part in raw_parts {
+        if let Some((start_secs, end_secs, pretty)) = parse_audio_command_segment(part, audio_duration) {
+            segments.push(CutSegment { start_secs, end_secs });
+            pretty_parts.push(pretty);
+        } else if let Some((start_secs, end_secs)) = parse_time_range_secs(part) {
+            segments.push(CutSegment { start_secs, end_secs });
+            pretty_parts.push(format!(
+                "{}-{}",
+                format_timestamp(start_secs),
+                format_timestamp(end_secs)
+            ));
+        } else {
+            return None;
+        }
+    }
+
+    Some((segments, pretty_parts.join(", ")))
+}
+
 fn parse_speed_modifier(text: &str) -> Option<f32> {
     let lower = text.to_lowercase();
 
@@ -812,6 +920,54 @@ fn parse_speed_modifier(text: &str) -> Option<f32> {
                 if speed > 0.0 && speed <= 2.0 {
                     return Some(speed);
                 }
+            }
+        }
+    }
+
+    None
+}
+
+fn parse_audio_command_segment(text: &str, audio_duration: Option<i64>) -> Option<(i64, i64, String)> {
+    let normalized = text.trim().to_lowercase();
+    let segment_part = normalized.split_whitespace().next().unwrap_or(&normalized);
+    let duration = audio_duration?;
+
+    if segment_part == "full" {
+        return Some((0, duration, format!("00:00-{}", format_timestamp(duration))));
+    }
+
+    if let Some(num_str) = segment_part.strip_prefix("first") {
+        if let Ok(secs) = num_str.parse::<i64>() {
+            if secs > 0 {
+                let end = secs.min(duration);
+                return Some((0, end, format!("00:00-{}", format_timestamp(end))));
+            }
+        }
+    }
+
+    if let Some(num_str) = segment_part.strip_prefix("last") {
+        if let Ok(secs) = num_str.parse::<i64>() {
+            if secs > 0 && secs <= duration {
+                let start = (duration - secs).max(0);
+                return Some((
+                    start,
+                    duration,
+                    format!("{}-{}", format_timestamp(start), format_timestamp(duration)),
+                ));
+            }
+        }
+    }
+
+    if let Some(num_str) = segment_part.strip_prefix("middle") {
+        if let Ok(secs) = num_str.parse::<i64>() {
+            if secs > 0 && secs <= duration {
+                let start = ((duration - secs) / 2).max(0);
+                let end = start + secs;
+                return Some((
+                    start,
+                    end,
+                    format!("{}-{}", format_timestamp(start), format_timestamp(end)),
+                ));
             }
         }
     }
@@ -1375,6 +1531,115 @@ async fn process_video_clip(
     Ok(())
 }
 
+async fn process_audio_cut(
+    bot: Bot,
+    db_pool: Arc<DbPool>,
+    chat_id: ChatId,
+    session: crate::download::audio_effects::AudioEffectSession,
+    segments: Vec<CutSegment>,
+    segments_text: String,
+) -> Result<(), AppError> {
+    use tokio::process::Command;
+
+    let total_len: i64 = segments.iter().map(|s| (s.end_secs - s.start_secs).max(0)).sum();
+    if total_len <= 0 {
+        bot.send_message(chat_id, "❌ Пустая вырезка.").await.ok();
+        return Ok(());
+    }
+
+    let input_path = std::path::PathBuf::from(&session.original_file_path);
+    if !input_path.exists() {
+        bot.send_message(chat_id, "❌ Не удалось найти исходный файл аудио.")
+            .await
+            .ok();
+        return Ok(());
+    }
+
+    let status = bot
+        .send_message(chat_id, format!("✂️ Вырезаю аудио: {}…", segments_text))
+        .await?;
+
+    let temp_dir = std::path::PathBuf::from("/tmp/doradura_audio_cut");
+    tokio::fs::create_dir_all(&temp_dir).await.ok();
+
+    let output_path = temp_dir.join(format!("cut_audio_{}_{}.mp3", chat_id.0, uuid::Uuid::new_v4()));
+    let filter = build_cut_filter(&segments, false, true);
+
+    let output = Command::new("ffmpeg")
+        .arg("-hide_banner")
+        .arg("-loglevel")
+        .arg("info")
+        .arg("-i")
+        .arg(&input_path)
+        .arg("-filter_complex")
+        .arg(&filter)
+        .arg("-map")
+        .arg("[a]")
+        .arg("-q:a")
+        .arg("0")
+        .arg("-y")
+        .arg(&output_path)
+        .output()
+        .await
+        .map_err(AppError::from)?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bot.delete_message(chat_id, status.id).await.ok();
+        bot.send_message(chat_id, format!("❌ ffmpeg error: {}", stderr))
+            .await
+            .ok();
+        tokio::fs::remove_file(&output_path).await.ok();
+        return Ok(());
+    }
+
+    if !output_path.exists() {
+        bot.delete_message(chat_id, status.id).await.ok();
+        bot.send_message(chat_id, "❌ Ошибка: выходной файл не был создан")
+            .await
+            .ok();
+        return Ok(());
+    }
+
+    let file_size = tokio::fs::metadata(&output_path).await.map(|m| m.len()).unwrap_or(0);
+    if file_size > config::validation::max_audio_size_bytes() {
+        bot.delete_message(chat_id, status.id).await.ok();
+        bot.send_message(chat_id, "❌ Аудио получилось слишком большим для Telegram.")
+            .await
+            .ok();
+        tokio::fs::remove_file(&output_path).await.ok();
+        return Ok(());
+    }
+
+    let caption = format!("{} [cut {}]", session.title, segments_text);
+    let conn = db::get_connection(&db_pool)?;
+    let send_as_document = db::get_user_send_audio_as_document(&conn, chat_id.0).unwrap_or(0);
+
+    let send_res = if send_as_document == 0 {
+        bot.send_audio(chat_id, teloxide::types::InputFile::file(output_path.clone()))
+            .caption(caption)
+            .duration(total_len.max(1) as u32)
+            .await
+    } else {
+        bot.send_document(chat_id, teloxide::types::InputFile::file(output_path.clone()))
+            .caption(caption)
+            .await
+    };
+
+    if let Err(e) = send_res {
+        bot.delete_message(chat_id, status.id).await.ok();
+        bot.send_message(chat_id, format!("❌ Не удалось отправить аудио: {e}"))
+            .await
+            .ok();
+        tokio::fs::remove_file(&output_path).await.ok();
+        return Ok(());
+    }
+
+    bot.delete_message(chat_id, status.id).await.ok();
+    tokio::fs::remove_file(&output_path).await.ok();
+    Ok(())
+}
+
 fn build_cut_filter(segments: &[CutSegment], with_video: bool, with_audio: bool) -> String {
     let mut parts = Vec::new();
     for (i, seg) in segments.iter().enumerate() {
@@ -1675,6 +1940,173 @@ pub async fn handle_info_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>) -
 
     log::info!("✅ handle_info_command completed");
     Ok(())
+}
+
+pub async fn handle_downsub_command(
+    bot: Bot,
+    msg: Message,
+    db_pool: Arc<DbPool>,
+    downsub_gateway: Arc<DownsubGateway>,
+) -> ResponseResult<()> {
+    let lang = i18n::user_lang_from_pool(&db_pool, msg.chat.id.0);
+    let usage_text = i18n::t(&lang, "commands.downsub_usage");
+    let disabled_text = i18n::t(&lang, "commands.downsub_disabled");
+
+    let message_text = match msg.text() {
+        Some(text) => text.trim(),
+        None => {
+            bot.send_message(msg.chat.id, usage_text.clone()).await?;
+            return Ok(());
+        }
+    };
+
+    let tokens: Vec<&str> = message_text.split_whitespace().collect();
+    if tokens.len() < 2 {
+        bot.send_message(msg.chat.id, usage_text.clone()).await?;
+        return Ok(());
+    }
+
+    let action = tokens[1].to_lowercase();
+    let options = parse_downsub_options(&tokens[3..]);
+
+    match action.as_str() {
+        "summary" => {
+            if tokens.len() < 3 {
+                bot.send_message(msg.chat.id, usage_text.clone()).await?;
+                return Ok(());
+            }
+
+            let url = tokens[2].to_string();
+            match downsub_gateway
+                .summarize_url(msg.chat.id.0, options.phone.clone(), url, options.language.clone())
+                .await
+            {
+                Ok(summary) => {
+                    let mut response = String::new();
+                    response.push_str(&i18n::t(&lang, "commands.downsub_summary_header"));
+                    response.push('\n');
+                    response.push_str(&summary.summary);
+
+                    if !summary.highlights.is_empty() {
+                        response.push_str("\n\nHighlights:\n");
+                        for highlight in summary.highlights {
+                            response.push_str("- ");
+                            response.push_str(&highlight);
+                            response.push('\n');
+                        }
+                    }
+
+                    if !summary.sections.is_empty() {
+                        for section in summary.sections {
+                            if let Some(title) = section.title {
+                                response.push_str("\n*");
+                                response.push_str(&title);
+                                response.push_str("*\n");
+                            }
+                            response.push_str(&section.text);
+                            response.push('\n');
+                        }
+                    }
+
+                    bot.send_message(msg.chat.id, response).await?;
+                }
+                Err(DownsubError::Unavailable) => {
+                    bot.send_message(msg.chat.id, disabled_text.clone()).await?;
+                }
+                Err(err) => {
+                    log::warn!("Downsub summary request failed: {}", err);
+                    let mut args = FluentArgs::new();
+                    args.set("error", err.to_string());
+                    bot.send_message(msg.chat.id, i18n::t_args(&lang, "commands.downsub_error", &args))
+                        .await?;
+                }
+            }
+        }
+        "subtitles" => {
+            if tokens.len() < 3 {
+                bot.send_message(msg.chat.id, usage_text.clone()).await?;
+                return Ok(());
+            }
+
+            let url = tokens[2].to_string();
+            match downsub_gateway
+                .fetch_subtitles(
+                    msg.chat.id.0,
+                    options.phone.clone(),
+                    url,
+                    options.format.clone(),
+                    options.language.clone(),
+                )
+                .await
+            {
+                Ok(result) => {
+                    let segments_count = result.segments.len() as i64;
+                    let format_value = if result.format.is_empty() {
+                        "srt".to_string()
+                    } else {
+                        result.format.clone()
+                    };
+                    let extension = format_value.split('.').next().unwrap_or("srt").to_lowercase();
+                    let file_name = format!("downsub_subtitles.{}", extension);
+                    let bytes = result.raw_subtitles.into_bytes();
+
+                    bot.send_document(msg.chat.id, InputFile::memory(bytes).file_name(file_name))
+                        .await?;
+
+                    let mut args = FluentArgs::new();
+                    args.set("format", format_value.clone());
+                    args.set("count", segments_count);
+                    let text = i18n::t_args(&lang, "commands.downsub_subtitles_sent", &args);
+                    bot.send_message(msg.chat.id, text).await?;
+                }
+                Err(DownsubError::Unavailable) => {
+                    bot.send_message(msg.chat.id, disabled_text.clone()).await?;
+                }
+                Err(err) => {
+                    log::warn!("Downsub subtitles request failed: {}", err);
+                    let mut args = FluentArgs::new();
+                    args.set("error", err.to_string());
+                    bot.send_message(msg.chat.id, i18n::t_args(&lang, "commands.downsub_error", &args))
+                        .await?;
+                }
+            }
+        }
+        _ => {
+            bot.send_message(msg.chat.id, usage_text.clone()).await?;
+        }
+    }
+
+    Ok(())
+}
+
+#[derive(Clone, Default)]
+struct DownsubOptions {
+    language: Option<String>,
+    format: Option<String>,
+    phone: Option<String>,
+}
+
+fn parse_downsub_options(tokens: &[&str]) -> DownsubOptions {
+    let mut options = DownsubOptions::default();
+
+    for &token in tokens {
+        if let Some((key, value)) = token.split_once('=') {
+            match key.to_lowercase().as_str() {
+                "lang" | "language" => {
+                    options.language = Some(value.to_string());
+                }
+                "format" => {
+                    options.format = Some(value.to_string());
+                }
+                "phone" => {
+                    options.phone = Some(value.to_string());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    options
 }
 
 /// Helper function to escape special characters for MarkdownV2

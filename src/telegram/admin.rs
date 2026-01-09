@@ -5,6 +5,7 @@
 //! - Database backup operations
 //! - Markdown escaping utilities
 
+use crate::downsub::DownsubGateway;
 use anyhow::Result;
 use regex::Regex;
 use std::collections::HashMap;
@@ -19,7 +20,7 @@ use teloxide::types::{
 
 use crate::core::config;
 
-use crate::core::config::admin::ADMIN_USERNAME;
+use crate::core::config::admin::{ADMIN_IDS, ADMIN_USER_ID};
 use crate::storage::backup::{create_backup, list_backups};
 use crate::storage::db::{get_all_users, get_connection, update_user_plan, update_user_plan_with_expiry, DbPool};
 use std::path::PathBuf;
@@ -30,6 +31,15 @@ const MAX_MESSAGE_LENGTH: usize = 4000;
 const DEFAULT_BOT_API_LOG_PATH: &str = "bot-api-data/logs/telegram-bot-api.log";
 const DEFAULT_BOT_API_LOG_TAIL_BYTES: u64 = 2 * 1024 * 1024;
 
+fn truncate_message(text: &str) -> String {
+    if text.len() <= MAX_MESSAGE_LENGTH {
+        return text.to_string();
+    }
+    let mut trimmed = text.chars().take(MAX_MESSAGE_LENGTH - 20).collect::<String>();
+    trimmed.push_str("\n... (truncated)");
+    trimmed
+}
+
 #[derive(Default)]
 struct QueryData {
     start_time: Option<f64>,
@@ -39,8 +49,14 @@ struct QueryData {
 }
 
 /// Check if user is admin
-pub fn is_admin(username: Option<&str>) -> bool {
-    username.map(|u| u == ADMIN_USERNAME.as_str()).unwrap_or(false)
+pub fn is_admin(user_id: i64) -> bool {
+    if !ADMIN_IDS.is_empty() {
+        return ADMIN_IDS.contains(&user_id);
+    }
+    if *ADMIN_USER_ID != 0 {
+        return *ADMIN_USER_ID == user_id;
+    }
+    false
 }
 
 /// Escapes special characters for MarkdownV2 format
@@ -127,8 +143,8 @@ struct BotApiUploadPending {
 }
 
 /// Handle /botapi_speed command - show upload speed stats from local Bot API logs (admin only)
-pub async fn handle_botapi_speed_command(bot: &Bot, chat_id: ChatId, username: Option<&str>) -> Result<()> {
-    if !is_admin(username) {
+pub async fn handle_botapi_speed_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> Result<()> {
+    if !is_admin(user_id) {
         bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
             .await?;
         return Ok(());
@@ -382,8 +398,8 @@ fn format_transaction_partner_for_log(partner: &TransactionPartner) -> String {
 }
 
 /// Handle /transactions command - list recent Telegram Stars transactions (admin only)
-pub async fn handle_transactions_command(bot: &Bot, chat_id: ChatId, username: Option<&str>) -> Result<()> {
-    if !is_admin(username) {
+pub async fn handle_transactions_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> Result<()> {
+    if !is_admin(user_id) {
         bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
             .await?;
         return Ok(());
@@ -462,9 +478,9 @@ pub async fn handle_transactions_command(bot: &Bot, chat_id: ChatId, username: O
 /// # Arguments
 /// * `bot` - Bot instance
 /// * `chat_id` - Chat ID where to send response
-/// * `username` - Username of the requester
-pub async fn handle_backup_command(bot: &Bot, chat_id: ChatId, username: Option<&str>) -> Result<()> {
-    if !is_admin(username) {
+/// * `user_id` - Telegram user ID of the requester
+pub async fn handle_backup_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> Result<()> {
+    if !is_admin(user_id) {
         bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
             .await?;
         return Ok(());
@@ -497,21 +513,19 @@ pub async fn handle_backup_command(bot: &Bot, chat_id: ChatId, username: Option<
 /// # Arguments
 /// * `bot` - Bot instance
 /// * `chat_id` - Chat ID where to send response
-/// * `username` - Username of the requester
+/// * `username` - Username of the requester (for logs)
+/// * `user_id` - Telegram user ID of the requester
 /// * `db_pool` - Database connection pool
 pub async fn handle_users_command(
     bot: &Bot,
     chat_id: ChatId,
     username: Option<&str>,
+    user_id: i64,
     db_pool: Arc<DbPool>,
 ) -> Result<()> {
-    log::debug!(
-        "Users command: username={:?}, is_admin={}",
-        username,
-        is_admin(username)
-    );
+    log::debug!("Users command: username={:?}, is_admin={}", username, is_admin(user_id));
 
-    if !is_admin(username) {
+    if !is_admin(user_id) {
         log::warn!("User {:?} tried to access /users command without permission", username);
         bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
             .await?;
@@ -649,17 +663,17 @@ pub async fn handle_users_command(
 /// # Arguments
 /// * `bot` - Bot instance
 /// * `chat_id` - Chat ID where to send response
-/// * `username` - Username of the requester
+/// * `user_id` - Telegram user ID of the requester
 /// * `message_text` - Full message text with command arguments
 /// * `db_pool` - Database connection pool
 pub async fn handle_setplan_command(
     bot: &Bot,
     chat_id: ChatId,
-    username: Option<&str>,
+    user_id: i64,
     message_text: &str,
     db_pool: Arc<DbPool>,
 ) -> Result<()> {
-    if !is_admin(username) {
+    if !is_admin(user_id) {
         bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
             .await?;
         return Ok(());
@@ -788,15 +802,10 @@ pub async fn handle_setplan_command(
 /// # Arguments
 /// * `bot` - Bot instance
 /// * `chat_id` - Chat ID where to send response
-/// * `username` - Username of the requester
+/// * `user_id` - Telegram user ID of the requester
 /// * `db_pool` - Database connection pool
-pub async fn handle_admin_command(
-    bot: &Bot,
-    chat_id: ChatId,
-    username: Option<&str>,
-    db_pool: Arc<DbPool>,
-) -> Result<()> {
-    if !is_admin(username) {
+pub async fn handle_admin_command(bot: &Bot, chat_id: ChatId, user_id: i64, db_pool: Arc<DbPool>) -> Result<()> {
+    if !is_admin(user_id) {
         bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
             .await?;
         return Ok(());
@@ -861,22 +870,58 @@ pub async fn handle_admin_command(
     Ok(())
 }
 
+/// Handle /downsub_health command - check Downsub gRPC server health via gRPC
+pub async fn handle_downsub_health_command(
+    bot: &Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    downsub_gateway: Arc<DownsubGateway>,
+) -> Result<()> {
+    if !is_admin(user_id) {
+        bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
+            .await?;
+        return Ok(());
+    }
+
+    let response_text = match downsub_gateway.check_health().await {
+        Ok(result) => {
+            let mut text = format!(
+                "✅ Downsub health ok\nstatus: {}\nversion: {}",
+                result.status, result.version
+            );
+            if let Some(message) = result.message {
+                text.push_str("\nmessage: ");
+                text.push_str(&message);
+            }
+            if let Some(uptime) = result.uptime {
+                text.push_str("\nuptime: ");
+                text.push_str(&uptime);
+            }
+            text
+        }
+        Err(err) => format!("❌ Downsub health failed: {}", err),
+    };
+
+    bot.send_message(chat_id, truncate_message(&response_text)).await?;
+    Ok(())
+}
+
 /// Handle /charges command - view all payment charges
 ///
 /// # Arguments
 /// * `bot` - Bot instance
 /// * `chat_id` - Chat ID where to send response
-/// * `username` - Username of the requester
+/// * `user_id` - Telegram user ID of the requester
 /// * `db_pool` - Database pool
 /// * `args` - Optional arguments: "stats", "premium", "vip", or user_id
 pub async fn handle_charges_command(
     bot: &Bot,
     chat_id: ChatId,
-    username: Option<&str>,
+    user_id: i64,
     db_pool: std::sync::Arc<crate::storage::db::DbPool>,
     args: &str,
 ) -> Result<()> {
-    if !is_admin(username) {
+    if !is_admin(user_id) {
         bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
             .await?;
         return Ok(());
@@ -1245,7 +1290,8 @@ fn build_file_url(base: &Url, token: &str, file_path: &str) -> Result<Url> {
 /// # Arguments
 /// * `bot` - Telegram bot instance
 /// * `chat_id` - Chat ID where the command was sent
-/// * `username` - Username of the user who sent the command
+/// * `user_id` - Telegram user ID of the requester
+/// * `username` - Username of the requester (for logs)
 /// * `message_text` - Full message text (e.g., "/download_tg BQACAgIAAxkBAAIBCGXxxx...")
 ///
 /// # Behavior
@@ -1260,11 +1306,12 @@ fn build_file_url(base: &Url, token: &str, file_path: &str) -> Result<Url> {
 pub async fn handle_download_tg_command(
     bot: &Bot,
     chat_id: ChatId,
+    user_id: i64,
     username: Option<&str>,
     message_text: &str,
 ) -> Result<()> {
     // Check admin permissions
-    if !is_admin(username) {
+    if !is_admin(user_id) {
         bot.send_message(chat_id, "❌ Эта команда доступна только администраторам.")
             .await?;
         return Ok(());
@@ -1358,7 +1405,8 @@ pub async fn handle_download_tg_command(
 /// # Arguments
 /// * `bot` - Telegram bot instance
 /// * `chat_id` - Chat ID where the command was sent
-/// * `username` - Username of the user who sent the command
+/// * `user_id` - Telegram user ID of the requester
+/// * `username` - Username of the requester (for logs)
 /// * `db_pool` - Database connection pool
 /// * `message_text` - Full message text (e.g., "/sent_files" or "/sent_files 100")
 ///
@@ -1373,6 +1421,7 @@ pub async fn handle_download_tg_command(
 pub async fn handle_sent_files_command(
     bot: &Bot,
     chat_id: ChatId,
+    user_id: i64,
     username: Option<&str>,
     db_pool: std::sync::Arc<DbPool>,
     message_text: &str,
@@ -1380,7 +1429,7 @@ pub async fn handle_sent_files_command(
     use crate::storage::db::{get_connection, get_sent_files};
 
     // Check admin permissions
-    if !is_admin(username) {
+    if !is_admin(user_id) {
         bot.send_message(chat_id, "❌ Эта команда доступна только администраторам.")
             .await?;
         return Ok(());
@@ -1509,10 +1558,17 @@ mod tests {
 
     #[test]
     fn test_is_admin() {
-        // Test with default admin username (from config)
-        let admin_username = crate::core::config::admin::ADMIN_USERNAME.as_str();
-        assert!(is_admin(Some(admin_username)));
-        assert!(!is_admin(Some("other_user")));
-        assert!(!is_admin(None));
+        if !ADMIN_IDS.is_empty() {
+            let admin_id = ADMIN_IDS[0];
+            let non_admin_id = ADMIN_IDS.iter().max().copied().unwrap_or(0) + 1;
+            assert!(is_admin(admin_id));
+            assert!(!is_admin(non_admin_id));
+        } else if *ADMIN_USER_ID != 0 {
+            let admin_id = *ADMIN_USER_ID;
+            assert!(is_admin(admin_id));
+            assert!(!is_admin(admin_id + 1));
+        } else {
+            assert!(!is_admin(0));
+        }
     }
 }
