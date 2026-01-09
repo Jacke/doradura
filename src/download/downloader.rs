@@ -3859,6 +3859,26 @@ pub async fn download_and_send_video(
                                 if first_part_db_id.is_none() && total_parts > 1 {
                                     first_part_db_id = Some(id);
                                 }
+                                if total_parts == 1 {
+                                    let bot_for_button = bot_clone.clone();
+                                    let message_id = sent_message.id;
+                                    tokio::spawn(async move {
+                                        use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
+                                        let keyboard = InlineKeyboardMarkup::new(vec![vec![
+                                            InlineKeyboardButton::callback(
+                                                "✂️ Cut Video",
+                                                format!("downloads:clip:{}", id),
+                                            ),
+                                        ]]);
+                                        if let Err(e) = bot_for_button
+                                            .edit_message_reply_markup(chat_id, message_id)
+                                            .reply_markup(keyboard)
+                                            .await
+                                        {
+                                            log::warn!("Failed to add video cut button: {}", e);
+                                        }
+                                    });
+                                }
                             }
                             Err(e) => log::warn!("Failed to save download history for part {}: {}", part_index, e),
                         }
