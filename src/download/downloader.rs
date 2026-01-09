@@ -2165,11 +2165,11 @@ pub async fn download_and_send_audio(
                 }
             }
 
-            // Add eyes emoji reaction to the original message if message_id is available
+            // Mark the original message as completed if message_id is available
             if let Some(msg_id) = message_id {
                 use teloxide::types::{MessageId, ReactionType};
                 let reaction = vec![ReactionType::Emoji {
-                    emoji: "👀".to_string(),
+                    emoji: "✅".to_string(),
                 }];
                 if let Err(e) = bot_clone
                     .set_message_reaction(chat_id, MessageId(msg_id))
@@ -3894,11 +3894,11 @@ pub async fn download_and_send_video(
                 file_format: Some("mp4".to_string()),
             }).await;
 
-            // Add eyes emoji reaction to the original message if message_id is available
+            // Mark the original message as completed if message_id is available
             if let Some(msg_id) = message_id {
                 use teloxide::types::{ReactionType, MessageId};
                 let reaction = vec![ReactionType::Emoji {
-                    emoji: "👀".to_string(),
+                    emoji: "✅".to_string(),
                 }];
                 if let Err(e) = bot_clone.set_message_reaction(chat_id, MessageId(msg_id)).reaction(reaction).await {
                     log::warn!("Failed to set message reaction: {}", e);
@@ -4227,11 +4227,11 @@ pub async fn download_and_send_subtitles(
                 )
                 .await;
 
-            // Add eyes emoji reaction to the original message if message_id is available
+            // Mark the original message as completed if message_id is available
             if let Some(msg_id) = message_id {
                 use teloxide::types::{MessageId, ReactionType};
                 let reaction = vec![ReactionType::Emoji {
-                    emoji: "👀".to_string(),
+                    emoji: "✅".to_string(),
                 }];
                 if let Err(e) = bot_clone
                     .set_message_reaction(chat_id, MessageId(msg_id))

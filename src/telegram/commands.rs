@@ -274,6 +274,17 @@ pub async fn handle_message(
         let urls: Vec<&str> = URL_REGEX.find_iter(text).map(|m| m.as_str()).collect();
 
         if !urls.is_empty() {
+            // Mark the user's link message as "seen"
+            if let Err(e) = bot
+                .set_message_reaction(msg.chat.id, teloxide::types::MessageId(msg.id.0))
+                .reaction(vec![teloxide::types::ReactionType::Emoji {
+                    emoji: "👀".to_string(),
+                }])
+                .await
+            {
+                log::warn!("Failed to set reaction on user message: {}", e);
+            }
+
             // Get user's preferred download format from database
             // Use get_user to get full user info (will be reused for logging)
             let (format, user_info) = match db::get_connection(&db_pool) {

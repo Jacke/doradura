@@ -1146,6 +1146,19 @@ async fn process_queue(
                     }
                 };
 
+                if let Some(msg_id) = task.message_id {
+                    use teloxide::types::{MessageId, ReactionType};
+                    if let Err(e) = bot
+                        .set_message_reaction(task.chat_id, MessageId(msg_id))
+                        .reaction(vec![ReactionType::Emoji {
+                            emoji: "📥".to_string(),
+                        }])
+                        .await
+                    {
+                        log::warn!("Failed to update reaction to download state: {}", e);
+                    }
+                }
+
                 // Process task based on format
                 let db_pool_clone = Arc::clone(&db_pool);
                 let video_quality = task.video_quality.clone();
