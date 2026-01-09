@@ -36,6 +36,7 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     ffmpeg \
+    gosu \
     python3 \
     python3-pip \
     sqlite3 \
@@ -62,6 +63,12 @@ COPY migration.sql ./
 RUN cat <<'EOF' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 #!/bin/bash
 set -e
+
+if [ "$(id -u)" -eq 0 ]; then
+  if [ -d /data ]; then
+    chown -R botuser:botuser /data || true
+  fi
+fi
 
 echo "Database initialization..."
 
@@ -92,15 +99,13 @@ export DATABASE_URL="$DB_PATH"
 echo "Ready to start bot (migrations will run if needed)"
 
 echo "Starting bot..."
-exec /app/doradura "$@"
+exec gosu botuser /app/doradura "$@"
 EOF
 
 # Create necessary directories and non-root user
 RUN mkdir -p downloads logs backups /data && \
     useradd -m -u 1000 botuser && \
     chown -R botuser:botuser /app /data
-
-USER botuser
 
 # Expose port for webapp (optional)
 EXPOSE 8080
