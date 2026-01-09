@@ -2,7 +2,8 @@
 FROM rust:1.85-slim AS builder
 
 # Install system dependencies required for building
-RUN apt-get update && apt-get install -y \
+# hadolint ignore=DL3008
+RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libssl-dev \
     libsqlite3-dev \
@@ -31,7 +32,8 @@ RUN cargo build --release
 FROM debian:bookworm-slim
 
 # Install runtime dependencies
-RUN apt-get update && apt-get install -y \
+# hadolint ignore=DL3008
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     ffmpeg \
     python3 \
@@ -41,10 +43,11 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install yt-dlp
-RUN wget https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
+RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp
 
 # Install Python dependencies for browser cookie extraction (optional)
+# hadolint ignore=DL3013
 RUN pip3 install --no-cache-dir --break-system-packages keyring pycryptodomex
 
 WORKDIR /app
@@ -56,38 +59,37 @@ COPY --from=builder /app/target/release/doradura /app/doradura
 COPY migration.sql ./
 
 # Create startup script
-RUN echo '#!/bin/bash\n\
-set -e\n\
-\n\
-echo "Database initialization..."\n\
-\n\
-# Use DATABASE_URL if provided, else default to /data/database.sqlite\n\
-DB_PATH=${DATABASE_URL:-/data/database.sqlite}\n\
-DB_DIR=$(dirname \"$DB_PATH\")\n\
-mkdir -p \"$DB_DIR\"\n\
-\n\
-if [ -f \"$DB_PATH\" ]; then\n\
-  echo \"✅ Using existing database at $DB_PATH\"\n\
-else\n\
-  echo \"⚠️  Database not found, creating from migration.sql at $DB_PATH...\"\n\
-  sqlite3 \"$DB_PATH\" < /app/migration.sql\n\
-  echo \"✅ Database created\"\n\
-fi\n\
-\n\
-export DATABASE_URL=\"$DB_PATH\"\n\
-\n\
-# Run any pending migrations from Rust code\n\
-echo "Ready to start bot (migrations will run if needed)"\n\
-\n\
-echo "Starting bot..."\n\
-exec /app/doradura "$@"\n\
-' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+RUN cat <<'EOF' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
+#!/bin/bash
+set -e
 
-# Create necessary directories
-RUN mkdir -p downloads logs backups
+echo "Database initialization..."
 
-# Create non-root user
-RUN useradd -m -u 1000 botuser && \
+# Use DATABASE_URL if provided, else default to /data/database.sqlite
+DB_PATH=${DATABASE_URL:-/data/database.sqlite}
+DB_DIR=$(dirname "$DB_PATH")
+mkdir -p "$DB_DIR"
+
+if [ -f "$DB_PATH" ]; then
+  echo "✅ Using existing database at $DB_PATH"
+else
+  echo "⚠️  Database not found, creating from migration.sql at $DB_PATH..."
+  sqlite3 "$DB_PATH" < /app/migration.sql
+  echo "✅ Database created"
+fi
+
+export DATABASE_URL="$DB_PATH"
+
+# Run any pending migrations from Rust code
+echo "Ready to start bot (migrations will run if needed)"
+
+echo "Starting bot..."
+exec /app/doradura "$@"
+EOF
+
+# Create necessary directories and non-root user
+RUN mkdir -p downloads logs backups && \
+    useradd -m -u 1000 botuser && \
     chown -R botuser:botuser /app
 
 USER botuser
