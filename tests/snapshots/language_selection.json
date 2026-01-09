@@ -1,0 +1,219 @@
+{
+  "name": "language_selection",
+  "version": "1.0",
+  "recorded_at": "2026-01-04T14:50:00Z",
+  "interactions": [
+    [
+      {
+        "method": "POST",
+        "path": "/sendMessage",
+        "body": {
+          "chat_id": 123456789,
+          "text": "🌐 Выбери язык / Choose language:",
+          "reply_markup": {
+            "inline_keyboard": [
+              [
+                {
+                  "text": "🇷🇺 Русский",
+                  "callback_data": "lang:ru"
+                },
+                {
+                  "text": "🇬🇧 English",
+                  "callback_data": "lang:en"
+                }
+              ],
+              [
+                {
+                  "text": "◀️ Назад / Back",
+                  "callback_data": "menu:settings"
+                }
+              ]
+            ]
+          }
+        },
+        "timestamp": 1736002200
+      },
+      {
+        "status": 200,
+        "body": {
+          "ok": true,
+          "result": {
+            "message_id": 48,
+            "from": {
+              "id": 987654321,
+              "is_bot": true,
+              "first_name": "DoraDura",
+              "username": "doradura_bot"
+            },
+            "chat": {
+              "id": 123456789,
+              "first_name": "Test",
+              "username": "testuser",
+              "type": "private"
+            },
+            "date": 1736002200,
+            "text": "🌐 Выбери язык / Choose language:",
+            "reply_markup": {
+              "inline_keyboard": [
+                [
+                  {
+                    "text": "🇷🇺 Русский",
+                    "callback_data": "lang:ru"
+                  },
+                  {
+                    "text": "🇬🇧 English",
+                    "callback_data": "lang:en"
+                  }
+                ],
+                [
+                  {
+                    "text": "◀️ Назад / Back",
+                    "callback_data": "menu:settings"
+                  }
+                ]
+              ]
+            }
+          }
+        },
+        "headers": {
+          "content-type": "application/json"
+        }
+      }
+    ],
+    [
+      {
+        "method": "POST",
+        "path": "/answerCallbackQuery",
+        "body": {
+          "callback_query_id": "1234567890ABCDEF",
+          "text": "✅ Язык изменён на Русский"
+        },
+        "timestamp": 1736002205
+      },
+      {
+        "status": 200,
+        "body": {
+          "ok": true,
+          "result": true
+        },
+        "headers": {
+          "content-type": "application/json"
+        }
+      }
+    ],
+    [
+      {
+        "method": "POST",
+        "path": "/editMessageText",
+        "body": {
+          "chat_id": 123456789,
+          "message_id": 48,
+          "text": "⚙️ *Настройки загрузки*\n\n📹 *Качество видео:* 1080p\n🎵 *Битрейт аудио:* 192 kbps\n📱 *Формат по умолчанию:* Аудио\n🌐 *Язык:* 🇷🇺 Русский\n\nВыбери параметр для изменения:",
+          "parse_mode": "MarkdownV2",
+          "reply_markup": {
+            "inline_keyboard": [
+              [
+                {
+                  "text": "📹 Качество видео",
+                  "callback_data": "settings:video_quality"
+                }
+              ],
+              [
+                {
+                  "text": "🎵 Битрейт аудио",
+                  "callback_data": "settings:audio_bitrate"
+                }
+              ],
+              [
+                {
+                  "text": "📱 Формат по умолчанию",
+                  "callback_data": "settings:default_format"
+                }
+              ],
+              [
+                {
+                  "text": "🌐 Язык / Language",
+                  "callback_data": "settings:language"
+                }
+              ],
+              [
+                {
+                  "text": "◀️ Назад",
+                  "callback_data": "menu:main"
+                }
+              ]
+            ]
+          }
+        },
+        "timestamp": 1736002206
+      },
+      {
+        "status": 200,
+        "body": {
+          "ok": true,
+          "result": {
+            "message_id": 48,
+            "from": {
+              "id": 987654321,
+              "is_bot": true,
+              "first_name": "DoraDura",
+              "username": "doradura_bot"
+            },
+            "chat": {
+              "id": 123456789,
+              "first_name": "Test",
+              "username": "testuser",
+              "type": "private"
+            },
+            "date": 1736002200,
+            "edit_date": 1736002206,
+            "text": "⚙️ Настройки загрузки\n\n📹 Качество видео: 1080p\n🎵 Битрейт аудио: 192 kbps\n📱 Формат по умолчанию: Аудио\n🌐 Язык: 🇷🇺 Русский\n\nВыбери параметр для изменения:",
+            "reply_markup": {
+              "inline_keyboard": [
+                [
+                  {
+                    "text": "📹 Качество видео",
+                    "callback_data": "settings:video_quality"
+                  }
+                ],
+                [
+                  {
+                    "text": "🎵 Битрейт аудио",
+                    "callback_data": "settings:audio_bitrate"
+                  }
+                ],
+                [
+                  {
+                    "text": "📱 Формат по умолчанию",
+                    "callback_data": "settings:default_format"
+                  }
+                ],
+                [
+                  {
+                    "text": "🌐 Язык / Language",
+                    "callback_data": "settings:language"
+                  }
+                ],
+                [
+                  {
+                    "text": "◀️ Назад",
+                    "callback_data": "menu:main"
+                  }
+                ]
+              ]
+            }
+          }
+        },
+        "headers": {
+          "content-type": "application/json"
+        }
+      }
+    ]
+  ],
+  "metadata": {
+    "description": "User selects language from settings menu, bot updates preference and returns to settings",
+    "callback_data": "lang:ru",
+    "user_id": "123456789",
+    "flow": "language_change"
+  }
+}
