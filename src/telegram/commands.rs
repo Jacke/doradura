@@ -349,6 +349,7 @@ pub async fn handle_message(
                         url.set_query(if new_query.is_empty() { None } else { Some(&new_query) });
                     }
 
+                    crate::telegram::cache::store_link_message_id(url.as_str(), msg.id.0).await;
                     valid_urls.push(url);
                 }
 
@@ -591,6 +592,8 @@ pub async fn handle_message(
                     }
                     url.set_query(if new_query.is_empty() { None } else { Some(&new_query) });
                 }
+
+                crate::telegram::cache::store_link_message_id(url.as_str(), msg.id.0).await;
 
                 // Send "processing" message
                 let processing_msg = bot
