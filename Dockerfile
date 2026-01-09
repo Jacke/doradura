@@ -1,5 +1,5 @@
 # Build stage
-FROM rust:1.83-slim as builder
+FROM rust:1.83-slim AS builder
 
 # Install system dependencies required for building
 RUN apt-get update && apt-get install -y \
@@ -53,24 +53,26 @@ COPY --from=builder /app/target/release/doradura /app/doradura
 # Copy migration script (for fallback)
 COPY migration.sql ./
 
-# Copy database from git (contains all users and settings)
-COPY database.sqlite ./
-
 # Create startup script
 RUN echo '#!/bin/bash\n\
 set -e\n\
 \n\
 echo "Database initialization..."\n\
 \n\
-# Database is already copied from git\n\
-if [ -f /app/database.sqlite ]; then\n\
-  echo "✅ Using database from git repository"\n\
-  echo "   Database synced with local development"\n\
+# Use DATABASE_URL if provided, else default to /data/database.sqlite\n\
+DB_PATH=${DATABASE_URL:-/data/database.sqlite}\n\
+DB_DIR=$(dirname \"$DB_PATH\")\n\
+mkdir -p \"$DB_DIR\"\n\
+\n\
+if [ -f \"$DB_PATH\" ]; then\n\
+  echo \"✅ Using existing database at $DB_PATH\"\n\
 else\n\
-  echo "⚠️  Database not found, creating from migration.sql..."\n\
-  sqlite3 /app/database.sqlite < /app/migration.sql\n\
-  echo "✅ Database created from migration"\n\
+  echo \"⚠️  Database not found, creating from migration.sql at $DB_PATH...\"\n\
+  sqlite3 \"$DB_PATH\" < /app/migration.sql\n\
+  echo \"✅ Database created\"\n\
 fi\n\
+\n\
+export DATABASE_URL=\"$DB_PATH\"\n\
 \n\
 # Run any pending migrations from Rust code\n\
 echo "Ready to start bot (migrations will run if needed)"\n\
