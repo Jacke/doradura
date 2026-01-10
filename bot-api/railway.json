@@ -11,8 +11,7 @@
     "restartPolicyMaxRetries": 10,
     "volumes": [
       {
-        "mountPath": "/var/lib/telegram-bot-api",
-        "name": "telegram-bot-api-data"
+        "mountPath": "/var/lib/telegram-bot-api"
       }
     ]
   }
