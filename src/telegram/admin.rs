@@ -1199,14 +1199,42 @@ pub async fn download_file_from_telegram(
         dest_path.file_name().and_then(|n| n.to_str()).unwrap_or("download")
     ));
 
-    let mut resp = client.get(file_url).send().await?;
+    let mut resp = client.get(file_url.clone()).send().await?;
     let status = resp.status();
-    if !status.is_success() && status != reqwest::StatusCode::PARTIAL_CONTENT {
+
+    // If local Bot API returns 404, retry with official api.telegram.org
+    if status == reqwest::StatusCode::NOT_FOUND && bot_api_is_local && base_url_str_mut != "https://api.telegram.org" {
+        log::warn!(
+            "⚠️ File not found on local Bot API ({}), retrying with api.telegram.org",
+            file.path
+        );
+
+        let fallback_base =
+            Url::parse("https://api.telegram.org").map_err(|e| anyhow::anyhow!("Invalid fallback URL: {}", e))?;
+        let fallback_url = build_file_url(&fallback_base, bot.token(), &file.path)?;
+
+        resp = client.get(fallback_url).send().await?;
+        let fallback_status = resp.status();
+
+        if !fallback_status.is_success() && fallback_status != reqwest::StatusCode::PARTIAL_CONTENT {
+            let body = resp.text().await.unwrap_or_default();
+            tokio::fs::remove_file(&tmp_path).await.ok();
+            return Err(anyhow::anyhow!(
+                "Telegram file download failed on both local Bot API and api.telegram.org (path={}, local_status={}, fallback_status={}): {}",
+                file.path,
+                status,
+                fallback_status,
+                body
+            ));
+        }
+
+        log::info!("✅ File downloaded successfully from api.telegram.org (fallback)");
+    } else if !status.is_success() && status != reqwest::StatusCode::PARTIAL_CONTENT {
         let body = resp.text().await.unwrap_or_default();
         tokio::fs::remove_file(&tmp_path).await.ok();
         return Err(anyhow::anyhow!(
             "Telegram file download failed (base={}, path={}, status={}): {}",
-            base_url_str,
+            base_url_str_mut,
             file.path,
             status,
             body
