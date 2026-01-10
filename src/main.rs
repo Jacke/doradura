@@ -340,8 +340,6 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
                         log::error!("Failed to notify primary admin {} about cookies: {}", primary_admin, e);
                     }
                 }
-            } else {
-                log::debug!("✅ Cookies validation passed");
             }
         }
     });
@@ -493,6 +491,7 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
                         .unwrap_or(false)
                 })
                 .endpoint(|bot: Bot, msg: Message| async move {
+                    log::info!("🎯 /update_cookies handler matched - routing to handle_update_cookies_command");
                     let user_id = msg
                         .from
                         .as_ref()
@@ -1212,16 +1211,8 @@ async fn process_queue(
                 };
 
                 if let Some(msg_id) = task.message_id {
-                    use teloxide::types::{MessageId, ReactionType};
-                    if let Err(e) = bot
-                        .set_message_reaction(task.chat_id, MessageId(msg_id))
-                        .reaction(vec![ReactionType::Emoji {
-                            emoji: "📥".to_string(),
-                        }])
-                        .await
-                    {
-                        log::warn!("Failed to update reaction to download state: {}", e);
-                    }
+                    use teloxide::types::MessageId;
+                    doradura::telegram::try_set_reaction(&bot, task.chat_id, MessageId(msg_id), "📥").await;
                 }
 
                 // Process task based on format
