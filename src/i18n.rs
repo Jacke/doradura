@@ -59,6 +59,38 @@ pub fn user_lang_from_pool(db_pool: &Arc<db::DbPool>, telegram_id: i64) -> Langu
     DEFAULT_LANG.clone()
 }
 
+/// Resolves the language for a user, falling back to Telegram locale when DB is default.
+pub fn user_lang_from_pool_with_fallback(
+    db_pool: &Arc<db::DbPool>,
+    telegram_id: i64,
+    telegram_lang_code: Option<&str>,
+) -> LanguageIdentifier {
+    let db_lang = if let Ok(conn) = db::get_connection(db_pool) {
+        db::get_user_language(&conn, telegram_id).ok()
+    } else {
+        None
+    };
+
+    if let Some(lang_code) = db_lang.as_deref() {
+        let lang = lang_from_code(lang_code);
+        if let Some(telegram_code) = telegram_lang_code.and_then(is_language_supported) {
+            if lang_code == "ru" && telegram_code != "ru" {
+                if let Ok(conn) = db::get_connection(db_pool) {
+                    let _ = db::set_user_language(&conn, telegram_id, telegram_code);
+                }
+                return lang_from_code(telegram_code);
+            }
+        }
+        return lang;
+    }
+
+    if let Some(telegram_code) = telegram_lang_code.and_then(is_language_supported) {
+        return lang_from_code(telegram_code);
+    }
+
+    DEFAULT_LANG.clone()
+}
+
 /// Returns a localized string for the given key.
 /// Converts literal `\n` sequences to actual newlines for proper Telegram formatting.
 pub fn t(lang: &LanguageIdentifier, key: &str) -> String {

@@ -48,7 +48,6 @@ pub async fn validate_cookies() -> bool {
     match output {
         Ok(output) => {
             if output.status.success() {
-                log::info!("✅ Cookies validation successful");
                 true
             } else {
                 let stderr = String::from_utf8_lossy(&output.stderr);
