@@ -1165,18 +1165,28 @@ pub async fn download_file_from_telegram(
         }
     }
 
-    let base_url =
-        Url::parse(base_url_str).map_err(|e| anyhow::anyhow!("Invalid Bot API base URL for file download: {}", e))?;
+    let mut base_url_str_mut = base_url_str;
+
+    // Check if file exists on local Bot API, fallback to official API if not
+    if bot_api_is_local {
+        if let Ok(exists) = check_local_file_exists(base_url_str, bot.token(), &file.path).await {
+            if !exists {
+                log::warn!(
+                    "⚠️ File not found on local Bot API server ({}), falling back to api.telegram.org",
+                    file.path
+                );
+                base_url_str_mut = "https://api.telegram.org";
+            }
+        } else {
+            log::warn!("⚠️ Failed to check file existence on local Bot API, falling back to api.telegram.org");
+            base_url_str_mut = "https://api.telegram.org";
+        }
+    }
+
+    let base_url = Url::parse(base_url_str_mut)
+        .map_err(|e| anyhow::anyhow!("Invalid Bot API base URL for file download: {}", e))?;
 
     let file_url = build_file_url(&base_url, bot.token(), &file.path)?;
-
-    if bot_api_is_local && !check_local_file_exists(base_url_str, bot.token(), &file.path).await? {
-        return Err(anyhow::anyhow!(
-            "File is not available on local Bot API server (base={}, path={})",
-            base_url_str,
-            file.path
-        ));
-    }
 
     // Download via HTTP (teloxide::Bot::download_file uses api.telegram.org internally)
     use tokio::io::AsyncWriteExt;

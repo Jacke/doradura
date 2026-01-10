@@ -5,15 +5,32 @@ ENV TELEGRAM_API_ID=""
 ENV TELEGRAM_API_HASH=""
 ENV TELEGRAM_HTTP_PORT="8081"
 
+# Create data directory for persistent storage
+RUN mkdir -p /var/lib/telegram-bot-api && \
+    chown -R telegram-bot-api:telegram-bot-api /var/lib/telegram-bot-api
+
 # Expose the HTTP port
 EXPOSE ${TELEGRAM_HTTP_PORT}
 
-# Create entrypoint script
+# Create entrypoint script with proper volume support
 RUN echo '#!/bin/sh' > /entrypoint.sh && \
+    echo 'set -e' >> /entrypoint.sh && \
+    echo '' >> /entrypoint.sh && \
+    echo '# Ensure data directory exists and has correct permissions' >> /entrypoint.sh && \
+    echo 'mkdir -p /var/lib/telegram-bot-api' >> /entrypoint.sh && \
+    echo 'chown -R telegram-bot-api:telegram-bot-api /var/lib/telegram-bot-api' >> /entrypoint.sh && \
+    echo '' >> /entrypoint.sh && \
+    echo 'echo "Starting Telegram Bot API with persistent storage..."' >> /entrypoint.sh && \
+    echo 'echo "Data directory: /var/lib/telegram-bot-api"' >> /entrypoint.sh && \
+    echo '' >> /entrypoint.sh && \
     echo 'exec telegram-bot-api --local \' >> /entrypoint.sh && \
     echo '  --api-id=${TELEGRAM_API_ID} \' >> /entrypoint.sh && \
     echo '  --api-hash=${TELEGRAM_API_HASH} \' >> /entrypoint.sh && \
-    echo '  --http-port=${TELEGRAM_HTTP_PORT}' >> /entrypoint.sh && \
+    echo '  --http-port=${TELEGRAM_HTTP_PORT} \' >> /entrypoint.sh && \
+    echo '  --dir=/var/lib/telegram-bot-api' >> /entrypoint.sh && \
     chmod +x /entrypoint.sh
+
+# Volume for persistent file storage
+VOLUME ["/var/lib/telegram-bot-api"]
 
 ENTRYPOINT ["/entrypoint.sh"]
