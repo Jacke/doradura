@@ -1763,8 +1763,12 @@ pub async fn handle_menu_callback(
                                         return Ok(());
                                     }
 
-                                    // Ignore answer_callback_query errors (can be "query is too old" on double click)
-                                    let _ = bot.answer_callback_query(callback_id.clone()).await;
+                                    // Answer callback query immediately to prevent "loading" state
+                                    // Ignore errors (can be "query is too old" on double click)
+                                    let _ = bot
+                                        .answer_callback_query(callback_id.clone())
+                                        .text("⏳ Обрабатываю...")
+                                        .await;
 
                                     rate_limiter.update_rate_limit(chat_id, &plan).await;
 
