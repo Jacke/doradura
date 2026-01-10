@@ -484,6 +484,25 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
                     }
                 })
         )
+        // Handle hidden admin commands that are not part of Command enum
+        .branch(
+            Update::filter_message()
+                .filter(|msg: Message| {
+                    msg.text()
+                        .map(|text| text.starts_with("/update_cookies"))
+                        .unwrap_or(false)
+                })
+                .endpoint(|bot: Bot, msg: Message| async move {
+                    let user_id = msg
+                        .from
+                        .as_ref()
+                        .and_then(|u| i64::try_from(u.id.0).ok())
+                        .unwrap_or(0);
+                    let message_text = msg.text().unwrap_or_default();
+                    let _ = handle_update_cookies_command(&bot, msg.chat.id, user_id, message_text).await;
+                    respond(())
+                }),
+        )
         .branch(Update::filter_message().branch(
             dptree::entry()
                 .filter_command::<Command>()
@@ -495,28 +514,6 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
                         let downsub_gateway = Arc::clone(&downsub_gateway);
                         async move {
                             log::info!("🎯 Received command: {:?} from chat {}", cmd, msg.chat.id);
-
-                            // Check for hidden admin commands first (not in Command enum)
-                            if let Some(text) = msg.text() {
-                                log::info!("📝 Full message text: '{}'", text);
-
-                                // Handle /update_cookies command (hidden admin command)
-                                if text.starts_with("/update_cookies") {
-                                    let user_id = msg
-                                        .from
-                                        .as_ref()
-                                        .and_then(|u| i64::try_from(u.id.0).ok())
-                                        .unwrap_or(0);
-                                    let _ = handle_update_cookies_command(
-                                        &bot,
-                                        msg.chat.id,
-                                        user_id,
-                                        text,
-                                    )
-                                    .await;
-                                    return respond(());
-                                }
-                            }
 
                             match cmd {
                                 Command::Start => {
