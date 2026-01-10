@@ -962,10 +962,12 @@ async fn get_metadata_from_ytdlp(
             "yt-dlp command timed out after {} seconds",
             config::download::YTDLP_TIMEOUT_SECS
         );
+        metrics::record_error("download", "metadata_timeout");
         AppError::Download("yt-dlp command timed out".to_string())
     })?
     .map_err(|e| {
         log::error!("Failed to execute {}: {}", ytdl_bin, e);
+        metrics::record_error("download", "metadata_spawn");
         AppError::Download(format!("Failed to get title: {}", e))
     })?;
 
@@ -987,7 +989,8 @@ async fn get_metadata_from_ytdlp(
             YtDlpErrorType::NetworkError => "network",
             YtDlpErrorType::Unknown => "ytdlp_unknown",
         };
-        metrics::record_error(error_category, "metadata");
+        let operation = format!("metadata:{}", error_category);
+        metrics::record_error("download", &operation);
 
         // Логируем детальную информацию об ошибке
         log::error!("yt-dlp failed to get metadata, error type: {:?}", error_type);
@@ -1027,6 +1030,7 @@ async fn get_metadata_from_ytdlp(
     // Проверяем что название не пустое
     if title.is_empty() {
         log::error!("yt-dlp returned empty title for URL: {}", url);
+        metrics::record_error("download", "metadata_empty_title");
         return Err(AppError::Download(
             "Failed to get video title. Video might be unavailable or private.".to_string(),
         ));
@@ -1506,7 +1510,8 @@ async fn download_audio_file_with_progress(
                     YtDlpErrorType::NetworkError => "network",
                     YtDlpErrorType::Unknown => "ytdlp_unknown",
                 };
-                metrics::record_error(error_category, "audio_download");
+                let operation = format!("audio_download:{}", error_category);
+                metrics::record_error("download", &operation);
 
                 // Логируем детальную информацию об ошибке
                 log::error!("yt-dlp download failed, error type: {:?}", error_type);
@@ -1538,6 +1543,7 @@ async fn download_audio_file_with_progress(
                 // Возвращаем пользовательское сообщение об ошибке
                 return Err(AppError::Download(get_error_message(&error_type)));
             } else {
+                metrics::record_error("download", "audio_download");
                 return Err(AppError::Download(format!("downloader exited with status: {}", status)));
             }
         }
@@ -1698,7 +1704,8 @@ async fn download_video_file_with_progress(
                     YtDlpErrorType::NetworkError => "network",
                     YtDlpErrorType::Unknown => "ytdlp_unknown",
                 };
-                metrics::record_error(error_category, "video_download");
+                let operation = format!("video_download:{}", error_category);
+                metrics::record_error("download", &operation);
 
                 // Логируем детальную информацию об ошибке
                 log::error!("yt-dlp download failed, error type: {:?}", error_type);
@@ -1730,6 +1737,7 @@ async fn download_video_file_with_progress(
                 // Возвращаем пользовательское сообщение об ошибке
                 return Err(AppError::Download(get_error_message(&error_type)));
             } else {
+                metrics::record_error("download", "video_download");
                 return Err(AppError::Download(format!("downloader exited with status: {}", status)));
             }
         }
@@ -2222,6 +2230,7 @@ pub async fn download_and_send_audio(
                 metrics::record_download_success("mp3", quality);
             }
             Err(e) => {
+                e.track_with_operation("audio_download");
                 log::error!("An error occurred during audio download for chat {}: {:?}", chat_id, e);
                 // Record failed download
                 timer.observe_duration();
@@ -2647,7 +2656,7 @@ where
                                 e
                             );
                         }
-                        metrics::record_error("telegram", "send_file_timeout");
+                        metrics::record_error("telegram_api", "send_file_timeout");
 
                         // Отправляем уведомление пользователю
                         let notification_msg = match file_type {
@@ -2680,7 +2689,7 @@ where
                             chat_id,
                             e
                         );
-                        metrics::record_error("telegram", "send_file");
+                        metrics::record_error("telegram_api", "send_file");
                         let error_msg = match file_type {
                             "video" => format!(
                                 "У меня не получилось отправить тебе видео 🥲 попробуй как-нибудь позже. Ошибка: {}",
@@ -2722,7 +2731,7 @@ where
                 );
 
                 // Record telegram error metric
-                metrics::record_error("telegram", "send_file");
+                metrics::record_error("telegram_api", "send_file");
 
                 let error_msg = match file_type {
                     "video" => format!("У меня не получилось отправить тебе видео 🥲 попробуй как-нибудь позже. Все {} попытки не удались: {}", max_attempts, e),
@@ -3950,6 +3959,7 @@ pub async fn download_and_send_video(
                 metrics::record_download_success("mp4", quality);
             }
             Err(e) => {
+                e.track_with_operation("video_download");
                 timer.observe_duration();
                 let error_type = if e.to_string().contains("too large") {
                     "file_too_large"
@@ -4285,6 +4295,7 @@ pub async fn download_and_send_subtitles(
                 metrics::record_download_success(format, "default");
             }
             Err(e) => {
+                e.track_with_operation("subtitle_download");
                 timer.observe_duration();
                 let error_type = if e.to_string().contains("timed out") {
                     "timeout"

@@ -35,8 +35,9 @@ use doradura::telegram::{
     handle_charges_command, handle_download_tg_command, handle_downsub_command, handle_downsub_health_command,
     handle_health_command, handle_info_command, handle_menu_callback, handle_message, handle_metrics_command,
     handle_revenue_command, handle_sent_files_command, handle_setplan_command, handle_transactions_command,
-    handle_users_command, is_message_addressed_to_bot, send_random_voice_message, setup_all_language_commands,
-    setup_chat_bot_commands, show_enhanced_main_menu, show_main_menu, Command, WebAppAction, WebAppData,
+    handle_update_cookies_command, handle_users_command, is_message_addressed_to_bot, send_random_voice_message,
+    setup_all_language_commands, setup_chat_bot_commands, show_enhanced_main_menu, show_main_menu, Command,
+    WebAppAction, WebAppData,
 };
 use export::show_export_menu;
 use history::show_history;
@@ -298,6 +299,53 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
         }
     });
 
+    // Start automatic cookies validation checker (every 10 minutes)
+    let bot_cookies = bot.clone();
+    tokio::spawn(async move {
+        use doradura::download::cookies;
+        use doradura::telegram::notify_admin_cookies_refresh;
+
+        let mut interval = interval(Duration::from_secs(10 * 60)); // 10 minutes
+        loop {
+            interval.tick().await;
+            log::debug!("Running periodic cookies validation check");
+
+            if cookies::needs_refresh().await {
+                log::warn!("🔴 Cookies need refresh!");
+
+                // Notify all admins
+                let admin_ids = config::admin::ADMIN_IDS.clone();
+                let primary_admin = *config::admin::ADMIN_USER_ID;
+
+                let mut notified_admins = std::collections::HashSet::new();
+
+                // Notify from ADMIN_IDS list
+                for admin_id in admin_ids.iter() {
+                    if notified_admins.insert(*admin_id) {
+                        if let Err(e) =
+                            notify_admin_cookies_refresh(&bot_cookies, *admin_id, "validation failed or file missing")
+                                .await
+                        {
+                            log::error!("Failed to notify admin {} about cookies: {}", admin_id, e);
+                        }
+                    }
+                }
+
+                // Notify primary admin if not already notified
+                if primary_admin != 0 && notified_admins.insert(primary_admin) {
+                    if let Err(e) =
+                        notify_admin_cookies_refresh(&bot_cookies, primary_admin, "validation failed or file missing")
+                            .await
+                    {
+                        log::error!("Failed to notify primary admin {} about cookies: {}", primary_admin, e);
+                    }
+                }
+            } else {
+                log::debug!("✅ Cookies validation passed");
+            }
+        }
+    });
+
     // Create a dispatcher to handle both commands and plain messages
     let handler = dptree::entry()
         // Web App Data handler must run FIRST to process Mini App data
@@ -447,9 +495,29 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
                         let downsub_gateway = Arc::clone(&downsub_gateway);
                         async move {
                             log::info!("🎯 Received command: {:?} from chat {}", cmd, msg.chat.id);
+
+                            // Check for hidden admin commands first (not in Command enum)
                             if let Some(text) = msg.text() {
                                 log::info!("📝 Full message text: '{}'", text);
+
+                                // Handle /update_cookies command (hidden admin command)
+                                if text.starts_with("/update_cookies") {
+                                    let user_id = msg
+                                        .from
+                                        .as_ref()
+                                        .and_then(|u| i64::try_from(u.id.0).ok())
+                                        .unwrap_or(0);
+                                    let _ = handle_update_cookies_command(
+                                        &bot,
+                                        msg.chat.id,
+                                        user_id,
+                                        text,
+                                    )
+                                    .await;
+                                    return respond(());
+                                }
                             }
+
                             match cmd {
                                 Command::Start => {
                                     // Check if user exists
