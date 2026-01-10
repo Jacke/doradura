@@ -101,6 +101,8 @@ if [ -n "$YTDL_COOKIES_B64" ]; then
   COOKIES_DIR=$(dirname "$COOKIES_PATH")
   mkdir -p "$COOKIES_DIR"
   echo "$YTDL_COOKIES_B64" | base64 -d > "$COOKIES_PATH"
+  chown botuser:botuser "$COOKIES_PATH"
+  chmod 644 "$COOKIES_PATH"
   export YTDL_COOKIES_FILE="$COOKIES_PATH"
   echo "✅ Wrote YouTube cookies to $COOKIES_PATH"
 fi
