@@ -19,6 +19,7 @@ use teloxide::types::{
 };
 
 use crate::core::config;
+use crate::download::cookies;
 
 use crate::core::config::admin::{ADMIN_IDS, ADMIN_USER_ID};
 use crate::storage::backup::{create_backup, list_backups};
@@ -1529,6 +1530,172 @@ pub async fn handle_sent_files_command(
     }
 
     Ok(())
+}
+
+/// Handles the /update_cookies command (admin only)
+///
+/// Accepts a base64-encoded cookies file and updates the YTDL_COOKIES_FILE
+///
+/// # Arguments
+/// * `bot` - Telegram bot instance
+/// * `chat_id` - Chat ID where the command was sent
+/// * `user_id` - Telegram user ID of the requester
+/// * `message_text` - Full message text (e.g., "/update_cookies <base64_string>")
+///
+/// # Behavior
+/// - Checks if user is admin
+/// - Decodes and validates base64 cookies
+/// - Updates the cookies file
+/// - Validates new cookies work
+/// - Sends confirmation message
+///
+/// # Example
+/// User sends: `/update_cookies <base64_encoded_cookies>`
+/// Bot responds: `✅ Cookies успешно обновлены и проверены!`
+pub async fn handle_update_cookies_command(bot: &Bot, chat_id: ChatId, user_id: i64, message_text: &str) -> Result<()> {
+    // Check admin permissions
+    if !is_admin(user_id) {
+        bot.send_message(chat_id, "❌ Эта команда доступна только администраторам.")
+            .await?;
+        return Ok(());
+    }
+
+    // Parse base64 from command
+    let parts: Vec<&str> = message_text.split_whitespace().collect();
+    if parts.len() < 2 {
+        bot.send_message(
+            chat_id,
+            "❌ *Использование:* `/update_cookies <base64>`\n\n\
+            *Как получить base64:*\n\
+            1\\. Экспортируй cookies из браузера \\(youtube\\.com\\)\n\
+            2\\. Конвертируй в base64: `base64 youtube_cookies\\.txt`\n\
+            3\\. Отправь результат этой командой\n\n\
+            *Формат cookies:* Netscape HTTP Cookie File",
+        )
+        .parse_mode(ParseMode::MarkdownV2)
+        .await?;
+        return Ok(());
+    }
+
+    let cookies_b64 = parts[1..].join(" ");
+    log::info!(
+        "📥 Admin {} updating cookies (base64 length: {})",
+        user_id,
+        cookies_b64.len()
+    );
+
+    // Send "processing" message
+    let processing_msg = bot.send_message(chat_id, "⏳ Обновляю cookies...").await?;
+
+    // Update cookies file
+    match cookies::update_cookies_from_base64(&cookies_b64).await {
+        Ok(path) => {
+            log::info!("✅ Cookies file updated: {:?}", path);
+
+            // Validate new cookies
+            bot.edit_message_text(chat_id, processing_msg.id, "⏳ Проверяю новые cookies...")
+                .await?;
+
+            let validation_result = cookies::validate_cookies().await;
+
+            // Delete processing message
+            let _ = bot.delete_message(chat_id, processing_msg.id).await;
+
+            if validation_result {
+                let success_message = format!(
+                    "✅ *Cookies успешно обновлены и проверены\\!*\n\n\
+                    📁 Путь: `{}`\n\
+                    ✓ Cookies валидны и работают\n\n\
+                    Бот теперь использует новые cookies для загрузки видео\\.",
+                    escape_markdown(&path.display().to_string())
+                );
+
+                bot.send_message(chat_id, success_message)
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .await?;
+
+                log::info!("✅ Cookies updated and validated successfully");
+            } else {
+                let warning_message = format!(
+                    "⚠️ *Cookies обновлены, но валидация не удалась*\n\n\
+                    📁 Путь: `{}`\n\
+                    ⚠️  Cookies могут быть невалидны\n\n\
+                    Возможные причины:\n\
+                    • Cookies устарели\n\
+                    • Неверный формат файла\n\
+                    • Сетевые проблемы\n\n\
+                    Попробуй экспортировать cookies заново\\.",
+                    escape_markdown(&path.display().to_string())
+                );
+
+                bot.send_message(chat_id, warning_message)
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .await?;
+
+                log::warn!("⚠️ Cookies updated but validation failed");
+            }
+        }
+        Err(e) => {
+            log::error!("❌ Failed to update cookies: {}", e);
+
+            // Delete processing message
+            let _ = bot.delete_message(chat_id, processing_msg.id).await;
+
+            let error_message = format!(
+                "❌ *Ошибка при обновлении cookies:*\n\n{}\n\n\
+                Возможные причины:\n\
+                • Неверный base64\n\
+                • Неверный формат cookies\n\
+                • Отсутствует переменная YTDL\\_COOKIES\\_FILE\n\
+                • Проблемы с правами на запись файла",
+                escape_markdown(&e.to_string())
+            );
+
+            bot.send_message(chat_id, error_message)
+                .parse_mode(ParseMode::MarkdownV2)
+                .await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Sends a notification to admin about cookies needing refresh
+///
+/// # Arguments
+/// * `bot` - Telegram bot instance
+/// * `admin_id` - Admin's Telegram user ID
+/// * `reason` - Reason why cookies need refresh (e.g., "validation failed", "file missing")
+pub async fn notify_admin_cookies_refresh(bot: &Bot, admin_id: i64, reason: &str) -> Result<()> {
+    let message = format!(
+        "🔴 *Требуется обновление YouTube cookies*\n\n\
+        Причина: {}\n\n\
+        Для обновления:\n\
+        1\\. Экспортируй cookies из браузера\n\
+        2\\. Конвертируй в base64: `base64 youtube_cookies\\.txt`\n\
+        3\\. Отправь командой: `/update_cookies <base64>`\n\n\
+        Без валидных cookies загрузка видео с YouTube может не работать\\.",
+        escape_markdown(reason)
+    );
+
+    match bot
+        .send_message(ChatId(admin_id), message)
+        .parse_mode(ParseMode::MarkdownV2)
+        .await
+    {
+        Ok(_) => {
+            log::info!("✅ Sent cookies refresh notification to admin {}", admin_id);
+            Ok(())
+        }
+        Err(e) => {
+            log::error!(
+                "❌ Failed to send cookies refresh notification to admin {}: {}",
+                admin_id,
+                e
+            );
+            Err(e.into())
+        }
+    }
 }
 
 #[cfg(test)]

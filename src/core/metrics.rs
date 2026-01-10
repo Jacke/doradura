@@ -382,31 +382,19 @@ pub fn init_metrics() {
     let _ = &*BOT_UPTIME_SECONDS;
     let _ = &*DISPATCHER_RECONNECTIONS_TOTAL;
 
-    // Initialize error counters with common error types
-    ERRORS_TOTAL.with_label_values(&["ytdlp", "download"]);
-    ERRORS_TOTAL.with_label_values(&["network", "download"]);
-    ERRORS_TOTAL.with_label_values(&["telegram", "send_file"]);
-    ERRORS_TOTAL.with_label_values(&["rate_limit", "download"]);
+    // Initialize error counters with common error categories and operations
+    ERRORS_TOTAL.with_label_values(&["download", "metadata"]);
+    ERRORS_TOTAL.with_label_values(&["download", "audio_download"]);
+    ERRORS_TOTAL.with_label_values(&["download", "video_download"]);
+    ERRORS_TOTAL.with_label_values(&["download", "subtitle_download"]);
+    ERRORS_TOTAL.with_label_values(&["telegram_api", "send_file"]);
+    ERRORS_TOTAL.with_label_values(&["telegram_api", "send_file_timeout"]);
     ERRORS_TOTAL.with_label_values(&["database", "query"]);
-    ERRORS_TOTAL.with_label_values(&["timeout", "download"]);
-    ERRORS_TOTAL.with_label_values(&["file_too_large", "download"]);
-
-    // Initialize ytdlp-specific error categories
-    ERRORS_TOTAL.with_label_values(&["invalid_cookies", "metadata"]);
-    ERRORS_TOTAL.with_label_values(&["invalid_cookies", "audio_download"]);
-    ERRORS_TOTAL.with_label_values(&["invalid_cookies", "video_download"]);
-    ERRORS_TOTAL.with_label_values(&["bot_detection", "metadata"]);
-    ERRORS_TOTAL.with_label_values(&["bot_detection", "audio_download"]);
-    ERRORS_TOTAL.with_label_values(&["bot_detection", "video_download"]);
-    ERRORS_TOTAL.with_label_values(&["video_unavailable", "metadata"]);
-    ERRORS_TOTAL.with_label_values(&["video_unavailable", "audio_download"]);
-    ERRORS_TOTAL.with_label_values(&["video_unavailable", "video_download"]);
-    ERRORS_TOTAL.with_label_values(&["network", "metadata"]);
-    ERRORS_TOTAL.with_label_values(&["network", "audio_download"]);
-    ERRORS_TOTAL.with_label_values(&["network", "video_download"]);
-    ERRORS_TOTAL.with_label_values(&["ytdlp_unknown", "metadata"]);
-    ERRORS_TOTAL.with_label_values(&["ytdlp_unknown", "audio_download"]);
-    ERRORS_TOTAL.with_label_values(&["ytdlp_unknown", "video_download"]);
+    ERRORS_TOTAL.with_label_values(&["http", "request"]);
+    ERRORS_TOTAL.with_label_values(&["io", "filesystem"]);
+    ERRORS_TOTAL.with_label_values(&["validation", "size_limit"]);
+    ERRORS_TOTAL.with_label_values(&["audio_effect", "processing"]);
+    ERRORS_TOTAL.with_label_values(&["other", "unknown"]);
 
     // Initialize queue depth gauges
     QUEUE_DEPTH.with_label_values(&["low"]);

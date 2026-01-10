@@ -124,9 +124,19 @@ impl AppError {
     /// }
     /// ```
     pub fn track(&self) {
+        self.track_with_operation("unknown");
+    }
+
+    /// Tracks this error in metrics with a specific operation label
+    pub fn track_with_operation(&self, operation: &str) {
         let category = self.category();
-        metrics::ERRORS_TOTAL.with_label_values(&[category]).inc();
-        log::debug!("Error tracked in metrics: category={}, error={}", category, self);
+        metrics::record_error(category, operation);
+        log::debug!(
+            "Error tracked in metrics: category={}, operation={}, error={}",
+            category,
+            operation,
+            self
+        );
     }
 
     /// Tracks this error and returns self for chaining
@@ -147,6 +157,12 @@ impl AppError {
     /// ```
     pub fn track_and_return(self) -> Self {
         self.track();
+        self
+    }
+
+    /// Tracks this error with an operation label and returns self for chaining
+    pub fn track_and_return_with_operation(self, operation: &str) -> Self {
+        self.track_with_operation(operation);
         self
     }
 }

@@ -1,6 +1,7 @@
 //! Download management and processing
 
 pub mod audio_effects;
+pub mod cookies;
 pub mod downloader;
 pub mod fetch;
 pub mod progress;
