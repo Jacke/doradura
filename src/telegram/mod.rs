@@ -12,6 +12,7 @@ pub mod markdown;
 pub mod menu;
 pub mod notifications;
 pub mod preview;
+pub mod reactions;
 pub mod types;
 pub mod voice;
 pub mod webapp;
@@ -29,5 +30,6 @@ pub use bot::{create_bot, is_message_addressed_to_bot, setup_all_language_comman
 pub use commands::{handle_downsub_command, handle_info_command, handle_message};
 pub use markdown::send_message_markdown_v2;
 pub use menu::{handle_menu_callback, show_enhanced_main_menu, show_language_selection_menu, show_main_menu};
+pub use reactions::try_set_reaction;
 pub use voice::{send_random_voice_message, send_voice_with_waveform, VOICE_FILES};
 pub use webapp::{create_webapp_router, run_webapp_server, WebAppAction, WebAppData};

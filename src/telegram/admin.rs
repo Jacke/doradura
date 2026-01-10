@@ -1610,10 +1610,9 @@ pub async fn handle_update_cookies_command(bot: &Bot, chat_id: ChatId, user_id: 
                 .await?;
 
             let validation_result = cookies::validate_cookies().await;
-            log::info!(
-                "🔍 Validation completed: {}",
-                if validation_result { "SUCCESS" } else { "FAILED" }
-            );
+            if !validation_result {
+                log::warn!("🔍 Validation failed after cookies update");
+            }
 
             // Delete processing message
             let _ = bot.delete_message(chat_id, processing_msg.id).await;

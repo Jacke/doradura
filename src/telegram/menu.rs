@@ -1770,6 +1770,21 @@ pub async fn handle_menu_callback(
                                         .text("⏳ Обрабатываю...")
                                         .await;
 
+                                    log::debug!(
+                                        "Download button clicked: chat={}, url_id={}, format={}",
+                                        chat_id.0,
+                                        url_id,
+                                        format
+                                    );
+
+                                    // Delete preview message IMMEDIATELY to prevent double-clicks
+                                    // User gets instant visual feedback that action was processed
+                                    if let Err(e) = bot.delete_message(chat_id, message_id).await {
+                                        log::warn!("Failed to delete preview message: {:?}", e);
+                                    }
+
+                                    log::debug!("Preview deleted for chat={}, proceeding with download", chat_id.0);
+
                                     rate_limiter.update_rate_limit(chat_id, &plan).await;
 
                                     // Handle "mp4+mp3" by adding two tasks to the queue
@@ -1854,11 +1869,6 @@ pub async fn handle_menu_callback(
                                             &plan,
                                         );
                                         download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
-                                    }
-
-                                    // Delete preview message
-                                    if let Err(e) = bot.delete_message(chat_id, message_id).await {
-                                        log::warn!("Failed to delete preview message: {:?}", e);
                                     }
                                 }
                                 Err(e) => {

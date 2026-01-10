@@ -99,7 +99,11 @@ pub async fn handle_message(
     rate_limiter: Arc<RateLimiter>,
     db_pool: Arc<DbPool>,
 ) -> ResponseResult<Option<db::User>> {
-    let lang = i18n::user_lang_from_pool(&db_pool, msg.chat.id.0);
+    let lang = i18n::user_lang_from_pool_with_fallback(
+        &db_pool,
+        msg.chat.id.0,
+        msg.from.as_ref().and_then(|user| user.language_code.as_deref()),
+    );
 
     if let Some(text) = msg.text() {
         log::debug!("handle_message: {:?}", text);
@@ -114,7 +118,9 @@ pub async fn handle_message(
                     let trimmed = text.trim();
                     if is_cancel_text(trimmed) {
                         let _ = db::delete_audio_cut_session_by_user(&conn, msg.chat.id.0);
-                        bot.send_message(msg.chat.id, "✂️ Вырезка аудио отменена.").await.ok();
+                        bot.send_message(msg.chat.id, i18n::t(&lang, "commands.audio_cut_cancelled"))
+                            .await
+                            .ok();
                         return Ok(None);
                     }
 
@@ -122,7 +128,7 @@ pub async fn handle_message(
                         Ok(Some(audio_session)) => audio_session,
                         Ok(None) => {
                             let _ = db::delete_audio_cut_session_by_user(&conn, msg.chat.id.0);
-                            bot.send_message(msg.chat.id, "❌ Сессия аудио истекла. Скачайте трек заново.")
+                            bot.send_message(msg.chat.id, i18n::t(&lang, "commands.audio_session_expired"))
                                 .await
                                 .ok();
                             return Ok(None);
@@ -134,7 +140,7 @@ pub async fn handle_message(
                     };
                     if audio_session.is_expired() {
                         let _ = db::delete_audio_cut_session_by_user(&conn, msg.chat.id.0);
-                        bot.send_message(msg.chat.id, "❌ Сессия аудио истекла. Скачайте трек заново.")
+                        bot.send_message(msg.chat.id, i18n::t(&lang, "commands.audio_session_expired"))
                             .await
                             .ok();
                         return Ok(None);
@@ -167,7 +173,7 @@ pub async fn handle_message(
                         crate::telegram::send_message_markdown_v2(
                             &bot,
                             msg.chat.id,
-                            "❌ Не понял интервалы\\.\n\nОтправь в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\n\nПример: `00:10-00:25, 01:00-01:10`\n\nИли напиши `отмена`\\.",
+                            i18n::t(&lang, "commands.audio_cut_invalid_intervals"),
                             None,
                         )
                         .await
@@ -185,7 +191,9 @@ pub async fn handle_message(
                     let trimmed = text.trim();
                     if is_cancel_text(trimmed) {
                         let _ = db::delete_video_clip_session_by_user(&conn, msg.chat.id.0);
-                        bot.send_message(msg.chat.id, "✂️ Вырезка отменена.").await.ok();
+                        bot.send_message(msg.chat.id, i18n::t(&lang, "commands.video_clip_cancelled"))
+                            .await
+                            .ok();
                         return Ok(None);
                     }
 
@@ -275,15 +283,7 @@ pub async fn handle_message(
 
         if !urls.is_empty() {
             // Mark the user's link message as "seen"
-            if let Err(e) = bot
-                .set_message_reaction(msg.chat.id, teloxide::types::MessageId(msg.id.0))
-                .reaction(vec![teloxide::types::ReactionType::Emoji {
-                    emoji: "👀".to_string(),
-                }])
-                .await
-            {
-                log::warn!("Failed to set reaction on user message: {}", e);
-            }
+            crate::telegram::try_set_reaction(&bot, msg.chat.id, teloxide::types::MessageId(msg.id.0), "👀").await;
 
             // Get user's preferred download format from database
             // Use get_user to get full user info (will be reused for logging)
@@ -1000,6 +1000,7 @@ async fn process_video_clip(
 ) -> Result<(), AppError> {
     use tokio::process::Command;
 
+    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
     let total_len: i64 = segments.iter().map(|s| (s.end_secs - s.start_secs).max(0)).sum();
     let is_video_note = session.output_kind == "video_note";
     let is_ringtone = session.output_kind == "iphone_ringtone";
@@ -1040,7 +1041,7 @@ async fn process_video_clip(
         (adjusted, true)
     } else if !is_video_note && !is_ringtone && total_len > 600 {
         // For regular cuts, reject if too long (10 min)
-        bot.send_message(chat_id, "❌ Слишком длинная вырезка (макс. 10 минут).")
+        bot.send_message(chat_id, i18n::t(&lang, "commands.cut_too_long"))
             .await
             .ok();
         return Ok(());
@@ -1057,17 +1058,17 @@ async fn process_video_clip(
     // Notify user if segments were truncated
     if truncated {
         let limit_text = if is_ringtone {
-            "для рингтонов (30 сек)"
+            i18n::t(&lang, "commands.cut_limit_ringtone")
         } else {
-            "для кружков (60 сек)"
+            i18n::t(&lang, "commands.cut_limit_video_note")
         };
-        bot.send_message(
-            chat_id,
-            format!(
-                "⚠️ Запрошенная длительность {} секунд превышает лимит Telegram {}.\n\n✂️ Будет использовано первые {} секунд.",
-                total_len, limit_text, actual_total_len
-            ),
-        ).await.ok();
+        let mut args = FluentArgs::new();
+        args.set("total", total_len);
+        args.set("limit", limit_text);
+        args.set("actual", actual_total_len);
+        bot.send_message(chat_id, i18n::t_args(&lang, "commands.cut_truncated", &args))
+            .await
+            .ok();
     }
 
     let conn = db::get_connection(&db_pool)?;
@@ -1076,12 +1077,14 @@ async fn process_video_clip(
             let download = match db::get_download_history_entry(&conn, chat_id.0, session.source_id)? {
                 Some(d) => d,
                 None => {
-                    bot.send_message(chat_id, "❌ Не нашёл этот файл в истории.").await.ok();
+                    bot.send_message(chat_id, i18n::t(&lang, "commands.cut_file_not_found"))
+                        .await
+                        .ok();
                     return Ok(());
                 }
             };
             if download.format != "mp4" {
-                bot.send_message(chat_id, "❌ Вырезка доступна только для MP4.")
+                bot.send_message(chat_id, i18n::t(&lang, "commands.cut_only_mp4"))
                     .await
                     .ok();
                 return Ok(());
@@ -1089,7 +1092,7 @@ async fn process_video_clip(
             let fid = match download.file_id.clone() {
                 Some(fid) => fid,
                 None => {
-                    bot.send_message(chat_id, "❌ У этого файла нет file_id для обработки.")
+                    bot.send_message(chat_id, i18n::t(&lang, "commands.cut_missing_file_id"))
                         .await
                         .ok();
                     return Ok(());
@@ -1101,14 +1104,16 @@ async fn process_video_clip(
             let cut = match db::get_cut_entry(&conn, chat_id.0, session.source_id)? {
                 Some(c) => c,
                 None => {
-                    bot.send_message(chat_id, "❌ Не нашёл эту вырезку.").await.ok();
+                    bot.send_message(chat_id, i18n::t(&lang, "commands.cut_not_found"))
+                        .await
+                        .ok();
                     return Ok(());
                 }
             };
             let fid = match cut.file_id.clone() {
                 Some(fid) => fid,
                 None => {
-                    bot.send_message(chat_id, "❌ У этой вырезки нет file_id для обработки.")
+                    bot.send_message(chat_id, i18n::t(&lang, "commands.cut_missing_file_id"))
                         .await
                         .ok();
                     return Ok(());
@@ -1126,25 +1131,34 @@ async fn process_video_clip(
             )
         }
         _ => {
-            bot.send_message(chat_id, "❌ Неизвестный источник вырезки.").await.ok();
+            bot.send_message(chat_id, i18n::t(&lang, "commands.cut_unknown_source"))
+                .await
+                .ok();
             return Ok(());
         }
     };
 
     let status_msg = if let Some(spd) = speed {
+        let mut args = FluentArgs::new();
+        args.set("segments", segments_text.as_str());
+        args.set("speed", spd as f64);
         if is_video_note {
-            format!("⭕️ Делаю кружок: {}… (скорость {}x)", segments_text, spd)
+            i18n::t_args(&lang, "commands.cut_status_video_note_speed", &args)
         } else if is_ringtone {
-            format!("🔔 Делаю рингтон: {}… (скорость {}x)", segments_text, spd)
+            i18n::t_args(&lang, "commands.cut_status_ringtone_speed", &args)
         } else {
-            format!("✂️ Вырезаю: {}… (скорость {}x)", segments_text, spd)
+            i18n::t_args(&lang, "commands.cut_status_clip_speed", &args)
         }
-    } else if is_video_note {
-        format!("⭕️ Делаю кружок: {}…", segments_text)
-    } else if is_ringtone {
-        format!("🔔 Делаю рингтон: {}…", segments_text)
     } else {
-        format!("✂️ Вырезаю: {}…", segments_text)
+        let mut args = FluentArgs::new();
+        args.set("segments", segments_text.as_str());
+        if is_video_note {
+            i18n::t_args(&lang, "commands.cut_status_video_note", &args)
+        } else if is_ringtone {
+            i18n::t_args(&lang, "commands.cut_status_ringtone", &args)
+        } else {
+            i18n::t_args(&lang, "commands.cut_status_clip", &args)
+        }
     };
 
     let status = bot.send_message(chat_id, status_msg).await?;
@@ -1191,7 +1205,7 @@ async fn process_video_clip(
 
     if is_video_note && !has_video {
         bot.delete_message(chat_id, status.id).await.ok();
-        bot.send_message(chat_id, "❌ Для создания кружка нужно видео.")
+        bot.send_message(chat_id, i18n::t(&lang, "commands.video_note_requires_video"))
             .await
             .ok();
         tokio::fs::remove_file(&input_path).await.ok();
@@ -1377,7 +1391,10 @@ async fn process_video_clip(
         if !retry_output.status.success() {
             let stderr2 = String::from_utf8_lossy(&retry_output.stderr);
             bot.delete_message(chat_id, status.id).await.ok();
-            bot.send_message(chat_id, format!("❌ ffmpeg error: {}\n{}", stderr, stderr2))
+            let mut args = FluentArgs::new();
+            args.set("stderr", stderr.to_string());
+            args.set("stderr2", stderr2.to_string());
+            bot.send_message(chat_id, i18n::t_args(&lang, "commands.ffmpeg_error_dual", &args))
                 .await
                 .ok();
             tokio::fs::remove_file(&input_path).await.ok();
@@ -1403,7 +1420,7 @@ async fn process_video_clip(
     if !output_path.exists() {
         log::error!("❌ Output file does not exist: {:?}", output_path);
         bot.delete_message(chat_id, status.id).await.ok();
-        bot.send_message(chat_id, "❌ Ошибка: выходной файл не был создан")
+        bot.send_message(chat_id, i18n::t(&lang, "commands.output_file_missing"))
             .await
             .ok();
         tokio::fs::remove_file(&input_path).await.ok();
@@ -1434,9 +1451,11 @@ async fn process_video_clip(
                 log::error!("❌ Failed to send video note: {}", e);
                 bot.delete_message(chat_id, status.id).await.ok();
                 let msg = if e.to_string().to_lowercase().contains("file is too big") {
-                    "❌ Кружок получился слишком большим для Telegram. Уменьши интервал.".to_string()
+                    i18n::t(&lang, "commands.video_note_too_big")
                 } else {
-                    format!("❌ Не удалось отправить кружок: {e}")
+                    let mut args = FluentArgs::new();
+                    args.set("error", e.to_string());
+                    i18n::t_args(&lang, "commands.video_note_send_failed", &args)
                 };
                 bot.send_message(chat_id, msg).await.ok();
                 tokio::fs::remove_file(&input_path).await.ok();
@@ -1456,7 +1475,9 @@ async fn process_video_clip(
             Ok(m) => m,
             Err(e) => {
                 bot.delete_message(chat_id, status.id).await.ok();
-                bot.send_message(chat_id, format!("❌ Не удалось отправить рингтон: {e}"))
+                let mut args = FluentArgs::new();
+                args.set("error", e.to_string());
+                bot.send_message(chat_id, i18n::t_args(&lang, "commands.ringtone_send_failed", &args))
                     .await
                     .ok();
                 tokio::fs::remove_file(&input_path).await.ok();
@@ -1473,7 +1494,9 @@ async fn process_video_clip(
             Ok(m) => m,
             Err(e) => {
                 bot.delete_message(chat_id, status.id).await.ok();
-                bot.send_message(chat_id, format!("❌ Не удалось отправить вырезку: {e}"))
+                let mut args = FluentArgs::new();
+                args.set("error", e.to_string());
+                bot.send_message(chat_id, i18n::t_args(&lang, "commands.clip_send_failed", &args))
                     .await
                     .ok();
                 tokio::fs::remove_file(&input_path).await.ok();
@@ -1490,7 +1513,9 @@ async fn process_video_clip(
             Ok(m) => m,
             Err(e) => {
                 bot.delete_message(chat_id, status.id).await.ok();
-                bot.send_message(chat_id, format!("❌ Не удалось отправить аудио: {e}"))
+                let mut args = FluentArgs::new();
+                args.set("error", e.to_string());
+                bot.send_message(chat_id, i18n::t_args(&lang, "commands.audio_send_failed", &args))
                     .await
                     .ok();
                 tokio::fs::remove_file(&input_path).await.ok();
@@ -1555,22 +1580,27 @@ async fn process_audio_cut(
 ) -> Result<(), AppError> {
     use tokio::process::Command;
 
+    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
     let total_len: i64 = segments.iter().map(|s| (s.end_secs - s.start_secs).max(0)).sum();
     if total_len <= 0 {
-        bot.send_message(chat_id, "❌ Пустая вырезка.").await.ok();
-        return Ok(());
-    }
-
-    let input_path = std::path::PathBuf::from(&session.original_file_path);
-    if !input_path.exists() {
-        bot.send_message(chat_id, "❌ Не удалось найти исходный файл аудио.")
+        bot.send_message(chat_id, i18n::t(&lang, "commands.empty_cut"))
             .await
             .ok();
         return Ok(());
     }
 
+    let input_path = std::path::PathBuf::from(&session.original_file_path);
+    if !input_path.exists() {
+        bot.send_message(chat_id, i18n::t(&lang, "commands.audio_source_missing"))
+            .await
+            .ok();
+        return Ok(());
+    }
+
+    let mut args = FluentArgs::new();
+    args.set("segments", segments_text.as_str());
     let status = bot
-        .send_message(chat_id, format!("✂️ Вырезаю аудио: {}…", segments_text))
+        .send_message(chat_id, i18n::t_args(&lang, "commands.audio_cut_processing", &args))
         .await?;
 
     let temp_dir = std::path::PathBuf::from("/tmp/doradura_audio_cut");
@@ -1600,7 +1630,9 @@ async fn process_audio_cut(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bot.delete_message(chat_id, status.id).await.ok();
-        bot.send_message(chat_id, format!("❌ ffmpeg error: {}", stderr))
+        let mut args = FluentArgs::new();
+        args.set("stderr", stderr.to_string());
+        bot.send_message(chat_id, i18n::t_args(&lang, "commands.ffmpeg_error_single", &args))
             .await
             .ok();
         tokio::fs::remove_file(&output_path).await.ok();
@@ -1609,7 +1641,7 @@ async fn process_audio_cut(
 
     if !output_path.exists() {
         bot.delete_message(chat_id, status.id).await.ok();
-        bot.send_message(chat_id, "❌ Ошибка: выходной файл не был создан")
+        bot.send_message(chat_id, i18n::t(&lang, "commands.output_file_missing"))
             .await
             .ok();
         return Ok(());
@@ -1618,7 +1650,7 @@ async fn process_audio_cut(
     let file_size = tokio::fs::metadata(&output_path).await.map(|m| m.len()).unwrap_or(0);
     if file_size > config::validation::max_audio_size_bytes() {
         bot.delete_message(chat_id, status.id).await.ok();
-        bot.send_message(chat_id, "❌ Аудио получилось слишком большим для Telegram.")
+        bot.send_message(chat_id, i18n::t(&lang, "commands.audio_too_large_for_telegram"))
             .await
             .ok();
         tokio::fs::remove_file(&output_path).await.ok();
@@ -1642,7 +1674,9 @@ async fn process_audio_cut(
 
     if let Err(e) = send_res {
         bot.delete_message(chat_id, status.id).await.ok();
-        bot.send_message(chat_id, format!("❌ Не удалось отправить аудио: {e}"))
+        let mut args = FluentArgs::new();
+        args.set("error", e.to_string());
+        bot.send_message(chat_id, i18n::t_args(&lang, "commands.audio_send_failed", &args))
             .await
             .ok();
         tokio::fs::remove_file(&output_path).await.ok();
@@ -1770,7 +1804,11 @@ pub async fn handle_info_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>) -
 
         // Send "processing" message
         log::info!("📤 Sending 'processing' message...");
-        let processing_msg = match bot.send_message(msg.chat.id, "⏳ Получаю информацию...").await {
+        let lang = i18n::user_lang_from_pool(&db_pool, msg.chat.id.0);
+        let processing_msg = match bot
+            .send_message(msg.chat.id, i18n::t(&lang, "commands.processing"))
+            .await
+        {
             Ok(msg) => {
                 log::info!("✅ Processing message sent, ID: {}", msg.id);
                 msg
