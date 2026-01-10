@@ -1553,16 +1553,26 @@ pub async fn handle_sent_files_command(
 /// User sends: `/update_cookies <base64_encoded_cookies>`
 /// Bot responds: `✅ Cookies успешно обновлены и проверены!`
 pub async fn handle_update_cookies_command(bot: &Bot, chat_id: ChatId, user_id: i64, message_text: &str) -> Result<()> {
+    log::info!(
+        "🔐 /update_cookies command received from user_id={}, chat_id={}",
+        user_id,
+        chat_id
+    );
+
     // Check admin permissions
     if !is_admin(user_id) {
+        log::warn!("❌ Non-admin user {} attempted to use /update_cookies", user_id);
         bot.send_message(chat_id, "❌ Эта команда доступна только администраторам.")
             .await?;
         return Ok(());
     }
 
+    log::info!("✅ Admin authentication passed for user_id={}", user_id);
+
     // Parse base64 from command
     let parts: Vec<&str> = message_text.split_whitespace().collect();
     if parts.len() < 2 {
+        log::warn!("⚠️  Admin {} called /update_cookies without base64 argument", user_id);
         bot.send_message(
             chat_id,
             "❌ *Использование:* `/update_cookies <base64>`\n\n\
@@ -1579,24 +1589,31 @@ pub async fn handle_update_cookies_command(bot: &Bot, chat_id: ChatId, user_id: 
 
     let cookies_b64 = parts[1..].join(" ");
     log::info!(
-        "📥 Admin {} updating cookies (base64 length: {})",
+        "📥 Admin {} updating cookies (base64 length: {} bytes)",
         user_id,
         cookies_b64.len()
     );
 
     // Send "processing" message
+    log::info!("⏳ Sending processing message to chat_id={}", chat_id);
     let processing_msg = bot.send_message(chat_id, "⏳ Обновляю cookies...").await?;
 
     // Update cookies file
+    log::info!("🔄 Starting cookies file update...");
     match cookies::update_cookies_from_base64(&cookies_b64).await {
         Ok(path) => {
-            log::info!("✅ Cookies file updated: {:?}", path);
+            log::info!("✅ Cookies file successfully written to: {:?}", path);
 
             // Validate new cookies
+            log::info!("🔍 Starting cookies validation...");
             bot.edit_message_text(chat_id, processing_msg.id, "⏳ Проверяю новые cookies...")
                 .await?;
 
             let validation_result = cookies::validate_cookies().await;
+            log::info!(
+                "🔍 Validation completed: {}",
+                if validation_result { "SUCCESS" } else { "FAILED" }
+            );
 
             // Delete processing message
             let _ = bot.delete_message(chat_id, processing_msg.id).await;
@@ -1614,7 +1631,7 @@ pub async fn handle_update_cookies_command(bot: &Bot, chat_id: ChatId, user_id: 
                     .parse_mode(ParseMode::MarkdownV2)
                     .await?;
 
-                log::info!("✅ Cookies updated and validated successfully");
+                log::info!("✅ /update_cookies completed successfully for admin {}", user_id);
             } else {
                 let warning_message = format!(
                     "⚠️ *Cookies обновлены, но валидация не удалась*\n\n\
@@ -1632,11 +1649,15 @@ pub async fn handle_update_cookies_command(bot: &Bot, chat_id: ChatId, user_id: 
                     .parse_mode(ParseMode::MarkdownV2)
                     .await?;
 
-                log::warn!("⚠️ Cookies updated but validation failed");
+                log::warn!(
+                    "⚠️ /update_cookies completed with validation failure for admin {}",
+                    user_id
+                );
             }
         }
         Err(e) => {
-            log::error!("❌ Failed to update cookies: {}", e);
+            log::error!("❌ Failed to update cookies file: {}", e);
+            log::error!("❌ Error details: {:?}", e);
 
             // Delete processing message
             let _ = bot.delete_message(chat_id, processing_msg.id).await;
@@ -1654,9 +1675,12 @@ pub async fn handle_update_cookies_command(bot: &Bot, chat_id: ChatId, user_id: 
             bot.send_message(chat_id, error_message)
                 .parse_mode(ParseMode::MarkdownV2)
                 .await?;
+
+            log::error!("❌ /update_cookies failed for admin {}", user_id);
         }
     }
 
+    log::info!("🏁 /update_cookies command handler finished for admin {}", user_id);
     Ok(())
 }
 
