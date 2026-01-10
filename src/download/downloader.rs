@@ -2175,18 +2175,8 @@ pub async fn download_and_send_audio(
 
             // Mark the original message as completed if message_id is available
             if let Some(msg_id) = message_id {
-                use teloxide::types::{MessageId, ReactionType};
-                let reaction = vec![ReactionType::Emoji {
-                    emoji: "✅".to_string(),
-                }];
-                if let Err(e) = bot_clone
-                    .set_message_reaction(chat_id, MessageId(msg_id))
-                    .reaction(reaction)
-                    .await
-                {
-                    log::warn!("Failed to set message reaction: {}", e);
-                    // Not critical, continue
-                }
+                use teloxide::types::MessageId;
+                crate::telegram::try_set_reaction(&bot_clone, chat_id, MessageId(msg_id), "✅").await;
             }
 
             log::info!("Audio sent successfully to chat {}", chat_id);
@@ -3905,14 +3895,8 @@ pub async fn download_and_send_video(
 
             // Mark the original message as completed if message_id is available
             if let Some(msg_id) = message_id {
-                use teloxide::types::{ReactionType, MessageId};
-                let reaction = vec![ReactionType::Emoji {
-                    emoji: "✅".to_string(),
-                }];
-                if let Err(e) = bot_clone.set_message_reaction(chat_id, MessageId(msg_id)).reaction(reaction).await {
-                    log::warn!("Failed to set message reaction: {}", e);
-                    // Not critical, continue
-                }
+                use teloxide::types::MessageId;
+                crate::telegram::try_set_reaction(&bot_clone, chat_id, MessageId(msg_id), "✅").await;
             }
 
             // Step 5: Auto-clear success message after delay (оставляем только название)
@@ -4239,18 +4223,8 @@ pub async fn download_and_send_subtitles(
 
             // Mark the original message as completed if message_id is available
             if let Some(msg_id) = message_id {
-                use teloxide::types::{MessageId, ReactionType};
-                let reaction = vec![ReactionType::Emoji {
-                    emoji: "✅".to_string(),
-                }];
-                if let Err(e) = bot_clone
-                    .set_message_reaction(chat_id, MessageId(msg_id))
-                    .reaction(reaction)
-                    .await
-                {
-                    log::warn!("Failed to set message reaction: {}", e);
-                    // Not critical, continue
-                }
+                use teloxide::types::MessageId;
+                crate::telegram::try_set_reaction(&bot_clone, chat_id, MessageId(msg_id), "✅").await;
             }
 
             log::info!("Subtitle sent successfully to chat {}", chat_id);
