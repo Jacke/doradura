@@ -1165,26 +1165,12 @@ pub async fn download_file_from_telegram(
         }
     }
 
-    let mut base_url_str_mut = base_url_str;
+    // Skip pre-check for local Bot API - just try to download directly
+    // If it fails with 404, we'll fallback to api.telegram.org in the download logic below
+    log::info!("📥 Attempting to download from: {}", base_url_str);
 
-    // Check if file exists on local Bot API, fallback to official API if not
-    if bot_api_is_local {
-        if let Ok(exists) = check_local_file_exists(base_url_str, bot.token(), &file.path).await {
-            if !exists {
-                log::warn!(
-                    "⚠️ File not found on local Bot API server ({}), falling back to api.telegram.org",
-                    file.path
-                );
-                base_url_str_mut = "https://api.telegram.org";
-            }
-        } else {
-            log::warn!("⚠️ Failed to check file existence on local Bot API, falling back to api.telegram.org");
-            base_url_str_mut = "https://api.telegram.org";
-        }
-    }
-
-    let base_url = Url::parse(base_url_str_mut)
-        .map_err(|e| anyhow::anyhow!("Invalid Bot API base URL for file download: {}", e))?;
+    let base_url =
+        Url::parse(base_url_str).map_err(|e| anyhow::anyhow!("Invalid Bot API base URL for file download: {}", e))?;
 
     let file_url = build_file_url(&base_url, bot.token(), &file.path)?;
 
@@ -1203,7 +1189,7 @@ pub async fn download_file_from_telegram(
     let status = resp.status();
 
     // If local Bot API returns 404, retry with official api.telegram.org
-    if status == reqwest::StatusCode::NOT_FOUND && bot_api_is_local && base_url_str_mut != "https://api.telegram.org" {
+    if status == reqwest::StatusCode::NOT_FOUND && bot_api_is_local && base_url_str != "https://api.telegram.org" {
         log::warn!(
             "⚠️ File not found on local Bot API ({}), retrying with api.telegram.org",
             file.path
@@ -1248,7 +1234,7 @@ pub async fn download_file_from_telegram(
         tokio::fs::remove_file(&tmp_path).await.ok();
         return Err(anyhow::anyhow!(
             "Telegram file download failed (base={}, path={}, status={}): {}",
-            base_url_str_mut,
+            base_url_str,
             file.path,
             status,
             body
@@ -1270,43 +1256,6 @@ pub async fn download_file_from_telegram(
     );
 
     Ok(dest_path)
-}
-
-async fn check_local_file_exists(bot_api_url: &str, token: &str, file_path: &str) -> Result<bool> {
-    let base =
-        Url::parse(bot_api_url).map_err(|e| anyhow::anyhow!("Invalid BOT_API_URL for local file check: {}", e))?;
-    let file_url = build_file_url(&base, token, file_path)?;
-
-    let client = reqwest::Client::builder()
-        .timeout(crate::config::network::timeout())
-        .build()?;
-    let resp = client
-        .get(file_url)
-        .header(reqwest::header::RANGE, "bytes=0-0")
-        .send()
-        .await?;
-
-    let status = resp.status();
-    log::info!(
-        "🔎 Local Bot API file check: base={}, path={}, status={}",
-        bot_api_url,
-        file_path,
-        status
-    );
-
-    if status == reqwest::StatusCode::NOT_FOUND {
-        return Ok(false);
-    }
-    if status.is_success() || status == reqwest::StatusCode::PARTIAL_CONTENT {
-        return Ok(true);
-    }
-
-    let body = resp.text().await.unwrap_or_default();
-    Err(anyhow::anyhow!(
-        "Local Bot API file check failed (status={}): {}",
-        status,
-        body
-    ))
 }
 
 fn build_file_url(base: &Url, token: &str, file_path: &str) -> Result<Url> {
