@@ -490,16 +490,22 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
                         .map(|text| text.starts_with("/update_cookies"))
                         .unwrap_or(false)
                 })
-                .endpoint(|bot: Bot, msg: Message| async move {
-                    log::info!("🎯 /update_cookies handler matched - routing to handle_update_cookies_command");
-                    let user_id = msg
-                        .from
-                        .as_ref()
-                        .and_then(|u| i64::try_from(u.id.0).ok())
-                        .unwrap_or(0);
-                    let message_text = msg.text().unwrap_or_default();
-                    let _ = handle_update_cookies_command(&bot, msg.chat.id, user_id, message_text).await;
-                    respond(())
+                .endpoint({
+                    let db_pool = Arc::clone(&db_pool);
+                    move |bot: Bot, msg: Message| {
+                        let db_pool = Arc::clone(&db_pool);
+                        async move {
+                            log::info!("🎯 /update_cookies handler matched - routing to handle_update_cookies_command");
+                            let user_id = msg
+                                .from
+                                .as_ref()
+                                .and_then(|u| i64::try_from(u.id.0).ok())
+                                .unwrap_or(0);
+                            let message_text = msg.text().unwrap_or_default();
+                            let _ = handle_update_cookies_command(db_pool, &bot, msg.chat.id, user_id, message_text).await;
+                            respond(())
+                        }
+                    }
                 }),
         )
         .branch(Update::filter_message().branch(

@@ -105,6 +105,31 @@ pub async fn handle_message(
         msg.from.as_ref().and_then(|user| user.language_code.as_deref()),
     );
 
+    // Handle document upload (for cookies file)
+    if let Some(document) = msg.document() {
+        if let Some(user) = msg.from.as_ref() {
+            let user_id = user.id.0 as i64;
+            // Check if user has active cookies upload session
+            if let Ok(conn) = db::get_connection(&db_pool) {
+                if let Ok(Some(_session)) = db::get_active_cookies_upload_session(&conn, user_id) {
+                    // Handle cookies file upload
+                    if let Err(e) = crate::telegram::handle_cookies_file_upload(
+                        db_pool.clone(),
+                        &bot,
+                        msg.chat.id,
+                        user_id,
+                        document,
+                    )
+                    .await
+                    {
+                        log::error!("Failed to handle cookies file upload: {}", e);
+                    }
+                    return Ok(None);
+                }
+            }
+        }
+    }
+
     if let Some(text) = msg.text() {
         log::debug!("handle_message: {:?}", text);
         if text.starts_with("/start") || text.starts_with("/help") {
