@@ -1210,7 +1210,9 @@ pub async fn download_file_from_telegram(
         );
 
         // Create a temporary bot instance pointed at official API to get correct file path
-        let official_bot = teloxide::Bot::new(bot.token().to_string());
+        // IMPORTANT: Must explicitly set API URL to avoid using BOT_API_URL env var
+        let official_bot = teloxide::Bot::new(bot.token().to_string())
+            .set_api_url(reqwest::Url::parse("https://api.telegram.org").expect("Failed to parse official API URL"));
 
         // Re-fetch file info from official API to get the correct path
         use teloxide::types::FileId;
