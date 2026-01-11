@@ -53,6 +53,7 @@ exec telegram-bot-api --local \
   --api-id="${TELEGRAM_API_ID}" \
   --api-hash="${TELEGRAM_API_HASH}" \
   --http-port="${TELEGRAM_HTTP_PORT}" \
+  --http-stat-port="${TELEGRAM_HTTP_PORT}" \
   --dir=/var/lib/telegram-bot-api \
   --temp-dir=/tmp \
   --verbosity=4
