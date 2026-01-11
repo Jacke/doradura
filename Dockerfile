@@ -68,6 +68,23 @@ if [ "$(id -u)" -eq 0 ]; then
   if [ -d /data ]; then
     chown -R botuser:botuser /data || true
   fi
+  if [ -d /telegram-bot-api ]; then
+    chown -R botuser:botuser /telegram-bot-api || true
+    chmod 755 /telegram-bot-api || true
+  fi
+fi
+
+# Set TEMP_FILES_DIR environment variable
+export TEMP_FILES_DIR="${TEMP_FILES_DIR:-/telegram-bot-api}"
+
+echo "Temporary files directory: $TEMP_FILES_DIR"
+if [ -d "$TEMP_FILES_DIR" ]; then
+  echo "✅ Temporary files directory exists"
+  mkdir -p "$TEMP_FILES_DIR" || true
+else
+  echo "⚠️  Temporary files directory does not exist, creating..."
+  mkdir -p "$TEMP_FILES_DIR" || echo "Failed to create $TEMP_FILES_DIR, falling back to /tmp"
+  export TEMP_FILES_DIR="/tmp"
 fi
 
 echo "Database initialization..."

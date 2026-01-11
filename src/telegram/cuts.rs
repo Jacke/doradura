@@ -705,7 +705,7 @@ async fn send_document_forced(
 
     // Don't delete the first message unless the forced re-upload succeeds.
 
-    let temp_dir = std::path::PathBuf::from("/tmp/doradura_telegram");
+    let temp_dir = std::path::PathBuf::from(crate::core::config::TEMP_FILES_DIR.as_str()).join("doradura_telegram");
     tokio::fs::create_dir_all(&temp_dir)
         .await
         .map_err(|e| request_error_from_text(e.to_string()))?;
@@ -765,7 +765,7 @@ async fn change_video_speed(
     use tokio::fs;
     use tokio::process::Command;
 
-    let temp_dir = PathBuf::from("/tmp/doradura_speed");
+    let temp_dir = PathBuf::from(crate::core::config::TEMP_FILES_DIR.as_str()).join("doradura_speed");
     fs::create_dir_all(&temp_dir).await?;
 
     let input_path = temp_dir.join(format!("input_{}_{}.mp4", chat_id.0, uuid::Uuid::new_v4()));
