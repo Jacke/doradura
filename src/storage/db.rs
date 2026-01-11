@@ -125,6 +125,16 @@ pub type DbConnection = PooledConnection<SqliteConnectionManager>;
 /// # }
 /// ```
 pub fn create_pool(database_path: &str) -> Result<DbPool, r2d2::Error> {
+    let path = std::path::Path::new(database_path);
+    let resolved_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else if let Ok(cwd) = std::env::current_dir() {
+        cwd.join(path)
+    } else {
+        path.to_path_buf()
+    };
+    log::info!("Using SQLite database at {}", resolved_path.display());
+
     // Run migrations before pool creation to avoid holding a pooled connection open
     match Connection::open(database_path) {
         Ok(mut conn) => {

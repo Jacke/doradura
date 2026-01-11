@@ -502,7 +502,14 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
                                 .and_then(|u| i64::try_from(u.id.0).ok())
                                 .unwrap_or(0);
                             let message_text = msg.text().unwrap_or_default();
-                            let _ = handle_update_cookies_command(db_pool, &bot, msg.chat.id, user_id, message_text).await;
+                            if let Err(e) =
+                                handle_update_cookies_command(db_pool, &bot, msg.chat.id, user_id, message_text).await
+                            {
+                                log::error!("❌ /update_cookies handler failed for user {}: {}", user_id, e);
+                                let _ = bot
+                                    .send_message(msg.chat.id, format!("❌ /update_cookies failed: {}", e))
+                                    .await;
+                            }
                             respond(())
                         }
                     }
