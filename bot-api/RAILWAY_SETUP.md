@@ -28,7 +28,7 @@ Railway Volume: **~$5-10/месяц** за 1GB storage
 4. Нажми **New Variable** → **Volume**
 5. Настройки volume:
    - **Name:** `telegram-bot-api-data`
-   - **Mount Path:** `/var/lib/telegram-bot-api`
+   - **Mount Path:** `/telegram-bot-api`
    - **Size:** 1GB (можно увеличить позже)
 
 ### Шаг 2: Настроить переменные окружения
@@ -42,7 +42,7 @@ TELEGRAM_API_HASH=<your_api_hash>
 TELEGRAM_HTTP_PORT=8081
 
 # НОВАЯ переменная для основного бота
-BOT_API_DATA_DIR=/var/lib/telegram-bot-api
+BOT_API_DATA_DIR=/telegram-bot-api
 ```
 
 **Важно:** `BOT_API_DATA_DIR` должна быть установлена в **основном боте**, а не в Bot API сервере!
@@ -66,7 +66,7 @@ git push railway main
 
 ```
 Starting Telegram Bot API with persistent storage...
-Data directory: /var/lib/telegram-bot-api
+Data directory: /telegram-bot-api
 ```
 
 Если видишь эти строки - всё работает! ✅
@@ -82,7 +82,7 @@ Data directory: /var/lib/telegram-bot-api
 3. Проверь логи - должен использоваться direct copy:
 
 ```
-📂 Local Bot API: attempting direct file copy from /var/lib/telegram-bot-api/...
+📂 Local Bot API: attempting direct file copy from /telegram-bot-api/...
 ✅ File exists locally, copying directly...
 ✅ File copied successfully
 ```
@@ -105,7 +105,7 @@ Data directory: /var/lib/telegram-bot-api
 ### Текущая схема (С volume)
 
 ```
-User → Telegram → Railway Bot API → Volume (/var/lib/telegram-bot-api)
+User → Telegram → Railway Bot API → Volume (/telegram-bot-api)
                          ↓
                     Main Bot (direct copy)
                          ↓
@@ -138,7 +138,7 @@ TELEGRAM_HTTP_PORT=8081
 
 ```bash
 BOT_API_URL=https://telegram-bot-api-production-d892.up.railway.app
-BOT_API_DATA_DIR=/var/lib/telegram-bot-api  # ← ВАЖНО!
+BOT_API_DATA_DIR=/telegram-bot-api  # ← ВАЖНО!
 ```
 
 **Примечание:** Если `BOT_API_DATA_DIR` не установлена, бот будет использовать HTTP fallback.
@@ -164,10 +164,10 @@ Telegram Bot API автоматически удаляет старые файл
 railway run bash
 
 # Проверить размер
-du -sh /var/lib/telegram-bot-api
+du -sh /telegram-bot-api
 
 # Удалить старые файлы (>24ч)
-find /var/lib/telegram-bot-api -type f -mtime +1 -delete
+find /telegram-bot-api -type f -mtime +1 -delete
 ```
 
 ---
@@ -178,7 +178,7 @@ find /var/lib/telegram-bot-api -type f -mtime +1 -delete
 
 **Решение:** Установи переменную окружения в **основном боте**:
 ```bash
-BOT_API_DATA_DIR=/var/lib/telegram-bot-api
+BOT_API_DATA_DIR=/telegram-bot-api
 ```
 
 ### Проблема: "File not found" (404)
@@ -196,7 +196,7 @@ BOT_API_DATA_DIR=/var/lib/telegram-bot-api
 
 ```bash
 # В entrypoint.sh
-chown -R telegram-bot-api:telegram-bot-api /var/lib/telegram-bot-api
+chown -R telegram-bot-api:telegram-bot-api /telegram-bot-api
 ```
 
 ### Проблема: Volume full (нет места)
@@ -205,7 +205,7 @@ chown -R telegram-bot-api:telegram-bot-api /var/lib/telegram-bot-api
 
 ```bash
 # В cron (если нужно)
-0 */6 * * * find /var/lib/telegram-bot-api -type f -mtime +1 -delete
+0 */6 * * * find /telegram-bot-api -type f -mtime +1 -delete
 ```
 
 ---
