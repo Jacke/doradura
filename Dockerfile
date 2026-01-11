@@ -76,12 +76,22 @@ echo "Database initialization..."
 DB_PATH=${DATABASE_URL:-/data/database.sqlite}
 DB_DIR=$(dirname "$DB_PATH")
 
+# Ensure directory exists and has correct permissions
 mkdir -p "$DB_DIR" || true
+chmod 755 "$DB_DIR" 2>/dev/null || true
+chown -R botuser:botuser "$DB_DIR" 2>/dev/null || true
+
+echo "🔍 Testing write permissions for $DB_DIR..."
 if ! touch "$DB_DIR/.rw_test" 2>/dev/null; then
-  echo "⚠️  Database directory not writable: $DB_DIR. Falling back to /app/database.sqlite"
+  echo "⚠️  Database directory not writable: $DB_DIR"
+  echo "Directory info:"
+  ls -lah "$DB_DIR" || echo "Directory does not exist"
+  echo "Current user: $(whoami)"
+  echo "Falling back to /app/database.sqlite"
   DB_PATH="/app/database.sqlite"
   DB_DIR="/app"
   mkdir -p "$DB_DIR"
+  chmod 755 "$DB_DIR"
 fi
 rm -f "$DB_DIR/.rw_test"
 
