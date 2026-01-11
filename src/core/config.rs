@@ -42,6 +42,13 @@ pub static DOWNLOAD_FOLDER: Lazy<String> = Lazy::new(|| {
     })
 });
 
+/// Temporary files directory for processing (clips, cuts, exports, etc.)
+/// Read from TEMP_FILES_DIR environment variable
+/// Defaults to /tmp on production, supports tilde (~) expansion
+/// Set to /telegram-bot-api on Railway for persistent storage
+pub static TEMP_FILES_DIR: Lazy<String> =
+    Lazy::new(|| env::var("TEMP_FILES_DIR").unwrap_or_else(|_| "/tmp".to_string()));
+
 /// Database file path
 /// Read from DATABASE_PATH environment variable
 /// Default: database.sqlite

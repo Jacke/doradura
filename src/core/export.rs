@@ -149,7 +149,8 @@ pub async fn handle_export(bot: &Bot, chat_id: ChatId, format: &str, db_pool: Ar
 
     // Создаем временный файл
     let temp_file = format!(
-        "/tmp/doradura_export_{}_{}.{}",
+        "{}/doradura_export_{}_{}.{}",
+        crate::core::config::TEMP_FILES_DIR.as_str(),
         chat_id.0,
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
