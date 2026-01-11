@@ -1209,9 +1209,21 @@ pub async fn download_file_from_telegram(
             file.path
         );
 
+        // Create a temporary bot instance pointed at official API to get correct file path
+        let official_bot = teloxide::Bot::new(bot.token().to_string());
+
+        // Re-fetch file info from official API to get the correct path
+        use teloxide::types::FileId;
+        let official_file = official_bot
+            .get_file(FileId(file_id.to_string()))
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get file info from official API: {}", e))?;
+
+        log::info!("📥 Official API file path: {}", official_file.path);
+
         let fallback_base =
             Url::parse("https://api.telegram.org").map_err(|e| anyhow::anyhow!("Invalid fallback URL: {}", e))?;
-        let fallback_url = build_file_url(&fallback_base, bot.token(), &file.path)?;
+        let fallback_url = build_file_url(&fallback_base, bot.token(), &official_file.path)?;
 
         resp = client.get(fallback_url).send().await?;
         let fallback_status = resp.status();
