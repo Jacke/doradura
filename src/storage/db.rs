@@ -2738,3 +2738,63 @@ pub fn get_feedback_stats(conn: &DbConnection) -> Result<(i64, i64, i64, i64)> {
 
     stmt.query_row([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
 }
+// ==================== Cookies Upload Sessions ====================
+
+#[derive(Debug, Clone)]
+pub struct CookiesUploadSession {
+    pub id: String,
+    pub user_id: i64,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub expires_at: chrono::DateTime<chrono::Utc>,
+}
+
+pub fn upsert_cookies_upload_session(conn: &DbConnection, session: &CookiesUploadSession) -> Result<()> {
+    conn.execute(
+        "DELETE FROM cookies_upload_sessions WHERE user_id = ?1",
+        [session.user_id],
+    )?;
+    conn.execute(
+        "INSERT INTO cookies_upload_sessions (id, user_id, created_at, expires_at)
+         VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![
+            session.id,
+            session.user_id,
+            session.created_at.to_rfc3339(),
+            session.expires_at.to_rfc3339(),
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn get_active_cookies_upload_session(conn: &DbConnection, user_id: i64) -> Result<Option<CookiesUploadSession>> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut stmt = conn.prepare(
+        "SELECT id, user_id, created_at, expires_at
+         FROM cookies_upload_sessions
+         WHERE user_id = ?1 AND expires_at > ?2
+         ORDER BY created_at DESC
+         LIMIT 1",
+    )?;
+    let mut rows = stmt.query(rusqlite::params![user_id, now])?;
+    if let Some(row) = rows.next()? {
+        let created_at: String = row.get(2)?;
+        let expires_at: String = row.get(3)?;
+        Ok(Some(CookiesUploadSession {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            created_at: chrono::DateTime::parse_from_rfc3339(&created_at)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now()),
+            expires_at: chrono::DateTime::parse_from_rfc3339(&expires_at)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now() + chrono::Duration::minutes(10)),
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn delete_cookies_upload_session_by_user(conn: &DbConnection, user_id: i64) -> Result<()> {
+    conn.execute("DELETE FROM cookies_upload_sessions WHERE user_id = ?1", [user_id])?;
+    Ok(())
+}
