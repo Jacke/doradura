@@ -1535,25 +1535,31 @@ pub async fn handle_sent_files_command(
 
 /// Handles the /update_cookies command (admin only)
 ///
-/// Accepts a base64-encoded cookies file and updates the YTDL_COOKIES_FILE
+/// Starts a session to receive a cookies file and updates the YTDL_COOKIES_FILE
 ///
 /// # Arguments
 /// * `bot` - Telegram bot instance
 /// * `chat_id` - Chat ID where the command was sent
 /// * `user_id` - Telegram user ID of the requester
-/// * `message_text` - Full message text (e.g., "/update_cookies <base64_string>")
+/// * `message_text` - Full message text (e.g., "/update_cookies")
 ///
 /// # Behavior
 /// - Checks if user is admin
-/// - Decodes and validates base64 cookies
-/// - Updates the cookies file
+/// - Creates a short-lived upload session
+/// - Receives a cookies file from the admin
 /// - Validates new cookies work
 /// - Sends confirmation message
 ///
 /// # Example
-/// User sends: `/update_cookies <base64_encoded_cookies>`
-/// Bot responds: `✅ Cookies успешно обновлены и проверены!`
-pub async fn handle_update_cookies_command(bot: &Bot, chat_id: ChatId, user_id: i64, message_text: &str) -> Result<()> {
+/// User sends: `/update_cookies`
+/// Bot responds: `📤 Отправь файл с cookies`
+pub async fn handle_update_cookies_command(
+    db_pool: Arc<crate::storage::db::DbPool>,
+    bot: &Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    _message_text: &str,
+) -> Result<()> {
     log::info!(
         "🔐 /update_cookies command received from user_id={}, chat_id={}",
         user_id,
@@ -1570,115 +1576,33 @@ pub async fn handle_update_cookies_command(bot: &Bot, chat_id: ChatId, user_id: 
 
     log::info!("✅ Admin authentication passed for user_id={}", user_id);
 
-    // Parse base64 from command
-    let parts: Vec<&str> = message_text.split_whitespace().collect();
-    if parts.len() < 2 {
-        log::warn!("⚠️  Admin {} called /update_cookies without base64 argument", user_id);
-        bot.send_message(
-            chat_id,
-            "❌ *Использование:* `/update_cookies <base64>`\n\n\
-            *Как получить base64:*\n\
-            1\\. Экспортируй cookies из браузера \\(youtube\\.com\\)\n\
-            2\\. Конвертируй в base64: `base64 youtube_cookies\\.txt`\n\
-            3\\. Отправь результат этой командой\n\n\
-            *Формат cookies:* Netscape HTTP Cookie File",
-        )
-        .parse_mode(ParseMode::MarkdownV2)
-        .await?;
-        return Ok(());
-    }
+    // Create cookies upload session
 
-    let cookies_b64 = parts[1..].join(" ");
-    log::info!(
-        "📥 Admin {} updating cookies (base64 length: {} bytes)",
+    let conn = crate::storage::db::get_connection(&db_pool)?;
+
+    let session = crate::storage::db::CookiesUploadSession {
+        id: uuid::Uuid::new_v4().to_string(),
         user_id,
-        cookies_b64.len()
-    );
+        created_at: chrono::Utc::now(),
+        expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+    };
 
-    // Send "processing" message
-    log::info!("⏳ Sending processing message to chat_id={}", chat_id);
-    let processing_msg = bot.send_message(chat_id, "⏳ Обновляю cookies...").await?;
+    crate::storage::db::upsert_cookies_upload_session(&conn, &session)?;
 
-    // Update cookies file
-    log::info!("🔄 Starting cookies file update...");
-    match cookies::update_cookies_from_base64(&cookies_b64).await {
-        Ok(path) => {
-            log::info!("✅ Cookies file successfully written to: {:?}", path);
+    log::info!("✅ Created cookies upload session for admin {}", user_id);
 
-            // Validate new cookies
-            log::info!("🔍 Starting cookies validation...");
-            bot.edit_message_text(chat_id, processing_msg.id, "⏳ Проверяю новые cookies...")
-                .await?;
-
-            let validation_result = cookies::validate_cookies().await;
-            if !validation_result {
-                log::warn!("🔍 Validation failed after cookies update");
-            }
-
-            // Delete processing message
-            let _ = bot.delete_message(chat_id, processing_msg.id).await;
-
-            if validation_result {
-                let success_message = format!(
-                    "✅ *Cookies успешно обновлены и проверены\\!*\n\n\
-                    📁 Путь: `{}`\n\
-                    ✓ Cookies валидны и работают\n\n\
-                    Бот теперь использует новые cookies для загрузки видео\\.",
-                    escape_markdown(&path.display().to_string())
-                );
-
-                bot.send_message(chat_id, success_message)
-                    .parse_mode(ParseMode::MarkdownV2)
-                    .await?;
-
-                log::info!("✅ /update_cookies completed successfully for admin {}", user_id);
-            } else {
-                let warning_message = format!(
-                    "⚠️ *Cookies обновлены, но валидация не удалась*\n\n\
-                    📁 Путь: `{}`\n\
-                    ⚠️  Cookies могут быть невалидны\n\n\
-                    Возможные причины:\n\
-                    • Cookies устарели\n\
-                    • Неверный формат файла\n\
-                    • Сетевые проблемы\n\n\
-                    Попробуй экспортировать cookies заново\\.",
-                    escape_markdown(&path.display().to_string())
-                );
-
-                bot.send_message(chat_id, warning_message)
-                    .parse_mode(ParseMode::MarkdownV2)
-                    .await?;
-
-                log::warn!(
-                    "⚠️ /update_cookies completed with validation failure for admin {}",
-                    user_id
-                );
-            }
-        }
-        Err(e) => {
-            log::error!("❌ Failed to update cookies file: {}", e);
-            log::error!("❌ Error details: {:?}", e);
-
-            // Delete processing message
-            let _ = bot.delete_message(chat_id, processing_msg.id).await;
-
-            let error_message = format!(
-                "❌ *Ошибка при обновлении cookies:*\n\n{}\n\n\
-                Возможные причины:\n\
-                • Неверный base64\n\
-                • Неверный формат cookies\n\
-                • Отсутствует переменная YTDL\\_COOKIES\\_FILE\n\
-                • Проблемы с правами на запись файла",
-                escape_markdown(&e.to_string())
-            );
-
-            bot.send_message(chat_id, error_message)
-                .parse_mode(ParseMode::MarkdownV2)
-                .await?;
-
-            log::error!("❌ /update_cookies failed for admin {}", user_id);
-        }
-    }
+    bot.send_message(
+        chat_id,
+        "📤 *Отправь файл с cookies*\n\n\
+        Отправь txt файл с cookies в формате Netscape HTTP Cookie File\\.\n\n\
+        *Как получить cookies:*\n\
+        1\\. Установи расширение для экспорта cookies\n\
+        2\\. Экспортируй cookies для youtube\\.com\n\
+        3\\. Отправь файл сюда\n\n\
+        ⏱ Сессия истечет через 10 минут\\.",
+    )
+    .parse_mode(ParseMode::MarkdownV2)
+    .await?;
 
     log::info!("🏁 /update_cookies command handler finished for admin {}", user_id);
     Ok(())
@@ -1696,8 +1620,8 @@ pub async fn notify_admin_cookies_refresh(bot: &Bot, admin_id: i64, reason: &str
         Причина: {}\n\n\
         Для обновления:\n\
         1\\. Экспортируй cookies из браузера\n\
-        2\\. Конвертируй в base64: `base64 youtube_cookies\\.txt`\n\
-        3\\. Отправь командой: `/update_cookies <base64>`\n\n\
+        2\\. Отправь командой: `/update_cookies`\n\
+        3\\. Пришли txt файл с cookies в ответ\n\n\
         Без валидных cookies загрузка видео с YouTube может не работать\\.",
         escape_markdown(reason)
     );
@@ -1722,44 +1646,192 @@ pub async fn notify_admin_cookies_refresh(bot: &Bot, admin_id: i64, reason: &str
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub async fn handle_cookies_file_upload(
+    db_pool: Arc<crate::storage::db::DbPool>,
+    bot: &Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    document: &teloxide::types::Document,
+) -> Result<()> {
+    log::info!(
+        "📤 Cookies file received from user_id={}, chat_id={}, file_id={}",
+        user_id,
+        chat_id,
+        document.file.id
+    );
 
+    // Check if there's an active cookies upload session
+
+    let conn = crate::storage::db::get_connection(&db_pool)?;
+
+    let session = crate::storage::db::get_active_cookies_upload_session(&conn, user_id)?;
+    if session.is_none() {
+        log::warn!("❌ No active cookies upload session for user {}", user_id);
+        return Ok(()); // Silently ignore if no session
+    }
+
+    log::info!("✅ Active cookies upload session found for user {}", user_id);
+
+    // Send processing message
+    let processing_msg = bot.send_message(chat_id, "⏳ Обрабатываю файл с cookies...").await?;
+
+    // Download file
+    let _file = bot.get_file(document.file.id.clone()).await?;
+    let file_path = std::path::PathBuf::from(format!("/tmp/cookies_upload_{}.txt", user_id));
+
+    match download_file_from_telegram(bot, &document.file.id.0, Some(file_path.clone())).await {
+        Ok(_) => {
+            log::info!("✅ Cookies file downloaded to: {:?}", file_path);
+
+            // Read file content
+            match tokio::fs::read_to_string(&file_path).await {
+                Ok(content) => {
+                    log::info!("✅ Cookies file read successfully, {} bytes", content.len());
+
+                    // Update cookies file
+                    match cookies::update_cookies_from_content(&content).await {
+                        Ok(path) => {
+                            log::info!("✅ Cookies file successfully written to: {:?}", path);
+
+                            // Delete temp file
+                            let _ = tokio::fs::remove_file(&file_path).await;
+
+                            // Validate new cookies
+                            bot.edit_message_text(chat_id, processing_msg.id, "⏳ Проверяю новые cookies...")
+                                .await?;
+
+                            let validation_result = cookies::validate_cookies().await;
+
+                            // Delete processing message
+                            let _ = bot.delete_message(chat_id, processing_msg.id).await;
+
+                            // Delete session
+                            crate::storage::db::delete_cookies_upload_session_by_user(&conn, user_id)?;
+
+                            if validation_result {
+                                let success_message = format!(
+                                    "✅ *Cookies успешно обновлены и проверены\\!*\n\n\
+                                    📁 Путь: `{}`\n\
+                                    ✓ Cookies валидны и работают\n\n\
+                                    Бот теперь использует новые cookies для загрузки видео\\.",
+                                    escape_markdown(&path.display().to_string())
+                                );
+
+                                bot.send_message(chat_id, success_message)
+                                    .parse_mode(ParseMode::MarkdownV2)
+                                    .await?;
+
+                                log::info!("✅ Cookies update completed successfully for admin {}", user_id);
+                            } else {
+                                let warning_message = format!(
+                                    "⚠️ *Cookies обновлены, но валидация не удалась*\n\n\
+                                    📁 Путь: `{}`\n\
+                                    ⚠️  Cookies могут быть невалидны\n\n\
+                                    Возможные причины:\n\
+                                    • Cookies устарели\n\
+                                    • Неверный формат файла\n\
+                                    • Сетевые проблемы\n\n\
+                                    Попробуй экспортировать cookies заново\\.",
+                                    escape_markdown(&path.display().to_string())
+                                );
+
+                                bot.send_message(chat_id, warning_message)
+                                    .parse_mode(ParseMode::MarkdownV2)
+                                    .await?;
+
+                                log::warn!(
+                                    "⚠️ Cookies update completed with validation failure for admin {}",
+                                    user_id
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("❌ Failed to update cookies file: {}", e);
+                            let _ = tokio::fs::remove_file(&file_path).await;
+                            let _ = bot.delete_message(chat_id, processing_msg.id).await;
+                            crate::storage::db::delete_cookies_upload_session_by_user(&conn, user_id)?;
+
+                            let error_message = format!(
+                                "❌ *Ошибка при обновлении cookies:*\n\n{}\n\n\
+                                Возможные причины:\n\
+                                • Неверный формат cookies файла\n\
+                                • Отсутствует переменная YTDL\\_COOKIES\\_FILE\n\
+                                • Проблемы с правами на запись файла",
+                                escape_markdown(&e.to_string())
+                            );
+
+                            bot.send_message(chat_id, error_message)
+                                .parse_mode(ParseMode::MarkdownV2)
+                                .await?;
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("❌ Failed to read cookies file: {}", e);
+                    let _ = tokio::fs::remove_file(&file_path).await;
+                    let _ = bot.delete_message(chat_id, processing_msg.id).await;
+                    crate::storage::db::delete_cookies_upload_session_by_user(&conn, user_id)?;
+
+                    bot.send_message(
+                        chat_id,
+                        format!("❌ *Ошибка чтения файла:*\n\n{}", escape_markdown(&e.to_string())),
+                    )
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .await?;
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("❌ Failed to download cookies file: {}", e);
+            let _ = bot.delete_message(chat_id, processing_msg.id).await;
+            crate::storage::db::delete_cookies_upload_session_by_user(&conn, user_id)?;
+
+            bot.send_message(
+                chat_id,
+                format!("❌ *Ошибка скачивания файла:*\n\n{}", escape_markdown(&e.to_string())),
+            )
+            .parse_mode(ParseMode::MarkdownV2)
+            .await?;
+        }
+    }
+
+    Ok(())
+}
+mod tests {
     #[test]
     fn test_escape_markdown_basic() {
-        assert_eq!(escape_markdown("hello"), "hello");
-        assert_eq!(escape_markdown("hello_world"), "hello\\_world");
-        assert_eq!(escape_markdown("hello*world"), "hello\\*world");
+        assert_eq!(super::escape_markdown("hello"), "hello");
+        assert_eq!(super::escape_markdown("hello_world"), "hello\\_world");
+        assert_eq!(super::escape_markdown("hello*world"), "hello\\*world");
     }
 
     #[test]
     fn test_escape_markdown_complex() {
         let input = "Test: [link](url) *bold* _italic_ `code`";
         let expected = "Test: \\[link\\]\\(url\\) \\*bold\\* \\_italic\\_ \\`code\\`";
-        assert_eq!(escape_markdown(input), expected);
+        assert_eq!(super::escape_markdown(input), expected);
     }
 
     #[test]
     fn test_escape_markdown_all_special_chars() {
         let input = r"\*[]()~`>#+-=|{}.!";
         let expected = r"\\\*\[\]\(\)\~\`\>\#\+\-\=\|\{\}\.\!";
-        assert_eq!(escape_markdown(input), expected);
+        assert_eq!(super::escape_markdown(input), expected);
     }
 
     #[test]
     fn test_is_admin() {
-        if !ADMIN_IDS.is_empty() {
-            let admin_id = ADMIN_IDS[0];
-            let non_admin_id = ADMIN_IDS.iter().max().copied().unwrap_or(0) + 1;
-            assert!(is_admin(admin_id));
-            assert!(!is_admin(non_admin_id));
-        } else if *ADMIN_USER_ID != 0 {
-            let admin_id = *ADMIN_USER_ID;
-            assert!(is_admin(admin_id));
-            assert!(!is_admin(admin_id + 1));
+        if !super::ADMIN_IDS.is_empty() {
+            let admin_id = super::ADMIN_IDS[0];
+            let non_admin_id = super::ADMIN_IDS.iter().max().copied().unwrap_or(0) + 1;
+            assert!(super::is_admin(admin_id));
+            assert!(!super::is_admin(non_admin_id));
+        } else if *super::ADMIN_USER_ID != 0 {
+            let admin_id = *super::ADMIN_USER_ID;
+            assert!(super::is_admin(admin_id));
+            assert!(!super::is_admin(admin_id + 1));
         } else {
-            assert!(!is_admin(0));
+            assert!(!super::is_admin(0));
         }
     }
 }

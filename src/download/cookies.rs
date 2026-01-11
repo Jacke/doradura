@@ -129,19 +129,35 @@ pub async fn needs_refresh() -> bool {
     !validate_cookies().await
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+pub async fn update_cookies_from_content(content: &str) -> Result<PathBuf> {
+    let cookies_path = get_cookies_path().ok_or_else(|| anyhow::anyhow!("YTDL_COOKIES_FILE not configured"))?;
 
+    // Basic validation: check if it looks like Netscape cookies format
+    if !content.contains("# Netscape HTTP Cookie File") && !content.contains(".youtube.com") {
+        return Err(anyhow::anyhow!(
+            "Invalid cookies format. Expected Netscape HTTP Cookie File format with youtube.com entries"
+        ));
+    }
+
+    // Write to file
+    tokio::fs::write(&cookies_path, content)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to write cookies file: {}", e))?;
+
+    log::info!("✅ Cookies file updated from content: {:?}", cookies_path);
+
+    Ok(cookies_path)
+}
+mod tests {
     #[test]
     fn test_get_cookies_path() {
         // This test will depend on env vars, just ensure it doesn't crash
-        let _path = get_cookies_path();
+        let _path = super::get_cookies_path();
     }
 
     #[tokio::test]
     async fn test_update_cookies_invalid_base64() {
-        let result = update_cookies_from_base64("not-valid-base64!@#").await;
+        let result = super::update_cookies_from_base64("not-valid-base64!@#").await;
         assert!(result.is_err());
     }
 
