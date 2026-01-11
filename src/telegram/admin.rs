@@ -1134,9 +1134,9 @@ pub async fn download_file_from_telegram(
     // For local Bot API with BOT_API_DATA_DIR, copy file directly from mounted volume
     if bot_api_is_local {
         if let Ok(data_dir) = std::env::var("BOT_API_DATA_DIR") {
-            // file.path is like: /var/lib/telegram-bot-api/8224275354:.../videos/file_1.mp4
+            // file.path is like: /telegram-bot-api/8224275354:.../videos/file_1.mp4
             // Strip container prefix and use BOT_API_DATA_DIR instead
-            let container_prefix = "/var/lib/telegram-bot-api/";
+            let container_prefix = "/telegram-bot-api/";
             if let Some(relative_path) = file.path.strip_prefix(container_prefix) {
                 let source_path = std::path::Path::new(&data_dir).join(relative_path);
                 log::info!("📂 Local Bot API: attempting direct file copy from {:?}", source_path);
@@ -1263,9 +1263,9 @@ fn build_file_url(base: &Url, token: &str, file_path: &str) -> Result<Url> {
 
     // For local Bot API, strip the container prefix
     let normalized_path = if !base.as_str().contains("api.telegram.org") {
-        // Local Bot API: file_path is like "/var/lib/telegram-bot-api/8224275354:.../videos/file_1.mp4"
+        // Local Bot API: file_path is like "/telegram-bot-api/8224275354:.../videos/file_1.mp4"
         // We need just the relative part: "8224275354:.../videos/file_1.mp4"
-        let container_prefix = "/var/lib/telegram-bot-api/";
+        let container_prefix = "/telegram-bot-api/";
         file_path.strip_prefix(container_prefix).unwrap_or(file_path)
     } else {
         // Official API: use file_path as-is
