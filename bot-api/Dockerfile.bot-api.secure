@@ -57,7 +57,6 @@ ENTRYPOINT_EOF
 # Make entrypoint executable
 RUN chmod +x /entrypoint.sh
 
-# Volume declaration for documentation
-VOLUME ["/var/lib/telegram-bot-api"]
+# Note: Railway manages volumes via railway.json, not Dockerfile VOLUME directive
 
 ENTRYPOINT ["/entrypoint.sh"]
