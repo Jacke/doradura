@@ -1163,7 +1163,7 @@ async fn process_video_clip(
 
     let status = bot.send_message(chat_id, status_msg).await?;
 
-    let temp_dir = std::path::PathBuf::from("/tmp/doradura_clip");
+    let temp_dir = std::path::PathBuf::from(crate::core::config::TEMP_FILES_DIR.as_str()).join("doradura_clip");
     tokio::fs::create_dir_all(&temp_dir).await.ok();
 
     let input_path = temp_dir.join(format!("input_{}_{}.mp4", chat_id.0, session.source_id));
@@ -1603,7 +1603,7 @@ async fn process_audio_cut(
         .send_message(chat_id, i18n::t_args(&lang, "commands.audio_cut_processing", &args))
         .await?;
 
-    let temp_dir = std::path::PathBuf::from("/tmp/doradura_audio_cut");
+    let temp_dir = std::path::PathBuf::from(crate::core::config::TEMP_FILES_DIR.as_str()).join("doradura_audio_cut");
     tokio::fs::create_dir_all(&temp_dir).await.ok();
 
     let output_path = temp_dir.join(format!("cut_audio_{}_{}.mp3", chat_id.0, uuid::Uuid::new_v4()));
