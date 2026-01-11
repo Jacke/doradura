@@ -1141,16 +1141,51 @@ pub async fn download_file_from_telegram(
                 let source_path = std::path::Path::new(&data_dir).join(relative_path);
                 log::info!("📂 Local Bot API: attempting direct file copy from {:?}", source_path);
 
-                if source_path.exists() {
-                    log::info!("✅ File exists locally, copying directly...");
-                    tokio::fs::copy(&source_path, &dest_path).await?;
-                    log::info!("✅ File copied successfully to: {:?}", dest_path);
-                    log::info!(
-                        "📊 File size: {} bytes ({:.2} MB)",
-                        file.size,
-                        file.size as f64 / (1024.0 * 1024.0)
+                let max_attempts = 6;
+                let mut last_size: Option<u64> = None;
+                let mut stable_count = 0;
+
+                for attempt in 1..=max_attempts {
+                    if let Ok(metadata) = tokio::fs::metadata(&source_path).await {
+                        let size = metadata.len();
+                        if size > 0 {
+                            if Some(size) == last_size {
+                                stable_count += 1;
+                            } else {
+                                stable_count = 0;
+                            }
+                            last_size = Some(size);
+
+                            if stable_count >= 1 {
+                                log::info!("✅ File exists locally (size={} bytes), copying directly...", size);
+                                tokio::fs::copy(&source_path, &dest_path).await?;
+                                log::info!("✅ File copied successfully to: {:?}", dest_path);
+                                log::info!(
+                                    "📊 File size: {} bytes ({:.2} MB)",
+                                    file.size,
+                                    file.size as f64 / (1024.0 * 1024.0)
+                                );
+                                return Ok(dest_path);
+                            }
+                        }
+                    }
+
+                    if attempt < max_attempts {
+                        log::info!(
+                            "⏳ Waiting for local file to finish writing (attempt {}/{})",
+                            attempt,
+                            max_attempts
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                    }
+                }
+
+                if let Some(size) = last_size {
+                    log::warn!(
+                        "⚠️ Local file not ready for copy after {} attempts (last size={} bytes)",
+                        max_attempts,
+                        size
                     );
-                    return Ok(dest_path);
                 } else {
                     log::warn!("⚠️ Local file not found at {:?}", source_path);
                 }
@@ -1173,6 +1208,7 @@ pub async fn download_file_from_telegram(
         Url::parse(base_url_str).map_err(|e| anyhow::anyhow!("Invalid Bot API base URL for file download: {}", e))?;
 
     let file_url = build_file_url(&base_url, bot.token(), &file.path)?;
+    log::info!("🌐 Telegram Bot API GET request URL: {}", file_url);
 
     // Download via HTTP (teloxide::Bot::download_file uses api.telegram.org internally)
     use tokio::io::AsyncWriteExt;
