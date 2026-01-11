@@ -85,12 +85,17 @@ if ! touch "$DB_DIR/.rw_test" 2>/dev/null; then
 fi
 rm -f "$DB_DIR/.rw_test"
 
+echo "🔍 Checking for database at: $DB_PATH"
+ls -lah "$DB_DIR" 2>/dev/null || echo "Directory $DB_DIR is empty or does not exist"
+
 if [ -f "$DB_PATH" ]; then
   echo "✅ Using existing database at $DB_PATH"
+  echo "📊 Database file size: $(du -h "$DB_PATH" | cut -f1)"
+  echo "📅 Last modified: $(stat -c %y "$DB_PATH" 2>/dev/null || stat -f "%Sm" "$DB_PATH" 2>/dev/null || echo "unknown")"
 else
   echo "⚠️  Database not found, creating from migration.sql at $DB_PATH..."
   sqlite3 "$DB_PATH" < /app/migration.sql
-  echo "✅ Database created"
+  echo "✅ Database created at $DB_PATH"
 fi
 
 export DATABASE_URL="$DB_PATH"
