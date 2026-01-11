@@ -37,11 +37,15 @@ fi
 # Show volume info
 echo "Volume mount point: /var/lib/telegram-bot-api"
 df -h /var/lib/telegram-bot-api || echo "Volume info not available"
+echo "Contents of /var/lib/telegram-bot-api:"
+ls -lah /var/lib/telegram-bot-api || echo "Unable to list contents"
 
 echo "================================================"
 echo "Starting Telegram Bot API..."
 echo "API ID: ${TELEGRAM_API_ID}"
 echo "HTTP Port: ${TELEGRAM_HTTP_PORT}"
+echo "Data directory: /var/lib/telegram-bot-api"
+echo "Verbosity level: 4 (debug)"
 echo "================================================"
 
 # Start telegram-bot-api with volume directory
@@ -51,7 +55,7 @@ exec telegram-bot-api --local \
   --http-port="${TELEGRAM_HTTP_PORT}" \
   --dir=/var/lib/telegram-bot-api \
   --temp-dir=/tmp \
-  --verbosity=1
+  --verbosity=4
 ENTRYPOINT_EOF
 
 # Make entrypoint executable
