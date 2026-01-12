@@ -1368,12 +1368,18 @@ fn build_file_url(base: &Url, token: &str, file_path: &str) -> Result<Url> {
     let mut url = base.clone();
 
     // For local Bot API in --local mode, file_path is absolute filesystem path like:
-    // "/telegram-bot-api/<token>/videos/file_1.mp4"
+    // Old format: "/telegram-bot-api/<token>/videos/file_1.mp4"
+    // New format: "/data/<token>/videos/file_1.mp4"
     // We need to extract only the relative part after the token directory
     let normalized_path = if !base.as_str().contains("api.telegram.org") {
         let mut stripped = file_path.trim_start_matches('/');
 
-        // Remove "telegram-bot-api/" prefix if present
+        // Remove "data/" prefix if present (new format)
+        if let Some(rest) = stripped.strip_prefix("data/") {
+            stripped = rest;
+        }
+
+        // Remove "telegram-bot-api/" prefix if present (old format)
         if let Some(rest) = stripped.strip_prefix("telegram-bot-api/") {
             stripped = rest;
         }
