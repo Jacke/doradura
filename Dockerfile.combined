@@ -1,12 +1,14 @@
 # Build stage for Rust application
-FROM rust:1.85-slim AS rust-builder
+FROM rust:1.85-alpine AS rust-builder
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    pkg-config \
-    libssl-dev \
-    libsqlite3-dev \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache \
+    musl-dev \
+    pkgconfig \
+    openssl-dev \
+    openssl-libs-static \
+    sqlite-dev \
+    sqlite-static \
+    build-base
 
 WORKDIR /app
 
@@ -17,7 +19,11 @@ COPY src ./src
 COPY locales ./locales
 COPY migrations ./migrations
 
-RUN cargo build --release
+RUN cargo build --release && \
+    echo "Binary built successfully:" && \
+    ls -lh /app/target/release/doradura && \
+    file /app/target/release/doradura && \
+    ldd /app/target/release/doradura || echo "Static binary (no dynamic libs)"
 
 # Runtime stage - based on aiogram/telegram-bot-api
 FROM aiogram/telegram-bot-api:latest
@@ -27,10 +33,15 @@ USER root
 # Install runtime dependencies for the bot
 RUN apk add --no-cache \
     ca-certificates \
+    musl \
+    libssl3 \
+    libcrypto3 \
     ffmpeg \
     python3 \
     py3-pip \
-    sqlite \
+    sqlite-libs \
+    libgcc \
+    libstdc++ \
     wget \
     bash \
     supervisor
@@ -52,9 +63,9 @@ RUN addgroup -g 2000 shareddata && \
     chmod 775 /data
 
 # Copy the compiled binary from rust-builder and set permissions
-COPY --from=rust-builder /app/target/release/doradura /app/doradura
-RUN chmod +x /app/doradura && \
-    chown botuser:botuser /app/doradura
+COPY --from=rust-builder --chown=botuser:botuser /app/target/release/doradura /app/doradura
+RUN chmod 755 /app/doradura && \
+    ls -la /app/doradura
 
 # Set environment variables for the bot to access Bot API files
 ENV BOT_API_DATA_DIR=/data
@@ -103,18 +114,30 @@ echo "================================================"
 echo "Starting Combined Telegram Bot API + Doradura Bot"
 echo "================================================"
 
-# Create directories
+# Create directories with correct permissions
 mkdir -p /data /tmp
+chmod 1777 /tmp
 
-# Set ownership with shared group
+# Set ownership and permissions for /data
 if id telegram-bot-api >/dev/null 2>&1 && getent group shareddata >/dev/null 2>&1; then
-  chown telegram-bot-api:shareddata /data || true
-  chmod 775 /data || true
+  chown telegram-bot-api:shareddata /data
+  chmod 775 /data
+  echo "✅ /data ownership: $(ls -ld /data)"
 fi
 
 # Ensure app directory is owned by botuser
 if id botuser >/dev/null 2>&1; then
-  chown botuser:botuser /app || true
+  chown -R botuser:botuser /app
+  chmod 755 /app
+  echo "✅ /app ownership: $(ls -ld /app)"
+fi
+
+# Verify binary exists and is executable
+if [ -f /app/doradura ]; then
+  echo "✅ Binary found: $(ls -lh /app/doradura)"
+else
+  echo "❌ ERROR: /app/doradura not found!"
+  exit 1
 fi
 
 # Set default temp files directory
@@ -137,10 +160,12 @@ if [ -n "$YTDL_COOKIES_B64" ]; then
   COOKIES_DIR=$(dirname "$COOKIES_PATH")
   mkdir -p "$COOKIES_DIR"
   echo "$YTDL_COOKIES_B64" | base64 -d > "$COOKIES_PATH"
-  chown botuser:botuser "$COOKIES_PATH"
+  if id botuser >/dev/null 2>&1; then
+    chown botuser:botuser "$COOKIES_PATH"
+  fi
   chmod 644 "$COOKIES_PATH"
   export YTDL_COOKIES_FILE="$COOKIES_PATH"
-  echo "✅ YouTube cookies written"
+  echo "✅ YouTube cookies written to $COOKIES_PATH"
 fi
 
 echo "================================================"
