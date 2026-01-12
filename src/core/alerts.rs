@@ -17,6 +17,7 @@ use chrono::{DateTime, Duration, Utc};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use teloxide::prelude::*;
+use crate::telegram::Bot;
 use teloxide::types::{ChatId, ParseMode};
 use tokio::sync::Mutex;
 

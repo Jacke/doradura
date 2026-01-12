@@ -13,6 +13,7 @@ use crate::telegram::setup_chat_bot_commands;
 use fluent_templates::fluent_bundle::FluentArgs;
 use std::sync::Arc;
 use teloxide::prelude::*;
+use crate::telegram::Bot;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode};
 use teloxide::RequestError;
 use unic_langid::LanguageIdentifier;

@@ -66,7 +66,7 @@ The bot requires these system tools to be installed:
 1. **Main Entry Point** ([src/main.rs](src/main.rs))
    - Initializes the bot with teloxide framework
    - Sets up logging to both console (Error level) and `app.log` file
-   - Runs database migrations from `migration.sql` on startup
+   - Runs database migrations from `migrations/` on startup
    - Creates shared state: `RateLimiter` and `DownloadQueue`
    - Spawns async `process_queue` task that continuously processes downloads
    - Sets up command handlers (`/start`, `/help`, `/settings`, `/tasks`) and message handlers
@@ -113,7 +113,7 @@ The bot requires these system tools to be installed:
    - SQLite database (`database.sqlite`) for persistence
    - Manages users (telegram_id, username, plan)
    - Logs all requests to `request_history` table
-   - Schema defined in `migration.sql`
+   - Schema defined in `migrations/`
 
 8. **C Code Integration** ([build.rs](build.rs), [c_code/](c_code/))
    - Build script compiles `foo.c` and `bar.c` into static library
@@ -151,7 +151,7 @@ c_code/
 ├── foo.c           - C code linked via FFI
 └── bar.c           - C code linked via FFI
 build.rs            - Build script for C code compilation
-migration.sql       - Database schema
+migrations/         - Database migrations
 ```
 
 ### Testing Notes

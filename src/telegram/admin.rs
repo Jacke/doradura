@@ -14,6 +14,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use teloxide::prelude::*;
+use crate::telegram::Bot;
 use teloxide::types::{
     InlineKeyboardButton, InlineKeyboardMarkup, ParseMode, Seconds, TransactionPartner, TransactionPartnerUserKind,
 };

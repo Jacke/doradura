@@ -1,6 +1,7 @@
 use crate::core::utils::pluralize_seconds;
 use regex::Regex;
 use teloxide::prelude::*;
+use crate::telegram::Bot;
 use teloxide::types::MessageId;
 
 /// Состояние загрузки файла для отображения прогресса пользователю.

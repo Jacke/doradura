@@ -10,6 +10,7 @@ use rand::Rng;
 use std::path::Path;
 use std::process::Command as ProcessCommand;
 use teloxide::prelude::*;
+use crate::telegram::Bot;
 use teloxide::types::InputFile;
 use tokio::time::{sleep, Duration};
 
