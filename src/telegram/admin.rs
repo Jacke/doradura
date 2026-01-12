@@ -6,6 +6,7 @@
 //! - Markdown escaping utilities
 
 use crate::downsub::DownsubGateway;
+use crate::telegram::Bot;
 use anyhow::Result;
 use regex::Regex;
 use std::collections::HashMap;
@@ -14,7 +15,6 @@ use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use teloxide::prelude::*;
-use crate::telegram::Bot;
 use teloxide::types::{
     InlineKeyboardButton, InlineKeyboardMarkup, ParseMode, Seconds, TransactionPartner, TransactionPartnerUserKind,
 };
@@ -1301,9 +1301,14 @@ fn build_file_url(base: &Url, token: &str, file_path: &str) -> Result<Url> {
     // For local Bot API, strip the container prefix
     let normalized_path = if !base.as_str().contains("api.telegram.org") {
         // Local Bot API: file_path is like "/telegram-bot-api/8224275354:.../videos/file_1.mp4"
-        // We need just the relative part: "8224275354:.../videos/file_1.mp4"
+        // We need just the relative part: "8224275354:.../videos/file_1.mp4" (without bot token segment)
         let container_prefix = "/telegram-bot-api/";
-        file_path.strip_prefix(container_prefix).unwrap_or(file_path)
+        let stripped = file_path.strip_prefix(container_prefix).unwrap_or(file_path);
+        let stripped = stripped.strip_prefix(&format!("bot{token}/")).unwrap_or(stripped);
+        stripped
+            .strip_prefix(token)
+            .and_then(|rest| rest.strip_prefix('/'))
+            .unwrap_or(stripped)
     } else {
         // Official API: use file_path as-is
         file_path
