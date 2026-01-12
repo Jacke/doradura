@@ -42,8 +42,10 @@ RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp/releases/latest/do
 # Install Python dependencies for browser cookie extraction
 RUN pip3 install --no-cache-dir --break-system-packages keyring pycryptodomex
 
-# Create bot user first
-RUN adduser -D -u 1000 botuser && \
+# Create shared group and users
+RUN addgroup -g 2000 shareddata && \
+    adduser -D -u 1000 -G shareddata botuser && \
+    addgroup telegram-bot-api shareddata && \
     mkdir -p /app /data
 
 # Copy the compiled binary from rust-builder and set executable permissions
@@ -51,9 +53,10 @@ COPY --from=rust-builder /app/target/release/doradura /app/doradura
 RUN chmod +x /app/doradura && \
     chown botuser:botuser /app/doradura
 
-# Set directory ownership (non-recursive to avoid issues)
+# Set directory ownership - both users can access /data via shared group
 RUN chown botuser:botuser /app && \
-    chown telegram-bot-api:telegram-bot-api /data
+    chown telegram-bot-api:shareddata /data && \
+    chmod 775 /data
 
 # Set environment variables for the bot to access Bot API files
 ENV BOT_API_DATA_DIR=/data
@@ -105,19 +108,16 @@ echo "================================================"
 # Create directories
 mkdir -p /data /tmp
 
-# Set ownership for Bot API user first
-if id telegram-bot-api >/dev/null 2>&1; then
-  chown telegram-bot-api:telegram-bot-api /data || true
+# Set ownership with shared group
+if id telegram-bot-api >/dev/null 2>&1 && getent group shareddata >/dev/null 2>&1; then
+  chown telegram-bot-api:shareddata /data || true
+  chmod 775 /data || true
 fi
 
-# Set ownership for bot user
+# Ensure app directory is owned by botuser
 if id botuser >/dev/null 2>&1; then
   chown botuser:botuser /app || true
-  chown botuser:botuser /data || true
 fi
-
-# Set permissions
-chmod 755 /data || true
 
 # Set default temp files directory
 export TEMP_FILES_DIR="${TEMP_FILES_DIR:-/data}"
