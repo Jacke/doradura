@@ -99,9 +99,9 @@ echo "================================================"
 
 # Create and fix permissions for all directories
 mkdir -p /data /tmp
-chown -R telegram-bot-api:telegram-bot-api /data
-chown -R botuser:botuser /data /app
-chmod -R 755 /data
+chown -R telegram-bot-api:telegram-bot-api /data 2>/dev/null || true
+chown -R botuser:botuser /data /app 2>/dev/null || true
+chmod -R 755 /data 2>/dev/null || true
 
 # Set default temp files directory
 export TEMP_FILES_DIR="${TEMP_FILES_DIR:-/data}"
