@@ -431,11 +431,12 @@ impl ProgressMessage {
     ///
     /// # Example
     ///
-    /// ```no_run
-    /// use teloxide::prelude::*;
+    /// ```ignore
+    /// use doradura::telegram::Bot;
     /// use doradura::download::progress::{ProgressMessage, DownloadStatus};
+    /// use teloxide::types::ChatId;
     ///
-    /// # async fn example(bot: Bot, chat_id: ChatId) -> ResponseResult<()> {
+    /// # async fn example(bot: Bot, chat_id: ChatId) -> teloxide::RequestError {
     /// let mut progress = ProgressMessage::new(chat_id);
     /// progress.update(&bot, DownloadStatus::Starting {
     ///     title: "Test Song".to_string(),
@@ -531,11 +532,11 @@ impl ProgressMessage {
     ///
     /// # Example
     ///
-    /// ```no_run
-    /// use teloxide::prelude::*;
+    /// ```ignore
+    /// use doradura::telegram::Bot;
     /// use doradura::download::progress::ProgressMessage;
     ///
-    /// # async fn example(bot: Bot, mut progress: ProgressMessage) -> ResponseResult<()> {
+    /// # async fn example(bot: Bot, mut progress: ProgressMessage) -> teloxide::RequestError {
     /// // Очистить сообщение через 10 секунд
     /// progress.clear_after(&bot, 10, "Test Song".to_string(), Some("mp3".to_string())).await?;
     /// # Ok(())
