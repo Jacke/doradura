@@ -2,13 +2,13 @@
 FROM rust:1.85-alpine AS rust-builder
 
 RUN apk add --no-cache \
-    musl-dev \
-    pkgconfig \
-    openssl-dev \
-    openssl-libs-static \
-    sqlite-dev \
-    sqlite-static \
-    build-base
+  musl-dev \
+  pkgconfig \
+  openssl-dev \
+  openssl-libs-static \
+  sqlite-dev \
+  sqlite-static \
+  build-base
 
 WORKDIR /app
 
@@ -20,10 +20,10 @@ COPY locales ./locales
 COPY migrations ./migrations
 
 RUN cargo build --release && \
-    echo "Binary built successfully:" && \
-    ls -lh /app/target/release/doradura && \
-    file /app/target/release/doradura && \
-    ldd /app/target/release/doradura || echo "Static binary (no dynamic libs)"
+  echo "Binary built successfully:" && \
+  ls -lh /app/target/release/doradura && \
+  file /app/target/release/doradura && \
+  ldd /app/target/release/doradura || echo "Static binary (no dynamic libs)"
 
 # Runtime stage - based on aiogram/telegram-bot-api
 FROM aiogram/telegram-bot-api:latest
@@ -32,40 +32,40 @@ USER root
 
 # Install runtime dependencies for the bot
 RUN apk add --no-cache \
-    ca-certificates \
-    musl \
-    libssl3 \
-    libcrypto3 \
-    ffmpeg \
-    python3 \
-    py3-pip \
-    sqlite-libs \
-    libgcc \
-    libstdc++ \
-    wget \
-    bash \
-    supervisor
+  ca-certificates \
+  musl \
+  libssl3 \
+  libcrypto3 \
+  ffmpeg \
+  python3 \
+  py3-pip \
+  sqlite-libs \
+  libgcc \
+  libstdc++ \
+  wget \
+  bash \
+  supervisor
 
 # Install yt-dlp
 RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
-    chmod a+rx /usr/local/bin/yt-dlp
+  chmod a+rx /usr/local/bin/yt-dlp
 
 # Install Python dependencies for browser cookie extraction
 RUN pip3 install --no-cache-dir --break-system-packages keyring pycryptodomex
 
 # Create shared group and users, then set up directories
 RUN addgroup -g 2000 shareddata && \
-    adduser -D -u 1000 -G shareddata botuser && \
-    addgroup telegram-bot-api shareddata && \
-    mkdir -p /app /data && \
-    chown 1000:2000 /app && \
-    chown telegram-bot-api:shareddata /data && \
-    chmod 775 /data
+  adduser -D -u 1000 -G shareddata botuser && \
+  addgroup telegram-bot-api shareddata && \
+  mkdir -p /app /data && \
+  chown 1000:2000 /app && \
+  chown telegram-bot-api:shareddata /data && \
+  chmod 775 /data
 
 # Copy the compiled binary from rust-builder and set permissions
 COPY --from=rust-builder --chown=1000:2000 /app/target/release/doradura /app/doradura
 RUN chmod 755 /app/doradura && \
-    ls -la /app/doradura
+  ls -la /app/doradura
 
 # Set environment variables for the bot to access Bot API files
 ENV BOT_API_DATA_DIR=/data
@@ -85,7 +85,7 @@ RUN chmod +x /app/run-bot.sh && chown root:root /app/run-bot.sh
 
 # Create supervisor configuration directory and config file
 RUN mkdir -p /etc/supervisor/conf.d && \
-    cat > /etc/supervisor/conf.d/supervisord.conf << 'SUPERVISOR_EOF'
+  cat > /etc/supervisor/conf.d/supervisord.conf << 'SUPERVISOR_EOF'
 [supervisord]
 nodaemon=true
 user=root
@@ -94,7 +94,7 @@ logfile_maxbytes=0
 pidfile=/var/run/supervisord.pid
 
 [program:telegram-bot-api]
-command=/bin/sh -c "telegram-bot-api --local --api-id=${TELEGRAM_API_ID} --api-hash=${TELEGRAM_API_HASH} --http-port=8081 --http-stat-port=8082 --dir=/data --temp-dir=/tmp --verbosity=1"
+command=/bin/sh -c "umask 002 && telegram-bot-api --local --api-id=${TELEGRAM_API_ID} --api-hash=${TELEGRAM_API_HASH} --http-port=8081 --http-stat-port=8082 --dir=/data --temp-dir=/tmp --verbosity=1"
 user=telegram-bot-api
 autostart=true
 autorestart=true
@@ -131,24 +131,24 @@ chmod 1777 /tmp
 
 # Set ownership and permissions for /data
 if id telegram-bot-api >/dev/null 2>&1 && getent group shareddata >/dev/null 2>&1; then
-  chown telegram-bot-api:shareddata /data
-  chmod 775 /data
-  echo "✅ /data ownership: $(ls -ld /data)"
+chown telegram-bot-api:shareddata /data
+chmod 775 /data
+echo "✅ /data ownership: $(ls -ld /data)"
 fi
 
 # Ensure app directory is owned by botuser (UID:GID = 1000:2000)
 if id botuser >/dev/null 2>&1; then
-  chown -R 1000:2000 /app
-  chmod 755 /app
-  echo "✅ /app ownership: $(ls -ld /app)"
+chown -R 1000:2000 /app
+chmod 755 /app
+echo "✅ /app ownership: $(ls -ld /app)"
 fi
 
 # Verify binary exists and is executable
 if [ -f /app/doradura ]; then
-  echo "✅ Binary found: $(ls -lh /app/doradura)"
+echo "✅ Binary found: $(ls -lh /app/doradura)"
 else
-  echo "❌ ERROR: /app/doradura not found!"
-  exit 1
+echo "❌ ERROR: /app/doradura not found!"
+exit 1
 fi
 
 # Set default temp files directory
@@ -167,16 +167,16 @@ echo "✅ Temp files: $TEMP_FILES_DIR"
 
 # Write YouTube cookies from env if provided (base64)
 if [ -n "$YTDL_COOKIES_B64" ]; then
-  COOKIES_PATH=${YTDL_COOKIES_FILE:-/data/youtube_cookies.txt}
-  COOKIES_DIR=$(dirname "$COOKIES_PATH")
-  mkdir -p "$COOKIES_DIR"
-  echo "$YTDL_COOKIES_B64" | base64 -d > "$COOKIES_PATH"
-  if id botuser >/dev/null 2>&1; then
-    chown 1000:2000 "$COOKIES_PATH"
-  fi
-  chmod 644 "$COOKIES_PATH"
-  export YTDL_COOKIES_FILE="$COOKIES_PATH"
-  echo "✅ YouTube cookies written to $COOKIES_PATH"
+COOKIES_PATH=${YTDL_COOKIES_FILE:-/data/youtube_cookies.txt}
+COOKIES_DIR=$(dirname "$COOKIES_PATH")
+mkdir -p "$COOKIES_DIR"
+echo "$YTDL_COOKIES_B64" | base64 -d > "$COOKIES_PATH"
+if id botuser >/dev/null 2>&1; then
+chown 1000:2000 "$COOKIES_PATH"
+fi
+chmod 644 "$COOKIES_PATH"
+export YTDL_COOKIES_FILE="$COOKIES_PATH"
+echo "✅ YouTube cookies written to $COOKIES_PATH"
 fi
 
 echo "================================================"
@@ -194,6 +194,6 @@ EXPOSE 8080 8081 8082
 
 # Health check for both services
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD pgrep telegram-bot-api && pgrep doradura || exit 1
+  CMD pgrep telegram-bot-api && pgrep doradura || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]
