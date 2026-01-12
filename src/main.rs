@@ -29,6 +29,7 @@ use doradura::storage::db::{
 };
 use doradura::storage::{create_pool, get_connection};
 use doradura::telegram::notifications::{notify_admin_task_failed, notify_admin_text};
+use doradura::telegram::Bot;
 use doradura::telegram::webapp::run_webapp_server;
 use doradura::telegram::{
     create_bot, handle_admin_command, handle_analytics_command, handle_backup_command, handle_botapi_speed_command,
@@ -266,17 +267,17 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
     ));
 
     // Start automatic backup scheduler (daily backups)
-    let db_path = config::DATABASE_PATH.to_string();
-    tokio::spawn(async move {
-        let mut interval = interval(Duration::from_secs(24 * 60 * 60)); // 24 hours
-        loop {
-            interval.tick().await;
-            match create_backup(&db_path) {
-                Ok(path) => log::info!("Automatic backup created: {}", path.display()),
-                Err(e) => log::error!("Failed to create automatic backup: {}", e),
-            }
-        }
-    });
+    //let db_path = config::DATABASE_PATH.to_string();
+    // tokio::spawn(async move {
+    //     let mut interval = interval(Duration::from_secs(24 * 60 * 60)); // 24 hours
+    //     loop {
+    //         interval.tick().await;
+    //         match create_backup(&db_path) {
+    //             Ok(path) => log::info!("Automatic backup created: {}", path.display()),
+    //             Err(e) => log::error!("Failed to create automatic backup: {}", e),
+    //         }
+    //     }
+    // });
 
     // Start automatic subscription expiry checker (every hour)
     let db_pool_expiry = Arc::clone(&db_pool);

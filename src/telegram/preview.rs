@@ -10,6 +10,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use teloxide::prelude::*;
+use crate::telegram::Bot;
 use teloxide::types::MessageId;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, InputFile};
 use tokio::process::Command as TokioCommand;

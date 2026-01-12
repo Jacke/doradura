@@ -12,6 +12,7 @@ use teloxide::utils::command::BotCommands;
 use unic_langid::LanguageIdentifier;
 
 use crate::core::config;
+use crate::telegram::bot_api_logger::Bot;
 use crate::i18n;
 
 /// Bot commands enum with descriptions
@@ -169,12 +170,13 @@ pub fn create_bot() -> anyhow::Result<Bot> {
     let bot = if let Ok(bot_api_url) = std::env::var("BOT_API_URL") {
         log::info!("Using custom Bot API URL: {}", bot_api_url);
         let url = url::Url::parse(&bot_api_url).map_err(|e| anyhow::anyhow!("Invalid BOT_API_URL: {}", e))?;
-        Bot::from_env_with_client(ClientBuilder::new().timeout(config::network::timeout()).build()?).set_api_url(url)
+        teloxide::Bot::from_env_with_client(ClientBuilder::new().timeout(config::network::timeout()).build()?)
+            .set_api_url(url)
     } else {
-        Bot::from_env_with_client(ClientBuilder::new().timeout(config::network::timeout()).build()?)
+        teloxide::Bot::from_env_with_client(ClientBuilder::new().timeout(config::network::timeout()).build()?)
     };
 
-    Ok(bot)
+    Ok(Bot::new(bot))
 }
 
 /// Checks if a message is addressed to the bot

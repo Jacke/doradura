@@ -1,6 +1,7 @@
 use crate::storage::db::{self, DbPool};
 use std::sync::Arc;
 use teloxide::prelude::*;
+use crate::telegram::Bot;
 use teloxide::types::InputFile;
 use teloxide::RequestError;
 
