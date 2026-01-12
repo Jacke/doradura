@@ -541,7 +541,7 @@ fn get_counter_total(counter: &prometheus::Counter) -> f64 {
     let metric_families = counter.collect();
     for mf in metric_families {
         if let Some(m) = mf.get_metric().iter().next() {
-            return m.get_counter().get_value();
+            return m.get_counter().value();
         }
     }
     0.0
@@ -554,7 +554,7 @@ fn get_metric_value(metric_vec: &prometheus::CounterVec) -> f64 {
     let mut total = 0.0;
     for mf in metric_families {
         for m in mf.get_metric() {
-            total += m.get_counter().get_value();
+            total += m.get_counter().value();
         }
     }
     total
@@ -567,8 +567,8 @@ fn get_counter_value(metric_vec: &prometheus::CounterVec, label_value: &str) -> 
     for mf in metric_families {
         for m in mf.get_metric() {
             for label_pair in m.get_label() {
-                if label_pair.get_value() == label_value {
-                    return m.get_counter().get_value();
+                if label_pair.value() == label_value {
+                    return m.get_counter().value();
                 }
             }
         }
@@ -583,8 +583,8 @@ fn get_gauge_value(metric_vec: &prometheus::GaugeVec, label_value: &str) -> f64 
     for mf in metric_families {
         for m in mf.get_metric() {
             for label_pair in m.get_label() {
-                if label_pair.get_value() == label_value {
-                    return m.get_gauge().get_value();
+                if label_pair.value() == label_value {
+                    return m.get_gauge().value();
                 }
             }
         }
@@ -598,7 +598,7 @@ fn get_gauge_total(gauge: &prometheus::Gauge) -> f64 {
     let metric_families = gauge.collect();
     for mf in metric_families {
         if let Some(m) = mf.get_metric().iter().next() {
-            return m.get_gauge().get_value();
+            return m.get_gauge().value();
         }
     }
     0.0
