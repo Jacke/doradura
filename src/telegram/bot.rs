@@ -12,8 +12,8 @@ use teloxide::utils::command::BotCommands;
 use unic_langid::LanguageIdentifier;
 
 use crate::core::config;
-use crate::telegram::bot_api_logger::Bot;
 use crate::i18n;
+use crate::telegram::bot_api_logger::Bot;
 
 /// Bot commands enum with descriptions
 #[derive(BotCommands, Clone, Debug)]

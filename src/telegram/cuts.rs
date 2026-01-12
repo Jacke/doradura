@@ -1,7 +1,7 @@
 use crate::storage::{db, DbPool};
+use crate::telegram::Bot;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use crate::telegram::Bot;
 use teloxide::types::{CallbackQueryId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode};
 
 const ITEMS_PER_PAGE: usize = 5;
