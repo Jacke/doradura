@@ -56,6 +56,8 @@ RUN pip3 install --no-cache-dir --break-system-packages keyring pycryptodomex
 # Create shared group and users, then set up directories
 RUN addgroup -g 2000 shareddata && \
     adduser -D -u 1000 -G shareddata botuser && \
+    id botuser && \
+    getent group shareddata && \
     addgroup telegram-bot-api shareddata && \
     mkdir -p /app /data && \
     chown botuser:botuser /app && \
