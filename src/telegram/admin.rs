@@ -1096,10 +1096,11 @@ pub async fn download_file_from_telegram(
     use teloxide::types::FileId;
     let file = bot.get_file(FileId(file_id.to_string())).await?;
     log::info!(
-        "✅ File info retrieved: path = {}, size = {} bytes",
+        "✅ File info retrieved: path = '{}', size = {} bytes",
         file.path,
         file.size
     );
+    log::debug!("📋 Raw file.path from Bot API: {:?}", file.path);
 
     // Determine destination path
     let dest_path = if let Some(custom_path) = destination_path {
@@ -1210,6 +1211,12 @@ pub async fn download_file_from_telegram(
 
     let file_url = build_file_url(&base_url, bot.token(), &file.path)?;
     log::info!("🌐 Telegram Bot API GET request URL: {}", file_url);
+    log::debug!(
+        "🔍 URL building details: base={}, token_len={}, file_path={}",
+        base_url_str,
+        bot.token().len(),
+        file.path
+    );
 
     // Download via HTTP (teloxide::Bot::download_file uses api.telegram.org internally)
     use tokio::io::AsyncWriteExt;
@@ -1298,17 +1305,29 @@ pub async fn download_file_from_telegram(
 fn build_file_url(base: &Url, token: &str, file_path: &str) -> Result<Url> {
     let mut url = base.clone();
 
-    // For local Bot API, strip the container prefix
+    // For local Bot API in --local mode, file_path is absolute filesystem path like:
+    // "/telegram-bot-api/<token>/videos/file_1.mp4"
+    // We need to extract only the relative part after the token directory
     let normalized_path = if !base.as_str().contains("api.telegram.org") {
-        // Local Bot API: file_path is like "/telegram-bot-api/8224275354:.../videos/file_1.mp4"
-        // We need just the relative part: "8224275354:.../videos/file_1.mp4" (without bot token segment)
-        let container_prefix = "/telegram-bot-api/";
-        let stripped = file_path.strip_prefix(container_prefix).unwrap_or(file_path);
-        let stripped = stripped.strip_prefix(&format!("bot{token}/")).unwrap_or(stripped);
+        let mut stripped = file_path.trim_start_matches('/');
+
+        // Remove "telegram-bot-api/" prefix if present
+        if let Some(rest) = stripped.strip_prefix("telegram-bot-api/") {
+            stripped = rest;
+        }
+
+        // Remove token directory (e.g., "6310079371:AAH5...wpUw/")
+        // The token in path doesn't have "bot" prefix
+        if let Some(rest) = stripped.strip_prefix(token) {
+            stripped = rest.trim_start_matches('/');
+        }
+
+        log::debug!(
+            "🔧 Normalized path for local Bot API: '{}' -> '{}'",
+            file_path,
+            stripped
+        );
         stripped
-            .strip_prefix(token)
-            .and_then(|rest| rest.strip_prefix('/'))
-            .unwrap_or(stripped)
     } else {
         // Official API: use file_path as-is
         file_path

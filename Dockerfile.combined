@@ -1,0 +1,149 @@
+# Build stage for Rust application
+FROM rust:1.85-slim AS rust-builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config \
+    libssl-dev \
+    libsqlite3-dev \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY Cargo.toml Cargo.lock ./
+COPY build.rs ./
+COPY c_code ./c_code
+COPY src ./src
+COPY locales ./locales
+COPY migrations ./migrations
+
+RUN cargo build --release
+
+# Runtime stage - based on aiogram/telegram-bot-api
+FROM aiogram/telegram-bot-api:latest
+
+USER root
+
+# Install runtime dependencies for the bot
+RUN apk add --no-cache \
+    ca-certificates \
+    ffmpeg \
+    python3 \
+    py3-pip \
+    sqlite \
+    wget \
+    bash \
+    supervisor
+
+# Install yt-dlp
+RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp
+
+# Install Python dependencies for browser cookie extraction
+RUN pip3 install --no-cache-dir --break-system-packages keyring pycryptodomex
+
+# Copy the compiled binary from rust-builder
+COPY --from=rust-builder /app/target/release/doradura /app/doradura
+
+# Create bot user
+RUN adduser -D -u 1000 botuser && \
+    mkdir -p /app /data /telegram-bot-api && \
+    chown -R botuser:botuser /app /data
+
+# Set environment variables for the bot to access Bot API files
+ENV BOT_API_DATA_DIR=/telegram-bot-api
+ENV BOT_API_URL=http://localhost:8081
+
+# Create supervisor configuration
+RUN cat > /etc/supervisor/conf.d/supervisord.conf << 'SUPERVISOR_EOF'
+[supervisord]
+nodaemon=true
+user=root
+logfile=/dev/stdout
+logfile_maxbytes=0
+pidfile=/var/run/supervisord.pid
+
+[program:telegram-bot-api]
+command=telegram-bot-api --local --api-id=%(ENV_TELEGRAM_API_ID)s --api-hash=%(ENV_TELEGRAM_API_HASH)s --http-port=8081 --http-stat-port=8082 --dir=/telegram-bot-api --temp-dir=/tmp --verbosity=3
+user=telegram-bot-api
+autostart=true
+autorestart=true
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+priority=10
+
+[program:doradura-bot]
+command=/app/doradura
+user=botuser
+autostart=true
+autorestart=true
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+priority=20
+environment=DATABASE_URL="/data/database.sqlite",TEMP_FILES_DIR="/telegram-bot-api",BOT_API_DATA_DIR="/telegram-bot-api",BOT_API_URL="http://localhost:8081"
+SUPERVISOR_EOF
+
+# Create entrypoint script
+RUN cat > /entrypoint.sh << 'ENTRYPOINT_EOF'
+#!/bin/bash
+set -e
+
+echo "================================================"
+echo "Starting Combined Telegram Bot API + Doradura Bot"
+echo "================================================"
+
+# Create and fix permissions for all directories
+mkdir -p /telegram-bot-api /data /tmp
+chown -R telegram-bot-api:telegram-bot-api /telegram-bot-api
+chown -R botuser:botuser /data /app
+chmod -R 755 /telegram-bot-api /data
+
+# Set default temp files directory
+export TEMP_FILES_DIR="${TEMP_FILES_DIR:-/telegram-bot-api}"
+
+# Database setup
+DB_PATH=${DATABASE_URL:-/data/database.sqlite}
+DB_DIR=$(dirname "$DB_PATH")
+mkdir -p "$DB_DIR"
+chmod 755 "$DB_DIR"
+chown -R botuser:botuser "$DB_DIR"
+export DATABASE_URL="$DB_PATH"
+
+echo "✅ Telegram Bot API directory: /telegram-bot-api"
+echo "✅ Database: $DB_PATH"
+echo "✅ Temp files: $TEMP_FILES_DIR"
+
+# Write YouTube cookies from env if provided (base64)
+if [ -n "$YTDL_COOKIES_B64" ]; then
+  COOKIES_PATH=${YTDL_COOKIES_FILE:-/data/youtube_cookies.txt}
+  COOKIES_DIR=$(dirname "$COOKIES_PATH")
+  mkdir -p "$COOKIES_DIR"
+  echo "$YTDL_COOKIES_B64" | base64 -d > "$COOKIES_PATH"
+  chown botuser:botuser "$COOKIES_PATH"
+  chmod 644 "$COOKIES_PATH"
+  export YTDL_COOKIES_FILE="$COOKIES_PATH"
+  echo "✅ YouTube cookies written"
+fi
+
+echo "================================================"
+echo "Starting services via supervisor..."
+echo "================================================"
+
+# Start supervisor (manages both Bot API and doradura bot)
+exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
+ENTRYPOINT_EOF
+
+RUN chmod +x /entrypoint.sh
+
+# Expose ports
+EXPOSE 8080 8081 8082
+
+# Health check for both services
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD pgrep telegram-bot-api && pgrep doradura || exit 1
+
+ENTRYPOINT ["/entrypoint.sh"]
