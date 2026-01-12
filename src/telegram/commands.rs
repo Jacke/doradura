@@ -12,6 +12,7 @@ use once_cell::sync::Lazy;
 use regex::Regex;
 use std::sync::Arc;
 use teloxide::prelude::*;
+use crate::telegram::Bot;
 use teloxide::types::{InputFile, ParseMode};
 use url::Url;
 

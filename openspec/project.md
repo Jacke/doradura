@@ -78,7 +78,7 @@ The bot is designed for personal use with Russian language interface ("Я Дор
 - **Rate limiting**: Per-user cooldown periods (configurable per plan)
 - **Download location**: `~/downloads/` (configurable)
 - **Supported platforms**: YouTube, SoundCloud
-- **Database**: SQLite (`database.sqlite`) with migrations (`migration.sql`)
+- **Database**: SQLite (`database.sqlite`) with migrations (`migrations/`)
 - **Admin functionality**: User management, backups, subscription management
 
 ## Important Constraints

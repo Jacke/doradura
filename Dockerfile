@@ -23,7 +23,6 @@ COPY c_code ./c_code
 COPY src ./src
 COPY locales ./locales
 COPY migrations ./migrations
-COPY migration.sql ./
 
 # Build the application
 RUN cargo build --release
@@ -57,7 +56,6 @@ WORKDIR /app
 COPY --from=builder /app/target/release/doradura /app/doradura
 
 # Copy migration script (for fallback)
-COPY migration.sql ./
 
 # Create startup script
 RUN cat <<'EOF' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
@@ -120,8 +118,7 @@ if [ -f "$DB_PATH" ]; then
   echo "📊 Database file size: $(du -h "$DB_PATH" | cut -f1)"
   echo "📅 Last modified: $(stat -c %y "$DB_PATH" 2>/dev/null || stat -f "%Sm" "$DB_PATH" 2>/dev/null || echo "unknown")"
 else
-  echo "⚠️  Database not found, creating from migration.sql at $DB_PATH..."
-  sqlite3 "$DB_PATH" < /app/migration.sql
+  echo "⚠️  Database not found at $DB_PATH; it will be initialized by migrations on startup."
   echo "✅ Database created at $DB_PATH"
 fi
 

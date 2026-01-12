@@ -85,25 +85,8 @@ chmod +x migrate_db.sh
    sqlite3 /app/database.sqlite < schema.sql
    ```
 
-### Option B: Dockerfile with auto-migration
-Update `Dockerfile` to always run migrations at startup:
-```dockerfile
-# In runtime stage, after COPY
-COPY migration.sql ./
-
-RUN echo '#!/bin/bash\n\
-if [ ! -f /app/database.sqlite ]; then\n\
-  sqlite3 /app/database.sqlite < /app/migration.sql\n\
-fi\n\
-sqlite3 /app/database.sqlite <<EOSQL\n\
-ALTER TABLE users ADD COLUMN IF NOT EXISTS send_as_document INTEGER DEFAULT 0;\n\
-ALTER TABLE users ADD COLUMN IF NOT EXISTS send_audio_as_document INTEGER DEFAULT 0;\n\
-EOSQL\n\
-exec /app/doradura\n\
-' > /app/start.sh && chmod +x /app/start.sh
-
-CMD ["/app/start.sh"]
-```
+### Option B: Let the app run migrations
+Rust applies migrations from `migrations/` on startup. No Dockerfile changes are required.
 
 ---
 
@@ -116,23 +99,7 @@ Rust already has `migrate_schema()` in `src/storage/db.rs`. SQLite, however, doe
 
 ## 🚀 Quick fix (5 minutes)
 
-### Step 1: Add a startup script in Dockerfile
-```dockerfile
-RUN echo '#!/bin/bash\n\
-set -e\n\
-if [ -f /app/database.sqlite ]; then\n\
-  echo "Database exists, running migrations..."\n\
-else\n\
-  echo "Creating new database..."\n\
-  sqlite3 /app/database.sqlite < /app/migration.sql\n\
-fi\n\
-exec /app/doradura "$@"\n\
-' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
-
-CMD ["/app/entrypoint.sh"]
-```
-
-### Step 2: Or simply delete the DB on Railway
+### Option: delete the DB on Railway
 1. Railway Dashboard → Settings → Restart Deployment
 2. Or in Shell:
    ```bash
@@ -175,7 +142,7 @@ Do **not** commit `database.sqlite`.
 - Can be large
 - Already git-ignored
 
-Use `migration.sql` + code-based migrations + Railway volumes instead.
+Use `migrations/` + code-based migrations + Railway volumes instead.
 
 ---
 

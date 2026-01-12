@@ -24,6 +24,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use teloxide::prelude::*;
+use crate::telegram::Bot;
 use teloxide::types::{InputFile, ParseMode};
 use teloxide::RequestError;
 use tokio::fs::File as TokioFile;
