@@ -1137,6 +1137,9 @@ pub async fn download_file_from_telegram(
     // For local Bot API with BOT_API_DATA_DIR, copy file directly from mounted volume
     if bot_api_is_local {
         if let Ok(data_dir) = std::env::var("BOT_API_DATA_DIR") {
+            log::info!("🔍 BOT_API_DATA_DIR: {}", data_dir);
+            log::info!("🔍 file.path from Bot API: {}", file.path);
+
             // file.path is like: /telegram-bot-api/8224275354:.../videos/file_1.mp4
             // Strip container prefix and use BOT_API_DATA_DIR instead
             let container_prefix = "/telegram-bot-api/";
@@ -1214,9 +1217,34 @@ pub async fn download_file_from_telegram(
                 }
             } else {
                 log::warn!(
-                    "⚠️ File path doesn't start with expected container prefix: {}",
+                    "⚠️ File path doesn't start with expected container prefix '{}', got: {}",
+                    container_prefix,
                     file.path
                 );
+                log::info!("🔄 Trying to use file.path directly as relative path");
+
+                // Try treating file.path as already relative or absolute path that needs BOT_API_DATA_DIR
+                let source_path = if file.path.starts_with('/') {
+                    // It's absolute path, maybe already pointing to /data
+                    std::path::PathBuf::from(&file.path)
+                } else {
+                    // It's relative path
+                    std::path::Path::new(&data_dir).join(&file.path)
+                };
+
+                log::info!("📂 Trying direct path: {:?}", source_path);
+
+                if let Ok(metadata) = tokio::fs::metadata(&source_path).await {
+                    let size = metadata.len();
+                    log::info!("✅ Found file at direct path! Size: {} bytes", size);
+                    if size > 0 {
+                        tokio::fs::copy(&source_path, &dest_path).await?;
+                        log::info!("✅ File copied successfully to: {:?}", dest_path);
+                        return Ok(dest_path);
+                    }
+                } else {
+                    log::warn!("❌ File not found at direct path either: {:?}", source_path);
+                }
             }
         } else {
             log::warn!("⚠️ BOT_API_DATA_DIR not set, will try HTTP fallback (will likely fail)");
