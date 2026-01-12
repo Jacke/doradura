@@ -7,12 +7,12 @@ use crate::downsub::{DownsubError, DownsubGateway};
 use crate::i18n;
 use crate::storage::db::{self, DbPool};
 use crate::telegram::preview::{get_preview_metadata, send_preview};
+use crate::telegram::Bot;
 use fluent_templates::fluent_bundle::FluentArgs;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use crate::telegram::Bot;
 use teloxide::types::{InputFile, ParseMode};
 use url::Url;
 

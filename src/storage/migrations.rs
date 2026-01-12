@@ -21,7 +21,8 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
 
     conn.busy_timeout(Duration::from_secs(30))
         .context("set SQLite busy timeout")?;
-    conn.execute_batch("BEGIN IMMEDIATE").context("acquire migration lock")?;
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .context("acquire migration lock")?;
 
     if let Err(err) = embedded::migrations::runner().run(conn).map(|_| ()) {
         let _ = conn.execute_batch("ROLLBACK");

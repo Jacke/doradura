@@ -6,9 +6,9 @@
 use crate::core::metrics;
 use crate::storage::db::{self, DbPool};
 use crate::telegram::admin;
+use crate::telegram::Bot;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use crate::telegram::Bot;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, ParseMode};
 
 /// Handles /analytics command - shows overview dashboard
