@@ -47,11 +47,11 @@ COPY --from=rust-builder /app/target/release/doradura /app/doradura
 
 # Create bot user
 RUN adduser -D -u 1000 botuser && \
-    mkdir -p /app /data /telegram-bot-api && \
+    mkdir -p /app /data && \
     chown -R botuser:botuser /app /data
 
 # Set environment variables for the bot to access Bot API files
-ENV BOT_API_DATA_DIR=/telegram-bot-api
+ENV BOT_API_DATA_DIR=/data
 ENV BOT_API_URL=http://localhost:8081
 
 # Create supervisor configuration
@@ -64,7 +64,7 @@ logfile_maxbytes=0
 pidfile=/var/run/supervisord.pid
 
 [program:telegram-bot-api]
-command=telegram-bot-api --local --api-id=%(ENV_TELEGRAM_API_ID)s --api-hash=%(ENV_TELEGRAM_API_HASH)s --http-port=8081 --http-stat-port=8082 --dir=/telegram-bot-api --temp-dir=/tmp --verbosity=3
+command=telegram-bot-api --local --api-id=%(ENV_TELEGRAM_API_ID)s --api-hash=%(ENV_TELEGRAM_API_HASH)s --http-port=8081 --http-stat-port=8082 --dir=/data --temp-dir=/tmp --verbosity=3
 user=telegram-bot-api
 autostart=true
 autorestart=true
@@ -84,7 +84,7 @@ stdout_logfile_maxbytes=0
 stderr_logfile=/dev/stderr
 stderr_logfile_maxbytes=0
 priority=20
-environment=DATABASE_URL="/data/database.sqlite",TEMP_FILES_DIR="/telegram-bot-api",BOT_API_DATA_DIR="/telegram-bot-api",BOT_API_URL="http://localhost:8081"
+environment=DATABASE_URL="/data/database.sqlite",TEMP_FILES_DIR="/data",BOT_API_DATA_DIR="/data",BOT_API_URL="http://localhost:8081"
 SUPERVISOR_EOF
 
 # Create entrypoint script
@@ -97,13 +97,13 @@ echo "Starting Combined Telegram Bot API + Doradura Bot"
 echo "================================================"
 
 # Create and fix permissions for all directories
-mkdir -p /telegram-bot-api /data /tmp
-chown -R telegram-bot-api:telegram-bot-api /telegram-bot-api
+mkdir -p /data /tmp
+chown -R telegram-bot-api:telegram-bot-api /data
 chown -R botuser:botuser /data /app
-chmod -R 755 /telegram-bot-api /data
+chmod -R 755 /data
 
 # Set default temp files directory
-export TEMP_FILES_DIR="${TEMP_FILES_DIR:-/telegram-bot-api}"
+export TEMP_FILES_DIR="${TEMP_FILES_DIR:-/data}"
 
 # Database setup
 DB_PATH=${DATABASE_URL:-/data/database.sqlite}
@@ -113,7 +113,7 @@ chmod 755 "$DB_DIR"
 chown -R botuser:botuser "$DB_DIR"
 export DATABASE_URL="$DB_PATH"
 
-echo "✅ Telegram Bot API directory: /telegram-bot-api"
+echo "✅ Telegram Bot API directory: /data"
 echo "✅ Database: $DB_PATH"
 echo "✅ Temp files: $TEMP_FILES_DIR"
 
