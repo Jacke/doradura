@@ -1,8 +1,8 @@
 use crate::core::config::admin::{ADMIN_IDS, ADMIN_USER_ID};
 use crate::storage::db::DbPool;
+use crate::telegram::Bot;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use crate::telegram::Bot;
 
 const MAX_MESSAGE_LENGTH: usize = 4000;
 

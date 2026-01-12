@@ -2,10 +2,10 @@
 //!
 //! This module handles user feedback collection and admin notifications.
 
+use crate::telegram::Bot;
 use std::collections::HashMap;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use crate::telegram::Bot;
 use teloxide::types::ParseMode;
 use tokio::sync::Mutex;
 

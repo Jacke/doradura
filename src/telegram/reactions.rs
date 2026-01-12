@@ -1,5 +1,5 @@
-use teloxide::prelude::*;
 use crate::telegram::Bot;
+use teloxide::prelude::*;
 use teloxide::types::{MessageId, ReactionType};
 
 /// Try to set a reaction, skipping invalid/unavailable reactions for the chat.

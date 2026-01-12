@@ -10,10 +10,10 @@ use crate::storage::db::{self, DbPool};
 use crate::telegram::admin;
 use crate::telegram::cache as tg_cache;
 use crate::telegram::setup_chat_bot_commands;
+use crate::telegram::Bot;
 use fluent_templates::fluent_bundle::FluentArgs;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use crate::telegram::Bot;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode};
 use teloxide::RequestError;
 use unic_langid::LanguageIdentifier;
@@ -87,6 +87,150 @@ async fn edit_caption_or_text(
             Ok(())
         }
     }
+}
+
+async fn start_download_from_preview(
+    bot: &Bot,
+    callback_id: &str,
+    chat_id: ChatId,
+    message_id: MessageId,
+    preview_msg_id: Option<MessageId>,
+    url_id: &str,
+    format: &str,
+    selected_quality: Option<String>,
+    db_pool: Arc<DbPool>,
+    download_queue: Arc<DownloadQueue>,
+    rate_limiter: Arc<RateLimiter>,
+) -> ResponseResult<()> {
+    let url_str = match cache::get_url(&db_pool, url_id).await {
+        Some(url_str) => url_str,
+        None => {
+            log::warn!("URL not found in cache for ID: {} (expired or invalid)", url_id);
+            bot.answer_callback_query(callback_id)
+                .text("Ссылка устарела, отправь её снова")
+                .await?;
+            return Ok(());
+        }
+    };
+
+    let url = match Url::parse(&url_str) {
+        Ok(url) => url,
+        Err(e) => {
+            log::error!("Failed to parse URL from cache: {}", e);
+            bot.answer_callback_query(callback_id)
+                .text("Ошибка: неверная ссылка")
+                .await?;
+            return Ok(());
+        }
+    };
+
+    let original_message_id = tg_cache::get_link_message_id(&url_str).await;
+    let conn = db::get_connection(&db_pool)
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+    let plan = match db::get_user(&conn, chat_id.0) {
+        Ok(Some(ref user)) => user.plan.clone(),
+        _ => "free".to_string(),
+    };
+
+    if rate_limiter.is_rate_limited(chat_id, &plan).await {
+        if let Some(remaining_time) = rate_limiter.get_remaining_time(chat_id).await {
+            let remaining_seconds = remaining_time.as_secs();
+            bot.answer_callback_query(callback_id)
+                .text(format!("Подожди {} секунд", remaining_seconds))
+                .await?;
+        } else {
+            bot.answer_callback_query(callback_id).text("Подожди немного").await?;
+        }
+        return Ok(());
+    }
+
+    let _ = bot
+        .answer_callback_query(callback_id)
+        .text("⏳ Обрабатываю...")
+        .await;
+
+    if let Err(e) = bot.delete_message(chat_id, message_id).await {
+        log::warn!("Failed to delete preview message: {:?}", e);
+    }
+    if let Some(prev_msg_id) = preview_msg_id {
+        if prev_msg_id != message_id {
+            if let Err(e) = bot.delete_message(chat_id, prev_msg_id).await {
+                log::warn!("Failed to delete preview message: {:?}", e);
+            }
+        }
+    }
+
+    rate_limiter.update_rate_limit(chat_id, &plan).await;
+
+    if format == "mp4+mp3" {
+        let video_quality = if let Some(quality) = selected_quality {
+            Some(quality)
+        } else {
+            Some(
+                db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string()),
+            )
+        };
+        let task_mp4 = DownloadTask::from_plan(
+            url.as_str().to_string(),
+            chat_id,
+            original_message_id,
+            true,
+            "mp4".to_string(),
+            video_quality,
+            None,
+            &plan,
+        );
+        download_queue.add_task(task_mp4, Some(Arc::clone(&db_pool))).await;
+
+        let audio_bitrate = Some(
+            db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string()),
+        );
+        let task_mp3 = DownloadTask::from_plan(
+            url.as_str().to_string(),
+            chat_id,
+            original_message_id,
+            false,
+            "mp3".to_string(),
+            None,
+            audio_bitrate,
+            &plan,
+        );
+        download_queue.add_task(task_mp3, Some(Arc::clone(&db_pool))).await;
+    } else {
+        let video_quality = if format == "mp4" {
+            if let Some(quality) = selected_quality {
+                Some(quality)
+            } else {
+                Some(
+                    db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string()),
+                )
+            }
+        } else {
+            None
+        };
+        let audio_bitrate = if format == "mp3" {
+            Some(
+                db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string()),
+            )
+        } else {
+            None
+        };
+
+        let is_video = format == "mp4";
+        let task = DownloadTask::from_plan(
+            url.as_str().to_string(),
+            chat_id,
+            original_message_id,
+            is_video,
+            format.to_string(),
+            video_quality,
+            audio_bitrate,
+            &plan,
+        );
+        download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
+    }
+
+    Ok(())
 }
 
 /// Shows the main settings menu for the download mode.
@@ -1615,17 +1759,19 @@ pub async fn handle_menu_callback(
                     }
                 }
             } else if data.starts_with("format:") {
-                let _ = bot.answer_callback_query(callback_id.clone()).await;
                 // Format: format:mp3 or format:mp3:preview:url_id or format:mp3:preview:url_id:preview_msg_id
                 let parts: Vec<&str> = data.split(':').collect();
                 let format = parts[1];
                 let is_from_preview = parts.len() >= 4 && parts[2] == "preview";
                 let url_id = if is_from_preview { Some(parts[3]) } else { None };
-                let _preview_msg_id = if is_from_preview && parts.len() >= 5 {
+                let preview_msg_id = if is_from_preview && parts.len() >= 5 {
                     parts[4].parse::<i32>().ok().map(teloxide::types::MessageId)
                 } else {
                     None
                 };
+                if !is_from_preview {
+                    let _ = bot.answer_callback_query(callback_id.clone()).await;
+                }
 
                 let conn = db::get_connection(&db_pool)
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
@@ -1634,74 +1780,20 @@ pub async fn handle_menu_callback(
 
                 if is_from_preview {
                     if let Some(id) = url_id {
-                        // Get URL from cache and return to preview menu with updated format
-                        match cache::get_url(&db_pool, id).await {
-                            Some(url_str) => {
-                                match url::Url::parse(&url_str) {
-                                    Ok(url) => {
-                                        let video_quality = if format == "mp4" {
-                                            db::get_user_video_quality(&conn, chat_id.0).ok()
-                                        } else {
-                                            None
-                                        };
-
-                                        // Get metadata and send new preview, delete old preview if preview_msg_id is available
-                                        match crate::telegram::preview::get_preview_metadata(
-                                            &url,
-                                            Some(format),
-                                            video_quality.as_deref(),
-                                        )
-                                        .await
-                                        {
-                                            Ok(metadata) => {
-                                                // Update existing preview message
-                                                match crate::telegram::preview::update_preview_message(
-                                                    &bot,
-                                                    chat_id,
-                                                    message_id, // Use current message_id (which is the menu) to update it back to preview
-                                                    &url,
-                                                    &metadata,
-                                                    format,
-                                                    video_quality.as_deref(),
-                                                    Arc::clone(&db_pool),
-                                                )
-                                                .await
-                                                {
-                                                    Ok(_) => {
-                                                        log::info!("Preview updated with new format: {}", format);
-                                                    }
-                                                    Err(e) => {
-                                                        log::error!("Failed to send updated preview: {:?}", e);
-                                                        let _ = bot.send_message(chat_id, "Не удалось обновить превью. Попробуй отправить ссылку снова.").await;
-                                                    }
-                                                }
-                                            }
-                                            Err(e) => {
-                                                log::error!("Failed to get preview metadata: {:?}", e);
-                                                let _ = bot
-                                                    .send_message(
-                                                        chat_id,
-                                                        "Не удалось обновить превью. Попробуй отправить ссылку снова.",
-                                                    )
-                                                    .await;
-                                            }
-                                        }
-                                    }
-                                    Err(e) => {
-                                        log::error!("Failed to parse URL from cache: {}", e);
-                                        bot.answer_callback_query(callback_id)
-                                            .text("Ошибка: неверная ссылка")
-                                            .await?;
-                                    }
-                                }
-                            }
-                            None => {
-                                log::warn!("URL not found in cache for ID: {} (expired or invalid)", id);
-                                bot.answer_callback_query(callback_id)
-                                    .text("Ссылка устарела, отправь её снова")
-                                    .await?;
-                            }
-                        }
+                        start_download_from_preview(
+                            &bot,
+                            &callback_id,
+                            chat_id,
+                            message_id,
+                            preview_msg_id,
+                            id,
+                            format,
+                            None,
+                            Arc::clone(&db_pool),
+                            Arc::clone(&download_queue),
+                            Arc::clone(&rate_limiter),
+                        )
+                        .await?;
                     }
                 } else {
                     // Update the menu to show new selection
