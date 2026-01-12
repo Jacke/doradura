@@ -23,7 +23,7 @@
 ## Recommended setup
 1. Install/refresh cookies (see `YOUTUBE_COOKIES.md` or `MACOS_COOKIES_FIX.md`).
 2. Keep yt-dlp current: `pip3 install -U yt-dlp`.
-3. Run diagnostics: `./test_ytdlp.sh diagnostics`.
+3. Run diagnostics: `./scripts/test_ytdlp.sh diagnostics`.
 4. If download fails, inspect logs for chosen `player_client` and cookie source.
 
 ## Useful env vars

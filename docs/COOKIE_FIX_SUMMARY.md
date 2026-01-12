@@ -15,7 +15,7 @@
 4. **Docs updated** (`FIX_YOUTUBE_ERRORS.md`).
 
 ## 🔍 Verification
-- Run diagnostics: `./test_ytdlp.sh diagnostics` — should report the browser or file in use.
+- Run diagnostics: `./scripts/test_ytdlp.sh diagnostics` — should report the browser or file in use.
 - Download tests now pass for videos that previously required login.
 
 ## ✅ Result

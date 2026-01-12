@@ -38,7 +38,7 @@ cargo run --release
 
 ```bash
 chmod +x clear_cache.sh
-./clear_cache.sh
+./scripts/clear_cache.sh
 ```
 The script provides cache-clean instructions.
 

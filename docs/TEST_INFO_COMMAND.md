@@ -13,7 +13,7 @@ pkill -f doradura
      ```
    - **Option B: `run_with_cookies.sh`**
      ```bash
-     ./run_with_cookies.sh
+     ./scripts/run_with_cookies.sh
      ```
    - **Option C: Background**
      ```bash

@@ -34,7 +34,7 @@ export RUST_LOG=doradura=debug
 If you see a cache hit with empty title → restart to clear cache.
 
 ## 🛠️ Other options
-- `./clear_cache.sh` — cleanup script.
+- `./scripts/clear_cache.sh` — cleanup script.
 - Wait 24 hours — cache expires automatically.
 - Try a video never downloaded before — it will not be cached.
 

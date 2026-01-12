@@ -18,7 +18,7 @@ For this bot:
 
 ### 1) Run staging bot locally
 ```bash
-./run_staging.sh
+./scripts/run_staging.sh
 ```
 Or manually:
 ```bash

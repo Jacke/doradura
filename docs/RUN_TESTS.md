@@ -4,13 +4,13 @@
 
 ```bash
 # 1. System diagnostics (run FIRST)
-./test_ytdlp.sh diagnostics
+./scripts/test_ytdlp.sh diagnostics
 
 # 2. If cookies are not set up — automatic setup
-./run_tests_with_cookies.sh
+./scripts/run_tests_with_cookies.sh
 
 # 3. Download test (requires internet)
-YTDL_COOKIES_FILE=./youtube_cookies.txt ./test_ytdlp.sh download
+YTDL_COOKIES_FILE=./youtube_cookies.txt ./scripts/test_ytdlp.sh download
 
 # 4. Run the bot with fixes
 YTDL_COOKIES_FILE=./youtube_cookies.txt cargo run --release
@@ -53,23 +53,23 @@ WARNING: ios client requires a GVS PO Token
 | `all-basic`   | Everything offline     | ❌ |
 | `all`         | Full suite             | ✅ |
 
-Full list: `./test_ytdlp.sh help`
+Full list: `./scripts/test_ytdlp.sh help`
 
 ## ⚡ Usage examples
 
 ### Offline basic suite
 ```bash
-./test_ytdlp.sh all-basic
+./scripts/test_ytdlp.sh all-basic
 ```
 
 ### Full suite with cookies
 ```bash
-YTDL_COOKIES_FILE=./youtube_cookies.txt ./test_ytdlp.sh all
+YTDL_COOKIES_FILE=./youtube_cookies.txt ./scripts/test_ytdlp.sh all
 ```
 
 ### Single test run
 ```bash
-./test_ytdlp.sh metadata
+./scripts/test_ytdlp.sh metadata
 ```
 
 ## 🧠 Tips

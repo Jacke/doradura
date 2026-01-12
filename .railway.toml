@@ -12,7 +12,6 @@ healthcheckTimeout = 100
 
 [env]
 # Environment variables - Railway should use Dashboard values, but these serve as fallback
-TELOXIDE_TOKEN = "6310079371:AAH5D08Tvmt5W7Lo8PDHBL_qxq4Cgv1wpUw"
 YTDL_COOKIES_FILE = "youtube_cookies.txt"
 # ADMIN_IDS = "optional"
 # WEBAPP_PORT = "8080"

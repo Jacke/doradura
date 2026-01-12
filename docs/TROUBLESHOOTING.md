@@ -62,6 +62,6 @@ Requires `keyring` and `pycryptodomex` (already in Dockerfile).
 ### Verify
 Run diagnostics:
 ```bash
-./test_ytdlp.sh diagnostics
+./scripts/test_ytdlp.sh diagnostics
 ```
 Should show cookies configured and available.

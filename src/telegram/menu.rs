@@ -1794,7 +1794,13 @@ pub async fn handle_menu_callback(
                     show_download_type_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None, None).await?;
                 }
             } else if data.starts_with("dl:") {
-                // Don't answer immediately - we'll answer after processing
+                // Answer callback and delete preview IMMEDIATELY to prevent double-clicks
+                // This gives instant visual feedback that the action was processed
+                let _ = bot.answer_callback_query(callback_id.clone()).await;
+                if let Err(e) = bot.delete_message(chat_id, message_id).await {
+                    log::warn!("Failed to delete preview message: {:?}", e);
+                }
+
                 // Format: dl:format:url_id (legacy format)
                 // Format: dl:format:quality:url_id (new format for video with quality selection)
                 let parts: Vec<&str> = data.split(':').collect();
@@ -1809,9 +1815,8 @@ pub async fn handle_menu_callback(
                         parts[3]
                     } else {
                         log::warn!("Invalid dl callback format: {}", data);
-                        bot.answer_callback_query(callback_id)
-                            .text("Ошибка: неверный формат запроса")
-                            .await?;
+                        // Preview already deleted, send error as new message
+                        let _ = bot.send_message(chat_id, "Ошибка: неверный формат запроса").await;
                         return Ok(());
                     };
 
@@ -1821,6 +1826,13 @@ pub async fn handle_menu_callback(
                     } else {
                         None
                     };
+
+                    log::debug!(
+                        "Download button clicked: chat={}, url_id={}, format={}",
+                        chat_id.0,
+                        url_id,
+                        format
+                    );
 
                     // Get URL from cache by ID
                     match cache::get_url(&db_pool, url_id).await {
@@ -1839,38 +1851,17 @@ pub async fn handle_menu_callback(
 
                                     // Check rate limit
                                     if rate_limiter.is_rate_limited(chat_id, &plan).await {
-                                        if let Some(remaining_time) = rate_limiter.get_remaining_time(chat_id).await {
-                                            let remaining_seconds = remaining_time.as_secs();
-                                            bot.answer_callback_query(callback_id)
-                                                .text(format!("Подожди {} секунд", remaining_seconds))
-                                                .await?;
+                                        let msg = if let Some(remaining_time) =
+                                            rate_limiter.get_remaining_time(chat_id).await
+                                        {
+                                            format!("⏳ Подожди {} секунд", remaining_time.as_secs())
                                         } else {
-                                            bot.answer_callback_query(callback_id).text("Подожди немного").await?;
-                                        }
+                                            "⏳ Подожди немного".to_string()
+                                        };
+                                        // Preview already deleted, send rate limit message
+                                        let _ = bot.send_message(chat_id, msg).await;
                                         return Ok(());
                                     }
-
-                                    // Answer callback query immediately to prevent "loading" state
-                                    // Ignore errors (can be "query is too old" on double click)
-                                    let _ = bot
-                                        .answer_callback_query(callback_id.clone())
-                                        .text("⏳ Обрабатываю...")
-                                        .await;
-
-                                    log::debug!(
-                                        "Download button clicked: chat={}, url_id={}, format={}",
-                                        chat_id.0,
-                                        url_id,
-                                        format
-                                    );
-
-                                    // Delete preview message IMMEDIATELY to prevent double-clicks
-                                    // User gets instant visual feedback that action was processed
-                                    if let Err(e) = bot.delete_message(chat_id, message_id).await {
-                                        log::warn!("Failed to delete preview message: {:?}", e);
-                                    }
-
-                                    log::debug!("Preview deleted for chat={}, proceeding with download", chat_id.0);
 
                                     rate_limiter.update_rate_limit(chat_id, &plan).await;
 
@@ -1960,17 +1951,15 @@ pub async fn handle_menu_callback(
                                 }
                                 Err(e) => {
                                     log::error!("Failed to parse URL from cache: {}", e);
-                                    bot.answer_callback_query(callback_id)
-                                        .text("Ошибка: неверная ссылка")
-                                        .await?;
+                                    // Preview already deleted, send error as new message
+                                    let _ = bot.send_message(chat_id, "❌ Ошибка: неверная ссылка").await;
                                 }
                             }
                         }
                         None => {
                             log::warn!("URL not found in cache for ID: {} (expired or invalid)", url_id);
-                            bot.answer_callback_query(callback_id)
-                                .text("Ссылка устарела, отправь её снова")
-                                .await?;
+                            // Preview already deleted, send error as new message
+                            let _ = bot.send_message(chat_id, "⏰ Ссылка устарела, отправь её снова").await;
                         }
                     }
                 }
