@@ -97,11 +97,22 @@ echo "================================================"
 echo "Starting Combined Telegram Bot API + Doradura Bot"
 echo "================================================"
 
-# Create and fix permissions for all directories
+# Create directories
 mkdir -p /data /tmp
-chown -R telegram-bot-api:telegram-bot-api /data 2>/dev/null || true
-chown -R botuser:botuser /data /app 2>/dev/null || true
-chmod -R 755 /data 2>/dev/null || true
+
+# Set ownership for Bot API user first
+if id telegram-bot-api >/dev/null 2>&1; then
+  chown telegram-bot-api:telegram-bot-api /data || true
+fi
+
+# Set ownership for bot user
+if id botuser >/dev/null 2>&1; then
+  chown botuser:botuser /app || true
+  chown botuser:botuser /data || true
+fi
+
+# Set permissions
+chmod 755 /data || true
 
 # Set default temp files directory
 export TEMP_FILES_DIR="${TEMP_FILES_DIR:-/data}"
@@ -110,8 +121,7 @@ export TEMP_FILES_DIR="${TEMP_FILES_DIR:-/data}"
 DB_PATH=${DATABASE_URL:-/data/database.sqlite}
 DB_DIR=$(dirname "$DB_PATH")
 mkdir -p "$DB_DIR"
-chmod 755 "$DB_DIR"
-chown -R botuser:botuser "$DB_DIR"
+chmod 755 "$DB_DIR" || true
 export DATABASE_URL="$DB_PATH"
 
 echo "✅ Telegram Bot API directory: /data"
