@@ -16,7 +16,7 @@ categories = ["command-line-utilities"]
 chrono = "0.4"
 teloxide = { version = "0.17", features = ["macros"] }
 log = "0.4"
-pretty_env_logger = "0.4"
+pretty_env_logger = "0.5"
 simplelog = "0.11"
 tokio = { version = "1.40", features = ["full"] }
 url = "2.5.0"
@@ -26,7 +26,7 @@ rand = "0.8"
 reqwest = { version = "0.12", features = ["json"] }  # For making HTTP requests
 select = "0.6.1"  # For parsing HTML
 shell-escape = "0.1.5"
-wiremock = "0.4"
+wiremock = "0.5"
 thiserror = "1.0"
 anyhow = "1.0.66"
 async-trait = "0.1.50"
@@ -51,7 +51,7 @@ hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
 urlencoding = "2.1"
-prometheus = "0.13"
+prometheus = "0.14"
 lazy_static = "1.4"
 clap = { version = "4.5", features = ["derive", "cargo"] }
 tonic = { version = "0.10", features = ["transport"] }

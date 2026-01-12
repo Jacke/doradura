@@ -333,14 +333,14 @@ impl AlertManager {
         // Sum all download successes
         for mf in metrics::DOWNLOAD_SUCCESS_TOTAL.collect() {
             for m in mf.get_metric() {
-                current_downloads += m.get_counter().get_value();
+                current_downloads += m.get_counter().value();
             }
         }
 
         // Sum all download failures
         for mf in metrics::DOWNLOAD_FAILURE_TOTAL.collect() {
             for m in mf.get_metric() {
-                current_errors += m.get_counter().get_value();
+                current_errors += m.get_counter().value();
             }
         }
 
@@ -428,7 +428,7 @@ impl AlertManager {
 
         for mf in metrics::QUEUE_DEPTH_TOTAL.collect() {
             for m in mf.get_metric() {
-                total_queue_depth = m.get_gauge().get_value();
+                total_queue_depth = m.get_gauge().value();
             }
         }
 
@@ -463,14 +463,14 @@ impl AlertManager {
 
         for mf in metrics::TASK_RETRIES_TOTAL.collect() {
             for m in mf.get_metric() {
-                total_retries += m.get_counter().get_value();
+                total_retries += m.get_counter().value();
             }
         }
 
         // Approximate total tasks from downloads
         for mf in metrics::DOWNLOAD_SUCCESS_TOTAL.collect() {
             for m in mf.get_metric() {
-                total_tasks += m.get_counter().get_value();
+                total_tasks += m.get_counter().value();
             }
         }
 

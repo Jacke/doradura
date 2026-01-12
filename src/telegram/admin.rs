@@ -1194,7 +1194,39 @@ pub async fn download_file_from_telegram(
                                     "✅ File exists locally and stable (size={} bytes), copying directly...",
                                     size
                                 );
-                                tokio::fs::copy(&source_path, &dest_path).await?;
+                                // Ensure parent directory exists
+                                if let Some(parent) = dest_path.parent() {
+                                    log::info!("📁 Creating parent directory: {:?}", parent);
+                                    if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                                        log::error!("❌ Failed to create parent directory {:?}: {}", parent, e);
+                                        return Err(anyhow::anyhow!("Failed to create directory: {}", e));
+                                    }
+                                    log::info!("✅ Parent directory ready");
+                                }
+
+                                // Check source file permissions
+                                match tokio::fs::metadata(&source_path).await {
+                                    Ok(meta) => {
+                                        log::info!("📋 Source file permissions: readonly={}, len={}", meta.permissions().readonly(), meta.len());
+                                    }
+                                    Err(e) => {
+                                        log::error!("❌ Cannot read source file metadata: {}", e);
+                                    }
+                                }
+
+                                // Remove destination if it exists (might be from failed previous attempt)
+                                if dest_path.exists() {
+                                    log::warn!("⚠️ Destination file already exists, removing: {:?}", dest_path);
+                                    if let Err(e) = tokio::fs::remove_file(&dest_path).await {
+                                        log::error!("❌ Failed to remove existing destination: {}", e);
+                                    }
+                                }
+
+                                log::info!("📥 Copying {} -> {}", source_path.display(), dest_path.display());
+                                if let Err(e) = tokio::fs::copy(&source_path, &dest_path).await {
+                                    log::error!("❌ Copy failed: {} (source={:?}, dest={:?})", e, source_path, dest_path);
+                                    return Err(anyhow::anyhow!("Copy failed: {}", e));
+                                }
                                 log::info!("✅ File copied successfully to: {:?}", dest_path);
                                 log::info!(
                                     "📊 Final file size: {} bytes ({:.2} MB)",
