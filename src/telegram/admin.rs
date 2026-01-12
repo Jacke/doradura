@@ -1140,11 +1140,25 @@ pub async fn download_file_from_telegram(
             log::info!("🔍 BOT_API_DATA_DIR: {}", data_dir);
             log::info!("🔍 file.path from Bot API: {}", file.path);
 
-            // file.path is like: /telegram-bot-api/8224275354:.../videos/file_1.mp4
-            // Strip container prefix and use BOT_API_DATA_DIR instead
-            let container_prefix = "/telegram-bot-api/";
-            if let Some(relative_path) = file.path.strip_prefix(container_prefix) {
-                let source_path = std::path::Path::new(&data_dir).join(relative_path);
+            // file.path can be:
+            // - Old format: /telegram-bot-api/8224275354:.../videos/file_1.mp4
+            // - New format: /data/8224275354:.../videos/file_1.mp4
+            // Try both prefixes
+            let prefixes = ["/data/", "/telegram-bot-api/"];
+            let mut matched_prefix = None;
+            let mut relative_path_str = String::new();
+
+            for prefix in &prefixes {
+                if let Some(rel_path) = file.path.strip_prefix(prefix) {
+                    matched_prefix = Some(*prefix);
+                    relative_path_str = rel_path.to_string();
+                    log::info!("✅ Matched prefix '{}', relative path: {}", prefix, rel_path);
+                    break;
+                }
+            }
+
+            if let Some(_prefix) = matched_prefix {
+                let source_path = std::path::Path::new(&data_dir).join(&relative_path_str);
                 log::info!("📂 Local Bot API: attempting direct file copy from {:?}", source_path);
 
                 let max_attempts = 6;
@@ -1217,8 +1231,7 @@ pub async fn download_file_from_telegram(
                 }
             } else {
                 log::warn!(
-                    "⚠️ File path doesn't start with expected container prefix '{}', got: {}",
-                    container_prefix,
+                    "⚠️ File path doesn't start with any expected prefix (['/data/', '/telegram-bot-api/']), got: {}",
                     file.path
                 );
                 log::info!("🔄 Trying to use file.path directly as relative path");
