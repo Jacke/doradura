@@ -1207,9 +1207,17 @@ async fn process_video_clip(
         if is_ringtone { "m4r" } else { "mp4" }
     ));
 
-    let _ = crate::telegram::download_file_from_telegram(&bot, &file_id, Some(input_path.clone()))
-        .await
-        .map_err(AppError::from)?;
+    log::info!(
+        "🔽 Starting download for video note: file_id={}, output_path={:?}",
+        file_id,
+        input_path
+    );
+    let download_result = crate::telegram::download_file_from_telegram(&bot, &file_id, Some(input_path.clone())).await;
+    match &download_result {
+        Ok(path) => log::info!("✅ Download completed: {:?}", path),
+        Err(e) => log::error!("❌ Download failed: {}", e),
+    }
+    let _ = download_result.map_err(AppError::from)?;
 
     // Probe file for video stream
     let probe_output = Command::new("ffprobe")

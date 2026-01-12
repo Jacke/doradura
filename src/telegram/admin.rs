@@ -1148,28 +1148,48 @@ pub async fn download_file_from_telegram(
                 let mut stable_count = 0;
 
                 for attempt in 1..=max_attempts {
+                    log::info!(
+                        "🔍 Checking source file (attempt {}/{}): {:?}",
+                        attempt,
+                        max_attempts,
+                        source_path
+                    );
                     if let Ok(metadata) = tokio::fs::metadata(&source_path).await {
                         let size = metadata.len();
+                        log::info!("📏 File size: {} bytes", size);
                         if size > 0 {
                             if Some(size) == last_size {
                                 stable_count += 1;
+                                log::info!("✅ File size stable (count={})", stable_count);
                             } else {
                                 stable_count = 0;
+                                log::info!(
+                                    "⏳ File size changed: {} -> {} bytes (still writing...)",
+                                    last_size.unwrap_or(0),
+                                    size
+                                );
                             }
                             last_size = Some(size);
 
                             if stable_count >= 1 {
-                                log::info!("✅ File exists locally (size={} bytes), copying directly...", size);
+                                log::info!(
+                                    "✅ File exists locally and stable (size={} bytes), copying directly...",
+                                    size
+                                );
                                 tokio::fs::copy(&source_path, &dest_path).await?;
                                 log::info!("✅ File copied successfully to: {:?}", dest_path);
                                 log::info!(
-                                    "📊 File size: {} bytes ({:.2} MB)",
+                                    "📊 Final file size: {} bytes ({:.2} MB)",
                                     file.size,
                                     file.size as f64 / (1024.0 * 1024.0)
                                 );
                                 return Ok(dest_path);
                             }
+                        } else {
+                            log::warn!("⚠️ File exists but size is 0 bytes");
                         }
+                    } else {
+                        log::warn!("⚠️ File not found yet at {:?}", source_path);
                     }
 
                     if attempt < max_attempts {
