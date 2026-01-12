@@ -12,9 +12,6 @@
     "volumes": [
       {
         "mountPath": "/data"
-      },
-      {
-        "mountPath": "/telegram-bot-api"
       }
     ]
   }
