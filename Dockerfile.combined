@@ -42,13 +42,18 @@ RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp/releases/latest/do
 # Install Python dependencies for browser cookie extraction
 RUN pip3 install --no-cache-dir --break-system-packages keyring pycryptodomex
 
-# Copy the compiled binary from rust-builder
-COPY --from=rust-builder /app/target/release/doradura /app/doradura
-
-# Create bot user
+# Create bot user first
 RUN adduser -D -u 1000 botuser && \
-    mkdir -p /app /data && \
-    chown -R botuser:botuser /app /data
+    mkdir -p /app /data
+
+# Copy the compiled binary from rust-builder and set executable permissions
+COPY --from=rust-builder /app/target/release/doradura /app/doradura
+RUN chmod +x /app/doradura && \
+    chown botuser:botuser /app/doradura
+
+# Set directory ownership (non-recursive to avoid issues)
+RUN chown botuser:botuser /app && \
+    chown telegram-bot-api:telegram-bot-api /data
 
 # Set environment variables for the bot to access Bot API files
 ENV BOT_API_DATA_DIR=/data
