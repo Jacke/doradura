@@ -14,7 +14,7 @@ use crate::telegram::Bot;
 use fluent_templates::fluent_bundle::FluentArgs;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode};
+use teloxide::types::{CallbackQueryId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode};
 use teloxide::RequestError;
 use unic_langid::LanguageIdentifier;
 use url::Url;
@@ -91,7 +91,7 @@ async fn edit_caption_or_text(
 
 async fn start_download_from_preview(
     bot: &Bot,
-    callback_id: &str,
+    callback_id: &CallbackQueryId,
     chat_id: ChatId,
     message_id: MessageId,
     preview_msg_id: Option<MessageId>,
@@ -106,7 +106,7 @@ async fn start_download_from_preview(
         Some(url_str) => url_str,
         None => {
             log::warn!("URL not found in cache for ID: {} (expired or invalid)", url_id);
-            bot.answer_callback_query(callback_id)
+            bot.answer_callback_query(callback_id.clone())
                 .text("Ссылка устарела, отправь её снова")
                 .await?;
             return Ok(());
@@ -117,7 +117,7 @@ async fn start_download_from_preview(
         Ok(url) => url,
         Err(e) => {
             log::error!("Failed to parse URL from cache: {}", e);
-            bot.answer_callback_query(callback_id)
+            bot.answer_callback_query(callback_id.clone())
                 .text("Ошибка: неверная ссылка")
                 .await?;
             return Ok(());
@@ -135,17 +135,19 @@ async fn start_download_from_preview(
     if rate_limiter.is_rate_limited(chat_id, &plan).await {
         if let Some(remaining_time) = rate_limiter.get_remaining_time(chat_id).await {
             let remaining_seconds = remaining_time.as_secs();
-            bot.answer_callback_query(callback_id)
+            bot.answer_callback_query(callback_id.clone())
                 .text(format!("Подожди {} секунд", remaining_seconds))
                 .await?;
         } else {
-            bot.answer_callback_query(callback_id).text("Подожди немного").await?;
+            bot.answer_callback_query(callback_id.clone())
+                .text("Подожди немного")
+                .await?;
         }
         return Ok(());
     }
 
     let _ = bot
-        .answer_callback_query(callback_id)
+        .answer_callback_query(callback_id.clone())
         .text("⏳ Обрабатываю...")
         .await;
 
@@ -166,9 +168,7 @@ async fn start_download_from_preview(
         let video_quality = if let Some(quality) = selected_quality {
             Some(quality)
         } else {
-            Some(
-                db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string()),
-            )
+            Some(db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string()))
         };
         let task_mp4 = DownloadTask::from_plan(
             url.as_str().to_string(),
@@ -182,9 +182,7 @@ async fn start_download_from_preview(
         );
         download_queue.add_task(task_mp4, Some(Arc::clone(&db_pool))).await;
 
-        let audio_bitrate = Some(
-            db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string()),
-        );
+        let audio_bitrate = Some(db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string()));
         let task_mp3 = DownloadTask::from_plan(
             url.as_str().to_string(),
             chat_id,
@@ -201,17 +199,13 @@ async fn start_download_from_preview(
             if let Some(quality) = selected_quality {
                 Some(quality)
             } else {
-                Some(
-                    db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string()),
-                )
+                Some(db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string()))
             }
         } else {
             None
         };
         let audio_bitrate = if format == "mp3" {
-            Some(
-                db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string()),
-            )
+            Some(db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string()))
         } else {
             None
         };
