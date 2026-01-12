@@ -1207,7 +1207,11 @@ pub async fn download_file_from_telegram(
                                 // Check source file permissions
                                 match tokio::fs::metadata(&source_path).await {
                                     Ok(meta) => {
-                                        log::info!("📋 Source file permissions: readonly={}, len={}", meta.permissions().readonly(), meta.len());
+                                        log::info!(
+                                            "📋 Source file permissions: readonly={}, len={}",
+                                            meta.permissions().readonly(),
+                                            meta.len()
+                                        );
                                     }
                                     Err(e) => {
                                         log::error!("❌ Cannot read source file metadata: {}", e);
@@ -1224,7 +1228,12 @@ pub async fn download_file_from_telegram(
 
                                 log::info!("📥 Copying {} -> {}", source_path.display(), dest_path.display());
                                 if let Err(e) = tokio::fs::copy(&source_path, &dest_path).await {
-                                    log::error!("❌ Copy failed: {} (source={:?}, dest={:?})", e, source_path, dest_path);
+                                    log::error!(
+                                        "❌ Copy failed: {} (source={:?}, dest={:?})",
+                                        e,
+                                        source_path,
+                                        dest_path
+                                    );
                                     return Err(anyhow::anyhow!("Copy failed: {}", e));
                                 }
                                 log::info!("✅ File copied successfully to: {:?}", dest_path);
