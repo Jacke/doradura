@@ -53,7 +53,7 @@ chmod 600 /Users/stan/Dev/_PROJ/doradura/youtube_cookies.txt
 ### Step 5: Run the bot with the script
 ```bash
 cd /Users/stan/Dev/_PROJ/doradura
-./run_with_cookies.sh
+./scripts/run_with_cookies.sh
 ```
 Or manually:
 ```bash
@@ -114,7 +114,7 @@ A cookies file is plain text and does not require special permissions.
 ## 🚀 Done!
 Restart the bot and try downloading the video again:
 ```bash
-./run_with_cookies.sh
+./scripts/run_with_cookies.sh
 ```
 
 ---
@@ -137,7 +137,7 @@ YouTube downloads will fail with 'bot detection' or 'only images' errors!
    1. Install Chrome extension: Get cookies.txt LOCALLY
    2. Go to youtube.com → login
    3. Click extension → Export → save as youtube_cookies.txt
-   4. Run: ./run_with_cookies.sh
+   4. Run: ./scripts/run_with_cookies.sh
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 Now you always know what to do. 🎯

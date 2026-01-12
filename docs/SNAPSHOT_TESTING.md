@@ -1,407 +1,290 @@
-# Snapshot Testing для Telegram Бота
+# 📸 Snapshot Testing - Полная Система Тестирования Telegram Бота
 
-Система snapshot-тестирования позволяет записывать реальные взаимодействия с Telegram API и воспроизводить их в тестах без живого бота.
+Система для записи реальных взаимодействий с Telegram API и их воспроизведения в тестах.
 
-## 🎯 Зачем это нужно?
+## 🎯 Что это даёт?
 
-✅ **Быстрые тесты** - не нужно ждать реальных API вызовов
+✅ **Снимаете кальку с живого бота** - все ответы взяты из реальных API вызовов
+✅ **Быстрые тесты** - нет реальных сетевых запросов
 ✅ **Детерминированность** - тесты всегда дают одинаковый результат
 ✅ **Оффлайн работа** - можно тестировать без интернета
-✅ **Изоляция** - тесты не зависят от состояния Telegram серверов
 ✅ **Документация** - snapshots показывают как работает API
 
-## 📁 Структура
+## 📊 Текущее состояние
 
-```
-doradura/
-├── src/testing/           # Модуль для snapshot тестирования
-│   ├── mod.rs            # Экспорты
-│   ├── snapshots.rs      # Загрузка и воспроизведение snapshots
-│   └── recorder.rs       # Запись взаимодействий
-├── tests/
-│   ├── snapshots/        # Сохраненные snapshots
-│   │   ├── start_command.json
-│   │   ├── youtube_download.json
-│   │   └── settings_menu.json
-│   └── bot_snapshots_test.rs  # Тесты на основе snapshots
-```
+- **Snapshots**: 7 штук
+- **API методов**: 7 различных (sendMessage, sendPhoto, sendAudio, ...)
+- **Тестов**: 18 автоматических тестов
+- **Сценариев**: Команды, настройки, загрузка, ошибки
 
-## 🎬 Как записать snapshot
+## 🚀 Быстрый старт
 
-### Способ 1: Ручное создание snapshot (рекомендуется)
-
-Самый простой способ - создать snapshot вручную на основе реальных ответов:
-
-1. **Включите детальное логирование запросов** (уже есть в коде):
-```bash
-RUST_LOG=debug cargo run
-```
-
-2. **Отправьте команду боту** через Telegram
-
-3. **Скопируйте JSON из логов** - вы увидите что-то вроде:
-```
-[DEBUG] Request to https://api.telegram.org/bot.../sendMessage
-Body: {"chat_id":123,"text":"Hello",...}
-[DEBUG] Response: {"ok":true,"result":{...}}
-```
-
-4. **Создайте snapshot файл**:
-```json
-{
-  "name": "my_test_scenario",
-  "version": "1.0",
-  "recorded_at": "2026-01-04T12:00:00Z",
-  "interactions": [
-    {
-      "method": "POST",
-      "path": "/sendMessage",
-      "body": { /* данные из Request */ },
-      "timestamp": 1735992000
-    },
-    {
-      "status": 200,
-      "body": { /* данные из Response */ },
-      "headers": {
-        "content-type": "application/json"
-      }
-    }
-  ],
-  "metadata": {
-    "description": "Описание сценария",
-    "command": "/start"
-  }
-}
-```
-
-5. **Сохраните в** `tests/snapshots/my_test_scenario.json`
-
-### Способ 2: Использование локального Bot API с логированием
-
-Если у вас настроен локальный Bot API (см. `LOCAL_BOT_API_SETUP.md`), можно перехватывать запросы через nginx/mitmproxy:
+### 1. Посмотрите существующие snapshots
 
 ```bash
-# Установить mitmproxy
-brew install mitmproxy  # macOS
-apt install mitmproxy   # Linux
-
-# Запустить прокси
-mitmproxy --port 8080 --mode reverse:http://localhost:8081
-
-# В .env указать прокси
-BOT_API_URL=http://localhost:8080
-
-# Запустить бота и использовать его
-cargo run
-
-# mitmproxy сохранит все запросы/ответы
-# Нажмите 'w' чтобы сохранить конкретный flow
+ls tests/snapshots/*.json
 ```
 
-### Способ 3: Программная запись (требует доработки)
+Доступны:
+- `start_command.json` - Команда /start
+- `info_command.json` - Информация о форматах
+- `settings_menu.json` - Меню настроек
+- `youtube_processing.json` - Обработка YouTube URL
+- `audio_download_complete.json` - Полный цикл скачивания
+- `language_selection.json` - Выбор языка
+- `rate_limit_error.json` - Ошибка лимита
 
-```rust
-use doradura::testing::recorder::RecordingClient;
-
-#[tokio::main]
-async fn record_scenario() {
-    let recorder = RecordingClient::new("my_scenario");
-
-    // Использовать бота как обычно
-    // (требуется интеграция с teloxide)
-
-    // Сохранить snapshot
-    recorder.save_to_default_dir().unwrap();
-}
-```
-
-## 🧪 Как использовать snapshot в тестах
-
-### Базовый пример
-
-```rust
-use doradura::testing::TelegramMock;
-use teloxide::prelude::*;
-
-#[tokio::test]
-async fn test_start_command() {
-    // Загрузить snapshot
-    let mock = TelegramMock::from_snapshot("start_command")
-        .await
-        .expect("Failed to load snapshot");
-
-    // Создать бота с mock сервером
-    let bot = mock.create_bot().expect("Failed to create bot");
-
-    // Использовать бота как обычно
-    let result = bot
-        .send_message(ChatId(123456789), "Welcome!")
-        .await;
-
-    // Проверить результат
-    assert!(result.is_ok());
-
-    // Проверить что все ожидаемые вызовы были сделаны
-    mock.verify().await.expect("Verification failed");
-}
-```
-
-### Тестирование сложного сценария
-
-```rust
-#[tokio::test]
-async fn test_youtube_download_flow() {
-    // Snapshot содержит всю последовательность:
-    // 1. Отправка URL
-    // 2. "Обрабатываю..."
-    // 3. Preview с кнопками
-    // 4. Выбор качества
-    // 5. Отправка файла
-
-    let mock = TelegramMock::from_snapshot("youtube_download_complete")
-        .await
-        .unwrap();
-
-    let bot = mock.create_bot().unwrap();
-
-    // Симулировать каждый шаг
-    let msg1 = bot.send_message(ChatId(123), "Processing...").await.unwrap();
-    let msg2 = bot.send_photo(ChatId(123), InputFile::url(...)).await.unwrap();
-    let msg3 = bot.send_audio(ChatId(123), InputFile::file(...)).await.unwrap();
-
-    // Все ответы будут из snapshot, без реальных API вызовов
-    mock.verify().await.unwrap();
-}
-```
-
-### Тестирование обработчиков команд
-
-```rust
-#[tokio::test]
-async fn test_info_command_handler() {
-    let mock = TelegramMock::from_snapshot("info_command").await.unwrap();
-    let bot = mock.create_bot().unwrap();
-
-    // Создать фейковое сообщение
-    // (можно использовать builder или JSON десериализацию)
-    let message = create_test_message("/info", 123456789);
-
-    // Вызвать обработчик
-    let result = handle_info_command(bot, message, db_pool).await;
-
-    assert!(result.is_ok());
-    mock.verify().await.unwrap();
-}
-```
-
-## 📝 Примеры snapshot'ов
-
-### Start Command
-```json
-{
-  "name": "start_command",
-  "interactions": [
-    {
-      "method": "POST",
-      "path": "/sendMessage",
-      "body": {
-        "chat_id": 123456789,
-        "text": "🎵 Привет! Я помогу тебе...",
-        "reply_markup": { /* inline keyboard */ }
-      }
-    },
-    {
-      "status": 200,
-      "body": {
-        "ok": true,
-        "result": { /* Message object */ }
-      }
-    }
-  ]
-}
-```
-
-### Download Flow
-```json
-{
-  "name": "youtube_download",
-  "interactions": [
-    // 1. Отправка "Processing..."
-    { "method": "POST", "path": "/sendMessage", ... },
-    { "status": 200, "body": { "ok": true, ... } },
-
-    // 2. Отправка preview
-    { "method": "POST", "path": "/sendPhoto", ... },
-    { "status": 200, "body": { "ok": true, ... } },
-
-    // 3. Отправка файла
-    { "method": "POST", "path": "/sendAudio", ... },
-    { "status": 200, "body": { "ok": true, ... } }
-  ]
-}
-```
-
-## 🛠️ Создание snapshot для разных сценариев
-
-### 1. Команды бота
-```bash
-# В боте отправить: /start
-# Скопировать запрос/ответ из логов
-# Создать: tests/snapshots/start_command.json
-
-# Аналогично для других команд:
-# /info -> info_command.json
-# /settings -> settings_command.json
-# /downloads -> downloads_command.json
-```
-
-### 2. Callback кнопки
-```bash
-# Нажать кнопку "Настройки"
-# Записать callback_query и ответ
-# Создать: settings_callback.json
-```
-
-### 3. Обработка URL
-```bash
-# Отправить YouTube URL
-# Записать всю цепочку взаимодействий
-# Создать: youtube_url_processing.json
-```
-
-### 4. Ошибки
-```bash
-# Вызвать ошибку (например, невалидный URL)
-# Записать error response
-# Создать: invalid_url_error.json
-```
-
-## 🔧 Продвинутые техники
-
-### Параметризованные тесты
-
-```rust
-#[rstest]
-#[case("start_command")]
-#[case("info_command")]
-#[case("settings_command")]
-#[tokio::test]
-async fn test_commands(#[case] snapshot_name: &str) {
-    let mock = TelegramMock::from_snapshot(snapshot_name).await.unwrap();
-    let bot = mock.create_bot().unwrap();
-
-    // Общая логика тестирования
-
-    mock.verify().await.unwrap();
-}
-```
-
-### Модификация snapshot в тесте
-
-```rust
-#[tokio::test]
-async fn test_with_different_user_id() {
-    let mut snapshot = TelegramSnapshot::load_by_name("start_command").unwrap();
-
-    // Изменить user_id во всех взаимодействиях
-    for (call, _) in &mut snapshot.interactions {
-        if let Some(chat_id) = call.body.get_mut("chat_id") {
-            *chat_id = serde_json::json!(999999);
-        }
-    }
-
-    let mock = TelegramMock::from_snapshot_data(snapshot).await.unwrap();
-    // ...
-}
-```
-
-### Частичное совпадение (для нестабильных полей)
-
-```rust
-// В snapshot можно использовать placeholders для динамических полей
-{
-  "body": {
-    "message_id": "__ANY__",  // Любое значение
-    "date": "__TIMESTAMP__",   // Любой timestamp
-    "text": "Hello, {{username}}!"  // Template
-  }
-}
-```
-
-## 🚀 Запуск тестов
+### 2. Запустите тесты
 
 ```bash
 # Все snapshot тесты
-cargo test --test bot_snapshots_test
+cargo test --test bot_snapshots_test --test bot_commands_test
 
 # Конкретный тест
-cargo test --test bot_snapshots_test test_start_command
+cargo test test_youtube_processing_flow
 
 # С выводом
-cargo test --test bot_snapshots_test -- --nocapture
-
-# В режиме записи (если реализовано)
-TELEGRAM_RECORD_MODE=true cargo test
+cargo test --test bot_commands_test -- --nocapture
 ```
 
-## 📊 Best Practices
+### 3. Используйте в своих тестах
 
-1. **Одна функция = один snapshot** - не смешивайте разные сценарии
-2. **Говорящие имена** - `user_sends_youtube_url_gets_preview.json`
-3. **Комментарии в metadata** - объясните что происходит
-4. **Версионирование** - при изменении API обновляйте version
-5. **Минимальные данные** - не записывайте лишние поля
-6. **Git** - коммитьте snapshots вместе с тестами
+```rust
+use common::TelegramMock;
 
-## 🐛 Отладка
+#[tokio::test]
+async fn test_my_feature() {
+    let mock = TelegramMock::from_snapshot("youtube_processing").await?;
+    let bot = mock.create_bot()?;
+    
+    // Используйте bot - все ответы будут из snapshot
+    // handle_youtube_url(&bot, url).await?;
+}
+```
 
-### Snapshot не загружается
+## 📁 Структура проекта
+
+```
+doradura/
+├── src/
+│   └── testing/              # (только для unit tests)
+│       ├── mod.rs
+│       ├── snapshots.rs
+│       └── recorder.rs
+│
+├── tests/
+│   ├── common/               # Shared testing utilities
+│   │   ├── mod.rs
+│   │   ├── snapshots.rs      # TelegramMock, TelegramSnapshot
+│   │   └── recorder.rs       # RecordingClient (helper)
+│   │
+│   ├── snapshots/            # JSON snapshots ⭐
+│   │   ├── README.md
+│   │   ├── SNAPSHOT_INDEX.md
+│   │   ├── start_command.json
+│   │   ├── info_command.json
+│   │   ├── settings_menu.json
+│   │   ├── language_selection.json
+│   │   ├── youtube_processing.json
+│   │   ├── audio_download_complete.json
+│   │   └── rate_limit_error.json
+│   │
+│   ├── bot_snapshots_test.rs    # Базовые тесты
+│   └── bot_commands_test.rs     # Детальные тесты команд
+│
+├── tools/
+│   └── log_to_snapshot.py    # Конвертер логов → JSON
+│
+└── docs/
+    ├── SNAPSHOT_TESTING.md           # Полная документация
+    └── SNAPSHOT_TESTING_QUICKSTART.md # Быстрый старт
+```
+
+## 🎬 Как создать новый snapshot
+
+### Способ 1: Вручную (рекомендуется)
+
+1. Запустите бота с логированием:
+   ```bash
+   RUST_LOG=debug cargo run
+   ```
+
+2. Выполните действие в Telegram (например, отправьте /info)
+
+3. Скопируйте JSON из логов
+
+4. Создайте файл `tests/snapshots/my_test.json`:
+   ```json
+   {
+     "name": "my_test",
+     "version": "1.0",
+     "recorded_at": "2026-01-04T12:00:00Z",
+     "interactions": [
+       [
+         {"method": "POST", "path": "/sendMessage", "body": {...}, "timestamp": 123},
+         {"status": 200, "body": {...}, "headers": {...}}
+       ]
+     ],
+     "metadata": {}
+   }
+   ```
+
+### Способ 2: Python утилита
+
 ```bash
-# Проверить путь
-ls tests/snapshots/
+# Интерактивный режим
+./tools/log_to_snapshot.py --interactive
 
-# Валидировать JSON
-jq . tests/snapshots/my_snapshot.json
+# Из файла логов
+./tools/log_to_snapshot.py --input bot.log --name my_test
 
-# Проверить в тесте
-let result = TelegramSnapshot::load_by_name("my_snapshot");
-println!("{:?}", result);
+# Из потока
+cargo run 2>&1 | ./tools/log_to_snapshot.py --stdin --name my_test
 ```
 
-### Mock не отвечает
+## 📚 Документация
+
+- **[SNAPSHOT_TESTING.md](docs/SNAPSHOT_TESTING.md)** - Полное руководство (200+ строк)
+- **[SNAPSHOT_TESTING_QUICKSTART.md](docs/SNAPSHOT_TESTING_QUICKSTART.md)** - Быстрый старт
+- **[tests/snapshots/README.md](tests/snapshots/README.md)** - Список всех snapshots
+- **[tests/snapshots/SNAPSHOT_INDEX.md](tests/snapshots/SNAPSHOT_INDEX.md)** - Индекс с деталями
+
+## 🧪 Примеры тестов
+
+### Базовый тест команды
 ```rust
-// Добавить логирование
-env_logger::init();
-
-// Проверить что URL правильный
-println!("Mock URL: {}", mock.uri());
-
-// Проверить запросы через wiremock
-// (см. документацию wiremock)
+#[tokio::test]
+async fn test_info_command() {
+    let mock = TelegramMock::from_snapshot("info_command").await?;
+    let snapshot = mock.snapshot();
+    
+    assert_eq!(snapshot.interactions.len(), 1);
+    let (_call, response) = &snapshot.interactions[0];
+    
+    let text = response.body["result"]["text"].as_str().unwrap();
+    assert!(text.contains("Видео"));
+    assert!(text.contains("320 kbps"));
+}
 ```
 
-### Тест падает на verify()
+### Тест сложного flow
 ```rust
-// Посмотреть сколько вызовов было сделано
-println!("Expected: {}", mock.snapshot().interactions.len());
-println!("Got: {}", actual_calls);
-
-// Отключить verify если не критично
-// mock.verify().await.unwrap();
+#[tokio::test]
+async fn test_audio_download_flow() {
+    let snapshot = TelegramSnapshot::load_by_name("audio_download_complete")?;
+    
+    // 5 шагов: 0% → 45% → 100% → sendAudio → cleanup
+    assert_eq!(snapshot.interactions.len(), 5);
+    
+    // Проверка прогресса
+    let (_call1, resp1) = &snapshot.interactions[0];
+    assert!(resp1.body["result"]["caption"].as_str().unwrap().contains("0%"));
+    
+    // Проверка файла
+    let (_call4, resp4) = &snapshot.interactions[3];
+    let audio = &resp4.body["result"]["audio"];
+    assert_eq!(audio["performer"].as_str().unwrap(), "Rick Astley");
+}
 ```
 
-## 🔮 Будущие улучшения
+## 🎨 Что можно тестировать?
 
-- [ ] Автоматическая запись через HTTP proxy
-- [ ] UI для просмотра snapshots
-- [ ] Диффы между snapshots
-- [ ] Fuzzing на основе snapshots
-- [ ] Генерация snapshot из Postman/Insomnia коллекций
-- [ ] Integration с cucumber для BDD тестов
+### ✅ Команды бота
+- `/start`, `/info`, `/settings`, `/help`
+- Проверка текста, кнопок, форматирования
 
-## 📚 Дополнительные ресурсы
+### ✅ Callback queries
+- Выбор языка, качества, формата
+- Проверка answerCallbackQuery, обновления сообщений
 
-- [Telegram Bot API Reference](https://core.telegram.org/bots/api)
-- [wiremock документация](https://docs.rs/wiremock/)
-- [teloxide документация](https://docs.rs/teloxide/)
-- [Примеры snapshot тестов](../tests/bot_snapshots_test.rs)
+### ✅ Сложные flows
+- Обработка URL → preview → скачивание → отправка
+- Многошаговые взаимодействия
+
+### ✅ Обработка ошибок
+- Rate limiting, неверные URL, сетевые ошибки
+- Проверка корректных сообщений об ошибках
+
+### ✅ Прогресс операций
+- Обновление прогресса скачивания
+- editMessage операции
+
+## 📈 Метрики покрытия
+
+```
+API методы покрыты:
+  ✅ sendMessage        (6 snapshots)
+  ✅ sendPhoto          (1 snapshot)
+  ✅ sendAudio          (1 snapshot)
+  ✅ deleteMessage      (2 snapshots)
+  ✅ editMessageCaption (1 snapshot)
+  ✅ editMessageText    (1 snapshot)
+  ✅ answerCallbackQuery(1 snapshot)
+
+Всего: 7/20+ методов Bot API
+```
+
+## 🔧 Расширение
+
+### Добавьте новые snapshots для:
+
+1. **Скачивание видео** - `video_download_complete.json`
+2. **История загрузок** - `downloads_list.json`
+3. **Вырезки** - `cuts_menu.json`, `cut_creation.json`
+4. **Админ команды** - `admin_users_list.json`, `admin_backup.json`
+5. **Подписки** - `subscription_purchase.json`
+6. **Ошибки** - `invalid_url.json`, `network_error.json`
+
+### Шаблон для нового snapshot:
+```bash
+cp tests/snapshots/start_command.json tests/snapshots/my_new_test.json
+# Отредактируйте JSON
+# Добавьте тест в tests/bot_commands_test.rs
+```
+
+## 🎯 Следующие шаги
+
+1. **Изучите** существующие snapshots в [tests/snapshots/](tests/snapshots/)
+2. **Запустите** тесты: `cargo test --test bot_commands_test`
+3. **Создайте** свой snapshot для нового функционала
+4. **Добавьте** тест в `tests/bot_commands_test.rs`
+5. **Проверьте**: `cargo test`
+
+## 💡 Best Practices
+
+- Один snapshot = один сценарий
+- Говорящие имена файлов
+- Комментарии в metadata
+- Минимальные данные (без лишних полей)
+- Версионирование в Git
+- Регулярное обновление при изменении API
+
+## 🐛 Troubleshooting
+
+**Snapshot не загружается:**
+```bash
+# Проверьте JSON
+jq . tests/snapshots/my_test.json
+
+# Посмотрите ошибку
+cargo test test_my_snapshot -- --nocapture
+```
+
+**Тест падает:**
+```rust
+// Добавьте отладку
+let snapshot = TelegramSnapshot::load_by_name("my_test")?;
+println!("Loaded: {:?}", snapshot);
+```
+
+## 📞 Помощь
+
+- Документация: [docs/SNAPSHOT_TESTING.md](docs/SNAPSHOT_TESTING.md)
+- Примеры: [tests/bot_commands_test.rs](tests/bot_commands_test.rs)
+- Индекс: [tests/snapshots/SNAPSHOT_INDEX.md](tests/snapshots/SNAPSHOT_INDEX.md)
+
+---
+
+**Статус**: ✅ Полностью рабочая система
+**Тестов**: 18 passing
+**Покрытие**: Команды, настройки, загрузка, ошибки

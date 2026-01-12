@@ -13,7 +13,7 @@ Two bots now:
 
 ### Staging bot
 ```bash
-./run_staging.sh
+./scripts/run_staging.sh
 ```
 
 ## Why

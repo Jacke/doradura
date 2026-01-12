@@ -436,7 +436,7 @@ pub fn add_cookies_args(args: &mut Vec<&str>) {
             log::warn!("   1. Install Chrome extension: Get cookies.txt LOCALLY");
             log::warn!("   2. Go to youtube.com → login");
             log::warn!("   3. Click extension → Export → save as youtube_cookies.txt");
-            log::warn!("   4. Run: ./run_with_cookies.sh");
+            log::warn!("   4. Run: ./scripts/run_with_cookies.sh");
         }
 
         #[cfg(not(target_os = "macos"))]

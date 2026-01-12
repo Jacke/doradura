@@ -23,8 +23,8 @@ Using the `ios` client without cookies triggers the PO Token requirement.
 
 ## Verification
 ```bash
-./test_ytdlp.sh diagnostics     # should show chosen player_client
-./test_ytdlp.sh download        # download works without PO Token errors
+./scripts/test_ytdlp.sh diagnostics     # should show chosen player_client
+./scripts/test_ytdlp.sh download        # download works without PO Token errors
 ```
 
 ## Notes

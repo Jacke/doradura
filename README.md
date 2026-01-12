@@ -125,7 +125,7 @@ For sending files larger than 50 MB (up to 2 GB), you can use a local Bot API se
 
 1. **Quick start with Docker:**
    ```bash
-   ./start_local_bot_api.sh
+   ./scripts/start_local_bot_api.sh
    ```
    
    See [LOCAL_BOT_API_SETUP.md](docs/LOCAL_BOT_API_SETUP.md) for detailed instructions.
