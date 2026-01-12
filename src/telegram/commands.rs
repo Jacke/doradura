@@ -1190,7 +1190,14 @@ async fn process_video_clip(
     let status = bot.send_message(chat_id, status_msg).await?;
 
     let temp_dir = std::path::PathBuf::from(crate::core::config::TEMP_FILES_DIR.as_str()).join("doradura_clip");
-    tokio::fs::create_dir_all(&temp_dir).await.ok();
+    if let Err(e) = tokio::fs::create_dir_all(&temp_dir).await {
+        log::error!("❌ Failed to create temp directory {:?}: {}", temp_dir, e);
+        bot.send_message(chat_id, "❌ Ошибка создания временной директории")
+            .await
+            .ok();
+        return Err(AppError::Io(e));
+    }
+    log::info!("📂 Temp directory ready: {:?}", temp_dir);
 
     let input_path = temp_dir.join(format!("input_{}_{}.mp4", chat_id.0, session.source_id));
     let output_path = temp_dir.join(format!(
@@ -1638,7 +1645,10 @@ async fn process_audio_cut(
         .await?;
 
     let temp_dir = std::path::PathBuf::from(crate::core::config::TEMP_FILES_DIR.as_str()).join("doradura_audio_cut");
-    tokio::fs::create_dir_all(&temp_dir).await.ok();
+    if let Err(e) = tokio::fs::create_dir_all(&temp_dir).await {
+        log::error!("❌ Failed to create temp directory {:?}: {}", temp_dir, e);
+        return Err(AppError::Io(e));
+    }
 
     let output_path = temp_dir.join(format!("cut_audio_{}_{}.mp3", chat_id.0, uuid::Uuid::new_v4()));
     let filter = build_cut_filter(&segments, false, true);
