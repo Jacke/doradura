@@ -1076,10 +1076,11 @@ pub async fn handle_charges_command(
 /// * `Err(anyhow::Error)` - If download fails
 ///
 /// # Example
-/// ```no_run
-/// # use doradura::telegram::download_file_from_telegram;
+/// ```ignore
+/// # use doradura::telegram::{Bot, download_file_from_telegram};
 /// # async fn run() -> anyhow::Result<()> {
-/// let bot = teloxide::Bot::new("BOT_TOKEN");
+/// let teloxide_bot = teloxide::Bot::new("BOT_TOKEN");
+/// let bot = Bot::new(teloxide_bot);
 /// let path = download_file_from_telegram(&bot, "BQACAgIAAxkBAAIBCGXxxx...", None).await?;
 /// println!("File saved to: {:?}", path);
 /// # Ok(())
