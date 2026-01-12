@@ -1208,6 +1208,13 @@ pub async fn download_file_from_telegram(
                         }
                     } else {
                         log::warn!("⚠️ File not found yet at {:?}", source_path);
+                        // Try to check if parent directory exists and is accessible
+                        if let Some(parent) = source_path.parent() {
+                            match tokio::fs::metadata(parent).await {
+                                Ok(_) => log::info!("✅ Parent directory exists: {:?}", parent),
+                                Err(e) => log::error!("❌ Cannot access parent directory {:?}: {}", parent, e),
+                            }
+                        }
                     }
 
                     if attempt < max_attempts {
