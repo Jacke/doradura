@@ -67,7 +67,7 @@ yt-dlp --cookies youtube_cookies.txt --print "%(title)s" "https://www.youtube.co
 
 ## Quick verification script
 ```bash
-./test_ytdlp.sh diagnostics
+./scripts/test_ytdlp.sh diagnostics
 ```
 Shows whether cookies are configured and usable.
 
