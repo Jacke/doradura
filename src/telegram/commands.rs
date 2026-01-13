@@ -1164,6 +1164,60 @@ async fn process_video_clip(
         }
     };
 
+    // Check if file is still accessible before processing
+    log::info!("🔍 Checking file accessibility: file_id={}", file_id);
+    match bot.get_file(teloxide::types::FileId(file_id.clone())).await {
+        Ok(file_info) => {
+            log::info!("✅ File accessible: path={}, size={}", file_info.path, file_info.size);
+
+            // For local Bot API, also check if file exists on disk
+            if let Ok(data_dir) = std::env::var("BOT_API_DATA_DIR") {
+                let prefixes = ["/data/", "/telegram-bot-api/"];
+                for prefix in &prefixes {
+                    if let Some(rel_path) = file_info.path.strip_prefix(prefix) {
+                        let local_path = std::path::Path::new(&data_dir).join(rel_path);
+                        match tokio::fs::metadata(&local_path).await {
+                            Ok(meta) => {
+                                if meta.len() == 0 {
+                                    log::warn!("⚠️ File exists but is empty: {:?}", local_path);
+                                    bot.send_message(
+                                        chat_id,
+                                        "❌ Файл повреждён или пуст. Скачай видео заново и попробуй ещё раз.",
+                                    )
+                                    .await
+                                    .ok();
+                                    return Ok(());
+                                }
+                                log::info!("✅ Local file verified: {:?} ({} bytes)", local_path, meta.len());
+                            }
+                            Err(e) => {
+                                log::error!("❌ Cannot access local file {:?}: {}", local_path, e);
+                                bot.send_message(
+                                    chat_id,
+                                    "❌ Файл недоступен или был удалён. Скачай видео заново и попробуй ещё раз.",
+                                )
+                                .await
+                                .ok();
+                                return Ok(());
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("❌ File not accessible: file_id={}, error={}", file_id, e);
+            bot.send_message(
+                chat_id,
+                "❌ Файл больше недоступен (возможно, был удалён). Скачай видео заново и попробуй ещё раз.",
+            )
+            .await
+            .ok();
+            return Ok(());
+        }
+    }
+
     let status_msg = if let Some(spd) = speed {
         let mut args = FluentArgs::new();
         args.set("segments", segments_text.as_str());

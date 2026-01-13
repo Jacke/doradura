@@ -984,6 +984,10 @@ pub struct SentFile {
     pub downloaded_at: String,
     /// Telegram file_id
     pub file_id: String,
+    /// Telegram message_id (for MTProto refresh)
+    pub message_id: Option<i32>,
+    /// Chat ID where message was sent
+    pub chat_id: Option<i64>,
 }
 
 /// Получает список файлов с file_id для администратора.
@@ -1000,7 +1004,8 @@ pub struct SentFile {
 pub fn get_sent_files(conn: &DbConnection, limit: Option<i32>) -> Result<Vec<SentFile>> {
     let limit = limit.unwrap_or(50);
     let mut stmt = conn.prepare(
-        "SELECT dh.id, dh.user_id, u.username, dh.url, dh.title, dh.format, dh.downloaded_at, dh.file_id
+        "SELECT dh.id, dh.user_id, u.username, dh.url, dh.title, dh.format, dh.downloaded_at, dh.file_id,
+                dh.message_id, dh.chat_id
          FROM download_history dh
          LEFT JOIN users u ON dh.user_id = u.telegram_id
          WHERE dh.file_id IS NOT NULL
@@ -1017,6 +1022,8 @@ pub fn get_sent_files(conn: &DbConnection, limit: Option<i32>) -> Result<Vec<Sen
             format: row.get(5)?,
             downloaded_at: row.get(6)?,
             file_id: row.get(7)?,
+            message_id: row.get(8)?,
+            chat_id: row.get(9)?,
         })
     })?;
 
@@ -1839,6 +1846,26 @@ pub fn update_session_file_id(conn: &DbConnection, session_id: &str, file_id: &s
     conn.execute(
         "UPDATE audio_effect_sessions SET telegram_file_id = ?1 WHERE id = ?2",
         [file_id, session_id],
+    )?;
+    Ok(())
+}
+
+/// Update download history with message_id and chat_id for MTProto refresh
+///
+/// This allows fetching fresh file_reference via messages.getMessages
+pub fn update_download_message_id(conn: &DbConnection, download_id: i64, message_id: i32, chat_id: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE download_history SET message_id = ?1, chat_id = ?2 WHERE id = ?3",
+        rusqlite::params![message_id, chat_id, download_id],
+    )?;
+    Ok(())
+}
+
+/// Update cut entry with message_id and chat_id for MTProto refresh
+pub fn update_cut_message_id(conn: &DbConnection, cut_id: i64, message_id: i32, chat_id: i64) -> Result<()> {
+    conn.execute(
+        "UPDATE cuts SET message_id = ?1, chat_id = ?2 WHERE id = ?3",
+        rusqlite::params![message_id, chat_id, cut_id],
     )?;
     Ok(())
 }
