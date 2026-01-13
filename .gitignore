@@ -38,4 +38,4 @@ prometheus_data/
 grafana_data/
 alertmanager_data/
 grafana/grafana.ini
-bot.log
+bot.logmtproto_session.bin
