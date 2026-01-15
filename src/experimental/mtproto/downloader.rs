@@ -7,8 +7,42 @@ use grammers_tl_types as tl;
 use std::path::Path;
 use tokio::io::AsyncWriteExt;
 
-/// Chunk size for file downloads (1MB)
-const CHUNK_SIZE: i64 = 1024 * 1024;
+/// Information about a message (with or without media)
+#[derive(Debug, Clone)]
+pub struct MessageInfo {
+    /// Message ID
+    pub id: i32,
+    /// Unix timestamp of the message
+    pub date: i32,
+    /// Text content of the message
+    pub text: String,
+    /// From user ID (if available)
+    pub from_id: Option<i64>,
+    /// Peer ID (chat/user)
+    pub peer_id: PeerInfo,
+    /// Media info if message has media
+    pub media: Option<MediaInfo>,
+    /// Is outgoing message (sent by bot)
+    pub out: bool,
+}
+
+/// Peer information
+#[derive(Debug, Clone)]
+pub struct PeerInfo {
+    pub peer_type: PeerType,
+    pub id: i64,
+}
+
+/// Type of peer
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeerType {
+    User,
+    Chat,
+    Channel,
+}
+
+/// Chunk size for file downloads (512KB - Telegram limit)
+const CHUNK_SIZE: i64 = 512 * 1024;
 
 /// Bot API response for getFile
 #[derive(Debug, serde::Deserialize)]
@@ -348,6 +382,26 @@ impl MtProtoDownloader {
 
         let mut media_list = Vec::new();
 
+        log::debug!("Received {} messages", message_list.len());
+        for msg in &message_list {
+            match msg {
+                tl::enums::Message::Message(m) => {
+                    log::debug!(
+                        "Message {}: has_media={}, peer_id={:?}",
+                        m.id,
+                        m.media.is_some(),
+                        m.peer_id
+                    );
+                }
+                tl::enums::Message::Service(s) => {
+                    log::debug!("Service message {}", s.id);
+                }
+                tl::enums::Message::Empty(e) => {
+                    log::debug!("Empty message {}", e.id);
+                }
+            }
+        }
+
         for msg in message_list {
             if let tl::enums::Message::Message(message) = msg {
                 if let Some(media) = message.media {
@@ -483,6 +537,180 @@ impl MtProtoDownloader {
 
         log::info!("Downloaded {} bytes to {:?}", bytes.len(), output_path);
         Ok(bytes.len() as u64)
+    }
+
+    /// Get specific messages by IDs for a user
+    ///
+    /// This uses messages.getMessages with peer to fetch specific messages from a private chat.
+    /// Note: Bots can use this but only for messages in chats where they participate.
+    ///
+    /// # Arguments
+    /// * `user_id` - Telegram user ID
+    /// * `access_hash` - User's access hash (can be 0 for users who messaged the bot)
+    /// * `message_ids` - List of message IDs to fetch
+    ///
+    /// # Returns
+    /// Vector of MessageInfo with message details and media info
+    pub async fn get_user_messages_by_ids(
+        &self,
+        user_id: i64,
+        access_hash: i64,
+        message_ids: &[i32],
+    ) -> Result<Vec<MessageInfo>, MtProtoError> {
+        log::info!("Getting {} messages for user {}", message_ids.len(), user_id);
+
+        let _input_peer = tl::enums::InputPeer::User(tl::types::InputPeerUser { user_id, access_hash });
+
+        // For bots, we need to use messages.getMessages which doesn't require peer
+        // but only works for messages the bot has access to
+        let input_messages: Vec<_> = message_ids
+            .iter()
+            .map(|&id| tl::enums::InputMessage::Id(tl::types::InputMessageId { id }))
+            .collect();
+
+        let messages = self
+            .client
+            .inner()
+            .invoke(&tl::functions::messages::GetMessages { id: input_messages })
+            .await
+            .map_err(MtProtoError::Invocation)?;
+
+        let message_list = match messages {
+            tl::enums::messages::Messages::Messages(m) => m.messages,
+            tl::enums::messages::Messages::Slice(m) => m.messages,
+            tl::enums::messages::Messages::ChannelMessages(m) => m.messages,
+            tl::enums::messages::Messages::NotModified(_) => vec![],
+        };
+
+        log::info!("Received {} messages", message_list.len());
+
+        self.parse_messages(message_list)
+    }
+
+    /// Get updates/messages that the bot received
+    ///
+    /// This uses updates.getState and other methods to get bot's messages.
+    /// Bots can access messages they sent or received in chats.
+    ///
+    /// # Arguments
+    /// * `message_ids` - List of message IDs to fetch (bot's own messages)
+    ///
+    /// # Returns
+    /// Vector of MessageInfo
+    pub async fn get_bot_messages(&self, message_ids: &[i32]) -> Result<Vec<MessageInfo>, MtProtoError> {
+        log::info!("Getting {} bot messages by ID", message_ids.len());
+
+        let input_messages: Vec<_> = message_ids
+            .iter()
+            .map(|&id| tl::enums::InputMessage::Id(tl::types::InputMessageId { id }))
+            .collect();
+
+        let messages = self
+            .client
+            .inner()
+            .invoke(&tl::functions::messages::GetMessages { id: input_messages })
+            .await
+            .map_err(MtProtoError::Invocation)?;
+
+        let message_list = match messages {
+            tl::enums::messages::Messages::Messages(m) => m.messages,
+            tl::enums::messages::Messages::Slice(m) => m.messages,
+            tl::enums::messages::Messages::ChannelMessages(m) => m.messages,
+            tl::enums::messages::Messages::NotModified(_) => vec![],
+        };
+
+        log::info!("Received {} messages", message_list.len());
+        self.parse_messages(message_list)
+    }
+
+    /// Parse message list into MessageInfo structs
+    fn parse_messages(&self, message_list: Vec<tl::enums::Message>) -> Result<Vec<MessageInfo>, MtProtoError> {
+        let mut result = Vec::new();
+
+        for msg in message_list {
+            if let tl::enums::Message::Message(message) = msg {
+                let peer_info = match &message.peer_id {
+                    tl::enums::Peer::User(u) => PeerInfo {
+                        peer_type: PeerType::User,
+                        id: u.user_id,
+                    },
+                    tl::enums::Peer::Chat(c) => PeerInfo {
+                        peer_type: PeerType::Chat,
+                        id: c.chat_id,
+                    },
+                    tl::enums::Peer::Channel(c) => PeerInfo {
+                        peer_type: PeerType::Channel,
+                        id: c.channel_id,
+                    },
+                };
+
+                let from_id = message.from_id.as_ref().and_then(|p| match p {
+                    tl::enums::Peer::User(u) => Some(u.user_id),
+                    _ => None,
+                });
+
+                let media_info = message
+                    .media
+                    .as_ref()
+                    .and_then(|m| self.extract_media_info(m, message.id, message.date));
+
+                result.push(MessageInfo {
+                    id: message.id,
+                    date: message.date,
+                    text: message.message,
+                    from_id,
+                    peer_id: peer_info,
+                    media: media_info,
+                    out: message.out,
+                });
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Get dialogs (list of chats) to find users who messaged the bot
+    ///
+    /// # Returns
+    /// Vector of (user_id, access_hash, name) for users
+    pub async fn get_dialogs(&self, limit: i32) -> Result<Vec<(i64, i64, String)>, MtProtoError> {
+        log::info!("Getting dialogs (limit: {})", limit);
+
+        let dialogs = self
+            .client
+            .inner()
+            .invoke(&tl::functions::messages::GetDialogs {
+                exclude_pinned: false,
+                folder_id: None,
+                offset_date: 0,
+                offset_id: 0,
+                offset_peer: tl::enums::InputPeer::Empty,
+                limit,
+                hash: 0,
+            })
+            .await
+            .map_err(MtProtoError::Invocation)?;
+
+        let users = match dialogs {
+            tl::enums::messages::Dialogs::Dialogs(d) => d.users,
+            tl::enums::messages::Dialogs::Slice(d) => d.users,
+            tl::enums::messages::Dialogs::NotModified(_) => vec![],
+        };
+
+        let mut result = Vec::new();
+        for user in users {
+            if let tl::enums::User::User(u) = user {
+                let name = format!(
+                    "{}{}",
+                    u.first_name.as_deref().unwrap_or(""),
+                    u.last_name.as_ref().map(|l| format!(" {}", l)).unwrap_or_default()
+                );
+                result.push((u.id, u.access_hash.unwrap_or(0), name));
+            }
+        }
+
+        log::info!("Found {} users in dialogs", result.len());
+        Ok(result)
     }
 }
 
