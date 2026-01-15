@@ -3470,3 +3470,296 @@ async fn show_help_menu(bot: &Bot, chat_id: ChatId, message_id: MessageId) -> Re
 
     edit_caption_or_text(bot, chat_id, message_id, text.to_string(), Some(keyboard)).await
 }
+
+// ==================== Pure Helper Functions ====================
+// These functions are extracted for testing purposes and may be used in production later
+
+#[allow(dead_code)]
+/// Formats video quality for display
+fn format_video_quality_display(quality: &str) -> &'static str {
+    match quality {
+        "1080p" => "🎬 1080p",
+        "720p" => "🎬 720p",
+        "480p" => "🎬 480p",
+        "360p" => "🎬 360p",
+        _ => "🎬 Best",
+    }
+}
+
+#[allow(dead_code)]
+/// Formats audio bitrate for display
+fn format_audio_bitrate_display(bitrate: &str) -> &'static str {
+    match bitrate {
+        "128k" => "128 kbps",
+        "192k" => "192 kbps",
+        "256k" => "256 kbps",
+        "320k" => "320 kbps",
+        _ => "320 kbps",
+    }
+}
+
+#[allow(dead_code)]
+/// Formats download format for display
+fn format_download_format_display(format: &str) -> &'static str {
+    match format {
+        "mp3" => "🎵 MP3",
+        "mp4" => "🎬 MP4",
+        "mp4+mp3" => "🎬🎵 MP4 + MP3",
+        "srt" => "📝 SRT",
+        "txt" => "📄 TXT",
+        _ => "🎵 MP3",
+    }
+}
+
+#[allow(dead_code)]
+/// Formats subscription plan for display
+fn format_plan_display(plan: &str) -> &'static str {
+    match plan {
+        "vip" => "💎 VIP",
+        "premium" => "⭐ Premium",
+        _ => "🆓 Free",
+    }
+}
+
+#[allow(dead_code)]
+/// Builds a format callback string with optional preview context
+fn build_format_callback(format: &str, url_id: Option<&str>, preview_msg_id: Option<i32>) -> String {
+    match (url_id, preview_msg_id) {
+        (Some(id), Some(msg_id)) => format!("format:{}:preview:{}:{}", format, id, msg_id),
+        (Some(id), None) => format!("format:{}:preview:{}", format, id),
+        _ => format!("format:{}", format),
+    }
+}
+
+#[allow(dead_code)]
+/// Builds a back callback string with optional preview context
+fn build_back_callback(url_id: Option<&str>, preview_msg_id: Option<i32>) -> String {
+    match (url_id, preview_msg_id) {
+        (Some(id), Some(msg_id)) => format!("back:preview:{}:{}", id, msg_id),
+        (Some(id), None) => format!("back:preview:{}", id),
+        _ => "back:main".to_string(),
+    }
+}
+
+#[allow(dead_code)]
+/// Builds a mode callback string with optional preview context
+fn build_mode_callback(mode: &str, url_id: Option<&str>) -> String {
+    match url_id {
+        Some(id) => format!("mode:{}:preview:{}", mode, id),
+        None => format!("mode:{}", mode),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== escape_markdown Tests ====================
+
+    #[test]
+    fn test_escape_markdown_basic() {
+        assert_eq!(escape_markdown("hello"), "hello");
+        assert_eq!(escape_markdown("hello world"), "hello world");
+    }
+
+    #[test]
+    fn test_escape_markdown_special_chars() {
+        assert_eq!(escape_markdown("hello_world"), "hello\\_world");
+        assert_eq!(escape_markdown("hello*world"), "hello\\*world");
+        assert_eq!(escape_markdown("hello.world"), "hello\\.world");
+    }
+
+    #[test]
+    fn test_escape_markdown_brackets() {
+        assert_eq!(escape_markdown("(test)"), "\\(test\\)");
+        assert_eq!(escape_markdown("[test]"), "\\[test\\]");
+        assert_eq!(escape_markdown("{test}"), "\\{test\\}");
+    }
+
+    #[test]
+    fn test_escape_markdown_all_special() {
+        let input = r"_*[]()~`>#+-=|{}.!";
+        let expected = r"\_\*\[\]\(\)\~\`\>\#\+\-\=\|\{\}\.\!";
+        assert_eq!(escape_markdown(input), expected);
+    }
+
+    #[test]
+    fn test_escape_markdown_empty() {
+        assert_eq!(escape_markdown(""), "");
+    }
+
+    #[test]
+    fn test_escape_markdown_cyrillic() {
+        assert_eq!(escape_markdown("Привет мир!"), "Привет мир\\!");
+    }
+
+    // ==================== Format Display Functions ====================
+
+    #[test]
+    fn test_format_video_quality_display() {
+        assert_eq!(format_video_quality_display("1080p"), "🎬 1080p");
+        assert_eq!(format_video_quality_display("720p"), "🎬 720p");
+        assert_eq!(format_video_quality_display("480p"), "🎬 480p");
+        assert_eq!(format_video_quality_display("360p"), "🎬 360p");
+        assert_eq!(format_video_quality_display("best"), "🎬 Best");
+        assert_eq!(format_video_quality_display("unknown"), "🎬 Best");
+    }
+
+    #[test]
+    fn test_format_audio_bitrate_display() {
+        assert_eq!(format_audio_bitrate_display("128k"), "128 kbps");
+        assert_eq!(format_audio_bitrate_display("192k"), "192 kbps");
+        assert_eq!(format_audio_bitrate_display("256k"), "256 kbps");
+        assert_eq!(format_audio_bitrate_display("320k"), "320 kbps");
+        assert_eq!(format_audio_bitrate_display("unknown"), "320 kbps");
+    }
+
+    #[test]
+    fn test_format_download_format_display() {
+        assert_eq!(format_download_format_display("mp3"), "🎵 MP3");
+        assert_eq!(format_download_format_display("mp4"), "🎬 MP4");
+        assert_eq!(format_download_format_display("mp4+mp3"), "🎬🎵 MP4 + MP3");
+        assert_eq!(format_download_format_display("srt"), "📝 SRT");
+        assert_eq!(format_download_format_display("txt"), "📄 TXT");
+        assert_eq!(format_download_format_display("unknown"), "🎵 MP3");
+    }
+
+    #[test]
+    fn test_format_plan_display() {
+        assert_eq!(format_plan_display("vip"), "💎 VIP");
+        assert_eq!(format_plan_display("premium"), "⭐ Premium");
+        assert_eq!(format_plan_display("free"), "🆓 Free");
+        assert_eq!(format_plan_display("unknown"), "🆓 Free");
+    }
+
+    // ==================== Callback Builders ====================
+
+    #[test]
+    fn test_build_format_callback_simple() {
+        assert_eq!(build_format_callback("mp3", None, None), "format:mp3");
+        assert_eq!(build_format_callback("mp4", None, None), "format:mp4");
+    }
+
+    #[test]
+    fn test_build_format_callback_with_preview() {
+        assert_eq!(
+            build_format_callback("mp3", Some("url123"), None),
+            "format:mp3:preview:url123"
+        );
+    }
+
+    #[test]
+    fn test_build_format_callback_with_preview_and_msg() {
+        assert_eq!(
+            build_format_callback("mp4", Some("url123"), Some(456)),
+            "format:mp4:preview:url123:456"
+        );
+    }
+
+    #[test]
+    fn test_build_back_callback_simple() {
+        assert_eq!(build_back_callback(None, None), "back:main");
+    }
+
+    #[test]
+    fn test_build_back_callback_with_preview() {
+        assert_eq!(build_back_callback(Some("url123"), None), "back:preview:url123");
+        assert_eq!(
+            build_back_callback(Some("url123"), Some(789)),
+            "back:preview:url123:789"
+        );
+    }
+
+    #[test]
+    fn test_build_mode_callback_simple() {
+        assert_eq!(build_mode_callback("video_quality", None), "mode:video_quality");
+        assert_eq!(build_mode_callback("audio_bitrate", None), "mode:audio_bitrate");
+    }
+
+    #[test]
+    fn test_build_mode_callback_with_preview() {
+        assert_eq!(
+            build_mode_callback("video_quality", Some("url123")),
+            "mode:video_quality:preview:url123"
+        );
+    }
+
+    // ==================== create_audio_effects_keyboard Tests ====================
+
+    #[test]
+    fn test_create_audio_effects_keyboard_default_values() {
+        use crate::download::audio_effects::MorphProfile;
+        let keyboard = create_audio_effects_keyboard("session123", 0, 1.0, 0, MorphProfile::None);
+
+        // Keyboard should have 9 rows (2 pitch + 2 tempo + 2 bass + 1 morph + 1 action + 1 skip)
+        assert_eq!(keyboard.inline_keyboard.len(), 9);
+    }
+
+    #[test]
+    fn test_create_audio_effects_keyboard_with_changes() {
+        use crate::download::audio_effects::MorphProfile;
+        let keyboard = create_audio_effects_keyboard("session456", 2, 1.5, 3, MorphProfile::Lofi);
+
+        // Verify the keyboard is created correctly
+        assert!(!keyboard.inline_keyboard.is_empty());
+
+        // Find the morph row (row 6, 0-indexed)
+        let morph_row = &keyboard.inline_keyboard[6];
+        let morph_button = &morph_row[0];
+        // LoFi profile should show "LoFi" in the button text
+        assert!(
+            morph_button.text.contains("LoFi"),
+            "Morph button: {}",
+            morph_button.text
+        );
+    }
+
+    #[test]
+    fn test_create_audio_effects_keyboard_action_row() {
+        use crate::download::audio_effects::MorphProfile;
+        let keyboard = create_audio_effects_keyboard("test_id", 0, 1.0, 0, MorphProfile::None);
+
+        // Action row (row 7, 0-indexed) should have Apply and Reset buttons
+        let action_row = &keyboard.inline_keyboard[7];
+        assert!(action_row[0].text.contains("Apply"), "Button: {}", action_row[0].text);
+    }
+
+    #[test]
+    fn test_create_audio_effects_keyboard_skip_row() {
+        use crate::download::audio_effects::MorphProfile;
+        let keyboard = create_audio_effects_keyboard("test_id", 0, 1.0, 0, MorphProfile::None);
+
+        // Skip row should be the last row (row 8, 0-indexed)
+        let skip_row = &keyboard.inline_keyboard[8];
+        assert!(skip_row[0].text.contains("Skip"), "Button: {}", skip_row[0].text);
+    }
+
+    // ==================== build_enhanced_menu Tests ====================
+
+    #[test]
+    fn test_build_enhanced_menu_returns_keyboard() {
+        let lang = i18n::lang_from_code("en");
+        let (text, keyboard) = build_enhanced_menu(&lang, "🎵 MP3", "🎬 720p / 🎵 320 kbps", "⭐ Premium");
+
+        // Text should not be empty
+        assert!(!text.is_empty());
+
+        // Keyboard should have 4 rows
+        assert_eq!(keyboard.inline_keyboard.len(), 4);
+    }
+
+    #[test]
+    fn test_build_enhanced_menu_keyboard_structure() {
+        let lang = i18n::lang_from_code("ru");
+        let (_, keyboard) = build_enhanced_menu(&lang, "🎵 MP3", "🎬 Best / 🎵 320 kbps", "🆓 Free");
+
+        // First row: Settings + Current
+        assert_eq!(keyboard.inline_keyboard[0].len(), 2);
+        // Second row: Stats + History
+        assert_eq!(keyboard.inline_keyboard[1].len(), 2);
+        // Third row: Services + Subscription
+        assert_eq!(keyboard.inline_keyboard[2].len(), 2);
+        // Fourth row: Language + Feedback
+        assert_eq!(keyboard.inline_keyboard[3].len(), 2);
+    }
+}

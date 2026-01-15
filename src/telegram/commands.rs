@@ -2257,3 +2257,521 @@ fn escape_markdown(text: &str) -> String {
 
     result
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== is_cancel_text tests ====================
+
+    #[test]
+    fn test_is_cancel_text_russian() {
+        assert!(is_cancel_text("отмена"));
+        assert!(is_cancel_text("Отмена"));
+        assert!(is_cancel_text("ОТМЕНА"));
+        assert!(is_cancel_text("  отмена  "));
+    }
+
+    #[test]
+    fn test_is_cancel_text_english() {
+        assert!(is_cancel_text("cancel"));
+        assert!(is_cancel_text("Cancel"));
+        assert!(is_cancel_text("CANCEL"));
+        assert!(is_cancel_text("/cancel"));
+    }
+
+    #[test]
+    fn test_is_cancel_text_symbols() {
+        assert!(is_cancel_text("❌"));
+        assert!(is_cancel_text("x"));
+        assert!(is_cancel_text("X"));
+    }
+
+    #[test]
+    fn test_is_cancel_text_invalid() {
+        assert!(!is_cancel_text("hello"));
+        assert!(!is_cancel_text(""));
+        assert!(!is_cancel_text("cancellation"));
+        assert!(!is_cancel_text("отменить"));
+    }
+
+    // ==================== parse_timestamp_secs tests ====================
+
+    #[test]
+    fn test_parse_timestamp_secs_mmss() {
+        assert_eq!(parse_timestamp_secs("00:00"), Some(0));
+        assert_eq!(parse_timestamp_secs("01:30"), Some(90));
+        assert_eq!(parse_timestamp_secs("10:00"), Some(600));
+        assert_eq!(parse_timestamp_secs("59:59"), Some(3599));
+    }
+
+    #[test]
+    fn test_parse_timestamp_secs_hhmmss() {
+        assert_eq!(parse_timestamp_secs("00:00:00"), Some(0));
+        assert_eq!(parse_timestamp_secs("01:00:00"), Some(3600));
+        assert_eq!(parse_timestamp_secs("01:30:45"), Some(5445));
+        assert_eq!(parse_timestamp_secs("10:15:30"), Some(36930));
+    }
+
+    #[test]
+    fn test_parse_timestamp_secs_invalid() {
+        assert_eq!(parse_timestamp_secs(""), None);
+        assert_eq!(parse_timestamp_secs("invalid"), None);
+        assert_eq!(parse_timestamp_secs("1:2:3:4"), None);
+        assert_eq!(parse_timestamp_secs("00:60"), None); // 60 seconds invalid
+        assert_eq!(parse_timestamp_secs("00:-1"), None);
+    }
+
+    // ==================== format_timestamp tests ====================
+
+    #[test]
+    fn test_format_timestamp_mmss() {
+        assert_eq!(format_timestamp(0), "00:00");
+        assert_eq!(format_timestamp(30), "00:30");
+        assert_eq!(format_timestamp(90), "01:30");
+        assert_eq!(format_timestamp(3599), "59:59");
+    }
+
+    #[test]
+    fn test_format_timestamp_hhmmss() {
+        assert_eq!(format_timestamp(3600), "01:00:00");
+        assert_eq!(format_timestamp(5445), "01:30:45");
+        assert_eq!(format_timestamp(36000), "10:00:00");
+    }
+
+    #[test]
+    fn test_format_timestamp_negative() {
+        // Negative values should be treated as 0
+        assert_eq!(format_timestamp(-10), "00:00");
+    }
+
+    // ==================== parse_time_range_secs tests ====================
+
+    #[test]
+    fn test_parse_time_range_secs_valid() {
+        assert_eq!(parse_time_range_secs("00:00-00:30"), Some((0, 30)));
+        assert_eq!(parse_time_range_secs("01:00-02:00"), Some((60, 120)));
+        assert_eq!(parse_time_range_secs("00:10-01:30:00"), Some((10, 5400)));
+    }
+
+    #[test]
+    fn test_parse_time_range_secs_special_dashes() {
+        // Em dash, en dash, minus sign
+        assert_eq!(parse_time_range_secs("00:00—00:30"), Some((0, 30)));
+        assert_eq!(parse_time_range_secs("00:00–00:30"), Some((0, 30)));
+        assert_eq!(parse_time_range_secs("00:00−00:30"), Some((0, 30)));
+    }
+
+    #[test]
+    fn test_parse_time_range_secs_with_spaces() {
+        assert_eq!(parse_time_range_secs("  00:00 - 00:30  "), Some((0, 30)));
+    }
+
+    #[test]
+    fn test_parse_time_range_secs_invalid() {
+        assert_eq!(parse_time_range_secs("00:30-00:00"), None); // End before start
+        assert_eq!(parse_time_range_secs("00:00-00:00"), None); // Same time
+        assert_eq!(parse_time_range_secs("invalid"), None);
+        assert_eq!(parse_time_range_secs("00:00"), None); // No range
+    }
+
+    // ==================== parse_command_segment tests ====================
+
+    #[test]
+    fn test_parse_command_segment_full() {
+        let result = parse_command_segment("full", Some(120));
+        assert!(result.is_some());
+        let (start, end, text) = result.unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(end, 60); // Capped at 60 for video notes
+        assert_eq!(text, "00:00-01:00");
+    }
+
+    #[test]
+    fn test_parse_command_segment_first() {
+        let result = parse_command_segment("first30", Some(120));
+        assert!(result.is_some());
+        let (start, end, _) = result.unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(end, 30);
+
+        let result = parse_command_segment("first15", Some(120));
+        assert!(result.is_some());
+        let (start, end, _) = result.unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(end, 15);
+    }
+
+    #[test]
+    fn test_parse_command_segment_last() {
+        let result = parse_command_segment("last30", Some(120));
+        assert!(result.is_some());
+        let (start, end, _) = result.unwrap();
+        assert_eq!(start, 90);
+        assert_eq!(end, 120);
+    }
+
+    #[test]
+    fn test_parse_command_segment_middle() {
+        let result = parse_command_segment("middle30", Some(120));
+        assert!(result.is_some());
+        let (start, end, _) = result.unwrap();
+        assert_eq!(start, 45); // (120-30)/2 = 45
+        assert_eq!(end, 75);
+    }
+
+    #[test]
+    fn test_parse_command_segment_with_speed() {
+        // Speed modifier should be stripped for segment parsing
+        let result = parse_command_segment("first30 2x", Some(120));
+        assert!(result.is_some());
+        let (start, end, _) = result.unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(end, 30);
+    }
+
+    #[test]
+    fn test_parse_command_segment_invalid() {
+        assert!(parse_command_segment("full", None).is_none()); // No duration
+        assert!(parse_command_segment("first0", Some(120)).is_none()); // Zero seconds
+        assert!(parse_command_segment("first61", Some(120)).is_none()); // Over 60 limit
+        assert!(parse_command_segment("invalid", Some(120)).is_none());
+    }
+
+    // ==================== parse_speed_modifier tests ====================
+
+    #[test]
+    fn test_parse_speed_modifier_suffix_x() {
+        assert_eq!(parse_speed_modifier("2x"), Some(2.0));
+        assert_eq!(parse_speed_modifier("1.5x"), Some(1.5));
+        assert_eq!(parse_speed_modifier("0.5x"), Some(0.5));
+    }
+
+    #[test]
+    fn test_parse_speed_modifier_prefix_x() {
+        assert_eq!(parse_speed_modifier("x2"), Some(2.0));
+        assert_eq!(parse_speed_modifier("x1.5"), Some(1.5));
+    }
+
+    #[test]
+    fn test_parse_speed_modifier_speed_prefix() {
+        assert_eq!(parse_speed_modifier("speed2"), Some(2.0));
+        assert_eq!(parse_speed_modifier("speed1.5"), Some(1.5));
+    }
+
+    #[test]
+    fn test_parse_speed_modifier_in_text() {
+        assert_eq!(parse_speed_modifier("first30 2x"), Some(2.0));
+        assert_eq!(parse_speed_modifier("full speed1.5"), Some(1.5));
+    }
+
+    #[test]
+    fn test_parse_speed_modifier_invalid() {
+        assert_eq!(parse_speed_modifier(""), None);
+        assert_eq!(parse_speed_modifier("fast"), None);
+        assert_eq!(parse_speed_modifier("3x"), None); // Over 2.0 limit
+        assert_eq!(parse_speed_modifier("0x"), None); // Zero not allowed
+    }
+
+    // ==================== parse_segments_spec tests ====================
+
+    #[test]
+    fn test_parse_segments_spec_time_ranges() {
+        let result = parse_segments_spec("00:00-00:30", None);
+        assert!(result.is_some());
+        let (segments, text, speed) = result.unwrap();
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].start_secs, 0);
+        assert_eq!(segments[0].end_secs, 30);
+        assert_eq!(text, "00:00-00:30");
+        assert!(speed.is_none());
+    }
+
+    #[test]
+    fn test_parse_segments_spec_multiple_ranges() {
+        let result = parse_segments_spec("00:00-00:10, 00:30-00:40", None);
+        assert!(result.is_some());
+        let (segments, text, _) = result.unwrap();
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].start_secs, 0);
+        assert_eq!(segments[0].end_secs, 10);
+        assert_eq!(segments[1].start_secs, 30);
+        assert_eq!(segments[1].end_secs, 40);
+        assert_eq!(text, "00:00-00:10, 00:30-00:40");
+    }
+
+    #[test]
+    fn test_parse_segments_spec_command() {
+        let result = parse_segments_spec("first30", Some(120));
+        assert!(result.is_some());
+        let (segments, _, _) = result.unwrap();
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].start_secs, 0);
+        assert_eq!(segments[0].end_secs, 30);
+    }
+
+    #[test]
+    fn test_parse_segments_spec_with_speed() {
+        let result = parse_segments_spec("first30 2x", Some(120));
+        assert!(result.is_some());
+        let (_, _, speed) = result.unwrap();
+        assert_eq!(speed, Some(2.0));
+    }
+
+    #[test]
+    fn test_parse_segments_spec_invalid() {
+        assert!(parse_segments_spec("", None).is_none());
+        assert!(parse_segments_spec("invalid", None).is_none());
+    }
+
+    // ==================== parse_audio_segments_spec tests ====================
+
+    #[test]
+    fn test_parse_audio_segments_spec_time_range() {
+        let result = parse_audio_segments_spec("00:00-01:00", None);
+        assert!(result.is_some());
+        let (segments, text) = result.unwrap();
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].start_secs, 0);
+        assert_eq!(segments[0].end_secs, 60);
+        assert_eq!(text, "00:00-01:00");
+    }
+
+    #[test]
+    fn test_parse_audio_segments_spec_full() {
+        let result = parse_audio_segments_spec("full", Some(300));
+        assert!(result.is_some());
+        let (segments, _) = result.unwrap();
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].start_secs, 0);
+        assert_eq!(segments[0].end_secs, 300); // Full duration, no cap
+    }
+
+    #[test]
+    fn test_parse_audio_segments_spec_first() {
+        let result = parse_audio_segments_spec("first60", Some(300));
+        assert!(result.is_some());
+        let (segments, _) = result.unwrap();
+        assert_eq!(segments[0].start_secs, 0);
+        assert_eq!(segments[0].end_secs, 60);
+    }
+
+    // ==================== parse_audio_command_segment tests ====================
+
+    #[test]
+    fn test_parse_audio_command_segment_full() {
+        let result = parse_audio_command_segment("full", Some(300));
+        assert!(result.is_some());
+        let (start, end, _) = result.unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(end, 300);
+    }
+
+    #[test]
+    fn test_parse_audio_command_segment_first() {
+        let result = parse_audio_command_segment("first60", Some(300));
+        assert!(result.is_some());
+        let (start, end, _) = result.unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(end, 60);
+    }
+
+    #[test]
+    fn test_parse_audio_command_segment_last() {
+        let result = parse_audio_command_segment("last60", Some(300));
+        assert!(result.is_some());
+        let (start, end, _) = result.unwrap();
+        assert_eq!(start, 240);
+        assert_eq!(end, 300);
+    }
+
+    #[test]
+    fn test_parse_audio_command_segment_middle() {
+        let result = parse_audio_command_segment("middle60", Some(300));
+        assert!(result.is_some());
+        let (start, end, _) = result.unwrap();
+        assert_eq!(start, 120); // (300-60)/2 = 120
+        assert_eq!(end, 180);
+    }
+
+    #[test]
+    fn test_parse_audio_command_segment_no_duration() {
+        assert!(parse_audio_command_segment("full", None).is_none());
+    }
+
+    // ==================== build_cut_filter tests ====================
+
+    #[test]
+    fn test_build_cut_filter_single_segment_video_audio() {
+        let segments = vec![CutSegment {
+            start_secs: 0,
+            end_secs: 30,
+        }];
+        let filter = build_cut_filter(&segments, true, true);
+        assert!(filter.contains("[0:v]trim=start=0:end=30"));
+        assert!(filter.contains("[0:a]atrim=start=0:end=30"));
+        assert!(filter.contains("concat=n=1:v=1:a=1[v][a]"));
+    }
+
+    #[test]
+    fn test_build_cut_filter_video_only() {
+        let segments = vec![CutSegment {
+            start_secs: 10,
+            end_secs: 40,
+        }];
+        let filter = build_cut_filter(&segments, true, false);
+        assert!(filter.contains("[0:v]trim=start=10:end=40"));
+        assert!(!filter.contains("[0:a]atrim"));
+        assert!(filter.contains("concat=n=1:v=1:a=0[v]"));
+    }
+
+    #[test]
+    fn test_build_cut_filter_audio_only() {
+        let segments = vec![CutSegment {
+            start_secs: 0,
+            end_secs: 60,
+        }];
+        let filter = build_cut_filter(&segments, false, true);
+        assert!(!filter.contains("[0:v]trim"));
+        assert!(filter.contains("[0:a]atrim=start=0:end=60"));
+        assert!(filter.contains("concat=n=1:v=0:a=1[a]"));
+    }
+
+    #[test]
+    fn test_build_cut_filter_multiple_segments() {
+        let segments = vec![
+            CutSegment {
+                start_secs: 0,
+                end_secs: 10,
+            },
+            CutSegment {
+                start_secs: 30,
+                end_secs: 40,
+            },
+        ];
+        let filter = build_cut_filter(&segments, true, true);
+        assert!(filter.contains("[0:v]trim=start=0:end=10"));
+        assert!(filter.contains("[0:v]trim=start=30:end=40"));
+        assert!(filter.contains("[v0][a0][v1][a1]concat=n=2"));
+    }
+
+    // ==================== parse_downsub_options tests ====================
+
+    #[test]
+    fn test_parse_downsub_options_language() {
+        let tokens = vec!["lang=en"];
+        let options = parse_downsub_options(&tokens);
+        assert_eq!(options.language, Some("en".to_string()));
+        assert!(options.format.is_none());
+        assert!(options.phone.is_none());
+    }
+
+    #[test]
+    fn test_parse_downsub_options_format() {
+        let tokens = vec!["format=srt"];
+        let options = parse_downsub_options(&tokens);
+        assert_eq!(options.format, Some("srt".to_string()));
+    }
+
+    #[test]
+    fn test_parse_downsub_options_multiple() {
+        let tokens = vec!["lang=ru", "format=vtt", "phone=+1234567890"];
+        let options = parse_downsub_options(&tokens);
+        assert_eq!(options.language, Some("ru".to_string()));
+        assert_eq!(options.format, Some("vtt".to_string()));
+        assert_eq!(options.phone, Some("+1234567890".to_string()));
+    }
+
+    #[test]
+    fn test_parse_downsub_options_case_insensitive() {
+        let tokens = vec!["LANG=en", "Language=fr", "FORMAT=txt"];
+        let options = parse_downsub_options(&tokens);
+        // Last matching key wins
+        assert_eq!(options.language, Some("fr".to_string()));
+        assert_eq!(options.format, Some("txt".to_string()));
+    }
+
+    #[test]
+    fn test_parse_downsub_options_empty() {
+        let tokens: Vec<&str> = vec![];
+        let options = parse_downsub_options(&tokens);
+        assert!(options.language.is_none());
+        assert!(options.format.is_none());
+        assert!(options.phone.is_none());
+    }
+
+    #[test]
+    fn test_parse_downsub_options_invalid_tokens() {
+        let tokens = vec!["invalid", "no_equals_sign"];
+        let options = parse_downsub_options(&tokens);
+        assert!(options.language.is_none());
+        assert!(options.format.is_none());
+    }
+
+    // ==================== escape_markdown tests ====================
+
+    #[test]
+    fn test_escape_markdown_special_chars() {
+        assert_eq!(escape_markdown("hello_world"), "hello\\_world");
+        assert_eq!(escape_markdown("*bold*"), "\\*bold\\*");
+        assert_eq!(escape_markdown("[link](url)"), "\\[link\\]\\(url\\)");
+        assert_eq!(escape_markdown("`code`"), "\\`code\\`");
+    }
+
+    #[test]
+    fn test_escape_markdown_multiple_chars() {
+        let text = "Test_with*multiple[special]chars!";
+        let escaped = escape_markdown(text);
+        assert_eq!(escaped, "Test\\_with\\*multiple\\[special\\]chars\\!");
+    }
+
+    #[test]
+    fn test_escape_markdown_empty() {
+        assert_eq!(escape_markdown(""), "");
+    }
+
+    #[test]
+    fn test_escape_markdown_no_special() {
+        assert_eq!(escape_markdown("hello world"), "hello world");
+        assert_eq!(escape_markdown("normal text 123"), "normal text 123");
+    }
+
+    #[test]
+    fn test_escape_markdown_all_special_chars() {
+        // All special chars: _ * [ ] ( ) ~ ` > # + - = | { } . !
+        let all_special = "_*[]()~`>#+-=|{}.!";
+        let escaped = escape_markdown(all_special);
+        assert_eq!(escaped, "\\_\\*\\[\\]\\(\\)\\~\\`\\>\\#\\+\\-\\=\\|\\{\\}\\.\\!");
+    }
+
+    // ==================== CutSegment serialization tests ====================
+
+    #[test]
+    fn test_cut_segment_serialize() {
+        let segment = CutSegment {
+            start_secs: 10,
+            end_secs: 30,
+        };
+        let json = serde_json::to_string(&segment).unwrap();
+        assert!(json.contains("\"start_secs\":10"));
+        assert!(json.contains("\"end_secs\":30"));
+    }
+
+    // ==================== URL_REGEX tests ====================
+
+    #[test]
+    fn test_url_regex_matches() {
+        let text = "Check out https://youtube.com/watch?v=abc and http://example.com";
+        let urls: Vec<&str> = URL_REGEX.find_iter(text).map(|m| m.as_str()).collect();
+        assert_eq!(urls.len(), 2);
+        assert!(urls[0].starts_with("https://youtube.com"));
+        assert!(urls[1].starts_with("http://example.com"));
+    }
+
+    #[test]
+    fn test_url_regex_no_match() {
+        let text = "No URLs here";
+        let urls: Vec<&str> = URL_REGEX.find_iter(text).map(|m| m.as_str()).collect();
+        assert!(urls.is_empty());
+    }
+}

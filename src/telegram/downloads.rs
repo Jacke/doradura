@@ -1549,3 +1549,186 @@ fn escape_markdown(text: &str) -> String {
         .replace('.', "\\.")
         .replace('!', "\\!")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== format_file_size tests ====================
+
+    #[test]
+    fn test_format_file_size_bytes() {
+        assert_eq!(format_file_size(0), "0 B");
+        assert_eq!(format_file_size(1), "1 B");
+        assert_eq!(format_file_size(500), "500 B");
+        assert_eq!(format_file_size(1023), "1023 B");
+    }
+
+    #[test]
+    fn test_format_file_size_kilobytes() {
+        assert_eq!(format_file_size(1024), "1.0 KB");
+        assert_eq!(format_file_size(1536), "1.5 KB");
+        assert_eq!(format_file_size(102400), "100.0 KB");
+    }
+
+    #[test]
+    fn test_format_file_size_megabytes() {
+        assert_eq!(format_file_size(1024 * 1024), "1.0 MB");
+        assert_eq!(format_file_size(1024 * 1024 * 50), "50.0 MB");
+        assert_eq!(format_file_size(1024 * 1024 * 512), "512.0 MB");
+    }
+
+    #[test]
+    fn test_format_file_size_gigabytes() {
+        assert_eq!(format_file_size(1024 * 1024 * 1024), "1.00 GB");
+        assert_eq!(format_file_size(1024 * 1024 * 1024 * 2), "2.00 GB");
+    }
+
+    // ==================== format_duration tests ====================
+
+    #[test]
+    fn test_format_duration_seconds_only() {
+        assert_eq!(format_duration(0), "0:00");
+        assert_eq!(format_duration(5), "0:05");
+        assert_eq!(format_duration(30), "0:30");
+        assert_eq!(format_duration(59), "0:59");
+    }
+
+    #[test]
+    fn test_format_duration_minutes() {
+        assert_eq!(format_duration(60), "1:00");
+        assert_eq!(format_duration(90), "1:30");
+        assert_eq!(format_duration(600), "10:00");
+        assert_eq!(format_duration(3599), "59:59");
+    }
+
+    #[test]
+    fn test_format_duration_hours() {
+        assert_eq!(format_duration(3600), "1:00:00");
+        assert_eq!(format_duration(3661), "1:01:01");
+        assert_eq!(format_duration(7200), "2:00:00");
+        assert_eq!(format_duration(86399), "23:59:59");
+    }
+
+    // ==================== short_error_text tests ====================
+
+    #[test]
+    fn test_short_error_text_fits() {
+        assert_eq!(short_error_text("Short text", 50), "Short text");
+        assert_eq!(short_error_text("  Trimmed  ", 50), "Trimmed");
+    }
+
+    #[test]
+    fn test_short_error_text_truncated() {
+        let text = "This is a very long error message that should be truncated";
+        let result = short_error_text(text, 20);
+        assert!(result.len() <= 22); // 20 chars + ellipsis (UTF-8)
+        assert!(result.ends_with('…'));
+    }
+
+    #[test]
+    fn test_short_error_text_newlines() {
+        assert_eq!(short_error_text("Line1\nLine2\nLine3", 50), "Line1 Line2 Line3");
+    }
+
+    #[test]
+    fn test_short_error_text_empty() {
+        assert_eq!(short_error_text("", 10), "");
+        assert_eq!(short_error_text("   ", 10), "");
+    }
+
+    // ==================== is_file_too_big_error tests ====================
+
+    #[test]
+    fn test_is_file_too_big_error_true() {
+        // Create a mock error containing "file is too big"
+        let err = teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other("Error: file is too big")));
+        assert!(is_file_too_big_error(&err));
+    }
+
+    #[test]
+    fn test_is_file_too_big_error_case_insensitive() {
+        let err = teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other("FILE IS TOO BIG")));
+        assert!(is_file_too_big_error(&err));
+    }
+
+    #[test]
+    fn test_is_file_too_big_error_false() {
+        let err = teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other("Network error occurred")));
+        assert!(!is_file_too_big_error(&err));
+    }
+
+    // ==================== escape_markdown tests ====================
+
+    #[test]
+    fn test_escape_markdown_underscore() {
+        assert_eq!(escape_markdown("hello_world"), "hello\\_world");
+    }
+
+    #[test]
+    fn test_escape_markdown_asterisk() {
+        assert_eq!(escape_markdown("*bold*"), "\\*bold\\*");
+    }
+
+    #[test]
+    fn test_escape_markdown_brackets() {
+        assert_eq!(escape_markdown("[link](url)"), "\\[link\\]\\(url\\)");
+    }
+
+    #[test]
+    fn test_escape_markdown_all_special() {
+        let all_special = "_*[]()~`>#+-=|{}.!";
+        let escaped = escape_markdown(all_special);
+        assert_eq!(escaped, "\\_\\*\\[\\]\\(\\)\\~\\`\\>\\#\\+\\-\\=\\|\\{\\}\\.\\!");
+    }
+
+    #[test]
+    fn test_escape_markdown_no_special() {
+        assert_eq!(escape_markdown("hello world 123"), "hello world 123");
+    }
+
+    #[test]
+    fn test_escape_markdown_empty() {
+        assert_eq!(escape_markdown(""), "");
+    }
+
+    // ==================== forced_document_unavailable_notice tests ====================
+
+    #[test]
+    fn test_forced_document_notice_local_api_unavailable() {
+        let error = "Not available on local bot api server";
+        let notice = forced_document_unavailable_notice(error);
+        assert!(notice.is_some());
+        assert!(notice.unwrap().contains("локальный Bot API"));
+    }
+
+    #[test]
+    fn test_forced_document_notice_file_too_big() {
+        let error = "file is too big";
+        let notice = forced_document_unavailable_notice(error);
+        assert!(notice.is_some());
+        assert!(notice.unwrap().contains("Не могу принудительно отправить"));
+    }
+
+    #[test]
+    fn test_forced_document_notice_download_failed() {
+        let error = "telegram file download failed";
+        let notice = forced_document_unavailable_notice(error);
+        assert!(notice.is_some());
+        assert!(notice.unwrap().contains("не получилось скачать"));
+    }
+
+    #[test]
+    fn test_forced_document_notice_none() {
+        let error = "Some random error";
+        let notice = forced_document_unavailable_notice(error);
+        assert!(notice.is_none());
+    }
+
+    // ==================== ITEMS_PER_PAGE constant tests ====================
+
+    #[test]
+    fn test_items_per_page_value() {
+        assert_eq!(ITEMS_PER_PAGE, 5);
+    }
+}

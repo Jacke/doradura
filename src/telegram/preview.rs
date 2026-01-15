@@ -1480,3 +1480,327 @@ fn create_video_format_keyboard(
 
     InlineKeyboardMarkup::new(buttons)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== parse_resolution_string tests ====================
+
+    #[test]
+    fn test_parse_resolution_string_standard() {
+        assert_eq!(parse_resolution_string("1920x1080"), Some((1920, 1080)));
+        assert_eq!(parse_resolution_string("1280x720"), Some((1280, 720)));
+        assert_eq!(parse_resolution_string("640x480"), Some((640, 480)));
+    }
+
+    #[test]
+    fn test_parse_resolution_string_with_extra_chars() {
+        // Sometimes yt-dlp returns resolutions with extra characters
+        assert_eq!(parse_resolution_string("1920x1080p"), Some((1920, 1080)));
+    }
+
+    #[test]
+    fn test_parse_resolution_string_invalid() {
+        assert_eq!(parse_resolution_string(""), None);
+        assert_eq!(parse_resolution_string("1920"), None);
+        assert_eq!(parse_resolution_string("invalid"), None);
+        assert_eq!(parse_resolution_string("x1080"), None);
+        assert_eq!(parse_resolution_string("1920x"), None);
+    }
+
+    // ==================== quality_from_short_side tests ====================
+
+    #[test]
+    fn test_quality_from_short_side_standard() {
+        assert_eq!(quality_from_short_side(1080), Some("1080p"));
+        assert_eq!(quality_from_short_side(720), Some("720p"));
+        assert_eq!(quality_from_short_side(480), Some("480p"));
+        assert_eq!(quality_from_short_side(360), Some("360p"));
+    }
+
+    #[test]
+    fn test_quality_from_short_side_unknown() {
+        assert_eq!(quality_from_short_side(1440), None);
+        assert_eq!(quality_from_short_side(240), None);
+        assert_eq!(quality_from_short_side(0), None);
+    }
+
+    // ==================== quality_from_dimensions tests ====================
+
+    #[test]
+    fn test_quality_from_dimensions_both() {
+        // Standard video with width > height (landscape)
+        assert_eq!(quality_from_dimensions(Some(1920), Some(1080)), Some("1080p"));
+        assert_eq!(quality_from_dimensions(Some(1280), Some(720)), Some("720p"));
+    }
+
+    #[test]
+    fn test_quality_from_dimensions_portrait() {
+        // Portrait video (height > width)
+        assert_eq!(quality_from_dimensions(Some(1080), Some(1920)), Some("1080p"));
+    }
+
+    #[test]
+    fn test_quality_from_dimensions_partial() {
+        assert_eq!(quality_from_dimensions(Some(1080), None), Some("1080p"));
+        assert_eq!(quality_from_dimensions(None, Some(720)), Some("720p"));
+    }
+
+    #[test]
+    fn test_quality_from_dimensions_none() {
+        assert_eq!(quality_from_dimensions(None, None), None);
+    }
+
+    // ==================== quality_from_note tests ====================
+
+    #[test]
+    fn test_quality_from_note_matches() {
+        assert_eq!(quality_from_note("1080p"), Some("1080p"));
+        assert_eq!(quality_from_note("720p HD"), Some("720p"));
+        assert_eq!(quality_from_note("480p SD"), Some("480p"));
+        assert_eq!(quality_from_note("360p"), Some("360p"));
+    }
+
+    #[test]
+    fn test_quality_from_note_case_insensitive() {
+        assert_eq!(quality_from_note("1080P"), Some("1080p"));
+        assert_eq!(quality_from_note("FULL HD 1080"), Some("1080p"));
+    }
+
+    #[test]
+    fn test_quality_from_note_no_match() {
+        assert_eq!(quality_from_note(""), None);
+        assert_eq!(quality_from_note("audio only"), None);
+        assert_eq!(quality_from_note("240p"), None);
+    }
+
+    // ==================== keyboard_stats tests ====================
+
+    #[test]
+    fn test_keyboard_stats_empty() {
+        let keyboard = InlineKeyboardMarkup::new(Vec::<Vec<InlineKeyboardButton>>::new());
+        assert_eq!(keyboard_stats(&keyboard), (0, 0));
+    }
+
+    #[test]
+    fn test_keyboard_stats_single_row() {
+        let keyboard = InlineKeyboardMarkup::new(vec![vec![
+            InlineKeyboardButton::callback("Button 1", "data1"),
+            InlineKeyboardButton::callback("Button 2", "data2"),
+        ]]);
+        assert_eq!(keyboard_stats(&keyboard), (1, 2));
+    }
+
+    #[test]
+    fn test_keyboard_stats_multiple_rows() {
+        let keyboard = InlineKeyboardMarkup::new(vec![
+            vec![InlineKeyboardButton::callback("A", "a")],
+            vec![
+                InlineKeyboardButton::callback("B", "b"),
+                InlineKeyboardButton::callback("C", "c"),
+            ],
+            vec![
+                InlineKeyboardButton::callback("D", "d"),
+                InlineKeyboardButton::callback("E", "e"),
+                InlineKeyboardButton::callback("F", "f"),
+            ],
+        ]);
+        assert_eq!(keyboard_stats(&keyboard), (3, 6));
+    }
+
+    // ==================== escape_markdown tests ====================
+
+    #[test]
+    fn test_escape_markdown_underscore() {
+        assert_eq!(escape_markdown("hello_world"), "hello\\_world");
+    }
+
+    #[test]
+    fn test_escape_markdown_asterisk() {
+        assert_eq!(escape_markdown("*bold*"), "\\*bold\\*");
+    }
+
+    #[test]
+    fn test_escape_markdown_brackets() {
+        assert_eq!(escape_markdown("[link](url)"), "\\[link\\]\\(url\\)");
+    }
+
+    #[test]
+    fn test_escape_markdown_backslash() {
+        // This escape_markdown also handles backslash
+        assert_eq!(escape_markdown("path\\to\\file"), "path\\\\to\\\\file");
+    }
+
+    #[test]
+    fn test_escape_markdown_all_special() {
+        let all_special = "\\_*[]()~`>#+-=|{}.!";
+        let escaped = escape_markdown(all_special);
+        assert_eq!(escaped, "\\\\\\_\\*\\[\\]\\(\\)\\~\\`\\>\\#\\+\\-\\=\\|\\{\\}\\.\\!");
+    }
+
+    #[test]
+    fn test_escape_markdown_empty() {
+        assert_eq!(escape_markdown(""), "");
+    }
+
+    #[test]
+    fn test_escape_markdown_no_special() {
+        assert_eq!(escape_markdown("hello world 123"), "hello world 123");
+    }
+
+    // ==================== filter_video_formats_by_size tests ====================
+
+    #[test]
+    fn test_filter_video_formats_by_size_empty() {
+        let formats: Vec<VideoFormatInfo> = vec![];
+        let filtered = filter_video_formats_by_size(&formats);
+        assert!(filtered.is_empty());
+    }
+
+    #[test]
+    fn test_filter_video_formats_by_size_all_pass() {
+        let formats = vec![
+            VideoFormatInfo {
+                quality: "1080p".to_string(),
+                size_bytes: Some(500 * 1024 * 1024), // 500MB
+                resolution: Some("1920x1080".to_string()),
+            },
+            VideoFormatInfo {
+                quality: "720p".to_string(),
+                size_bytes: Some(300 * 1024 * 1024), // 300MB
+                resolution: Some("1280x720".to_string()),
+            },
+        ];
+        let filtered = filter_video_formats_by_size(&formats);
+        assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn test_filter_video_formats_by_size_filters_large() {
+        let formats = vec![
+            VideoFormatInfo {
+                quality: "1080p".to_string(),
+                size_bytes: Some(3 * 1024 * 1024 * 1024), // 3GB - too large
+                resolution: Some("1920x1080".to_string()),
+            },
+            VideoFormatInfo {
+                quality: "720p".to_string(),
+                size_bytes: Some(300 * 1024 * 1024), // 300MB
+                resolution: Some("1280x720".to_string()),
+            },
+        ];
+        let filtered = filter_video_formats_by_size(&formats);
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].quality, "720p");
+    }
+
+    #[test]
+    fn test_filter_video_formats_by_size_none_passes() {
+        let formats = vec![VideoFormatInfo {
+            quality: "1080p".to_string(),
+            size_bytes: None, // Unknown size - should pass
+            resolution: None,
+        }];
+        let filtered = filter_video_formats_by_size(&formats);
+        assert_eq!(filtered.len(), 1);
+    }
+
+    // ==================== get_json_value tests ====================
+
+    #[test]
+    fn test_get_json_value_string() {
+        let json: Value = serde_json::json!({"title": "Test Video"});
+        assert_eq!(get_json_value(&json, "title"), Some("Test Video".to_string()));
+    }
+
+    #[test]
+    fn test_get_json_value_number() {
+        let json: Value = serde_json::json!({"duration": 120});
+        assert_eq!(get_json_value(&json, "duration"), Some("120".to_string()));
+    }
+
+    #[test]
+    fn test_get_json_value_null() {
+        let json: Value = serde_json::json!({"title": null});
+        assert_eq!(get_json_value(&json, "title"), None);
+    }
+
+    #[test]
+    fn test_get_json_value_missing() {
+        let json: Value = serde_json::json!({"other": "value"});
+        assert_eq!(get_json_value(&json, "title"), None);
+    }
+
+    #[test]
+    fn test_get_json_value_empty_string() {
+        let json: Value = serde_json::json!({"title": ""});
+        assert_eq!(get_json_value(&json, "title"), None);
+    }
+
+    #[test]
+    fn test_get_json_value_na() {
+        let json: Value = serde_json::json!({"title": "NA"});
+        assert_eq!(get_json_value(&json, "title"), None);
+    }
+
+    #[test]
+    fn test_get_json_value_trims_whitespace() {
+        let json: Value = serde_json::json!({"title": "  Test  "});
+        assert_eq!(get_json_value(&json, "title"), Some("Test".to_string()));
+    }
+
+    // ==================== get_video_filesize_from_json tests ====================
+
+    #[test]
+    fn test_get_video_filesize_from_json_found() {
+        let json: Value = serde_json::json!({
+            "formats": [
+                {"height": 720, "filesize": 100000000},
+                {"height": 1080, "filesize": 200000000}
+            ]
+        });
+        assert_eq!(get_video_filesize_from_json(&json, "1080p"), Some(200000000));
+        assert_eq!(get_video_filesize_from_json(&json, "720p"), Some(100000000));
+    }
+
+    #[test]
+    fn test_get_video_filesize_from_json_approx() {
+        let json: Value = serde_json::json!({
+            "formats": [
+                {"height": 720, "filesize_approx": 100000000}
+            ]
+        });
+        assert_eq!(get_video_filesize_from_json(&json, "720p"), Some(100000000));
+    }
+
+    #[test]
+    fn test_get_video_filesize_from_json_not_found() {
+        let json: Value = serde_json::json!({
+            "formats": [
+                {"height": 720, "filesize": 100000000}
+            ]
+        });
+        assert_eq!(get_video_filesize_from_json(&json, "1080p"), None);
+    }
+
+    #[test]
+    fn test_get_video_filesize_from_json_invalid_quality() {
+        let json: Value = serde_json::json!({"formats": []});
+        assert_eq!(get_video_filesize_from_json(&json, "best"), None);
+        assert_eq!(get_video_filesize_from_json(&json, "invalid"), None);
+    }
+
+    #[test]
+    fn test_get_video_filesize_from_json_no_formats() {
+        let json: Value = serde_json::json!({});
+        assert_eq!(get_video_filesize_from_json(&json, "1080p"), None);
+    }
+
+    // ==================== MAX_VIDEO_FORMAT_SIZE_BYTES constant tests ====================
+
+    #[test]
+    fn test_max_video_format_size() {
+        assert_eq!(MAX_VIDEO_FORMAT_SIZE_BYTES, 2 * 1024 * 1024 * 1024); // 2GB
+    }
+}
