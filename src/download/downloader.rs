@@ -2154,7 +2154,7 @@ pub async fn download_and_send_audio(
                     // Get audio bitrate from config
                     let bitrate = audio_bitrate.as_deref().unwrap_or("320k");
 
-                    if let Err(e) = save_download_history(
+                    match save_download_history(
                         &conn,
                         chat_id.0,
                         url.as_str(),
@@ -2169,7 +2169,16 @@ pub async fn download_and_send_audio(
                         None,
                         None,
                     ) {
-                        log::warn!("Failed to save download history: {}", e);
+                        Ok(db_id) => {
+                            // Save message_id for MTProto file_reference refresh
+                            let sent_msg_id = sent_message.id.0;
+                            if let Err(e) = db::update_download_message_id(&conn, db_id, sent_msg_id, chat_id.0) {
+                                log::warn!("Failed to save message_id for download {}: {}", db_id, e);
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to save download history: {}", e);
+                        }
                     }
                 }
             }
@@ -3856,6 +3865,12 @@ pub async fn download_and_send_video(
 
                         match db_id {
                             Ok(id) => {
+                                // Save message_id for MTProto file_reference refresh
+                                let sent_msg_id = sent_message.id.0;
+                                if let Err(e) = db::update_download_message_id(&conn, id, sent_msg_id, chat_id.0) {
+                                    log::warn!("Failed to save message_id for download {}: {}", id, e);
+                                }
+
                                 if first_part_db_id.is_none() && total_parts > 1 {
                                     first_part_db_id = Some(id);
                                 }

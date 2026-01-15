@@ -1030,7 +1030,7 @@ pub async fn handle_downloads_callback(
                                 .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()))
                                 .or_else(|| sent_message.audio().map(|a| a.file.id.0.clone()));
                             if let Some(fid) = new_file_id {
-                                let _ = db::save_download_history(
+                                if let Ok(db_id) = db::save_download_history(
                                     &conn,
                                     chat_id.0,
                                     &download.url,
@@ -1044,7 +1044,10 @@ pub async fn handle_downloads_callback(
                                     None,
                                     None,
                                     None,
-                                );
+                                ) {
+                                    // Save message_id for MTProto file_reference refresh
+                                    let _ = db::update_download_message_id(&conn, db_id, sent_message.id.0, chat_id.0);
+                                }
                             }
                         }
                         Err(e) => {
@@ -1101,7 +1104,7 @@ pub async fn handle_downloads_callback(
                                 .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()))
                                 .or_else(|| sent_message.audio().map(|a| a.file.id.0.clone()));
                             if let Some(fid) = new_file_id {
-                                let _ = db::save_download_history(
+                                if let Ok(db_id) = db::save_download_history(
                                     &conn,
                                     chat_id.0,
                                     &cut.original_url,
@@ -1115,7 +1118,10 @@ pub async fn handle_downloads_callback(
                                     None,
                                     None,
                                     None,
-                                );
+                                ) {
+                                    // Save message_id for MTProto file_reference refresh
+                                    let _ = db::update_download_message_id(&conn, db_id, sent_message.id.0, chat_id.0);
+                                }
                             }
                         }
                         Err(e) => {
