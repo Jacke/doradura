@@ -9,6 +9,6 @@ pub mod error;
 pub mod file_id;
 
 pub use client::MtProtoClient;
-pub use downloader::{MediaInfo, MediaType, MtProtoDownloader};
+pub use downloader::{MediaInfo, MediaType, MessageInfo, MtProtoDownloader, PeerInfo, PeerType};
 pub use error::MtProtoError;
 pub use file_id::{DecodedFileId, FileType};
