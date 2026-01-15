@@ -1,5 +1,6 @@
 use crate::core::config;
 use crate::core::error::AppError;
+use crate::core::error_logger::{self, ErrorType, UserContext};
 use crate::core::metrics;
 use crate::core::rate_limiter::RateLimiter;
 use crate::core::utils::{escape_filename, sanitize_filename};
@@ -2243,6 +2244,21 @@ pub async fn download_and_send_audio(
                 };
                 metrics::record_download_failure("mp3", error_type);
 
+                // Log error to database
+                let user_ctx = UserContext::new(chat_id.0, None);
+                let err_type = match error_type {
+                    "file_too_large" => ErrorType::FileTooLarge,
+                    "timeout" => ErrorType::Timeout,
+                    _ => ErrorType::DownloadFailed,
+                };
+                error_logger::log_error(
+                    err_type,
+                    &e.to_string(),
+                    &user_ctx,
+                    Some(url.as_str()),
+                    Some(r#"{"format":"mp3"}"#),
+                );
+
                 // Определяем тип ошибки и формируем полезное сообщение
                 let error_str = e.to_string();
                 let custom_message = if error_str.contains("Only images are available") {
@@ -3969,6 +3985,21 @@ pub async fn download_and_send_video(
                     "other"
                 };
                 metrics::record_download_failure("mp4", error_type);
+
+                // Log error to database
+                let user_ctx = UserContext::new(chat_id.0, None);
+                let err_type = match error_type {
+                    "file_too_large" => ErrorType::FileTooLarge,
+                    "timeout" => ErrorType::Timeout,
+                    _ => ErrorType::DownloadFailed,
+                };
+                error_logger::log_error(
+                    err_type,
+                    &e.to_string(),
+                    &user_ctx,
+                    Some(url.as_str()),
+                    Some(r#"{"format":"mp4"}"#),
+                );
             }
         }
 
@@ -4293,6 +4324,21 @@ pub async fn download_and_send_subtitles(
                     "other"
                 };
                 metrics::record_download_failure(format, error_type);
+
+                // Log error to database
+                let user_ctx = UserContext::new(chat_id.0, None);
+                let err_type = if error_type == "timeout" {
+                    ErrorType::Timeout
+                } else {
+                    ErrorType::DownloadFailed
+                };
+                error_logger::log_error(
+                    err_type,
+                    &e.to_string(),
+                    &user_ctx,
+                    Some(url.as_str()),
+                    Some(&format!(r#"{{"format":"{}"}}"#, format)),
+                );
             }
         }
 
@@ -4533,6 +4579,156 @@ mod download_tests {
             .unwrap_or(false)
     }
 
+    // ==================== extract_retry_after Tests ====================
+
+    #[test]
+    fn test_extract_retry_after_standard_format() {
+        assert_eq!(extract_retry_after("Retry after 30s"), Some(30));
+        assert_eq!(extract_retry_after("retry after 60s"), Some(60));
+        assert_eq!(extract_retry_after("RETRY AFTER 120s"), Some(120));
+    }
+
+    #[test]
+    fn test_extract_retry_after_alternative_format() {
+        assert_eq!(extract_retry_after("retry_after: 45"), Some(45));
+        assert_eq!(extract_retry_after("retry_after:30"), Some(30));
+        assert_eq!(extract_retry_after("RETRY_AFTER: 90"), Some(90));
+    }
+
+    #[test]
+    fn test_extract_retry_after_no_match() {
+        assert_eq!(extract_retry_after("no retry info here"), None);
+        assert_eq!(extract_retry_after(""), None);
+        assert_eq!(extract_retry_after("random error message"), None);
+    }
+
+    #[test]
+    fn test_extract_retry_after_embedded_in_message() {
+        assert_eq!(
+            extract_retry_after("Error: Too many requests. Retry after 15s please wait"),
+            Some(15)
+        );
+    }
+
+    // ==================== is_timeout_or_network_error Tests ====================
+
+    #[test]
+    fn test_is_timeout_or_network_error_timeout() {
+        assert!(is_timeout_or_network_error("Request timeout"));
+        assert!(is_timeout_or_network_error("Connection timed out"));
+        assert!(is_timeout_or_network_error("TIMEOUT ERROR"));
+    }
+
+    #[test]
+    fn test_is_timeout_or_network_error_network() {
+        assert!(is_timeout_or_network_error("Network error occurred"));
+        assert!(is_timeout_or_network_error("Error sending request"));
+    }
+
+    #[test]
+    fn test_is_timeout_or_network_error_negative() {
+        assert!(!is_timeout_or_network_error("File not found"));
+        assert!(!is_timeout_or_network_error("Permission denied"));
+        assert!(!is_timeout_or_network_error("Invalid URL"));
+    }
+
+    // ==================== ImageFormat and detect_image_format Tests ====================
+
+    #[test]
+    fn test_image_format_debug() {
+        assert_eq!(format!("{:?}", ImageFormat::Jpeg), "Jpeg");
+        assert_eq!(format!("{:?}", ImageFormat::Png), "Png");
+        assert_eq!(format!("{:?}", ImageFormat::WebP), "WebP");
+        assert_eq!(format!("{:?}", ImageFormat::Unknown), "Unknown");
+    }
+
+    #[test]
+    fn test_image_format_clone() {
+        let format = ImageFormat::Jpeg;
+        let cloned = format;
+        assert_eq!(format, cloned);
+    }
+
+    #[test]
+    fn test_image_format_copy() {
+        let format = ImageFormat::Png;
+        let copied: ImageFormat = format;
+        assert_eq!(format, copied);
+    }
+
+    #[test]
+    fn test_detect_image_format_jpeg() {
+        // JPEG magic bytes: FF D8 FF
+        let jpeg_bytes = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
+        assert_eq!(detect_image_format(&jpeg_bytes), ImageFormat::Jpeg);
+    }
+
+    #[test]
+    fn test_detect_image_format_png() {
+        // PNG magic bytes: 89 50 4E 47 (0x89 PNG)
+        let png_bytes = vec![0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A];
+        assert_eq!(detect_image_format(&png_bytes), ImageFormat::Png);
+    }
+
+    #[test]
+    fn test_detect_image_format_webp() {
+        // WebP magic bytes: RIFF....WEBP
+        let webp_bytes = vec![
+            0x52, 0x49, 0x46, 0x46, // RIFF
+            0x00, 0x00, 0x00, 0x00, // size placeholder
+            0x57, 0x45, 0x42, 0x50, // WEBP
+        ];
+        assert_eq!(detect_image_format(&webp_bytes), ImageFormat::WebP);
+    }
+
+    #[test]
+    fn test_detect_image_format_unknown() {
+        let random_bytes = vec![0x00, 0x01, 0x02, 0x03];
+        assert_eq!(detect_image_format(&random_bytes), ImageFormat::Unknown);
+    }
+
+    #[test]
+    fn test_detect_image_format_too_short() {
+        let short_bytes = vec![0xFF, 0xD8];
+        assert_eq!(detect_image_format(&short_bytes), ImageFormat::Unknown);
+
+        let empty_bytes: Vec<u8> = vec![];
+        assert_eq!(detect_image_format(&empty_bytes), ImageFormat::Unknown);
+    }
+
+    // ==================== UploadProgress Tests ====================
+
+    #[test]
+    fn test_upload_progress_new() {
+        let progress = UploadProgress::new();
+        assert_eq!(progress.bytes_sent(), 0);
+    }
+
+    #[test]
+    fn test_upload_progress_add_bytes() {
+        let progress = UploadProgress::new();
+        progress.add_bytes(1000);
+        assert_eq!(progress.bytes_sent(), 1000);
+
+        progress.add_bytes(500);
+        assert_eq!(progress.bytes_sent(), 1500);
+    }
+
+    #[test]
+    fn test_upload_progress_clone() {
+        let progress = UploadProgress::new();
+        progress.add_bytes(100);
+
+        let cloned = progress.clone();
+        // Both should share the same Arc
+        assert_eq!(cloned.bytes_sent(), 100);
+
+        progress.add_bytes(50);
+        assert_eq!(cloned.bytes_sent(), 150);
+    }
+
+    // ==================== Existing Tests ====================
+
     #[test]
     fn test_probe_duration_seconds_handles_missing_file() {
         assert_eq!(probe_duration_seconds("/no/such/file.mp3"), None);
@@ -4546,6 +4742,219 @@ mod download_tests {
         }
         let res = spawn_downloader_with_fallback("youtube-dl", &["--version"]);
         assert!(res.is_err());
+    }
+
+    // ==================== truncate_tail_utf8 Tests ====================
+
+    #[test]
+    fn test_truncate_tail_utf8_short_string() {
+        let text = "Hello, World!";
+        assert_eq!(truncate_tail_utf8(text, 100), text);
+    }
+
+    #[test]
+    fn test_truncate_tail_utf8_exact_length() {
+        let text = "Hello";
+        assert_eq!(truncate_tail_utf8(text, 5), "Hello");
+    }
+
+    #[test]
+    fn test_truncate_tail_utf8_truncates() {
+        let text = "Hello, World! This is a test.";
+        let result = truncate_tail_utf8(text, 10);
+        // Should contain ellipsis and last 10 bytes
+        assert!(result.starts_with("…\n"));
+        assert!(result.len() <= 15); // ellipsis + newline + ~10 bytes
+    }
+
+    #[test]
+    fn test_truncate_tail_utf8_respects_boundaries() {
+        // UTF-8 string with multi-byte characters
+        let text = "Привет мир"; // Russian text (each Cyrillic char is 2 bytes)
+        let result = truncate_tail_utf8(text, 6);
+        // Should not break in the middle of a UTF-8 character
+        assert!(result.is_char_boundary(0));
+        for (i, _) in result.char_indices() {
+            assert!(result.is_char_boundary(i));
+        }
+    }
+
+    #[test]
+    fn test_truncate_tail_utf8_empty_string() {
+        let text = "";
+        assert_eq!(truncate_tail_utf8(text, 10), "");
+    }
+
+    // ==================== validate_cookies_file_format Tests ====================
+
+    #[test]
+    fn test_validate_cookies_file_format_valid() {
+        use std::io::Write;
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join(format!("test_cookies_{}.txt", std::process::id()));
+
+        let mut file = std::fs::File::create(&temp_file).unwrap();
+        writeln!(file, "# Netscape HTTP Cookie File").unwrap();
+        writeln!(file, "# This is a generated file").unwrap();
+        writeln!(file, ".youtube.com\tTRUE\t/\tTRUE\t0\tSID\tabc123").unwrap();
+        drop(file);
+
+        let result = validate_cookies_file_format(temp_file.to_str().unwrap());
+        let _ = std::fs::remove_file(&temp_file);
+        assert!(result);
+    }
+
+    #[test]
+    fn test_validate_cookies_file_format_missing_header() {
+        use std::io::Write;
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join(format!("test_cookies_no_header_{}.txt", std::process::id()));
+
+        let mut file = std::fs::File::create(&temp_file).unwrap();
+        writeln!(file, "# Some other file format").unwrap();
+        writeln!(file, ".youtube.com\tTRUE\t/\tTRUE\t0\tSID\tabc123").unwrap();
+        drop(file);
+
+        let result = validate_cookies_file_format(temp_file.to_str().unwrap());
+        let _ = std::fs::remove_file(&temp_file);
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_validate_cookies_file_format_no_cookies() {
+        use std::io::Write;
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join(format!("test_cookies_empty_{}.txt", std::process::id()));
+
+        let mut file = std::fs::File::create(&temp_file).unwrap();
+        writeln!(file, "# Netscape HTTP Cookie File").unwrap();
+        writeln!(file, "# No actual cookies").unwrap();
+        drop(file);
+
+        let result = validate_cookies_file_format(temp_file.to_str().unwrap());
+        let _ = std::fs::remove_file(&temp_file);
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_validate_cookies_file_format_nonexistent() {
+        let result = validate_cookies_file_format("/nonexistent/cookies.txt");
+        assert!(!result);
+    }
+
+    #[test]
+    fn test_validate_cookies_file_format_http_cookie_header() {
+        use std::io::Write;
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join(format!("test_cookies_http_{}.txt", std::process::id()));
+
+        let mut file = std::fs::File::create(&temp_file).unwrap();
+        writeln!(file, "# HTTP Cookie File").unwrap();
+        writeln!(file, ".example.com\tTRUE\t/\tFALSE\t0\ttest\tvalue").unwrap();
+        drop(file);
+
+        let result = validate_cookies_file_format(temp_file.to_str().unwrap());
+        let _ = std::fs::remove_file(&temp_file);
+        assert!(result);
+    }
+
+    // ==================== build_telegram_safe_format Tests ====================
+
+    #[test]
+    fn test_build_telegram_safe_format_default() {
+        let format = build_telegram_safe_format(None);
+        // Should contain avc1 codec preference for telegram compatibility
+        assert!(format.contains("avc1"));
+        assert!(format.contains("mp4a"));
+        // Should have fallbacks
+        assert!(format.contains("/best"));
+    }
+
+    #[test]
+    fn test_build_telegram_safe_format_1080p() {
+        let format = build_telegram_safe_format(Some(1080));
+        assert!(format.contains("[height<=1080]"));
+        assert!(format.contains("avc1"));
+    }
+
+    #[test]
+    fn test_build_telegram_safe_format_720p() {
+        let format = build_telegram_safe_format(Some(720));
+        assert!(format.contains("[height<=720]"));
+        assert!(format.contains("avc1"));
+    }
+
+    #[test]
+    fn test_build_telegram_safe_format_480p() {
+        let format = build_telegram_safe_format(Some(480));
+        assert!(format.contains("[height<=480]"));
+    }
+
+    #[test]
+    fn test_build_telegram_safe_format_custom_height() {
+        let format = build_telegram_safe_format(Some(144));
+        // Custom height should be first in the chain
+        assert!(format.contains("[height<=144]"));
+    }
+
+    #[test]
+    fn test_build_telegram_safe_format_has_fallbacks() {
+        let format = build_telegram_safe_format(Some(720));
+        // Should have progressive fallback to lower qualities
+        assert!(format.contains("[height<=720]"));
+        assert!(format.contains("[height<=480]"));
+        assert!(format.contains("[height<=360]"));
+        // Final fallback
+        assert!(format.contains("best[ext=mp4]"));
+        assert!(format.ends_with("/best"));
+    }
+
+    // ==================== read_log_tail Tests ====================
+
+    #[test]
+    fn test_read_log_tail_nonexistent_file() {
+        let result = read_log_tail(&PathBuf::from("/nonexistent/log.txt"), 1024);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_read_log_tail_small_file() {
+        use std::io::Write;
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join(format!("test_log_small_{}.txt", std::process::id()));
+
+        let mut file = std::fs::File::create(&temp_file).unwrap();
+        writeln!(file, "Line 1").unwrap();
+        writeln!(file, "Line 2").unwrap();
+        drop(file);
+
+        let result = read_log_tail(&temp_file, 1024).unwrap();
+        let _ = std::fs::remove_file(&temp_file);
+
+        assert!(result.contains("Line 1"));
+        assert!(result.contains("Line 2"));
+    }
+
+    #[test]
+    fn test_read_log_tail_truncates_large_file() {
+        use std::io::Write;
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join(format!("test_log_large_{}.txt", std::process::id()));
+
+        let mut file = std::fs::File::create(&temp_file).unwrap();
+        // Write more than max_bytes
+        for i in 0..100 {
+            writeln!(file, "Line number {}", i).unwrap();
+        }
+        drop(file);
+
+        let result = read_log_tail(&temp_file, 50).unwrap();
+        let _ = std::fs::remove_file(&temp_file);
+
+        // Should only contain the tail
+        assert!(result.len() <= 60); // Allow some margin for line boundaries
+                                     // Should not contain the first lines
+        assert!(!result.contains("Line number 0"));
     }
 
     // Integration-ish test: requires network and yt-dlp (or youtube-dl) + ffmpeg installed.
