@@ -164,6 +164,8 @@ impl TelegramMock {
 mod tests {
     use super::*;
 
+    // ==================== TelegramSnapshot Tests ====================
+
     #[test]
     fn test_snapshot_creation() {
         let mut snapshot = TelegramSnapshot::new("test");
@@ -204,5 +206,129 @@ mod tests {
 
         assert_eq!(snapshot.name, deserialized.name);
         assert_eq!(snapshot.version, deserialized.version);
+    }
+
+    #[test]
+    fn test_snapshot_new_defaults() {
+        let snapshot = TelegramSnapshot::new("my-snapshot");
+        assert_eq!(snapshot.name, "my-snapshot");
+        assert_eq!(snapshot.version, "1.0");
+        assert!(snapshot.interactions.is_empty());
+        assert!(snapshot.metadata.is_empty());
+        assert!(!snapshot.recorded_at.is_empty());
+    }
+
+    #[test]
+    fn test_snapshot_with_metadata() {
+        let mut snapshot = TelegramSnapshot::new("test");
+        snapshot
+            .metadata
+            .insert("scenario".to_string(), "download_mp3".to_string());
+        snapshot.metadata.insert("user_id".to_string(), "12345".to_string());
+
+        assert_eq!(snapshot.metadata.get("scenario"), Some(&"download_mp3".to_string()));
+        assert_eq!(snapshot.metadata.len(), 2);
+    }
+
+    #[test]
+    fn test_snapshot_save_and_load() {
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join(format!("test_snapshot_{}.json", std::process::id()));
+
+        let mut snapshot = TelegramSnapshot::new("test_save");
+        snapshot.metadata.insert("test".to_string(), "value".to_string());
+        snapshot.add_interaction(
+            ApiCall {
+                method: "GET".to_string(),
+                path: "/getMe".to_string(),
+                body: serde_json::json!({}),
+                timestamp: 123,
+            },
+            ApiResponse {
+                status: 200,
+                body: serde_json::json!({"ok": true}),
+                headers: HashMap::new(),
+            },
+        );
+
+        // Save
+        snapshot.save(&temp_file).unwrap();
+        assert!(temp_file.exists());
+
+        // Load
+        let loaded = TelegramSnapshot::load(&temp_file).unwrap();
+        assert_eq!(loaded.name, "test_save");
+        assert_eq!(loaded.interactions.len(), 1);
+        assert_eq!(loaded.metadata.get("test"), Some(&"value".to_string()));
+
+        // Cleanup
+        let _ = std::fs::remove_file(&temp_file);
+    }
+
+    #[test]
+    fn test_snapshot_load_nonexistent() {
+        let result = TelegramSnapshot::load("/nonexistent/path.json");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_snapshots_dir() {
+        let dir = TelegramSnapshot::snapshots_dir();
+        assert!(dir.ends_with("tests/snapshots"));
+    }
+
+    // ==================== ApiCall Tests ====================
+
+    #[test]
+    fn test_api_call_serialization() {
+        let call = ApiCall {
+            method: "POST".to_string(),
+            path: "/sendMessage".to_string(),
+            body: serde_json::json!({"chat_id": 123}),
+            timestamp: 1000,
+        };
+
+        let json = serde_json::to_string(&call).unwrap();
+        let deserialized: ApiCall = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(call.method, deserialized.method);
+        assert_eq!(call.path, deserialized.path);
+        assert_eq!(call.timestamp, deserialized.timestamp);
+    }
+
+    // ==================== ApiResponse Tests ====================
+
+    #[test]
+    fn test_api_response_serialization() {
+        let mut headers = HashMap::new();
+        headers.insert("Content-Type".to_string(), "application/json".to_string());
+
+        let response = ApiResponse {
+            status: 200,
+            body: serde_json::json!({"ok": true}),
+            headers,
+        };
+
+        let json = serde_json::to_string(&response).unwrap();
+        let deserialized: ApiResponse = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(response.status, deserialized.status);
+        assert_eq!(response.headers.len(), 1);
+    }
+
+    #[test]
+    fn test_api_response_error() {
+        let response = ApiResponse {
+            status: 400,
+            body: serde_json::json!({
+                "ok": false,
+                "error_code": 400,
+                "description": "Bad Request"
+            }),
+            headers: HashMap::new(),
+        };
+
+        assert_eq!(response.status, 400);
+        assert_eq!(response.body.get("ok"), Some(&serde_json::json!(false)));
     }
 }
