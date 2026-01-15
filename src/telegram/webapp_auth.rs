@@ -157,5 +157,83 @@ mod tests {
         let bot_token = "test_token";
         let result = validate_telegram_webapp_data(init_data, bot_token);
         assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Missing hash"));
+    }
+
+    #[test]
+    fn test_extract_user_id_missing_user() {
+        let init_data = "auth_date=1234567890&hash=abc";
+        let result = extract_user_id_unsafe(init_data);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Missing user"));
+    }
+
+    #[test]
+    fn test_extract_user_id_invalid_json() {
+        let init_data = "user=not-valid-json&auth_date=1234567890&hash=abc";
+        let result = extract_user_id_unsafe(init_data);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Failed to parse"));
+    }
+
+    #[test]
+    fn test_extract_user_id_missing_id_in_json() {
+        let init_data = "user=%7B%22first_name%22%3A%22Test%22%7D&auth_date=1234567890&hash=abc";
+        let result = extract_user_id_unsafe(init_data);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Missing user id"));
+    }
+
+    #[test]
+    fn test_validate_missing_user() {
+        let init_data = "auth_date=1234567890&hash=abc123def456";
+        let bot_token = "test_token";
+        let result = validate_telegram_webapp_data(init_data, bot_token);
+        // First it will fail on hash validation or missing user
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_invalid_hash() {
+        let init_data = "user=%7B%22id%22%3A123%7D&auth_date=1234567890&hash=invalidhash";
+        let bot_token = "test_token";
+        let result = validate_telegram_webapp_data(init_data, bot_token);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid hash"));
+    }
+
+    #[test]
+    fn test_url_decoding() {
+        // Test URL encoded JSON
+        let init_data = "user=%7B%22id%22%3A999%7D&auth_date=1234567890&hash=abc";
+        let result = extract_user_id_unsafe(init_data);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 999);
+    }
+
+    #[test]
+    fn test_extract_with_complex_user() {
+        // Test with more user fields
+        let user = r#"{"id":12345,"first_name":"John","last_name":"Doe","username":"johndoe"}"#;
+        let encoded_user = urlencoding::encode(user);
+        let init_data = format!("user={}&auth_date=1234567890&hash=abc", encoded_user);
+        let result = extract_user_id_unsafe(&init_data);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 12345);
+    }
+
+    #[test]
+    fn test_empty_init_data() {
+        let result = extract_user_id_unsafe("");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_malformed_pair() {
+        // A pair without = should be skipped
+        let init_data = "invalid&user=%7B%22id%22%3A123%7D&auth_date=1234567890";
+        let result = extract_user_id_unsafe(init_data);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), 123);
     }
 }

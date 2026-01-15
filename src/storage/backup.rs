@@ -140,3 +140,58 @@ pub fn restore_backup(backup_path: &Path, db_path: &str) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn test_max_backups_constant() {
+        assert_eq!(MAX_BACKUPS, 30);
+    }
+
+    #[test]
+    fn test_backup_dir_constant() {
+        assert_eq!(BACKUP_DIR, "backups");
+    }
+
+    #[test]
+    fn test_restore_backup_nonexistent() {
+        let result = restore_backup(Path::new("/nonexistent/backup.sqlite"), "/tmp/db.sqlite");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("does not exist"));
+    }
+
+    #[test]
+    fn test_restore_backup_success() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create a backup file
+        let backup_path = temp_dir.path().join("backup.sqlite");
+        fs::write(&backup_path, b"backup content").unwrap();
+
+        // Destination path
+        let db_path = temp_dir.path().join("restored.sqlite");
+
+        let result = restore_backup(&backup_path, db_path.to_str().unwrap());
+        assert!(result.is_ok());
+
+        // Verify the restored file has the correct content
+        let restored_content = fs::read(&db_path).unwrap();
+        assert_eq!(restored_content, b"backup content");
+    }
+
+    #[test]
+    fn test_cleanup_old_backups_empty_dir() {
+        let temp_dir = TempDir::new().unwrap();
+        let result = cleanup_old_backups(temp_dir.path());
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_cleanup_old_backups_nonexistent_dir() {
+        let result = cleanup_old_backups(Path::new("/nonexistent/dir"));
+        assert!(result.is_ok()); // Should not fail, just skip
+    }
+}
