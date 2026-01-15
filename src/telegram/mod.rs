@@ -9,6 +9,7 @@ pub mod commands;
 pub mod cuts;
 pub mod downloads;
 pub mod feedback;
+pub mod handlers;
 pub mod markdown;
 pub mod menu;
 pub mod notifications;
@@ -31,6 +32,7 @@ pub use analytics::{handle_analytics_command, handle_health_command, handle_metr
 pub use bot::{create_bot, is_message_addressed_to_bot, setup_all_language_commands, setup_chat_bot_commands, Command};
 pub use bot_api_logger::Bot;
 pub use commands::{handle_downsub_command, handle_info_command, handle_message};
+pub use handlers::{schema, HandlerDeps, HandlerError};
 pub use markdown::send_message_markdown_v2;
 pub use menu::{handle_menu_callback, show_enhanced_main_menu, show_language_selection_menu, show_main_menu};
 pub use reactions::try_set_reaction;
