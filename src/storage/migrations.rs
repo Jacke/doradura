@@ -32,3 +32,16 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
     conn.execute_batch("COMMIT").context("commit migrations")?;
     Ok(())
 }
+
+/// Run migrations for tests without the outer transaction wrapper
+/// This is needed because refinery uses its own transactions internally
+#[doc(hidden)]
+pub fn run_migrations_for_test(conn: &mut Connection) -> Result<()> {
+    conn.busy_timeout(Duration::from_secs(30))
+        .context("set SQLite busy timeout")?;
+
+    embedded::migrations::runner()
+        .run(conn)
+        .map(|_| ())
+        .context("apply migrations")
+}
