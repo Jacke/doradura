@@ -276,6 +276,8 @@ fn escape_markdown(text: &str) -> String {
 mod tests {
     use super::*;
 
+    // ==================== format_size Tests ====================
+
     #[test]
     fn test_format_size_escapes_dots() {
         // Test GB format (has decimal point)
@@ -302,9 +304,151 @@ mod tests {
     }
 
     #[test]
+    fn test_format_size_boundary_values() {
+        // Exactly 1 GB
+        let one_gb = 1024 * 1024 * 1024;
+        let result = format_size(one_gb);
+        assert!(result.contains("GB"));
+
+        // Just under 1 GB
+        let under_gb = 1024 * 1024 * 1024 - 1;
+        let result = format_size(under_gb);
+        assert!(result.contains("MB"));
+
+        // Exactly 1 MB
+        let one_mb = 1024 * 1024;
+        let result = format_size(one_mb);
+        assert!(result.contains("MB"));
+
+        // Exactly 1 KB
+        let one_kb = 1024;
+        let result = format_size(one_kb);
+        assert!(result.contains("KB"));
+    }
+
+    #[test]
+    fn test_format_size_zero() {
+        let result = format_size(0);
+        assert_eq!(result, "0 B");
+    }
+
+    // ==================== truncate_string_safe Tests ====================
+
+    #[test]
+    fn test_truncate_string_safe_short_text() {
+        let result = truncate_string_safe("Hello", 10);
+        assert_eq!(result, "Hello");
+    }
+
+    #[test]
+    fn test_truncate_string_safe_exact_length() {
+        let result = truncate_string_safe("Hello", 5);
+        assert_eq!(result, "Hello");
+    }
+
+    #[test]
+    fn test_truncate_string_safe_needs_truncation() {
+        let result = truncate_string_safe("Hello World", 8);
+        assert_eq!(result, "Hello...");
+    }
+
+    #[test]
+    fn test_truncate_string_safe_empty() {
+        let result = truncate_string_safe("", 10);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_truncate_string_safe_cyrillic() {
+        // Test with Cyrillic characters (multi-byte UTF-8)
+        let result = truncate_string_safe("Привет мир", 8);
+        assert!(result.ends_with("..."));
+        // Should not panic with multi-byte characters
+    }
+
+    #[test]
+    fn test_truncate_string_safe_very_short_max() {
+        // Max length less than 3 (length of "...")
+        let result = truncate_string_safe("Hello", 2);
+        assert_eq!(result, "...");
+    }
+
+    // ==================== create_activity_chart Tests ====================
+
+    #[test]
+    fn test_create_activity_chart_empty() {
+        let result = create_activity_chart(&[]);
+        assert_eq!(result, "Нет данных");
+    }
+
+    #[test]
+    fn test_create_activity_chart_single_day() {
+        let data = vec![("2024-01-15".to_string(), 5)];
+        let result = create_activity_chart(&data);
+        assert!(result.contains("15.01"));
+        assert!(result.contains("5"));
+    }
+
+    #[test]
+    fn test_create_activity_chart_multiple_days() {
+        let data = vec![
+            ("2024-01-15".to_string(), 10),
+            ("2024-01-14".to_string(), 5),
+            ("2024-01-13".to_string(), 2),
+        ];
+        let result = create_activity_chart(&data);
+        assert!(result.contains("15.01"));
+        assert!(result.contains("14.01"));
+        assert!(result.contains("13.01"));
+    }
+
+    #[test]
+    fn test_create_activity_chart_max_7_days() {
+        let data: Vec<(String, i64)> = (0..10).map(|i| (format!("2024-01-{:02}", 10 + i), i as i64)).collect();
+        let result = create_activity_chart(&data);
+        // Should only include 7 days
+        let lines: Vec<&str> = result.lines().collect();
+        assert_eq!(lines.len(), 7);
+    }
+
+    #[test]
+    fn test_create_activity_chart_zero_count() {
+        let data = vec![("2024-01-15".to_string(), 0)];
+        let result = create_activity_chart(&data);
+        assert!(result.contains("0"));
+        assert!(result.contains("░░░░░░░░░░")); // All empty bars
+    }
+
+    // ==================== escape_markdown Tests ====================
+
+    #[test]
     fn test_escape_markdown_escapes_dots() {
         let text = "Hello. World. Test.";
         let result = escape_markdown(text);
         assert_eq!(result, "Hello\\. World\\. Test\\.");
+    }
+
+    #[test]
+    fn test_escape_markdown_all_special_chars() {
+        let input = r"_*[]()~`>#+-=|{}.!";
+        let expected = r"\_\*\[\]\(\)\~\`\>\#\+\-\=\|\{\}\.\!";
+        assert_eq!(escape_markdown(input), expected);
+    }
+
+    #[test]
+    fn test_escape_markdown_backslash() {
+        assert_eq!(escape_markdown("a\\b"), "a\\\\b");
+    }
+
+    #[test]
+    fn test_escape_markdown_empty() {
+        assert_eq!(escape_markdown(""), "");
+    }
+
+    #[test]
+    fn test_escape_markdown_cyrillic() {
+        let text = "Привет мир!";
+        let result = escape_markdown(text);
+        assert_eq!(result, "Привет мир\\!");
     }
 }

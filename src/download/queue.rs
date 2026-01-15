@@ -443,6 +443,112 @@ mod tests {
     use super::*;
     use chrono::Duration;
 
+    // ==================== TaskPriority Tests ====================
+
+    #[test]
+    fn test_task_priority_from_plan() {
+        assert_eq!(TaskPriority::from_plan("vip"), TaskPriority::High);
+        assert_eq!(TaskPriority::from_plan("premium"), TaskPriority::Medium);
+        assert_eq!(TaskPriority::from_plan("free"), TaskPriority::Low);
+        assert_eq!(TaskPriority::from_plan("unknown"), TaskPriority::Low);
+    }
+
+    #[test]
+    fn test_task_priority_ordering() {
+        assert!(TaskPriority::High > TaskPriority::Medium);
+        assert!(TaskPriority::Medium > TaskPriority::Low);
+        assert!(TaskPriority::High > TaskPriority::Low);
+    }
+
+    // ==================== DownloadTask Tests ====================
+
+    #[test]
+    fn test_download_task_new() {
+        let task = DownloadTask::new(
+            "http://example.com".to_string(),
+            ChatId(123),
+            Some(456),
+            false,
+            "mp3".to_string(),
+            None,
+            Some("320k".to_string()),
+        );
+        assert!(!task.id.is_empty());
+        assert_eq!(task.url, "http://example.com");
+        assert_eq!(task.chat_id, ChatId(123));
+        assert_eq!(task.message_id, Some(456));
+        assert!(!task.is_video);
+        assert_eq!(task.format, "mp3");
+        assert_eq!(task.video_quality, None);
+        assert_eq!(task.audio_bitrate, Some("320k".to_string()));
+        assert_eq!(task.priority, TaskPriority::Low);
+    }
+
+    #[test]
+    fn test_download_task_with_priority() {
+        let task = DownloadTask::with_priority(
+            "http://example.com".to_string(),
+            ChatId(123),
+            None,
+            true,
+            "mp4".to_string(),
+            Some("1080p".to_string()),
+            None,
+            TaskPriority::High,
+        );
+        assert_eq!(task.priority, TaskPriority::High);
+        assert!(task.is_video);
+        assert_eq!(task.video_quality, Some("1080p".to_string()));
+    }
+
+    #[test]
+    fn test_download_task_from_plan() {
+        let vip_task = DownloadTask::from_plan(
+            "http://example.com".to_string(),
+            ChatId(123),
+            None,
+            false,
+            "mp3".to_string(),
+            None,
+            None,
+            "vip",
+        );
+        assert_eq!(vip_task.priority, TaskPriority::High);
+
+        let premium_task = DownloadTask::from_plan(
+            "http://example.com".to_string(),
+            ChatId(123),
+            None,
+            false,
+            "mp3".to_string(),
+            None,
+            None,
+            "premium",
+        );
+        assert_eq!(premium_task.priority, TaskPriority::Medium);
+
+        let free_task = DownloadTask::from_plan(
+            "http://example.com".to_string(),
+            ChatId(123),
+            None,
+            false,
+            "mp3".to_string(),
+            None,
+            None,
+            "free",
+        );
+        assert_eq!(free_task.priority, TaskPriority::Low);
+    }
+
+    // ==================== DownloadQueue Tests ====================
+
+    #[test]
+    fn test_download_queue_default() {
+        let queue = DownloadQueue::default();
+        // Verify the queue is created with default trait
+        assert!(matches!(queue, DownloadQueue { .. }));
+    }
+
     #[tokio::test]
     async fn test_add_and_get_task() {
         let queue = DownloadQueue::new();
@@ -464,6 +570,131 @@ mod tests {
             .await
             .expect("Should retrieve task that was just added");
         assert_eq!(fetched_task.url, task.url);
+    }
+
+    #[tokio::test]
+    async fn test_queue_empty() {
+        let queue = DownloadQueue::new();
+        assert_eq!(queue.size().await, 0);
+        assert!(queue.get_task().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_priority_ordering() {
+        let queue = DownloadQueue::new();
+
+        // Add low priority task first
+        let low_task = DownloadTask::from_plan(
+            "http://low.com".to_string(),
+            ChatId(1),
+            None,
+            false,
+            "mp3".to_string(),
+            None,
+            None,
+            "free",
+        );
+        queue.add_task(low_task, None).await;
+
+        // Add high priority task second
+        let high_task = DownloadTask::from_plan(
+            "http://high.com".to_string(),
+            ChatId(2),
+            None,
+            false,
+            "mp3".to_string(),
+            None,
+            None,
+            "vip",
+        );
+        queue.add_task(high_task, None).await;
+
+        // High priority should come out first
+        let first = queue.get_task().await.unwrap();
+        assert_eq!(first.url, "http://high.com");
+        assert_eq!(first.priority, TaskPriority::High);
+
+        let second = queue.get_task().await.unwrap();
+        assert_eq!(second.url, "http://low.com");
+        assert_eq!(second.priority, TaskPriority::Low);
+    }
+
+    #[tokio::test]
+    async fn test_filter_tasks_by_chat_id() {
+        let queue = DownloadQueue::new();
+
+        let task1 = DownloadTask::new(
+            "http://example1.com".to_string(),
+            ChatId(100),
+            None,
+            false,
+            "mp3".to_string(),
+            None,
+            None,
+        );
+        let task2 = DownloadTask::new(
+            "http://example2.com".to_string(),
+            ChatId(200),
+            None,
+            false,
+            "mp3".to_string(),
+            None,
+            None,
+        );
+        let task3 = DownloadTask::new(
+            "http://example3.com".to_string(),
+            ChatId(100),
+            None,
+            false,
+            "mp3".to_string(),
+            None,
+            None,
+        );
+
+        queue.add_task(task1, None).await;
+        queue.add_task(task2, None).await;
+        queue.add_task(task3, None).await;
+
+        let user_100_tasks = queue.filter_tasks_by_chat_id(ChatId(100)).await;
+        assert_eq!(user_100_tasks.len(), 2);
+
+        let user_200_tasks = queue.filter_tasks_by_chat_id(ChatId(200)).await;
+        assert_eq!(user_200_tasks.len(), 1);
+
+        let user_999_tasks = queue.filter_tasks_by_chat_id(ChatId(999)).await;
+        assert_eq!(user_999_tasks.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_get_queue_position() {
+        let queue = DownloadQueue::new();
+
+        let task1 = DownloadTask::new(
+            "http://example1.com".to_string(),
+            ChatId(100),
+            None,
+            false,
+            "mp3".to_string(),
+            None,
+            None,
+        );
+        let task2 = DownloadTask::new(
+            "http://example2.com".to_string(),
+            ChatId(200),
+            None,
+            false,
+            "mp3".to_string(),
+            None,
+            None,
+        );
+
+        queue.add_task(task1, None).await;
+        queue.add_task(task2, None).await;
+
+        // Positions are 1-based
+        assert_eq!(queue.get_queue_position(ChatId(100)).await, Some(1));
+        assert_eq!(queue.get_queue_position(ChatId(200)).await, Some(2));
+        assert_eq!(queue.get_queue_position(ChatId(999)).await, None);
     }
 
     #[tokio::test]
@@ -497,6 +728,26 @@ mod tests {
 
         let removed = queue.remove_old_tasks(Duration::days(1)).await;
         assert_eq!(removed, 1);
+        assert_eq!(queue.size().await, 1);
+    }
+
+    #[tokio::test]
+    async fn test_remove_old_tasks_all_new() {
+        let queue = DownloadQueue::new();
+
+        let task = DownloadTask::new(
+            "http://example.com".to_string(),
+            ChatId(123),
+            None,
+            false,
+            "mp3".to_string(),
+            None,
+            None,
+        );
+        queue.add_task(task, None).await;
+
+        let removed = queue.remove_old_tasks(Duration::days(1)).await;
+        assert_eq!(removed, 0);
         assert_eq!(queue.size().await, 1);
     }
 }

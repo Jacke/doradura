@@ -137,6 +137,7 @@ pub fn is_language_supported(code: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fluent_templates::fluent_bundle::FluentArgs;
 
     #[test]
     fn loads_known_translation() {
@@ -181,5 +182,127 @@ mod tests {
         assert_eq!(is_language_supported("it"), None);
         assert_eq!(is_language_supported("ja"), None);
         assert_eq!(is_language_supported("unknown"), None);
+    }
+
+    #[test]
+    fn test_lang_from_code_supported() {
+        let en = lang_from_code("en");
+        assert_eq!(en.to_string(), "en-US");
+
+        let ru = lang_from_code("ru");
+        assert_eq!(ru.to_string(), "ru");
+
+        let fr = lang_from_code("fr");
+        assert_eq!(fr.to_string(), "fr");
+
+        let de = lang_from_code("de");
+        assert_eq!(de.to_string(), "de");
+    }
+
+    #[test]
+    fn test_lang_from_code_with_variants() {
+        // Should normalize variants
+        let en_us = lang_from_code("en-us");
+        assert_eq!(en_us.to_string(), "en-US");
+
+        let ru_ru = lang_from_code("ru-ru");
+        assert_eq!(ru_ru.to_string(), "ru");
+    }
+
+    #[test]
+    fn test_lang_from_code_unknown_handling() {
+        // Unknown language codes that can be parsed stay as-is
+        let unknown = lang_from_code("xyz");
+        // The parse succeeds since "xyz" is a valid lang code format
+        // and stays as-is (no normalization applies)
+        assert!(!unknown.to_string().is_empty());
+
+        // Empty string falls back to default
+        let empty = lang_from_code("");
+        assert_eq!(empty.to_string(), "ru");
+    }
+
+    #[test]
+    fn test_language_name() {
+        assert_eq!(language_name("en"), "English");
+        assert_eq!(language_name("ru"), "Русский");
+        assert_eq!(language_name("fr"), "Français");
+        assert_eq!(language_name("de"), "Deutsch");
+        assert_eq!(language_name("EN"), "English"); // case insensitive
+        assert_eq!(language_name("unknown"), "Unknown");
+    }
+
+    #[test]
+    fn test_supported_langs_constant() {
+        assert_eq!(SUPPORTED_LANGS.len(), 4);
+
+        // Verify each language is present
+        let codes: Vec<&str> = SUPPORTED_LANGS.iter().map(|(c, _)| *c).collect();
+        assert!(codes.contains(&"en"));
+        assert!(codes.contains(&"ru"));
+        assert!(codes.contains(&"fr"));
+        assert!(codes.contains(&"de"));
+    }
+
+    #[test]
+    fn test_t_missing_key_returns_key() {
+        let en = lang_from_code("en");
+        let result = t(&en, "nonexistent.key.that.does.not.exist");
+        // Should return the key itself when not found
+        assert_eq!(result, "nonexistent.key.that.does.not.exist");
+    }
+
+    #[test]
+    fn test_t_args_with_interpolation() {
+        let en = lang_from_code("en");
+
+        let mut args = FluentArgs::new();
+        args.set("count", 5);
+
+        // Test that t_args works (even if it returns key on missing)
+        let result = t_args(&en, "test.key.with.args", &args);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_t_args_missing_key_returns_key() {
+        let en = lang_from_code("en");
+        let args = FluentArgs::new();
+
+        let result = t_args(&en, "nonexistent.key", &args);
+        assert_eq!(result, "nonexistent.key");
+    }
+
+    #[test]
+    fn test_multiple_languages_have_same_keys() {
+        let en = lang_from_code("en");
+        let ru = lang_from_code("ru");
+
+        // Both languages should have the processing key
+        let en_text = t(&en, "commands.processing");
+        let ru_text = t(&ru, "commands.processing");
+
+        // Both should be non-empty and different
+        assert!(!en_text.is_empty());
+        assert!(!ru_text.is_empty());
+        assert_ne!(en_text, ru_text); // Different languages should have different translations
+    }
+
+    #[test]
+    fn test_language_identifier_parsing() {
+        // Test various formats
+        let cases = vec![
+            ("en", "en-US"),
+            ("EN", "en-US"),
+            ("ru", "ru"),
+            ("RU", "ru"),
+            ("fr", "fr"),
+            ("de", "de"),
+        ];
+
+        for (input, expected) in cases {
+            let lang = lang_from_code(input);
+            assert_eq!(lang.to_string(), expected, "Failed for input: {}", input);
+        }
     }
 }

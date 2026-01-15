@@ -951,3 +951,165 @@ pub async fn restore_subscription(bot: &Bot, telegram_id: i64, db_pool: Arc<DbPo
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_plan_limits_for_free() {
+        let limits = PlanLimits::for_plan("free");
+        assert_eq!(limits.rate_limit_seconds, 30);
+        assert_eq!(limits.daily_download_limit, Some(5));
+        assert_eq!(limits.max_file_size_mb, 49);
+        assert_eq!(limits.queue_priority, 0);
+        assert!(!limits.can_choose_video_quality);
+        assert!(!limits.can_choose_audio_bitrate);
+        assert_eq!(limits.allowed_formats.len(), 2);
+        assert!(limits.allowed_formats.contains(&"mp3".to_string()));
+        assert!(limits.allowed_formats.contains(&"mp4".to_string()));
+    }
+
+    #[test]
+    fn test_plan_limits_for_premium() {
+        let limits = PlanLimits::for_plan("premium");
+        assert_eq!(limits.rate_limit_seconds, 10);
+        assert_eq!(limits.daily_download_limit, None);
+        assert_eq!(limits.max_file_size_mb, 100);
+        assert_eq!(limits.queue_priority, 70);
+        assert!(limits.can_choose_video_quality);
+        assert!(limits.can_choose_audio_bitrate);
+        assert_eq!(limits.allowed_formats.len(), 4);
+    }
+
+    #[test]
+    fn test_plan_limits_for_vip() {
+        let limits = PlanLimits::for_plan("vip");
+        assert_eq!(limits.rate_limit_seconds, 5);
+        assert_eq!(limits.daily_download_limit, None);
+        assert_eq!(limits.max_file_size_mb, 200);
+        assert_eq!(limits.queue_priority, 100);
+        assert!(limits.can_choose_video_quality);
+        assert!(limits.can_choose_audio_bitrate);
+        assert_eq!(limits.allowed_formats.len(), 4);
+        assert!(limits.allowed_formats.contains(&"srt".to_string()));
+        assert!(limits.allowed_formats.contains(&"txt".to_string()));
+    }
+
+    #[test]
+    fn test_plan_limits_for_unknown_defaults_to_free() {
+        let limits = PlanLimits::for_plan("unknown");
+        assert_eq!(limits.rate_limit_seconds, 30);
+        assert_eq!(limits.daily_download_limit, Some(5));
+        assert_eq!(limits.max_file_size_mb, 49);
+
+        let limits2 = PlanLimits::for_plan("");
+        assert_eq!(limits2.rate_limit_seconds, 30);
+
+        let limits3 = PlanLimits::for_plan("invalid_plan");
+        assert_eq!(limits3.daily_download_limit, Some(5));
+    }
+
+    #[test]
+    fn test_plan_limits_clone() {
+        let limits = PlanLimits::for_plan("premium");
+        let cloned = limits.clone();
+        assert_eq!(limits.rate_limit_seconds, cloned.rate_limit_seconds);
+        assert_eq!(limits.max_file_size_mb, cloned.max_file_size_mb);
+    }
+
+    #[test]
+    fn test_plan_limits_debug() {
+        let limits = PlanLimits::for_plan("vip");
+        let debug_str = format!("{:?}", limits);
+        assert!(debug_str.contains("PlanLimits"));
+        assert!(debug_str.contains("rate_limit_seconds"));
+        assert!(debug_str.contains("5"));
+    }
+
+    #[test]
+    fn test_format_subscription_period_for_log_30_days() {
+        let period = Seconds::from_seconds(2592000); // 30 days in seconds
+        let formatted = format_subscription_period_for_log(&period);
+        assert!(formatted.contains("2592000 seconds"));
+        assert!(formatted.contains("30.00 days"));
+        assert!(formatted.contains("1.00 months"));
+    }
+
+    #[test]
+    fn test_format_subscription_period_for_log_1_day() {
+        let period = Seconds::from_seconds(86400); // 1 day in seconds
+        let formatted = format_subscription_period_for_log(&period);
+        assert!(formatted.contains("86400 seconds"));
+        assert!(formatted.contains("1.00 days"));
+    }
+
+    #[test]
+    fn test_format_subscription_period_for_log_90_days() {
+        let period = Seconds::from_seconds(7776000); // 90 days in seconds
+        let formatted = format_subscription_period_for_log(&period);
+        assert!(formatted.contains("7776000 seconds"));
+        assert!(formatted.contains("90.00 days"));
+        assert!(formatted.contains("3.00 months"));
+    }
+
+    #[test]
+    fn test_format_subscription_period_for_log_zero() {
+        let period = Seconds::from_seconds(0);
+        let formatted = format_subscription_period_for_log(&period);
+        assert!(formatted.contains("0 seconds"));
+        assert!(formatted.contains("0.00 days"));
+    }
+
+    #[test]
+    fn test_premium_vs_vip_rate_limits() {
+        let premium = PlanLimits::for_plan("premium");
+        let vip = PlanLimits::for_plan("vip");
+        let free = PlanLimits::for_plan("free");
+
+        // VIP has lower rate limit than premium
+        assert!(vip.rate_limit_seconds < premium.rate_limit_seconds);
+        // Premium has lower rate limit than free
+        assert!(premium.rate_limit_seconds < free.rate_limit_seconds);
+    }
+
+    #[test]
+    fn test_premium_vs_vip_file_size() {
+        let premium = PlanLimits::for_plan("premium");
+        let vip = PlanLimits::for_plan("vip");
+        let free = PlanLimits::for_plan("free");
+
+        // VIP has higher max file size than premium
+        assert!(vip.max_file_size_mb > premium.max_file_size_mb);
+        // Premium has higher max file size than free
+        assert!(premium.max_file_size_mb > free.max_file_size_mb);
+    }
+
+    #[test]
+    fn test_premium_vs_vip_queue_priority() {
+        let premium = PlanLimits::for_plan("premium");
+        let vip = PlanLimits::for_plan("vip");
+        let free = PlanLimits::for_plan("free");
+
+        // VIP has highest priority
+        assert_eq!(vip.queue_priority, 100);
+        // Premium has medium priority
+        assert!(premium.queue_priority > 0 && premium.queue_priority < 100);
+        // Free has lowest priority
+        assert_eq!(free.queue_priority, 0);
+    }
+
+    #[test]
+    fn test_allowed_formats_subset() {
+        let premium = PlanLimits::for_plan("premium");
+        let free = PlanLimits::for_plan("free");
+
+        // Free has fewer formats than premium
+        assert!(free.allowed_formats.len() < premium.allowed_formats.len());
+
+        // All free formats are in premium
+        for format in &free.allowed_formats {
+            assert!(premium.allowed_formats.contains(format));
+        }
+    }
+}

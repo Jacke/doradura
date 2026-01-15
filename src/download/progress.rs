@@ -573,6 +573,8 @@ impl ProgressMessage {
 mod tests {
     use super::*;
 
+    // ==================== create_progress_bar Tests ====================
+
     #[test]
     fn test_progress_bar() {
         assert_eq!(create_progress_bar(0), "[░░░░░░░░░░]");
@@ -581,9 +583,201 @@ mod tests {
     }
 
     #[test]
+    fn test_progress_bar_intermediate_values() {
+        assert_eq!(create_progress_bar(10), "[█░░░░░░░░░]");
+        assert_eq!(create_progress_bar(25), "[██░░░░░░░░]");
+        assert_eq!(create_progress_bar(75), "[███████░░░]");
+        assert_eq!(create_progress_bar(90), "[█████████░]");
+    }
+
+    #[test]
+    fn test_progress_bar_overflow() {
+        // Progress > 100 should be capped
+        assert_eq!(create_progress_bar(150), "[██████████]");
+        assert_eq!(create_progress_bar(255), "[██████████]");
+    }
+
+    // ==================== escape_markdown Tests ====================
+
+    #[test]
     fn test_escape_markdown() {
         assert_eq!(escape_markdown("Hello World"), "Hello World");
         assert_eq!(escape_markdown("Test_file.mp3"), "Test\\_file\\.mp3");
         assert_eq!(escape_markdown("Song [2024]"), "Song \\[2024\\]");
+    }
+
+    #[test]
+    fn test_escape_markdown_all_special() {
+        let input = r"_*[]()~`>#+-=|{}.!";
+        let expected = r"\_\*\[\]\(\)\~\`\>\#\+\-\=\|\{\}\.\!";
+        assert_eq!(escape_markdown(input), expected);
+    }
+
+    #[test]
+    fn test_escape_markdown_backslash() {
+        assert_eq!(escape_markdown("a\\b"), "a\\\\b");
+    }
+
+    #[test]
+    fn test_escape_markdown_empty() {
+        assert_eq!(escape_markdown(""), "");
+    }
+
+    // ==================== extract_retry_after Tests ====================
+
+    #[test]
+    fn test_extract_retry_after_standard() {
+        assert_eq!(extract_retry_after("Retry after 30s"), Some(30));
+        assert_eq!(extract_retry_after("retry after 60s"), Some(60));
+    }
+
+    #[test]
+    fn test_extract_retry_after_colon_format() {
+        assert_eq!(extract_retry_after("retry_after: 45"), Some(45));
+        assert_eq!(extract_retry_after("retry_after:30"), Some(30));
+    }
+
+    #[test]
+    fn test_extract_retry_after_no_match() {
+        assert_eq!(extract_retry_after("No retry info"), None);
+        assert_eq!(extract_retry_after(""), None);
+    }
+
+    // ==================== DownloadStatus::get_emoji Tests ====================
+
+    #[test]
+    fn test_get_emoji_mp3() {
+        assert_eq!(DownloadStatus::get_emoji(Some(&"mp3".to_string())), "🎵");
+    }
+
+    #[test]
+    fn test_get_emoji_mp4() {
+        assert_eq!(DownloadStatus::get_emoji(Some(&"mp4".to_string())), "🎬");
+        assert_eq!(DownloadStatus::get_emoji(Some(&"mp4+mp3".to_string())), "🎬");
+    }
+
+    #[test]
+    fn test_get_emoji_srt() {
+        assert_eq!(DownloadStatus::get_emoji(Some(&"srt".to_string())), "📝");
+    }
+
+    #[test]
+    fn test_get_emoji_txt() {
+        assert_eq!(DownloadStatus::get_emoji(Some(&"txt".to_string())), "📄");
+    }
+
+    #[test]
+    fn test_get_emoji_default() {
+        assert_eq!(DownloadStatus::get_emoji(None), "🎵");
+        assert_eq!(DownloadStatus::get_emoji(Some(&"unknown".to_string())), "🎵");
+    }
+
+    // ==================== DownloadStatus::to_message Tests ====================
+
+    #[test]
+    fn test_status_starting_message() {
+        let status = DownloadStatus::Starting {
+            title: "Test Song".to_string(),
+            file_format: Some("mp3".to_string()),
+        };
+        let msg = status.to_message();
+        assert!(msg.contains("Test Song"));
+        assert!(msg.contains("⏳"));
+    }
+
+    #[test]
+    fn test_status_downloading_message() {
+        let status = DownloadStatus::Downloading {
+            title: "Test Song".to_string(),
+            progress: 50,
+            speed_mbs: Some(5.5),
+            eta_seconds: Some(30),
+            current_size: Some(50 * 1024 * 1024),
+            total_size: Some(100 * 1024 * 1024),
+            file_format: Some("mp3".to_string()),
+        };
+        let msg = status.to_message();
+        assert!(msg.contains("Test Song"));
+        assert!(msg.contains("50%"));
+        assert!(msg.contains("📥"));
+    }
+
+    #[test]
+    fn test_status_uploading_message() {
+        let status = DownloadStatus::Uploading {
+            title: "Test Song".to_string(),
+            dots: 2,
+            progress: None,
+            speed_mbs: None,
+            eta_seconds: None,
+            current_size: None,
+            total_size: None,
+            file_format: None,
+        };
+        let msg = status.to_message();
+        assert!(msg.contains("Test Song"));
+        assert!(msg.contains("📤"));
+    }
+
+    #[test]
+    fn test_status_uploading_with_progress() {
+        let status = DownloadStatus::Uploading {
+            title: "Test Song".to_string(),
+            dots: 0,
+            progress: Some(75),
+            speed_mbs: Some(10.0),
+            eta_seconds: Some(15),
+            current_size: None,
+            total_size: None,
+            file_format: Some("mp4".to_string()),
+        };
+        let msg = status.to_message();
+        assert!(msg.contains("75%"));
+    }
+
+    #[test]
+    fn test_status_success_message() {
+        let status = DownloadStatus::Success {
+            title: "Test Song".to_string(),
+            elapsed_secs: 5,
+            file_format: Some("mp3".to_string()),
+        };
+        let msg = status.to_message();
+        assert!(msg.contains("Test Song"));
+        assert!(msg.contains("✅"));
+        assert!(msg.contains("5"));
+    }
+
+    #[test]
+    fn test_status_completed_message() {
+        let status = DownloadStatus::Completed {
+            title: "Test Song".to_string(),
+            file_format: Some("mp3".to_string()),
+        };
+        let msg = status.to_message();
+        assert!(msg.contains("Test Song"));
+        assert!(msg.contains("🎵"));
+    }
+
+    #[test]
+    fn test_status_error_message() {
+        let status = DownloadStatus::Error {
+            title: "Test Song".to_string(),
+            error: "Network error".to_string(),
+            file_format: Some("mp3".to_string()),
+        };
+        let msg = status.to_message();
+        assert!(msg.contains("Test Song"));
+        assert!(msg.contains("❌"));
+        assert!(msg.contains("Network error"));
+    }
+
+    // ==================== ProgressMessage Tests ====================
+
+    #[test]
+    fn test_progress_message_new() {
+        let pm = ProgressMessage::new(ChatId(12345));
+        assert_eq!(pm.chat_id, ChatId(12345));
+        assert!(pm.message_id.is_none());
     }
 }

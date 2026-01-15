@@ -229,9 +229,20 @@ pub async fn create_recording_bot(
 mod tests {
     use super::*;
 
+    // ==================== RecordingMode Tests ====================
+
     #[test]
     fn test_recording_mode_from_env() {
+        // Save original env var
+        let original = std::env::var("TELEGRAM_RECORD_MODE").ok();
+
         std::env::set_var("TELEGRAM_RECORD_MODE", "true");
+        assert_eq!(RecordingMode::from_env(), RecordingMode::Enabled);
+
+        std::env::set_var("TELEGRAM_RECORD_MODE", "1");
+        assert_eq!(RecordingMode::from_env(), RecordingMode::Enabled);
+
+        std::env::set_var("TELEGRAM_RECORD_MODE", "enabled");
         assert_eq!(RecordingMode::from_env(), RecordingMode::Enabled);
 
         std::env::set_var("TELEGRAM_RECORD_MODE", "verbose");
@@ -239,11 +250,89 @@ mod tests {
 
         std::env::remove_var("TELEGRAM_RECORD_MODE");
         assert_eq!(RecordingMode::from_env(), RecordingMode::Disabled);
+
+        // Restore original env var
+        if let Some(val) = original {
+            std::env::set_var("TELEGRAM_RECORD_MODE", val);
+        }
     }
+
+    #[test]
+    fn test_recording_mode_is_enabled() {
+        assert!(RecordingMode::Enabled.is_enabled());
+        assert!(RecordingMode::Verbose.is_enabled());
+        assert!(!RecordingMode::Disabled.is_enabled());
+    }
+
+    #[test]
+    fn test_recording_mode_is_verbose() {
+        assert!(RecordingMode::Verbose.is_verbose());
+        assert!(!RecordingMode::Enabled.is_verbose());
+        assert!(!RecordingMode::Disabled.is_verbose());
+    }
+
+    #[test]
+    fn test_recording_mode_equality() {
+        assert_eq!(RecordingMode::Enabled, RecordingMode::Enabled);
+        assert_ne!(RecordingMode::Enabled, RecordingMode::Disabled);
+        assert_ne!(RecordingMode::Verbose, RecordingMode::Enabled);
+    }
+
+    // ==================== RecordingClient Tests ====================
 
     #[test]
     fn test_recording_client_creation() {
         let client = RecordingClient::new("test");
         assert_eq!(client.interaction_count(), 0);
+    }
+
+    #[test]
+    fn test_recording_client_with_mode() {
+        let client = RecordingClient::with_mode("test", RecordingMode::Enabled);
+        assert_eq!(client.mode, RecordingMode::Enabled);
+        assert_eq!(client.interaction_count(), 0);
+    }
+
+    #[test]
+    fn test_recording_client_disabled_mode() {
+        let client = RecordingClient::with_mode("test", RecordingMode::Disabled);
+        assert_eq!(client.mode, RecordingMode::Disabled);
+    }
+
+    #[test]
+    fn test_recording_client_get_snapshot() {
+        let client = RecordingClient::new("my_snapshot");
+        let snapshot = client.get_snapshot();
+        assert_eq!(snapshot.name, "my_snapshot");
+        assert!(snapshot.interactions.is_empty());
+    }
+
+    #[test]
+    fn test_recording_client_save_empty() {
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join(format!("test_recorder_{}.json", std::process::id()));
+
+        let client = RecordingClient::new("test");
+        // Saving empty snapshot should succeed (with warning)
+        let result = client.save(&temp_file);
+        assert!(result.is_ok());
+
+        // File should not be created (or be empty) since no interactions
+        // Based on the implementation, it skips saving if empty
+        let _ = std::fs::remove_file(&temp_file);
+    }
+
+    #[test]
+    fn test_recording_mode_debug() {
+        let mode = RecordingMode::Enabled;
+        let debug = format!("{:?}", mode);
+        assert_eq!(debug, "Enabled");
+    }
+
+    #[test]
+    fn test_recording_mode_clone() {
+        let mode = RecordingMode::Verbose;
+        let cloned = mode;
+        assert_eq!(mode, cloned);
     }
 }

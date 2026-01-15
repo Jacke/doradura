@@ -162,3 +162,283 @@ pub fn get_fix_recommendations(error_type: &YtDlpErrorType) -> String {
             .to_string(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== analyze_ytdlp_error Tests ====================
+
+    #[test]
+    fn test_analyze_invalid_cookies_error() {
+        let cases = vec![
+            "cookies are no longer valid",
+            "Cookies have likely been rotated",
+            "Sign in to confirm you're not a bot",
+            "Please sign in",
+            "Use --cookies-from-browser",
+            "Use --cookies for the authentication",
+            "The provided YouTube account cookies are no longer valid",
+        ];
+
+        for case in cases {
+            assert_eq!(
+                analyze_ytdlp_error(case),
+                YtDlpErrorType::InvalidCookies,
+                "Failed for: {}",
+                case
+            );
+        }
+    }
+
+    #[test]
+    fn test_analyze_bot_detection_error() {
+        let cases = vec![
+            "bot detection triggered",
+            "HTTP Error 403: Forbidden",
+            "Unable to extract video data",
+            "Signature extraction failed",
+        ];
+
+        for case in cases {
+            assert_eq!(
+                analyze_ytdlp_error(case),
+                YtDlpErrorType::BotDetection,
+                "Failed for: {}",
+                case
+            );
+        }
+    }
+
+    #[test]
+    fn test_analyze_video_unavailable_error() {
+        let cases = vec![
+            "Private video",
+            "Video unavailable",
+            "This video is not available in your country",
+            "Video is private",
+            "Video has been removed",
+            "This video does not exist",
+            "Video is not available",
+        ];
+
+        for case in cases {
+            assert_eq!(
+                analyze_ytdlp_error(case),
+                YtDlpErrorType::VideoUnavailable,
+                "Failed for: {}",
+                case
+            );
+        }
+    }
+
+    #[test]
+    fn test_analyze_network_error() {
+        let cases = vec![
+            "Connection timeout",
+            "Connection refused",
+            "Network unreachable",
+            "Socket error",
+            "DNS resolution failed",
+            "Failed to connect to server",
+        ];
+
+        for case in cases {
+            assert_eq!(
+                analyze_ytdlp_error(case),
+                YtDlpErrorType::NetworkError,
+                "Failed for: {}",
+                case
+            );
+        }
+    }
+
+    #[test]
+    fn test_analyze_unknown_error() {
+        let cases = vec!["Some random error", "Unknown error occurred", "Unexpected behavior", ""];
+
+        for case in cases {
+            assert_eq!(
+                analyze_ytdlp_error(case),
+                YtDlpErrorType::Unknown,
+                "Failed for: '{}'",
+                case
+            );
+        }
+    }
+
+    #[test]
+    fn test_analyze_case_insensitive() {
+        // Should work regardless of case
+        assert_eq!(
+            analyze_ytdlp_error("COOKIES ARE NO LONGER VALID"),
+            YtDlpErrorType::InvalidCookies
+        );
+        assert_eq!(analyze_ytdlp_error("http error 403"), YtDlpErrorType::BotDetection);
+        assert_eq!(analyze_ytdlp_error("PRIVATE VIDEO"), YtDlpErrorType::VideoUnavailable);
+        assert_eq!(analyze_ytdlp_error("CONNECTION TIMEOUT"), YtDlpErrorType::NetworkError);
+    }
+
+    // ==================== get_error_message Tests ====================
+
+    #[test]
+    fn test_get_error_message_invalid_cookies() {
+        let msg = get_error_message(&YtDlpErrorType::InvalidCookies);
+        assert!(msg.contains("❌"));
+        assert!(msg.contains("YouTube"));
+    }
+
+    #[test]
+    fn test_get_error_message_bot_detection() {
+        let msg = get_error_message(&YtDlpErrorType::BotDetection);
+        assert!(msg.contains("❌"));
+        assert!(msg.contains("YouTube"));
+        assert!(msg.contains("заблокировал"));
+    }
+
+    #[test]
+    fn test_get_error_message_video_unavailable() {
+        let msg = get_error_message(&YtDlpErrorType::VideoUnavailable);
+        assert!(msg.contains("❌"));
+        assert!(msg.contains("недоступно"));
+    }
+
+    #[test]
+    fn test_get_error_message_network() {
+        let msg = get_error_message(&YtDlpErrorType::NetworkError);
+        assert!(msg.contains("❌"));
+        assert!(msg.contains("сет"));
+    }
+
+    #[test]
+    fn test_get_error_message_unknown() {
+        let msg = get_error_message(&YtDlpErrorType::Unknown);
+        assert!(msg.contains("❌"));
+        assert!(msg.contains("скачать"));
+    }
+
+    // ==================== should_notify_admin Tests ====================
+
+    #[test]
+    fn test_should_notify_admin_critical_errors() {
+        assert!(should_notify_admin(&YtDlpErrorType::InvalidCookies));
+        assert!(should_notify_admin(&YtDlpErrorType::BotDetection));
+        assert!(should_notify_admin(&YtDlpErrorType::Unknown));
+    }
+
+    #[test]
+    fn test_should_not_notify_admin_normal_errors() {
+        assert!(!should_notify_admin(&YtDlpErrorType::VideoUnavailable));
+        assert!(!should_notify_admin(&YtDlpErrorType::NetworkError));
+    }
+
+    // ==================== get_fix_recommendations Tests ====================
+
+    #[test]
+    fn test_get_fix_recommendations_invalid_cookies() {
+        let recs = get_fix_recommendations(&YtDlpErrorType::InvalidCookies);
+        assert!(recs.contains("РЕКОМЕНДАЦИИ"));
+        assert!(recs.contains("cookies"));
+        assert!(recs.contains("браузер"));
+    }
+
+    #[test]
+    fn test_get_fix_recommendations_bot_detection() {
+        let recs = get_fix_recommendations(&YtDlpErrorType::BotDetection);
+        assert!(recs.contains("РЕКОМЕНДАЦИИ"));
+        assert!(recs.contains("yt-dlp"));
+    }
+
+    #[test]
+    fn test_get_fix_recommendations_video_unavailable() {
+        let recs = get_fix_recommendations(&YtDlpErrorType::VideoUnavailable);
+        assert!(recs.contains("недоступно"));
+        assert!(recs.contains("не требует"));
+    }
+
+    #[test]
+    fn test_get_fix_recommendations_network() {
+        let recs = get_fix_recommendations(&YtDlpErrorType::NetworkError);
+        assert!(recs.contains("интернет"));
+        assert!(recs.contains("youtube.com"));
+    }
+
+    #[test]
+    fn test_get_fix_recommendations_unknown() {
+        let recs = get_fix_recommendations(&YtDlpErrorType::Unknown);
+        assert!(recs.contains("логи"));
+        assert!(recs.contains("yt-dlp"));
+    }
+
+    // ==================== YtDlpErrorType Trait Tests ====================
+
+    #[test]
+    fn test_error_type_debug() {
+        assert_eq!(format!("{:?}", YtDlpErrorType::InvalidCookies), "InvalidCookies");
+        assert_eq!(format!("{:?}", YtDlpErrorType::BotDetection), "BotDetection");
+        assert_eq!(format!("{:?}", YtDlpErrorType::VideoUnavailable), "VideoUnavailable");
+        assert_eq!(format!("{:?}", YtDlpErrorType::NetworkError), "NetworkError");
+        assert_eq!(format!("{:?}", YtDlpErrorType::Unknown), "Unknown");
+    }
+
+    #[test]
+    fn test_error_type_clone() {
+        let original = YtDlpErrorType::InvalidCookies;
+        let cloned = original.clone();
+        assert_eq!(original, cloned);
+    }
+
+    #[test]
+    fn test_error_type_equality() {
+        assert_eq!(YtDlpErrorType::InvalidCookies, YtDlpErrorType::InvalidCookies);
+        assert_ne!(YtDlpErrorType::InvalidCookies, YtDlpErrorType::BotDetection);
+        assert_ne!(YtDlpErrorType::NetworkError, YtDlpErrorType::Unknown);
+    }
+
+    // ==================== Integration Tests ====================
+
+    #[test]
+    fn test_full_error_handling_flow() {
+        let stderr = "ERROR: Cookies are no longer valid. Please use --cookies-from-browser";
+
+        let error_type = analyze_ytdlp_error(stderr);
+        assert_eq!(error_type, YtDlpErrorType::InvalidCookies);
+
+        let user_msg = get_error_message(&error_type);
+        assert!(!user_msg.is_empty());
+
+        let notify = should_notify_admin(&error_type);
+        assert!(notify);
+
+        let recommendations = get_fix_recommendations(&error_type);
+        assert!(recommendations.contains("cookies"));
+    }
+
+    #[test]
+    fn test_real_world_error_messages() {
+        // Real error messages from yt-dlp
+        let cases = vec![
+            (
+                "ERROR: [youtube] dQw4w9WgXcQ: Sign in to confirm you're not a bot. Use --cookies-from-browser",
+                YtDlpErrorType::InvalidCookies,
+            ),
+            (
+                "ERROR: [youtube] abc123: Private video. Sign in if you've been granted access to this video",
+                YtDlpErrorType::VideoUnavailable,
+            ),
+            (
+                "ERROR: unable to download video data: HTTP Error 403: Forbidden",
+                YtDlpErrorType::BotDetection,
+            ),
+            // Note: "timed out" matches "timeout" check since we use contains
+            (
+                "ERROR: Unable to download webpage: Connection timeout",
+                YtDlpErrorType::NetworkError,
+            ),
+        ];
+
+        for (stderr, expected) in cases {
+            assert_eq!(analyze_ytdlp_error(stderr), expected, "Failed for stderr: {}", stderr);
+        }
+    }
+}
