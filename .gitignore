@@ -38,4 +38,5 @@ prometheus_data/
 grafana_data/
 alertmanager_data/
 grafana/grafana.ini
-bot.logmtproto_session.bin
+# MTProto session files (contain auth tokens)
+mtproto_session*.bin
