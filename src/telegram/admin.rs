@@ -1412,6 +1412,137 @@ pub async fn download_file_from_telegram(
     Ok(dest_path)
 }
 
+/// Downloads a file from Telegram with fallback chain:
+/// 1. Local Bot API server (if BOT_API_DATA_DIR is set)
+/// 2. Bot API HTTP download (local or official)
+/// 3. MTProto direct download (using message_id to get fresh file_reference)
+///
+/// # Arguments
+/// * `bot` - Telegram bot instance
+/// * `file_id` - Telegram file_id
+/// * `message_id` - Optional message_id for MTProto fallback
+/// * `chat_id` - Optional chat_id for MTProto fallback
+/// * `destination_path` - Where to save the file
+///
+/// # Returns
+/// Path to the downloaded file or an error
+pub async fn download_file_with_fallback(
+    bot: &Bot,
+    file_id: &str,
+    message_id: Option<i32>,
+    chat_id: Option<i64>,
+    destination_path: Option<PathBuf>,
+) -> Result<PathBuf> {
+    log::info!(
+        "📥 Starting download with fallback chain: file_id={}, message_id={:?}",
+        &file_id[..20.min(file_id.len())],
+        message_id
+    );
+
+    // Try standard Bot API download first
+    match download_file_from_telegram(bot, file_id, destination_path.clone()).await {
+        Ok(path) => {
+            log::info!("✅ Downloaded via Bot API: {:?}", path);
+            Ok(path)
+        }
+        Err(e) => {
+            log::warn!("⚠️ Bot API download failed: {}", e);
+
+            // Check if we have message_id for MTProto fallback
+            if let (Some(msg_id), Some(_chat)) = (message_id, chat_id) {
+                log::info!("🔄 Attempting MTProto fallback with message_id={}", msg_id);
+
+                match download_via_mtproto(msg_id, destination_path).await {
+                    Ok(path) => {
+                        log::info!("✅ Downloaded via MTProto: {:?}", path);
+                        Ok(path)
+                    }
+                    Err(mtproto_err) => {
+                        log::error!("❌ MTProto fallback also failed: {}", mtproto_err);
+                        Err(anyhow::anyhow!(
+                            "File download failed. Bot API error: {}. MTProto error: {}",
+                            e,
+                            mtproto_err
+                        ))
+                    }
+                }
+            } else {
+                log::warn!("⚠️ No message_id available for MTProto fallback");
+                Err(anyhow::anyhow!(
+                    "File download failed and no message_id available for MTProto fallback: {}",
+                    e
+                ))
+            }
+        }
+    }
+}
+
+/// Downloads a file via MTProto using message_id to get fresh file_reference
+async fn download_via_mtproto(message_id: i32, destination_path: Option<PathBuf>) -> Result<PathBuf> {
+    use crate::experimental::mtproto::{MtProtoClient, MtProtoDownloader};
+
+    // Load MTProto credentials from environment
+    let api_id: i32 = std::env::var("TELEGRAM_API_ID")
+        .map_err(|_| anyhow::anyhow!("TELEGRAM_API_ID not set"))?
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid TELEGRAM_API_ID: {}", e))?;
+
+    let api_hash = std::env::var("TELEGRAM_API_HASH").map_err(|_| anyhow::anyhow!("TELEGRAM_API_HASH not set"))?;
+
+    let bot_token = std::env::var("BOT_TOKEN")
+        .or_else(|_| std::env::var("TELOXIDE_TOKEN"))
+        .map_err(|_| anyhow::anyhow!("BOT_TOKEN or TELOXIDE_TOKEN not set"))?;
+
+    let session_path = std::env::var("MTPROTO_SESSION_PATH").unwrap_or_else(|_| "mtproto_session.bin".to_string());
+
+    log::info!("🔌 Initializing MTProto client for fallback download...");
+
+    let client = MtProtoClient::new_bot(api_id, &api_hash, &bot_token, std::path::Path::new(&session_path))
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to initialize MTProto client: {}", e))?;
+
+    let downloader = MtProtoDownloader::with_bot_token(client, bot_token);
+
+    // Get message with fresh media info
+    log::info!("📨 Fetching message {} for fresh file_reference...", message_id);
+    let messages = downloader
+        .get_bot_messages(&[message_id])
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to get message via MTProto: {}", e))?;
+
+    let message = messages
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("Message {} not found via MTProto", message_id))?;
+
+    let media = message
+        .media
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Message {} has no media", message_id))?;
+
+    // Determine output path
+    let output_path = destination_path.unwrap_or_else(|| {
+        let filename = media
+            .filename
+            .clone()
+            .unwrap_or_else(|| format!("mtproto_download_{}.bin", message_id));
+        PathBuf::from("./downloads").join(filename)
+    });
+
+    // Ensure parent directory exists
+    if let Some(parent) = output_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    log::info!("📥 Downloading via MTProto: {} bytes to {:?}", media.size, output_path);
+
+    downloader
+        .download_media(media, &output_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("MTProto download failed: {}", e))?;
+
+    Ok(output_path)
+}
+
 fn build_file_url(base: &Url, token: &str, file_path: &str) -> Result<Url> {
     let mut url = base.clone();
 
@@ -2010,5 +2141,133 @@ mod tests {
         } else {
             assert!(!super::is_admin(0));
         }
+    }
+
+    // ==================== truncate_message Tests ====================
+
+    #[test]
+    fn test_truncate_message_short() {
+        let text = "Hello, World!";
+        assert_eq!(super::truncate_message(text), text);
+    }
+
+    #[test]
+    fn test_truncate_message_at_limit() {
+        let text = "a".repeat(super::MAX_MESSAGE_LENGTH);
+        assert_eq!(super::truncate_message(&text), text);
+    }
+
+    #[test]
+    fn test_truncate_message_over_limit() {
+        let text = "a".repeat(super::MAX_MESSAGE_LENGTH + 100);
+        let result = super::truncate_message(&text);
+        assert!(result.len() < super::MAX_MESSAGE_LENGTH);
+        assert!(result.ends_with("... (truncated)"));
+    }
+
+    #[test]
+    fn test_truncate_message_empty() {
+        assert_eq!(super::truncate_message(""), "");
+    }
+
+    // ==================== indent_lines Tests ====================
+
+    #[test]
+    fn test_indent_lines_single_line() {
+        assert_eq!(super::indent_lines("hello", "  "), "  hello");
+    }
+
+    #[test]
+    fn test_indent_lines_multiple_lines() {
+        let input = "line1\nline2\nline3";
+        let expected = "  line1\n  line2\n  line3";
+        assert_eq!(super::indent_lines(input, "  "), expected);
+    }
+
+    #[test]
+    fn test_indent_lines_empty() {
+        // Empty input results in empty output
+        assert_eq!(super::indent_lines("", "  "), "");
+    }
+
+    #[test]
+    fn test_indent_lines_with_tabs() {
+        assert_eq!(super::indent_lines("hello", "\t"), "\thello");
+    }
+
+    // ==================== format_subscription_period_for_log Tests ====================
+
+    #[test]
+    fn test_format_subscription_period_for_log_one_day() {
+        use teloxide::types::Seconds;
+        let period = Seconds::from_seconds(86400);
+        let result = super::format_subscription_period_for_log(&period);
+        assert!(result.contains("86400 seconds"));
+        assert!(result.contains("~1.00 days"));
+    }
+
+    #[test]
+    fn test_format_subscription_period_for_log_one_month() {
+        use teloxide::types::Seconds;
+        let period = Seconds::from_seconds(86400 * 30);
+        let result = super::format_subscription_period_for_log(&period);
+        assert!(result.contains("~30.00 days"));
+        assert!(result.contains("~1.00 months"));
+    }
+
+    #[test]
+    fn test_format_subscription_period_for_log_zero() {
+        use teloxide::types::Seconds;
+        let period = Seconds::from_seconds(0);
+        let result = super::format_subscription_period_for_log(&period);
+        assert!(result.contains("0 seconds"));
+    }
+
+    // ==================== is_local_bot_api Tests ====================
+
+    #[test]
+    fn test_is_local_bot_api_official() {
+        assert!(!super::is_local_bot_api("https://api.telegram.org/bot12345"));
+    }
+
+    #[test]
+    fn test_is_local_bot_api_local() {
+        assert!(super::is_local_bot_api("http://localhost:8081/bot12345"));
+        assert!(super::is_local_bot_api("http://127.0.0.1:8081/bot12345"));
+        assert!(super::is_local_bot_api("http://my-bot-api.local/bot12345"));
+    }
+
+    // ==================== read_log_tail Tests ====================
+
+    #[test]
+    fn test_read_log_tail_nonexistent() {
+        let result = super::read_log_tail(&std::path::PathBuf::from("/nonexistent/file.log"), 1024);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_read_log_tail_small_file() {
+        use std::io::Write;
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join(format!("admin_test_log_{}.txt", std::process::id()));
+
+        let mut file = std::fs::File::create(&temp_file).unwrap();
+        writeln!(file, "Line 1").unwrap();
+        writeln!(file, "Line 2").unwrap();
+        drop(file);
+
+        let result = super::read_log_tail(&temp_file, 1024).unwrap();
+        let _ = std::fs::remove_file(&temp_file);
+
+        assert!(result.contains("Line 1"));
+        assert!(result.contains("Line 2"));
+    }
+
+    // ==================== MAX_MESSAGE_LENGTH constant test ====================
+
+    #[test]
+    fn test_max_message_length_value() {
+        // Telegram limit is 4096, we use 4000 to have margin
+        assert_eq!(super::MAX_MESSAGE_LENGTH, 4000);
     }
 }

@@ -488,3 +488,103 @@ pub async fn handle_history_callback(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_escape_markdown_special_chars() {
+        assert_eq!(escape_markdown("test_underscore"), "test\\_underscore");
+        assert_eq!(escape_markdown("bold*text"), "bold\\*text");
+        assert_eq!(escape_markdown("[link]"), "\\[link\\]");
+        assert_eq!(escape_markdown("(parens)"), "\\(parens\\)");
+        assert_eq!(escape_markdown("~strike~"), "\\~strike\\~");
+        assert_eq!(escape_markdown("`code`"), "\\`code\\`");
+        assert_eq!(escape_markdown(">quote"), "\\>quote");
+        assert_eq!(escape_markdown("#hash"), "\\#hash");
+        assert_eq!(escape_markdown("+plus"), "\\+plus");
+        assert_eq!(escape_markdown("-dash"), "\\-dash");
+        assert_eq!(escape_markdown("=equals"), "\\=equals");
+        assert_eq!(escape_markdown("|pipe"), "\\|pipe");
+        assert_eq!(escape_markdown("{brace}"), "\\{brace\\}");
+        assert_eq!(escape_markdown("period."), "period\\.");
+        assert_eq!(escape_markdown("exclaim!"), "exclaim\\!");
+    }
+
+    #[test]
+    fn test_escape_markdown_backslash() {
+        assert_eq!(escape_markdown("back\\slash"), "back\\\\slash");
+    }
+
+    #[test]
+    fn test_escape_markdown_normal_text() {
+        assert_eq!(escape_markdown("normal text"), "normal text");
+        assert_eq!(escape_markdown("Hello World"), "Hello World");
+        assert_eq!(escape_markdown("12345"), "12345");
+    }
+
+    #[test]
+    fn test_escape_markdown_empty_string() {
+        assert_eq!(escape_markdown(""), "");
+    }
+
+    #[test]
+    fn test_escape_markdown_multiple_special_chars() {
+        assert_eq!(
+            escape_markdown("Hello [World]! How are you?"),
+            "Hello \\[World\\]\\! How are you?"
+        );
+    }
+
+    #[test]
+    fn test_escape_markdown_unicode() {
+        assert_eq!(escape_markdown("Привет мир"), "Привет мир");
+        assert_eq!(escape_markdown("🎵 Music"), "🎵 Music");
+    }
+
+    #[test]
+    fn test_format_date_valid() {
+        assert_eq!(format_date("2024-01-15 10:30:00"), "янв 15, 10:30");
+        assert_eq!(format_date("2024-06-01 00:00:00"), "июн 1, 00:00");
+        assert_eq!(format_date("2024-12-31 23:59:00"), "дек 31, 23:59");
+    }
+
+    #[test]
+    fn test_format_date_all_months() {
+        assert!(format_date("2024-01-01 12:00:00").starts_with("янв"));
+        assert!(format_date("2024-02-01 12:00:00").starts_with("фев"));
+        assert!(format_date("2024-03-01 12:00:00").starts_with("мар"));
+        assert!(format_date("2024-04-01 12:00:00").starts_with("апр"));
+        assert!(format_date("2024-05-01 12:00:00").starts_with("май"));
+        assert!(format_date("2024-06-01 12:00:00").starts_with("июн"));
+        assert!(format_date("2024-07-01 12:00:00").starts_with("июл"));
+        assert!(format_date("2024-08-01 12:00:00").starts_with("авг"));
+        assert!(format_date("2024-09-01 12:00:00").starts_with("сен"));
+        assert!(format_date("2024-10-01 12:00:00").starts_with("окт"));
+        assert!(format_date("2024-11-01 12:00:00").starts_with("ноя"));
+        assert!(format_date("2024-12-01 12:00:00").starts_with("дек"));
+    }
+
+    #[test]
+    fn test_format_date_invalid() {
+        assert_eq!(format_date("not a date"), "not a date");
+        assert_eq!(format_date(""), "");
+        assert_eq!(format_date("2024-13-01 12:00:00"), "2024-13-01 12:00:00");
+    }
+
+    #[test]
+    fn test_format_date_midnight() {
+        assert_eq!(format_date("2024-01-01 00:00:00"), "янв 1, 00:00");
+    }
+
+    #[test]
+    fn test_format_date_end_of_day() {
+        assert_eq!(format_date("2024-01-01 23:59:00"), "янв 1, 23:59");
+    }
+
+    #[test]
+    fn test_items_per_page_constant() {
+        assert_eq!(ITEMS_PER_PAGE, 5);
+    }
+}
