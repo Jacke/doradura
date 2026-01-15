@@ -15,7 +15,7 @@ use doradura::metadata_refresh;
 use doradura::core::{
     alerts, config, export, history, init_logger, log_cookies_configuration,
     rate_limiter::{self, RateLimiter},
-    stats, subscription,
+    stats, stats_reporter, subscription,
 };
 use doradura::download::queue::{self as queue};
 use doradura::download::ytdlp::{self as ytdlp};
@@ -172,6 +172,9 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
         create_pool(&config::DATABASE_PATH).map_err(|e| anyhow::anyhow!("Failed to create database pool: {}", e))?,
     );
 
+    // Initialize error logger
+    doradura::core::error_logger::init_error_logger(Arc::clone(&db_pool));
+
     // Start audio effects cleanup task
     doradura::download::audio_effects::start_cleanup_task(Arc::clone(&db_pool));
 
@@ -225,6 +228,29 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
         }
     } else {
         log::info!("Alerting disabled (ALERTS_ENABLED=false)");
+    }
+
+    // Start periodic stats reporter (sends statistics to admin every STATS_REPORT_INTERVAL hours)
+    {
+        let admin_user_id = *config::admin::ADMIN_USER_ID;
+        let interval_hours = env::var("STATS_REPORT_INTERVAL")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(3); // Default: every 3 hours
+
+        if admin_user_id != 0 && interval_hours > 0 {
+            let _stats_reporter = stats_reporter::start_stats_reporter(
+                bot.clone(),
+                ChatId(admin_user_id),
+                Arc::clone(&db_pool),
+                interval_hours,
+            );
+            log::info!("Stats reporter started (every {} hours)", interval_hours);
+        } else if interval_hours == 0 {
+            log::info!("Stats reporter disabled (STATS_REPORT_INTERVAL=0)");
+        } else {
+            log::warn!("Stats reporter disabled (ADMIN_USER_ID not set)");
+        }
     }
 
     // Start Mini App web server if WEBAPP_PORT is set
