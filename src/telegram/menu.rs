@@ -132,19 +132,8 @@ async fn start_download_from_preview(
         _ => "free".to_string(),
     };
 
-    if rate_limiter.is_rate_limited(chat_id, &plan).await {
-        if let Some(remaining_time) = rate_limiter.get_remaining_time(chat_id).await {
-            let remaining_seconds = remaining_time.as_secs();
-            bot.answer_callback_query(callback_id.clone())
-                .text(format!("Подожди {} секунд", remaining_seconds))
-                .await?;
-        } else {
-            bot.answer_callback_query(callback_id.clone())
-                .text("Подожди немного")
-                .await?;
-        }
-        return Ok(());
-    }
+    // Rate limit disabled
+    let _ = (rate_limiter, &plan);
 
     let _ = bot
         .answer_callback_query(callback_id.clone())
@@ -161,8 +150,6 @@ async fn start_download_from_preview(
             }
         }
     }
-
-    rate_limiter.update_rate_limit(chat_id, &plan).await;
 
     if format == "mp4+mp3" {
         let video_quality = if let Some(quality) = selected_quality {
@@ -1849,21 +1836,8 @@ pub async fn handle_menu_callback(
                                         _ => "free".to_string(),
                                     };
 
-                                    // Check rate limit
-                                    if rate_limiter.is_rate_limited(chat_id, &plan).await {
-                                        let msg = if let Some(remaining_time) =
-                                            rate_limiter.get_remaining_time(chat_id).await
-                                        {
-                                            format!("⏳ Подожди {} секунд", remaining_time.as_secs())
-                                        } else {
-                                            "⏳ Подожди немного".to_string()
-                                        };
-                                        // Preview already deleted, send rate limit message
-                                        let _ = bot.send_message(chat_id, msg).await;
-                                        return Ok(());
-                                    }
-
-                                    rate_limiter.update_rate_limit(chat_id, &plan).await;
+                                    // Rate limit disabled - users can download without waiting
+                                    let _ = (rate_limiter, &plan); // silence unused warnings
 
                                     // Handle "mp4+mp3" by adding two tasks to the queue
                                     if format == "mp4+mp3" {
