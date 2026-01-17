@@ -10,6 +10,7 @@ pub mod logging;
 pub mod metrics;
 pub mod metrics_server;
 pub mod rate_limiter;
+pub mod retry;
 pub mod stats;
 pub mod stats_reporter;
 pub mod subscription;
