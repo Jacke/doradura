@@ -309,7 +309,13 @@ pub async fn handle_message(
 
         if !urls.is_empty() {
             // Mark the user's link message as "seen"
-            crate::telegram::try_set_reaction(&bot, msg.chat.id, teloxide::types::MessageId(msg.id.0), "👀").await;
+            crate::telegram::try_set_reaction(
+                &bot,
+                msg.chat.id,
+                teloxide::types::MessageId(msg.id.0),
+                crate::telegram::emoji::EYES,
+            )
+            .await;
 
             // Get user's preferred download format from database
             // Use get_user to get full user info (will be reused for logging)

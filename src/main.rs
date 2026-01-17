@@ -663,7 +663,13 @@ async fn process_queue(
 
                 if let Some(msg_id) = task.message_id {
                     use teloxide::types::MessageId;
-                    doradura::telegram::try_set_reaction(&bot, task.chat_id, MessageId(msg_id), "📥").await;
+                    doradura::telegram::try_set_reaction(
+                        &bot,
+                        task.chat_id,
+                        MessageId(msg_id),
+                        doradura::telegram::emoji::EYES,
+                    )
+                    .await;
                 }
 
                 // Process task based on format

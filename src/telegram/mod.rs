@@ -13,6 +13,7 @@ pub mod handlers;
 pub mod markdown;
 pub mod menu;
 pub mod notifications;
+pub mod operation;
 pub mod preview;
 pub mod reactions;
 pub mod types;
@@ -35,6 +36,10 @@ pub use commands::{handle_downsub_command, handle_info_command, handle_message};
 pub use handlers::{schema, HandlerDeps, HandlerError};
 pub use markdown::send_message_markdown_v2;
 pub use menu::{handle_menu_callback, show_enhanced_main_menu, show_language_selection_menu, show_main_menu};
-pub use reactions::try_set_reaction;
+pub use operation::{
+    Completed, InProgress, MarkdownV2Formatter, MessageFormatter, NotStarted, Operation, OperationBuilder,
+    OperationError, OperationInfo, OperationStatus, PlainTextFormatter, DEFAULT_EMOJI,
+};
+pub use reactions::{emoji, try_set_reaction};
 pub use voice::{send_random_voice_message, send_voice_with_waveform, VOICE_FILES};
 pub use webapp::{create_webapp_router, run_webapp_server, WebAppAction, WebAppData};
