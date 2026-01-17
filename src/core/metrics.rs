@@ -232,6 +232,78 @@ lazy_static! {
         "Total number of dispatcher reconnections"
     )
     .unwrap();
+
+    /// Operation duration by type
+    /// Labels: operation_type (download/upload/processing), format
+    pub static ref OPERATION_DURATION_SECONDS: HistogramVec = register_histogram_vec!(
+        "doradura_operation_duration_seconds",
+        "Duration of operations by type and format",
+        &["operation_type", "format"],
+        vec![1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0]
+    )
+    .unwrap();
+
+    /// Operation success count
+    /// Labels: operation_type, format
+    pub static ref OPERATION_SUCCESS_TOTAL: CounterVec = register_counter_vec!(
+        "doradura_operation_success_total",
+        "Total number of successful operations",
+        &["operation_type", "format"]
+    )
+    .unwrap();
+
+    /// Operation failure count
+    /// Labels: operation_type, format, error_category
+    pub static ref OPERATION_FAILURE_TOTAL: CounterVec = register_counter_vec!(
+        "doradura_operation_failure_total",
+        "Total number of failed operations",
+        &["operation_type", "format", "error_category"]
+    )
+    .unwrap();
+
+    /// File size distribution
+    /// Labels: format
+    pub static ref FILE_SIZE_BYTES: HistogramVec = register_histogram_vec!(
+        "doradura_file_size_bytes",
+        "Size of files processed by format",
+        &["format"],
+        vec![1_000_000.0, 5_000_000.0, 10_000_000.0, 25_000_000.0, 50_000_000.0, 100_000_000.0, 500_000_000.0]
+    )
+    .unwrap();
+
+    /// Cookies status (1 = valid, 0 = needs refresh)
+    pub static ref COOKIES_STATUS: Gauge = register_gauge!(
+        "doradura_cookies_status",
+        "Cookies status (1 = valid, 0 = needs refresh)"
+    )
+    .unwrap();
+
+    /// Platform distribution for downloads
+    /// Labels: platform (youtube/soundcloud/vimeo/etc)
+    pub static ref PLATFORM_DOWNLOADS_TOTAL: CounterVec = register_counter_vec!(
+        "doradura_platform_downloads_total",
+        "Downloads by source platform",
+        &["platform"]
+    )
+    .unwrap();
+
+    /// User feedback count
+    /// Labels: sentiment (positive/neutral/negative)
+    pub static ref USER_FEEDBACK_TOTAL: CounterVec = register_counter_vec!(
+        "doradura_user_feedback_total",
+        "User feedback submissions by sentiment",
+        &["sentiment"]
+    )
+    .unwrap();
+
+    /// Alert count by type and severity
+    /// Labels: alert_type, severity
+    pub static ref ALERTS_TOTAL: CounterVec = register_counter_vec!(
+        "doradura_alerts_total",
+        "Alerts triggered by type and severity",
+        &["alert_type", "severity"]
+    )
+    .unwrap();
 }
 
 // ======================
@@ -435,6 +507,31 @@ pub fn init_metrics() {
     // Set yt-dlp status to healthy by default
     YTDLP_HEALTH_STATUS.set(1.0);
 
+    // Initialize new operation metrics
+    let _ = &*OPERATION_DURATION_SECONDS;
+    let _ = &*OPERATION_SUCCESS_TOTAL;
+    let _ = &*OPERATION_FAILURE_TOTAL;
+    let _ = &*FILE_SIZE_BYTES;
+    let _ = &*COOKIES_STATUS;
+    let _ = &*PLATFORM_DOWNLOADS_TOTAL;
+    let _ = &*USER_FEEDBACK_TOTAL;
+    let _ = &*ALERTS_TOTAL;
+
+    // Initialize operation metrics with common labels
+    OPERATION_SUCCESS_TOTAL.with_label_values(&["download", "mp3"]);
+    OPERATION_SUCCESS_TOTAL.with_label_values(&["download", "mp4"]);
+    OPERATION_SUCCESS_TOTAL.with_label_values(&["upload", "mp3"]);
+    OPERATION_SUCCESS_TOTAL.with_label_values(&["upload", "mp4"]);
+
+    // Initialize platform metrics
+    PLATFORM_DOWNLOADS_TOTAL.with_label_values(&["youtube"]);
+    PLATFORM_DOWNLOADS_TOTAL.with_label_values(&["soundcloud"]);
+    PLATFORM_DOWNLOADS_TOTAL.with_label_values(&["vimeo"]);
+    PLATFORM_DOWNLOADS_TOTAL.with_label_values(&["other"]);
+
+    // Set cookies status to valid by default
+    COOKIES_STATUS.set(1.0);
+
     log::info!("Metrics registry initialized successfully");
 }
 
@@ -493,6 +590,80 @@ pub fn record_payment_failure(plan: &str, reason: &str) {
 pub fn record_revenue(plan: &str, amount: f64) {
     REVENUE_TOTAL_STARS.inc_by(amount);
     REVENUE_BY_PLAN.with_label_values(&[plan]).inc_by(amount);
+}
+
+/// Helper function to record operation start (returns timer)
+pub fn start_operation_timer(operation_type: &str, format: &str) -> prometheus::HistogramTimer {
+    OPERATION_DURATION_SECONDS
+        .with_label_values(&[operation_type, format])
+        .start_timer()
+}
+
+/// Helper function to record operation success
+pub fn record_operation_success(operation_type: &str, format: &str) {
+    OPERATION_SUCCESS_TOTAL
+        .with_label_values(&[operation_type, format])
+        .inc();
+}
+
+/// Helper function to record operation failure
+pub fn record_operation_failure(operation_type: &str, format: &str, error_category: &str) {
+    OPERATION_FAILURE_TOTAL
+        .with_label_values(&[operation_type, format, error_category])
+        .inc();
+}
+
+/// Helper function to record file size
+pub fn record_file_size(format: &str, size_bytes: u64) {
+    FILE_SIZE_BYTES.with_label_values(&[format]).observe(size_bytes as f64);
+}
+
+/// Helper function to record platform download
+pub fn record_platform_download(platform: &str) {
+    PLATFORM_DOWNLOADS_TOTAL.with_label_values(&[platform]).inc();
+}
+
+/// Helper function to update cookies status
+pub fn update_cookies_status(valid: bool) {
+    COOKIES_STATUS.set(if valid { 1.0 } else { 0.0 });
+}
+
+/// Helper function to record user feedback
+pub fn record_user_feedback(sentiment: &str) {
+    USER_FEEDBACK_TOTAL.with_label_values(&[sentiment]).inc();
+}
+
+/// Helper function to record alert
+pub fn record_alert(alert_type: &str, severity: &str) {
+    ALERTS_TOTAL.with_label_values(&[alert_type, severity]).inc();
+}
+
+/// Extract platform from URL for metrics
+pub fn extract_platform(url: &str) -> &'static str {
+    let url_lower = url.to_lowercase();
+    if url_lower.contains("youtube.com") || url_lower.contains("youtu.be") {
+        "youtube"
+    } else if url_lower.contains("soundcloud.com") {
+        "soundcloud"
+    } else if url_lower.contains("vimeo.com") {
+        "vimeo"
+    } else if url_lower.contains("tiktok.com") {
+        "tiktok"
+    } else if url_lower.contains("instagram.com") {
+        "instagram"
+    } else if url_lower.contains("twitter.com") || url_lower.contains("x.com") {
+        "twitter"
+    } else if url_lower.contains("spotify.com") {
+        "spotify"
+    } else if url_lower.contains("bandcamp.com") {
+        "bandcamp"
+    } else if url_lower.contains("twitch.tv") {
+        "twitch"
+    } else if url_lower.contains("dailymotion.com") {
+        "dailymotion"
+    } else {
+        "other"
+    }
 }
 
 #[cfg(test)]
