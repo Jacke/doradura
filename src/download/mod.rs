@@ -4,6 +4,7 @@ pub mod audio_effects;
 pub mod cookies;
 pub mod downloader;
 pub mod fetch;
+pub mod playlist;
 pub mod progress;
 pub mod queue;
 pub mod ringtone;

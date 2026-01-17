@@ -57,19 +57,34 @@ pub enum AlertType {
     LowConversion,
     /// High retry rate
     HighRetryRate,
+    /// Cookies need refresh
+    CookiesExpired,
+    /// Download timeout rate high
+    HighTimeoutRate,
+    /// Disk space low
+    LowDiskSpace,
+    /// User complaint/negative feedback
+    UserComplaint,
+    /// System resource usage high
+    HighResourceUsage,
 }
 
 impl AlertType {
     /// Returns the throttle window for this alert type (in seconds)
     fn throttle_window(&self) -> i64 {
         match self {
-            AlertType::HighErrorRate => 1800, // 30 minutes
-            AlertType::QueueBackup => 900,    // 15 minutes
-            AlertType::PaymentFailure => 0,   // No throttle - immediate
-            AlertType::YtdlpDown => 300,      // 5 minutes
-            AlertType::DatabaseIssues => 300, // 5 minutes
-            AlertType::LowConversion => 3600, // 1 hour
-            AlertType::HighRetryRate => 900,  // 15 minutes
+            AlertType::HighErrorRate => 1800,     // 30 minutes
+            AlertType::QueueBackup => 900,        // 15 minutes
+            AlertType::PaymentFailure => 0,       // No throttle - immediate
+            AlertType::YtdlpDown => 300,          // 5 minutes
+            AlertType::DatabaseIssues => 300,     // 5 minutes
+            AlertType::LowConversion => 3600,     // 1 hour
+            AlertType::HighRetryRate => 900,      // 15 minutes
+            AlertType::CookiesExpired => 600,     // 10 minutes
+            AlertType::HighTimeoutRate => 1800,   // 30 minutes
+            AlertType::LowDiskSpace => 3600,      // 1 hour
+            AlertType::UserComplaint => 0,        // No throttle - immediate
+            AlertType::HighResourceUsage => 1800, // 30 minutes
         }
     }
 
@@ -83,6 +98,11 @@ impl AlertType {
             AlertType::DatabaseIssues => "database_issues",
             AlertType::LowConversion => "low_conversion",
             AlertType::HighRetryRate => "high_retry_rate",
+            AlertType::CookiesExpired => "cookies_expired",
+            AlertType::HighTimeoutRate => "high_timeout_rate",
+            AlertType::LowDiskSpace => "low_disk_space",
+            AlertType::UserComplaint => "user_complaint",
+            AlertType::HighResourceUsage => "high_resource_usage",
         }
     }
 }
@@ -509,6 +529,124 @@ impl AlertManager {
             "Payment Failure".to_string(),
             format!("A {} subscription payment has failed", plan),
             Some(format!("Reason: {}\n\nPlease investigate immediately.", reason)),
+        );
+
+        self.send_alert(alert).await
+    }
+
+    /// Sends a cookies expired alert
+    pub async fn alert_cookies_expired(&self, reason: &str) -> Result<(), String> {
+        // Record metric
+        metrics::record_alert("cookies_expired", "critical");
+
+        let alert = Alert::new(
+            AlertType::CookiesExpired,
+            Severity::Critical,
+            "Cookies Need Refresh".to_string(),
+            "YouTube cookies have expired or become invalid.".to_string(),
+            Some(format!(
+                "Reason: {}\n\nDownloads will fail until cookies are refreshed.\nUse /update_cookies command to upload new cookies.",
+                reason
+            )),
+        );
+
+        self.send_alert(alert).await
+    }
+
+    /// Sends a download timeout alert
+    pub async fn alert_high_timeout_rate(&self, timeout_rate: f64, threshold: f64) -> Result<(), String> {
+        metrics::record_alert("high_timeout_rate", "warning");
+
+        let alert = Alert::new(
+            AlertType::HighTimeoutRate,
+            Severity::Warning,
+            "High Timeout Rate Detected".to_string(),
+            format!(
+                "Download timeout rate: {:.1}% (threshold: {:.1}%)",
+                timeout_rate, threshold
+            ),
+            Some("Network issues or slow external services may be affecting downloads.".to_string()),
+        );
+
+        self.send_alert(alert).await
+    }
+
+    /// Sends a low disk space alert
+    pub async fn alert_low_disk_space(&self, available_gb: f64, threshold_gb: f64) -> Result<(), String> {
+        metrics::record_alert("low_disk_space", "critical");
+
+        let alert = Alert::new(
+            AlertType::LowDiskSpace,
+            Severity::Critical,
+            "Low Disk Space".to_string(),
+            format!(
+                "Available disk space: {:.1} GB (threshold: {:.1} GB)",
+                available_gb, threshold_gb
+            ),
+            Some("Downloads may fail due to insufficient disk space. Please free up space.".to_string()),
+        );
+
+        self.send_alert(alert).await
+    }
+
+    /// Sends a user complaint alert
+    pub async fn alert_user_complaint(
+        &self,
+        user_id: i64,
+        username: Option<&str>,
+        feedback: &str,
+    ) -> Result<(), String> {
+        metrics::record_alert("user_complaint", "warning");
+
+        let user_display = username.map_or(format!("ID: {}", user_id), |u| format!("@{} ({})", u, user_id));
+
+        let alert = Alert::new(
+            AlertType::UserComplaint,
+            Severity::Warning,
+            "User Complaint Received".to_string(),
+            format!("User {} reported an issue", user_display),
+            Some(format!("Feedback:\n{}", feedback)),
+        );
+
+        self.send_alert(alert).await
+    }
+
+    /// Sends a download failure alert for a specific user
+    pub async fn alert_download_failure(
+        &self,
+        user_id: i64,
+        url: &str,
+        error: &str,
+        retry_count: u32,
+    ) -> Result<(), String> {
+        // Only alert if retries exhausted
+        if retry_count < 3 {
+            return Ok(());
+        }
+
+        metrics::record_alert("download_failure", "warning");
+
+        let truncated_url = if url.len() > 100 {
+            format!("{}...", &url[..100])
+        } else {
+            url.to_string()
+        };
+
+        let truncated_error = if error.len() > 200 {
+            format!("{}...", &error[..200])
+        } else {
+            error.to_string()
+        };
+
+        let alert = Alert::new(
+            AlertType::HighErrorRate,
+            Severity::Warning,
+            "Download Failure (Retries Exhausted)".to_string(),
+            format!(
+                "User {} failed to download after {} attempts:\n{}",
+                user_id, retry_count, truncated_url
+            ),
+            Some(format!("Error: {}", truncated_error)),
         );
 
         self.send_alert(alert).await
