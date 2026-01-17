@@ -143,3 +143,60 @@ pub async fn notify_admin_task_failed(
         }
     }
 }
+
+/// Sends a notification to admins about a new user registration.
+///
+/// # Arguments
+///
+/// * `bot` - Bot instance used to send messages
+/// * `user_id` - Telegram ID of the new user
+/// * `username` - Username of the new user (if available)
+/// * `first_name` - First name of the user (if available)
+/// * `language` - Detected/selected language code
+/// * `first_message` - The first message/action from the user (if available)
+pub async fn notify_admin_new_user(
+    bot: &Bot,
+    user_id: i64,
+    username: Option<&str>,
+    first_name: Option<&str>,
+    language: Option<&str>,
+    first_message: Option<&str>,
+) {
+    let admin_chat_ids = admin_chat_ids();
+    if admin_chat_ids.is_empty() {
+        return;
+    }
+
+    let username_display = username.map_or_else(|| "—".to_string(), |u| format!("@{}", u));
+    let first_name_display = first_name.unwrap_or("—");
+    let language_display = language.unwrap_or("—");
+
+    let mut message = format!(
+        "🆕 *Новый пользователь*\n\n\
+        👤 {}\n\
+        📛 Имя: {}\n\
+        🆔 ID: `{}`\n\
+        🌐 Язык: {}",
+        username_display, first_name_display, user_id, language_display
+    );
+
+    if let Some(msg) = first_message {
+        // Truncate long messages
+        let truncated = if msg.len() > 200 {
+            format!("{}...", &msg[..200])
+        } else {
+            msg.to_string()
+        };
+        message.push_str(&format!("\n\n💬 Первое сообщение:\n{}", truncated));
+    }
+
+    for chat_id in admin_chat_ids {
+        send_plain_text_chunks(bot, chat_id, &message).await;
+    }
+
+    log::info!(
+        "Admin notified about new user: {} (@{})",
+        user_id,
+        username.unwrap_or("none")
+    );
+}

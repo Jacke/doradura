@@ -1402,7 +1402,7 @@ pub async fn handle_menu_callback(
                     if let Ok(conn) = db::get_connection(&db_pool) {
                         let username = q.from.username.clone();
                         // Create user with selected language
-                        if let Err(e) = db::create_user_with_language(&conn, chat_id.0, username, lang_code) {
+                        if let Err(e) = db::create_user_with_language(&conn, chat_id.0, username.clone(), lang_code) {
                             log::warn!("Failed to create user with language: {}", e);
                         } else {
                             log::info!(
@@ -1410,6 +1410,23 @@ pub async fn handle_menu_callback(
                                 chat_id.0,
                                 lang_code
                             );
+                            // Notify admins about new user
+                            use crate::telegram::notifications::notify_admin_new_user;
+                            let bot_notify = bot.clone();
+                            let user_id = chat_id.0;
+                            let first_name = q.from.first_name.clone();
+                            let lang = lang_code.to_string();
+                            tokio::spawn(async move {
+                                notify_admin_new_user(
+                                    &bot_notify,
+                                    user_id,
+                                    username.as_deref(),
+                                    Some(&first_name),
+                                    Some(&lang),
+                                    Some("/start → язык"),
+                                )
+                                .await;
+                            });
                         }
                     }
 
@@ -1454,8 +1471,27 @@ pub async fn handle_menu_callback(
                                 chat_id.0,
                                 q.from.username
                             );
-                            if let Err(e) = db::create_user(&conn, chat_id.0, q.from.username.clone()) {
+                            let username = q.from.username.clone();
+                            if let Err(e) = db::create_user(&conn, chat_id.0, username.clone()) {
                                 log::warn!("Failed to create user before setting language: {}", e);
+                            } else {
+                                // Notify admins about new user
+                                use crate::telegram::notifications::notify_admin_new_user;
+                                let bot_notify = bot.clone();
+                                let user_id = chat_id.0;
+                                let first_name = q.from.first_name.clone();
+                                let lang = lang_code.to_string();
+                                tokio::spawn(async move {
+                                    notify_admin_new_user(
+                                        &bot_notify,
+                                        user_id,
+                                        username.as_deref(),
+                                        Some(&first_name),
+                                        Some(&lang),
+                                        Some("смена языка"),
+                                    )
+                                    .await;
+                                });
                             }
                         }
                         let _ = db::set_user_language(&conn, chat_id.0, lang_code);
