@@ -2187,7 +2187,13 @@ pub async fn download_and_send_audio(
             // Mark the original message as completed if message_id is available
             if let Some(msg_id) = message_id {
                 use teloxide::types::MessageId;
-                crate::telegram::try_set_reaction(&bot_clone, chat_id, MessageId(msg_id), "✅").await;
+                crate::telegram::try_set_reaction(
+                    &bot_clone,
+                    chat_id,
+                    MessageId(msg_id),
+                    crate::telegram::emoji::THUMBS_UP,
+                )
+                .await;
             }
 
             log::info!("Audio sent successfully to chat {}", chat_id);
@@ -3928,7 +3934,7 @@ pub async fn download_and_send_video(
             // Mark the original message as completed if message_id is available
             if let Some(msg_id) = message_id {
                 use teloxide::types::MessageId;
-                crate::telegram::try_set_reaction(&bot_clone, chat_id, MessageId(msg_id), "✅").await;
+                crate::telegram::try_set_reaction(&bot_clone, chat_id, MessageId(msg_id), crate::telegram::emoji::THUMBS_UP).await;
             }
 
             // Step 5: Auto-clear success message after delay (оставляем только название)
@@ -4271,7 +4277,13 @@ pub async fn download_and_send_subtitles(
             // Mark the original message as completed if message_id is available
             if let Some(msg_id) = message_id {
                 use teloxide::types::MessageId;
-                crate::telegram::try_set_reaction(&bot_clone, chat_id, MessageId(msg_id), "✅").await;
+                crate::telegram::try_set_reaction(
+                    &bot_clone,
+                    chat_id,
+                    MessageId(msg_id),
+                    crate::telegram::emoji::THUMBS_UP,
+                )
+                .await;
             }
 
             log::info!("Subtitle sent successfully to chat {}", chat_id);

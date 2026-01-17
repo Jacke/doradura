@@ -32,4 +32,8 @@ pub mod testing;
 pub use core::{config, BotError};
 pub use download::{download_and_send_audio, download_and_send_subtitles, download_and_send_video, DownloadQueue};
 pub use storage::{create_pool, get_connection, DbConnection, DbPool};
-pub use telegram::{handle_menu_callback, handle_message, show_main_menu};
+pub use telegram::{
+    handle_menu_callback, handle_message, show_main_menu, Completed, InProgress, MarkdownV2Formatter, MessageFormatter,
+    NotStarted, Operation, OperationBuilder, OperationError, OperationInfo, OperationStatus, PlainTextFormatter,
+    DEFAULT_EMOJI,
+};
