@@ -2,6 +2,30 @@ use crate::telegram::Bot;
 use teloxide::prelude::*;
 use teloxide::types::{MessageId, ReactionType};
 
+/// Allowed emoji for bot reactions per Telegram Bot API.
+/// List current as of January 2025.
+/// Full list: https://core.telegram.org/bots/api#reactiontypeemoji
+pub mod emoji {
+    /// "Eyes" reaction - indicates bot has seen/is processing the message
+    pub const EYES: &str = "👀";
+    /// "Thumbs up" reaction - for successful completion
+    pub const THUMBS_UP: &str = "👍";
+    /// "Party" reaction - for successful completion (alternative)
+    pub const PARTY: &str = "🎉";
+    /// "Fire" reaction - for active process indication
+    pub const FIRE: &str = "🔥";
+    /// "Lightning" reaction - for fast operations
+    pub const ZAP: &str = "⚡";
+    /// "Heart" reaction - for favorites/likes
+    pub const HEART: &str = "❤️";
+    /// "Thinking" reaction - for processing/thinking
+    pub const THINKING: &str = "🤔";
+    /// "Sad" reaction - for failures
+    pub const SAD: &str = "😢";
+    /// "Developer" reaction - for technical operations
+    pub const DEVELOPER: &str = "👨‍💻";
+}
+
 /// Try to set a reaction, skipping invalid/unavailable reactions for the chat.
 pub async fn try_set_reaction(bot: &Bot, chat_id: ChatId, message_id: MessageId, emoji: &str) {
     let mut chosen = emoji.to_string();
