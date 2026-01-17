@@ -109,7 +109,25 @@ fn webapp_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                     if let Ok(conn) = get_connection(&deps.db_pool) {
                         let chat_id = msg.chat.id.0;
                         if let Ok(None) = get_user(&conn, chat_id) {
-                            let _ = create_user(&conn, chat_id, msg.from.as_ref().and_then(|u| u.username.clone()));
+                            let username = msg.from.as_ref().and_then(|u| u.username.clone());
+                            if create_user(&conn, chat_id, username.clone()).is_ok() {
+                                // Notify admins about new user
+                                use crate::telegram::notifications::notify_admin_new_user;
+                                let bot_notify = bot.clone();
+                                let first_name = msg.from.as_ref().map(|u| u.first_name.clone());
+                                let lang_code = msg.from.as_ref().and_then(|u| u.language_code.clone());
+                                tokio::spawn(async move {
+                                    notify_admin_new_user(
+                                        &bot_notify,
+                                        chat_id,
+                                        username.as_deref(),
+                                        first_name.as_deref(),
+                                        lang_code.as_deref(),
+                                        Some("Web App"),
+                                    )
+                                    .await;
+                                });
+                            }
                         }
                     }
 
@@ -430,8 +448,26 @@ async fn handle_start_command(bot: &Bot, msg: &Message, deps: &HandlerDeps) -> R
 
             if let Ok(conn) = get_connection(&deps.db_pool) {
                 let username = msg.from.as_ref().and_then(|u| u.username.clone());
-                if let Err(e) = db::create_user_with_language(&conn, msg.chat.id.0, username, lang_code) {
+                if let Err(e) = db::create_user_with_language(&conn, msg.chat.id.0, username.clone(), lang_code) {
                     log::warn!("Failed to create user with auto-detected language: {}", e);
+                } else {
+                    // Notify admins about new user
+                    use crate::telegram::notifications::notify_admin_new_user;
+                    let bot_notify = bot.clone();
+                    let user_id = msg.chat.id.0;
+                    let first_name = msg.from.as_ref().map(|u| u.first_name.clone());
+                    let lang = lang_code.to_string();
+                    tokio::spawn(async move {
+                        notify_admin_new_user(
+                            &bot_notify,
+                            user_id,
+                            username.as_deref(),
+                            first_name.as_deref(),
+                            Some(&lang),
+                            Some("/start"),
+                        )
+                        .await;
+                    });
                 }
             }
 
@@ -560,14 +596,30 @@ fn message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                                         }
                                     }
                                     Ok(None) => {
-                                        if let Err(e) = create_user(
-                                            &conn,
-                                            chat_id,
-                                            msg.from.as_ref().and_then(|u| u.username.clone()),
-                                        ) {
+                                        let username = msg.from.as_ref().and_then(|u| u.username.clone());
+                                        if let Err(e) = create_user(&conn, chat_id, username.clone()) {
                                             log::error!("Failed to create user: {}", e);
-                                        } else if let Err(e) = log_request(&conn, chat_id, text) {
-                                            log::error!("Failed to log request for new user: {}", e);
+                                        } else {
+                                            if let Err(e) = log_request(&conn, chat_id, text) {
+                                                log::error!("Failed to log request for new user: {}", e);
+                                            }
+                                            // Notify admins about new user
+                                            use crate::telegram::notifications::notify_admin_new_user;
+                                            let bot_notify = bot.clone();
+                                            let first_name = msg.from.as_ref().map(|u| u.first_name.clone());
+                                            let lang_code = msg.from.as_ref().and_then(|u| u.language_code.clone());
+                                            let first_message = text.to_string();
+                                            tokio::spawn(async move {
+                                                notify_admin_new_user(
+                                                    &bot_notify,
+                                                    chat_id,
+                                                    username.as_deref(),
+                                                    first_name.as_deref(),
+                                                    lang_code.as_deref(),
+                                                    Some(&first_message),
+                                                )
+                                                .await;
+                                            });
                                         }
                                     }
                                     Err(e) => {
