@@ -336,6 +336,7 @@ async fn create_test_deps() -> HandlerDeps {
         downsub_gateway,
         Some("test_bot".to_string()),
         UserId(123456789),
+        None, // alert_manager - not needed for tests
     )
 }
 
