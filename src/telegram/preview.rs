@@ -1,9 +1,7 @@
 use crate::core::config;
 use crate::core::error::AppError;
 use crate::download::downloader::add_cookies_args;
-use crate::download::ytdlp_errors::{
-    analyze_ytdlp_error, get_error_message, get_fix_recommendations, should_notify_admin,
-};
+use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message};
 use crate::storage::cache;
 use crate::storage::db::DbPool;
 use crate::telegram::Bot;
@@ -65,15 +63,6 @@ async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<Value, AppE
         // Логируем детальную информацию об ошибке
         log::error!("Failed to get metadata, error type: {:?}", error_type);
         log::error!("yt-dlp stderr: {}", stderr);
-
-        // Логируем рекомендации по исправлению
-        let recommendations = get_fix_recommendations(&error_type);
-        log::error!("{}", recommendations);
-
-        // Если нужно уведомить администратора, логируем это
-        if should_notify_admin(&error_type) {
-            log::warn!("⚠️  This error requires administrator attention!");
-        }
 
         // Возвращаем пользовательское сообщение об ошибке
         return Err(AppError::Download(get_error_message(&error_type)));
@@ -584,15 +573,6 @@ async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<VideoFo
         // Логируем детальную информацию об ошибке
         log::error!("Failed to get formats list, error type: {:?}", error_type);
         log::error!("yt-dlp stderr: {}", stderr);
-
-        // Логируем рекомендации по исправлению
-        let recommendations = get_fix_recommendations(&error_type);
-        log::error!("{}", recommendations);
-
-        // Если нужно уведомить администратора, логируем это
-        if should_notify_admin(&error_type) {
-            log::warn!("⚠️  This error requires administrator attention!");
-        }
 
         // Возвращаем пользовательское сообщение об ошибке
         return Err(AppError::Download(get_error_message(&error_type)));
