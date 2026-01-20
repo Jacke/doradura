@@ -253,3 +253,108 @@ pub async fn is_service_supported(service_name: &str) -> bool {
         }
     }
 }
+
+/// Выводит текущую версию yt-dlp
+///
+/// # Returns
+///
+/// Возвращает `Ok(())` при успехе или ошибку при неудаче.
+pub async fn print_ytdlp_version() -> Result<(), AppError> {
+    let ytdl_bin = &*config::YTDL_BIN;
+
+    log::info!("Checking yt-dlp version...");
+
+    let version_output = Command::new(ytdl_bin)
+        .arg("--version")
+        .output()
+        .map_err(|e| AppError::Download(format!("Failed to get yt-dlp version: {}", e)))?;
+
+    let version = String::from_utf8_lossy(&version_output.stdout).trim().to_string();
+
+    if version.is_empty() {
+        return Err(AppError::Download(
+            "yt-dlp is not installed or --version produced no output".to_string(),
+        ));
+    }
+
+    println!("yt-dlp version: {}", version);
+    log::info!("yt-dlp version: {}", version);
+
+    Ok(())
+}
+
+/// Принудительно обновляет yt-dlp до последней версии (игнорируя статус)
+///
+/// # Returns
+///
+/// Возвращает `Ok(())` при успехе или ошибку при неудаче.
+pub async fn force_update_ytdlp() -> Result<(), AppError> {
+    let ytdl_bin = &*config::YTDL_BIN;
+
+    log::info!("Force updating yt-dlp...");
+    println!("Force updating yt-dlp to the latest version...");
+
+    // Пытаемся обновить yt-dlp через -U
+    let update_result = timeout(
+        std::time::Duration::from_secs(120), // 2 минуты на обновление
+        TokioCommand::new(ytdl_bin).arg("-U").output(),
+    )
+    .await;
+
+    match update_result {
+        Ok(Ok(output)) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+
+            if output.status.success() {
+                println!("✅ yt-dlp updated successfully");
+                log::info!("yt-dlp force update successful: {}", stdout);
+                return Ok(());
+            }
+
+            // Код выхода 100 означает, что yt-dlp установлен через pip
+            if output.status.code() == Some(100) {
+                log::info!("yt-dlp is installed via pip. Attempting to update via pip...");
+                println!("yt-dlp is installed via pip. Attempting to update...");
+
+                let pip_commands = vec!["pip3", "pip"];
+                for pip_cmd in pip_commands {
+                    log::debug!("Trying to update yt-dlp via {}...", pip_cmd);
+
+                    let pip_update_result = timeout(
+                        std::time::Duration::from_secs(120),
+                        TokioCommand::new(pip_cmd)
+                            .args(["install", "--upgrade", "yt-dlp"])
+                            .output(),
+                    )
+                    .await;
+
+                    match pip_update_result {
+                        Ok(Ok(pip_output)) => {
+                            if pip_output.status.success() {
+                                println!("✅ yt-dlp updated successfully via {}", pip_cmd);
+                                log::info!("yt-dlp updated successfully via {}", pip_cmd);
+                                return Ok(());
+                            }
+                        }
+                        _ => continue,
+                    }
+                }
+
+                return Err(AppError::Download(
+                    "Failed to update yt-dlp via pip. Try running manually: pip install --upgrade yt-dlp".to_string(),
+                ));
+            }
+
+            Err(AppError::Download(format!(
+                "yt-dlp update failed (exit code: {:?}): {}",
+                output.status.code(),
+                stderr
+            )))
+        }
+        Ok(Err(e)) => Err(AppError::Download(format!("Failed to execute yt-dlp update: {}", e))),
+        Err(_) => Err(AppError::Download(
+            "yt-dlp update timed out after 2 minutes".to_string(),
+        )),
+    }
+}

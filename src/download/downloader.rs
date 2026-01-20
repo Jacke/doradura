@@ -6,7 +6,8 @@ use crate::core::rate_limiter::RateLimiter;
 use crate::core::utils::{escape_filename, sanitize_filename};
 use crate::download::progress::{DownloadStatus, ProgressMessage};
 use crate::download::ytdlp_errors::{
-    analyze_ytdlp_error, get_error_message, get_fix_recommendations, should_notify_admin, YtDlpErrorType,
+    analyze_ytdlp_error, get_error_message, get_fix_recommendations, sanitize_user_error_message, should_notify_admin,
+    YtDlpErrorType,
 };
 use crate::storage::cache;
 use crate::storage::db::{self as db, save_download_history, DbPool};
@@ -989,6 +990,7 @@ async fn get_metadata_from_ytdlp(
             YtDlpErrorType::BotDetection => "bot_detection",
             YtDlpErrorType::VideoUnavailable => "video_unavailable",
             YtDlpErrorType::NetworkError => "network",
+            YtDlpErrorType::FragmentError => "fragment_error",
             YtDlpErrorType::Unknown => "ytdlp_unknown",
         };
         let operation = format!("metadata:{}", error_category);
@@ -1400,7 +1402,15 @@ async fn download_audio_file_with_progress(
             "--embed-thumbnail",
             "--no-playlist",
             "--concurrent-fragments",
-            "5",
+            "3", // Уменьшаем до 3 для снижения риска блокировки фрагментов
+            "--fragment-retries",
+            "10", // Переделываем неудачные фрагменты до 10 раз
+            "--socket-timeout",
+            "30", // Timeout для сокетов
+            "--http-chunk-size",
+            "10485760", // 10MB chunks для более мелкого retry
+            "--sleep-requests",
+            "1", // Небольшая задержка между запросами (1ms)
         ];
         add_cookies_args(&mut args);
 
@@ -1510,6 +1520,7 @@ async fn download_audio_file_with_progress(
                     YtDlpErrorType::BotDetection => "bot_detection",
                     YtDlpErrorType::VideoUnavailable => "video_unavailable",
                     YtDlpErrorType::NetworkError => "network",
+                    YtDlpErrorType::FragmentError => "fragment_error",
                     YtDlpErrorType::Unknown => "ytdlp_unknown",
                 };
                 let operation = format!("audio_download:{}", error_category);
@@ -1590,7 +1601,15 @@ async fn download_video_file_with_progress(
             "--merge-output-format",
             "mp4",
             "--concurrent-fragments",
-            "5",
+            "3", // Уменьшаем до 3 для снижения риска блокировки фрагментов
+            "--fragment-retries",
+            "10", // Переделываем неудачные фрагменты до 10 раз
+            "--socket-timeout",
+            "30", // Timeout для сокетов
+            "--http-chunk-size",
+            "10485760", // 10MB chunks для более мелкого retry
+            "--sleep-requests",
+            "1", // Небольшая задержка между запросами (1ms)
             // Убеждаемся, что видео в совместимом формате для Telegram
             // Если видео уже в H.264/AAC - перекодирование не требуется (быстрее)
             // movflags +faststart делает видео готовым для streaming
@@ -1704,6 +1723,7 @@ async fn download_video_file_with_progress(
                     YtDlpErrorType::BotDetection => "bot_detection",
                     YtDlpErrorType::VideoUnavailable => "video_unavailable",
                     YtDlpErrorType::NetworkError => "network",
+                    YtDlpErrorType::FragmentError => "fragment_error",
                     YtDlpErrorType::Unknown => "ytdlp_unknown",
                 };
                 let operation = format!("video_download:{}", error_category);
@@ -2267,6 +2287,7 @@ pub async fn download_and_send_audio(
 
                 // Определяем тип ошибки и формируем полезное сообщение
                 let error_str = e.to_string();
+                let user_error = sanitize_user_error_message(&error_str);
                 let custom_message = if error_str.contains("Only images are available") {
                     Some(
                         "Это видео недоступно для скачивания 😢\n\n\
@@ -2296,6 +2317,8 @@ pub async fn download_and_send_audio(
                     None
                 };
 
+                let display_error = custom_message.unwrap_or(user_error.as_str());
+
                 // Send error sticker and message
                 send_error_with_sticker_and_message(&bot_clone, chat_id, custom_message).await;
                 // Show error status
@@ -2305,7 +2328,7 @@ pub async fn download_and_send_audio(
                         DownloadStatus::Error {
                             title: "Скачивание".to_string(),
                             file_format: Some("mp3".to_string()),
-                            error: e.to_string(),
+                            error: display_error.to_string(),
                         },
                     )
                     .await;
@@ -4014,6 +4037,7 @@ pub async fn download_and_send_video(
 
             // Определяем тип ошибки и формируем полезное сообщение
             let error_str = e.to_string();
+            let user_error = sanitize_user_error_message(&error_str);
             let custom_message = if error_str.contains("Only images are available") {
                 Some(
                     "Это видео недоступно для скачивания 😢\n\n\
@@ -4041,6 +4065,8 @@ pub async fn download_and_send_video(
                 None
             };
 
+            let display_error = custom_message.unwrap_or(user_error.as_str());
+
             // Send error sticker and message
             send_error_with_sticker_and_message(&bot_clone, chat_id, custom_message).await;
             // Show error status
@@ -4049,7 +4075,7 @@ pub async fn download_and_send_video(
                     &bot_clone,
                     DownloadStatus::Error {
                         title: "Скачивание".to_string(),
-                        error: e.to_string(),
+                        error: display_error.to_string(),
                         file_format: Some("mp4".to_string()),
                     },
                 )
@@ -4360,6 +4386,7 @@ pub async fn download_and_send_subtitles(
                 chat_id,
                 e
             );
+            let user_error = sanitize_user_error_message(&e.to_string());
             // Send error sticker and message
             send_error_with_sticker(&bot_clone, chat_id).await;
             // Show error status
@@ -4368,7 +4395,7 @@ pub async fn download_and_send_subtitles(
                     &bot_clone,
                     DownloadStatus::Error {
                         title: "Скачивание".to_string(),
-                        error: e.to_string(),
+                        error: user_error,
                         file_format: Some(subtitle_format.clone()),
                     },
                 )

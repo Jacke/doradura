@@ -21,11 +21,13 @@ use teloxide::types::{
 
 use crate::core::config;
 use crate::download::cookies;
+use crate::download::ytdlp;
 
 use crate::core::config::admin::{ADMIN_IDS, ADMIN_USER_ID};
 use crate::storage::backup::{create_backup, list_backups};
 use crate::storage::db::{get_all_users, get_connection, update_user_plan, update_user_plan_with_expiry, DbPool};
 use std::path::PathBuf;
+use tokio::process::Command as TokioCommand;
 use url::Url;
 
 /// Maximum message length for Telegram (with margin)
@@ -104,6 +106,20 @@ fn indent_lines(text: &str, indent: &str) -> String {
         .map(|line| format!("{}{}", indent, line))
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+async fn get_ytdlp_version() -> Option<String> {
+    let ytdl_bin = &*config::YTDL_BIN;
+    let output = TokioCommand::new(ytdl_bin).arg("--version").output().await.ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if version.is_empty() {
+        None
+    } else {
+        Some(version)
+    }
 }
 
 fn format_subscription_period_for_log(period: &Seconds) -> String {
@@ -1913,6 +1929,46 @@ pub async fn handle_update_cookies_command(
     .await?;
 
     log::info!("🏁 /update_cookies command handler finished for admin {}", user_id);
+    Ok(())
+}
+
+/// Handles the /update_ytdlp command (admin only)
+///
+/// Triggers yt-dlp update and reports before/after version.
+pub async fn handle_update_ytdlp_command(bot: &Bot, chat_id: ChatId, user_id: i64, _message_text: &str) -> Result<()> {
+    log::info!(
+        "🔧 /update_ytdlp command received from user_id={}, chat_id={}",
+        user_id,
+        chat_id
+    );
+
+    if !is_admin(user_id) {
+        log::warn!("❌ Non-admin user {} attempted to use /update_ytdlp", user_id);
+        bot.send_message(chat_id, "❌ Эта команда доступна только администраторам.")
+            .await?;
+        return Ok(());
+    }
+
+    let before = get_ytdlp_version().await.unwrap_or_else(|| "unknown".to_string());
+    let processing_msg = bot.send_message(chat_id, "⏳ Обновляю yt-dlp...").await?;
+
+    match ytdlp::check_and_update_ytdlp().await {
+        Ok(_) => {
+            let after = get_ytdlp_version().await.unwrap_or_else(|| "unknown".to_string());
+            let status = if before == after {
+                "yt-dlp уже актуален"
+            } else {
+                "yt-dlp обновлен"
+            };
+            let text = format!("✅ {}\nВерсия до: {}\nВерсия после: {}", status, before, after);
+            bot.edit_message_text(chat_id, processing_msg.id, text).await?;
+        }
+        Err(e) => {
+            let text = format!("❌ Не удалось обновить yt-dlp: {}", e);
+            bot.edit_message_text(chat_id, processing_msg.id, text).await?;
+        }
+    }
+
     Ok(())
 }
 
