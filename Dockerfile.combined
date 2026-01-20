@@ -44,7 +44,8 @@ RUN apk add --no-cache \
   libstdc++ \
   wget \
   bash \
-  supervisor
+  supervisor \
+  nodejs
 
 # Install yt-dlp
 RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
@@ -68,6 +69,9 @@ RUN addgroup -g 2000 shareddata && \
 COPY --from=rust-builder --chown=1000:2000 /app/target/release/doradura /app/doradura
 RUN chmod 755 /app/doradura && \
   ls -la /app/doradura
+
+# Copy migrations for auto-migration on startup
+COPY --from=rust-builder --chown=1000:2000 /app/migrations /app/migrations
 
 # Set environment variables for the bot to access Bot API files
 ENV BOT_API_DATA_DIR=/data
@@ -166,6 +170,24 @@ export DATABASE_URL="$DB_PATH"
 echo "✅ Telegram Bot API directory: /data"
 echo "✅ Database: $DB_PATH"
 echo "✅ Temp files: $TEMP_FILES_DIR"
+
+# Run database migrations
+echo "🔄 Running database migrations..."
+MIGRATIONS_DIR="/app/migrations"
+if [ -d "$MIGRATIONS_DIR" ]; then
+  for migration in $(ls -1 "$MIGRATIONS_DIR"/*.sql 2>/dev/null | sort -V); do
+    migration_name=$(basename "$migration")
+    echo "  Applying: $migration_name"
+    if sqlite3 "$DB_PATH" < "$migration" 2>&1; then
+      echo "  ✅ $migration_name applied"
+    else
+      echo "  ⚠️  $migration_name (already applied or error)"
+    fi
+  done
+  echo "✅ Migrations complete"
+else
+  echo "⚠️  No migrations directory found"
+fi
 
 # Write YouTube cookies from env if provided (base64)
 if [ -n "$YTDL_COOKIES_B64" ]; then
