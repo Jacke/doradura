@@ -384,7 +384,7 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
         text.push_str("*Доступные планы:*\n\n");
 
         // Premium план
-        text.push_str("⭐ *Premium* \\- 1 Star каждые 30 дней\n");
+        text.push_str("⭐ *Premium* \\- 350 Stars \\(~$6\\) каждые 30 дней\n");
         text.push_str("• 10 секунд между запросами\n");
         text.push_str("• Неограниченные загрузки\n");
         text.push_str("• Файлы до 100 MB\n");
@@ -392,7 +392,7 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
         text.push_str("• Приоритетная очередь\n\n");
 
         // VIP план
-        text.push_str("👑 *VIP* \\- 2 Stars каждые 30 дней\n");
+        text.push_str("👑 *VIP* \\- 850 Stars \\(~$15\\) каждые 30 дней\n");
         text.push_str("• 5 секунд между запросами\n");
         text.push_str("• Неограниченные загрузки\n");
         text.push_str("• Файлы до 200 MB\n");

@@ -245,9 +245,10 @@ async fn e2e_rate_limit_error() {
     let (_call, resp) = &snapshot.interactions[0];
     let text = resp.body["result"]["text"].as_str().unwrap();
 
-    assert!(text.contains("Превышен лимит"), "Should show rate limit error");
-    assert!(text.contains("45 секунд"), "Should show wait time");
+    assert!(text.contains("Подожди"), "Should show rate limit message");
+    assert!(text.contains("45"), "Should show wait time");
     assert!(text.contains("/plan"), "Should suggest upgrade");
+    assert!(text.contains("Premium"), "Should mention Premium plan");
 
     // Verify metadata
     assert_eq!(snapshot.metadata.get("error_type").unwrap(), "rate_limit");

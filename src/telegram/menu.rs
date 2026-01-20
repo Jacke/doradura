@@ -2424,7 +2424,7 @@ async fn handle_audio_cut_callback(bot: Bot, q: CallbackQuery, db_pool: Arc<DbPo
             .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
         {
             bot.answer_callback_query(callback_id)
-                .text("⭐ Эта функция доступна только Premium/VIP подписчикам")
+                .text("⭐ Эта функция доступна в Premium за ~$6/мес → /plan")
                 .show_alert(true)
                 .await?;
             return Ok(());
@@ -2724,7 +2724,7 @@ pub async fn handle_audio_effects_callback(
     let conn = db::get_connection(&db_pool)?;
     if !db::is_premium_or_vip(&conn, chat_id.0)? {
         bot.answer_callback_query(callback_id)
-            .text("⭐ Эта функция доступна только Premium/VIP подписчикам")
+            .text("⭐ Эта функция доступна в Premium за ~$6/мес → /plan")
             .show_alert(true)
             .await?;
         return Ok(());

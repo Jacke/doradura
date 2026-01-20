@@ -75,9 +75,10 @@ async fn test_rate_limit_error_snapshot() {
     let (_call, response) = &snapshot.interactions[0];
     let text = response.body["result"]["text"].as_str().unwrap();
 
-    assert!(text.contains("Превышен лимит"));
-    assert!(text.contains("45 секунд"));
+    assert!(text.contains("Подожди"));
+    assert!(text.contains("45"));
     assert!(text.contains("/plan"));
+    assert!(text.contains("Premium"));
 }
 
 #[tokio::test]
