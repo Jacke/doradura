@@ -567,4 +567,228 @@ mod tests {
         assert_eq!(stats.successes, 2);
         assert_eq!(stats.failures, 1);
     }
+
+    #[test]
+    fn test_protocol_parsing() {
+        assert_eq!(ProxyProtocol::parse_from_str("http"), Some(ProxyProtocol::Http));
+        assert_eq!(ProxyProtocol::parse_from_str("HTTPS"), Some(ProxyProtocol::Https));
+        assert_eq!(ProxyProtocol::parse_from_str("socks5"), Some(ProxyProtocol::Socks5));
+        assert_eq!(ProxyProtocol::parse_from_str("socks5h"), Some(ProxyProtocol::Socks5));
+        assert_eq!(ProxyProtocol::parse_from_str("invalid"), None);
+    }
+
+    #[test]
+    fn test_proxy_url_generation() {
+        let proxy = Proxy::new(ProxyProtocol::Http, "proxy.example.com".to_string(), 8080);
+        assert_eq!(proxy.to_url(), "http://proxy.example.com:8080");
+
+        let proxy_auth = Proxy::with_auth(
+            ProxyProtocol::Http,
+            "proxy.example.com".to_string(),
+            8080,
+            "user:pass".to_string(),
+        );
+        assert_eq!(proxy_auth.to_url(), "http://user:pass@proxy.example.com:8080");
+
+        let proxy_socks = Proxy::new(ProxyProtocol::Socks5, "localhost".to_string(), 1080);
+        assert_eq!(proxy_socks.to_url(), "socks5://localhost:1080");
+    }
+
+    #[test]
+    fn test_proxy_weight() {
+        let proxy = Proxy::new(ProxyProtocol::Http, "127.0.0.1".to_string(), 8080).with_weight(5);
+        assert_eq!(proxy.weight, 5);
+
+        // Weight should be at least 1
+        let proxy_min = Proxy::new(ProxyProtocol::Http, "127.0.0.1".to_string(), 8081).with_weight(0);
+        assert_eq!(proxy_min.weight, 1);
+    }
+
+    #[test]
+    fn test_round_robin_selection() {
+        let mut list = ProxyList::new(ProxySelectionStrategy::RoundRobin);
+        list.add_proxy_string("http://proxy1.com:8080").unwrap();
+        list.add_proxy_string("http://proxy2.com:8080").unwrap();
+        list.add_proxy_string("http://proxy3.com:8080").unwrap();
+
+        // Round-robin should cycle through proxies
+        assert_eq!(list.select().unwrap().host, "proxy1.com");
+        assert_eq!(list.select().unwrap().host, "proxy2.com");
+        assert_eq!(list.select().unwrap().host, "proxy3.com");
+        assert_eq!(list.select().unwrap().host, "proxy1.com");
+    }
+
+    #[test]
+    fn test_fixed_selection() {
+        let mut list = ProxyList::new(ProxySelectionStrategy::Fixed);
+        list.add_proxy_string("http://proxy1.com:8080").unwrap();
+        list.add_proxy_string("http://proxy2.com:8080").unwrap();
+
+        // Fixed should always return first proxy
+        for _ in 0..5 {
+            assert_eq!(list.select().unwrap().host, "proxy1.com");
+        }
+    }
+
+    #[test]
+    fn test_health_status_calculation() {
+        let mut list = ProxyList::new(ProxySelectionStrategy::Fixed);
+        let proxy = Proxy::new(ProxyProtocol::Http, "127.0.0.1".to_string(), 8080);
+        list.add_proxy(proxy.clone()).unwrap();
+
+        // No stats yet - should be considered healthy (1.0)
+        assert_eq!(list.health_status(&proxy), 1.0);
+
+        // 100% success after recording successes
+        for _ in 0..10 {
+            list.record_success(&proxy);
+        }
+        assert_eq!(list.health_status(&proxy), 1.0);
+
+        // 50% success after recording failures
+        for _ in 0..10 {
+            list.record_failure(&proxy);
+        }
+        assert_eq!(list.health_status(&proxy), 0.5);
+    }
+
+    #[test]
+    fn test_duplicate_proxy_detection() {
+        let mut list = ProxyList::new(ProxySelectionStrategy::Fixed);
+        list.add_proxy_string("http://proxy.com:8080").unwrap();
+
+        // Adding same proxy again should fail
+        let result = list.add_proxy_string("http://proxy.com:8080");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("already exists"));
+    }
+
+    #[test]
+    fn test_invalid_proxy_format() {
+        // Invalid formats should fail to parse
+        let result = Proxy::from_string("invalid proxy string");
+        assert!(result.is_err());
+
+        let result = Proxy::from_string("http://proxy.com");
+        assert!(result.is_err()); // Missing port
+
+        let result = Proxy::from_string("ftp://proxy.com:8080");
+        assert!(result.is_err()); // Unsupported protocol
+    }
+
+    #[test]
+    fn test_proxy_list_empty_handling() {
+        let list = ProxyList::new(ProxySelectionStrategy::RoundRobin);
+        assert!(list.is_empty());
+        assert_eq!(list.len(), 0);
+        assert_eq!(list.select(), None);
+    }
+
+    #[test]
+    fn test_reset_stats() {
+        let mut list = ProxyList::new(ProxySelectionStrategy::Fixed);
+        let proxy = Proxy::new(ProxyProtocol::Http, "127.0.0.1".to_string(), 8080);
+        list.add_proxy(proxy.clone()).unwrap();
+
+        list.record_success(&proxy);
+        list.record_success(&proxy);
+        list.record_failure(&proxy);
+
+        let stats_before = list.get_stats(&proxy).unwrap();
+        assert_eq!(stats_before.successes, 2);
+        assert_eq!(stats_before.failures, 1);
+
+        list.reset_stats();
+
+        let stats_after = list.get_stats(&proxy).unwrap();
+        assert_eq!(stats_after.successes, 0);
+        assert_eq!(stats_after.failures, 0);
+    }
+
+    #[test]
+    fn test_all_stats() {
+        let mut list = ProxyList::new(ProxySelectionStrategy::RoundRobin);
+        let proxy1 = Proxy::new(ProxyProtocol::Http, "proxy1.com".to_string(), 8080);
+        let proxy2 = Proxy::new(ProxyProtocol::Https, "proxy2.com".to_string(), 8443);
+
+        list.add_proxy(proxy1.clone()).unwrap();
+        list.add_proxy(proxy2.clone()).unwrap();
+
+        list.record_success(&proxy1);
+        list.record_failure(&proxy1);
+        list.record_success(&proxy2);
+        list.record_success(&proxy2);
+
+        let all_stats = list.all_stats();
+        assert_eq!(all_stats.len(), 2);
+
+        let stats1 = all_stats.get("http://proxy1.com:8080").unwrap();
+        assert_eq!(stats1.successes, 1);
+        assert_eq!(stats1.failures, 1);
+
+        let stats2 = all_stats.get("https://proxy2.com:8443").unwrap();
+        assert_eq!(stats2.successes, 2);
+        assert_eq!(stats2.failures, 0);
+    }
+
+    #[test]
+    fn test_bytes_downloaded_tracking() {
+        let mut list = ProxyList::new(ProxySelectionStrategy::Fixed);
+        let proxy = Proxy::new(ProxyProtocol::Http, "127.0.0.1".to_string(), 8080);
+        list.add_proxy(proxy.clone()).unwrap();
+
+        list.add_bytes(&proxy, 1024);
+        list.add_bytes(&proxy, 2048);
+        list.add_bytes(&proxy, 512);
+
+        let stats = list.get_stats(&proxy).unwrap();
+        assert_eq!(stats.bytes_downloaded, 1024 + 2048 + 512);
+    }
+
+    #[test]
+    fn test_healthy_proxies_filtering() {
+        let mut list = ProxyList::new(ProxySelectionStrategy::RoundRobin);
+        let proxy_good = Proxy::new(ProxyProtocol::Http, "good.com".to_string(), 8080);
+        let proxy_bad = Proxy::new(ProxyProtocol::Http, "bad.com".to_string(), 8081);
+
+        list.add_proxy(proxy_good.clone()).unwrap();
+        list.add_proxy(proxy_bad.clone()).unwrap();
+
+        // Mark good proxy as mostly successful
+        for _ in 0..9 {
+            list.record_success(&proxy_good);
+        }
+        list.record_failure(&proxy_good); // 90% success
+
+        // Mark bad proxy as mostly failed
+        for _ in 0..9 {
+            list.record_failure(&proxy_bad);
+        }
+        list.record_success(&proxy_bad); // 10% success
+
+        let healthy = list.healthy_proxies(0.5); // Min 50% health
+        assert_eq!(healthy.len(), 1);
+        assert_eq!(healthy[0].host, "good.com");
+    }
+
+    #[test]
+    fn test_proxy_clone_and_equality() {
+        let proxy1 = Proxy::new(ProxyProtocol::Http, "127.0.0.1".to_string(), 8080);
+        let proxy2 = proxy1.clone();
+
+        assert_eq!(proxy1, proxy2);
+        assert_eq!(proxy1.to_url(), proxy2.to_url());
+    }
+
+    #[test]
+    fn test_proxy_stats_display() {
+        let stats = ProxyStats {
+            successes: 90,
+            failures: 10,
+            bytes_downloaded: 1048576,
+        };
+
+        let display_str = format!("{}", stats);
+        assert!(display_str.contains("90%")); // Should show 90% success rate
+    }
 }
