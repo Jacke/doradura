@@ -5,6 +5,7 @@ use crate::core::metrics;
 use crate::core::rate_limiter::RateLimiter;
 use crate::core::utils::{escape_filename, sanitize_filename};
 use crate::download::progress::{DownloadStatus, ProgressMessage};
+use crate::download::proxy::ProxyListManager;
 use crate::download::ytdlp_errors::{
     analyze_ytdlp_error, get_error_message, get_fix_recommendations, sanitize_user_error_message, should_notify_admin,
     YtDlpErrorType,
@@ -457,6 +458,29 @@ pub fn add_cookies_args(args: &mut Vec<&str>) {
         }
 
         log::warn!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
+    }
+}
+
+/// Selects a proxy from configured sources and returns the proxy URL if available
+///
+/// Returns the proxy URL if configured and healthy, None otherwise
+#[allow(dead_code)]
+async fn get_proxy_for_download() -> Option<String> {
+    // Skip if proxy system is not configured
+    if config::proxy::PROXY_LIST.is_none() && config::proxy::PROXY_FILE.is_none() {
+        return None;
+    }
+
+    // Create proxy manager with configured strategy
+    let manager = ProxyListManager::new(config::proxy::get_selection_strategy());
+
+    // Select a proxy for this download
+    if let Some(proxy) = manager.select().await {
+        log::debug!("Selected proxy for download: {}", proxy);
+        Some(proxy.to_string())
+    } else {
+        log::warn!("Proxy configured but no healthy proxies available");
+        None
     }
 }
 
