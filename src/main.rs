@@ -16,6 +16,7 @@ use doradura::core::{
 };
 use doradura::download::queue::{self as queue};
 use doradura::download::ytdlp::{self as ytdlp};
+use doradura::download::ytdlp_errors::sanitize_user_error_message;
 use doradura::download::{
     download_and_send_audio, download_and_send_subtitles, download_and_send_video, DownloadQueue,
 };
@@ -93,6 +94,10 @@ async fn main() -> Result<()> {
             );
             run_metadata_refresh(limit, dry_run, verbose).await
         }
+        Some(Commands::UpdateYtdlp { force, check }) => {
+            log::info!("Managing yt-dlp (force: {}, check: {})", force, check);
+            run_ytdlp_update(force, check).await
+        }
         None => {
             // No command specified - default to running the bot
             log::info!("No command specified, running bot in default mode");
@@ -117,6 +122,21 @@ async fn run_metadata_refresh(limit: Option<usize>, dry_run: bool, verbose: bool
     // Run metadata refresh
     metadata_refresh::refresh_missing_metadata(db_pool, bot_token, limit, dry_run, verbose).await?;
 
+    Ok(())
+}
+
+/// Run yt-dlp update command
+async fn run_ytdlp_update(force: bool, check: bool) -> Result<()> {
+    if check {
+        // Just check version without updating
+        ytdlp::print_ytdlp_version().await?;
+    } else if force {
+        // Force update
+        ytdlp::force_update_ytdlp().await?;
+    } else {
+        // Normal check and update (only if needed)
+        ytdlp::check_and_update_ytdlp().await?;
+    }
     Ok(())
 }
 
@@ -734,17 +754,18 @@ async fn process_queue(
                         log::info!("Task {} completed successfully", task_id);
                     }
                     Err(e) => {
-                        let error_msg = format!("{:?}", e);
+                        let admin_error_msg = format!("{:?}", e);
+                        let user_error_msg = sanitize_user_error_message(&e.to_string());
                         log::error!(
                             "Failed to process task {} (format: {}): {}",
                             task_id,
                             task_format,
-                            error_msg
+                            admin_error_msg
                         );
 
                         // Mark the task as failed
                         if let Ok(conn) = db::get_connection(&db_pool) {
-                            if let Err(db_err) = db::mark_task_failed(&conn, &task_id, &error_msg) {
+                            if let Err(db_err) = db::mark_task_failed(&conn, &task_id, &user_error_msg) {
                                 log::error!("Failed to mark task {} as failed in DB: {}", task_id, db_err);
                             } else {
                                 // Notify the administrator only if the task has not exceeded retry limits
@@ -757,7 +778,7 @@ async fn process_queue(
                                                 &task_id,
                                                 task_chat_id.0,
                                                 &task_url,
-                                                &error_msg,
+                                                &admin_error_msg,
                                                 None,
                                             )
                                             .await;
