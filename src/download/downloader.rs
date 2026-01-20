@@ -7,8 +7,7 @@ use crate::core::utils::{escape_filename, sanitize_filename};
 use crate::download::progress::{DownloadStatus, ProgressMessage};
 use crate::download::proxy::ProxyListManager;
 use crate::download::ytdlp_errors::{
-    analyze_ytdlp_error, get_error_message, get_fix_recommendations, sanitize_user_error_message, should_notify_admin,
-    YtDlpErrorType,
+    analyze_ytdlp_error, get_error_message, sanitize_user_error_message, should_notify_admin, YtDlpErrorType,
 };
 use crate::storage::cache;
 use crate::storage::db::{self as db, save_download_history, DbPool};
@@ -1024,10 +1023,6 @@ async fn get_metadata_from_ytdlp(
         log::error!("yt-dlp failed to get metadata, error type: {:?}", error_type);
         log::error!("yt-dlp stderr: {}", stderr);
 
-        // Логируем рекомендации по исправлению
-        let recommendations = get_fix_recommendations(&error_type);
-        log::error!("{}", recommendations);
-
         // Если нужно уведомить администратора — шлём детализацию в Telegram админу
         if should_notify_admin(&error_type) {
             log::warn!("⚠️  This error requires administrator attention!");
@@ -1043,8 +1038,6 @@ async fn get_metadata_from_ytdlp(
                 text.push_str(&command_str);
                 text.push_str("\n\nstderr:\n");
                 text.push_str(&stderr);
-                text.push_str("\n\nrecommendations:\n");
-                text.push_str(&recommendations);
                 notify_admin_text(bot, &text).await;
             }
         }
@@ -1554,22 +1547,17 @@ async fn download_audio_file_with_progress(
                 log::error!("yt-dlp download failed, error type: {:?}", error_type);
                 log::error!("yt-dlp stderr: {}", stderr_text);
 
-                // Логируем рекомендации по исправлению
-                let recommendations = get_fix_recommendations(&error_type);
-                log::error!("{}", recommendations);
-
                 // Если нужно уведомить администратора — отправляем детализацию (stdout/stderr) админу
                 if should_notify_admin(&error_type) {
                     log::warn!("⚠️  This error requires administrator attention!");
                     let admin_message = format!(
-                        "YTDLP ERROR (audio download)\nuser_chat_id: {}\nurl: {}\nerror_type: {:?}\n\ncommand:\n{}\n\nstdout (tail):\n{}\n\nstderr (tail):\n{}\n\nrecommendations:\n{}",
+                        "YTDLP ERROR (audio download)\nuser_chat_id: {}\nurl: {}\nerror_type: {:?}\n\ncommand:\n{}\n\nstdout (tail):\n{}\n\nstderr (tail):\n{}",
                         user_chat_id.0,
                         url_str,
                         error_type,
                         command_str,
                         truncate_tail_utf8(&stdout_text, 6000),
                         truncate_tail_utf8(&stderr_text, 6000),
-                        recommendations
                     );
                     let bot_for_admin = admin_bot.clone();
                     runtime_handle.spawn(async move {
@@ -1757,22 +1745,17 @@ async fn download_video_file_with_progress(
                 log::error!("yt-dlp download failed, error type: {:?}", error_type);
                 log::error!("yt-dlp stderr: {}", stderr_text);
 
-                // Логируем рекомендации по исправлению
-                let recommendations = get_fix_recommendations(&error_type);
-                log::error!("{}", recommendations);
-
                 // Если нужно уведомить администратора — отправляем детализацию (stdout/stderr) админу
                 if should_notify_admin(&error_type) {
                     log::warn!("⚠️  This error requires administrator attention!");
                     let admin_message = format!(
-                        "YTDLP ERROR (video download)\nuser_chat_id: {}\nurl: {}\nerror_type: {:?}\n\ncommand:\n{}\n\nstdout (tail):\n{}\n\nstderr (tail):\n{}\n\nrecommendations:\n{}",
+                        "YTDLP ERROR (video download)\nuser_chat_id: {}\nurl: {}\nerror_type: {:?}\n\ncommand:\n{}\n\nstdout (tail):\n{}\n\nstderr (tail):\n{}",
                         user_chat_id.0,
                         url_str,
                         error_type,
                         command_str,
                         truncate_tail_utf8(&stdout_text, 6000),
                         truncate_tail_utf8(&stderr_text, 6000),
-                        recommendations
                     );
                     let bot_for_admin = admin_bot.clone();
                     runtime_handle.spawn(async move {
