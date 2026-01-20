@@ -380,6 +380,91 @@ pub mod analytics {
     });
 }
 
+/// Proxy configuration for yt-dlp downloads
+pub mod proxy {
+    use once_cell::sync::Lazy;
+    use std::env;
+
+    /// Proxy list (comma-separated, e.g., "http://127.0.0.1:8080,socks5://127.0.0.1:1080")
+    /// Read from PROXY_LIST environment variable
+    /// Default: empty (no proxies)
+    pub static PROXY_LIST: Lazy<Option<String>> = Lazy::new(|| {
+        env::var("PROXY_LIST")
+            .ok()
+            .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
+    });
+
+    /// Path to file containing proxy list (one proxy per line)
+    /// Read from PROXY_FILE environment variable
+    /// Useful for managing large proxy lists
+    pub static PROXY_FILE: Lazy<Option<String>> = Lazy::new(|| {
+        env::var("PROXY_FILE")
+            .ok()
+            .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
+    });
+
+    /// Proxy selection strategy: "round_robin", "random", "weighted", "fixed"
+    /// Read from PROXY_STRATEGY environment variable
+    /// Default: "round_robin"
+    pub static PROXY_STRATEGY: Lazy<String> = Lazy::new(|| {
+        env::var("PROXY_STRATEGY")
+            .unwrap_or_else(|_| "round_robin".to_string())
+            .to_lowercase()
+    });
+
+    /// Enable proxy rotation (use different proxy for each download)
+    /// Read from PROXY_ROTATION_ENABLED environment variable
+    /// Default: true
+    pub static ROTATION_ENABLED: Lazy<bool> = Lazy::new(|| {
+        env::var("PROXY_ROTATION_ENABLED")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(true)
+    });
+
+    /// Minimum proxy health score (0.0 - 1.0) to use proxy
+    /// Proxies with lower success rate are skipped
+    /// Read from PROXY_MIN_HEALTH environment variable
+    /// Default: 0.5 (50% success rate)
+    pub static MIN_HEALTH: Lazy<f64> = Lazy::new(|| {
+        let value: f64 = env::var("PROXY_MIN_HEALTH")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0.5);
+        value.clamp(0.0, 1.0)
+    });
+
+    /// URL to fetch proxy list from (useful for dynamic proxy updates)
+    /// Read from PROXY_URL environment variable
+    /// Default: empty (disabled)
+    pub static PROXY_UPDATE_URL: Lazy<Option<String>> = Lazy::new(|| {
+        env::var("PROXY_UPDATE_URL")
+            .ok()
+            .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
+    });
+
+    /// Interval to fetch proxy list from URL (in seconds)
+    /// Read from PROXY_UPDATE_INTERVAL environment variable
+    /// Default: 3600 (1 hour)
+    pub static PROXY_UPDATE_INTERVAL_SECS: Lazy<u64> = Lazy::new(|| {
+        env::var("PROXY_UPDATE_INTERVAL")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3600)
+    });
+
+    /// Gets the proxy selection strategy from environment configuration
+    pub fn get_selection_strategy() -> crate::download::proxy::ProxySelectionStrategy {
+        use crate::download::proxy::ProxySelectionStrategy;
+        match PROXY_STRATEGY.as_str() {
+            "random" => ProxySelectionStrategy::Random,
+            "weighted" => ProxySelectionStrategy::Weighted,
+            "fixed" => ProxySelectionStrategy::Fixed,
+            _ => ProxySelectionStrategy::RoundRobin,
+        }
+    }
+}
+
 /// Validation configuration
 pub mod validation {
     /// Maximum URL length (RFC 7230 recommends 8000, but we use 2048 for safety)

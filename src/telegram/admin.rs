@@ -2161,6 +2161,109 @@ pub async fn handle_cookies_file_upload(
 
     Ok(())
 }
+
+/// Shows proxy statistics and health status
+///
+/// Admin command to view current proxy configuration and health metrics
+pub async fn handle_proxy_stats_command(bot: &Bot, chat_id: ChatId, _user_id: i64) -> Result<()> {
+    use crate::core::config;
+    use crate::download::proxy::ProxyListManager;
+
+    // Check if proxies are configured
+    if config::proxy::PROXY_LIST.is_none() && config::proxy::PROXY_FILE.is_none() {
+        bot.send_message(
+            chat_id,
+            "❌ *No proxies configured*\n\nSet PROXY_LIST or PROXY_FILE environment variables.",
+        )
+        .parse_mode(ParseMode::MarkdownV2)
+        .await?;
+        return Ok(());
+    }
+
+    let manager = ProxyListManager::new(config::proxy::get_selection_strategy());
+    let stats = manager.all_stats().await;
+
+    if stats.is_empty() {
+        bot.send_message(chat_id, "ℹ️ *Proxy system configured but no proxies loaded yet*")
+            .parse_mode(ParseMode::MarkdownV2)
+            .await?;
+        return Ok(());
+    }
+
+    let mut message = "🔄 *Proxy Statistics*\n\n".to_string();
+    message.push_str(&format!("Strategy: `{}`\n", config::proxy::PROXY_STRATEGY.as_str()));
+    message.push_str(&format!("Min Health: `{:.1}%`\n", *config::proxy::MIN_HEALTH * 100.0));
+    message.push_str(&format!("Total Proxies: `{}`\n\n", stats.len()));
+
+    message.push_str("*Proxy Health:*\n");
+    for (proxy_url, stat) in stats.iter().take(10) {
+        let total = stat.successes + stat.failures;
+        let success_rate = if total > 0 {
+            stat.successes as f64 / total as f64
+        } else {
+            0.0
+        };
+
+        let health_emoji = if success_rate >= 0.9 {
+            "✅"
+        } else if success_rate >= 0.7 {
+            "⚠️ "
+        } else {
+            "❌"
+        };
+
+        message.push_str(&format!(
+            "{} `{:.0}%` \\| {} ok\\, {} err\n",
+            health_emoji,
+            success_rate * 100.0,
+            stat.successes,
+            stat.failures
+        ));
+        if proxy_url.len() > 40 {
+            message.push_str(&format!("`{}...`\n", &proxy_url[..37]));
+        } else {
+            message.push_str(&format!("`{}`\n", proxy_url));
+        }
+    }
+
+    if stats.len() > 10 {
+        message.push_str(&format!("\n_... and {} more proxies_", stats.len() - 10));
+    }
+
+    bot.send_message(chat_id, message)
+        .parse_mode(ParseMode::MarkdownV2)
+        .await?;
+
+    Ok(())
+}
+
+/// Resets proxy health statistics
+///
+/// Admin command to reset all proxy health counters
+pub async fn handle_proxy_reset_command(bot: &Bot, chat_id: ChatId, _user_id: i64) -> Result<()> {
+    use crate::core::config;
+    use crate::download::proxy::ProxyListManager;
+
+    if config::proxy::PROXY_LIST.is_none() && config::proxy::PROXY_FILE.is_none() {
+        bot.send_message(chat_id, "❌ *No proxies configured*")
+            .parse_mode(ParseMode::MarkdownV2)
+            .await?;
+        return Ok(());
+    }
+
+    let manager = ProxyListManager::new(config::proxy::get_selection_strategy());
+    manager.reset_stats().await;
+
+    bot.send_message(
+        chat_id,
+        "✅ *Proxy statistics reset*\n\nAll health counters have been cleared.",
+    )
+    .parse_mode(ParseMode::MarkdownV2)
+    .await?;
+
+    Ok(())
+}
+
 mod tests {
     #[test]
     fn test_escape_markdown_basic() {
