@@ -47,8 +47,8 @@ common =
     .unknown = Unknown
 
 commands =
-    .rate_limited_with_eta = Taking a quick break 😌 Try again in {$time} {$unit}.
-    .rate_limited = Taking a quick break 😌 Try again in a bit.
+    .rate_limited_with_eta = ⏳ Wait {$time} {$unit}...\n\n💡 Premium = no waiting, ~$6/month → /plan
+    .rate_limited = ⏳ Too fast! Wait a moment.\n\n💡 Premium = no waiting, ~$6/month → /plan
     .invalid_group_links = Sorry, I couldn't recognize any valid links. Please send links from supported services (YouTube, SoundCloud, VK, TikTok, Instagram, Twitch, Spotify, etc.).
     .group_added = ✅ Added {$count} tracks to the queue!
     .status_too_large = ❌ Too large
