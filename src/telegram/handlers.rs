@@ -10,6 +10,7 @@ use teloxide::dispatching::{UpdateFilterExt, UpdateHandler};
 use teloxide::prelude::*;
 use teloxide::types::Message;
 
+use crate::core::alerts::AlertManager;
 use crate::core::rate_limiter::RateLimiter;
 use crate::download::queue::{self as queue, DownloadQueue};
 use crate::downsub::DownsubGateway;
@@ -31,6 +32,7 @@ pub struct HandlerDeps {
     pub downsub_gateway: Arc<DownsubGateway>,
     pub bot_username: Option<String>,
     pub bot_id: UserId,
+    pub alert_manager: Option<Arc<AlertManager>>,
 }
 
 impl HandlerDeps {
@@ -42,6 +44,7 @@ impl HandlerDeps {
         downsub_gateway: Arc<DownsubGateway>,
         bot_username: Option<String>,
         bot_id: UserId,
+        alert_manager: Option<Arc<AlertManager>>,
     ) -> Self {
         Self {
             db_pool,
@@ -50,6 +53,7 @@ impl HandlerDeps {
             downsub_gateway,
             bot_username,
             bot_id,
+            alert_manager,
         }
     }
 }
@@ -603,6 +607,7 @@ fn message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                     deps.download_queue.clone(),
                     deps.rate_limiter.clone(),
                     deps.db_pool.clone(),
+                    deps.alert_manager.clone(),
                 )
                 .await;
 

@@ -220,18 +220,20 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
     }
 
     // Start internal alert monitoring (sends Telegram alerts to admin based on metrics thresholds)
-    if *config::alerts::ENABLED {
+    let alert_manager: Option<Arc<alerts::AlertManager>> = if *config::alerts::ENABLED {
         let admin_user_id = *config::admin::ADMIN_USER_ID;
         if admin_user_id == 0 {
             log::warn!("Alerts enabled but ADMIN_USER_ID is not set; skipping alert monitor startup");
+            None
         } else {
-            let _alert_manager =
-                alerts::start_alert_monitor(bot.clone(), ChatId(admin_user_id), Arc::clone(&db_pool)).await;
+            let manager = alerts::start_alert_monitor(bot.clone(), ChatId(admin_user_id), Arc::clone(&db_pool)).await;
             log::info!("Internal alert monitor started");
+            Some(manager)
         }
     } else {
         log::info!("Alerting disabled (ALERTS_ENABLED=false)");
-    }
+        None
+    };
 
     // Start periodic stats reporter (sends statistics to admin every STATS_REPORT_INTERVAL hours)
     {
@@ -381,6 +383,7 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
         Arc::clone(&downsub_gateway),
         bot_username.map(|s| s.to_string()),
         bot_id,
+        alert_manager,
     );
 
     // Create the dispatcher handler tree using the modular schema

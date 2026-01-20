@@ -1,3 +1,4 @@
+use crate::core::alerts::AlertManager;
 use crate::core::config;
 use crate::core::error::AppError;
 use crate::core::rate_limiter::RateLimiter;
@@ -100,6 +101,7 @@ pub async fn handle_message(
     _download_queue: Arc<DownloadQueue>,
     rate_limiter: Arc<RateLimiter>,
     db_pool: Arc<DbPool>,
+    alert_manager: Option<Arc<AlertManager>>,
 ) -> ResponseResult<Option<db::User>> {
     let lang = i18n::user_lang_from_pool_with_fallback(
         &db_pool,
@@ -714,18 +716,38 @@ pub async fn handle_message(
                     Err(e) => {
                         log::error!("Failed to get preview metadata: {:?}", e);
 
+                        // Check whether this is a duration-related error (not a real error, just a limit)
+                        let is_duration_error = if let AppError::Download(ref err_msg) = e {
+                            err_msg.contains("слишком длинное")
+                                || err_msg.contains("too long")
+                                || err_msg.contains("zu lang")
+                                || err_msg.contains("trop long")
+                        } else {
+                            false
+                        };
+
+                        // Send alert to admin for real errors (not duration limits)
+                        if !is_duration_error {
+                            if let Some(ref alert_mgr) = alert_manager {
+                                let user_id = msg.chat.id.0;
+                                let error_str = format!("{:?}", e);
+                                if let Err(alert_err) = alert_mgr
+                                    .alert_download_failure(user_id, url.as_str(), &error_str, 3)
+                                    .await
+                                {
+                                    log::error!("Failed to send alert: {}", alert_err);
+                                }
+                            }
+                        }
+
                         // Delete processing message
                         let _ = bot.delete_message(msg.chat.id, processing_msg.id).await;
 
-                        // Check whether this is a duration-related error
-                        let error_message = if let AppError::Download(ref msg) = e {
+                        // Build user-facing error message
+                        let error_message = if let AppError::Download(ref err_msg) = e {
                             // If it's already translated error (from preview), use it
-                            if msg.contains("слишком длинное")
-                                || msg.contains("too long")
-                                || msg.contains("zu lang")
-                                || msg.contains("trop long")
-                            {
-                                msg.clone()
+                            if is_duration_error {
+                                err_msg.clone()
                             } else {
                                 i18n::t(&lang, "commands.preview_info_failed")
                             }
