@@ -108,6 +108,7 @@ impl RealHandlerTest {
             downsub_gateway,
             Some("test_bot".to_string()),
             UserId(987654321),
+            None, // alert_manager - not needed for tests
         );
 
         Self { mock_server, bot, deps }
