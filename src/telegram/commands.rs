@@ -3,6 +3,7 @@ use crate::core::error::AppError;
 use crate::core::rate_limiter::RateLimiter;
 use crate::core::utils::pluralize_seconds;
 use crate::download::queue::DownloadQueue;
+use crate::download::ytdlp_errors::sanitize_user_error_message;
 use crate::downsub::{DownsubError, DownsubGateway};
 use crate::i18n;
 use crate::storage::db::{self, DbPool};
@@ -2055,7 +2056,8 @@ pub async fn handle_info_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>) -
                     Err(e) => log::warn!("⚠️  Failed to delete processing message: {:?}", e),
                 }
 
-                let error_msg = format!("❌ Не удалось получить информацию о файле:\n{}", e);
+                let user_error = sanitize_user_error_message(&e.to_string());
+                let error_msg = format!("❌ Не удалось получить информацию о файле:\n{}", user_error);
                 log::info!("📤 Sending error message...");
                 match bot.send_message(msg.chat.id, error_msg).await {
                     Ok(_) => {

@@ -49,6 +49,17 @@ pub enum Commands {
         #[arg(short, long)]
         verbose: bool,
     },
+
+    /// Update yt-dlp to the latest version
+    UpdateYtdlp {
+        /// Force update even if already up to date
+        #[arg(long)]
+        force: bool,
+
+        /// Check version without updating
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 impl Cli {

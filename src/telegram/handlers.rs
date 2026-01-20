@@ -68,6 +68,7 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
     let deps_webapp = deps.clone();
     let deps_payment = deps.clone();
     let deps_cookies = deps.clone();
+    let deps_ytdlp = deps.clone();
     let deps_commands = deps.clone();
     let deps_messages = deps.clone();
     let deps_precheckout = deps.clone();
@@ -80,6 +81,7 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
         .branch(successful_payment_handler(deps_payment))
         // Hidden admin commands (not in Command enum)
         .branch(update_cookies_handler(deps_cookies))
+        .branch(update_ytdlp_handler(deps_ytdlp))
         // Command handler
         .branch(command_handler(deps_commands))
         // Message handler for URLs and text
@@ -254,6 +256,34 @@ fn update_cookies_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                     log::error!("❌ /update_cookies handler failed for user {}: {}", user_id, e);
                     let _ = bot
                         .send_message(msg.chat.id, format!("❌ /update_cookies failed: {}", e))
+                        .await;
+                }
+                Ok(())
+            }
+        })
+}
+
+/// Handler for /update_ytdlp admin command (hidden, not in Command enum)
+fn update_ytdlp_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
+    Update::filter_message()
+        .filter(|msg: Message| {
+            msg.text()
+                .map(|text| text.starts_with("/update_ytdlp"))
+                .unwrap_or(false)
+        })
+        .endpoint(move |bot: Bot, msg: Message| {
+            let _deps = deps.clone();
+            async move {
+                use crate::telegram::handle_update_ytdlp_command;
+
+                log::info!("🎯 /update_ytdlp handler matched - routing to handle_update_ytdlp_command");
+                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+                let message_text = msg.text().unwrap_or_default();
+
+                if let Err(e) = handle_update_ytdlp_command(&bot, msg.chat.id, user_id, message_text).await {
+                    log::error!("❌ /update_ytdlp handler failed for user {}: {}", user_id, e);
+                    let _ = bot
+                        .send_message(msg.chat.id, format!("❌ /update_ytdlp failed: {}", e))
                         .await;
                 }
                 Ok(())

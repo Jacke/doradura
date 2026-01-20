@@ -13,6 +13,8 @@ pub enum YtDlpErrorType {
     VideoUnavailable,
     /// Проблемы с сетью (таймауты, соединение)
     NetworkError,
+    /// Ошибки при загрузке фрагментов видео (обычно временные)
+    FragmentError,
     /// Неизвестная ошибка
     Unknown,
 }
@@ -39,7 +41,17 @@ pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
         return YtDlpErrorType::InvalidCookies;
     }
 
-    // Проверяем bot detection
+    // Проверяем ошибки при загрузке фрагментов (обычно временные блокировки)
+    if stderr_lower.contains("fragment")
+        && (stderr_lower.contains("http error 403")
+            || stderr_lower.contains("retrying fragment")
+            || stderr_lower.contains("fragment not found")
+            || stderr_lower.contains("skipping fragment"))
+    {
+        return YtDlpErrorType::FragmentError;
+    }
+
+    // Проверяем bot detection (если это не фрагменты)
     if stderr_lower.contains("bot detection")
         || stderr_lower.contains("http error 403")
         || stderr_lower.contains("unable to extract")
@@ -94,6 +106,9 @@ pub fn get_error_message(error_type: &YtDlpErrorType) -> String {
             "❌ Видео недоступно.\n\nВозможно оно приватное, удалено или заблокировано в твоём регионе.".to_string()
         }
         YtDlpErrorType::NetworkError => "❌ Проблема с сетью.\n\nПопробуй ещё раз через минуту.".to_string(),
+        YtDlpErrorType::FragmentError => {
+            "❌ Временная проблема при загрузке видео.\n\nПопробуй повторить попытку.".to_string()
+        }
         YtDlpErrorType::Unknown => "❌ Не удалось скачать видео.\n\nПроверь, что ссылка корректна.".to_string(),
     }
 }
@@ -111,8 +126,44 @@ pub fn should_notify_admin(error_type: &YtDlpErrorType) -> bool {
         YtDlpErrorType::BotDetection => true,
         YtDlpErrorType::VideoUnavailable => false,
         YtDlpErrorType::NetworkError => false,
+        YtDlpErrorType::FragmentError => false, // Временные ошибки фрагментов - не требуют внимания
         YtDlpErrorType::Unknown => true,
     }
+}
+
+/// Sanitizes a raw error string for user-facing output.
+///
+/// If the message looks like a yt-dlp stderr dump, return a friendly
+/// user message instead of the raw error text.
+pub fn sanitize_user_error_message(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return "❌ Не удалось скачать видео.\n\nПопробуй ещё раз позже.".to_string();
+    }
+
+    let lower = trimmed.to_lowercase();
+    let looks_like_ytdlp = lower.contains("yt-dlp")
+        || lower.contains("youtube-dl")
+        || lower.contains("http error 403")
+        || lower.contains("fragment")
+        || lower.contains("signature extraction")
+        || lower.contains("bot detection")
+        || lower.contains("stderr")
+        || lower.contains("stdout")
+        || lower.contains("recommendations")
+        || lower.contains("[download]")
+        || lower.contains("warning: [youtube]")
+        || lower.contains("error: [youtube]")
+        || lower.contains("downloaded file is empty")
+        || lower.contains("unable to download")
+        || lower.contains("sign in to confirm you're not a bot");
+
+    if looks_like_ytdlp {
+        let error_type = analyze_ytdlp_error(trimmed);
+        return get_error_message(&error_type);
+    }
+
+    trimmed.to_string()
 }
 
 /// Возвращает рекомендации по исправлению ошибки для логов
@@ -154,6 +205,13 @@ pub fn get_fix_recommendations(error_type: &YtDlpErrorType) -> String {
             • Проверь интернет-соединение\n\
             • Проверь доступность youtube.com\n\
             • Увеличь таймауты если проблема повторяется"
+            .to_string(),
+        YtDlpErrorType::FragmentError => "🔧 РЕКОМЕНДАЦИИ ПО ИСПРАВЛЕНИЮ:\n\
+            • Это временная ошибка при загрузке видео - yt-dlp автоматически переделывает фрагменты\n\
+            • Если проблема повторяется часто:\n\
+              1. Проверь интернет-соединение\n\
+              2. Попробуй загрузить позже (YouTube может ограничивать частые запросы)\n\
+              3. Убедись что используешь актуальную версию yt-dlp"
             .to_string(),
         YtDlpErrorType::Unknown => "🔧 РЕКОМЕНДАЦИИ ПО ИСПРАВЛЕНИЮ:\n\
             • Проверь логи yt-dlp для деталей\n\
@@ -368,6 +426,23 @@ mod tests {
         let recs = get_fix_recommendations(&YtDlpErrorType::Unknown);
         assert!(recs.contains("логи"));
         assert!(recs.contains("yt-dlp"));
+    }
+
+    // ==================== sanitize_user_error_message Tests ====================
+
+    #[test]
+    fn test_sanitize_user_error_message_ytdlp() {
+        let raw = "ERROR: [youtube] abc: HTTP Error 403: Forbidden";
+        let sanitized = sanitize_user_error_message(raw);
+        assert!(!sanitized.to_lowercase().contains("yt-dlp"));
+        assert!(sanitized.contains("YouTube"));
+    }
+
+    #[test]
+    fn test_sanitize_user_error_message_passthrough() {
+        let raw = "❌ Видео недоступно.\n\nПопробуй другое видео.";
+        let sanitized = sanitize_user_error_message(raw);
+        assert_eq!(sanitized, raw);
     }
 
     // ==================== YtDlpErrorType Trait Tests ====================
