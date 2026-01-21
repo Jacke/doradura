@@ -330,13 +330,13 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
         }
     });
 
-    // Start automatic cookies validation checker (every 10 minutes)
+    // Start automatic cookies validation checker (every 5 minutes)
     let bot_cookies = bot.clone();
     tokio::spawn(async move {
         use doradura::download::cookies;
         use doradura::telegram::notify_admin_cookies_refresh;
 
-        let mut interval = interval(Duration::from_secs(10 * 60)); // 10 minutes
+        let mut interval = interval(Duration::from_secs(5 * 60)); // 5 minutes
         loop {
             interval.tick().await;
             log::debug!("Running periodic cookies validation check");
