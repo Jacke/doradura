@@ -10,7 +10,7 @@ use base64::{engine::general_purpose, Engine as _};
 use std::path::PathBuf;
 use tokio::process::Command;
 
-/// Validates YouTube cookies by testing a known video URL
+/// Validates YouTube cookies by testing video URLs that require authentication
 ///
 /// Returns true if cookies are valid and working, false otherwise
 pub async fn validate_cookies() -> bool {
@@ -27,48 +27,62 @@ pub async fn validate_cookies() -> bool {
         return false;
     }
 
-    // Test cookies with a simple metadata fetch
-    // Use a known age-restricted video that requires auth
-    let test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ";
+    // Test with multiple videos - some require auth more strictly
+    // Using different types of content to catch various auth requirements
+    let test_urls = [
+        "https://www.youtube.com/watch?v=jNQXAC9IVRw", // "Me at the zoo" - first YouTube video
+        "https://www.youtube.com/watch?v=dQw4w9WgXcQ", // Rick Astley
+    ];
 
     let ytdl_bin = crate::core::config::YTDL_BIN.as_str();
 
-    let output = Command::new(ytdl_bin)
-        .arg("--no-warnings")
-        .arg("--no-playlist")
-        .arg("--skip-download")
-        .arg("--cookies")
-        .arg(&cookies_path)
-        .arg("--print")
-        .arg("id")
-        .arg(test_url)
-        .output()
-        .await;
+    for test_url in &test_urls {
+        let output = Command::new(ytdl_bin)
+            .arg("--no-warnings")
+            .arg("--no-playlist")
+            .arg("--skip-download")
+            .arg("--cookies")
+            .arg(&cookies_path)
+            // Use extractor-args same as in actual downloads to test real behavior
+            .arg("--extractor-args")
+            .arg("youtube:player_client=default,web_safari,web_embedded")
+            .arg("--print")
+            .arg("%(id)s %(title)s")
+            .arg(test_url)
+            .output()
+            .await;
 
-    match output {
-        Ok(output) => {
-            if output.status.success() {
-                true
-            } else {
+        match output {
+            Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                log::warn!("❌ Cookies validation failed: {}", stderr);
 
-                // Check for specific error patterns
-                if stderr.contains("Sign in to confirm") || stderr.contains("bot") || stderr.contains("Cookie") {
-                    log::error!("🔴 Cookies are invalid or expired!");
-                    false
-                } else {
-                    // Other errors might be network-related, give benefit of the doubt
-                    log::warn!("⚠️  Validation inconclusive, assuming cookies are OK");
-                    true
+                // Check for auth-related errors even if command "succeeded"
+                if stderr.contains("Sign in to confirm")
+                    || stderr.contains("not a bot")
+                    || stderr.contains("Cookie")
+                    || stderr.contains("cookies")
+                    || stderr.contains("login")
+                    || stderr.contains("authentication")
+                {
+                    log::error!("🔴 Cookies validation failed for {}: {}", test_url, stderr);
+                    return false;
+                }
+
+                if !output.status.success() {
+                    log::warn!("❌ Cookies validation failed for {}: {}", test_url, stderr);
+                    // Any failure is suspicious - don't assume OK
+                    return false;
                 }
             }
-        }
-        Err(e) => {
-            log::error!("Failed to execute yt-dlp for cookies validation: {}", e);
-            false
+            Err(e) => {
+                log::error!("Failed to execute yt-dlp for cookies validation: {}", e);
+                return false;
+            }
         }
     }
+
+    log::debug!("✅ Cookies validation passed");
+    true
 }
 
 /// Returns the configured cookies file path from environment
