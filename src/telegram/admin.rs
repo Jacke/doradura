@@ -1984,7 +1984,7 @@ pub async fn notify_admin_cookies_refresh(bot: &Bot, admin_id: i64, reason: &str
         Причина: {}\n\n\
         Для обновления:\n\
         1\\. Экспортируй cookies из браузера\n\
-        2\\. Отправь командой: `/update_cookies`\n\
+        2\\. Нажми: /update\\_cookies\n\
         3\\. Пришли txt файл с cookies в ответ\n\n\
         Без валидных cookies загрузка видео с YouTube может не работать\\.",
         escape_markdown(reason)
