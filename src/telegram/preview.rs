@@ -1,6 +1,7 @@
 use crate::core::config;
 use crate::core::error::AppError;
-use crate::download::downloader::add_cookies_args;
+use crate::core::escape_markdown;
+use crate::download::metadata::add_cookies_args;
 use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message};
 use crate::storage::cache;
 use crate::storage::db::DbPool;
@@ -797,43 +798,6 @@ async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<VideoFo
     }
 
     Ok(formats)
-}
-
-/// Экранирует специальные символы для MarkdownV2
-///
-/// В Telegram MarkdownV2 требуется экранировать следующие символы:
-/// _ * [ ] ( ) ~ ` > # + - = | { } . !
-///
-/// Важно: обратный слеш должен экранироваться первым, чтобы избежать повторного экранирования
-fn escape_markdown(text: &str) -> String {
-    let mut result = String::with_capacity(text.len() * 2);
-
-    for c in text.chars() {
-        match c {
-            '\\' => result.push_str("\\\\"),
-            '_' => result.push_str("\\_"),
-            '*' => result.push_str("\\*"),
-            '[' => result.push_str("\\["),
-            ']' => result.push_str("\\]"),
-            '(' => result.push_str("\\("),
-            ')' => result.push_str("\\)"),
-            '~' => result.push_str("\\~"),
-            '`' => result.push_str("\\`"),
-            '>' => result.push_str("\\>"),
-            '#' => result.push_str("\\#"),
-            '+' => result.push_str("\\+"),
-            '-' => result.push_str("\\-"),
-            '=' => result.push_str("\\="),
-            '|' => result.push_str("\\|"),
-            '{' => result.push_str("\\{"),
-            '}' => result.push_str("\\}"),
-            '.' => result.push_str("\\."),
-            '!' => result.push_str("\\!"),
-            _ => result.push(c),
-        }
-    }
-
-    result
 }
 
 /// Отправляет превью с метаданными и кнопками подтверждения

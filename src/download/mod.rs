@@ -4,11 +4,14 @@ pub mod audio_effects;
 pub mod cookies;
 pub mod downloader;
 pub mod fetch;
+pub mod metadata;
 pub mod playlist;
 pub mod progress;
 pub mod proxy;
 pub mod queue;
 pub mod ringtone;
+pub mod send;
+pub mod thumbnail;
 pub mod ytdlp;
 pub mod ytdlp_errors;
 

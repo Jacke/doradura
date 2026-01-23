@@ -3,7 +3,7 @@
 //! Extracts individual video URLs from playlists for processing.
 
 use crate::core::config;
-use crate::download::downloader::add_cookies_args;
+use crate::download::metadata::add_cookies_args;
 use serde::Deserialize;
 use std::process::Stdio;
 use tokio::process::Command;

@@ -1,4 +1,5 @@
 use crate::core::config::admin::ADMIN_USERNAME;
+use crate::core::escape_markdown;
 use crate::core::export::handle_export;
 use crate::core::history::handle_history_callback;
 use crate::core::rate_limiter::RateLimiter;
@@ -19,43 +20,6 @@ use teloxide::RequestError;
 use unic_langid::LanguageIdentifier;
 use url::Url;
 use uuid::Uuid;
-
-/// Escapes special characters for MarkdownV2.
-///
-/// Telegram MarkdownV2 requires escaping these characters:
-/// _ * [ ] ( ) ~ ` > # + - = | { } . !
-///
-/// Important: escape the backslash first to avoid double escaping.
-fn escape_markdown(text: &str) -> String {
-    let mut result = String::with_capacity(text.len() * 2);
-
-    for c in text.chars() {
-        match c {
-            '\\' => result.push_str("\\\\"),
-            '_' => result.push_str("\\_"),
-            '*' => result.push_str("\\*"),
-            '[' => result.push_str("\\["),
-            ']' => result.push_str("\\]"),
-            '(' => result.push_str("\\("),
-            ')' => result.push_str("\\)"),
-            '~' => result.push_str("\\~"),
-            '`' => result.push_str("\\`"),
-            '>' => result.push_str("\\>"),
-            '#' => result.push_str("\\#"),
-            '+' => result.push_str("\\+"),
-            '-' => result.push_str("\\-"),
-            '=' => result.push_str("\\="),
-            '|' => result.push_str("\\|"),
-            '{' => result.push_str("\\{"),
-            '}' => result.push_str("\\}"),
-            '.' => result.push_str("\\."),
-            '!' => result.push_str("\\!"),
-            _ => result.push(c),
-        }
-    }
-
-    result
-}
 
 /// Edit caption if present, else fallback to editing text.
 async fn edit_caption_or_text(

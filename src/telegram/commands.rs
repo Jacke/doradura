@@ -1,5 +1,6 @@
 use crate::core::alerts::AlertManager;
 use crate::core::config;
+use crate::core::escape_markdown;
 use crate::core::error::AppError;
 use crate::core::rate_limiter::RateLimiter;
 use crate::core::utils::pluralize_seconds;
@@ -2268,24 +2269,6 @@ fn parse_downsub_options(tokens: &[&str]) -> DownsubOptions {
     }
 
     options
-}
-
-/// Helper function to escape special characters for MarkdownV2
-fn escape_markdown(text: &str) -> String {
-    let mut result = String::with_capacity(text.len() * 2);
-
-    for c in text.chars() {
-        match c {
-            '_' | '*' | '[' | ']' | '(' | ')' | '~' | '`' | '>' | '#' | '+' | '-' | '=' | '|' | '{' | '}' | '.'
-            | '!' => {
-                result.push('\\');
-                result.push(c);
-            }
-            _ => result.push(c),
-        }
-    }
-
-    result
 }
 
 #[cfg(test)]

@@ -2,6 +2,7 @@
 //!
 //! This module handles user feedback collection and admin notifications.
 
+use crate::core::escape_markdown;
 use crate::telegram::Bot;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -11,36 +12,6 @@ use tokio::sync::Mutex;
 
 use crate::core::config::admin::ADMIN_USER_ID;
 use crate::i18n;
-
-/// Escapes special characters for MarkdownV2.
-fn escape_markdown(text: &str) -> String {
-    let mut result = String::with_capacity(text.len() * 2);
-    for c in text.chars() {
-        match c {
-            '\\' => result.push_str("\\\\"),
-            '_' => result.push_str("\\_"),
-            '*' => result.push_str("\\*"),
-            '[' => result.push_str("\\["),
-            ']' => result.push_str("\\]"),
-            '(' => result.push_str("\\("),
-            ')' => result.push_str("\\)"),
-            '~' => result.push_str("\\~"),
-            '`' => result.push_str("\\`"),
-            '>' => result.push_str("\\>"),
-            '#' => result.push_str("\\#"),
-            '+' => result.push_str("\\+"),
-            '-' => result.push_str("\\-"),
-            '=' => result.push_str("\\="),
-            '|' => result.push_str("\\|"),
-            '{' => result.push_str("\\{"),
-            '}' => result.push_str("\\}"),
-            '.' => result.push_str("\\."),
-            '!' => result.push_str("\\!"),
-            _ => result.push(c),
-        }
-    }
-    result
-}
 
 /// State management for feedback collection
 /// Maps user_id -> waiting for feedback
