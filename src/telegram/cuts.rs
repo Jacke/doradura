@@ -1,3 +1,4 @@
+use crate::core::config;
 use crate::storage::{db, DbPool};
 use crate::telegram::Bot;
 use std::sync::Arc;
@@ -627,12 +628,7 @@ fn bot_api_source_hint() -> String {
     }
 }
 
-fn is_local_bot_api_env() -> bool {
-    std::env::var("BOT_API_URL")
-        .ok()
-        .map(|u| !u.contains("api.telegram.org"))
-        .unwrap_or(false)
-}
+// is_local_bot_api_env is now crate::core::config::bot_api::is_local()
 
 fn short_error_text(text: &str, max_chars: usize) -> String {
     let t = text.trim().replace('\n', " ");
@@ -661,7 +657,7 @@ fn forced_document_unavailable_notice(download_error_text: &str) -> Option<Strin
         ));
     }
     if lower.contains("file is too big") {
-        if is_local_bot_api_env() {
+        if config::bot_api::is_local() {
             return Some(format!(
                 "⚠️ Не могу принудительно отправить как документ: локальный Bot API вернул `file is too big` ещё на `getFile`.\nОбычно это значит, что сервер запущен НЕ в `--local` режиме (и наследует лимит официального Bot API ~20 MB), либо реально применён лимит на стороне сервера.\nОставил как видео.\n\nПричина: {}\n{}",
                 short_error_text(download_error_text, 180),

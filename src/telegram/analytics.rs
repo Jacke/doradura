@@ -3,6 +3,7 @@
 //! This module provides admin-only commands to view bot metrics, performance data,
 //! and system health directly in Telegram without needing to access Grafana.
 
+use crate::core::escape_markdown;
 use crate::core::metrics;
 use crate::storage::db::{self, DbPool};
 use crate::telegram::admin;
@@ -650,26 +651,4 @@ fn format_duration(seconds: u64) -> String {
     } else {
         format!("{}s", secs)
     }
-}
-
-/// Escapes markdown special characters for MarkdownV2
-fn escape_markdown(text: &str) -> String {
-    text.replace('_', "\\_")
-        .replace('*', "\\*")
-        .replace('[', "\\[")
-        .replace(']', "\\]")
-        .replace('(', "\\(")
-        .replace(')', "\\)")
-        .replace('~', "\\~")
-        .replace('`', "\\`")
-        .replace('>', "\\>")
-        .replace('#', "\\#")
-        .replace('+', "\\+")
-        .replace('-', "\\-")
-        .replace('=', "\\=")
-        .replace('|', "\\|")
-        .replace('{', "\\{")
-        .replace('}', "\\}")
-        .replace('.', "\\.")
-        .replace('!', "\\!")
 }

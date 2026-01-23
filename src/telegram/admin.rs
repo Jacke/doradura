@@ -5,10 +5,12 @@
 //! - Database backup operations
 //! - Markdown escaping utilities
 
+use crate::core::{BOT_API_RESPONSE_REGEX, BOT_API_START_SIMPLE_REGEX};
+// Re-export escape_markdown for backward compatibility (other modules import from here)
+pub use crate::core::escape_markdown;
 use crate::downsub::DownsubGateway;
 use crate::telegram::Bot;
 use anyhow::Result;
-use regex::Regex;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -30,15 +32,19 @@ use std::path::PathBuf;
 use tokio::process::Command as TokioCommand;
 use url::Url;
 
-/// Maximum message length for Telegram (with margin)
-const MAX_MESSAGE_LENGTH: usize = 4000;
+// truncate_for_telegram is imported from crate::core
 const DEFAULT_BOT_API_LOG_PATH: &str = "bot-api-data/logs/telegram-bot-api.log";
 const DEFAULT_BOT_API_LOG_TAIL_BYTES: u64 = 2 * 1024 * 1024;
 
+/// Maximum message length for Telegram (with margin) - for backward compatibility
+pub const MAX_MESSAGE_LENGTH: usize = crate::core::TELEGRAM_MESSAGE_LIMIT;
+
+/// Truncate message for Telegram - for backward compatibility with original behavior
 fn truncate_message(text: &str) -> String {
     if text.len() <= MAX_MESSAGE_LENGTH {
         return text.to_string();
     }
+    // Original behavior: trim to MAX_MESSAGE_LENGTH - 20 and add "\n... (truncated)"
     let mut trimmed = text.chars().take(MAX_MESSAGE_LENGTH - 20).collect::<String>();
     trimmed.push_str("\n... (truncated)");
     trimmed
@@ -63,43 +69,7 @@ pub fn is_admin(user_id: i64) -> bool {
     false
 }
 
-/// Escapes special characters for MarkdownV2 format
-///
-/// # Arguments
-/// * `text` - Text to escape
-///
-/// # Returns
-/// Escaped text safe for MarkdownV2 parsing
-pub fn escape_markdown(text: &str) -> String {
-    let mut result = String::with_capacity(text.len() * 2);
-
-    for c in text.chars() {
-        match c {
-            '\\' => result.push_str("\\\\"),
-            '_' => result.push_str("\\_"),
-            '*' => result.push_str("\\*"),
-            '[' => result.push_str("\\["),
-            ']' => result.push_str("\\]"),
-            '(' => result.push_str("\\("),
-            ')' => result.push_str("\\)"),
-            '~' => result.push_str("\\~"),
-            '`' => result.push_str("\\`"),
-            '>' => result.push_str("\\>"),
-            '#' => result.push_str("\\#"),
-            '+' => result.push_str("\\+"),
-            '-' => result.push_str("\\-"),
-            '=' => result.push_str("\\="),
-            '|' => result.push_str("\\|"),
-            '{' => result.push_str("\\{"),
-            '}' => result.push_str("\\}"),
-            '.' => result.push_str("\\."),
-            '!' => result.push_str("\\!"),
-            _ => result.push(c),
-        }
-    }
-
-    result
-}
+// escape_markdown is imported from crate::core (as alias for escape_markdown_v2)
 
 fn indent_lines(text: &str, indent: &str) -> String {
     text.lines()
@@ -143,9 +113,7 @@ fn read_log_tail(path: &PathBuf, max_bytes: u64) -> Result<String, std::io::Erro
     Ok(buf)
 }
 
-fn is_local_bot_api(bot_api_url: &str) -> bool {
-    !bot_api_url.contains("api.telegram.org")
-}
+// is_local_bot_api is now in crate::core::config::bot_api::is_local_url
 
 struct BotApiUploadStat {
     method: String,
@@ -177,7 +145,7 @@ pub async fn handle_botapi_speed_command(bot: &Bot, chat_id: ChatId, user_id: i6
         }
     };
 
-    if !is_local_bot_api(&bot_api_url) {
+    if !config::bot_api::is_local_url(&bot_api_url) {
         bot.send_message(
             chat_id,
             "⚠️ Используется официальный Bot API. Локальные логи недоступны.",
@@ -206,10 +174,9 @@ pub async fn handle_botapi_speed_command(bot: &Bot, chat_id: ChatId, user_id: i6
         }
     };
 
-    let start_re = Regex::new(r"\[(\d+\.\d+)\].*Query (0x[0-9a-f]+): .*method:\s*([a-z_]+).*\[size:(\d+)\]")
-        .map_err(|e| anyhow::anyhow!("Failed to compile start regex: {}", e))?;
-    let response_re = Regex::new(r"\[(\d+\.\d+)\].*Query (0x[0-9a-f]+): \[method:([a-z_]+)\]")
-        .map_err(|e| anyhow::anyhow!("Failed to compile response regex: {}", e))?;
+    // Use pre-compiled lazy regexes from crate::core
+    let start_re = &*BOT_API_START_SIMPLE_REGEX;
+    let response_re = &*BOT_API_RESPONSE_REGEX;
 
     let mut queries: HashMap<String, QueryData> = HashMap::new();
 
@@ -2383,17 +2350,18 @@ mod tests {
     }
 
     // ==================== is_local_bot_api Tests ====================
+    // Note: is_local_bot_api is now in crate::core::config::bot_api::is_local_url
 
     #[test]
     fn test_is_local_bot_api_official() {
-        assert!(!super::is_local_bot_api("https://api.telegram.org/bot12345"));
+        assert!(!crate::core::config::bot_api::is_local_url("https://api.telegram.org/bot12345"));
     }
 
     #[test]
     fn test_is_local_bot_api_local() {
-        assert!(super::is_local_bot_api("http://localhost:8081/bot12345"));
-        assert!(super::is_local_bot_api("http://127.0.0.1:8081/bot12345"));
-        assert!(super::is_local_bot_api("http://my-bot-api.local/bot12345"));
+        assert!(crate::core::config::bot_api::is_local_url("http://localhost:8081/bot12345"));
+        assert!(crate::core::config::bot_api::is_local_url("http://127.0.0.1:8081/bot12345"));
+        assert!(crate::core::config::bot_api::is_local_url("http://my-bot-api.local/bot12345"));
     }
 
     // ==================== read_log_tail Tests ====================

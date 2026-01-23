@@ -35,6 +35,7 @@
 //! ```
 
 use crate::core::utils::escape_markdown_v2;
+use crate::core::extract_retry_after;
 use crate::telegram::reactions::{emoji, try_set_reaction};
 use crate::telegram::Bot;
 use std::marker::PhantomData;
@@ -813,32 +814,7 @@ fn create_progress_bar(progress: u8) -> String {
     format!("[{}{}]", "█".repeat(filled), "░".repeat(empty))
 }
 
-/// Extracts retry-after seconds from Telegram rate limit error.
-fn extract_retry_after(error_str: &str) -> Option<u64> {
-    let lower = error_str.to_lowercase();
-
-    if let Some(pos) = lower.find("retry after ") {
-        let after = &lower[pos + 12..];
-        let num: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
-        if let Ok(secs) = num.parse() {
-            return Some(secs);
-        }
-    }
-
-    if let Some(pos) = lower.find("retry_after") {
-        let after = &lower[pos + 11..];
-        let num: String = after
-            .chars()
-            .skip_while(|c| !c.is_ascii_digit())
-            .take_while(|c| c.is_ascii_digit())
-            .collect();
-        if let Ok(secs) = num.parse() {
-            return Some(secs);
-        }
-    }
-
-    None
-}
+// extract_retry_after is imported from crate::core
 
 // ============================================================================
 // Tests
