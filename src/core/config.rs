@@ -530,3 +530,37 @@ pub mod validation {
     /// Use max_video_size_bytes() instead for dynamic limit detection
     pub const MAX_VIDEO_SIZE_BYTES: u64 = 50 * 1024 * 1024; // 50 MB
 }
+
+/// Bot API server configuration utilities
+///
+/// Provides functions to check if local Bot API server is being used
+/// and retrieve the Bot API URL.
+pub mod bot_api {
+    /// Returns the BOT_API_URL environment variable if set.
+    pub fn get_url() -> Option<String> {
+        std::env::var("BOT_API_URL").ok()
+    }
+
+    /// Returns true if using a local Bot API server (not api.telegram.org).
+    ///
+    /// Checks if BOT_API_URL is set and doesn't point to api.telegram.org.
+    pub fn is_local() -> bool {
+        get_url()
+            .map(|url| !url.contains("api.telegram.org"))
+            .unwrap_or(false)
+    }
+
+    /// Returns the local Bot API URL if using local server, None otherwise.
+    ///
+    /// This is useful when you need the URL only if it's a local server.
+    pub fn local_url() -> Option<String> {
+        get_url().filter(|url| !url.contains("api.telegram.org"))
+    }
+
+    /// Checks if the given URL string points to a local Bot API server.
+    ///
+    /// Returns true if the URL doesn't contain "api.telegram.org".
+    pub fn is_local_url(url: &str) -> bool {
+        !url.contains("api.telegram.org")
+    }
+}

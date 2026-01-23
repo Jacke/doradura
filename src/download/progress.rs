@@ -1,6 +1,6 @@
 use crate::core::utils::pluralize_seconds;
+use crate::core::{escape_markdown_v2 as escape_markdown, extract_retry_after};
 use crate::telegram::Bot;
-use regex::Regex;
 use teloxide::prelude::*;
 use teloxide::types::MessageId;
 
@@ -319,65 +319,7 @@ fn create_progress_bar(progress: u8) -> String {
     format!("[{}{}]", filled_blocks, empty_blocks)
 }
 
-/// Извлекает время ожидания из ошибки Telegram API (rate limiting)
-///
-/// Парсит строку ошибки вида "Retry after Xs" и возвращает количество секунд
-fn extract_retry_after(error_str: &str) -> Option<u64> {
-    // Пробуем найти паттерн "Retry after Xs" или "retry_after: X"
-    let re = Regex::new(r"(?i)retry\s+after\s+(\d+)\s*s").ok()?;
-    if let Some(caps) = re.captures(error_str) {
-        if let Some(seconds_str) = caps.get(1) {
-            return seconds_str.as_str().parse::<u64>().ok();
-        }
-    }
-
-    // Альтернативный паттерн: "retry_after: X"
-    let re2 = Regex::new(r"(?i)retry_after[:\s]+(\d+)").ok()?;
-    if let Some(caps) = re2.captures(error_str) {
-        if let Some(seconds_str) = caps.get(1) {
-            return seconds_str.as_str().parse::<u64>().ok();
-        }
-    }
-
-    None
-}
-
-/// Экранирует специальные символы для MarkdownV2
-///
-/// В Telegram MarkdownV2 требуется экранировать следующие символы:
-/// _ * [ ] ( ) ~ ` > # + - = | { } . !
-///
-/// Важно: обратный слеш должен экранироваться первым, чтобы избежать повторного экранирования
-fn escape_markdown(text: &str) -> String {
-    let mut result = String::with_capacity(text.len() * 2);
-
-    for c in text.chars() {
-        match c {
-            '\\' => result.push_str("\\\\"),
-            '_' => result.push_str("\\_"),
-            '*' => result.push_str("\\*"),
-            '[' => result.push_str("\\["),
-            ']' => result.push_str("\\]"),
-            '(' => result.push_str("\\("),
-            ')' => result.push_str("\\)"),
-            '~' => result.push_str("\\~"),
-            '`' => result.push_str("\\`"),
-            '>' => result.push_str("\\>"),
-            '#' => result.push_str("\\#"),
-            '+' => result.push_str("\\+"),
-            '-' => result.push_str("\\-"),
-            '=' => result.push_str("\\="),
-            '|' => result.push_str("\\|"),
-            '{' => result.push_str("\\{"),
-            '}' => result.push_str("\\}"),
-            '.' => result.push_str("\\."),
-            '!' => result.push_str("\\!"),
-            _ => result.push(c),
-        }
-    }
-
-    result
-}
+// escape_markdown and extract_retry_after are now imported from crate::core
 
 /// Структура для управления сообщением с прогрессом загрузки.
 ///

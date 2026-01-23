@@ -1,3 +1,122 @@
+use once_cell::sync::Lazy;
+use regex::Regex;
+
+// =============================================================================
+// Lazy-compiled Regex patterns for performance
+// =============================================================================
+
+/// Regex for extracting retry-after seconds from error messages (format: "retry after N s")
+pub static RETRY_AFTER_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)retry\s+after\s+(\d+)\s*s").expect("Invalid RETRY_AFTER_REGEX"));
+
+/// Alternative regex for retry_after (format: "retry_after: N" or "retry_after N")
+pub static RETRY_AFTER_ALT_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"(?i)retry_after[:\s]+(\d+)").expect("Invalid RETRY_AFTER_ALT_REGEX"));
+
+/// Regex for parsing Bot API log entries (query start)
+pub static BOT_API_START_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\[(\d+\.\d+)\].*Query (0x[0-9a-f]+): .*method:\s*([a-z_]+).*\[name:([^]]+)\]\[size:(\d+)\]")
+        .expect("Invalid BOT_API_START_REGEX")
+});
+
+/// Regex for parsing Bot API log entries (query start without name/size - for admin)
+pub static BOT_API_START_SIMPLE_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\[(\d+\.\d+)\].*Query (0x[0-9a-f]+): .*method:\s*([a-z_]+).*\[size:(\d+)\]")
+        .expect("Invalid BOT_API_START_SIMPLE_REGEX")
+});
+
+/// Regex for parsing Bot API log entries (query response)
+pub static BOT_API_RESPONSE_REGEX: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"\[(\d+\.\d+)\].*Query (0x[0-9a-f]+): \[method:([a-z_]+)\]").expect("Invalid BOT_API_RESPONSE_REGEX")
+});
+
+// =============================================================================
+// Utility functions using the lazy regexes
+// =============================================================================
+
+/// Extract retry-after seconds from an error message.
+///
+/// Looks for patterns like:
+/// - "retry after 30 s"
+/// - "retry_after: 30"
+/// - "retry_after 30"
+///
+/// Returns the number of seconds to wait, or None if not found.
+pub fn extract_retry_after(error_str: &str) -> Option<u64> {
+    // Try the first pattern: "retry after N s"
+    if let Some(caps) = RETRY_AFTER_REGEX.captures(error_str) {
+        if let Some(secs) = caps.get(1) {
+            return secs.as_str().parse().ok();
+        }
+    }
+
+    // Try the alternative pattern: "retry_after: N" or "retry_after N"
+    if let Some(caps) = RETRY_AFTER_ALT_REGEX.captures(error_str) {
+        if let Some(secs) = caps.get(1) {
+            return secs.as_str().parse().ok();
+        }
+    }
+
+    None
+}
+
+/// Check if an error is a timeout or network error that should be retried.
+pub fn is_timeout_or_network_error(error_str: &str) -> bool {
+    let lower = error_str.to_lowercase();
+    lower.contains("timed out")
+        || lower.contains("timeout")
+        || lower.contains("connection reset")
+        || lower.contains("connection refused")
+        || lower.contains("network is unreachable")
+        || lower.contains("network error")
+        || lower.contains("error sending request")
+        || lower.contains("broken pipe")
+}
+
+/// Truncate string from the beginning (keeping the tail) to fit within max_bytes.
+/// Ensures valid UTF-8 boundaries and adds ellipsis prefix if truncated.
+pub fn truncate_tail_utf8(text: &str, max_bytes: usize) -> String {
+    if text.len() <= max_bytes {
+        return text.to_string();
+    }
+
+    // Need to leave room for "…\n" (ellipsis + newline = 4 bytes for … in UTF-8 + 1 for \n)
+    let prefix = "…\n";
+    let prefix_len = prefix.len(); // 4 bytes for UTF-8 ellipsis + 1 for newline
+    let target_bytes = max_bytes.saturating_sub(prefix_len);
+    let skip_bytes = text.len() - target_bytes;
+
+    // Find the next valid UTF-8 boundary after skip_bytes
+    let mut start_idx = skip_bytes;
+    while start_idx < text.len() && !text.is_char_boundary(start_idx) {
+        start_idx += 1;
+    }
+
+    format!("{}{}", prefix, &text[start_idx..])
+}
+
+/// Truncate string from the end to fit within max_len characters.
+/// Adds ellipsis suffix if truncated.
+pub fn truncate_string_safe(text: &str, max_len: usize) -> String {
+    if text.chars().count() <= max_len {
+        return text.to_string();
+    }
+    let truncated: String = text.chars().take(max_len.saturating_sub(3)).collect();
+    format!("{}...", truncated)
+}
+
+/// Telegram message character limit (4096 minus safety margin)
+pub const TELEGRAM_MESSAGE_LIMIT: usize = 4000;
+
+/// Truncate text for Telegram messages (max 4000 chars)
+pub fn truncate_for_telegram(text: &str) -> String {
+    truncate_string_safe(text, TELEGRAM_MESSAGE_LIMIT)
+}
+
+// =============================================================================
+// Filename utilities
+// =============================================================================
+
 /// Экранирует специальные символы в имени файла для безопасного использования.
 ///
 /// Заменяет проблемные символы для предотвращения проблем с путями файлов

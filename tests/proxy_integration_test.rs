@@ -2,7 +2,7 @@
 
 #[cfg(test)]
 mod proxy_tests {
-    use doradura::download::proxy::{Proxy, ProxyListManager, ProxyProtocol, ProxySelectionStrategy};
+    use doradura::download::{Proxy, ProxyListManager, ProxyProtocol, ProxySelectionStrategy};
     use std::sync::Arc;
 
     // ============================================================================
@@ -180,14 +180,14 @@ mod proxy_tests {
         let proxy = Proxy::new(ProxyProtocol::Http, "127.0.0.1".to_string(), 8080);
         manager.add_proxy(proxy.clone()).await.unwrap();
 
-        let manager = Arc::new(manager);
+        let manager: Arc<ProxyListManager> = Arc::new(manager);
 
         // Spawn multiple concurrent tasks
         let mut handles = vec![];
 
         for i in 0..10 {
             let proxy_clone = proxy.clone();
-            let manager_clone = Arc::clone(&manager);
+            let manager_clone: Arc<ProxyListManager> = Arc::clone(&manager);
 
             let handle = tokio::spawn(async move {
                 if i % 2 == 0 {
@@ -223,13 +223,13 @@ mod proxy_tests {
         manager.add_proxy(proxy1.clone()).await.unwrap();
         manager.add_proxy(proxy2.clone()).await.unwrap();
 
-        let manager = Arc::new(manager);
+        let manager: Arc<ProxyListManager> = Arc::new(manager);
 
         // Multiple concurrent selections should work
         let mut handles = vec![];
 
         for _ in 0..20 {
-            let manager_clone = Arc::clone(&manager);
+            let manager_clone: Arc<ProxyListManager> = Arc::clone(&manager);
             let handle = tokio::spawn(async move {
                 let selected = manager_clone.select().await;
                 assert!(selected.is_some());

@@ -1,3 +1,4 @@
+use crate::core::{escape_markdown, truncate_string_safe};
 use crate::storage::db::{self, DbPool};
 use crate::telegram::Bot;
 use std::sync::Arc;
@@ -21,30 +22,7 @@ fn format_size(bytes: i64) -> String {
     size_str.replace('.', "\\.")
 }
 
-/// Безопасно обрезает строку до указанной длины символов (не байт!)
-/// Возвращает обрезанную строку с добавлением "..." если была обрезка
-fn truncate_string_safe(text: &str, max_len: usize) -> String {
-    if text.is_empty() {
-        return String::new();
-    }
-
-    let char_count = text.chars().count();
-    if char_count <= max_len {
-        return text.to_string();
-    }
-
-    // Безопасно обрезаем до max_len - 3 символов, чтобы поместить "..."
-    let truncate_len = max_len.saturating_sub(3);
-    let mut result = String::with_capacity(truncate_len + 3);
-    for (idx, ch) in text.chars().enumerate() {
-        if idx >= truncate_len {
-            break;
-        }
-        result.push(ch);
-    }
-    result.push_str("...");
-    result
-}
+// truncate_string_safe is now imported from crate::core
 
 /// Создает ASCII график активности
 fn create_activity_chart(activity_by_day: &[(String, i64)]) -> String {
@@ -233,43 +211,6 @@ pub async fn show_global_stats(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>)
     bot.send_message(chat_id, text)
         .parse_mode(teloxide::types::ParseMode::MarkdownV2)
         .await
-}
-
-/// Экранирует специальные символы для MarkdownV2
-///
-/// В Telegram MarkdownV2 требуется экранировать следующие символы:
-/// _ * [ ] ( ) ~ ` > # + - = | { } . !
-///
-/// Важно: обратный слеш должен экранироваться первым, чтобы избежать повторного экранирования
-fn escape_markdown(text: &str) -> String {
-    let mut result = String::with_capacity(text.len() * 2);
-
-    for c in text.chars() {
-        match c {
-            '\\' => result.push_str("\\\\"),
-            '_' => result.push_str("\\_"),
-            '*' => result.push_str("\\*"),
-            '[' => result.push_str("\\["),
-            ']' => result.push_str("\\]"),
-            '(' => result.push_str("\\("),
-            ')' => result.push_str("\\)"),
-            '~' => result.push_str("\\~"),
-            '`' => result.push_str("\\`"),
-            '>' => result.push_str("\\>"),
-            '#' => result.push_str("\\#"),
-            '+' => result.push_str("\\+"),
-            '-' => result.push_str("\\-"),
-            '=' => result.push_str("\\="),
-            '|' => result.push_str("\\|"),
-            '{' => result.push_str("\\{"),
-            '}' => result.push_str("\\}"),
-            '.' => result.push_str("\\."),
-            '!' => result.push_str("\\!"),
-            _ => result.push(c),
-        }
-    }
-
-    result
 }
 
 #[cfg(test)]
