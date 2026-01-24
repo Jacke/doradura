@@ -1,7 +1,7 @@
 use crate::core::alerts::AlertManager;
 use crate::core::config;
-use crate::core::escape_markdown;
 use crate::core::error::AppError;
+use crate::core::escape_markdown;
 use crate::core::rate_limiter::RateLimiter;
 use crate::core::utils::pluralize_seconds;
 use crate::download::queue::DownloadQueue;
