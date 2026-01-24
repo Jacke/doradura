@@ -19,6 +19,7 @@ pub mod ytdlp_errors;
 
 // Re-exports for convenience
 pub use audio::download_and_send_audio;
-pub use downloader::{download_and_send_subtitles, download_and_send_video};
+pub use downloader::download_and_send_subtitles;
 pub use proxy::{Proxy, ProxyList, ProxyListManager, ProxyProtocol, ProxySelectionStrategy};
 pub use queue::DownloadQueue;
+pub use video::download_and_send_video;
