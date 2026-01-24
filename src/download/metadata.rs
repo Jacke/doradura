@@ -84,11 +84,7 @@ pub fn add_cookies_args(args: &mut Vec<&str>) {
             // Check file existence
             let cookies_path_buf = std::path::Path::new(&cookies_path);
             if !cookies_path_buf.exists() {
-                log::error!(
-                    "Cookies file not found: {} (checked: {})",
-                    cookies_file,
-                    cookies_path
-                );
+                log::error!("Cookies file not found: {} (checked: {})", cookies_file, cookies_path);
                 log::error!("   Current working directory: {:?}", std::env::current_dir());
                 log::error!("   YouTube downloads will FAIL without valid cookies!");
                 log::error!("   Please check the path and ensure the file exists.");

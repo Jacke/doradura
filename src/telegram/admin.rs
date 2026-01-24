@@ -2354,14 +2354,22 @@ mod tests {
 
     #[test]
     fn test_is_local_bot_api_official() {
-        assert!(!crate::core::config::bot_api::is_local_url("https://api.telegram.org/bot12345"));
+        assert!(!crate::core::config::bot_api::is_local_url(
+            "https://api.telegram.org/bot12345"
+        ));
     }
 
     #[test]
     fn test_is_local_bot_api_local() {
-        assert!(crate::core::config::bot_api::is_local_url("http://localhost:8081/bot12345"));
-        assert!(crate::core::config::bot_api::is_local_url("http://127.0.0.1:8081/bot12345"));
-        assert!(crate::core::config::bot_api::is_local_url("http://my-bot-api.local/bot12345"));
+        assert!(crate::core::config::bot_api::is_local_url(
+            "http://localhost:8081/bot12345"
+        ));
+        assert!(crate::core::config::bot_api::is_local_url(
+            "http://127.0.0.1:8081/bot12345"
+        ));
+        assert!(crate::core::config::bot_api::is_local_url(
+            "http://my-bot-api.local/bot12345"
+        ));
     }
 
     // ==================== read_log_tail Tests ====================
