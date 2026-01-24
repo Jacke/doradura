@@ -34,8 +34,8 @@
 //! let op = op.complete_success(Some("Video note ready!"), 5).await?;
 //! ```
 
-use crate::core::utils::escape_markdown_v2;
 use crate::core::extract_retry_after;
+use crate::core::utils::escape_markdown_v2;
 use crate::telegram::reactions::{emoji, try_set_reaction};
 use crate::telegram::Bot;
 use std::marker::PhantomData;

@@ -545,9 +545,7 @@ pub mod bot_api {
     ///
     /// Checks if BOT_API_URL is set and doesn't point to api.telegram.org.
     pub fn is_local() -> bool {
-        get_url()
-            .map(|url| !url.contains("api.telegram.org"))
-            .unwrap_or(false)
+        get_url().map(|url| !url.contains("api.telegram.org")).unwrap_or(false)
     }
 
     /// Returns the local Bot API URL if using local server, None otherwise.
