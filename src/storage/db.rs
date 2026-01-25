@@ -2115,6 +2115,56 @@ pub fn delete_video_clip_session_by_user(conn: &DbConnection, user_id: i64) -> R
     Ok(())
 }
 
+// ==================== Video Timestamps ====================
+
+use crate::timestamps::{TimestampSource, VideoTimestamp};
+
+/// Save timestamps extracted from a video for later use in clip suggestions
+pub fn save_video_timestamps(conn: &DbConnection, download_id: i64, timestamps: &[VideoTimestamp]) -> Result<()> {
+    for ts in timestamps {
+        conn.execute(
+            "INSERT INTO video_timestamps (download_id, source, time_seconds, end_seconds, label)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                download_id,
+                ts.source.as_str(),
+                ts.time_seconds,
+                ts.end_seconds,
+                ts.label,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// Get timestamps for a download entry
+pub fn get_video_timestamps(conn: &DbConnection, download_id: i64) -> Result<Vec<VideoTimestamp>> {
+    let mut stmt = conn.prepare(
+        "SELECT source, time_seconds, end_seconds, label
+         FROM video_timestamps
+         WHERE download_id = ?1
+         ORDER BY time_seconds ASC",
+    )?;
+
+    let rows = stmt.query_map([download_id], |row| {
+        let source_str: String = row.get(0)?;
+        Ok(VideoTimestamp {
+            source: TimestampSource::parse(&source_str),
+            time_seconds: row.get(1)?,
+            end_seconds: row.get(2)?,
+            label: row.get(3)?,
+        })
+    })?;
+
+    rows.collect()
+}
+
+/// Delete timestamps for a download entry
+pub fn delete_video_timestamps(conn: &DbConnection, download_id: i64) -> Result<()> {
+    conn.execute("DELETE FROM video_timestamps WHERE download_id = ?1", [download_id])?;
+    Ok(())
+}
+
 // ==================== Cuts ====================
 
 #[derive(Debug, Clone)]

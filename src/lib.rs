@@ -23,6 +23,7 @@ pub mod i18n;
 pub mod metadata_refresh;
 pub mod storage;
 pub mod telegram;
+pub mod timestamps;
 
 // Testing utilities (only available in tests and test binaries)
 #[cfg(test)]

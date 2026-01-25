@@ -883,10 +883,11 @@ fn format_timestamp(secs: i64) -> String {
     }
 }
 
+/// Segment of video to cut
 #[derive(Debug, Clone, Copy, serde::Serialize)]
-struct CutSegment {
-    start_secs: i64,
-    end_secs: i64,
+pub struct CutSegment {
+    pub start_secs: i64,
+    pub end_secs: i64,
 }
 
 fn parse_segments_spec(text: &str, video_duration: Option<i64>) -> Option<(Vec<CutSegment>, String, Option<f32>)> {
@@ -1045,7 +1046,8 @@ fn parse_audio_command_segment(text: &str, audio_duration: Option<i64>) -> Optio
     None
 }
 
-async fn process_video_clip(
+/// Process video clip/circle creation
+pub async fn process_video_clip(
     bot: Bot,
     db_pool: Arc<DbPool>,
     chat_id: ChatId,

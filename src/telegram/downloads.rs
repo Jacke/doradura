@@ -1,6 +1,8 @@
 use crate::core::{config, escape_markdown};
 use crate::storage::{db, DbPool};
+use crate::telegram::commands::{process_video_clip, CutSegment};
 use crate::telegram::Bot;
+use crate::timestamps::{format_timestamp, select_best_timestamps, VideoTimestamp};
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{CallbackQueryId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode};
@@ -31,6 +33,71 @@ fn format_duration(seconds: i64) -> String {
     } else {
         format!("{}:{:02}", minutes, secs)
     }
+}
+
+/// Build timestamp buttons for clip/circle creation
+/// Returns (buttons_rows, text_list) where buttons_rows contains up to 6 buttons
+/// and text_list contains all timestamps as formatted text
+fn build_timestamp_ui(
+    timestamps: &[VideoTimestamp],
+    output_kind: &str,
+    download_id: i64,
+) -> (Vec<Vec<InlineKeyboardButton>>, String) {
+    if timestamps.is_empty() {
+        return (vec![], String::new());
+    }
+
+    // Select best timestamps for buttons (max 6)
+    let best = select_best_timestamps(timestamps, 6);
+
+    // Build buttons (2 per row)
+    let mut button_rows: Vec<Vec<InlineKeyboardButton>> = vec![];
+    let mut current_row: Vec<InlineKeyboardButton> = vec![];
+
+    for ts in &best {
+        let time_str = ts.format_time();
+        let label = ts.display_label(10);
+        let button_text = format!("{} {}", time_str, label);
+
+        // Callback format: downloads:ts:{output_kind}:{download_id}:{time_seconds}
+        let callback = format!("downloads:ts:{}:{}:{}", output_kind, download_id, ts.time_seconds);
+
+        current_row.push(InlineKeyboardButton::callback(button_text, callback));
+
+        if current_row.len() == 2 {
+            button_rows.push(current_row);
+            current_row = vec![];
+        }
+    }
+
+    // Add remaining button if any
+    if !current_row.is_empty() {
+        button_rows.push(current_row);
+    }
+
+    // Build text list for all timestamps
+    let mut text_lines: Vec<String> = vec![];
+    for ts in timestamps {
+        let time_str = ts.format_time();
+        let label = ts.label.as_deref().unwrap_or("");
+        if label.is_empty() {
+            text_lines.push(format!("• {}", escape_markdown(&time_str)));
+        } else {
+            text_lines.push(format!(
+                "• {} \\- {}",
+                escape_markdown(&time_str),
+                escape_markdown(label)
+            ));
+        }
+    }
+
+    let text = if !text_lines.is_empty() {
+        format!("\n\n📍 *Сохранённые таймкоды:*\n{}", text_lines.join("\n"))
+    } else {
+        String::new()
+    };
+
+    (button_rows, text)
 }
 
 /// Show downloads page
@@ -701,11 +768,25 @@ pub async fn handle_downloads_callback(
                 crate::storage::db::upsert_video_clip_session(&conn, &session).map_err(|e| {
                     teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
-                let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+
+                // Fetch timestamps and build UI
+                let timestamps = db::get_video_timestamps(&conn, download_id).unwrap_or_default();
+                let (ts_buttons, ts_text) = build_timestamp_ui(&timestamps, "clip", download_id);
+
+                // Build keyboard with timestamp buttons and cancel button
+                let mut keyboard_rows = ts_buttons;
+                keyboard_rows.push(vec![InlineKeyboardButton::callback(
                     "❌ Отмена".to_string(),
                     "downloads:clip_cancel".to_string(),
-                )]]);
-                bot.send_message(chat_id, "✂️ Отправь интервалы для вырезки в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\n\nПример: `00:10-00:25, 01:00-01:10`").parse_mode(ParseMode::MarkdownV2).reply_markup(keyboard).await?;
+                )]);
+                let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
+
+                let base_message = "✂️ Отправь интервалы для вырезки в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\n\nПример: `00:10-00:25, 01:00-01:10`";
+                let message = format!("{}{}", base_message, ts_text);
+                bot.send_message(chat_id, message)
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .reply_markup(keyboard)
+                    .await?;
                 bot.send_message(chat_id, download.url.clone()).await.ok();
                 bot.delete_message(chat_id, message_id).await.ok();
             }
@@ -788,11 +869,25 @@ pub async fn handle_downloads_callback(
                 crate::storage::db::upsert_video_clip_session(&conn, &session).map_err(|e| {
                     teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
-                let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+
+                // Fetch timestamps and build UI
+                let timestamps = db::get_video_timestamps(&conn, download_id).unwrap_or_default();
+                let (ts_buttons, ts_text) = build_timestamp_ui(&timestamps, "circle", download_id);
+
+                // Build keyboard with timestamp buttons and cancel button
+                let mut keyboard_rows = ts_buttons;
+                keyboard_rows.push(vec![InlineKeyboardButton::callback(
                     "❌ Отмена".to_string(),
                     "downloads:clip_cancel".to_string(),
-                )]]);
-                bot.send_message(chat_id, "⭕️ Отправь интервалы для кружка в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\n\nИли используй команды:\n• `full` \\- всё видео\n• `first30` \\- первые 30 секунд\n• `last30` \\- последние 30 секунд\n• `middle30` \\- 30 секунд из середины\n\n💡 Можно добавить скорость: `first30 2x`, `full 1\\.5x`\n\n💡 Если длительность превысит 60 секунд \\(лимит Telegram\\), видео будет автоматически обрезано\\.\n\nПример: `00:10-00:25` или `first30 2x`").parse_mode(ParseMode::MarkdownV2).reply_markup(keyboard).await?;
+                )]);
+                let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
+
+                let base_message = "⭕️ Отправь интервалы для кружка в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\n\nИли используй команды:\n• `full` \\- всё видео\n• `first30` \\- первые 30 секунд\n• `last30` \\- последние 30 секунд\n• `middle30` \\- 30 секунд из середины\n\n💡 Можно добавить скорость: `first30 2x`, `full 1\\.5x`\n\n💡 Если длительность превысит 60 секунд \\(лимит Telegram\\), видео будет автоматически обрезано\\.\n\nПример: `00:10-00:25` или `first30 2x`";
+                let message = format!("{}{}", base_message, ts_text);
+                bot.send_message(chat_id, message)
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .reply_markup(keyboard)
+                    .await?;
                 bot.send_message(chat_id, download.url.clone()).await.ok();
                 bot.delete_message(chat_id, message_id).await.ok();
             }
@@ -882,6 +977,84 @@ pub async fn handle_downloads_callback(
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
             crate::storage::db::delete_video_clip_session_by_user(&conn, chat_id.0).ok();
             bot.delete_message(chat_id, message_id).await.ok();
+        }
+        // Handle timestamp button clicks: downloads:ts:{output_kind}:{download_id}:{time_seconds}
+        "ts" => {
+            if parts.len() < 5 {
+                return Ok(());
+            }
+            let output_kind = parts[2]; // "circle" or "clip"
+            let download_id = parts[3].parse::<i64>().unwrap_or(0);
+            let time_seconds = parts[4].parse::<i64>().unwrap_or(0);
+
+            let conn = db::get_connection(&db_pool)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+
+            if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+            {
+                // Delete the prompt message
+                bot.delete_message(chat_id, message_id).await.ok();
+
+                // Determine segment duration based on output kind
+                let segment_duration = match output_kind {
+                    "circle" => 30, // 30 seconds for video notes (max 60s limit)
+                    _ => 30,        // Default 30 seconds for clips
+                };
+
+                // Adjust end time based on video duration if available
+                let end_seconds = if let Some(duration) = download.duration {
+                    std::cmp::min(time_seconds + segment_duration, duration)
+                } else {
+                    time_seconds + segment_duration
+                };
+
+                // Create session
+                let session = db::VideoClipSession {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    user_id: chat_id.0,
+                    source_download_id: download_id,
+                    source_kind: "download".to_string(),
+                    source_id: download_id,
+                    original_url: download.url.clone(),
+                    output_kind: if output_kind == "circle" {
+                        "video_note".to_string()
+                    } else {
+                        "cut".to_string()
+                    },
+                    created_at: chrono::Utc::now(),
+                    expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                };
+
+                // Delete any existing session first
+                db::delete_video_clip_session_by_user(&conn, chat_id.0).ok();
+
+                // Create segment
+                let segment = CutSegment {
+                    start_secs: time_seconds,
+                    end_secs: end_seconds,
+                };
+                let segments_text = format!("{}-{}", format_timestamp(time_seconds), format_timestamp(end_seconds));
+
+                // Process the clip
+                let bot_clone = bot.clone();
+                let db_pool_clone = db_pool.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = process_video_clip(
+                        bot_clone,
+                        db_pool_clone,
+                        chat_id,
+                        session,
+                        vec![segment],
+                        segments_text,
+                        None, // no speed modifier
+                    )
+                    .await
+                    {
+                        log::error!("Failed to process timestamp clip: {}", e);
+                    }
+                });
+            }
         }
         "speed" => {
             if parts.len() < 3 {
