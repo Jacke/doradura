@@ -22,7 +22,8 @@ use crate::download::send::{send_error_with_sticker, send_error_with_sticker_and
 use crate::download::ytdlp_errors::{
     analyze_ytdlp_error, get_error_message, sanitize_user_error_message, should_notify_admin, YtDlpErrorType,
 };
-use crate::storage::db::{self as db, save_download_history, DbPool};
+use crate::storage::db::{self as db, save_download_history, save_video_timestamps, DbPool};
+use crate::telegram::cache::PREVIEW_CACHE;
 use crate::telegram::notifications::notify_admin_text;
 use crate::telegram::Bot;
 use chrono::{DateTime, Utc};
@@ -997,6 +998,23 @@ pub async fn download_and_send_video(
                                 let sent_msg_id = sent_message.id.0;
                                 if let Err(e) = db::update_download_message_id(&conn, id, sent_msg_id, chat_id.0) {
                                     log::warn!("Failed to save message_id for download {}: {}", id, e);
+                                }
+
+                                // Save video timestamps (only for single-part videos or first part)
+                                if total_parts == 1 || first_part_db_id.is_none() {
+                                    if let Some(metadata) = PREVIEW_CACHE.get(url.as_str()).await {
+                                        if !metadata.timestamps.is_empty() {
+                                            if let Err(e) = save_video_timestamps(&conn, id, &metadata.timestamps) {
+                                                log::warn!("Failed to save video timestamps for download {}: {}", id, e);
+                                            } else {
+                                                log::debug!(
+                                                    "Saved {} timestamps for download {}",
+                                                    metadata.timestamps.len(),
+                                                    id
+                                                );
+                                            }
+                                        }
+                                    }
                                 }
 
                                 if first_part_db_id.is_none() && total_parts > 1 {

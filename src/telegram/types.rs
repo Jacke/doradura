@@ -16,6 +16,7 @@ pub struct PreviewMetadata {
     pub filesize: Option<u64>, // в байтах (для default формата)
     pub description: Option<String>,
     pub video_formats: Option<Vec<VideoFormatInfo>>, // доступные форматы видео (только для mp4)
+    pub timestamps: Vec<crate::timestamps::VideoTimestamp>, // извлечённые таймкоды
 }
 
 impl PreviewMetadata {
@@ -94,6 +95,7 @@ mod tests {
             filesize: None,
             description: None,
             video_formats: None,
+            timestamps: Vec::new(),
         };
         assert_eq!(meta.format_duration(), "3:05");
     }
@@ -108,6 +110,7 @@ mod tests {
             filesize: None,
             description: None,
             video_formats: None,
+            timestamps: Vec::new(),
         };
         assert_eq!(meta.format_duration(), "0:00");
     }
@@ -122,6 +125,7 @@ mod tests {
             filesize: None,
             description: None,
             video_formats: None,
+            timestamps: Vec::new(),
         };
         assert_eq!(meta.format_duration(), "Неизвестно");
     }
@@ -136,6 +140,7 @@ mod tests {
             filesize: None,
             description: None,
             video_formats: None,
+            timestamps: Vec::new(),
         };
         assert_eq!(meta.format_duration(), "61:01");
     }
@@ -150,6 +155,7 @@ mod tests {
             filesize: Some(5 * 1024 * 1024), // 5 MB
             description: None,
             video_formats: None,
+            timestamps: Vec::new(),
         };
         assert_eq!(meta.format_filesize(), "5.0 MB");
     }
@@ -164,6 +170,7 @@ mod tests {
             filesize: Some(512 * 1024), // 512 KB
             description: None,
             video_formats: None,
+            timestamps: Vec::new(),
         };
         assert_eq!(meta.format_filesize(), "512.0 KB");
     }
@@ -178,6 +185,7 @@ mod tests {
             filesize: Some(500), // 500 bytes
             description: None,
             video_formats: None,
+            timestamps: Vec::new(),
         };
         assert_eq!(meta.format_filesize(), "500 B");
     }
@@ -192,6 +200,7 @@ mod tests {
             filesize: None,
             description: None,
             video_formats: None,
+            timestamps: Vec::new(),
         };
         assert_eq!(meta.format_filesize(), "Неизвестно");
     }
@@ -206,6 +215,7 @@ mod tests {
             filesize: None,
             description: None,
             video_formats: None,
+            timestamps: Vec::new(),
         };
         assert_eq!(meta.display_title(), "Artist Name - Song Name");
     }
@@ -220,6 +230,7 @@ mod tests {
             filesize: None,
             description: None,
             video_formats: None,
+            timestamps: Vec::new(),
         };
         assert_eq!(meta.display_title(), "Song Name");
     }
@@ -234,6 +245,7 @@ mod tests {
             filesize: None,
             description: None,
             video_formats: None,
+            timestamps: Vec::new(),
         };
         assert_eq!(meta.display_title(), "Song Name");
     }
@@ -248,6 +260,7 @@ mod tests {
             filesize: Some(1000000),
             description: Some("Description".to_string()),
             video_formats: None,
+            timestamps: Vec::new(),
         };
         let debug = format!("{:?}", meta);
         assert!(debug.contains("PreviewMetadata"));
@@ -268,6 +281,7 @@ mod tests {
                 size_bytes: Some(500),
                 resolution: Some("1280x720".to_string()),
             }]),
+            timestamps: Vec::new(),
         };
         let cloned = meta.clone();
         assert_eq!(meta.title, cloned.title);
@@ -301,6 +315,7 @@ mod tests {
                     resolution: Some("854x480".to_string()),
                 },
             ]),
+            timestamps: Vec::new(),
         };
 
         assert!(meta.video_formats.is_some());

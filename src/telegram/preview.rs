@@ -6,6 +6,7 @@ use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message};
 use crate::storage::cache;
 use crate::storage::db::DbPool;
 use crate::telegram::Bot;
+use crate::timestamps::extract_all_timestamps;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -505,6 +506,12 @@ pub async fn get_preview_metadata(
         }
     });
 
+    // Извлекаем таймкоды из URL и метаданных
+    let timestamps = extract_all_timestamps(url, Some(&json_metadata));
+    if !timestamps.is_empty() {
+        log::debug!("Extracted {} timestamps for URL: {}", timestamps.len(), url);
+    }
+
     let metadata = PreviewMetadata {
         title: title.clone(),
         artist: artist.clone(),
@@ -513,6 +520,7 @@ pub async fn get_preview_metadata(
         filesize,
         description,
         video_formats,
+        timestamps,
     };
 
     // Сохраняем расширенные метаданные в кэш только если title не пустой и не "Unknown Track"
