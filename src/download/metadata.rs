@@ -484,6 +484,10 @@ pub async fn get_metadata_from_ytdlp(
     // YouTube changed policy: now Android requires PO Token
     // Use default web client which works with cookies
 
+    // Use Node.js for YouTube n-challenge solving
+    args_vec.push("--js-runtimes".to_string());
+    args_vec.push("node".to_string());
+
     args_vec.push("--no-check-certificate".to_string());
     args_vec.push(url.as_str().to_string());
 
@@ -590,6 +594,10 @@ pub async fn get_metadata_from_ytdlp(
         artist_args_vec.push(arg.to_string());
     }
 
+    // Use Node.js for YouTube n-challenge solving
+    artist_args_vec.push("--js-runtimes".to_string());
+    artist_args_vec.push("node".to_string());
+
     artist_args_vec.push("--no-check-certificate".to_string());
     artist_args_vec.push(url.as_str().to_string());
 
@@ -625,6 +633,10 @@ pub async fn get_metadata_from_ytdlp(
         for arg in temp_args {
             uploader_args_vec.push(arg.to_string());
         }
+
+        // Use Node.js for YouTube n-challenge solving
+        uploader_args_vec.push("--js-runtimes".to_string());
+        uploader_args_vec.push("node".to_string());
 
         uploader_args_vec.push("--no-check-certificate".to_string());
         uploader_args_vec.push(url.as_str().to_string());

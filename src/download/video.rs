@@ -90,6 +90,10 @@ pub async fn download_video_file_with_progress(
         args.push("--extractor-args");
         args.push("youtube:player_client=default,web_safari,web_embedded");
 
+        // Use Node.js for YouTube n-challenge solving
+        args.push("--js-runtimes");
+        args.push("node");
+
         args.extend_from_slice(&["--no-check-certificate", &url_str]);
 
         let command_str = format!("{} {}", ytdl_bin, args.join(" "));
