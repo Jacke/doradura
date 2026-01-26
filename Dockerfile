@@ -34,16 +34,22 @@ FROM debian:bookworm-slim
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    curl \
     ffmpeg \
     gosu \
     python3 \
     python3-pip \
     sqlite3 \
+    unzip \
     wget \
     && rm -rf /var/lib/apt/lists/*
 
-# Install yt-dlp (intentionally unpinned - must always use latest version for site compatibility)
-RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
+# Install Deno (JavaScript runtime required for yt-dlp YouTube n-challenge solving)
+RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh && \
+    deno --version
+
+# Install yt-dlp from nightly builds (latest fixes for YouTube compatibility)
+RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
     chmod a+rx /usr/local/bin/yt-dlp
 
 # Install Python dependencies for browser cookie extraction (optional)
