@@ -804,6 +804,16 @@ fn media_upload_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                     }
                 };
 
+                // Skip if user has active cookies upload session (let message_handler process it)
+                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+                if let Ok(Some(_)) = db::get_active_cookies_upload_session(&conn, user_id) {
+                    log::info!(
+                        "📤 Skipping media_upload_handler - user {} has active cookies session",
+                        user_id
+                    );
+                    return Ok(());
+                }
+
                 // Check if user can upload media
                 let limits = PlanLimits::for_plan(&user.plan);
                 if !limits.can_upload_media {
