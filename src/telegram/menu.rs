@@ -2137,6 +2137,21 @@ pub async fn handle_menu_callback(
                     return Ok(());
                 }
 
+                // Handle yt-dlp version/update callbacks
+                if data == "admin:update_ytdlp" {
+                    if let Err(e) = admin::handle_update_ytdlp_callback(&bot, chat_id, message_id).await {
+                        log::error!("Failed to handle update_ytdlp callback: {}", e);
+                    }
+                    return Ok(());
+                }
+
+                if data == "admin:check_ytdlp_version" {
+                    if let Err(e) = admin::handle_check_ytdlp_version_callback(&bot, chat_id, message_id).await {
+                        log::error!("Failed to handle check_ytdlp_version callback: {}", e);
+                    }
+                    return Ok(());
+                }
+
                 if let Some(user_id_str) = data.strip_prefix("admin:user:") {
                     // Show the management menu for a specific user
                     // Remove "admin:user:" prefix
