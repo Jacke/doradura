@@ -46,6 +46,9 @@ pub async fn validate_cookies() -> bool {
             // Use extractor-args same as in actual downloads to test real behavior
             .arg("--extractor-args")
             .arg("youtube:player_client=default,web_safari,web_embedded")
+            // Use Node.js for YouTube n-challenge solving
+            .arg("--js-runtimes")
+            .arg("node")
             .arg("--print")
             .arg("%(id)s %(title)s")
             .arg(test_url)
