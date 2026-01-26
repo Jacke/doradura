@@ -305,7 +305,7 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
         handle_charges_command, handle_download_tg_command, handle_downsub_command, handle_downsub_health_command,
         handle_health_command, handle_info_command, handle_metrics_command, handle_revenue_command,
         handle_sent_files_command, handle_setplan_command, handle_transactions_command, handle_users_command,
-        show_main_menu,
+        handle_version_command, show_main_menu,
     };
 
     Update::filter_message().branch(dptree::entry().filter_command::<Command>().endpoint(
@@ -428,6 +428,10 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                     Command::BotApiSpeed => {
                         let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
                         let _ = handle_botapi_speed_command(&bot, msg.chat.id, user_id).await;
+                    }
+                    Command::Version => {
+                        let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+                        let _ = handle_version_command(&bot, msg.chat.id, user_id).await;
                     }
                 }
                 Ok(())

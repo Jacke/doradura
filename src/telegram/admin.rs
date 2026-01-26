@@ -18,7 +18,8 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use teloxide::prelude::*;
 use teloxide::types::{
-    InlineKeyboardButton, InlineKeyboardMarkup, ParseMode, Seconds, TransactionPartner, TransactionPartnerUserKind,
+    InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode, Seconds, TransactionPartner,
+    TransactionPartnerUserKind,
 };
 
 use crate::core::config;
@@ -90,6 +91,131 @@ async fn get_ytdlp_version() -> Option<String> {
     } else {
         Some(version)
     }
+}
+
+/// Handles the /version command (admin only)
+///
+/// Shows yt-dlp version and provides a button to update.
+pub async fn handle_version_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> Result<()> {
+    log::info!(
+        "📦 /version command received from user_id={}, chat_id={}",
+        user_id,
+        chat_id
+    );
+
+    if !is_admin(user_id) {
+        log::warn!("❌ Non-admin user {} attempted to use /version", user_id);
+        bot.send_message(chat_id, "❌ Эта команда доступна только администраторам.")
+            .await?;
+        return Ok(());
+    }
+
+    let version = get_ytdlp_version()
+        .await
+        .unwrap_or_else(|| "не удалось получить".to_string());
+
+    let ytdl_bin = &*config::YTDL_BIN;
+
+    let text = format!(
+        "📦 *yt\\-dlp версия*\n\n\
+        Версия: `{}`\n\
+        Бинарник: `{}`",
+        escape_markdown(&version),
+        escape_markdown(ytdl_bin)
+    );
+
+    let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+        "🔄 Обновить yt-dlp".to_string(),
+        "admin:update_ytdlp".to_string(),
+    )]]);
+
+    bot.send_message(chat_id, text)
+        .parse_mode(ParseMode::MarkdownV2)
+        .reply_markup(keyboard)
+        .await?;
+
+    Ok(())
+}
+
+/// Handles the callback for updating yt-dlp from /version command
+pub async fn handle_update_ytdlp_callback(bot: &Bot, chat_id: ChatId, message_id: MessageId) -> Result<()> {
+    let before = get_ytdlp_version().await.unwrap_or_else(|| "unknown".to_string());
+
+    // Update message to show progress
+    bot.edit_message_text(chat_id, message_id, "⏳ Обновляю yt-dlp...")
+        .await?;
+
+    match ytdlp::force_update_ytdlp().await {
+        Ok(_) => {
+            let after = get_ytdlp_version().await.unwrap_or_else(|| "unknown".to_string());
+            let (status, emoji) = if before == after {
+                ("yt\\-dlp уже актуален", "✅")
+            } else {
+                ("yt\\-dlp обновлен", "🎉")
+            };
+            let text = format!(
+                "{} *{}*\n\n\
+                Версия до: `{}`\n\
+                Версия после: `{}`",
+                emoji,
+                status,
+                escape_markdown(&before),
+                escape_markdown(&after)
+            );
+
+            // Add button to check again
+            let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+                "🔄 Проверить снова".to_string(),
+                "admin:check_ytdlp_version".to_string(),
+            )]]);
+
+            bot.edit_message_text(chat_id, message_id, text)
+                .parse_mode(ParseMode::MarkdownV2)
+                .reply_markup(keyboard)
+                .await?;
+        }
+        Err(e) => {
+            let text = format!(
+                "❌ *Не удалось обновить yt\\-dlp*\n\n\
+                Ошибка: `{}`",
+                escape_markdown(&e.to_string())
+            );
+            bot.edit_message_text(chat_id, message_id, text)
+                .parse_mode(ParseMode::MarkdownV2)
+                .await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Handles the callback for checking yt-dlp version
+pub async fn handle_check_ytdlp_version_callback(bot: &Bot, chat_id: ChatId, message_id: MessageId) -> Result<()> {
+    let version = get_ytdlp_version()
+        .await
+        .unwrap_or_else(|| "не удалось получить".to_string());
+
+    let ytdl_bin = &*config::YTDL_BIN;
+
+    let text = format!(
+        "📦 *yt\\-dlp версия*\n\n\
+        Версия: `{}`\n\
+        Бинарник: `{}`",
+        escape_markdown(&version),
+        escape_markdown(ytdl_bin)
+    );
+
+    let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+        "🔄 Обновить yt-dlp".to_string(),
+        "admin:update_ytdlp".to_string(),
+    )]]);
+
+    bot.edit_message_text(chat_id, message_id, text)
+        .parse_mode(ParseMode::MarkdownV2)
+        .reply_markup(keyboard)
+        .await?;
+
+    Ok(())
 }
 
 fn format_subscription_period_for_log(period: &Seconds) -> String {

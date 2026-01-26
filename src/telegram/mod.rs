@@ -24,10 +24,10 @@ pub mod webapp_auth;
 // Re-exports for convenience
 pub use admin::{
     download_file_from_telegram, download_file_with_fallback, escape_markdown, handle_admin_command,
-    handle_backup_command, handle_botapi_speed_command, handle_charges_command, handle_cookies_file_upload,
-    handle_download_tg_command, handle_downsub_health_command, handle_sent_files_command, handle_setplan_command,
-    handle_transactions_command, handle_update_cookies_command, handle_update_ytdlp_command, handle_users_command,
-    is_admin, notify_admin_cookies_refresh,
+    handle_backup_command, handle_botapi_speed_command, handle_charges_command, handle_check_ytdlp_version_callback,
+    handle_cookies_file_upload, handle_download_tg_command, handle_downsub_health_command, handle_sent_files_command,
+    handle_setplan_command, handle_transactions_command, handle_update_cookies_command, handle_update_ytdlp_callback,
+    handle_update_ytdlp_command, handle_users_command, handle_version_command, is_admin, notify_admin_cookies_refresh,
 };
 pub use analytics::{handle_analytics_command, handle_health_command, handle_metrics_command, handle_revenue_command};
 pub use bot::{create_bot, is_message_addressed_to_bot, setup_all_language_commands, setup_chat_bot_commands, Command};

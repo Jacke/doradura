@@ -73,6 +73,8 @@ pub enum Command {
         description = "скорость загрузки через локальный Bot API (только для администратора)"
     )]
     BotApiSpeed,
+    #[command(description = "версия yt-dlp и обновление (только для администратора)")]
+    Version,
 }
 
 const BOT_COMMAND_DEFINITIONS: &[(&str, &str)] = &[
