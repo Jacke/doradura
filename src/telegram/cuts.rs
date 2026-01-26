@@ -1,6 +1,8 @@
 use crate::core::config;
 use crate::storage::{db, DbPool};
+use crate::telegram::commands::{process_video_clip, CutSegment};
 use crate::telegram::Bot;
+use crate::timestamps::format_timestamp;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{CallbackQueryId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode};
@@ -29,6 +31,50 @@ fn format_duration(seconds: i64) -> String {
     } else {
         format!("{}:{:02}", minutes, secs)
     }
+}
+
+/// Build duration selection buttons for circle creation from cuts
+/// Returns rows of buttons with time ranges (first/last/middle/full)
+fn build_duration_buttons_for_cut(
+    cut_id: i64,
+    lang: &unic_langid::LanguageIdentifier,
+) -> Vec<Vec<InlineKeyboardButton>> {
+    let durations = [15, 30, 60];
+
+    // Row 1: First N seconds (from beginning)
+    let first_row: Vec<InlineKeyboardButton> = durations
+        .iter()
+        .map(|&dur| {
+            let label = format!("▶ 0:00–{}", format_duration_short(dur));
+            InlineKeyboardButton::callback(label, format!("cuts:dur:first:{}:{}", cut_id, dur))
+        })
+        .collect();
+
+    // Row 2: Last N seconds (from end)
+    let last_row: Vec<InlineKeyboardButton> = durations
+        .iter()
+        .map(|&dur| {
+            let label = format!("◀ ...–{}", format_duration_short(dur));
+            InlineKeyboardButton::callback(label, format!("cuts:dur:last:{}:{}", cut_id, dur))
+        })
+        .collect();
+
+    // Row 3: Middle and Full (localized)
+    let btn_middle = crate::i18n::t(lang, "video_circle.btn_middle");
+    let btn_full = crate::i18n::t(lang, "video_circle.btn_full");
+    let special_row = vec![
+        InlineKeyboardButton::callback(btn_middle, format!("cuts:dur:middle:{}:30", cut_id)),
+        InlineKeyboardButton::callback(btn_full, format!("cuts:dur:full:{}", cut_id)),
+    ];
+
+    vec![first_row, last_row, special_row]
+}
+
+/// Format duration as short string (0:15, 0:30, 1:00)
+fn format_duration_short(seconds: i64) -> String {
+    let mins = seconds / 60;
+    let secs = seconds % 60;
+    format!("{}:{:02}", mins, secs)
 }
 
 pub async fn show_cuts_page(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>, page: usize) -> ResponseResult<Message> {
@@ -575,18 +621,22 @@ pub async fn handle_cuts_callback(
                     teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
 
-                let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
-                    "❌ Отмена".to_string(),
-                    "cuts:clip_cancel".to_string(),
-                )]]);
+                // Get user language for localization
+                let lang = crate::i18n::user_lang(&conn, chat_id.0);
 
-                bot.send_message(
-                    chat_id,
-                    "⭕️ Отправь интервалы для кружка в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\n\nИли используй команды:\n• `full` \\- всё видео\n• `first30` \\- первые 30 секунд\n• `last30` \\- последние 30 секунд\n• `middle30` \\- 30 секунд из середины\n\n💡 Можно добавить скорость: `first30 2x`, `full 1\\.5x`\n\n💡 Если длительность превысит 60 секунд \\(лимит Telegram\\), видео будет автоматически обрезано\\.\n\nПример: `00:10-00:25` или `first30 2x`",
-                )
-                .parse_mode(ParseMode::MarkdownV2)
-                .reply_markup(keyboard)
-                .await?;
+                // Build keyboard: duration buttons + cancel button
+                let mut keyboard_rows = build_duration_buttons_for_cut(cut_id, &lang);
+                keyboard_rows.push(vec![InlineKeyboardButton::callback(
+                    crate::i18n::t(&lang, "common.cancel"),
+                    "cuts:clip_cancel".to_string(),
+                )]);
+                let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
+
+                let message = crate::i18n::t(&lang, "video_circle.select_part");
+                bot.send_message(chat_id, message)
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .reply_markup(keyboard)
+                    .await?;
 
                 if !cut.original_url.trim().is_empty() {
                     bot.send_message(chat_id, cut.original_url).await.ok();
@@ -599,6 +649,101 @@ pub async fn handle_cuts_callback(
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
             db::delete_video_clip_session_by_user(&conn, chat_id.0).ok();
             bot.delete_message(chat_id, message_id).await.ok();
+        }
+        // Handle duration button clicks: cuts:dur:{position}:{cut_id}:{seconds}
+        // position: first, last, middle, full
+        "dur" => {
+            if parts.len() < 4 {
+                return Ok(());
+            }
+            let position = parts[2]; // first, last, middle, full
+            let cut_id = parts[3].parse::<i64>().unwrap_or(0);
+            let duration_seconds = if parts.len() >= 5 {
+                parts[4].parse::<i64>().unwrap_or(30)
+            } else {
+                60 // default for "full"
+            };
+
+            let conn = db::get_connection(&db_pool)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+
+            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+            {
+                if cut.file_id.is_none() {
+                    bot.send_message(chat_id, "❌ У этой вырезки нет file_id для кружка.")
+                        .await
+                        .ok();
+                    return Ok(());
+                }
+
+                // Delete the prompt message
+                bot.delete_message(chat_id, message_id).await.ok();
+
+                let cut_duration = cut.duration.unwrap_or(duration_seconds);
+
+                // Calculate segment based on position
+                let (start_secs, end_secs) = match position {
+                    "first" => {
+                        let end = std::cmp::min(duration_seconds, cut_duration).min(60);
+                        (0, end)
+                    }
+                    "last" => {
+                        let duration = std::cmp::min(duration_seconds, cut_duration).min(60);
+                        let start = (cut_duration - duration).max(0);
+                        (start, cut_duration.min(start + 60))
+                    }
+                    "middle" => {
+                        let duration = std::cmp::min(duration_seconds, cut_duration).min(60);
+                        let start = ((cut_duration - duration) / 2).max(0);
+                        (start, (start + duration).min(cut_duration))
+                    }
+                    "full" => {
+                        let end = cut_duration.min(60);
+                        (0, end)
+                    }
+                    _ => (0, std::cmp::min(duration_seconds, 60)),
+                };
+
+                // Create session
+                let session = db::VideoClipSession {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    user_id: chat_id.0,
+                    source_download_id: 0,
+                    source_kind: "cut".to_string(),
+                    source_id: cut_id,
+                    original_url: cut.original_url.clone(),
+                    output_kind: "video_note".to_string(),
+                    created_at: chrono::Utc::now(),
+                    expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                };
+
+                // Delete any existing session first
+                db::delete_video_clip_session_by_user(&conn, chat_id.0).ok();
+
+                // Create segment
+                let segment = CutSegment { start_secs, end_secs };
+                let segments_text = format!("{}-{}", format_timestamp(start_secs), format_timestamp(end_secs));
+
+                // Process the clip
+                let bot_clone = bot.clone();
+                let db_pool_clone = db_pool.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = process_video_clip(
+                        bot_clone,
+                        db_pool_clone,
+                        chat_id,
+                        session,
+                        vec![segment],
+                        segments_text,
+                        None, // no speed modifier
+                    )
+                    .await
+                    {
+                        log::error!("Failed to process duration circle from cut: {}", e);
+                    }
+                });
+            }
         }
         "cancel" => {
             bot.delete_message(chat_id, message_id).await.ok();

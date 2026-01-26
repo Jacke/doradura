@@ -74,6 +74,7 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
     let deps_cookies = deps.clone();
     let deps_ytdlp = deps.clone();
     let deps_commands = deps.clone();
+    let deps_media_upload = deps.clone();
     let deps_messages = deps.clone();
     let deps_precheckout = deps.clone();
     let deps_callback = deps.clone();
@@ -88,6 +89,8 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
         .branch(update_ytdlp_handler(deps_ytdlp))
         // Command handler
         .branch(command_handler(deps_commands))
+        // Media upload handler for premium/vip users
+        .branch(media_upload_handler(deps_media_upload))
         // Message handler for URLs and text
         .branch(message_handler(deps_messages))
         // Pre-checkout query handler
@@ -343,6 +346,9 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                     Command::Downloads => {
                         handle_downloads_command(&bot, &msg, &deps).await?;
                     }
+                    Command::Uploads => {
+                        handle_uploads_command(&bot, &msg, &deps).await?;
+                    }
                     Command::Cuts => {
                         handle_cuts_command(&bot, &msg, &deps).await?;
                     }
@@ -571,6 +577,40 @@ async fn handle_downloads_command(bot: &Bot, msg: &Message, deps: &HandlerDeps) 
     Ok(())
 }
 
+/// Handle /uploads command
+async fn handle_uploads_command(bot: &Bot, msg: &Message, deps: &HandlerDeps) -> Result<(), HandlerError> {
+    use crate::telegram::videos::show_videos_page;
+
+    log::info!("⚡ Command::Uploads matched");
+
+    let message_text = msg.text().unwrap_or("");
+    let args: Vec<&str> = message_text.split_whitespace().collect();
+
+    let (filter, search) = if args.len() > 1 {
+        match args[1].to_lowercase().as_str() {
+            "video" => (Some("video".to_string()), None),
+            "photo" => (Some("photo".to_string()), None),
+            "document" => (Some("document".to_string()), None),
+            "audio" => (Some("audio".to_string()), None),
+            _ => {
+                let search_query = args[1..].join(" ");
+                (None, Some(search_query))
+            }
+        }
+    } else {
+        (None, None)
+    };
+
+    log::info!("📂 Showing videos page with filter={:?}, search={:?}", filter, search);
+
+    match show_videos_page(bot, msg.chat.id, deps.db_pool.clone(), 0, filter, search).await {
+        Ok(_) => log::info!("✅ Videos page shown successfully"),
+        Err(e) => log::error!("❌ Failed to show videos page: {:?}", e),
+    }
+
+    Ok(())
+}
+
 /// Handle /cuts command
 async fn handle_cuts_command(bot: &Bot, msg: &Message, deps: &HandlerDeps) -> Result<(), HandlerError> {
     use crate::telegram::cuts::show_cuts_page;
@@ -720,6 +760,308 @@ fn pre_checkout_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
             Ok(())
         }
     })
+}
+
+/// Handler for media uploads (photo/video/document) from premium/vip users
+fn media_upload_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
+    use crate::core::subscription::PlanLimits;
+    use crate::storage::uploads::{find_duplicate_upload, save_upload, NewUpload};
+    use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, ParseMode};
+
+    Update::filter_message()
+        .filter(|msg: Message| {
+            // Only handle messages with media (photo, video, document, audio)
+            msg.photo().is_some() || msg.video().is_some() || msg.document().is_some() || msg.audio().is_some()
+        })
+        .endpoint(move |bot: Bot, msg: Message| {
+            let deps = deps.clone();
+            async move {
+                let chat_id = msg.chat.id;
+
+                // Get user and check plan
+                let conn = match get_connection(&deps.db_pool) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        log::error!("Failed to get DB connection: {}", e);
+                        return Ok(());
+                    }
+                };
+
+                let user = match get_user(&conn, chat_id.0) {
+                    Ok(Some(u)) => u,
+                    Ok(None) => {
+                        // User doesn't exist, create them
+                        let username = msg.from.as_ref().and_then(|u| u.username.clone());
+                        if let Err(e) = create_user(&conn, chat_id.0, username) {
+                            log::error!("Failed to create user: {}", e);
+                        }
+                        // Don't process media for new users (they're free tier)
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        log::error!("Failed to get user: {}", e);
+                        return Ok(());
+                    }
+                };
+
+                // Check if user can upload media
+                let limits = PlanLimits::for_plan(&user.plan);
+                if !limits.can_upload_media {
+                    // Free users can't upload media - silently ignore
+                    // (they might be sending photos/videos for other reasons)
+                    return Ok(());
+                }
+
+                // Extract file info from the message
+                #[allow(clippy::type_complexity)]
+                let (
+                    media_type,
+                    file_id,
+                    file_unique_id,
+                    file_size,
+                    duration,
+                    width,
+                    height,
+                    mime_type,
+                    filename,
+                    thumbnail_file_id,
+                ): (
+                    &str,
+                    String,
+                    Option<String>,
+                    Option<i64>,
+                    Option<i64>,
+                    Option<i32>,
+                    Option<i32>,
+                    Option<String>,
+                    Option<String>,
+                    Option<String>,
+                ) = if let Some(photos) = msg.photo() {
+                    // Get the largest photo
+                    let photo = photos.iter().max_by_key(|p| p.width * p.height);
+                    if let Some(p) = photo {
+                        (
+                            "photo",
+                            p.file.id.0.clone(),
+                            Some(p.file.unique_id.0.clone()),
+                            Some(p.file.size as i64),
+                            None,
+                            Some(p.width as i32),
+                            Some(p.height as i32),
+                            Some("image/jpeg".to_string()),
+                            None,
+                            None,
+                        )
+                    } else {
+                        return Ok(());
+                    }
+                } else if let Some(video) = msg.video() {
+                    (
+                        "video",
+                        video.file.id.0.clone(),
+                        Some(video.file.unique_id.0.clone()),
+                        Some(video.file.size as i64),
+                        Some(video.duration.seconds() as i64),
+                        Some(video.width as i32),
+                        Some(video.height as i32),
+                        video.mime_type.as_ref().map(|m| m.to_string()),
+                        video.file_name.clone(),
+                        video.thumbnail.as_ref().map(|t| t.file.id.0.clone()),
+                    )
+                } else if let Some(doc) = msg.document() {
+                    (
+                        "document",
+                        doc.file.id.0.clone(),
+                        Some(doc.file.unique_id.0.clone()),
+                        Some(doc.file.size as i64),
+                        None,
+                        None,
+                        None,
+                        doc.mime_type.as_ref().map(|m| m.to_string()),
+                        doc.file_name.clone(),
+                        doc.thumbnail.as_ref().map(|t| t.file.id.0.clone()),
+                    )
+                } else if let Some(audio) = msg.audio() {
+                    (
+                        "audio",
+                        audio.file.id.0.clone(),
+                        Some(audio.file.unique_id.0.clone()),
+                        Some(audio.file.size as i64),
+                        Some(audio.duration.seconds() as i64),
+                        None,
+                        None,
+                        audio.mime_type.as_ref().map(|m| m.to_string()),
+                        audio.file_name.clone(),
+                        audio.thumbnail.as_ref().map(|t| t.file.id.0.clone()),
+                    )
+                } else {
+                    return Ok(());
+                };
+
+                // Check file size limit
+                if let Some(size) = file_size {
+                    let max_size_bytes = (limits.max_file_size_mb as i64) * 1024 * 1024;
+                    if size > max_size_bytes {
+                        bot.send_message(
+                            chat_id,
+                            format!(
+                                "❌ Файл слишком большой ({} MB). Максимальный размер для твоего плана: {} MB.",
+                                size / 1024 / 1024,
+                                limits.max_file_size_mb
+                            ),
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                }
+
+                // Check for duplicates
+                if let Some(ref unique_id) = file_unique_id {
+                    if let Ok(Some(existing)) = find_duplicate_upload(&conn, chat_id.0, unique_id) {
+                        bot.send_message(
+                            chat_id,
+                            format!(
+                                "ℹ️ Этот файл уже загружен: *{}*\n\nИспользуй /videos чтобы найти его.",
+                                crate::core::escape_markdown(&existing.title)
+                            ),
+                        )
+                        .parse_mode(ParseMode::MarkdownV2)
+                        .await?;
+                        return Ok(());
+                    }
+                }
+
+                // Extract file format from mime type or filename
+                let file_format = mime_type
+                    .as_ref()
+                    .and_then(|m| m.split('/').next_back().map(|s| s.to_string()))
+                    .or_else(|| {
+                        filename
+                            .as_ref()
+                            .and_then(|f| f.rsplit('.').next().map(|s| s.to_lowercase()))
+                    });
+
+                // Generate title from filename or default
+                let title = filename
+                    .as_ref()
+                    .map(|f| {
+                        // Remove extension from filename
+                        f.rsplit_once('.')
+                            .map(|(name, _)| name.to_string())
+                            .unwrap_or_else(|| f.clone())
+                    })
+                    .unwrap_or_else(|| {
+                        format!(
+                            "{} {}",
+                            match media_type {
+                                "photo" => "Фото",
+                                "video" => "Видео",
+                                "audio" => "Аудио",
+                                _ => "Документ",
+                            },
+                            chrono::Utc::now().format("%d.%m.%Y %H:%M")
+                        )
+                    });
+
+                // Save upload to database
+                let upload = NewUpload {
+                    user_id: chat_id.0,
+                    original_filename: filename.as_deref(),
+                    title: &title,
+                    media_type,
+                    file_format: file_format.as_deref(),
+                    file_id: &file_id,
+                    file_unique_id: file_unique_id.as_deref(),
+                    file_size,
+                    duration,
+                    width,
+                    height,
+                    mime_type: mime_type.as_deref(),
+                    message_id: Some(msg.id.0),
+                    chat_id: Some(chat_id.0),
+                    thumbnail_file_id: thumbnail_file_id.as_deref(),
+                };
+
+                match save_upload(&conn, &upload) {
+                    Ok(upload_id) => {
+                        log::info!(
+                            "Upload saved: id={}, user={}, type={}, title={}",
+                            upload_id,
+                            chat_id.0,
+                            media_type,
+                            title
+                        );
+
+                        // Format file info for display
+                        let size_str = file_size
+                            .map(|s| {
+                                if s < 1024 * 1024 {
+                                    format!("{:.1} KB", s as f64 / 1024.0)
+                                } else {
+                                    format!("{:.1} MB", s as f64 / 1024.0 / 1024.0)
+                                }
+                            })
+                            .unwrap_or_else(|| "—".to_string());
+
+                        let duration_str = duration.map(|d| {
+                            let mins = d / 60;
+                            let secs = d % 60;
+                            format!("{}:{:02}", mins, secs)
+                        });
+
+                        let media_icon = match media_type {
+                            "photo" => "📷",
+                            "video" => "🎬",
+                            "audio" => "🎵",
+                            _ => "📄",
+                        };
+
+                        let mut info_parts = vec![size_str];
+                        if let Some(dur) = duration_str {
+                            info_parts.push(dur);
+                        }
+                        if let Some(w) = width {
+                            if let Some(h) = height {
+                                info_parts.push(format!("{}x{}", w, h));
+                            }
+                        }
+
+                        let escaped_title = crate::core::escape_markdown(&title);
+                        let escaped_info = crate::core::escape_markdown(&info_parts.join(" · "));
+
+                        // Build action keyboard
+                        let keyboard = InlineKeyboardMarkup::new(vec![
+                            vec![
+                                InlineKeyboardButton::callback("📤 Отправить", format!("videos:send:{}", upload_id)),
+                                InlineKeyboardButton::callback("🗑️ Удалить", format!("videos:delete:{}", upload_id)),
+                            ],
+                            vec![InlineKeyboardButton::callback(
+                                "📂 Все загрузки",
+                                "videos:page:0:all".to_string(),
+                            )],
+                        ]);
+
+                        bot.send_message(
+                            chat_id,
+                            format!(
+                                "{} *Файл загружен:* {}\n└ {}\n\nИспользуй /videos чтобы конвертировать файлы\\.",
+                                media_icon, escaped_title, escaped_info
+                            ),
+                        )
+                        .parse_mode(ParseMode::MarkdownV2)
+                        .reply_markup(keyboard)
+                        .await?;
+                    }
+                    Err(e) => {
+                        log::error!("Failed to save upload: {}", e);
+                        bot.send_message(chat_id, "❌ Не удалось сохранить файл. Попробуй ещё раз.")
+                            .await?;
+                    }
+                }
+
+                Ok(())
+            }
+        })
 }
 
 /// Handler for callback queries (inline keyboard buttons)
