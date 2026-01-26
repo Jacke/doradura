@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::process::Command as TokioCommand;
 use tokio::time::{timeout, Duration};
 
-/// Интервал автообновления yt-dlp (6 часов)
-const AUTO_UPDATE_INTERVAL_HOURS: u64 = 6;
+/// Интервал автообновления yt-dlp (1 час)
+const AUTO_UPDATE_INTERVAL_HOURS: u64 = 1;
 
 /// URL для скачивания nightly билдов yt-dlp
 const NIGHTLY_URL: &str = "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp";
