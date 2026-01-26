@@ -24,6 +24,8 @@ pub struct PlanLimits {
     pub can_choose_video_quality: bool,
     /// Можно ли выбирать битрейт аудио
     pub can_choose_audio_bitrate: bool,
+    /// Можно ли загружать медиафайлы для конвертации
+    pub can_upload_media: bool,
 }
 
 impl PlanLimits {
@@ -43,6 +45,7 @@ impl PlanLimits {
                 queue_priority: 70,
                 can_choose_video_quality: true,
                 can_choose_audio_bitrate: true,
+                can_upload_media: true,
             },
             "vip" => PlanLimits {
                 rate_limit_seconds: 5,
@@ -57,6 +60,7 @@ impl PlanLimits {
                 queue_priority: 100,
                 can_choose_video_quality: true,
                 can_choose_audio_bitrate: true,
+                can_upload_media: true,
             },
             _ => PlanLimits {
                 rate_limit_seconds: 30,
@@ -66,6 +70,7 @@ impl PlanLimits {
                 queue_priority: 0,
                 can_choose_video_quality: false,
                 can_choose_audio_bitrate: false,
+                can_upload_media: false,
             },
         }
     }
@@ -965,6 +970,7 @@ mod tests {
         assert_eq!(limits.queue_priority, 0);
         assert!(!limits.can_choose_video_quality);
         assert!(!limits.can_choose_audio_bitrate);
+        assert!(!limits.can_upload_media);
         assert_eq!(limits.allowed_formats.len(), 2);
         assert!(limits.allowed_formats.contains(&"mp3".to_string()));
         assert!(limits.allowed_formats.contains(&"mp4".to_string()));
@@ -979,6 +985,7 @@ mod tests {
         assert_eq!(limits.queue_priority, 70);
         assert!(limits.can_choose_video_quality);
         assert!(limits.can_choose_audio_bitrate);
+        assert!(limits.can_upload_media);
         assert_eq!(limits.allowed_formats.len(), 4);
     }
 
@@ -991,6 +998,7 @@ mod tests {
         assert_eq!(limits.queue_priority, 100);
         assert!(limits.can_choose_video_quality);
         assert!(limits.can_choose_audio_bitrate);
+        assert!(limits.can_upload_media);
         assert_eq!(limits.allowed_formats.len(), 4);
         assert!(limits.allowed_formats.contains(&"srt".to_string()));
         assert!(limits.allowed_formats.contains(&"txt".to_string()));

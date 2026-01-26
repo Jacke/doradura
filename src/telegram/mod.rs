@@ -17,6 +17,7 @@ pub mod operation;
 pub mod preview;
 pub mod reactions;
 pub mod types;
+pub mod videos;
 pub mod voice;
 pub mod webapp;
 pub mod webapp_auth;
@@ -41,5 +42,6 @@ pub use operation::{
     OperationError, OperationInfo, OperationStatus, PlainTextFormatter, DEFAULT_EMOJI,
 };
 pub use reactions::{emoji, try_set_reaction};
+pub use videos::{handle_videos_callback, show_videos_page};
 pub use voice::{send_random_voice_message, send_voice_with_waveform, VOICE_FILES};
 pub use webapp::{create_webapp_router, run_webapp_server, WebAppAction, WebAppData};
