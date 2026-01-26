@@ -1,151 +1,163 @@
 use crate::core::config;
 use crate::core::error::AppError;
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::process::Command as TokioCommand;
-use tokio::time::timeout;
+use tokio::time::{timeout, Duration};
 
-/// Проверяет и обновляет yt-dlp до последней версии при старте бота
-///
-/// Выполняет проверку версии yt-dlp и обновляет её если доступна новая версия.
-/// Использует команду `yt-dlp -U` для автоматического обновления.
-///
-/// # Returns
-///
-/// Возвращает `Ok(())` при успехе или ошибку при неудаче.
-///
-/// # Behavior
-///
-/// - Проверяет наличие yt-dlp в системе
-/// - Пытается обновить yt-dlp через `yt-dlp -U`
-/// - Логирует результаты обновления
-pub async fn check_and_update_ytdlp() -> Result<(), AppError> {
+/// Интервал автообновления yt-dlp (6 часов)
+const AUTO_UPDATE_INTERVAL_HOURS: u64 = 6;
+
+/// URL для скачивания nightly билдов yt-dlp
+const NIGHTLY_URL: &str = "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp";
+
+/// Флаг для остановки фонового обновления
+static STOP_AUTO_UPDATE: AtomicBool = AtomicBool::new(false);
+
+/// Получает текущую версию yt-dlp
+pub fn get_current_version() -> String {
     let ytdl_bin = &*config::YTDL_BIN;
+    Command::new(ytdl_bin)
+        .arg("--version")
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_else(|_| "unknown".to_string())
+}
 
-    log::info!("Checking yt-dlp version...");
+/// Скачивает и устанавливает последнюю nightly версию yt-dlp
+async fn download_nightly_ytdlp() -> Result<(String, String), AppError> {
+    let ytdl_bin = &*config::YTDL_BIN;
+    let old_version = get_current_version();
 
-    // Проверяем текущую версию
-    let version_output = Command::new(ytdl_bin).arg("--version").output();
+    log::info!("Downloading yt-dlp nightly build...");
 
-    match version_output {
-        Ok(output) => {
-            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            log::info!("Current yt-dlp version: {}", version);
-        }
-        Err(e) => {
-            log::warn!("Failed to get yt-dlp version: {}. Will try to update anyway.", e);
-        }
-    }
-
-    // Пытаемся обновить yt-dlp
-    log::info!("Checking for yt-dlp updates...");
-
-    let update_result = timeout(
-        std::time::Duration::from_secs(30), // 30 секунд на обновление
-        TokioCommand::new(ytdl_bin).arg("-U").output(),
+    // Скачиваем через wget
+    let download_result = timeout(
+        Duration::from_secs(120),
+        TokioCommand::new("wget")
+            .args(["-q", "-O", ytdl_bin, NIGHTLY_URL])
+            .output(),
     )
     .await;
 
-    match update_result {
+    match download_result {
         Ok(Ok(output)) => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            if !output.status.success() {
+                // Пробуем curl как fallback
+                log::info!("wget failed, trying curl...");
 
-            if output.status.success() {
-                if stdout.contains("up to date") || stdout.contains("up-to-date") {
-                    log::info!("yt-dlp is already up to date");
-                } else if stdout.contains("Updated") || stdout.contains("updated") {
-                    log::info!("yt-dlp updated successfully: {}", stdout);
-                } else {
-                    log::info!("yt-dlp update check completed: {}", stdout);
-                }
-            } else {
-                // Код выхода 100 означает, что yt-dlp установлен через pip
-                if output.status.code() == Some(100) {
-                    log::info!("yt-dlp is installed via pip. Attempting to update via pip...");
+                let curl_result = timeout(
+                    Duration::from_secs(120),
+                    TokioCommand::new("curl")
+                        .args(["-fsSL", "-o", ytdl_bin, NIGHTLY_URL])
+                        .output(),
+                )
+                .await;
 
-                    // Пытаемся обновить через pip или pip3
-                    let pip_commands = vec!["pip3", "pip"];
-                    let mut update_successful = false;
-                    let mut last_error: Option<String> = None;
-
-                    for pip_cmd in pip_commands {
-                        log::debug!("Trying to update yt-dlp via {}...", pip_cmd);
-
-                        let pip_update_result = timeout(
-                            std::time::Duration::from_secs(60), // 60 секунд на обновление через pip
-                            TokioCommand::new(pip_cmd)
-                                .args(["install", "--upgrade", "yt-dlp"])
-                                .output(),
-                        )
-                        .await;
-
-                        match pip_update_result {
-                            Ok(Ok(pip_output)) => {
-                                if pip_output.status.success() {
-                                    let pip_stdout = String::from_utf8_lossy(&pip_output.stdout);
-                                    if pip_stdout.contains("Successfully installed")
-                                        || pip_stdout.contains("Requirement already satisfied")
-                                    {
-                                        log::info!("yt-dlp updated successfully via {}", pip_cmd);
-                                        update_successful = true;
-                                        break;
-                                    } else {
-                                        log::info!("yt-dlp {} update: {}", pip_cmd, pip_stdout);
-                                        update_successful = true;
-                                        break;
-                                    }
-                                } else {
-                                    let pip_stderr = String::from_utf8_lossy(&pip_output.stderr);
-                                    let exit_code = pip_output.status.code();
-                                    let error_msg =
-                                        format!("{} failed with exit code {:?}: {}", pip_cmd, exit_code, pip_stderr);
-                                    log::debug!("{} update failed: {}", pip_cmd, error_msg);
-                                    last_error = Some(error_msg);
-                                    // Пробуем следующую команду
-                                    continue;
-                                }
-                            }
-                            Ok(Err(e)) => {
-                                last_error = Some(format!("{} command not found or failed to execute: {}", pip_cmd, e));
-                                log::debug!("{} command error: {}", pip_cmd, e);
-                                // Пробуем следующую команду
-                                continue;
-                            }
-                            Err(_) => {
-                                last_error = Some(format!("{} update timed out after 60 seconds", pip_cmd));
-                                log::debug!("{} update timed out", pip_cmd);
-                                // Пробуем следующую команду
-                                continue;
-                            }
+                match curl_result {
+                    Ok(Ok(curl_output)) => {
+                        if !curl_output.status.success() {
+                            let stderr = String::from_utf8_lossy(&curl_output.stderr);
+                            return Err(AppError::Download(format!(
+                                "Failed to download yt-dlp nightly: {}",
+                                stderr
+                            )));
                         }
                     }
-
-                    if !update_successful {
-                        if let Some(error) = last_error {
-                            log::warn!("Failed to update yt-dlp via pip/pip3. Last error: {}. You may need to run 'pip install --upgrade yt-dlp' or 'pip3 install --upgrade yt-dlp' manually (may require sudo).", error);
-                        } else {
-                            log::warn!("Failed to update yt-dlp via pip/pip3. You may need to run 'pip install --upgrade yt-dlp' or 'pip3 install --upgrade yt-dlp' manually (may require sudo).");
-                        }
+                    Ok(Err(e)) => {
+                        return Err(AppError::Download(format!("curl failed: {}", e)));
                     }
-                } else {
-                    log::warn!(
-                        "yt-dlp update check failed (exit code: {:?}): {}",
-                        output.status.code(),
-                        stderr
-                    );
-                    // Не считаем это критической ошибкой - может быть проблема с сетью или правами
+                    Err(_) => {
+                        return Err(AppError::Download("curl download timed out".to_string()));
+                    }
                 }
             }
         }
         Ok(Err(e)) => {
-            log::warn!("Failed to execute yt-dlp update: {}. Continuing anyway.", e);
+            return Err(AppError::Download(format!("wget failed: {}", e)));
         }
         Err(_) => {
-            log::warn!("yt-dlp update check timed out. Continuing anyway.");
+            return Err(AppError::Download("wget download timed out".to_string()));
+        }
+    }
+
+    // Устанавливаем права на выполнение
+    let _ = TokioCommand::new("chmod").args(["a+rx", ytdl_bin]).output().await;
+
+    let new_version = get_current_version();
+    log::info!("yt-dlp updated: {} → {}", old_version, new_version);
+
+    Ok((old_version, new_version))
+}
+
+/// Проверяет и обновляет yt-dlp до последней nightly версии при старте бота
+pub async fn check_and_update_ytdlp() -> Result<(), AppError> {
+    let old_version = get_current_version();
+    log::info!("Current yt-dlp version: {}", old_version);
+    log::info!("Updating yt-dlp to latest nightly build...");
+
+    match download_nightly_ytdlp().await {
+        Ok((old, new)) => {
+            if old == new {
+                log::info!("yt-dlp is already at the latest nightly version: {}", new);
+            } else {
+                log::info!("✅ yt-dlp updated successfully: {} → {}", old, new);
+            }
+        }
+        Err(e) => {
+            log::warn!("Failed to update yt-dlp: {}. Continuing with current version.", e);
         }
     }
 
     Ok(())
+}
+
+/// Запускает фоновую задачу автообновления yt-dlp
+///
+/// Обновляет yt-dlp каждые N часов для предотвращения 403 ошибок от YouTube.
+pub fn start_auto_update_task() {
+    STOP_AUTO_UPDATE.store(false, Ordering::SeqCst);
+
+    tokio::spawn(async move {
+        let interval = Duration::from_secs(AUTO_UPDATE_INTERVAL_HOURS * 60 * 60);
+
+        log::info!(
+            "🔄 yt-dlp auto-update task started (interval: {} hours)",
+            AUTO_UPDATE_INTERVAL_HOURS
+        );
+
+        loop {
+            // Ждём интервал
+            tokio::time::sleep(interval).await;
+
+            // Проверяем флаг остановки
+            if STOP_AUTO_UPDATE.load(Ordering::SeqCst) {
+                log::info!("yt-dlp auto-update task stopped");
+                break;
+            }
+
+            log::info!("🔄 Running scheduled yt-dlp update...");
+
+            match download_nightly_ytdlp().await {
+                Ok((old, new)) => {
+                    if old == new {
+                        log::info!("yt-dlp is already at the latest version: {}", new);
+                    } else {
+                        log::info!("✅ yt-dlp auto-updated: {} → {}", old, new);
+                    }
+                }
+                Err(e) => {
+                    log::error!("❌ yt-dlp auto-update failed: {}", e);
+                }
+            }
+        }
+    });
+}
+
+/// Останавливает фоновую задачу автообновления
+pub fn stop_auto_update_task() {
+    STOP_AUTO_UPDATE.store(true, Ordering::SeqCst);
+    log::info!("yt-dlp auto-update task stop requested");
 }
 
 /// Проверяет, поддерживается ли URL yt-dlp
@@ -291,89 +303,12 @@ pub async fn print_ytdlp_version() -> Result<(), AppError> {
 ///
 /// Возвращает `Ok(())` при успехе или ошибку при неудаче.
 pub async fn force_update_ytdlp() -> Result<(), AppError> {
-    let ytdl_bin = &*config::YTDL_BIN;
-
     log::info!("Force updating yt-dlp from nightly builds...");
     println!("Force updating yt-dlp to the latest nightly version...");
 
-    // Получаем текущую версию для сравнения
-    let old_version = Command::new(ytdl_bin)
-        .arg("--version")
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .unwrap_or_else(|_| "unknown".to_string());
+    let (old_version, new_version) = download_nightly_ytdlp().await?;
 
-    log::info!("Current yt-dlp version: {}", old_version);
+    println!("✅ yt-dlp updated: {} → {}", old_version, new_version);
 
-    // Скачиваем последний nightly билд напрямую
-    let nightly_url = "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp";
-
-    let download_result = timeout(
-        std::time::Duration::from_secs(120), // 2 минуты на загрузку
-        TokioCommand::new("wget")
-            .args(["-q", "-O", ytdl_bin, nightly_url])
-            .output(),
-    )
-    .await;
-
-    match download_result {
-        Ok(Ok(output)) => {
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                // Пробуем curl как fallback
-                log::info!("wget failed, trying curl...");
-
-                let curl_result = timeout(
-                    std::time::Duration::from_secs(120),
-                    TokioCommand::new("curl")
-                        .args(["-fsSL", "-o", ytdl_bin, nightly_url])
-                        .output(),
-                )
-                .await;
-
-                match curl_result {
-                    Ok(Ok(curl_output)) => {
-                        if !curl_output.status.success() {
-                            let curl_stderr = String::from_utf8_lossy(&curl_output.stderr);
-                            return Err(AppError::Download(format!(
-                                "Failed to download yt-dlp nightly: wget: {}, curl: {}",
-                                stderr, curl_stderr
-                            )));
-                        }
-                    }
-                    Ok(Err(e)) => {
-                        return Err(AppError::Download(format!("Failed to execute curl: {}", e)));
-                    }
-                    Err(_) => {
-                        return Err(AppError::Download(
-                            "curl download timed out after 2 minutes".to_string(),
-                        ));
-                    }
-                }
-            }
-
-            // Устанавливаем права на выполнение
-            let chmod_result = TokioCommand::new("chmod").args(["a+rx", ytdl_bin]).output().await;
-
-            if let Err(e) = chmod_result {
-                log::warn!("Failed to set yt-dlp permissions: {}", e);
-            }
-
-            // Проверяем новую версию
-            let new_version = Command::new(ytdl_bin)
-                .arg("--version")
-                .output()
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                .unwrap_or_else(|_| "unknown".to_string());
-
-            log::info!("New yt-dlp version: {}", new_version);
-            println!("✅ yt-dlp updated: {} → {}", old_version, new_version);
-
-            Ok(())
-        }
-        Ok(Err(e)) => Err(AppError::Download(format!("Failed to execute wget: {}", e))),
-        Err(_) => Err(AppError::Download(
-            "yt-dlp download timed out after 2 minutes".to_string(),
-        )),
-    }
+    Ok(())
 }

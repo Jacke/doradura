@@ -155,6 +155,9 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
         log::warn!("Failed to check/update yt-dlp: {}. Continuing anyway.", e);
     }
 
+    // Start background auto-update task (every 6 hours)
+    ytdlp::start_auto_update_task();
+
     // Create bot instance
     let bot = create_bot()?;
 
