@@ -127,6 +127,7 @@ bot_commands =
     .downsub = Summarize links & fetch subtitles
     .downsub_health = Downsub health check (admin)
     .downloads = My downloads
+    .uploads = My uploads
     .cuts = My cuts
     .history = Download history
     .stats = My stats
@@ -309,6 +310,9 @@ audio_effects =
 
 video_circle =
     .prompt = ⭕️ Send intervals for video note in format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nYou can send multiple intervals separated by commas\\.\n\nOr use commands:\n• `full` \\- entire video\n• `first30` \\- first 30 seconds\n• `last30` \\- last 30 seconds\n• `middle30` \\- 30 seconds from the middle\n\n💡 You can add speed: `first30 2x`, `full 1\\.5x`\n\n💡 If duration exceeds 60 seconds \\(Telegram limit\\), video will be automatically trimmed\\.\n\nExample: `00:10-00:25` or `first30 2x`
+    .select_part = ⭕️ *Select video part for circle:*\n\n▶ — from start\n◀ — from end\n\nOr send interval: `0:10-0:40`
+    .btn_middle = 🎯 middle
+    .btn_full = 📹 full
     .creating = ⭕️ Creating video note: {$segments}…
     .creating_with_speed = ⭕️ Creating video note: {$segments}… (speed {$speed}x)
     .truncated_warning = ⚠️ Requested duration {$requested} seconds exceeds Telegram limit for video notes (60 sec)\\.\n\n✂️ Will use first {$actual} seconds\\.
