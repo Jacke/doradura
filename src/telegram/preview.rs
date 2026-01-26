@@ -43,6 +43,8 @@ async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<Value, AppE
         "2",
         "--extractor-args",
         "youtube:player_client=default,web_safari,web_embedded",
+        "--js-runtimes",
+        "node",
     ];
     add_cookies_args(&mut args);
     args.push(url.as_str());
@@ -560,6 +562,8 @@ async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<VideoFo
     }
     list_formats_args.push("--extractor-args".to_string());
     list_formats_args.push("youtube:player_client=default,web_safari,web_embedded".to_string());
+    list_formats_args.push("--js-runtimes".to_string());
+    list_formats_args.push("node".to_string());
     list_formats_args.push(url.as_str().to_string());
 
     let command_str = format!("{} {}", ytdl_bin, list_formats_args.join(" "));
