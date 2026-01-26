@@ -768,10 +768,26 @@ fn media_upload_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
     use crate::storage::uploads::{find_duplicate_upload, save_upload, NewUpload};
     use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, ParseMode};
 
+    let deps_filter = deps.clone();
+
     Update::filter_message()
         .filter(|msg: Message| {
             // Only handle messages with media (photo, video, document, audio)
             msg.photo().is_some() || msg.video().is_some() || msg.document().is_some() || msg.audio().is_some()
+        })
+        .filter(move |msg: Message| {
+            // Skip if user has active cookies upload session (let message_handler process it)
+            let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+            if let Ok(conn) = get_connection(&deps_filter.db_pool) {
+                if let Ok(Some(_)) = db::get_active_cookies_upload_session(&conn, user_id) {
+                    log::info!(
+                        "📤 Filter: skipping media_upload_handler - user {} has active cookies session",
+                        user_id
+                    );
+                    return false; // Don't handle - let it fall through to message_handler
+                }
+            }
+            true // Handle this message
         })
         .endpoint(move |bot: Bot, msg: Message| {
             let deps = deps.clone();
@@ -803,16 +819,6 @@ fn media_upload_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                         return Ok(());
                     }
                 };
-
-                // Skip if user has active cookies upload session (let message_handler process it)
-                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
-                if let Ok(Some(_)) = db::get_active_cookies_upload_session(&conn, user_id) {
-                    log::info!(
-                        "📤 Skipping media_upload_handler - user {} has active cookies session",
-                        user_id
-                    );
-                    return Ok(());
-                }
 
                 // Check if user can upload media
                 let limits = PlanLimits::for_plan(&user.plan);
