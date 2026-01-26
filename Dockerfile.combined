@@ -50,8 +50,10 @@ RUN apk add --no-cache \
   nodejs
 
 # Install Deno (JavaScript runtime required for yt-dlp YouTube n-challenge solving)
+# Cache bust: 2026-01-26
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh && \
-  /usr/local/bin/deno --version
+  /usr/local/bin/deno --version && \
+  ln -s /usr/local/bin/deno /usr/bin/deno
 ENV PATH="/usr/local/bin:$PATH"
 
 # Install yt-dlp from nightly builds (latest fixes for YouTube compatibility)
