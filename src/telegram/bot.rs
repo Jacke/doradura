@@ -31,6 +31,8 @@ pub enum Command {
     History,
     #[command(description = "мои загрузки")]
     Downloads,
+    #[command(description = "мои файлы")]
+    Uploads,
     #[command(description = "мои вырезки")]
     Cuts,
     #[command(description = "личная статистика")]
@@ -84,6 +86,7 @@ const BOT_COMMAND_DEFINITIONS: &[(&str, &str)] = &[
     ("downsub", "bot_commands.downsub"),
     // ("downsub_health", "bot_commands.downsub_health"),
     ("downloads", "bot_commands.downloads"),
+    ("uploads", "bot_commands.uploads"),
     ("cuts", "bot_commands.cuts"),
     //("history", "bot_commands.history"),
     //("stats", "bot_commands.stats"),

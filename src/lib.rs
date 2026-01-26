@@ -15,6 +15,7 @@
 //! - `telegram`: Telegram bot integration and handlers
 
 pub mod cli;
+pub mod conversion;
 pub mod core;
 pub mod download;
 pub mod downsub;

@@ -107,6 +107,7 @@ bot_commands =
     .downsub = Zusammenfassung & Untertitel anfordern
     .downsub_health = Downsub-Check (Admin)
     .downloads = Meine Downloads
+    .uploads = Meine Dateien
     .cuts = Meine Ausschnitte
     .history = Download-Verlauf
     .stats = Meine Statistik

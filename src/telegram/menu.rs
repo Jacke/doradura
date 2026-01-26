@@ -2124,6 +2124,10 @@ pub async fn handle_menu_callback(
                     q.from.username.clone(),
                 )
                 .await?;
+            } else if data.starts_with("videos:") || data.starts_with("convert:") {
+                // Handle videos and conversion callback queries
+                use crate::telegram::videos::handle_videos_callback;
+                handle_videos_callback(&bot, callback_id.clone(), chat_id, message_id, &data, db_pool.clone()).await?;
             } else if data.starts_with("admin:") {
                 // Handle admin panel callbacks
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
