@@ -52,6 +52,7 @@ RUN apk add --no-cache \
 # Install Chromium and display server for cookie management
 RUN apk add --no-cache \
   chromium \
+  chromium-chromedriver \
   nss \
   freetype \
   harfbuzz \
@@ -77,11 +78,7 @@ RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp-nightly-builds/rel
 
 # Install Python dependencies
 RUN pip3 install --no-cache-dir --break-system-packages \
-  keyring pycryptodomex websockify playwright
-
-# Playwright: use system Chromium instead of downloading its own
-ENV PLAYWRIGHT_BROWSERS_PATH=0
-ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
+  keyring pycryptodomex websockify selenium
 
 # Create shared group and users, then set up directories
 # Both telegram-bot-api and botuser need to share files via shareddata group
