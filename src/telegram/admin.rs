@@ -2165,39 +2165,41 @@ pub async fn handle_cookies_file_upload(
                             // Delete session
                             crate::storage::db::delete_cookies_upload_session_by_user(&conn, user_id)?;
 
-                            if validation_result.is_ok() {
-                                let success_message = format!(
-                                    "✅ *Cookies успешно обновлены и проверены\\!*\n\n\
-                                    📁 Путь: `{}`\n\
-                                    ✓ Cookies валидны и работают\n\n\
-                                    Бот теперь использует новые cookies для загрузки видео\\.",
-                                    escape_markdown(&path.display().to_string())
-                                );
+                            match validation_result {
+                                Ok(()) => {
+                                    let success_message = format!(
+                                        "✅ *Cookies успешно обновлены и проверены\\!*\n\n\
+                                        📁 Путь: `{}`\n\
+                                        ✓ Cookies валидны и работают\n\n\
+                                        Бот теперь использует новые cookies для загрузки видео\\.",
+                                        escape_markdown(&path.display().to_string())
+                                    );
 
-                                bot.send_message(chat_id, success_message)
-                                    .parse_mode(ParseMode::MarkdownV2)
-                                    .await?;
+                                    bot.send_message(chat_id, success_message)
+                                        .parse_mode(ParseMode::MarkdownV2)
+                                        .await?;
 
-                                log::info!("✅ Cookies update completed successfully for admin {}", user_id);
-                            } else {
-                                let reason = validation_result.unwrap_err();
-                                let warning_message = format!(
-                                    "⚠️ *Cookies обновлены, но валидация не удалась*\n\n\
-                                    📁 Путь: `{}`\n\
-                                    ⚠️ Причина: {}\n\n\
-                                    Попробуй экспортировать cookies заново или используй /browser\\_login\\.",
-                                    escape_markdown(&path.display().to_string()),
-                                    escape_markdown(&reason)
-                                );
+                                    log::info!("✅ Cookies update completed successfully for admin {}", user_id);
+                                }
+                                Err(reason) => {
+                                    let warning_message = format!(
+                                        "⚠️ *Cookies обновлены, но валидация не удалась*\n\n\
+                                        📁 Путь: `{}`\n\
+                                        ⚠️ Причина: {}\n\n\
+                                        Попробуй экспортировать cookies заново или используй /browser\\_login\\.",
+                                        escape_markdown(&path.display().to_string()),
+                                        escape_markdown(&reason)
+                                    );
 
-                                bot.send_message(chat_id, warning_message)
-                                    .parse_mode(ParseMode::MarkdownV2)
-                                    .await?;
+                                    bot.send_message(chat_id, warning_message)
+                                        .parse_mode(ParseMode::MarkdownV2)
+                                        .await?;
 
-                                log::warn!(
-                                    "⚠️ Cookies update completed with validation failure for admin {}",
-                                    user_id
-                                );
+                                    log::warn!(
+                                        "⚠️ Cookies update completed with validation failure for admin {}",
+                                        user_id
+                                    );
+                                }
                             }
                         }
                         Err(e) => {
