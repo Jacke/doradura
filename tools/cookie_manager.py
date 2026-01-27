@@ -78,10 +78,43 @@ login_state = {
     "novnc_proc": None,
 }
 
+# Lock to prevent concurrent browser sessions (login vs refresh).
+# Initialized in on_startup() since asyncio.Lock() needs a running event loop.
+_browser_lock = None
+
+
+def _init_browser_lock():
+    global _browser_lock
+    _browser_lock = asyncio.Lock()
+
 
 # ---------------------------------------------------------------------------
 # Selenium helpers
 # ---------------------------------------------------------------------------
+
+def _cleanup_chrome_locks():
+    """Remove stale Chrome lock files from the profile directory.
+
+    Chrome creates SingletonLock, SingletonCookie, SingletonSocket files
+    that prevent reuse of the profile if Chrome crashed or was killed.
+    """
+    if not os.path.exists(BROWSER_PROFILE_DIR):
+        return
+
+    lock_patterns = [
+        "SingletonLock",
+        "SingletonCookie",
+        "SingletonSocket",
+    ]
+    for pattern in lock_patterns:
+        lock_path = os.path.join(BROWSER_PROFILE_DIR, pattern)
+        if os.path.exists(lock_path) or os.path.islink(lock_path):
+            try:
+                os.remove(lock_path)
+                log.info("Removed stale lock file: %s", lock_path)
+            except OSError as e:
+                log.warning("Failed to remove lock file %s: %s", lock_path, e)
+
 
 def _make_chrome_options(headless: bool) -> ChromeOptions:
     """Create ChromeOptions with common flags."""
@@ -102,6 +135,7 @@ def _make_chrome_options(headless: bool) -> ChromeOptions:
 
 def _create_driver(headless: bool) -> webdriver.Chrome:
     """Create a Selenium Chrome driver."""
+    _cleanup_chrome_locks()
     opts = _make_chrome_options(headless)
     service = ChromeService(executable_path=CHROMEDRIVER_PATH)
     return webdriver.Chrome(service=service, options=opts)
@@ -194,9 +228,13 @@ async def export_cookies_from_profile() -> int:
     if not os.path.exists(BROWSER_PROFILE_DIR):
         raise FileNotFoundError(f"Browser profile not found: {BROWSER_PROFILE_DIR}")
 
-    # Run Selenium in a thread to avoid blocking the event loop
-    loop = asyncio.get_running_loop()
-    return await loop.run_in_executor(None, _export_cookies_headless)
+    if _browser_lock is None:
+        raise RuntimeError("Browser lock not initialized")
+
+    async with _browser_lock:
+        # Run Selenium in a thread to avoid blocking the event loop
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, _export_cookies_headless)
 
 
 def _export_cookies_headless() -> int:
@@ -244,6 +282,12 @@ async def start_login() -> dict:
     """Start visual login session: Xvfb + Chromium + x11vnc + noVNC."""
     if status["login_active"]:
         return {"error": "Login session already active"}
+
+    if _browser_lock is None:
+        return {"error": "Browser lock not initialized"}
+
+    if _browser_lock.locked():
+        return {"error": "Browser is busy (refresh in progress), try again in a moment"}
 
     log.info("Starting login session...")
 
@@ -485,6 +529,7 @@ async def handle_export_cookies(request):
 
 async def on_startup(app):
     """Start refresh loop on server startup."""
+    _init_browser_lock()
     app["refresh_task"] = asyncio.ensure_future(refresh_loop())
 
 
@@ -510,6 +555,9 @@ def main():
     log.info("  Refresh interval: %ds", REFRESH_INTERVAL)
     log.info("  Chromium path: %s", CHROMIUM_PATH)
     log.info("  ChromeDriver path: %s", CHROMEDRIVER_PATH)
+
+    # Clean up stale Chrome lock files from previous crash/restart
+    _cleanup_chrome_locks()
 
     app = web.Application()
     app.router.add_post("/api/login_start", handle_login_start)
