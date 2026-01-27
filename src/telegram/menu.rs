@@ -2142,6 +2142,16 @@ pub async fn handle_menu_callback(
                 }
 
                 // Handle yt-dlp version/update callbacks
+                // Handle browser/cookie manager callbacks
+                if data.starts_with("admin:browser_") {
+                    if let Err(e) =
+                        admin::handle_browser_callback(&bot, callback_id.to_string(), chat_id, message_id, &data).await
+                    {
+                        log::error!("Failed to handle browser callback: {}", e);
+                    }
+                    return Ok(());
+                }
+
                 if data == "admin:update_ytdlp" {
                     if let Err(e) = admin::handle_update_ytdlp_callback(&bot, chat_id, message_id).await {
                         log::error!("Failed to handle update_ytdlp callback: {}", e);

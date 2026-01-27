@@ -2074,11 +2074,11 @@ pub async fn handle_update_ytdlp_command(bot: &Bot, chat_id: ChatId, user_id: i6
 pub async fn notify_admin_cookies_refresh(bot: &Bot, admin_id: i64, reason: &str) -> Result<()> {
     let message = format!(
         "🔴 *Требуется обновление YouTube cookies*\n\n\
-        Причина: {}\n\n\
+        Причина: _{}_\n\n\
         Для обновления:\n\
-        1\\. Экспортируй cookies из браузера\n\
-        2\\. Нажми: /update\\_cookies\n\
-        3\\. Пришли txt файл с cookies в ответ\n\n\
+        • /browser\\_login — войти через браузер \\(рекомендуется\\)\n\
+        • /update\\_cookies — загрузить cookies файл вручную\n\
+        • /browser\\_status — проверить статус cookie manager\n\n\
         Без валидных cookies загрузка видео с YouTube может не работать\\.",
         escape_markdown(reason)
     );
@@ -2165,7 +2165,7 @@ pub async fn handle_cookies_file_upload(
                             // Delete session
                             crate::storage::db::delete_cookies_upload_session_by_user(&conn, user_id)?;
 
-                            if validation_result {
+                            if validation_result.is_ok() {
                                 let success_message = format!(
                                     "✅ *Cookies успешно обновлены и проверены\\!*\n\n\
                                     📁 Путь: `{}`\n\
@@ -2180,16 +2180,14 @@ pub async fn handle_cookies_file_upload(
 
                                 log::info!("✅ Cookies update completed successfully for admin {}", user_id);
                             } else {
+                                let reason = validation_result.unwrap_err();
                                 let warning_message = format!(
                                     "⚠️ *Cookies обновлены, но валидация не удалась*\n\n\
                                     📁 Путь: `{}`\n\
-                                    ⚠️  Cookies могут быть невалидны\n\n\
-                                    Возможные причины:\n\
-                                    • Cookies устарели\n\
-                                    • Неверный формат файла\n\
-                                    • Сетевые проблемы\n\n\
-                                    Попробуй экспортировать cookies заново\\.",
-                                    escape_markdown(&path.display().to_string())
+                                    ⚠️ Причина: {}\n\n\
+                                    Попробуй экспортировать cookies заново или используй /browser\\_login\\.",
+                                    escape_markdown(&path.display().to_string()),
+                                    escape_markdown(&reason)
                                 );
 
                                 bot.send_message(chat_id, warning_message)
@@ -2353,6 +2351,354 @@ pub async fn handle_proxy_reset_command(bot: &Bot, chat_id: ChatId, _user_id: i6
     )
     .parse_mode(ParseMode::MarkdownV2)
     .await?;
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Cookie Manager (Playwright browser automation) integration
+// ---------------------------------------------------------------------------
+
+/// Default cookie manager API URL
+const COOKIE_MANAGER_URL: &str = "http://127.0.0.1:9876";
+
+/// Send an HTTP request to the cookie_manager.py API
+async fn cookie_manager_request(method: &str, path: &str) -> Result<serde_json::Value, String> {
+    let url = format!("{}{}", COOKIE_MANAGER_URL, path);
+    // login_start launches Xvfb + Chromium + VNC — needs more time
+    let timeout_secs = if path.contains("login_start") { 90 } else { 30 };
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let response = match method {
+        "POST" => client.post(&url).send().await,
+        _ => client.get(&url).send().await,
+    };
+
+    let resp = response.map_err(|e| format!("Request failed: {}", e))?;
+    let status = resp.status();
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+
+    if !status.is_success() {
+        return Err(format!("HTTP {}: {}", status, body));
+    }
+
+    serde_json::from_str(&body).map_err(|e| format!("JSON parse error: {} (body: {})", e, body))
+}
+
+/// Handles the /browser_login command (admin only)
+///
+/// Starts a visual login session via noVNC so the admin can log in to YouTube.
+pub async fn handle_browser_login_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> Result<()> {
+    if !is_admin(user_id) {
+        bot.send_message(chat_id, "❌ Only admins can use this command.")
+            .await?;
+        return Ok(());
+    }
+
+    log::info!("Admin {} starting browser login session", user_id);
+
+    let msg = bot
+        .send_message(chat_id, "🔄 Starting browser login session...")
+        .await?;
+
+    match cookie_manager_request("POST", "/api/login_start").await {
+        Ok(data) => {
+            if let Some(error) = data.get("error").and_then(|v| v.as_str()) {
+                bot.edit_message_text(chat_id, msg.id, format!("❌ {}", error)).await?;
+                return Ok(());
+            }
+
+            let novnc_url = data.get("novnc_url").and_then(|v| v.as_str()).unwrap_or("unknown");
+
+            let escaped_url = escape_markdown(novnc_url);
+
+            let keyboard = InlineKeyboardMarkup::new(vec![
+                vec![InlineKeyboardButton::url(
+                    "🌐 Open noVNC",
+                    novnc_url
+                        .parse()
+                        .unwrap_or_else(|_| "https://example.com".parse().unwrap()),
+                )],
+                vec![
+                    InlineKeyboardButton::callback("✅ Done — export cookies", "admin:browser_login_done".to_string()),
+                    InlineKeyboardButton::callback("❌ Cancel", "admin:browser_login_cancel".to_string()),
+                ],
+            ]);
+
+            bot.edit_message_text(
+                chat_id,
+                msg.id,
+                format!(
+                    "🌐 *Browser login session started*\n\n\
+                     Open the link below to log in to YouTube:\n\
+                     `{}`\n\n\
+                     After logging in, press *Done* to export cookies\\.",
+                    escaped_url
+                ),
+            )
+            .parse_mode(ParseMode::MarkdownV2)
+            .reply_markup(keyboard)
+            .await?;
+        }
+        Err(e) => {
+            bot.edit_message_text(chat_id, msg.id, format!("❌ Failed to start login session: {}", e))
+                .await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Handles the /browser_status command (admin only)
+///
+/// Shows the current cookie manager status.
+pub async fn handle_browser_status_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> Result<()> {
+    if !is_admin(user_id) {
+        bot.send_message(chat_id, "❌ Only admins can use this command.")
+            .await?;
+        return Ok(());
+    }
+
+    match cookie_manager_request("GET", "/api/status").await {
+        Ok(data) => {
+            let login_active = data.get("login_active").and_then(|v| v.as_bool()).unwrap_or(false);
+            let needs_relogin = data.get("needs_relogin").and_then(|v| v.as_bool()).unwrap_or(false);
+            let profile_exists = data.get("profile_exists").and_then(|v| v.as_bool()).unwrap_or(false);
+            let cookies_exist = data.get("cookies_exist").and_then(|v| v.as_bool()).unwrap_or(false);
+            let cookie_count = data.get("cookie_count").and_then(|v| v.as_u64()).unwrap_or(0);
+            let last_refresh = data.get("last_refresh").and_then(|v| v.as_str()).unwrap_or("never");
+            let last_success = data.get("last_refresh_success").and_then(|v| v.as_bool());
+            let last_error = data.get("last_error").and_then(|v| v.as_str());
+
+            let status_icon = if needs_relogin {
+                "🔴"
+            } else if cookies_exist && cookie_count > 0 {
+                "🟢"
+            } else {
+                "🟡"
+            };
+
+            let login_status = if login_active {
+                "🌐 Active login session"
+            } else {
+                "— No active session"
+            };
+
+            let refresh_icon = match last_success {
+                Some(true) => "✅",
+                Some(false) => "❌",
+                None => "—",
+            };
+
+            let escaped_refresh = escape_markdown(last_refresh);
+            let error_line = if let Some(err) = last_error {
+                // Inside backticks, MarkdownV2 only needs ` and \ escaped
+                let escaped_err = err.replace('\\', "\\\\").replace('`', "\\`");
+                format!("\n⚠️ Last error: `{}`", escaped_err)
+            } else {
+                String::new()
+            };
+
+            let mut buttons = vec![];
+            if needs_relogin || !profile_exists {
+                buttons.push(vec![InlineKeyboardButton::callback(
+                    "🌐 Start login",
+                    "admin:browser_login_start".to_string(),
+                )]);
+            }
+            buttons.push(vec![InlineKeyboardButton::callback(
+                "🔄 Force refresh",
+                "admin:browser_force_refresh".to_string(),
+            )]);
+
+            let keyboard = InlineKeyboardMarkup::new(buttons);
+
+            bot.send_message(
+                chat_id,
+                format!(
+                    "{} *Cookie Manager Status*\n\n\
+                     Profile: {}\n\
+                     Cookies: {} \\({} cookies\\)\n\
+                     Login: {}\n\
+                     Last refresh: {} {}\
+                     {}\n\n\
+                     _Needs re\\-login: {}_",
+                    status_icon,
+                    if profile_exists { "✅ exists" } else { "❌ missing" },
+                    if cookies_exist { "✅" } else { "❌" },
+                    cookie_count,
+                    login_status,
+                    refresh_icon,
+                    escaped_refresh,
+                    error_line,
+                    if needs_relogin { "yes" } else { "no" },
+                ),
+            )
+            .parse_mode(ParseMode::MarkdownV2)
+            .reply_markup(keyboard)
+            .await?;
+        }
+        Err(e) => {
+            bot.send_message(
+                chat_id,
+                format!(
+                    "❌ Cookie manager is not reachable: {}\n\nMake sure it's running on {}",
+                    e, COOKIE_MANAGER_URL
+                ),
+            )
+            .await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Handles admin:browser_* callback queries
+pub async fn handle_browser_callback(
+    bot: &Bot,
+    _callback_id: String,
+    chat_id: ChatId,
+    message_id: MessageId,
+    data: &str,
+) -> Result<()> {
+    match data {
+        "admin:browser_login_done" => {
+            bot.edit_message_text(chat_id, message_id, "🔄 Exporting cookies...")
+                .await?;
+
+            match cookie_manager_request("POST", "/api/login_stop").await {
+                Ok(resp) => {
+                    let exported = resp.get("cookies_exported").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let count = resp.get("cookie_count").and_then(|v| v.as_u64()).unwrap_or(0);
+
+                    if exported && count > 0 {
+                        bot.edit_message_text(
+                            chat_id,
+                            message_id,
+                            format!("✅ Login complete! Exported {} cookies.", count),
+                        )
+                        .await?;
+                    } else {
+                        bot.edit_message_text(
+                            chat_id,
+                            message_id,
+                            format!(
+                                "⚠️ Login stopped. Cookies exported: {}, count: {}.\n\
+                                 Try /browser_login again if cookies seem insufficient.",
+                                exported, count
+                            ),
+                        )
+                        .await?;
+                    }
+                }
+                Err(e) => {
+                    bot.edit_message_text(chat_id, message_id, format!("❌ Failed to export cookies: {}", e))
+                        .await?;
+                }
+            }
+        }
+
+        "admin:browser_login_cancel" => {
+            // Stop the login session without exporting
+            let _ = cookie_manager_request("POST", "/api/login_stop").await;
+            bot.edit_message_text(chat_id, message_id, "❌ Login session cancelled.")
+                .await?;
+        }
+
+        "admin:browser_login_start" => {
+            // Start login from status page button
+            bot.edit_message_text(chat_id, message_id, "🔄 Starting login session...")
+                .await?;
+
+            match cookie_manager_request("POST", "/api/login_start").await {
+                Ok(data) => {
+                    if let Some(error) = data.get("error").and_then(|v| v.as_str()) {
+                        bot.edit_message_text(chat_id, message_id, format!("❌ {}", error))
+                            .await?;
+                        return Ok(());
+                    }
+
+                    let novnc_url = data.get("novnc_url").and_then(|v| v.as_str()).unwrap_or("unknown");
+
+                    let escaped_url = escape_markdown(novnc_url);
+
+                    let keyboard = InlineKeyboardMarkup::new(vec![
+                        vec![InlineKeyboardButton::url(
+                            "🌐 Open noVNC",
+                            novnc_url
+                                .parse()
+                                .unwrap_or_else(|_| "https://example.com".parse().unwrap()),
+                        )],
+                        vec![
+                            InlineKeyboardButton::callback(
+                                "✅ Done — export cookies",
+                                "admin:browser_login_done".to_string(),
+                            ),
+                            InlineKeyboardButton::callback("❌ Cancel", "admin:browser_login_cancel".to_string()),
+                        ],
+                    ]);
+
+                    bot.edit_message_text(
+                        chat_id,
+                        message_id,
+                        format!(
+                            "🌐 *Browser login session started*\n\n\
+                             Open the link below to log in to YouTube:\n\
+                             `{}`\n\n\
+                             After logging in, press *Done* to export cookies\\.",
+                            escaped_url
+                        ),
+                    )
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .reply_markup(keyboard)
+                    .await?;
+                }
+                Err(e) => {
+                    bot.edit_message_text(chat_id, message_id, format!("❌ Failed to start login session: {}", e))
+                        .await?;
+                }
+            }
+        }
+
+        "admin:browser_force_refresh" => {
+            bot.edit_message_text(chat_id, message_id, "🔄 Force refreshing cookies...")
+                .await?;
+
+            match cookie_manager_request("POST", "/api/export_cookies").await {
+                Ok(resp) => {
+                    let success = resp.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let count = resp.get("cookie_count").and_then(|v| v.as_u64()).unwrap_or(0);
+
+                    if success {
+                        bot.edit_message_text(
+                            chat_id,
+                            message_id,
+                            format!("✅ Cookies refreshed! {} cookies exported.", count),
+                        )
+                        .await?;
+                    } else {
+                        let error = resp.get("error").and_then(|v| v.as_str()).unwrap_or("unknown error");
+                        bot.edit_message_text(chat_id, message_id, format!("❌ Refresh failed: {}", error))
+                            .await?;
+                    }
+                }
+                Err(e) => {
+                    bot.edit_message_text(chat_id, message_id, format!("❌ Failed to refresh cookies: {}", e))
+                        .await?;
+                }
+            }
+        }
+
+        _ => {
+            log::warn!("Unknown browser callback: {}", data);
+        }
+    }
 
     Ok(())
 }
