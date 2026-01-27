@@ -18,6 +18,7 @@ import asyncio
 import logging
 import os
 import subprocess
+import time
 from datetime import datetime, timezone
 
 from aiohttp import web
@@ -92,6 +93,29 @@ def _init_browser_lock():
 # Selenium helpers
 # ---------------------------------------------------------------------------
 
+def _kill_orphaned_chrome():
+    """Kill any orphaned chromium/chromedriver processes.
+
+    When supervisor restarts cookie_manager after a crash, Chrome processes
+    from the previous instance may still be running, holding locks on the
+    user-data-dir. Kill them so we can reuse the profile.
+    """
+    for proc_name in ("chromium-browser", "chromium", "chromedriver", "chrome"):
+        try:
+            result = subprocess.run(
+                ["pkill", "-f", proc_name],
+                capture_output=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                log.info("Killed orphaned %s processes", proc_name)
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+
+    # Give processes time to exit
+    time.sleep(1)
+
+
 def _cleanup_chrome_locks():
     """Remove stale Chrome lock files from the profile directory.
 
@@ -135,6 +159,7 @@ def _make_chrome_options(headless: bool) -> ChromeOptions:
 
 def _create_driver(headless: bool) -> webdriver.Chrome:
     """Create a Selenium Chrome driver."""
+    _kill_orphaned_chrome()
     _cleanup_chrome_locks()
     opts = _make_chrome_options(headless)
     service = ChromeService(executable_path=CHROMEDRIVER_PATH)
@@ -556,7 +581,8 @@ def main():
     log.info("  Chromium path: %s", CHROMIUM_PATH)
     log.info("  ChromeDriver path: %s", CHROMEDRIVER_PATH)
 
-    # Clean up stale Chrome lock files from previous crash/restart
+    # Kill orphaned Chrome processes and clean up stale lock files
+    _kill_orphaned_chrome()
     _cleanup_chrome_locks()
 
     app = web.Application()
