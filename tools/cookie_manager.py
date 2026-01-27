@@ -20,6 +20,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 from datetime import datetime, timezone
 
 from aiohttp import web
@@ -94,12 +95,51 @@ def _init_browser_lock():
 # Selenium helpers
 # ---------------------------------------------------------------------------
 
-def _cleanup_profile_locks(profile_dir: str):
-    """Remove stale Chrome lock files from a profile directory.
+def _kill_chrome_on_profile(profile_dir: str):
+    """Kill all Chrome/chromedriver processes using the given profile directory.
 
-    Chrome creates SingletonLock, SingletonCookie, SingletonSocket files
-    that prevent reuse of the profile if Chrome crashed or was killed.
+    When cookie_manager is restarted by supervisor, orphaned Chrome child
+    processes from the previous instance keep running and hold the profile
+    lock. We must kill them before creating a new session.
     """
+    killed = 0
+    try:
+        # Read /proc to find Chrome processes with matching user-data-dir.
+        # This works on any Linux, unlike ps which varies between busybox/procps.
+        needle = f"--user-data-dir={profile_dir}"
+        my_pid = os.getpid()
+        for entry in os.listdir("/proc"):
+            if not entry.isdigit():
+                continue
+            pid = int(entry)
+            if pid == my_pid:
+                continue
+            try:
+                cmdline_path = f"/proc/{pid}/cmdline"
+                with open(cmdline_path, "rb") as f:
+                    cmdline = f.read().decode("utf-8", errors="replace")
+                if needle in cmdline:
+                    os.kill(pid, 9)  # SIGKILL
+                    killed += 1
+            except (OSError, PermissionError):
+                pass
+
+        if killed:
+            log.info("Killed %d orphaned Chrome processes on %s", killed, profile_dir)
+            time.sleep(1)
+    except Exception as e:
+        log.warning("Failed to kill orphaned Chrome processes: %s", e)
+
+    # Also kill any stale chromedriver processes
+    try:
+        subprocess.run(["killall", "-9", "chromedriver"],
+                       capture_output=True, timeout=5)
+    except Exception:
+        pass
+
+
+def _cleanup_profile_locks(profile_dir: str):
+    """Remove stale Chrome lock files (symlinks) from a profile directory."""
     if not os.path.exists(profile_dir):
         return
 
@@ -132,6 +172,7 @@ def _make_chrome_options(*, headless: bool, profile_dir: str) -> ChromeOptions:
 
 def _create_driver(*, headless: bool, profile_dir: str) -> webdriver.Chrome:
     """Create a Selenium Chrome driver with the given profile directory."""
+    _kill_chrome_on_profile(profile_dir)
     _cleanup_profile_locks(profile_dir)
     opts = _make_chrome_options(headless=headless, profile_dir=profile_dir)
     service = ChromeService(executable_path=CHROMEDRIVER_PATH)
@@ -435,6 +476,9 @@ async def stop_login() -> dict:
         except Exception:
             pass
 
+    # Kill any remaining Chrome processes on the profile
+    _kill_chrome_on_profile(BROWSER_PROFILE_DIR)
+
     # Cleanup display stack
     _kill_proc(login_state.get("novnc_proc"))
     _kill_proc(login_state.get("vnc_proc"))
@@ -575,7 +619,8 @@ def main():
     log.info("  Chromium path: %s", CHROMIUM_PATH)
     log.info("  ChromeDriver path: %s", CHROMEDRIVER_PATH)
 
-    # Clean up stale Chrome lock files from previous crash/restart
+    # Kill orphaned Chrome processes and clean up stale lock files
+    _kill_chrome_on_profile(BROWSER_PROFILE_DIR)
     _cleanup_profile_locks(BROWSER_PROFILE_DIR)
 
     app = web.Application()
