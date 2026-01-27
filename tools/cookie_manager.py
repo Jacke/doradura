@@ -17,8 +17,9 @@ API endpoints:
 import asyncio
 import logging
 import os
+import shutil
 import subprocess
-import time
+import tempfile
 from datetime import datetime, timezone
 
 from aiohttp import web
@@ -93,45 +94,17 @@ def _init_browser_lock():
 # Selenium helpers
 # ---------------------------------------------------------------------------
 
-def _kill_orphaned_chrome():
-    """Kill any orphaned chromium/chromedriver processes.
-
-    When supervisor restarts cookie_manager after a crash, Chrome processes
-    from the previous instance may still be running, holding locks on the
-    user-data-dir. Kill them so we can reuse the profile.
-    """
-    for proc_name in ("chromium-browser", "chromium", "chromedriver", "chrome"):
-        try:
-            result = subprocess.run(
-                ["pkill", "-f", proc_name],
-                capture_output=True,
-                timeout=5,
-            )
-            if result.returncode == 0:
-                log.info("Killed orphaned %s processes", proc_name)
-        except (subprocess.TimeoutExpired, OSError):
-            pass
-
-    # Give processes time to exit
-    time.sleep(1)
-
-
-def _cleanup_chrome_locks():
-    """Remove stale Chrome lock files from the profile directory.
+def _cleanup_profile_locks(profile_dir: str):
+    """Remove stale Chrome lock files from a profile directory.
 
     Chrome creates SingletonLock, SingletonCookie, SingletonSocket files
     that prevent reuse of the profile if Chrome crashed or was killed.
     """
-    if not os.path.exists(BROWSER_PROFILE_DIR):
+    if not os.path.exists(profile_dir):
         return
 
-    lock_patterns = [
-        "SingletonLock",
-        "SingletonCookie",
-        "SingletonSocket",
-    ]
-    for pattern in lock_patterns:
-        lock_path = os.path.join(BROWSER_PROFILE_DIR, pattern)
+    for name in ("SingletonLock", "SingletonCookie", "SingletonSocket"):
+        lock_path = os.path.join(profile_dir, name)
         if os.path.exists(lock_path) or os.path.islink(lock_path):
             try:
                 os.remove(lock_path)
@@ -140,11 +113,11 @@ def _cleanup_chrome_locks():
                 log.warning("Failed to remove lock file %s: %s", lock_path, e)
 
 
-def _make_chrome_options(headless: bool) -> ChromeOptions:
+def _make_chrome_options(*, headless: bool, profile_dir: str) -> ChromeOptions:
     """Create ChromeOptions with common flags."""
     opts = ChromeOptions()
     opts.binary_location = CHROMIUM_PATH
-    opts.add_argument(f"--user-data-dir={BROWSER_PROFILE_DIR}")
+    opts.add_argument(f"--user-data-dir={profile_dir}")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-gpu")
     opts.add_argument("--disable-dev-shm-usage")
@@ -157,11 +130,10 @@ def _make_chrome_options(headless: bool) -> ChromeOptions:
     return opts
 
 
-def _create_driver(headless: bool) -> webdriver.Chrome:
-    """Create a Selenium Chrome driver."""
-    _kill_orphaned_chrome()
-    _cleanup_chrome_locks()
-    opts = _make_chrome_options(headless)
+def _create_driver(*, headless: bool, profile_dir: str) -> webdriver.Chrome:
+    """Create a Selenium Chrome driver with the given profile directory."""
+    _cleanup_profile_locks(profile_dir)
+    opts = _make_chrome_options(headless=headless, profile_dir=profile_dir)
     service = ChromeService(executable_path=CHROMEDRIVER_PATH)
     return webdriver.Chrome(service=service, options=opts)
 
@@ -263,12 +235,32 @@ async def export_cookies_from_profile() -> int:
 
 
 def _export_cookies_headless() -> int:
-    """Headless export — runs in a thread."""
-    driver = _create_driver(headless=True)
+    """Headless export — runs in a thread.
+
+    Copies the persistent browser profile to a temporary directory to avoid
+    Chrome's "user data directory already in use" lock conflict with any
+    concurrent headed session or previous crash.
+    """
+    tmp_dir = tempfile.mkdtemp(prefix="cookie_refresh_")
     try:
-        return _export_cookies_from_driver(driver)
+        # Copy profile to temp dir (ignore errors for lock/socket files)
+        tmp_profile = os.path.join(tmp_dir, "profile")
+        shutil.copytree(
+            BROWSER_PROFILE_DIR,
+            tmp_profile,
+            ignore=shutil.ignore_patterns(
+                "SingletonLock", "SingletonCookie", "SingletonSocket",
+            ),
+        )
+        log.info("Copied profile to temp dir: %s", tmp_profile)
+
+        driver = _create_driver(headless=True, profile_dir=tmp_profile)
+        try:
+            return _export_cookies_from_driver(driver)
+        finally:
+            driver.quit()
     finally:
-        driver.quit()
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def check_session_valid(cookie_count: int) -> bool:
@@ -336,7 +328,9 @@ async def start_login() -> dict:
 
     try:
         loop = asyncio.get_running_loop()
-        driver = await loop.run_in_executor(None, _create_driver, False)
+        driver = await loop.run_in_executor(
+            None, lambda: _create_driver(headless=False, profile_dir=BROWSER_PROFILE_DIR)
+        )
         login_state["driver"] = driver
 
         # Navigate to Google login
@@ -581,9 +575,8 @@ def main():
     log.info("  Chromium path: %s", CHROMIUM_PATH)
     log.info("  ChromeDriver path: %s", CHROMEDRIVER_PATH)
 
-    # Kill orphaned Chrome processes and clean up stale lock files
-    _kill_orphaned_chrome()
-    _cleanup_chrome_locks()
+    # Clean up stale Chrome lock files from previous crash/restart
+    _cleanup_profile_locks(BROWSER_PROFILE_DIR)
 
     app = web.Application()
     app.router.add_post("/api/login_start", handle_login_start)
