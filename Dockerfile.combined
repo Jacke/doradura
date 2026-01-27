@@ -49,16 +49,39 @@ RUN apk add --no-cache \
   supervisor \
   nodejs
 
+# Install Chromium and display server for cookie management
+RUN apk add --no-cache \
+  chromium \
+  nss \
+  freetype \
+  harfbuzz \
+  ttf-freefont \
+  font-noto \
+  xorg-server \
+  xvfb-run \
+  x11vnc \
+  py3-aiohttp
+
+# Install noVNC (web-based VNC client for first-time login)
+RUN mkdir -p /opt/novnc && \
+  wget -qO- https://github.com/novnc/noVNC/archive/refs/tags/v1.5.0.tar.gz | \
+  tar xz -C /opt/novnc --strip-components=1 && \
+  ln -s /opt/novnc/vnc_lite.html /opt/novnc/index.html
+
 # Node.js 22+ is already installed (required for yt-dlp YouTube n-challenge solving)
-# Verify Node.js is available for yt-dlp
 RUN node --version && echo "Node.js available for yt-dlp --js-runtimes node"
 
 # Install yt-dlp from nightly builds (latest fixes for YouTube compatibility)
 RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
   chmod a+rx /usr/local/bin/yt-dlp
 
-# Install Python dependencies for browser cookie extraction
-RUN pip3 install --no-cache-dir --break-system-packages keyring pycryptodomex
+# Install Python dependencies
+RUN pip3 install --no-cache-dir --break-system-packages \
+  keyring pycryptodomex websockify playwright
+
+# Playwright: use system Chromium instead of downloading its own
+ENV PLAYWRIGHT_BROWSERS_PATH=0
+ENV PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium-browser
 
 # Create shared group and users, then set up directories
 # Both telegram-bot-api and botuser need to share files via shareddata group
@@ -78,6 +101,9 @@ RUN chmod 755 /app/doradura && \
 
 # Copy migrations for auto-migration on startup
 COPY --from=rust-builder --chown=1000:2000 /app/migrations /app/migrations
+
+# Copy cookie manager script
+COPY --chown=1000:2000 tools/cookie_manager.py /app/cookie_manager.py
 
 # Set environment variables for the bot to access Bot API files
 ENV BOT_API_DATA_DIR=/data
@@ -115,6 +141,18 @@ stdout_logfile_maxbytes=0
 stderr_logfile=/dev/stderr
 stderr_logfile_maxbytes=0
 priority=10
+
+[program:cookie-manager]
+command=python3 /app/cookie_manager.py
+user=botuser
+autostart=true
+autorestart=true
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+priority=15
+environment=DISPLAY=":99"
 
 [program:doradura-bot]
 command=/app/run-bot.sh
@@ -219,8 +257,8 @@ ENTRYPOINT_EOF
 
 RUN chmod +x /entrypoint.sh
 
-# Expose ports
-EXPOSE 8080 8081 8082
+# Expose ports (8080=webapp, 8081=bot-api, 8082=bot-api-stats, 6080=noVNC)
+EXPOSE 6080 8080 8081 8082
 
 # Health check for both services
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
