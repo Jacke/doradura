@@ -78,6 +78,8 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
     let deps_messages = deps.clone();
     let deps_precheckout = deps.clone();
     let deps_callback = deps.clone();
+    let deps_browser_login = deps.clone();
+    let deps_browser_status = deps.clone();
 
     dptree::entry()
         // Web App Data handler must run FIRST to process Mini App data
@@ -87,6 +89,8 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
         // Hidden admin commands (not in Command enum)
         .branch(update_cookies_handler(deps_cookies))
         .branch(update_ytdlp_handler(deps_ytdlp))
+        .branch(browser_login_handler(deps_browser_login))
+        .branch(browser_status_handler(deps_browser_status))
         // Command handler
         .branch(command_handler(deps_commands))
         // Media upload handler for premium/vip users
@@ -291,6 +295,58 @@ fn update_ytdlp_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                     log::error!("❌ /update_ytdlp handler failed for user {}: {}", user_id, e);
                     let _ = bot
                         .send_message(msg.chat.id, format!("❌ /update_ytdlp failed: {}", e))
+                        .await;
+                }
+                Ok(())
+            }
+        })
+}
+
+/// Handler for /browser_login admin command (hidden, not in Command enum)
+fn browser_login_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
+    Update::filter_message()
+        .filter(|msg: Message| {
+            msg.text()
+                .map(|text| text.starts_with("/browser_login"))
+                .unwrap_or(false)
+        })
+        .endpoint(move |bot: Bot, msg: Message| {
+            let _deps = deps.clone();
+            async move {
+                use crate::telegram::handle_browser_login_command;
+
+                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+
+                if let Err(e) = handle_browser_login_command(&bot, msg.chat.id, user_id).await {
+                    log::error!("❌ /browser_login handler failed for user {}: {}", user_id, e);
+                    let _ = bot
+                        .send_message(msg.chat.id, format!("❌ /browser_login failed: {}", e))
+                        .await;
+                }
+                Ok(())
+            }
+        })
+}
+
+/// Handler for /browser_status admin command (hidden, not in Command enum)
+fn browser_status_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
+    Update::filter_message()
+        .filter(|msg: Message| {
+            msg.text()
+                .map(|text| text.starts_with("/browser_status"))
+                .unwrap_or(false)
+        })
+        .endpoint(move |bot: Bot, msg: Message| {
+            let _deps = deps.clone();
+            async move {
+                use crate::telegram::handle_browser_status_command;
+
+                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+
+                if let Err(e) = handle_browser_status_command(&bot, msg.chat.id, user_id).await {
+                    log::error!("❌ /browser_status handler failed for user {}: {}", user_id, e);
+                    let _ = bot
+                        .send_message(msg.chat.id, format!("❌ /browser_status failed: {}", e))
                         .await;
                 }
                 Ok(())
@@ -810,9 +866,17 @@ fn media_upload_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                         let username = msg.from.as_ref().and_then(|u| u.username.clone());
                         if let Err(e) = create_user(&conn, chat_id.0, username) {
                             log::error!("Failed to create user: {}", e);
+                            return Ok(());
                         }
-                        // Don't process media for new users (they're free tier)
-                        return Ok(());
+
+                        // Fetch the newly created user
+                        match get_user(&conn, chat_id.0) {
+                            Ok(Some(u)) => u,
+                            _ => {
+                                log::error!("Failed to get created user");
+                                return Ok(());
+                            }
+                        }
                     }
                     Err(e) => {
                         log::error!("Failed to get user: {}", e);
@@ -823,8 +887,12 @@ fn media_upload_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                 // Check if user can upload media
                 let limits = PlanLimits::for_plan(&user.plan);
                 if !limits.can_upload_media {
-                    // Free users can't upload media - silently ignore
-                    // (they might be sending photos/videos for other reasons)
+                    // Notify user that they can't upload media
+                    bot.send_message(
+                        chat_id,
+                        "❌ Твой тарифный план не позволяет загружать файлы.\n\nИспользуй /plan, чтобы узнать подробнее о тарифах."
+                    )
+                    .await?;
                     return Ok(());
                 }
 

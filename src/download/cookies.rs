@@ -12,23 +12,33 @@ use tokio::process::Command;
 
 /// Validates YouTube cookies by testing video URLs that require authentication
 ///
-/// Returns true if cookies are valid and working, false otherwise
-pub async fn validate_cookies() -> bool {
+/// Returns `Ok(())` if cookies are valid, or `Err(reason)` with a human-readable failure reason.
+pub async fn validate_cookies() -> Result<(), String> {
     let cookies_path = match get_cookies_path() {
         Some(path) => path,
         None => {
             log::warn!("No cookies file configured (YTDL_COOKIES_FILE not set)");
-            return false;
+            return Err("YTDL_COOKIES_FILE не задан — путь к cookies не настроен".to_string());
         }
     };
 
     if !cookies_path.exists() {
         log::warn!("Cookies file does not exist: {:?}", cookies_path);
-        return false;
+        return Err(format!("Файл cookies не найден: {}", cookies_path.display()));
+    }
+
+    // Check file is not empty
+    match std::fs::metadata(&cookies_path) {
+        Ok(meta) if meta.len() == 0 => {
+            return Err("Файл cookies пуст (0 байт)".to_string());
+        }
+        Err(e) => {
+            return Err(format!("Не удалось прочитать файл cookies: {}", e));
+        }
+        _ => {}
     }
 
     // Test with multiple videos - some require auth more strictly
-    // Using different types of content to catch various auth requirements
     let test_urls = [
         "https://www.youtube.com/watch?v=jNQXAC9IVRw", // "Me at the zoo" - first YouTube video
         "https://www.youtube.com/watch?v=dQw4w9WgXcQ", // Rick Astley
@@ -43,10 +53,8 @@ pub async fn validate_cookies() -> bool {
             .arg("--skip-download")
             .arg("--cookies")
             .arg(&cookies_path)
-            // Use extractor-args same as in actual downloads to test real behavior
             .arg("--extractor-args")
             .arg("youtube:player_client=default,web_safari,web_embedded")
-            // Use Node.js for YouTube n-challenge solving
             .arg("--js-runtimes")
             .arg("node")
             .arg("--print")
@@ -59,33 +67,41 @@ pub async fn validate_cookies() -> bool {
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
 
-                // Check for auth-related errors even if command "succeeded"
-                if stderr.contains("Sign in to confirm")
-                    || stderr.contains("not a bot")
-                    || stderr.contains("Cookie")
-                    || stderr.contains("cookies")
-                    || stderr.contains("login")
-                    || stderr.contains("authentication")
-                {
+                if stderr.contains("Sign in to confirm") || stderr.contains("not a bot") {
                     log::error!("🔴 Cookies validation failed for {}: {}", test_url, stderr);
-                    return false;
+                    return Err("YouTube требует авторизацию — cookies истекли или сессия недействительна".to_string());
+                }
+
+                if stderr.contains("Cookie") || stderr.contains("cookies") {
+                    log::error!("🔴 Cookies validation failed for {}: {}", test_url, stderr);
+                    return Err("Ошибка чтения cookies — файл повреждён или имеет неверный формат".to_string());
+                }
+
+                if stderr.contains("login") || stderr.contains("authentication") {
+                    log::error!("🔴 Cookies validation failed for {}: {}", test_url, stderr);
+                    return Err("YouTube требует повторный вход — сессия истекла".to_string());
                 }
 
                 if !output.status.success() {
+                    let stderr_short = stderr.lines().next().unwrap_or("unknown error");
                     log::warn!("❌ Cookies validation failed for {}: {}", test_url, stderr);
-                    // Any failure is suspicious - don't assume OK
-                    return false;
+                    return Err(format!("yt-dlp завершился с ошибкой: {}", stderr_short));
                 }
             }
             Err(e) => {
                 log::error!("Failed to execute yt-dlp for cookies validation: {}", e);
-                return false;
+                return Err(format!("Не удалось запустить yt-dlp: {}", e));
             }
         }
     }
 
     log::debug!("✅ Cookies validation passed");
-    true
+    Ok(())
+}
+
+/// Validates YouTube cookies (bool wrapper for backward compatibility)
+pub async fn validate_cookies_ok() -> bool {
+    validate_cookies().await.is_ok()
 }
 
 /// Returns the configured cookies file path from environment
@@ -130,20 +146,9 @@ pub async fn update_cookies_from_base64(cookies_b64: &str) -> Result<PathBuf> {
 
 /// Checks if cookies need refresh by validating them
 ///
-/// Returns true if cookies are missing, invalid, or expired
-pub async fn needs_refresh() -> bool {
-    let cookies_path = match get_cookies_path() {
-        Some(path) => path,
-        None => return true, // No cookies configured
-    };
-
-    if !cookies_path.exists() {
-        log::info!("Cookies file missing: {:?}", cookies_path);
-        return true;
-    }
-
-    // Validate cookies
-    !validate_cookies().await
+/// Returns `None` if cookies are valid, or `Some(reason)` with a human-readable failure reason.
+pub async fn needs_refresh() -> Option<String> {
+    validate_cookies().await.err()
 }
 
 pub async fn update_cookies_from_content(content: &str) -> Result<PathBuf> {

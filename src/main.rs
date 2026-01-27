@@ -344,8 +344,8 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
             interval.tick().await;
             log::debug!("Running periodic cookies validation check");
 
-            if cookies::needs_refresh().await {
-                log::warn!("🔴 Cookies need refresh!");
+            if let Some(reason) = cookies::needs_refresh().await {
+                log::warn!("🔴 Cookies need refresh: {}", reason);
 
                 // Notify all admins
                 let admin_ids = config::admin::ADMIN_IDS.clone();
@@ -356,10 +356,7 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
                 // Notify from ADMIN_IDS list
                 for admin_id in admin_ids.iter() {
                     if notified_admins.insert(*admin_id) {
-                        if let Err(e) =
-                            notify_admin_cookies_refresh(&bot_cookies, *admin_id, "validation failed or file missing")
-                                .await
-                        {
+                        if let Err(e) = notify_admin_cookies_refresh(&bot_cookies, *admin_id, &reason).await {
                             log::error!("Failed to notify admin {} about cookies: {}", admin_id, e);
                         }
                     }
@@ -367,10 +364,7 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
 
                 // Notify primary admin if not already notified
                 if primary_admin != 0 && notified_admins.insert(primary_admin) {
-                    if let Err(e) =
-                        notify_admin_cookies_refresh(&bot_cookies, primary_admin, "validation failed or file missing")
-                            .await
-                    {
+                    if let Err(e) = notify_admin_cookies_refresh(&bot_cookies, primary_admin, &reason).await {
                         log::error!("Failed to notify primary admin {} about cookies: {}", primary_admin, e);
                     }
                 }
