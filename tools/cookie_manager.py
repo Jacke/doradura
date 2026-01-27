@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-YouTube Cookie Manager — aiohttp server + Playwright browser automation.
+YouTube Cookie Manager — aiohttp server + Selenium browser automation.
 
 Manages YouTube cookies automatically:
 1. First login via noVNC (admin logs in visually)
@@ -21,6 +21,9 @@ import subprocess
 from datetime import datetime, timezone
 
 from aiohttp import web
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options as ChromeOptions
+from selenium.webdriver.chrome.service import Service as ChromeService
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -36,9 +39,8 @@ NOVNC_HOST = os.environ.get("NOVNC_HOST", "")
 NOVNC_PORT = int(os.environ.get("NOVNC_PORT", "6080"))
 VNC_PORT = 5900
 DISPLAY = ":99"
-CHROMIUM_PATH = os.environ.get(
-    "PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH", "/usr/bin/chromium-browser"
-)
+CHROMIUM_PATH = os.environ.get("CHROMIUM_PATH", "/usr/bin/chromium-browser")
+CHROMEDRIVER_PATH = os.environ.get("CHROMEDRIVER_PATH", "/usr/bin/chromedriver")
 
 # Required YouTube/Google cookies that indicate a valid session
 REQUIRED_COOKIES = {"SID", "HSID", "SSID", "APISID", "SAPISID"}
@@ -70,8 +72,7 @@ status = {
 }
 
 login_state = {
-    "browser": None,
-    "context": None,
+    "driver": None,
     "xvfb_proc": None,
     "vnc_proc": None,
     "novnc_proc": None,
@@ -79,63 +80,78 @@ login_state = {
 
 
 # ---------------------------------------------------------------------------
+# Selenium helpers
+# ---------------------------------------------------------------------------
+
+def _make_chrome_options(headless: bool) -> ChromeOptions:
+    """Create ChromeOptions with common flags."""
+    opts = ChromeOptions()
+    opts.binary_location = CHROMIUM_PATH
+    opts.add_argument(f"--user-data-dir={BROWSER_PROFILE_DIR}")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-gpu")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--disable-extensions")
+    if headless:
+        opts.add_argument("--headless=new")
+    else:
+        opts.add_argument("--start-maximized")
+        opts.add_argument("--window-size=1280,720")
+    return opts
+
+
+def _create_driver(headless: bool) -> webdriver.Chrome:
+    """Create a Selenium Chrome driver."""
+    opts = _make_chrome_options(headless)
+    service = ChromeService(executable_path=CHROMEDRIVER_PATH)
+    return webdriver.Chrome(service=service, options=opts)
+
+
+# ---------------------------------------------------------------------------
 # Cookie export
 # ---------------------------------------------------------------------------
 
 def format_netscape_cookie(cookie: dict) -> str:
-    """Convert a Playwright cookie dict to a Netscape cookie file line."""
+    """Convert a Selenium cookie dict to a Netscape cookie file line."""
     domain = cookie.get("domain", "")
     subdomain = "TRUE" if domain.startswith(".") else "FALSE"
     path = cookie.get("path", "/")
     secure = "TRUE" if cookie.get("secure", False) else "FALSE"
-    expires = str(int(cookie.get("expires", 0)))
+    expiry = cookie.get("expiry", 0)
+    expires = str(int(expiry)) if expiry else "0"
     name = cookie.get("name", "")
     value = cookie.get("value", "")
     return f"{domain}\t{subdomain}\t{path}\t{secure}\t{expires}\t{name}\t{value}"
 
 
-async def export_cookies_from_profile() -> int:
-    """Launch headless browser with saved profile, extract and write cookies."""
-    from playwright.async_api import async_playwright
+def _export_cookies_from_driver(driver: webdriver.Chrome) -> int:
+    """Extract cookies from an open driver and write to file."""
+    # Navigate to YouTube to ensure cookies are fresh
+    driver.get("https://www.youtube.com")
 
-    if not os.path.exists(BROWSER_PROFILE_DIR):
-        raise FileNotFoundError(f"Browser profile not found: {BROWSER_PROFILE_DIR}")
+    # Collect cookies from both YouTube and Google domains
+    cookies = driver.get_cookies()
 
-    cookie_count = 0
+    # Also grab Google cookies by visiting accounts.google.com
+    try:
+        driver.get("https://accounts.google.com")
+        cookies.extend(driver.get_cookies())
+    except Exception as e:
+        log.warning("Could not get Google cookies: %s", e)
 
-    async with async_playwright() as p:
-        context = await p.chromium.launch_persistent_context(
-            user_data_dir=BROWSER_PROFILE_DIR,
-            executable_path=CHROMIUM_PATH,
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-gpu",
-                "--disable-dev-shm-usage",
-                "--disable-extensions",
-            ],
-        )
-
-        try:
-            # Navigate to YouTube to refresh session
-            page = context.pages[0] if context.pages else await context.new_page()
-            await page.goto(
-                "https://www.youtube.com",
-                wait_until="networkidle",
-                timeout=30000,
-            )
-
-            # Extract cookies
-            cookies = await context.cookies(
-                ["https://www.youtube.com", "https://accounts.google.com"]
-            )
-        finally:
-            await context.close()
+    # Deduplicate by (domain, name)
+    seen = set()
+    unique = []
+    for c in cookies:
+        key = (c.get("domain", ""), c.get("name", ""))
+        if key not in seen:
+            seen.add(key)
+            unique.append(c)
 
     # Filter relevant cookies
     relevant = [
         c
-        for c in cookies
+        for c in unique
         if any(
             d in c.get("domain", "")
             for d in ["youtube.com", "google.com", "googleapis.com"]
@@ -173,11 +189,29 @@ async def export_cookies_from_profile() -> int:
     return cookie_count
 
 
+async def export_cookies_from_profile() -> int:
+    """Launch headless browser with saved profile, extract and write cookies."""
+    if not os.path.exists(BROWSER_PROFILE_DIR):
+        raise FileNotFoundError(f"Browser profile not found: {BROWSER_PROFILE_DIR}")
+
+    # Run Selenium in a thread to avoid blocking the event loop
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(None, _export_cookies_headless)
+
+
+def _export_cookies_headless() -> int:
+    """Headless export — runs in a thread."""
+    driver = _create_driver(headless=True)
+    try:
+        return _export_cookies_from_driver(driver)
+    finally:
+        driver.quit()
+
+
 def check_session_valid(cookie_count: int) -> bool:
     """Check if the exported cookies contain valid session data."""
     if cookie_count < 5:
         return False
-    # Read cookie file and check for required cookies
     try:
         with open(COOKIES_FILE, "r") as f:
             content = f.read()
@@ -208,8 +242,6 @@ def _kill_proc(proc):
 
 async def start_login() -> dict:
     """Start visual login session: Xvfb + Chromium + x11vnc + noVNC."""
-    from playwright.async_api import async_playwright
-
     if status["login_active"]:
         return {"error": "Login session already active"}
 
@@ -225,37 +257,30 @@ async def start_login() -> dict:
         stderr=subprocess.DEVNULL,
     )
     login_state["xvfb_proc"] = xvfb_proc
-    await asyncio.sleep(1)  # Wait for Xvfb to start
+    await asyncio.sleep(1)
 
     if xvfb_proc.poll() is not None:
         return {"error": "Failed to start Xvfb"}
 
-    # 2. Launch Playwright Chromium in headed mode
+    # 2. Launch Chromium via Selenium in headed mode on Xvfb display
     os.environ["DISPLAY"] = DISPLAY
 
-    pw = await async_playwright().start()
-    login_state["browser"] = pw
+    try:
+        loop = asyncio.get_running_loop()
+        driver = await loop.run_in_executor(None, _create_driver, False)
+        login_state["driver"] = driver
 
-    context = await pw.chromium.launch_persistent_context(
-        user_data_dir=BROWSER_PROFILE_DIR,
-        executable_path=CHROMIUM_PATH,
-        headless=False,
-        args=[
-            "--no-sandbox",
-            "--disable-gpu",
-            "--disable-dev-shm-usage",
-            "--start-maximized",
-        ],
-        viewport={"width": 1280, "height": 720},
-    )
-    login_state["context"] = context
-
-    # Navigate to Google login
-    page = context.pages[0] if context.pages else await context.new_page()
-    await page.goto(
-        "https://accounts.google.com/ServiceLogin?continue=https://www.youtube.com/",
-        timeout=30000,
-    )
+        # Navigate to Google login
+        await loop.run_in_executor(
+            None,
+            driver.get,
+            "https://accounts.google.com/ServiceLogin?continue=https://www.youtube.com/",
+        )
+    except Exception as e:
+        log.error("Failed to start Chromium: %s", e)
+        _kill_proc(xvfb_proc)
+        login_state["xvfb_proc"] = None
+        return {"error": f"Failed to start Chromium: {e}"}
 
     # 3. Start x11vnc
     vnc_proc = subprocess.Popen(
@@ -320,75 +345,41 @@ async def stop_login() -> dict:
     result = {"status": "ok", "cookies_exported": False, "cookie_count": 0}
 
     # Export cookies before closing
-    try:
-        context = login_state.get("context")
-        if context:
-            cookies = await context.cookies(
-                ["https://www.youtube.com", "https://accounts.google.com"]
-            )
-            relevant = [
-                c
-                for c in cookies
-                if any(
-                    d in c.get("domain", "")
-                    for d in ["youtube.com", "google.com", "googleapis.com"]
-                )
-            ]
-
-            # Write Netscape format
-            lines = [
-                "# Netscape HTTP Cookie File",
-                f"# Generated by cookie_manager.py at {datetime.now(timezone.utc).isoformat()}",
-                "",
-            ]
-            for c in relevant:
-                lines.append(format_netscape_cookie(c))
-
-            content = "\n".join(lines) + "\n"
-            tmp_path = COOKIES_FILE + ".tmp"
-            with open(tmp_path, "w") as f:
-                f.write(content)
-            os.rename(tmp_path, COOKIES_FILE)
-            os.chmod(COOKIES_FILE, 0o644)
+    driver = login_state.get("driver")
+    if driver:
+        try:
+            loop = asyncio.get_running_loop()
+            count = await loop.run_in_executor(None, _export_cookies_from_driver, driver)
 
             result["cookies_exported"] = True
-            result["cookie_count"] = len(relevant)
+            result["cookie_count"] = count
 
-            status["cookie_count"] = len(relevant)
+            status["cookie_count"] = count
             status["last_refresh"] = datetime.now(timezone.utc).isoformat()
             status["last_refresh_success"] = True
-            status["needs_relogin"] = not check_session_valid(len(relevant))
+            status["needs_relogin"] = not check_session_valid(count)
             status["last_error"] = None
 
-            log.info("Exported %d cookies after login", len(relevant))
-    except Exception as e:
-        log.error("Failed to export cookies after login: %s", e)
-        result["error"] = str(e)
-        status["last_error"] = str(e)
+            log.info("Exported %d cookies after login", count)
+        except Exception as e:
+            log.error("Failed to export cookies after login: %s", e)
+            result["error"] = str(e)
+            status["last_error"] = str(e)
 
-    # Cleanup: close browser and display stack
-    try:
-        context = login_state.get("context")
-        if context:
-            await context.close()
-    except Exception:
-        pass
+        # Quit browser
+        try:
+            driver.quit()
+        except Exception:
+            pass
 
-    try:
-        browser = login_state.get("browser")
-        if browser:
-            await browser.stop()
-    except Exception:
-        pass
-
+    # Cleanup display stack
     _kill_proc(login_state.get("novnc_proc"))
     _kill_proc(login_state.get("vnc_proc"))
     _kill_proc(login_state.get("xvfb_proc"))
 
     # Reset state
     login_state.update({
-        "browser": None,
-        "context": None,
+        "driver": None,
         "xvfb_proc": None,
         "vnc_proc": None,
         "novnc_proc": None,
@@ -414,7 +405,6 @@ async def refresh_loop():
     await asyncio.sleep(30)
 
     while True:
-        # Check if profile exists
         status["profile_exists"] = os.path.exists(BROWSER_PROFILE_DIR)
 
         if status["login_active"]:
@@ -519,6 +509,7 @@ def main():
     log.info("  Browser profile: %s", BROWSER_PROFILE_DIR)
     log.info("  Refresh interval: %ds", REFRESH_INTERVAL)
     log.info("  Chromium path: %s", CHROMIUM_PATH)
+    log.info("  ChromeDriver path: %s", CHROMEDRIVER_PATH)
 
     app = web.Application()
     app.router.add_post("/api/login_start", handle_login_start)
