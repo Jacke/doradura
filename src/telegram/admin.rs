@@ -2524,6 +2524,11 @@ pub async fn handle_browser_status_command(bot: &Bot, chat_id: ChatId, user_id: 
             let last_success = data.get("last_refresh_success").and_then(|v| v.as_bool());
             let last_error = data.get("last_error").and_then(|v| v.as_str());
 
+            // Persistent browser status
+            let browser_running = data.get("browser_running").and_then(|v| v.as_bool()).unwrap_or(false);
+            let browser_restarts = data.get("browser_restarts").and_then(|v| v.as_u64()).unwrap_or(0);
+            let browser_memory_mb = data.get("browser_memory_mb").and_then(|v| v.as_u64());
+
             // Get detailed cookie analysis
             let required_found: Vec<String> = data
                 .get("required_found")
@@ -2543,6 +2548,13 @@ pub async fn handle_browser_status_command(bot: &Bot, chat_id: ChatId, user_id: 
                 "🟢"
             } else {
                 "🟡"
+            };
+
+            let browser_status = if browser_running {
+                let mem_info = browser_memory_mb.map(|m| format!(" \\({}MB\\)", m)).unwrap_or_default();
+                format!("🟢 Running{}", mem_info)
+            } else {
+                "🔴 Not running".to_string()
             };
 
             let login_status = if login_active {
@@ -2603,17 +2615,24 @@ pub async fn handle_browser_status_command(bot: &Bot, chat_id: ChatId, user_id: 
                     "admin:browser_login_start".to_string(),
                 )]);
             }
-            buttons.push(vec![InlineKeyboardButton::callback(
-                "🔄 Force refresh",
-                "admin:browser_force_refresh".to_string(),
-            )]);
+            buttons.push(vec![
+                InlineKeyboardButton::callback("🔄 Refresh", "admin:browser_force_refresh".to_string()),
+                InlineKeyboardButton::callback("🔃 Restart browser", "admin:browser_restart".to_string()),
+            ]);
 
             let keyboard = InlineKeyboardMarkup::new(buttons);
+
+            let restarts_info = if browser_restarts > 0 {
+                format!(" \\({} restarts\\)", browser_restarts)
+            } else {
+                String::new()
+            };
 
             bot.send_message(
                 chat_id,
                 format!(
                     "{} *Cookie Manager Status*\n\n\
+                     🌐 Browser: {}{}\n\
                      Profile: {}\n\
                      Cookies: {} \\({} cookies\\)\n\
                      Login: {}\n\
@@ -2621,6 +2640,8 @@ pub async fn handle_browser_status_command(bot: &Bot, chat_id: ChatId, user_id: 
                      {}{}\n\n\
                      _Needs re\\-login: {}_",
                     status_icon,
+                    browser_status,
+                    restarts_info,
                     if profile_exists { "✅ exists" } else { "❌ missing" },
                     if cookies_exist { "✅" } else { "❌" },
                     cookie_count,
@@ -2782,6 +2803,34 @@ pub async fn handle_browser_callback(
                 }
                 Err(e) => {
                     bot.edit_message_text(chat_id, message_id, format!("❌ Failed to refresh cookies: {}", e))
+                        .await?;
+                }
+            }
+        }
+
+        "admin:browser_restart" => {
+            bot.edit_message_text(chat_id, message_id, "🔃 Restarting browser...")
+                .await?;
+
+            match cookie_manager_request("POST", "/api/restart_browser").await {
+                Ok(resp) => {
+                    let success = resp.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+
+                    if success {
+                        bot.edit_message_text(
+                            chat_id,
+                            message_id,
+                            "✅ Browser restarted successfully.\n\nUse /browser_status to check current state.",
+                        )
+                        .await?;
+                    } else {
+                        let error = resp.get("error").and_then(|v| v.as_str()).unwrap_or("unknown error");
+                        bot.edit_message_text(chat_id, message_id, format!("❌ Restart failed: {}", error))
+                            .await?;
+                    }
+                }
+                Err(e) => {
+                    bot.edit_message_text(chat_id, message_id, format!("❌ Failed to restart browser: {}", e))
                         .await?;
                 }
             }
