@@ -2072,15 +2072,55 @@ pub async fn handle_update_ytdlp_command(bot: &Bot, chat_id: ChatId, user_id: i6
 /// * `admin_id` - Admin's Telegram user ID
 /// * `reason` - Reason why cookies need refresh (e.g., "validation failed", "file missing")
 pub async fn notify_admin_cookies_refresh(bot: &Bot, admin_id: i64, reason: &str) -> Result<()> {
+    // Try to get detailed cookie info from cookie manager
+    let cookie_detail = match cookie_manager_request("GET", "/api/status").await {
+        Ok(data) => {
+            let cookie_count = data.get("cookie_count").and_then(|v| v.as_u64()).unwrap_or(0);
+            let required_found: Vec<String> = data
+                .get("required_found")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            let required_missing: Vec<String> = data
+                .get("required_missing")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+
+            let found_str = if required_found.is_empty() {
+                "нет".to_string()
+            } else {
+                required_found.join(", ")
+            };
+            let missing_str = if required_missing.is_empty() {
+                "нет".to_string()
+            } else {
+                required_missing.join(", ")
+            };
+
+            format!(
+                "\n\n*Состояние cookies \\({} шт\\.\\):*\n\
+                 ✅ Найдены: {}\n\
+                 ❌ Отсутствуют: {}",
+                cookie_count,
+                escape_markdown(&found_str),
+                escape_markdown(&missing_str)
+            )
+        }
+        Err(_) => String::new(),
+    };
+
     let message = format!(
         "🔴 *Требуется обновление YouTube cookies*\n\n\
-        Причина: _{}_\n\n\
+        Причина: _{}_\
+        {}\n\n\
         Для обновления:\n\
         • /browser\\_login — войти через браузер \\(рекомендуется\\)\n\
         • /update\\_cookies — загрузить cookies файл вручную\n\
         • /browser\\_status — проверить статус cookie manager\n\n\
         Без валидных cookies загрузка видео с YouTube может не работать\\.",
-        escape_markdown(reason)
+        escape_markdown(reason),
+        cookie_detail
     );
 
     match bot
@@ -2484,6 +2524,19 @@ pub async fn handle_browser_status_command(bot: &Bot, chat_id: ChatId, user_id: 
             let last_success = data.get("last_refresh_success").and_then(|v| v.as_bool());
             let last_error = data.get("last_error").and_then(|v| v.as_str());
 
+            // Get detailed cookie analysis
+            let required_found: Vec<String> = data
+                .get("required_found")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            let required_missing: Vec<String> = data
+                .get("required_missing")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            let invalid_reason = data.get("invalid_reason").and_then(|v| v.as_str());
+
             let status_icon = if needs_relogin {
                 "🔴"
             } else if cookies_exist && cookie_count > 0 {
@@ -2513,6 +2566,36 @@ pub async fn handle_browser_status_command(bot: &Bot, chat_id: ChatId, user_id: 
                 String::new()
             };
 
+            // Build session cookies detail
+            let session_detail = if needs_relogin {
+                let missing_str = if required_missing.is_empty() {
+                    "none".to_string()
+                } else {
+                    escape_markdown(&required_missing.join(", "))
+                };
+                let found_str = if required_found.is_empty() {
+                    "none".to_string()
+                } else {
+                    escape_markdown(&required_found.join(", "))
+                };
+                let reason_str = if let Some(reason) = invalid_reason {
+                    format!("\n❗ _{}_", escape_markdown(reason))
+                } else {
+                    String::new()
+                };
+                format!(
+                    "\n\n*Session cookies:*\n✅ Found: {}\n❌ Missing: {}{}",
+                    found_str, missing_str, reason_str
+                )
+            } else {
+                let found_str = if required_found.is_empty() {
+                    "checking\\.\\.\\.".to_string()
+                } else {
+                    escape_markdown(&required_found.join(", "))
+                };
+                format!("\n\n*Session cookies:* ✅ {}", found_str)
+            };
+
             let mut buttons = vec![];
             if needs_relogin || !profile_exists {
                 buttons.push(vec![InlineKeyboardButton::callback(
@@ -2535,7 +2618,7 @@ pub async fn handle_browser_status_command(bot: &Bot, chat_id: ChatId, user_id: 
                      Cookies: {} \\({} cookies\\)\n\
                      Login: {}\n\
                      Last refresh: {} {}\
-                     {}\n\n\
+                     {}{}\n\n\
                      _Needs re\\-login: {}_",
                     status_icon,
                     if profile_exists { "✅ exists" } else { "❌ missing" },
@@ -2545,6 +2628,7 @@ pub async fn handle_browser_status_command(bot: &Bot, chat_id: ChatId, user_id: 
                     refresh_icon,
                     escaped_refresh,
                     error_line,
+                    session_detail,
                     if needs_relogin { "yes" } else { "no" },
                 ),
             )
