@@ -2420,18 +2420,24 @@ pub async fn handle_browser_login_command(bot: &Bot, chat_id: ChatId, user_id: i
 
             let escaped_url = escape_markdown(novnc_url);
 
-            let keyboard = InlineKeyboardMarkup::new(vec![
-                vec![InlineKeyboardButton::url(
-                    "🌐 Open noVNC",
-                    novnc_url
-                        .parse()
-                        .unwrap_or_else(|_| "https://example.com".parse().unwrap()),
-                )],
-                vec![
-                    InlineKeyboardButton::callback("✅ Done — export cookies", "admin:browser_login_done".to_string()),
-                    InlineKeyboardButton::callback("❌ Cancel", "admin:browser_login_cancel".to_string()),
-                ],
+            // Build keyboard: only add URL button if it's a valid public URL
+            // (Telegram rejects http://localhost URLs in inline buttons)
+            let is_public_url = novnc_url.starts_with("https://")
+                || (novnc_url.starts_with("http://")
+                    && !novnc_url.contains("localhost")
+                    && !novnc_url.contains("127.0.0.1"));
+
+            let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+            if is_public_url {
+                if let Ok(url) = novnc_url.parse() {
+                    rows.push(vec![InlineKeyboardButton::url("🌐 Open noVNC", url)]);
+                }
+            }
+            rows.push(vec![
+                InlineKeyboardButton::callback("✅ Done — export cookies", "admin:browser_login_done".to_string()),
+                InlineKeyboardButton::callback("❌ Cancel", "admin:browser_login_cancel".to_string()),
             ]);
+            let keyboard = InlineKeyboardMarkup::new(rows);
 
             bot.edit_message_text(
                 chat_id,

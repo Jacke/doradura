@@ -78,7 +78,7 @@ RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp-nightly-builds/rel
 
 # Install Python dependencies
 RUN pip3 install --no-cache-dir --break-system-packages \
-  keyring pycryptodomex websockify selenium
+  keyring pycryptodomex websockify undetected-chromedriver
 
 # Create shared group and users, then set up directories
 # Both telegram-bot-api and botuser need to share files via shareddata group
@@ -89,7 +89,10 @@ RUN addgroup -g 2000 shareddata && \
   mkdir -p /app /data && \
   chown 1000:2000 /app && \
   chown telegram-bot-api:shareddata /data && \
-  chmod 775 /data
+  chmod 775 /data && \
+  cp /usr/bin/chromedriver /home/botuser/chromedriver && \
+  chown 1000:2000 /home/botuser/chromedriver && \
+  chmod 755 /home/botuser/chromedriver
 
 # Copy the compiled binary from rust-builder and set permissions
 COPY --from=rust-builder --chown=1000:2000 /app/target/release/doradura /app/doradura
@@ -149,7 +152,7 @@ stdout_logfile_maxbytes=0
 stderr_logfile=/dev/stderr
 stderr_logfile_maxbytes=0
 priority=15
-environment=DISPLAY=":99"
+environment=DISPLAY=":99",HOME="/home/botuser",CHROMEDRIVER_PATH="/home/botuser/chromedriver"
 
 [program:doradura-bot]
 command=/app/run-bot.sh

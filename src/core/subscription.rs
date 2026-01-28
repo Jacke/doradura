@@ -70,7 +70,7 @@ impl PlanLimits {
                 queue_priority: 0,
                 can_choose_video_quality: false,
                 can_choose_audio_bitrate: false,
-                can_upload_media: false,
+                can_upload_media: true,
             },
         }
     }
