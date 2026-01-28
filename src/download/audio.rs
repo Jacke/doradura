@@ -117,14 +117,22 @@ pub async fn download_audio_file_with_progress(
             "2",
             "--max-sleep-interval",
             "5",
+            // Exponential backoff for 403/rate-limit errors
+            "--retry-sleep",
+            "http:exp=1:30", // 1s -> 2s -> 4s -> ... up to 30s
+            "--retry-sleep",
+            "fragment:exp=1:30", // same for fragment errors
+            "--retries",
+            "5", // retry main request up to 5 times
         ];
         add_cookies_args(&mut args);
 
-        // Use default web client with cookies (not Android which requires PO Token)
+        // Use web client with PO Token support (bgutil plugin provides tokens automatically)
+        // web client provides better quality formats than android_sdkless
         args.push("--extractor-args");
-        args.push("youtube:player_client=default,web_safari,web_embedded");
+        args.push("youtube:player_client=web,web_safari,android_sdkless");
 
-        // Use Node.js for YouTube n-challenge solving
+        // Use Node.js for YouTube n-challenge solving and BotGuard token generation
         args.push("--js-runtimes");
         args.push("node");
 

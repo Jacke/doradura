@@ -47,7 +47,8 @@ RUN apk add --no-cache \
   unzip \
   bash \
   supervisor \
-  nodejs
+  nodejs \
+  git
 
 # Install Chromium and display server for cookie management
 RUN apk add --no-cache \
@@ -72,13 +73,26 @@ RUN mkdir -p /opt/novnc && \
 # Node.js 22+ is already installed (required for yt-dlp YouTube n-challenge solving)
 RUN node --version && echo "Node.js available for yt-dlp --js-runtimes node"
 
+# Install npm (for bgutil PO Token provider)
+RUN apk add --no-cache npm
+
 # Install yt-dlp from nightly builds (latest fixes for YouTube compatibility)
 RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
   chmod a+rx /usr/local/bin/yt-dlp
 
-# Install Python dependencies
+# Install Python dependencies (including yt-dlp PO Token plugin)
 RUN pip3 install --no-cache-dir --break-system-packages \
-  keyring pycryptodomex websockify undetected-chromedriver
+  keyring pycryptodomex websockify undetected-chromedriver bgutil-ytdlp-pot-provider
+
+# Install bgutil PO Token HTTP server (generates tokens for yt-dlp)
+# This server runs BotGuard JavaScript via Node.js to generate valid PO tokens
+RUN mkdir -p /opt/bgutil && \
+  cd /opt/bgutil && \
+  git clone --single-branch --branch 1.2.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git . && \
+  cd server && \
+  npm install && \
+  npx tsc && \
+  echo "✅ bgutil PO Token server built successfully"
 
 # Create shared group and users, then set up directories
 # Both telegram-bot-api and botuser need to share files via shareddata group
@@ -154,6 +168,18 @@ stderr_logfile=/dev/stderr
 stderr_logfile_maxbytes=0
 priority=15
 environment=DISPLAY=":99",HOME="/home/botuser",CHROMEDRIVER_PATH="/home/botuser/chromedriver"
+
+[program:bgutil-pot-server]
+command=node /opt/bgutil/server/build/main.js
+user=botuser
+autostart=true
+autorestart=true
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+priority=12
+environment=HOME="/home/botuser",TOKEN_TTL="6"
 
 [program:doradura-bot]
 command=/app/run-bot.sh

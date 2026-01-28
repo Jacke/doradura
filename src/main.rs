@@ -623,6 +623,8 @@ async fn process_queue(
     // Semaphore to limit concurrent downloads
     let semaphore = Arc::new(tokio::sync::Semaphore::new(config::queue::MAX_CONCURRENT_DOWNLOADS));
     let mut interval = interval(config::queue::check_interval());
+    // Track last download start to enforce global delay between downloads
+    let last_download_start = Arc::new(tokio::sync::Mutex::new(std::time::Instant::now()));
 
     loop {
         interval.tick().await;
@@ -632,6 +634,7 @@ async fn process_queue(
             let rate_limiter = Arc::clone(&rate_limiter);
             let semaphore = Arc::clone(&semaphore);
             let db_pool = Arc::clone(&db_pool);
+            let last_download_start = Arc::clone(&last_download_start);
 
             tokio::spawn(async move {
                 // Acquire permit from semaphore (will wait if all permits are taken)
@@ -652,6 +655,23 @@ async fn process_queue(
                     task.id,
                     semaphore.available_permits()
                 );
+
+                // Enforce global delay between download starts to avoid YouTube rate limiting
+                {
+                    let mut last_start = last_download_start.lock().await;
+                    let elapsed = last_start.elapsed();
+                    let inter_delay = config::queue::inter_download_delay();
+                    if elapsed < inter_delay {
+                        let wait_time = inter_delay - elapsed;
+                        log::info!(
+                            "Waiting {:?} before starting task {} (rate limit protection)",
+                            wait_time,
+                            task.id
+                        );
+                        tokio::time::sleep(wait_time).await;
+                    }
+                    *last_start = std::time::Instant::now();
+                }
 
                 // Mark the task as processing
                 if let Ok(conn) = db::get_connection(&db_pool) {
