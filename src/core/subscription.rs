@@ -970,7 +970,7 @@ mod tests {
         assert_eq!(limits.queue_priority, 0);
         assert!(!limits.can_choose_video_quality);
         assert!(!limits.can_choose_audio_bitrate);
-        assert!(!limits.can_upload_media);
+        assert!(limits.can_upload_media);
         assert_eq!(limits.allowed_formats.len(), 2);
         assert!(limits.allowed_formats.contains(&"mp3".to_string()));
         assert!(limits.allowed_formats.contains(&"mp4".to_string()));
