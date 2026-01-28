@@ -211,12 +211,25 @@ def _export_cookies_from_driver(driver: uc.Chrome) -> int:
     # Navigate to YouTube to ensure cookies are fresh
     driver.get("https://www.youtube.com")
 
+    # Wait for page to fully load and cookie rotation JavaScript to execute
+    # YouTube calls RotateCookiesPage periodically to refresh session cookies
+    time.sleep(5)
+
+    # Simulate some interaction to trigger cookie refresh
+    try:
+        driver.execute_script("window.scrollTo(0, 500);")
+        time.sleep(2)
+        driver.execute_script("window.scrollTo(0, 0);")
+    except Exception:
+        pass
+
     # Collect cookies from both YouTube and Google domains
     cookies = driver.get_cookies()
 
     # Also grab Google cookies by visiting accounts.google.com
     try:
         driver.get("https://accounts.google.com")
+        time.sleep(3)  # Wait for cookie sync
         cookies.extend(driver.get_cookies())
     except Exception as e:
         log.warning("Could not get Google cookies: %s", e)
@@ -288,30 +301,114 @@ async def export_cookies_from_profile() -> int:
 def _export_cookies_headless() -> int:
     """Headless export — runs in a thread.
 
-    Copies the persistent browser profile to a temporary directory to avoid
-    Chrome's "user data directory already in use" lock conflict with any
-    concurrent headed session or previous crash.
-    """
-    tmp_dir = tempfile.mkdtemp(prefix="cookie_refresh_")
-    try:
-        # Copy profile to temp dir (ignore errors for lock/socket files)
-        tmp_profile = os.path.join(tmp_dir, "profile")
-        shutil.copytree(
-            BROWSER_PROFILE_DIR,
-            tmp_profile,
-            ignore=shutil.ignore_patterns(
-                "SingletonLock", "SingletonCookie", "SingletonSocket",
-            ),
-        )
-        log.info("Copied profile to temp dir: %s", tmp_profile)
+    IMPORTANT: Uses the original profile directly (not a copy) to avoid
+    Google detecting a "new device" and invalidating the session.
 
-        driver = _create_driver(headless=True, profile_dir=tmp_profile)
+    The previous approach of copying to temp directory caused Google to
+    see the browser as a new device, triggering session invalidation.
+    """
+    # Kill any orphaned Chrome processes and clean up locks first
+    _kill_chrome_on_profile(BROWSER_PROFILE_DIR)
+    _cleanup_profile_locks(BROWSER_PROFILE_DIR)
+
+    log.info("Starting headless refresh with original profile: %s", BROWSER_PROFILE_DIR)
+
+    driver = _create_driver(headless=True, profile_dir=BROWSER_PROFILE_DIR)
+    try:
+        # Navigate to YouTube and wait for cookie rotation to happen
+        log.info("Navigating to YouTube for session refresh...")
+        driver.get("https://www.youtube.com")
+
+        # Wait for page to fully load and JavaScript to execute
+        time.sleep(5)
+
+        # Simulate human-like behavior to keep session "warm"
+        # Scroll down a bit
         try:
-            return _export_cookies_from_driver(driver)
-        finally:
-            driver.quit()
+            driver.execute_script("window.scrollTo(0, 300);")
+            time.sleep(2)
+            driver.execute_script("window.scrollTo(0, 0);")
+            time.sleep(2)
+        except Exception as e:
+            log.warning("Could not simulate scrolling: %s", e)
+
+        # Check if we're still logged in by looking for sign-in button
+        is_logged_in = _check_youtube_logged_in(driver)
+
+        if not is_logged_in:
+            log.error("Session is NOT logged in! Detected sign-out. Skipping cookie export.")
+            # Return 0 to indicate no valid cookies - this will trigger needs_relogin
+            return 0
+
+        log.info("Session is still logged in, proceeding with cookie export")
+
+        # Wait a bit more to ensure cookie rotation completes
+        time.sleep(3)
+
+        return _export_cookies_from_driver(driver)
     finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+        driver.quit()
+        # Clean up any locks that might have been created
+        _cleanup_profile_locks(BROWSER_PROFILE_DIR)
+
+
+def _check_youtube_logged_in(driver: uc.Chrome) -> bool:
+    """Check if YouTube session is logged in by examining page elements."""
+    try:
+        # Method 1: Check for avatar button (logged in users have this)
+        avatar_selectors = [
+            "button#avatar-btn",
+            "#avatar-btn",
+            "ytd-topbar-menu-button-renderer button",
+            "[aria-label*='Account']",
+        ]
+        for selector in avatar_selectors:
+            try:
+                elements = driver.find_elements("css selector", selector)
+                if elements:
+                    log.info("Found avatar element with selector: %s", selector)
+                    return True
+            except Exception:
+                pass
+
+        # Method 2: Check for Sign In button (means NOT logged in)
+        sign_in_selectors = [
+            "a[href*='accounts.google.com/ServiceLogin']",
+            "ytd-button-renderer a[href*='accounts.google']",
+            "tp-yt-paper-button[aria-label='Sign in']",
+            "[aria-label='Sign in']",
+        ]
+        for selector in sign_in_selectors:
+            try:
+                elements = driver.find_elements("css selector", selector)
+                if elements:
+                    log.warning("Found Sign In button with selector: %s - NOT logged in!", selector)
+                    return False
+            except Exception:
+                pass
+
+        # Method 3: Check page source for login indicators
+        page_source = driver.page_source.lower()
+        if "sign in" in page_source and "sign out" not in page_source:
+            log.warning("Page contains 'Sign in' without 'Sign out' - likely NOT logged in")
+            return False
+
+        # Method 4: Check cookies for session indicators
+        cookies = driver.get_cookies()
+        cookie_names = {c.get("name", "") for c in cookies}
+        has_session_cookies = bool(REQUIRED_COOKIES & cookie_names)
+
+        if has_session_cookies:
+            log.info("Session cookies present: %s", REQUIRED_COOKIES & cookie_names)
+            return True
+        else:
+            log.warning("No session cookies found!")
+            return False
+
+    except Exception as e:
+        log.error("Error checking login status: %s", e)
+        # If we can't determine, assume logged in and let cookie export decide
+        return True
 
 
 def check_session_valid(cookie_count: int) -> bool:
