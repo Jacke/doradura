@@ -48,12 +48,25 @@ CHROMEDRIVER_PATH = os.environ.get("CHROMEDRIVER_PATH", "/usr/bin/chromedriver")
 # Required YouTube/Google cookies that indicate a valid session
 REQUIRED_COOKIES = {"SID", "HSID", "SSID", "APISID", "SAPISID"}
 
+# All important Google/YouTube cookies to track
+TRACKED_COOKIES = {
+    "SID", "HSID", "SSID", "APISID", "SAPISID",  # Core session
+    "__Secure-1PSID", "__Secure-3PSID",  # Secure session variants
+    "__Secure-1PAPISID", "__Secure-3PAPISID",  # Secure API variants
+    "LOGIN_INFO",  # YouTube login state
+    "PREF", "YSC", "VISITOR_INFO1_LIVE",  # YouTube preferences
+    "CONSENT", "SOCS",  # Cookie consent
+}
+
+# Store previous cookies for comparison
+_previous_cookies = {}
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,  # Enable DEBUG for detailed cookie tracking
     format="%(asctime)s [cookie-manager] %(levelname)s %(message)s",
     datefmt="%H:%M:%S",
 )
@@ -206,38 +219,189 @@ def format_netscape_cookie(cookie: dict) -> str:
     return f"{domain}\t{subdomain}\t{path}\t{secure}\t{expires}\t{name}\t{value}"
 
 
+def _log_cookie_details(cookies: list, context: str = ""):
+    """Log detailed information about cookies for debugging."""
+    global _previous_cookies
+
+    now = time.time()
+    log.info("=" * 60)
+    log.info("COOKIE ANALYSIS %s", f"({context})" if context else "")
+    log.info("=" * 60)
+    log.info("Total cookies: %d", len(cookies))
+
+    # Group by domain
+    by_domain = {}
+    for c in cookies:
+        domain = c.get("domain", "unknown")
+        if domain not in by_domain:
+            by_domain[domain] = []
+        by_domain[domain].append(c)
+
+    for domain in sorted(by_domain.keys()):
+        log.info("-" * 40)
+        log.info("Domain: %s (%d cookies)", domain, len(by_domain[domain]))
+
+        for c in sorted(by_domain[domain], key=lambda x: x.get("name", "")):
+            name = c.get("name", "")
+            value = c.get("value", "")
+            expiry = c.get("expiry", 0)
+            secure = c.get("secure", False)
+            http_only = c.get("httpOnly", False)
+
+            # Only show detailed info for important cookies
+            if name in TRACKED_COOKIES:
+                # Calculate expiry info
+                if expiry:
+                    expires_in = expiry - now
+                    if expires_in > 0:
+                        days = expires_in / 86400
+                        expiry_str = f"expires in {days:.1f} days"
+                    else:
+                        expiry_str = f"EXPIRED {abs(expires_in)/3600:.1f}h ago!"
+                else:
+                    expiry_str = "session cookie (no expiry)"
+
+                # Truncate value for security but show enough to compare
+                value_preview = value[:20] + "..." if len(value) > 20 else value
+
+                # Check if changed from previous
+                prev_value = _previous_cookies.get(f"{domain}:{name}")
+                changed = ""
+                if prev_value is not None:
+                    if prev_value != value:
+                        changed = " [CHANGED!]"
+                    else:
+                        changed = " [same]"
+
+                log.info("  📌 %s = %s | %s | secure=%s httpOnly=%s%s",
+                         name, value_preview, expiry_str, secure, http_only, changed)
+
+                # Store for next comparison
+                _previous_cookies[f"{domain}:{name}"] = value
+
+    # Summary of required cookies
+    cookie_names = {c.get("name", "") for c in cookies}
+    found_required = REQUIRED_COOKIES & cookie_names
+    missing_required = REQUIRED_COOKIES - cookie_names
+
+    log.info("-" * 40)
+    log.info("REQUIRED COOKIES STATUS:")
+    log.info("  ✅ Found: %s", found_required if found_required else "NONE!")
+    log.info("  ❌ Missing: %s", missing_required if missing_required else "none")
+    log.info("=" * 60)
+
+    return bool(found_required)
+
+
+def _log_page_state(driver: uc.Chrome, context: str = ""):
+    """Log page state for debugging sign-out issues."""
+    try:
+        log.info("=" * 60)
+        log.info("PAGE STATE ANALYSIS %s", f"({context})" if context else "")
+        log.info("=" * 60)
+
+        # Current URL
+        log.info("Current URL: %s", driver.current_url)
+
+        # Page title
+        log.info("Page title: %s", driver.title)
+
+        # Check for common elements
+        checks = [
+            ("Avatar/Account button", "#avatar-btn, button[aria-label*='Account']"),
+            ("Sign In button", "[aria-label='Sign in'], a[href*='accounts.google.com/ServiceLogin']"),
+            ("Sign Out option", "[aria-label='Sign out']"),
+            ("YouTube logo", "#logo"),
+        ]
+
+        for name, selector in checks:
+            try:
+                elements = driver.find_elements("css selector", selector)
+                if elements:
+                    log.info("  ✅ %s: FOUND (%d elements)", name, len(elements))
+                else:
+                    log.info("  ❌ %s: not found", name)
+            except Exception as e:
+                log.info("  ⚠️ %s: error checking (%s)", name, e)
+
+        # Look for error messages or unusual content
+        try:
+            page_source = driver.page_source
+            error_indicators = [
+                "Sign in to confirm you're not a bot",
+                "unusual traffic",
+                "captcha",
+                "verify it's you",
+                "session expired",
+                "signed out",
+            ]
+            for indicator in error_indicators:
+                if indicator.lower() in page_source.lower():
+                    log.warning("  ⚠️ FOUND ERROR INDICATOR: '%s'", indicator)
+        except Exception:
+            pass
+
+        log.info("=" * 60)
+
+    except Exception as e:
+        log.error("Error logging page state: %s", e)
+
+
 def _export_cookies_from_driver(driver: uc.Chrome) -> int:
     """Extract cookies from an open driver and write to file."""
+    log.info("Starting cookie export from driver...")
+
+    # Log initial state before navigation
+    initial_cookies = driver.get_cookies()
+    log.info("Cookies BEFORE YouTube navigation: %d", len(initial_cookies))
+    _log_cookie_details(initial_cookies, "BEFORE navigation")
+
     # Navigate to YouTube to ensure cookies are fresh
+    log.info("Navigating to YouTube...")
     driver.get("https://www.youtube.com")
 
     # Wait for page to fully load and cookie rotation JavaScript to execute
     # YouTube calls RotateCookiesPage periodically to refresh session cookies
+    log.info("Waiting 5s for page load and JS execution...")
     time.sleep(5)
+
+    # Log page state
+    _log_page_state(driver, "after YouTube load")
 
     # Simulate some interaction to trigger cookie refresh
     try:
+        log.info("Simulating user interaction (scroll)...")
         driver.execute_script("window.scrollTo(0, 500);")
         time.sleep(2)
         driver.execute_script("window.scrollTo(0, 0);")
-    except Exception:
-        pass
+    except Exception as e:
+        log.warning("Could not simulate scroll: %s", e)
 
-    # Collect cookies from both YouTube and Google domains
-    cookies = driver.get_cookies()
+    # Collect cookies from YouTube
+    youtube_cookies = driver.get_cookies()
+    log.info("Cookies AFTER YouTube interaction: %d", len(youtube_cookies))
+    _log_cookie_details(youtube_cookies, "AFTER YouTube")
 
     # Also grab Google cookies by visiting accounts.google.com
     try:
+        log.info("Navigating to accounts.google.com...")
         driver.get("https://accounts.google.com")
         time.sleep(3)  # Wait for cookie sync
-        cookies.extend(driver.get_cookies())
+
+        _log_page_state(driver, "after Google accounts load")
+
+        google_cookies = driver.get_cookies()
+        log.info("Cookies from Google: %d", len(google_cookies))
+        _log_cookie_details(google_cookies, "Google domain")
+
+        youtube_cookies.extend(google_cookies)
     except Exception as e:
         log.warning("Could not get Google cookies: %s", e)
 
     # Deduplicate by (domain, name)
     seen = set()
     unique = []
-    for c in cookies:
+    for c in youtube_cookies:
         key = (c.get("domain", ""), c.get("name", ""))
         if key not in seen:
             seen.add(key)
@@ -252,6 +416,10 @@ def _export_cookies_from_driver(driver: uc.Chrome) -> int:
             for d in ["youtube.com", "google.com", "googleapis.com"]
         )
     ]
+
+    log.info("=" * 60)
+    log.info("FINAL EXPORT: %d relevant cookies (from %d total)", len(relevant), len(unique))
+    _log_cookie_details(relevant, "FINAL EXPORT")
 
     # Write Netscape format
     lines = [
@@ -276,7 +444,7 @@ def _export_cookies_from_driver(driver: uc.Chrome) -> int:
     has_session = bool(REQUIRED_COOKIES & cookie_names)
 
     log.info(
-        "Exported %d cookies (%s session cookies)",
+        "✅ Exported %d cookies (%s session cookies)",
         cookie_count,
         "has" if has_session else "NO",
     )
@@ -307,24 +475,62 @@ def _export_cookies_headless() -> int:
     The previous approach of copying to temp directory caused Google to
     see the browser as a new device, triggering session invalidation.
     """
+    log.info("=" * 80)
+    log.info("HEADLESS COOKIE REFRESH STARTED")
+    log.info("=" * 80)
+
     # Kill any orphaned Chrome processes and clean up locks first
     _kill_chrome_on_profile(BROWSER_PROFILE_DIR)
     _cleanup_profile_locks(BROWSER_PROFILE_DIR)
 
-    log.info("Starting headless refresh with original profile: %s", BROWSER_PROFILE_DIR)
+    log.info("Using original profile: %s", BROWSER_PROFILE_DIR)
+
+    # Check profile directory contents
+    if os.path.exists(BROWSER_PROFILE_DIR):
+        try:
+            items = os.listdir(BROWSER_PROFILE_DIR)
+            log.info("Profile directory contains %d items", len(items))
+            # Log some key directories
+            key_dirs = ["Default", "Cookies", "Local State"]
+            for d in key_dirs:
+                path = os.path.join(BROWSER_PROFILE_DIR, d)
+                if os.path.exists(path):
+                    log.info("  ✅ %s exists", d)
+                else:
+                    log.warning("  ❌ %s NOT FOUND", d)
+        except Exception as e:
+            log.warning("Could not list profile directory: %s", e)
 
     driver = _create_driver(headless=True, profile_dir=BROWSER_PROFILE_DIR)
     try:
+        # Get cookies BEFORE any navigation
+        initial_cookies = driver.get_cookies()
+        log.info("Cookies in browser BEFORE navigation: %d", len(initial_cookies))
+        if initial_cookies:
+            _log_cookie_details(initial_cookies, "INITIAL (before navigation)")
+        else:
+            log.warning("⚠️ NO COOKIES in browser before navigation!")
+
         # Navigate to YouTube and wait for cookie rotation to happen
         log.info("Navigating to YouTube for session refresh...")
         driver.get("https://www.youtube.com")
 
         # Wait for page to fully load and JavaScript to execute
+        log.info("Waiting 5s for page load...")
         time.sleep(5)
+
+        # Log page state
+        _log_page_state(driver, "after YouTube navigation")
+
+        # Check cookies after YouTube load
+        after_yt_cookies = driver.get_cookies()
+        log.info("Cookies AFTER YouTube load: %d", len(after_yt_cookies))
+        _log_cookie_details(after_yt_cookies, "AFTER YouTube load")
 
         # Simulate human-like behavior to keep session "warm"
         # Scroll down a bit
         try:
+            log.info("Simulating user interaction...")
             driver.execute_script("window.scrollTo(0, 300);")
             time.sleep(2)
             driver.execute_script("window.scrollTo(0, 0);")
@@ -336,20 +542,46 @@ def _export_cookies_headless() -> int:
         is_logged_in = _check_youtube_logged_in(driver)
 
         if not is_logged_in:
-            log.error("Session is NOT logged in! Detected sign-out. Skipping cookie export.")
-            # Return 0 to indicate no valid cookies - this will trigger needs_relogin
+            log.error("=" * 80)
+            log.error("SESSION IS NOT LOGGED IN! SIGN-OUT DETECTED!")
+            log.error("=" * 80)
+
+            # Take screenshot for debugging (save to /data)
+            try:
+                screenshot_path = "/data/signout_debug.png"
+                driver.save_screenshot(screenshot_path)
+                log.info("Screenshot saved to %s", screenshot_path)
+            except Exception as e:
+                log.warning("Could not save screenshot: %s", e)
+
+            # Log current page source (truncated)
+            try:
+                source = driver.page_source[:2000]
+                log.info("Page source (first 2000 chars):\n%s", source)
+            except Exception:
+                pass
+
             return 0
 
-        log.info("Session is still logged in, proceeding with cookie export")
+        log.info("✅ Session is still logged in, proceeding with cookie export")
 
         # Wait a bit more to ensure cookie rotation completes
         time.sleep(3)
 
         return _export_cookies_from_driver(driver)
+    except Exception as e:
+        log.error("Error during headless refresh: %s", e, exc_info=True)
+        raise
     finally:
-        driver.quit()
+        try:
+            driver.quit()
+        except Exception:
+            pass
         # Clean up any locks that might have been created
         _cleanup_profile_locks(BROWSER_PROFILE_DIR)
+        log.info("=" * 80)
+        log.info("HEADLESS COOKIE REFRESH COMPLETED")
+        log.info("=" * 80)
 
 
 def _check_youtube_logged_in(driver: uc.Chrome) -> bool:
@@ -698,6 +930,76 @@ async def handle_export_cookies(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def handle_cookie_debug(request):
+    """Return detailed cookie analysis for debugging."""
+    result = {
+        "cookies_file_exists": os.path.exists(COOKIES_FILE),
+        "profile_exists": os.path.exists(BROWSER_PROFILE_DIR),
+        "cookies": [],
+        "analysis": {},
+    }
+
+    if os.path.exists(COOKIES_FILE):
+        try:
+            with open(COOKIES_FILE, "r") as f:
+                content = f.read()
+
+            result["file_size"] = len(content)
+            result["file_lines"] = len(content.splitlines())
+
+            now = time.time()
+            cookies = []
+            for line in content.splitlines():
+                if line.startswith("#") or not line.strip():
+                    continue
+                parts = line.split("\t")
+                if len(parts) >= 7:
+                    domain, _, path, secure, expiry, name, value = parts[:7]
+                    expiry_int = int(expiry) if expiry.isdigit() else 0
+
+                    cookie_info = {
+                        "domain": domain,
+                        "name": name,
+                        "value_preview": value[:30] + "..." if len(value) > 30 else value,
+                        "secure": secure == "TRUE",
+                        "expiry": expiry_int,
+                    }
+
+                    if expiry_int > 0:
+                        expires_in = expiry_int - now
+                        cookie_info["expires_in_hours"] = round(expires_in / 3600, 1)
+                        cookie_info["expired"] = expires_in < 0
+                    else:
+                        cookie_info["expires_in_hours"] = None
+                        cookie_info["expired"] = False
+
+                    # Mark important cookies
+                    cookie_info["is_required"] = name in REQUIRED_COOKIES
+                    cookie_info["is_tracked"] = name in TRACKED_COOKIES
+
+                    cookies.append(cookie_info)
+
+            result["cookies"] = cookies
+            result["total_cookies"] = len(cookies)
+
+            # Analysis
+            required_found = [c["name"] for c in cookies if c["is_required"]]
+            required_missing = list(REQUIRED_COOKIES - set(required_found))
+            expired = [c["name"] for c in cookies if c.get("expired")]
+
+            result["analysis"] = {
+                "required_cookies_found": required_found,
+                "required_cookies_missing": required_missing,
+                "expired_cookies": expired,
+                "session_valid": len(required_found) > 0 and len(expired) == 0,
+            }
+
+        except Exception as e:
+            result["error"] = str(e)
+
+    return web.json_response(result)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -740,6 +1042,7 @@ def main():
     app.router.add_post("/api/login_stop", handle_login_stop)
     app.router.add_get("/api/status", handle_status)
     app.router.add_post("/api/export_cookies", handle_export_cookies)
+    app.router.add_get("/api/cookie_debug", handle_cookie_debug)
 
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
