@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-YouTube Cookie Manager — aiohttp server + Selenium browser automation.
+YouTube Cookie Manager — aiohttp server + undetected-chromedriver automation.
 
 Manages YouTube cookies automatically:
 1. First login via noVNC (admin logs in visually)
@@ -24,15 +24,14 @@ import time
 from datetime import datetime, timezone
 
 from aiohttp import web
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options as ChromeOptions
-from selenium.webdriver.chrome.service import Service as ChromeService
+import undetected_chromedriver as uc
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-COOKIES_FILE = os.environ.get("YTDL_COOKIES_FILE", "/data/youtube_cookies.txt")
+_raw_cookies_file = os.environ.get("YTDL_COOKIES_FILE", "/data/youtube_cookies.txt")
+COOKIES_FILE = _raw_cookies_file if os.path.isabs(_raw_cookies_file) else os.path.join("/data", _raw_cookies_file)
 BROWSER_PROFILE_DIR = os.environ.get("BROWSER_PROFILE_DIR", "/data/browser_profile")
 REFRESH_INTERVAL = int(os.environ.get("COOKIE_REFRESH_INTERVAL", "1800"))  # 30 min
 LOGIN_TIMEOUT = int(os.environ.get("COOKIE_LOGIN_TIMEOUT", "900"))  # 15 min
@@ -153,15 +152,14 @@ def _cleanup_profile_locks(profile_dir: str):
                 log.warning("Failed to remove lock file %s: %s", lock_path, e)
 
 
-def _make_chrome_options(*, headless: bool, profile_dir: str) -> ChromeOptions:
+def _make_chrome_options(*, headless: bool, profile_dir: str) -> uc.ChromeOptions:
     """Create ChromeOptions with common flags."""
-    opts = ChromeOptions()
+    opts = uc.ChromeOptions()
     opts.binary_location = CHROMIUM_PATH
     opts.add_argument(f"--user-data-dir={profile_dir}")
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-gpu")
     opts.add_argument("--disable-dev-shm-usage")
-    opts.add_argument("--disable-extensions")
     if headless:
         opts.add_argument("--headless=new")
     else:
@@ -170,13 +168,24 @@ def _make_chrome_options(*, headless: bool, profile_dir: str) -> ChromeOptions:
     return opts
 
 
-def _create_driver(*, headless: bool, profile_dir: str) -> webdriver.Chrome:
-    """Create a Selenium Chrome driver with the given profile directory."""
+def _create_driver(*, headless: bool, profile_dir: str) -> uc.Chrome:
+    """Create an undetected Chrome driver with the given profile directory."""
     _kill_chrome_on_profile(profile_dir)
     _cleanup_profile_locks(profile_dir)
     opts = _make_chrome_options(headless=headless, profile_dir=profile_dir)
-    service = ChromeService(executable_path=CHROMEDRIVER_PATH)
-    return webdriver.Chrome(service=service, options=opts)
+
+    # Ensure HOME is writable (undetected-chromedriver writes to ~/.local/)
+    home = os.environ.get("HOME", "/tmp")
+    local_dir = os.path.join(home, ".local", "share", "undetected_chromedriver")
+    os.makedirs(local_dir, exist_ok=True)
+
+    return uc.Chrome(
+        options=opts,
+        browser_executable_path=CHROMIUM_PATH,
+        driver_executable_path=CHROMEDRIVER_PATH,
+        headless=headless,
+        use_subprocess=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +205,7 @@ def format_netscape_cookie(cookie: dict) -> str:
     return f"{domain}\t{subdomain}\t{path}\t{secure}\t{expires}\t{name}\t{value}"
 
 
-def _export_cookies_from_driver(driver: webdriver.Chrome) -> int:
+def _export_cookies_from_driver(driver: uc.Chrome) -> int:
     """Extract cookies from an open driver and write to file."""
     # Navigate to YouTube to ensure cookies are fresh
     driver.get("https://www.youtube.com")
