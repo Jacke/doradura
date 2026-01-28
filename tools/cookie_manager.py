@@ -1,27 +1,35 @@
 #!/usr/bin/env python3
 """
-YouTube Cookie Manager — aiohttp server + undetected-chromedriver automation.
+YouTube Cookie Manager — aiohttp server + Persistent Browser Architecture.
 
-Manages YouTube cookies automatically:
-1. First login via noVNC (admin logs in visually)
-2. Cookie refresh every 30 minutes (headless)
-3. Exports cookies in Netscape format for yt-dlp
+Manages YouTube cookies automatically with a PERSISTENT headless browser:
+1. Browser starts once at startup and stays running
+2. Cookie refresh via navigation (not browser restart) every 30 minutes
+3. Session cookies are preserved because browser never closes
+
+Key difference from previous approach:
+- OLD: Start Chrome → navigate → export → quit Chrome (session cookies lost!)
+- NEW: Start Chrome once → navigate periodically → export → browser stays running
 
 API endpoints:
-  POST /api/login_start    — Start login session (Xvfb + Chromium + noVNC)
-  POST /api/login_stop     — Stop login, export cookies
-  GET  /api/status         — Cookie manager status
-  POST /api/export_cookies — Force cookie re-export
+  POST /api/login_start     — Start visual login session (Xvfb + noVNC)
+  POST /api/login_stop      — Stop login, export cookies
+  GET  /api/status          — Cookie manager status
+  POST /api/export_cookies  — Force cookie re-export
+  GET  /api/browser_health  — Check persistent browser health
+  POST /api/restart_browser — Force restart persistent browser
+  GET  /api/cookie_debug    — Detailed cookie analysis
 """
 
 import asyncio
 import logging
 import os
-import shutil
+import signal
 import subprocess
-import tempfile
+import threading
 import time
 from datetime import datetime, timezone
+from typing import Optional
 
 from aiohttp import web
 import undetected_chromedriver as uc
@@ -45,6 +53,11 @@ DISPLAY = ":99"
 CHROMIUM_PATH = os.environ.get("CHROMIUM_PATH", "/usr/bin/chromium-browser")
 CHROMEDRIVER_PATH = os.environ.get("CHROMEDRIVER_PATH", "/usr/bin/chromedriver")
 
+# Watchdog configuration
+HEALTH_CHECK_INTERVAL = int(os.environ.get("BROWSER_HEALTH_CHECK_INTERVAL", "300"))  # 5 min
+BROWSER_MAX_MEMORY_MB = int(os.environ.get("BROWSER_MAX_MEMORY_MB", "1024"))  # 1 GB
+BROWSER_RESTART_INTERVAL = int(os.environ.get("BROWSER_RESTART_INTERVAL", "21600"))  # 6 hours
+
 # Required YouTube/Google cookies that indicate a valid session
 REQUIRED_COOKIES = {"SID", "HSID", "SSID", "APISID", "SAPISID"}
 
@@ -66,7 +79,7 @@ _previous_cookies = {}
 # ---------------------------------------------------------------------------
 
 logging.basicConfig(
-    level=logging.DEBUG,  # Enable DEBUG for detailed cookie tracking
+    level=logging.DEBUG,
     format="%(asctime)s [cookie-manager] %(levelname)s %(message)s",
     datefmt="%H:%M:%S",
 )
@@ -85,6 +98,12 @@ status = {
     "needs_relogin": False,
     "profile_exists": False,
     "last_error": None,
+    # Persistent browser status
+    "browser_running": False,
+    "browser_started_at": None,
+    "browser_restarts": 0,
+    "last_health_check": None,
+    "browser_memory_mb": None,
 }
 
 login_state = {
@@ -94,9 +113,8 @@ login_state = {
     "novnc_proc": None,
 }
 
-# Lock to prevent concurrent browser sessions (login vs refresh).
-# Initialized in on_startup() since asyncio.Lock() needs a running event loop.
-_browser_lock = None
+# Lock to prevent concurrent browser operations
+_browser_lock: Optional[asyncio.Lock] = None
 
 
 def _init_browser_lock():
@@ -105,20 +123,410 @@ def _init_browser_lock():
 
 
 # ---------------------------------------------------------------------------
-# Selenium helpers
+# Persistent Browser Manager
+# ---------------------------------------------------------------------------
+
+class PersistentBrowserManager:
+    """
+    Manages a persistent headless Chrome browser that stays running.
+
+    Key features:
+    - Browser starts once and stays alive
+    - Session cookies are preserved (not deleted on quit)
+    - Periodic navigation refreshes the session
+    - Watchdog monitors health and restarts if needed
+    """
+
+    def __init__(self):
+        self.driver: Optional[uc.Chrome] = None
+        self.started_at: Optional[datetime] = None
+        self.restarts: int = 0
+        self._lock = threading.Lock()
+        self._watchdog_thread: Optional[threading.Thread] = None
+        self._shutdown_event = threading.Event()
+        self._last_activity: float = 0
+
+    def is_running(self) -> bool:
+        """Check if browser is currently running."""
+        with self._lock:
+            if self.driver is None:
+                return False
+            try:
+                # Try to get window handles - fails if browser crashed
+                _ = self.driver.window_handles
+                return True
+            except Exception:
+                return False
+
+    def start(self) -> bool:
+        """Start the persistent browser. Returns True if successful."""
+        with self._lock:
+            if self.driver is not None:
+                log.warning("Browser already running, not starting new one")
+                return True
+
+            log.info("=" * 60)
+            log.info("STARTING PERSISTENT BROWSER")
+            log.info("=" * 60)
+
+            try:
+                self._cleanup_before_start()
+                self.driver = self._create_browser()
+                self.started_at = datetime.now(timezone.utc)
+                self._last_activity = time.time()
+
+                # Navigate to YouTube to establish session
+                log.info("Initial navigation to YouTube...")
+                self.driver.get("https://www.youtube.com")
+                time.sleep(3)
+
+                log.info("✅ Persistent browser started successfully")
+                status["browser_running"] = True
+                status["browser_started_at"] = self.started_at.isoformat()
+
+                return True
+
+            except Exception as e:
+                log.error("Failed to start persistent browser: %s", e)
+                self.driver = None
+                status["browser_running"] = False
+                status["last_error"] = f"Browser start failed: {e}"
+                return False
+
+    def stop(self, export_cookies: bool = True) -> int:
+        """Stop the browser. Returns cookie count if exported."""
+        with self._lock:
+            if self.driver is None:
+                log.info("Browser not running, nothing to stop")
+                return 0
+
+            log.info("=" * 60)
+            log.info("STOPPING PERSISTENT BROWSER")
+            log.info("=" * 60)
+
+            cookie_count = 0
+
+            if export_cookies:
+                try:
+                    log.info("Exporting cookies before shutdown...")
+                    cookie_count = self._export_cookies_internal()
+                    log.info("Exported %d cookies", cookie_count)
+                except Exception as e:
+                    log.error("Failed to export cookies on shutdown: %s", e)
+
+            try:
+                self.driver.quit()
+            except Exception as e:
+                log.warning("Error quitting browser: %s", e)
+
+            self.driver = None
+            status["browser_running"] = False
+
+            # Kill any orphaned processes
+            _kill_chrome_on_profile(BROWSER_PROFILE_DIR)
+            _cleanup_profile_locks(BROWSER_PROFILE_DIR)
+
+            log.info("Persistent browser stopped")
+            return cookie_count
+
+    def restart(self) -> bool:
+        """Restart the browser (stop + start). Returns True if successful."""
+        log.info("Restarting persistent browser...")
+        self.stop(export_cookies=True)
+        time.sleep(2)
+        success = self.start()
+        if success:
+            self.restarts += 1
+            status["browser_restarts"] = self.restarts
+        return success
+
+    def refresh_and_export(self) -> int:
+        """
+        Navigate to YouTube to refresh session, then export cookies.
+        This is the key operation that keeps session alive WITHOUT restarting browser.
+        Returns cookie count.
+        """
+        with self._lock:
+            if self.driver is None:
+                raise RuntimeError("Browser not running")
+
+            log.info("=" * 60)
+            log.info("REFRESHING SESSION (in-browser navigation)")
+            log.info("=" * 60)
+
+            try:
+                # Navigate to YouTube
+                log.info("Navigating to YouTube...")
+                self.driver.get("https://www.youtube.com")
+                time.sleep(5)
+
+                # Log page state
+                _log_page_state(self.driver, "after YouTube navigation")
+
+                # Simulate user interaction to keep session warm
+                log.info("Simulating user interaction...")
+                self.driver.execute_script("window.scrollTo(0, 300);")
+                time.sleep(2)
+                self.driver.execute_script("window.scrollTo(0, 0);")
+                time.sleep(2)
+
+                # Check if still logged in
+                if not _check_youtube_logged_in(self.driver):
+                    log.error("SESSION LOGGED OUT! Need re-login.")
+                    status["needs_relogin"] = True
+                    self._take_screenshot("signout_detected")
+                    return 0
+
+                # Export cookies
+                cookie_count = self._export_cookies_internal()
+                self._last_activity = time.time()
+
+                log.info("✅ Session refresh complete: %d cookies exported", cookie_count)
+                return cookie_count
+
+            except Exception as e:
+                log.error("Error during refresh: %s", e)
+                self._take_screenshot("refresh_error")
+                raise
+
+    def get_health(self) -> dict:
+        """Get browser health information."""
+        health = {
+            "running": self.is_running(),
+            "uptime_seconds": None,
+            "memory_mb": None,
+            "last_activity_ago": None,
+            "needs_restart": False,
+            "restart_reason": None,
+        }
+
+        if self.started_at:
+            health["uptime_seconds"] = int((datetime.now(timezone.utc) - self.started_at).total_seconds())
+
+        if self._last_activity:
+            health["last_activity_ago"] = int(time.time() - self._last_activity)
+
+        # Check memory usage
+        if self.driver:
+            try:
+                # Get Chrome PID and check memory
+                chrome_pid = self._get_chrome_pid()
+                if chrome_pid:
+                    mem_mb = self._get_process_memory(chrome_pid)
+                    health["memory_mb"] = mem_mb
+                    status["browser_memory_mb"] = mem_mb
+
+                    if mem_mb and mem_mb > BROWSER_MAX_MEMORY_MB:
+                        health["needs_restart"] = True
+                        health["restart_reason"] = f"Memory usage {mem_mb}MB > {BROWSER_MAX_MEMORY_MB}MB"
+            except Exception as e:
+                log.debug("Could not check memory: %s", e)
+
+        # Check scheduled restart
+        if health["uptime_seconds"] and health["uptime_seconds"] > BROWSER_RESTART_INTERVAL:
+            health["needs_restart"] = True
+            health["restart_reason"] = f"Scheduled restart after {BROWSER_RESTART_INTERVAL}s"
+
+        status["last_health_check"] = datetime.now(timezone.utc).isoformat()
+        return health
+
+    def start_watchdog(self):
+        """Start watchdog thread that monitors browser health."""
+        if self._watchdog_thread and self._watchdog_thread.is_alive():
+            log.warning("Watchdog already running")
+            return
+
+        self._shutdown_event.clear()
+        self._watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
+        self._watchdog_thread.start()
+        log.info("Watchdog thread started (check interval: %ds)", HEALTH_CHECK_INTERVAL)
+
+    def stop_watchdog(self):
+        """Stop the watchdog thread."""
+        self._shutdown_event.set()
+        if self._watchdog_thread:
+            self._watchdog_thread.join(timeout=10)
+            self._watchdog_thread = None
+        log.info("Watchdog thread stopped")
+
+    def _watchdog_loop(self):
+        """Watchdog loop that runs in a separate thread."""
+        while not self._shutdown_event.is_set():
+            try:
+                health = self.get_health()
+
+                if not health["running"]:
+                    log.warning("⚠️ Watchdog: Browser not running, attempting restart...")
+                    self.restart()
+
+                elif health["needs_restart"]:
+                    log.info("🔄 Watchdog: %s", health["restart_reason"])
+                    self.restart()
+
+            except Exception as e:
+                log.error("Watchdog error: %s", e)
+
+            # Wait for next check (but can be interrupted by shutdown)
+            self._shutdown_event.wait(timeout=HEALTH_CHECK_INTERVAL)
+
+    def _create_browser(self) -> uc.Chrome:
+        """Create Chrome browser instance."""
+        opts = uc.ChromeOptions()
+        opts.binary_location = CHROMIUM_PATH
+        opts.add_argument(f"--user-data-dir={BROWSER_PROFILE_DIR}")
+        opts.add_argument("--no-sandbox")
+        opts.add_argument("--disable-gpu")
+        opts.add_argument("--disable-dev-shm-usage")
+        opts.add_argument("--disable-blink-features=AutomationControlled")
+        opts.add_argument("--disable-infobars")
+        opts.add_argument("--disable-extensions")
+        opts.add_argument("--headless=new")
+        opts.add_argument("--window-size=1920,1080")
+        opts.add_argument(
+            "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+        )
+
+        # Ensure HOME is writable
+        home = os.environ.get("HOME", "/tmp")
+        local_dir = os.path.join(home, ".local", "share", "undetected_chromedriver")
+        os.makedirs(local_dir, exist_ok=True)
+
+        return uc.Chrome(
+            options=opts,
+            browser_executable_path=CHROMIUM_PATH,
+            driver_executable_path=CHROMEDRIVER_PATH,
+            headless=True,
+            use_subprocess=True,
+        )
+
+    def _cleanup_before_start(self):
+        """Clean up before starting browser."""
+        os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
+        _kill_chrome_on_profile(BROWSER_PROFILE_DIR)
+        _cleanup_profile_locks(BROWSER_PROFILE_DIR)
+
+    def _export_cookies_internal(self) -> int:
+        """Export cookies from the running browser. Called with lock held."""
+        if self.driver is None:
+            return 0
+
+        # Get cookies from YouTube domain
+        log.info("Collecting cookies from YouTube...")
+        youtube_cookies = self.driver.get_cookies()
+        _log_cookie_details(youtube_cookies, "YouTube cookies")
+
+        # Also get cookies from Google domain
+        try:
+            log.info("Navigating to Google to collect additional cookies...")
+            self.driver.get("https://accounts.google.com")
+            time.sleep(3)
+            google_cookies = self.driver.get_cookies()
+            _log_cookie_details(google_cookies, "Google cookies")
+            youtube_cookies.extend(google_cookies)
+        except Exception as e:
+            log.warning("Could not get Google cookies: %s", e)
+
+        # Navigate back to YouTube
+        try:
+            self.driver.get("https://www.youtube.com")
+            time.sleep(2)
+        except Exception:
+            pass
+
+        # Deduplicate
+        seen = set()
+        unique = []
+        for c in youtube_cookies:
+            key = (c.get("domain", ""), c.get("name", ""))
+            if key not in seen:
+                seen.add(key)
+                unique.append(c)
+
+        # Filter relevant
+        relevant = [
+            c for c in unique
+            if any(d in c.get("domain", "") for d in ["youtube.com", "google.com", "googleapis.com"])
+        ]
+
+        # Write Netscape format
+        lines = [
+            "# Netscape HTTP Cookie File",
+            f"# Generated by cookie_manager.py at {datetime.now(timezone.utc).isoformat()}",
+            "",
+        ]
+        for c in relevant:
+            lines.append(format_netscape_cookie(c))
+
+        content = "\n".join(lines) + "\n"
+
+        # Atomic write
+        tmp_path = COOKIES_FILE + ".tmp"
+        with open(tmp_path, "w") as f:
+            f.write(content)
+        os.rename(tmp_path, COOKIES_FILE)
+        os.chmod(COOKIES_FILE, 0o644)
+
+        log.info("✅ Exported %d cookies to %s", len(relevant), COOKIES_FILE)
+        return len(relevant)
+
+    def _take_screenshot(self, name: str):
+        """Take a screenshot for debugging."""
+        try:
+            if self.driver:
+                path = f"/data/{name}_{int(time.time())}.png"
+                self.driver.save_screenshot(path)
+                log.info("Screenshot saved: %s", path)
+        except Exception as e:
+            log.warning("Could not save screenshot: %s", e)
+
+    def _get_chrome_pid(self) -> Optional[int]:
+        """Get the PID of the Chrome browser process."""
+        try:
+            if self.driver and hasattr(self.driver, 'service'):
+                # Chrome spawns from chromedriver, so we need to find Chrome process
+                needle = f"--user-data-dir={BROWSER_PROFILE_DIR}"
+                for entry in os.listdir("/proc"):
+                    if not entry.isdigit():
+                        continue
+                    try:
+                        with open(f"/proc/{entry}/cmdline", "rb") as f:
+                            cmdline = f.read().decode("utf-8", errors="replace")
+                        if needle in cmdline and "chromium" in cmdline.lower():
+                            return int(entry)
+                    except (OSError, PermissionError):
+                        pass
+        except Exception:
+            pass
+        return None
+
+    def _get_process_memory(self, pid: int) -> Optional[int]:
+        """Get memory usage of a process in MB."""
+        try:
+            with open(f"/proc/{pid}/status", "r") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        # VmRSS: 123456 kB
+                        parts = line.split()
+                        if len(parts) >= 2:
+                            return int(parts[1]) // 1024  # kB to MB
+        except Exception:
+            pass
+        return None
+
+
+# Global persistent browser manager
+browser_manager = PersistentBrowserManager()
+
+
+# ---------------------------------------------------------------------------
+# Helper functions (extracted from old code)
 # ---------------------------------------------------------------------------
 
 def _kill_chrome_on_profile(profile_dir: str):
-    """Kill all Chrome/chromedriver processes using the given profile directory.
-
-    When cookie_manager is restarted by supervisor, orphaned Chrome child
-    processes from the previous instance keep running and hold the profile
-    lock. We must kill them before creating a new session.
-    """
+    """Kill all Chrome/chromedriver processes using the given profile directory."""
     killed = 0
     try:
-        # Read /proc to find Chrome processes with matching user-data-dir.
-        # This works on any Linux, unlike ps which varies between busybox/procps.
         needle = f"--user-data-dir={profile_dir}"
         my_pid = os.getpid()
         for entry in os.listdir("/proc"):
@@ -128,11 +536,10 @@ def _kill_chrome_on_profile(profile_dir: str):
             if pid == my_pid:
                 continue
             try:
-                cmdline_path = f"/proc/{pid}/cmdline"
-                with open(cmdline_path, "rb") as f:
+                with open(f"/proc/{pid}/cmdline", "rb") as f:
                     cmdline = f.read().decode("utf-8", errors="replace")
                 if needle in cmdline:
-                    os.kill(pid, 9)  # SIGKILL
+                    os.kill(pid, 9)
                     killed += 1
             except (OSError, PermissionError):
                 pass
@@ -143,16 +550,14 @@ def _kill_chrome_on_profile(profile_dir: str):
     except Exception as e:
         log.warning("Failed to kill orphaned Chrome processes: %s", e)
 
-    # Also kill any stale chromedriver processes
     try:
-        subprocess.run(["killall", "-9", "chromedriver"],
-                       capture_output=True, timeout=5)
+        subprocess.run(["killall", "-9", "chromedriver"], capture_output=True, timeout=5)
     except Exception:
         pass
 
 
 def _cleanup_profile_locks(profile_dir: str):
-    """Remove stale Chrome lock files (symlinks) from a profile directory."""
+    """Remove stale Chrome lock files from a profile directory."""
     if not os.path.exists(profile_dir):
         return
 
@@ -165,61 +570,6 @@ def _cleanup_profile_locks(profile_dir: str):
             except OSError as e:
                 log.warning("Failed to remove lock file %s: %s", lock_path, e)
 
-
-def _make_chrome_options(*, headless: bool, profile_dir: str) -> uc.ChromeOptions:
-    """Create ChromeOptions with common flags."""
-    opts = uc.ChromeOptions()
-    opts.binary_location = CHROMIUM_PATH
-    opts.add_argument(f"--user-data-dir={profile_dir}")
-    opts.add_argument("--no-sandbox")
-    opts.add_argument("--disable-gpu")
-    opts.add_argument("--disable-dev-shm-usage")
-
-    # Common anti-detection flags
-    opts.add_argument("--disable-blink-features=AutomationControlled")
-    opts.add_argument("--disable-infobars")
-    opts.add_argument("--disable-extensions")
-
-    if headless:
-        # Use new headless mode which is less detectable
-        opts.add_argument("--headless=new")
-        # Set window size even in headless
-        opts.add_argument("--window-size=1920,1080")
-        # Fake user agent to not reveal HeadlessChrome
-        opts.add_argument(
-            "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
-        )
-    else:
-        opts.add_argument("--start-maximized")
-        opts.add_argument("--window-size=1920,1080")
-
-    return opts
-
-
-def _create_driver(*, headless: bool, profile_dir: str) -> uc.Chrome:
-    """Create an undetected Chrome driver with the given profile directory."""
-    _kill_chrome_on_profile(profile_dir)
-    _cleanup_profile_locks(profile_dir)
-    opts = _make_chrome_options(headless=headless, profile_dir=profile_dir)
-
-    # Ensure HOME is writable (undetected-chromedriver writes to ~/.local/)
-    home = os.environ.get("HOME", "/tmp")
-    local_dir = os.path.join(home, ".local", "share", "undetected_chromedriver")
-    os.makedirs(local_dir, exist_ok=True)
-
-    return uc.Chrome(
-        options=opts,
-        browser_executable_path=CHROMIUM_PATH,
-        driver_executable_path=CHROMEDRIVER_PATH,
-        headless=headless,
-        use_subprocess=True,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Cookie export
-# ---------------------------------------------------------------------------
 
 def format_netscape_cookie(cookie: dict) -> str:
     """Convert a Selenium cookie dict to a Netscape cookie file line."""
@@ -244,7 +594,6 @@ def _log_cookie_details(cookies: list, context: str = ""):
     log.info("=" * 60)
     log.info("Total cookies: %d", len(cookies))
 
-    # Group by domain
     by_domain = {}
     for c in cookies:
         domain = c.get("domain", "unknown")
@@ -263,9 +612,7 @@ def _log_cookie_details(cookies: list, context: str = ""):
             secure = c.get("secure", False)
             http_only = c.get("httpOnly", False)
 
-            # Only show detailed info for important cookies
             if name in TRACKED_COOKIES:
-                # Calculate expiry info
                 if expiry:
                     expires_in = expiry - now
                     if expires_in > 0:
@@ -276,10 +623,8 @@ def _log_cookie_details(cookies: list, context: str = ""):
                 else:
                     expiry_str = "session cookie (no expiry)"
 
-                # Truncate value for security but show enough to compare
                 value_preview = value[:20] + "..." if len(value) > 20 else value
 
-                # Check if changed from previous
                 prev_value = _previous_cookies.get(f"{domain}:{name}")
                 changed = ""
                 if prev_value is not None:
@@ -291,10 +636,8 @@ def _log_cookie_details(cookies: list, context: str = ""):
                 log.info("  📌 %s = %s | %s | secure=%s httpOnly=%s%s",
                          name, value_preview, expiry_str, secure, http_only, changed)
 
-                # Store for next comparison
                 _previous_cookies[f"{domain}:{name}"] = value
 
-    # Summary of required cookies
     cookie_names = {c.get("name", "") for c in cookies}
     found_required = REQUIRED_COOKIES & cookie_names
     missing_required = REQUIRED_COOKIES - cookie_names
@@ -314,19 +657,12 @@ def _log_page_state(driver: uc.Chrome, context: str = ""):
         log.info("=" * 60)
         log.info("PAGE STATE ANALYSIS %s", f"({context})" if context else "")
         log.info("=" * 60)
-
-        # Current URL
         log.info("Current URL: %s", driver.current_url)
-
-        # Page title
         log.info("Page title: %s", driver.title)
 
-        # Check for common elements
         checks = [
             ("Avatar/Account button", "#avatar-btn, button[aria-label*='Account']"),
             ("Sign In button", "[aria-label='Sign in'], a[href*='accounts.google.com/ServiceLogin']"),
-            ("Sign Out option", "[aria-label='Sign out']"),
-            ("YouTube logo", "#logo"),
         ]
 
         for name, selector in checks:
@@ -339,337 +675,15 @@ def _log_page_state(driver: uc.Chrome, context: str = ""):
             except Exception as e:
                 log.info("  ⚠️ %s: error checking (%s)", name, e)
 
-        # Look for error messages or unusual content
-        try:
-            page_source = driver.page_source
-            error_indicators = [
-                "Sign in to confirm you're not a bot",
-                "unusual traffic",
-                "captcha",
-                "verify it's you",
-                "session expired",
-                "signed out",
-            ]
-            for indicator in error_indicators:
-                if indicator.lower() in page_source.lower():
-                    log.warning("  ⚠️ FOUND ERROR INDICATOR: '%s'", indicator)
-        except Exception:
-            pass
-
         log.info("=" * 60)
 
     except Exception as e:
         log.error("Error logging page state: %s", e)
 
 
-def _export_cookies_from_driver(driver: uc.Chrome) -> int:
-    """Extract cookies from an open driver and write to file."""
-    log.info("Starting cookie export from driver...")
-
-    # Log initial state before navigation
-    initial_cookies = driver.get_cookies()
-    log.info("Cookies BEFORE YouTube navigation: %d", len(initial_cookies))
-    _log_cookie_details(initial_cookies, "BEFORE navigation")
-
-    # Navigate to YouTube to ensure cookies are fresh
-    log.info("Navigating to YouTube...")
-    driver.get("https://www.youtube.com")
-
-    # Wait for page to fully load and cookie rotation JavaScript to execute
-    # YouTube calls RotateCookiesPage periodically to refresh session cookies
-    log.info("Waiting 5s for page load and JS execution...")
-    time.sleep(5)
-
-    # Log page state
-    _log_page_state(driver, "after YouTube load")
-
-    # Simulate some interaction to trigger cookie refresh
-    try:
-        log.info("Simulating user interaction (scroll)...")
-        driver.execute_script("window.scrollTo(0, 500);")
-        time.sleep(2)
-        driver.execute_script("window.scrollTo(0, 0);")
-    except Exception as e:
-        log.warning("Could not simulate scroll: %s", e)
-
-    # Collect cookies from YouTube
-    youtube_cookies = driver.get_cookies()
-    log.info("Cookies AFTER YouTube interaction: %d", len(youtube_cookies))
-    _log_cookie_details(youtube_cookies, "AFTER YouTube")
-
-    # Also grab Google cookies by visiting accounts.google.com
-    try:
-        log.info("Navigating to accounts.google.com...")
-        driver.get("https://accounts.google.com")
-        time.sleep(3)  # Wait for cookie sync
-
-        _log_page_state(driver, "after Google accounts load")
-
-        google_cookies = driver.get_cookies()
-        log.info("Cookies from Google: %d", len(google_cookies))
-        _log_cookie_details(google_cookies, "Google domain")
-
-        youtube_cookies.extend(google_cookies)
-    except Exception as e:
-        log.warning("Could not get Google cookies: %s", e)
-
-    # Deduplicate by (domain, name)
-    seen = set()
-    unique = []
-    for c in youtube_cookies:
-        key = (c.get("domain", ""), c.get("name", ""))
-        if key not in seen:
-            seen.add(key)
-            unique.append(c)
-
-    # Filter relevant cookies
-    relevant = [
-        c
-        for c in unique
-        if any(
-            d in c.get("domain", "")
-            for d in ["youtube.com", "google.com", "googleapis.com"]
-        )
-    ]
-
-    log.info("=" * 60)
-    log.info("FINAL EXPORT: %d relevant cookies (from %d total)", len(relevant), len(unique))
-    _log_cookie_details(relevant, "FINAL EXPORT")
-
-    # Write Netscape format
-    lines = [
-        "# Netscape HTTP Cookie File",
-        f"# Generated by cookie_manager.py at {datetime.now(timezone.utc).isoformat()}",
-        "",
-    ]
-    for c in relevant:
-        lines.append(format_netscape_cookie(c))
-
-    content = "\n".join(lines) + "\n"
-
-    # Atomic write
-    tmp_path = COOKIES_FILE + ".tmp"
-    with open(tmp_path, "w") as f:
-        f.write(content)
-    os.rename(tmp_path, COOKIES_FILE)
-    os.chmod(COOKIES_FILE, 0o644)
-
-    cookie_count = len(relevant)
-    cookie_names = {c["name"] for c in relevant}
-    has_session = bool(REQUIRED_COOKIES & cookie_names)
-
-    log.info(
-        "✅ Exported %d cookies (%s session cookies)",
-        cookie_count,
-        "has" if has_session else "NO",
-    )
-
-    return cookie_count
-
-
-async def export_cookies_from_profile() -> int:
-    """Launch headless browser with saved profile, extract and write cookies."""
-    if not os.path.exists(BROWSER_PROFILE_DIR):
-        raise FileNotFoundError(f"Browser profile not found: {BROWSER_PROFILE_DIR}")
-
-    if _browser_lock is None:
-        raise RuntimeError("Browser lock not initialized")
-
-    async with _browser_lock:
-        # Run Selenium in a thread to avoid blocking the event loop
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, _export_cookies_headless)
-
-
-def _export_cookies_headless() -> int:
-    """Headless export — runs in a thread.
-
-    IMPORTANT: Uses the original profile directly (not a copy) to avoid
-    Google detecting a "new device" and invalidating the session.
-
-    The previous approach of copying to temp directory caused Google to
-    see the browser as a new device, triggering session invalidation.
-    """
-    log.info("=" * 80)
-    log.info("HEADLESS COOKIE REFRESH STARTED")
-    log.info("=" * 80)
-
-    # Kill any orphaned Chrome processes and clean up locks first
-    _kill_chrome_on_profile(BROWSER_PROFILE_DIR)
-    _cleanup_profile_locks(BROWSER_PROFILE_DIR)
-
-    log.info("Using original profile: %s", BROWSER_PROFILE_DIR)
-
-    # Check profile directory contents and cookie database
-    if os.path.exists(BROWSER_PROFILE_DIR):
-        try:
-            items = os.listdir(BROWSER_PROFILE_DIR)
-            log.info("Profile directory contains %d items: %s", len(items), items[:10])
-
-            # Check Default profile directory
-            default_dir = os.path.join(BROWSER_PROFILE_DIR, "Default")
-            if os.path.exists(default_dir):
-                log.info("  ✅ Default directory exists")
-                default_items = os.listdir(default_dir)
-                log.info("  Default contains %d items", len(default_items))
-
-                # Check for cookie database files (Chrome stores cookies here)
-                cookie_paths = [
-                    os.path.join(default_dir, "Cookies"),
-                    os.path.join(default_dir, "Network", "Cookies"),
-                ]
-                for cookie_path in cookie_paths:
-                    if os.path.exists(cookie_path):
-                        size = os.path.getsize(cookie_path)
-                        log.info("  ✅ Cookie DB found: %s (%d bytes)", cookie_path, size)
-
-                        # Try to read cookie count from SQLite
-                        try:
-                            import sqlite3
-                            conn = sqlite3.connect(cookie_path)
-                            cursor = conn.cursor()
-                            cursor.execute("SELECT COUNT(*) FROM cookies")
-                            count = cursor.fetchone()[0]
-                            log.info("  Cookie DB contains %d total cookies", count)
-
-                            # Check specifically for required session cookies
-                            required_names = tuple(REQUIRED_COOKIES)
-                            cursor.execute(
-                                f"SELECT host_key, name, expires_utc, is_persistent FROM cookies "
-                                f"WHERE name IN ({','.join('?' * len(required_names))})",
-                                required_names
-                            )
-                            required_cookies = cursor.fetchall()
-
-                            if required_cookies:
-                                log.info("  📋 REQUIRED COOKIES IN DB:")
-                                for host, name, expires, is_persistent in required_cookies:
-                                    # Chrome stores expiry as microseconds since 1601
-                                    if expires and expires > 0:
-                                        # Convert Chrome timestamp to Unix
-                                        unix_ts = (expires / 1000000) - 11644473600
-                                        expires_str = datetime.fromtimestamp(unix_ts, tz=timezone.utc).isoformat()
-                                        persist_str = "PERSISTENT" if is_persistent else "SESSION"
-                                    else:
-                                        expires_str = "NO EXPIRY (session cookie)"
-                                        persist_str = "SESSION"
-                                    log.info("    ✅ %s: %s | %s | %s", name, host, persist_str, expires_str)
-                            else:
-                                log.warning("  ❌ NO REQUIRED COOKIES (SID, HSID, etc.) IN DATABASE!")
-
-                            # Also show some sample cookies
-                            cursor.execute("SELECT host_key, name, expires_utc, is_persistent FROM cookies LIMIT 5")
-                            sample = cursor.fetchall()
-                            log.info("  Sample cookies:")
-                            for host, name, expires, is_persistent in sample:
-                                persist_str = "PERSISTENT" if is_persistent else "session"
-                                log.info("    - %s: %s (%s)", host, name, persist_str)
-
-                            conn.close()
-                        except Exception as e:
-                            log.warning("  Could not read cookie DB: %s", e)
-                    else:
-                        log.warning("  ❌ Cookie DB not found: %s", cookie_path)
-            else:
-                log.warning("  ❌ Default directory NOT FOUND")
-
-            # Check Local State
-            local_state = os.path.join(BROWSER_PROFILE_DIR, "Local State")
-            if os.path.exists(local_state):
-                log.info("  ✅ Local State exists (%d bytes)", os.path.getsize(local_state))
-            else:
-                log.warning("  ❌ Local State NOT FOUND")
-
-        except Exception as e:
-            log.warning("Could not analyze profile directory: %s", e)
-
-    driver = _create_driver(headless=True, profile_dir=BROWSER_PROFILE_DIR)
-    try:
-        # Get cookies BEFORE any navigation
-        initial_cookies = driver.get_cookies()
-        log.info("Cookies in browser BEFORE navigation: %d", len(initial_cookies))
-        if initial_cookies:
-            _log_cookie_details(initial_cookies, "INITIAL (before navigation)")
-        else:
-            log.warning("⚠️ NO COOKIES in browser before navigation!")
-
-        # Navigate to YouTube and wait for cookie rotation to happen
-        log.info("Navigating to YouTube for session refresh...")
-        driver.get("https://www.youtube.com")
-
-        # Wait for page to fully load and JavaScript to execute
-        log.info("Waiting 5s for page load...")
-        time.sleep(5)
-
-        # Log page state
-        _log_page_state(driver, "after YouTube navigation")
-
-        # Check cookies after YouTube load
-        after_yt_cookies = driver.get_cookies()
-        log.info("Cookies AFTER YouTube load: %d", len(after_yt_cookies))
-        _log_cookie_details(after_yt_cookies, "AFTER YouTube load")
-
-        # Simulate human-like behavior to keep session "warm"
-        # Scroll down a bit
-        try:
-            log.info("Simulating user interaction...")
-            driver.execute_script("window.scrollTo(0, 300);")
-            time.sleep(2)
-            driver.execute_script("window.scrollTo(0, 0);")
-            time.sleep(2)
-        except Exception as e:
-            log.warning("Could not simulate scrolling: %s", e)
-
-        # Check if we're still logged in by looking for sign-in button
-        is_logged_in = _check_youtube_logged_in(driver)
-
-        if not is_logged_in:
-            log.error("=" * 80)
-            log.error("SESSION IS NOT LOGGED IN! SIGN-OUT DETECTED!")
-            log.error("=" * 80)
-
-            # Take screenshot for debugging (save to /data)
-            try:
-                screenshot_path = "/data/signout_debug.png"
-                driver.save_screenshot(screenshot_path)
-                log.info("Screenshot saved to %s", screenshot_path)
-            except Exception as e:
-                log.warning("Could not save screenshot: %s", e)
-
-            # Log current page source (truncated)
-            try:
-                source = driver.page_source[:2000]
-                log.info("Page source (first 2000 chars):\n%s", source)
-            except Exception:
-                pass
-
-            return 0
-
-        log.info("✅ Session is still logged in, proceeding with cookie export")
-
-        # Wait a bit more to ensure cookie rotation completes
-        time.sleep(3)
-
-        return _export_cookies_from_driver(driver)
-    except Exception as e:
-        log.error("Error during headless refresh: %s", e, exc_info=True)
-        raise
-    finally:
-        try:
-            driver.quit()
-        except Exception:
-            pass
-        # Clean up any locks that might have been created
-        _cleanup_profile_locks(BROWSER_PROFILE_DIR)
-        log.info("=" * 80)
-        log.info("HEADLESS COOKIE REFRESH COMPLETED")
-        log.info("=" * 80)
-
-
 def _check_youtube_logged_in(driver: uc.Chrome) -> bool:
-    """Check if YouTube session is logged in by examining page elements."""
+    """Check if YouTube session is logged in."""
     try:
-        # Method 1: Check for avatar button (logged in users have this)
         avatar_selectors = [
             "button#avatar-btn",
             "#avatar-btn",
@@ -680,34 +694,25 @@ def _check_youtube_logged_in(driver: uc.Chrome) -> bool:
             try:
                 elements = driver.find_elements("css selector", selector)
                 if elements:
-                    log.info("Found avatar element with selector: %s", selector)
+                    log.info("Found avatar element: %s", selector)
                     return True
             except Exception:
                 pass
 
-        # Method 2: Check for Sign In button (means NOT logged in)
         sign_in_selectors = [
             "a[href*='accounts.google.com/ServiceLogin']",
             "ytd-button-renderer a[href*='accounts.google']",
-            "tp-yt-paper-button[aria-label='Sign in']",
             "[aria-label='Sign in']",
         ]
         for selector in sign_in_selectors:
             try:
                 elements = driver.find_elements("css selector", selector)
                 if elements:
-                    log.warning("Found Sign In button with selector: %s - NOT logged in!", selector)
+                    log.warning("Found Sign In button: %s - NOT logged in!", selector)
                     return False
             except Exception:
                 pass
 
-        # Method 3: Check page source for login indicators
-        page_source = driver.page_source.lower()
-        if "sign in" in page_source and "sign out" not in page_source:
-            log.warning("Page contains 'Sign in' without 'Sign out' - likely NOT logged in")
-            return False
-
-        # Method 4: Check cookies for session indicators
         cookies = driver.get_cookies()
         cookie_names = {c.get("name", "") for c in cookies}
         has_session_cookies = bool(REQUIRED_COOKIES & cookie_names)
@@ -721,7 +726,6 @@ def _check_youtube_logged_in(driver: uc.Chrome) -> bool:
 
     except Exception as e:
         log.error("Error checking login status: %s", e)
-        # If we can't determine, assume logged in and let cookie export decide
         return True
 
 
@@ -777,7 +781,7 @@ def get_cookie_analysis() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Login flow (visual via noVNC)
+# Login flow (visual via noVNC) — kept for initial login
 # ---------------------------------------------------------------------------
 
 def _kill_proc(proc):
@@ -793,20 +797,59 @@ def _kill_proc(proc):
                 pass
 
 
+def _make_login_chrome_options(profile_dir: str) -> uc.ChromeOptions:
+    """Create ChromeOptions for login (headed mode)."""
+    opts = uc.ChromeOptions()
+    opts.binary_location = CHROMIUM_PATH
+    opts.add_argument(f"--user-data-dir={profile_dir}")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-gpu")
+    opts.add_argument("--disable-dev-shm-usage")
+    opts.add_argument("--disable-blink-features=AutomationControlled")
+    opts.add_argument("--disable-infobars")
+    opts.add_argument("--disable-extensions")
+    opts.add_argument("--start-maximized")
+    opts.add_argument("--window-size=1920,1080")
+    return opts
+
+
+def _create_login_driver(profile_dir: str) -> uc.Chrome:
+    """Create Chrome driver for login (headed mode on Xvfb)."""
+    _kill_chrome_on_profile(profile_dir)
+    _cleanup_profile_locks(profile_dir)
+    opts = _make_login_chrome_options(profile_dir)
+
+    home = os.environ.get("HOME", "/tmp")
+    local_dir = os.path.join(home, ".local", "share", "undetected_chromedriver")
+    os.makedirs(local_dir, exist_ok=True)
+
+    return uc.Chrome(
+        options=opts,
+        browser_executable_path=CHROMIUM_PATH,
+        driver_executable_path=CHROMEDRIVER_PATH,
+        headless=False,
+        use_subprocess=True,
+    )
+
+
 async def start_login() -> dict:
     """Start visual login session: Xvfb + Chromium + x11vnc + noVNC."""
     if status["login_active"]:
         return {"error": "Login session already active"}
 
+    # Stop persistent browser before login
+    if browser_manager.is_running():
+        log.info("Stopping persistent browser for login session...")
+        browser_manager.stop(export_cookies=True)
+
     if _browser_lock is None:
         return {"error": "Browser lock not initialized"}
 
     if _browser_lock.locked():
-        return {"error": "Browser is busy (refresh in progress), try again in a moment"}
+        return {"error": "Browser is busy, try again in a moment"}
 
     log.info("Starting login session...")
 
-    # Ensure profile dir exists
     os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
 
     # 1. Start Xvfb
@@ -821,17 +864,16 @@ async def start_login() -> dict:
     if xvfb_proc.poll() is not None:
         return {"error": "Failed to start Xvfb"}
 
-    # 2. Launch Chromium via Selenium in headed mode on Xvfb display
+    # 2. Launch Chromium
     os.environ["DISPLAY"] = DISPLAY
 
     try:
         loop = asyncio.get_running_loop()
         driver = await loop.run_in_executor(
-            None, lambda: _create_driver(headless=False, profile_dir=BROWSER_PROFILE_DIR)
+            None, lambda: _create_login_driver(BROWSER_PROFILE_DIR)
         )
         login_state["driver"] = driver
 
-        # Navigate to Google login
         await loop.run_in_executor(
             None,
             driver.get,
@@ -856,39 +898,27 @@ async def start_login() -> dict:
     else:
         vnc_cmd += ["-nopw"]
 
-    vnc_proc = subprocess.Popen(
-        vnc_cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    vnc_proc = subprocess.Popen(vnc_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     login_state["vnc_proc"] = vnc_proc
     await asyncio.sleep(0.5)
 
     # 4. Start noVNC websockify
     novnc_proc = subprocess.Popen(
-        [
-            "websockify",
-            "--web=/opt/novnc",
-            str(NOVNC_PORT),
-            f"localhost:{VNC_PORT}",
-        ],
+        ["websockify", "--web=/opt/novnc", str(NOVNC_PORT), f"localhost:{VNC_PORT}"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
     login_state["novnc_proc"] = novnc_proc
     await asyncio.sleep(0.5)
 
-    # Update status
     status["login_active"] = True
     status["login_started_at"] = datetime.now(timezone.utc).isoformat()
 
-    # Build noVNC URL
     host = NOVNC_HOST or "localhost"
     novnc_url = f"http://{host}:{NOVNC_PORT}/vnc.html?autoconnect=true"
 
     log.info("Login session started. noVNC URL: %s", novnc_url)
 
-    # Schedule auto-timeout
     asyncio.get_running_loop().call_later(LOGIN_TIMEOUT, _auto_stop_login)
 
     return {"status": "ok", "novnc_url": novnc_url}
@@ -902,7 +932,7 @@ def _auto_stop_login():
 
 
 async def stop_login() -> dict:
-    """Stop login session, export cookies, cleanup."""
+    """Stop login session, export cookies, start persistent browser."""
     if not status["login_active"]:
         return {"error": "No active login session"}
 
@@ -912,17 +942,15 @@ async def stop_login() -> dict:
 
     result = {"status": "ok", "cookies_exported": False, "cookie_count": 0}
 
-    # Export cookies before closing
     driver = login_state.get("driver")
     if driver:
         try:
-            # First, log current browser cookies
             browser_cookies = driver.get_cookies()
             log.info("Browser has %d cookies before export", len(browser_cookies))
             _log_cookie_details(browser_cookies, "BROWSER STATE at login stop")
 
             loop = asyncio.get_running_loop()
-            count = await loop.run_in_executor(None, _export_cookies_from_driver, driver)
+            count = await loop.run_in_executor(None, _export_cookies_from_login_driver, driver)
 
             result["cookies_exported"] = True
             result["cookie_count"] = count
@@ -935,37 +963,16 @@ async def stop_login() -> dict:
 
             log.info("Exported %d cookies after login", count)
 
-            # Check if cookies were saved to profile
-            log.info("Checking if cookies persisted to profile...")
-            default_dir = os.path.join(BROWSER_PROFILE_DIR, "Default")
-            for cookie_path in [
-                os.path.join(default_dir, "Cookies"),
-                os.path.join(default_dir, "Network", "Cookies"),
-            ]:
-                if os.path.exists(cookie_path):
-                    try:
-                        import sqlite3
-                        conn = sqlite3.connect(cookie_path)
-                        cursor = conn.cursor()
-                        cursor.execute("SELECT COUNT(*) FROM cookies")
-                        db_count = cursor.fetchone()[0]
-                        conn.close()
-                        log.info("  ✅ Cookie DB %s has %d cookies", cookie_path, db_count)
-                    except Exception as e:
-                        log.warning("  Could not read cookie DB: %s", e)
-
         except Exception as e:
             log.error("Failed to export cookies after login: %s", e)
             result["error"] = str(e)
             status["last_error"] = str(e)
 
-        # Quit browser
         try:
             driver.quit()
         except Exception:
             pass
 
-    # Kill any remaining Chrome processes on the profile
     _kill_chrome_on_profile(BROWSER_PROFILE_DIR)
 
     # Cleanup display stack
@@ -973,7 +980,6 @@ async def stop_login() -> dict:
     _kill_proc(login_state.get("vnc_proc"))
     _kill_proc(login_state.get("xvfb_proc"))
 
-    # Reset state
     login_state.update({
         "driver": None,
         "xvfb_proc": None,
@@ -986,19 +992,81 @@ async def stop_login() -> dict:
 
     log.info("Login session stopped")
 
+    # Start persistent browser after login
+    log.info("Starting persistent browser after login...")
+    await asyncio.sleep(2)
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, browser_manager.start)
+
     return result
 
 
+def _export_cookies_from_login_driver(driver: uc.Chrome) -> int:
+    """Export cookies from login browser."""
+    log.info("Navigating to YouTube...")
+    driver.get("https://www.youtube.com")
+    time.sleep(5)
+
+    youtube_cookies = driver.get_cookies()
+
+    try:
+        log.info("Navigating to Google...")
+        driver.get("https://accounts.google.com")
+        time.sleep(3)
+        google_cookies = driver.get_cookies()
+        youtube_cookies.extend(google_cookies)
+    except Exception as e:
+        log.warning("Could not get Google cookies: %s", e)
+
+    seen = set()
+    unique = []
+    for c in youtube_cookies:
+        key = (c.get("domain", ""), c.get("name", ""))
+        if key not in seen:
+            seen.add(key)
+            unique.append(c)
+
+    relevant = [
+        c for c in unique
+        if any(d in c.get("domain", "") for d in ["youtube.com", "google.com", "googleapis.com"])
+    ]
+
+    lines = [
+        "# Netscape HTTP Cookie File",
+        f"# Generated by cookie_manager.py at {datetime.now(timezone.utc).isoformat()}",
+        "",
+    ]
+    for c in relevant:
+        lines.append(format_netscape_cookie(c))
+
+    content = "\n".join(lines) + "\n"
+
+    tmp_path = COOKIES_FILE + ".tmp"
+    with open(tmp_path, "w") as f:
+        f.write(content)
+    os.rename(tmp_path, COOKIES_FILE)
+    os.chmod(COOKIES_FILE, 0o644)
+
+    log.info("✅ Exported %d cookies", len(relevant))
+    return len(relevant)
+
+
 # ---------------------------------------------------------------------------
-# Refresh loop
+# Refresh loop (uses persistent browser)
 # ---------------------------------------------------------------------------
 
 async def refresh_loop():
-    """Background task: refresh cookies every REFRESH_INTERVAL seconds."""
+    """Background task: refresh session every REFRESH_INTERVAL seconds."""
     log.info("Cookie refresh loop started (interval: %ds)", REFRESH_INTERVAL)
 
-    # Initial delay — give bot time to start
+    # Initial delay
     await asyncio.sleep(30)
+
+    # Start persistent browser if not running and profile exists
+    if os.path.exists(BROWSER_PROFILE_DIR) and not browser_manager.is_running():
+        log.info("Starting persistent browser on startup...")
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, browser_manager.start)
 
     while True:
         status["profile_exists"] = os.path.exists(BROWSER_PROFILE_DIR)
@@ -1014,10 +1082,21 @@ async def refresh_loop():
             await asyncio.sleep(REFRESH_INTERVAL)
             continue
 
+        # Ensure browser is running
+        if not browser_manager.is_running():
+            log.info("Browser not running, starting...")
+            loop = asyncio.get_running_loop()
+            success = await loop.run_in_executor(None, browser_manager.start)
+            if not success:
+                log.error("Failed to start browser, will retry later")
+                await asyncio.sleep(60)
+                continue
+
         log.info("Running scheduled cookie refresh...")
 
         try:
-            count = await export_cookies_from_profile()
+            loop = asyncio.get_running_loop()
+            count = await loop.run_in_executor(None, browser_manager.refresh_and_export)
 
             status["last_refresh"] = datetime.now(timezone.utc).isoformat()
             status["last_refresh_success"] = True
@@ -1058,8 +1137,8 @@ async def handle_login_stop(request):
 async def handle_status(request):
     status["profile_exists"] = os.path.exists(BROWSER_PROFILE_DIR)
     status["cookies_exist"] = os.path.exists(COOKIES_FILE)
+    status["browser_running"] = browser_manager.is_running()
 
-    # Add detailed cookie analysis
     analysis = get_cookie_analysis()
     status["cookie_analysis"] = analysis
     status["required_found"] = analysis["required_found"]
@@ -1070,8 +1149,13 @@ async def handle_status(request):
 
 
 async def handle_export_cookies(request):
+    """Force cookie export from persistent browser."""
+    if not browser_manager.is_running():
+        return web.json_response({"success": False, "error": "Browser not running"}, status=500)
+
     try:
-        count = await export_cookies_from_profile()
+        loop = asyncio.get_running_loop()
+        count = await loop.run_in_executor(None, browser_manager.refresh_and_export)
         status["last_refresh"] = datetime.now(timezone.utc).isoformat()
         status["last_refresh_success"] = True
         status["cookie_count"] = count
@@ -1083,11 +1167,31 @@ async def handle_export_cookies(request):
         return web.json_response({"success": False, "error": str(e)}, status=500)
 
 
+async def handle_browser_health(request):
+    """Get browser health information."""
+    health = browser_manager.get_health()
+    return web.json_response(health)
+
+
+async def handle_restart_browser(request):
+    """Force restart the persistent browser."""
+    try:
+        loop = asyncio.get_running_loop()
+        success = await loop.run_in_executor(None, browser_manager.restart)
+        if success:
+            return web.json_response({"success": True, "message": "Browser restarted"})
+        else:
+            return web.json_response({"success": False, "error": "Failed to restart browser"}, status=500)
+    except Exception as e:
+        return web.json_response({"success": False, "error": str(e)}, status=500)
+
+
 async def handle_cookie_debug(request):
     """Return detailed cookie analysis for debugging."""
     result = {
         "cookies_file_exists": os.path.exists(COOKIES_FILE),
         "profile_exists": os.path.exists(BROWSER_PROFILE_DIR),
+        "browser_running": browser_manager.is_running(),
         "cookies": [],
         "analysis": {},
     }
@@ -1126,7 +1230,6 @@ async def handle_cookie_debug(request):
                         cookie_info["expires_in_hours"] = None
                         cookie_info["expired"] = False
 
-                    # Mark important cookies
                     cookie_info["is_required"] = name in REQUIRED_COOKIES
                     cookie_info["is_tracked"] = name in TRACKED_COOKIES
 
@@ -1135,7 +1238,6 @@ async def handle_cookie_debug(request):
             result["cookies"] = cookies
             result["total_cookies"] = len(cookies)
 
-            # Analysis
             required_found = [c["name"] for c in cookies if c["is_required"]]
             required_missing = list(REQUIRED_COOKIES - set(required_found))
             expired = [c["name"] for c in cookies if c.get("expired")]
@@ -1158,13 +1260,18 @@ async def handle_cookie_debug(request):
 # ---------------------------------------------------------------------------
 
 async def on_startup(app):
-    """Start refresh loop on server startup."""
+    """Start refresh loop and watchdog on server startup."""
     _init_browser_lock()
     app["refresh_task"] = asyncio.ensure_future(refresh_loop())
+
+    # Start watchdog in background
+    browser_manager.start_watchdog()
 
 
 async def on_cleanup(app):
     """Cleanup on server shutdown."""
+    log.info("Server shutting down...")
+
     task = app.get("refresh_task")
     if task:
         task.cancel()
@@ -1173,20 +1280,49 @@ async def on_cleanup(app):
         except asyncio.CancelledError:
             pass
 
+    # Stop watchdog
+    browser_manager.stop_watchdog()
+
     # Stop login if active
     if status["login_active"]:
         await stop_login()
 
+    # Stop persistent browser (exports cookies)
+    if browser_manager.is_running():
+        log.info("Exporting cookies before shutdown...")
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, browser_manager.stop, True)
+
+    log.info("Cleanup complete")
+
+
+def _handle_signal(signum, frame):
+    """Handle shutdown signals gracefully."""
+    log.info("Received signal %d, initiating graceful shutdown...", signum)
+    if browser_manager.is_running():
+        browser_manager.stop(export_cookies=True)
+    raise SystemExit(0)
+
 
 def main():
-    log.info("Cookie Manager starting on %s:%d", API_HOST, API_PORT)
+    log.info("=" * 60)
+    log.info("Cookie Manager starting (PERSISTENT BROWSER ARCHITECTURE)")
+    log.info("=" * 60)
+    log.info("  API: %s:%d", API_HOST, API_PORT)
     log.info("  Cookies file: %s", COOKIES_FILE)
     log.info("  Browser profile: %s", BROWSER_PROFILE_DIR)
     log.info("  Refresh interval: %ds", REFRESH_INTERVAL)
+    log.info("  Health check interval: %ds", HEALTH_CHECK_INTERVAL)
+    log.info("  Browser restart interval: %ds", BROWSER_RESTART_INTERVAL)
     log.info("  Chromium path: %s", CHROMIUM_PATH)
     log.info("  ChromeDriver path: %s", CHROMEDRIVER_PATH)
+    log.info("=" * 60)
 
-    # Kill orphaned Chrome processes and clean up stale lock files
+    # Register signal handlers
+    signal.signal(signal.SIGTERM, _handle_signal)
+    signal.signal(signal.SIGINT, _handle_signal)
+
+    # Clean up before start
     _kill_chrome_on_profile(BROWSER_PROFILE_DIR)
     _cleanup_profile_locks(BROWSER_PROFILE_DIR)
 
@@ -1196,6 +1332,8 @@ def main():
     app.router.add_get("/api/status", handle_status)
     app.router.add_post("/api/export_cookies", handle_export_cookies)
     app.router.add_get("/api/cookie_debug", handle_cookie_debug)
+    app.router.add_get("/api/browser_health", handle_browser_health)
+    app.router.add_post("/api/restart_browser", handle_restart_browser)
 
     app.on_startup.append(on_startup)
     app.on_cleanup.append(on_cleanup)
