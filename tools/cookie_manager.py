@@ -40,6 +40,7 @@ API_HOST = os.environ.get("COOKIE_MANAGER_HOST", "127.0.0.1")
 NOVNC_HOST = os.environ.get("NOVNC_HOST", "")
 NOVNC_PORT = int(os.environ.get("NOVNC_PORT", "6080"))
 VNC_PORT = 5900
+VNC_PASSWORD = os.environ.get("VNC_PASSWORD", "")
 DISPLAY = ":99"
 CHROMIUM_PATH = os.environ.get("CHROMIUM_PATH", "/usr/bin/chromium-browser")
 CHROMEDRIVER_PATH = os.environ.get("CHROMEDRIVER_PATH", "/usr/bin/chromedriver")
@@ -396,15 +397,20 @@ async def start_login() -> dict:
         return {"error": f"Failed to start Chromium: {e}"}
 
     # 3. Start x11vnc
+    vnc_cmd = [
+        "x11vnc",
+        "-display", DISPLAY,
+        "-forever",
+        "-rfbport", str(VNC_PORT),
+        "-shared",
+    ]
+    if VNC_PASSWORD:
+        vnc_cmd += ["-passwd", VNC_PASSWORD]
+    else:
+        vnc_cmd += ["-nopw"]
+
     vnc_proc = subprocess.Popen(
-        [
-            "x11vnc",
-            "-display", DISPLAY,
-            "-nopw",
-            "-forever",
-            "-rfbport", str(VNC_PORT),
-            "-shared",
-        ],
+        vnc_cmd,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
