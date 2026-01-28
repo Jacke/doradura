@@ -248,6 +248,19 @@ echo "================================================"
 mkdir -p /data /tmp
 chmod 1777 /tmp
 
+# Bot API binlog recovery option
+# Set CLEAR_BOT_API_BINLOG=true to clear corrupted binlog files
+if [ "$CLEAR_BOT_API_BINLOG" = "true" ]; then
+  echo "⚠️  CLEAR_BOT_API_BINLOG=true - clearing Bot API binlog files..."
+  for f in /data/*.binlog /data/6310079371/*.binlog; do
+    if [ -e "$f" ]; then
+      echo "  🗑️  Removing: $f"
+      rm -f "$f"
+    fi
+  done
+  echo "✅ Bot API binlog files cleared. Fresh start enabled."
+fi
+
 # Set ownership and permissions for /data
 if id telegram-bot-api >/dev/null 2>&1 && getent group shareddata >/dev/null 2>&1; then
 chown telegram-bot-api:shareddata /data
