@@ -62,7 +62,15 @@ RUN apk add --no-cache \
   xorg-server \
   xvfb-run \
   x11vnc \
-  py3-aiohttp
+  py3-aiohttp \
+  # Build dependencies for canvas (bgutil PO Token server)
+  build-base \
+  pkgconfig \
+  cairo-dev \
+  pango-dev \
+  jpeg-dev \
+  giflib-dev \
+  pixman-dev
 
 # Install noVNC (web-based VNC client for first-time login)
 RUN mkdir -p /opt/novnc && \
