@@ -164,7 +164,7 @@ def _make_chrome_options(*, headless: bool, profile_dir: str) -> uc.ChromeOption
         opts.add_argument("--headless=new")
     else:
         opts.add_argument("--start-maximized")
-        opts.add_argument("--window-size=1280,720")
+        opts.add_argument("--window-size=1920,1080")
     return opts
 
 
@@ -363,7 +363,7 @@ async def start_login() -> dict:
 
     # 1. Start Xvfb
     xvfb_proc = subprocess.Popen(
-        ["Xvfb", DISPLAY, "-screen", "0", "1280x720x24"],
+        ["Xvfb", DISPLAY, "-screen", "0", "1920x1080x24"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
