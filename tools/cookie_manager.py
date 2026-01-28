@@ -530,12 +530,42 @@ def _export_cookies_headless() -> int:
                             cursor = conn.cursor()
                             cursor.execute("SELECT COUNT(*) FROM cookies")
                             count = cursor.fetchone()[0]
-                            cursor.execute("SELECT host_key, name, expires_utc FROM cookies LIMIT 10")
+                            log.info("  Cookie DB contains %d total cookies", count)
+
+                            # Check specifically for required session cookies
+                            required_names = tuple(REQUIRED_COOKIES)
+                            cursor.execute(
+                                f"SELECT host_key, name, expires_utc, is_persistent FROM cookies "
+                                f"WHERE name IN ({','.join('?' * len(required_names))})",
+                                required_names
+                            )
+                            required_cookies = cursor.fetchall()
+
+                            if required_cookies:
+                                log.info("  📋 REQUIRED COOKIES IN DB:")
+                                for host, name, expires, is_persistent in required_cookies:
+                                    # Chrome stores expiry as microseconds since 1601
+                                    if expires and expires > 0:
+                                        # Convert Chrome timestamp to Unix
+                                        unix_ts = (expires / 1000000) - 11644473600
+                                        expires_str = datetime.fromtimestamp(unix_ts, tz=timezone.utc).isoformat()
+                                        persist_str = "PERSISTENT" if is_persistent else "SESSION"
+                                    else:
+                                        expires_str = "NO EXPIRY (session cookie)"
+                                        persist_str = "SESSION"
+                                    log.info("    ✅ %s: %s | %s | %s", name, host, persist_str, expires_str)
+                            else:
+                                log.warning("  ❌ NO REQUIRED COOKIES (SID, HSID, etc.) IN DATABASE!")
+
+                            # Also show some sample cookies
+                            cursor.execute("SELECT host_key, name, expires_utc, is_persistent FROM cookies LIMIT 5")
                             sample = cursor.fetchall()
+                            log.info("  Sample cookies:")
+                            for host, name, expires, is_persistent in sample:
+                                persist_str = "PERSISTENT" if is_persistent else "session"
+                                log.info("    - %s: %s (%s)", host, name, persist_str)
+
                             conn.close()
-                            log.info("  Cookie DB contains %d cookies", count)
-                            for host, name, expires in sample:
-                                log.info("    - %s: %s (expires: %s)", host, name, expires)
                         except Exception as e:
                             log.warning("  Could not read cookie DB: %s", e)
                     else:
