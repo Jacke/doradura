@@ -139,19 +139,38 @@ chmod 775 /data
 cd /data
 
 BOT_API="${BOT_API_URL:-http://localhost:8081}"
+BOT_TOKEN="${TELOXIDE_TOKEN:-}"
 
-# Wait for Telegram Bot API to be ready (up to 60 seconds)
+# Wait for Telegram Bot API to be fully ready (up to 180 seconds)
+# The API may respond to connections but return "restart" while initializing
 echo "Waiting for Telegram Bot API at $BOT_API..."
-for i in $(seq 1 60); do
+READY=0
+for i in $(seq 1 180); do
+  # First check if server is responding
   if wget -q --spider "$BOT_API" 2>/dev/null; then
-    echo "✅ Bot API is ready after ${i}s"
-    break
-  fi
-  if [ $i -eq 60 ]; then
-    echo "⚠️ Bot API not ready after 60s, starting anyway..."
+    # Server is up, now check if API is actually ready (not returning "restart")
+    if [ -n "$BOT_TOKEN" ]; then
+      RESP=$(wget -q -O - "$BOT_API/bot$BOT_TOKEN/getMe" 2>/dev/null || echo "")
+      if echo "$RESP" | grep -q '"ok":true'; then
+        echo "✅ Bot API is fully ready after ${i}s"
+        READY=1
+        break
+      elif echo "$RESP" | grep -q 'restart'; then
+        # Still initializing, wait more
+        [ $((i % 10)) -eq 0 ] && echo "  Bot API initializing... (${i}s)"
+      fi
+    else
+      echo "✅ Bot API server responding after ${i}s (no token to verify)"
+      READY=1
+      break
+    fi
   fi
   sleep 1
 done
+
+if [ $READY -eq 0 ]; then
+  echo "⚠️ Bot API not fully ready after 180s, starting anyway..."
+fi
 
 # Switch to botuser and run the bot
 exec su -s /bin/sh botuser -c "export DATABASE_URL=/data/database.sqlite TEMP_FILES_DIR=/data BOT_API_DATA_DIR=/data BOT_API_URL=$BOT_API LOG_FILE_PATH=/data/app.log && exec /app/doradura"
