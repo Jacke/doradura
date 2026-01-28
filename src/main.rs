@@ -166,7 +166,41 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
     let max_retries = config::retry::MAX_DISPATCHER_RETRIES;
 
     // Get bot information to check mentions
-    let bot_info = bot.get_me().await?;
+    // Retry if Bot API is still initializing (returns "restart" error)
+    let bot_info = {
+        let startup_max_retries = 60; // Up to 5 minutes (60 * 5s)
+        let mut startup_retry = 0;
+        loop {
+            match bot.get_me().await {
+                Ok(info) => break info,
+                Err(e) => {
+                    let err_str = e.to_string();
+                    let is_retryable = err_str.contains("restart")
+                        || err_str.contains("network")
+                        || err_str.contains("connection")
+                        || err_str.contains("timed out")
+                        || err_str.contains("Connection refused");
+
+                    startup_retry += 1;
+                    if startup_retry >= startup_max_retries || !is_retryable {
+                        return Err(anyhow::anyhow!(
+                            "Failed to connect to Bot API after {} retries: {}",
+                            startup_retry,
+                            e
+                        ));
+                    }
+
+                    log::warn!(
+                        "Bot API not ready (attempt {}/{}): {}. Retrying in 5 seconds...",
+                        startup_retry,
+                        startup_max_retries,
+                        err_str
+                    );
+                    sleep(Duration::from_secs(5)).await;
+                }
+            }
+        }
+    };
     let bot_username = bot_info.username.as_deref();
     let bot_id = bot_info.id;
     log::info!("Bot username: {:?}, Bot ID: {}", bot_username, bot_id);
