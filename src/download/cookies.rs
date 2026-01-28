@@ -54,7 +54,7 @@ pub async fn validate_cookies() -> Result<(), String> {
             .arg("--cookies")
             .arg(&cookies_path)
             .arg("--extractor-args")
-            .arg("youtube:player_client=default,web_safari,web_embedded")
+            .arg("youtube:player_client=web,web_safari,android_sdkless")
             .arg("--js-runtimes")
             .arg("node")
             .arg("--print")

@@ -91,7 +91,12 @@ pub mod queue {
     use super::Duration;
 
     /// Maximum number of concurrent downloads
-    pub const MAX_CONCURRENT_DOWNLOADS: usize = 5;
+    /// Reduced to 2 to avoid YouTube 403 rate limiting
+    pub const MAX_CONCURRENT_DOWNLOADS: usize = 2;
+
+    /// Global delay between starting new download tasks (milliseconds)
+    /// Helps avoid rate limiting when multiple users download simultaneously
+    pub const INTER_DOWNLOAD_DELAY_MS: u64 = 3000;
 
     /// Interval between queue checks (in milliseconds)
     pub const CHECK_INTERVAL_MS: u64 = 100;
@@ -99,6 +104,11 @@ pub mod queue {
     /// Queue check interval duration
     pub fn check_interval() -> Duration {
         Duration::from_millis(CHECK_INTERVAL_MS)
+    }
+
+    /// Inter-download delay duration
+    pub fn inter_download_delay() -> Duration {
+        Duration::from_millis(INTER_DOWNLOAD_DELAY_MS)
     }
 }
 
