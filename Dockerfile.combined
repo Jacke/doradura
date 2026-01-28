@@ -233,6 +233,10 @@ chmod 1777 /tmp
 if id telegram-bot-api >/dev/null 2>&1 && getent group shareddata >/dev/null 2>&1; then
 chown telegram-bot-api:shareddata /data
 chmod 775 /data
+# Fix ownership of telegram-bot-api files (tqueue.binlog, etc.)
+for f in /data/tqueue.binlog /data/*.binlog; do
+  [ -e "$f" ] && chown telegram-bot-api:shareddata "$f" && echo "  Fixed ownership: $f"
+done
 echo "✅ /data ownership: $(ls -ld /data)"
 fi
 
