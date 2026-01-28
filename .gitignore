@@ -40,3 +40,4 @@ alertmanager_data/
 grafana/grafana.ini
 # MTProto session files (contain auth tokens)
 mtproto_session*.bin
+run-staging.sh

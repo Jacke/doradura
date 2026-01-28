@@ -24,7 +24,8 @@ use doradura::downsub::DownsubGateway;
 use doradura::storage::db::{self as db, expire_old_subscriptions, get_failed_tasks};
 use doradura::storage::{create_pool, get_connection};
 use doradura::telegram::notifications::notify_admin_task_failed;
-use doradura::telegram::webapp::run_webapp_server;
+// DISABLED: Mini App not ready for production
+// use doradura::telegram::webapp::run_webapp_server;
 use doradura::telegram::Bot;
 use doradura::telegram::{create_bot, schema, setup_all_language_commands, HandlerDeps};
 use std::env;
@@ -261,35 +262,37 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
         }
     }
 
-    // Start Mini App web server if WEBAPP_PORT is set
-    if let Ok(webapp_port_str) = env::var("WEBAPP_PORT") {
-        if let Ok(webapp_port) = webapp_port_str.parse::<u16>() {
-            log::info!("Starting Mini App web server on port {}", webapp_port);
-            let db_pool_webapp = Arc::clone(&db_pool);
-            let download_queue_webapp = Arc::clone(&download_queue);
-            let rate_limiter_webapp = Arc::clone(&rate_limiter);
-            let bot_token_webapp = bot.token().to_string();
-
-            tokio::spawn(async move {
-                if let Err(e) = run_webapp_server(
-                    webapp_port,
-                    db_pool_webapp,
-                    download_queue_webapp,
-                    rate_limiter_webapp,
-                    bot_token_webapp,
-                )
-                .await
-                {
-                    log::error!("Mini App web server error: {}", e);
-                }
-            });
-        } else {
-            log::warn!("Invalid WEBAPP_PORT value: {}", webapp_port_str);
-        }
-    } else {
-        log::info!("WEBAPP_PORT not set, Mini App web server disabled");
-        log::info!("Set WEBAPP_PORT environment variable to enable Mini App (e.g., WEBAPP_PORT=8080)");
-    }
+    // DISABLED: Mini App web server — not ready for production yet
+    // To re-enable, uncomment the block below and set WEBAPP_PORT env var
+    //
+    // if let Ok(webapp_port_str) = env::var("WEBAPP_PORT") {
+    //     if let Ok(webapp_port) = webapp_port_str.parse::<u16>() {
+    //         log::info!("Starting Mini App web server on port {}", webapp_port);
+    //         let db_pool_webapp = Arc::clone(&db_pool);
+    //         let download_queue_webapp = Arc::clone(&download_queue);
+    //         let rate_limiter_webapp = Arc::clone(&rate_limiter);
+    //         let bot_token_webapp = bot.token().to_string();
+    //
+    //         tokio::spawn(async move {
+    //             if let Err(e) = run_webapp_server(
+    //                 webapp_port,
+    //                 db_pool_webapp,
+    //                 download_queue_webapp,
+    //                 rate_limiter_webapp,
+    //                 bot_token_webapp,
+    //             )
+    //             .await
+    //             {
+    //                 log::error!("Mini App web server error: {}", e);
+    //             }
+    //         });
+    //     } else {
+    //         log::warn!("Invalid WEBAPP_PORT value: {}", webapp_port_str);
+    //     }
+    // } else {
+    //     log::info!("WEBAPP_PORT not set, Mini App web server disabled");
+    //     log::info!("Set WEBAPP_PORT environment variable to enable Mini App (e.g., WEBAPP_PORT=8080)");
+    // }
 
     // Start the queue processing
     tokio::spawn(process_queue(
