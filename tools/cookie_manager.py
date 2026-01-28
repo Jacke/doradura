@@ -174,11 +174,26 @@ def _make_chrome_options(*, headless: bool, profile_dir: str) -> uc.ChromeOption
     opts.add_argument("--no-sandbox")
     opts.add_argument("--disable-gpu")
     opts.add_argument("--disable-dev-shm-usage")
+
+    # Common anti-detection flags
+    opts.add_argument("--disable-blink-features=AutomationControlled")
+    opts.add_argument("--disable-infobars")
+    opts.add_argument("--disable-extensions")
+
     if headless:
+        # Use new headless mode which is less detectable
         opts.add_argument("--headless=new")
+        # Set window size even in headless
+        opts.add_argument("--window-size=1920,1080")
+        # Fake user agent to not reveal HeadlessChrome
+        opts.add_argument(
+            "--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
+        )
     else:
         opts.add_argument("--start-maximized")
         opts.add_argument("--window-size=1920,1080")
+
     return opts
 
 
@@ -485,21 +500,58 @@ def _export_cookies_headless() -> int:
 
     log.info("Using original profile: %s", BROWSER_PROFILE_DIR)
 
-    # Check profile directory contents
+    # Check profile directory contents and cookie database
     if os.path.exists(BROWSER_PROFILE_DIR):
         try:
             items = os.listdir(BROWSER_PROFILE_DIR)
-            log.info("Profile directory contains %d items", len(items))
-            # Log some key directories
-            key_dirs = ["Default", "Cookies", "Local State"]
-            for d in key_dirs:
-                path = os.path.join(BROWSER_PROFILE_DIR, d)
-                if os.path.exists(path):
-                    log.info("  ✅ %s exists", d)
-                else:
-                    log.warning("  ❌ %s NOT FOUND", d)
+            log.info("Profile directory contains %d items: %s", len(items), items[:10])
+
+            # Check Default profile directory
+            default_dir = os.path.join(BROWSER_PROFILE_DIR, "Default")
+            if os.path.exists(default_dir):
+                log.info("  ✅ Default directory exists")
+                default_items = os.listdir(default_dir)
+                log.info("  Default contains %d items", len(default_items))
+
+                # Check for cookie database files (Chrome stores cookies here)
+                cookie_paths = [
+                    os.path.join(default_dir, "Cookies"),
+                    os.path.join(default_dir, "Network", "Cookies"),
+                ]
+                for cookie_path in cookie_paths:
+                    if os.path.exists(cookie_path):
+                        size = os.path.getsize(cookie_path)
+                        log.info("  ✅ Cookie DB found: %s (%d bytes)", cookie_path, size)
+
+                        # Try to read cookie count from SQLite
+                        try:
+                            import sqlite3
+                            conn = sqlite3.connect(cookie_path)
+                            cursor = conn.cursor()
+                            cursor.execute("SELECT COUNT(*) FROM cookies")
+                            count = cursor.fetchone()[0]
+                            cursor.execute("SELECT host_key, name, expires_utc FROM cookies LIMIT 10")
+                            sample = cursor.fetchall()
+                            conn.close()
+                            log.info("  Cookie DB contains %d cookies", count)
+                            for host, name, expires in sample:
+                                log.info("    - %s: %s (expires: %s)", host, name, expires)
+                        except Exception as e:
+                            log.warning("  Could not read cookie DB: %s", e)
+                    else:
+                        log.warning("  ❌ Cookie DB not found: %s", cookie_path)
+            else:
+                log.warning("  ❌ Default directory NOT FOUND")
+
+            # Check Local State
+            local_state = os.path.join(BROWSER_PROFILE_DIR, "Local State")
+            if os.path.exists(local_state):
+                log.info("  ✅ Local State exists (%d bytes)", os.path.getsize(local_state))
+            else:
+                log.warning("  ❌ Local State NOT FOUND")
+
         except Exception as e:
-            log.warning("Could not list profile directory: %s", e)
+            log.warning("Could not analyze profile directory: %s", e)
 
     driver = _create_driver(headless=True, profile_dir=BROWSER_PROFILE_DIR)
     try:
@@ -788,7 +840,9 @@ async def stop_login() -> dict:
     if not status["login_active"]:
         return {"error": "No active login session"}
 
-    log.info("Stopping login session...")
+    log.info("=" * 80)
+    log.info("STOPPING LOGIN SESSION - SAVING COOKIES")
+    log.info("=" * 80)
 
     result = {"status": "ok", "cookies_exported": False, "cookie_count": 0}
 
@@ -796,6 +850,11 @@ async def stop_login() -> dict:
     driver = login_state.get("driver")
     if driver:
         try:
+            # First, log current browser cookies
+            browser_cookies = driver.get_cookies()
+            log.info("Browser has %d cookies before export", len(browser_cookies))
+            _log_cookie_details(browser_cookies, "BROWSER STATE at login stop")
+
             loop = asyncio.get_running_loop()
             count = await loop.run_in_executor(None, _export_cookies_from_driver, driver)
 
@@ -809,6 +868,26 @@ async def stop_login() -> dict:
             status["last_error"] = None
 
             log.info("Exported %d cookies after login", count)
+
+            # Check if cookies were saved to profile
+            log.info("Checking if cookies persisted to profile...")
+            default_dir = os.path.join(BROWSER_PROFILE_DIR, "Default")
+            for cookie_path in [
+                os.path.join(default_dir, "Cookies"),
+                os.path.join(default_dir, "Network", "Cookies"),
+            ]:
+                if os.path.exists(cookie_path):
+                    try:
+                        import sqlite3
+                        conn = sqlite3.connect(cookie_path)
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT COUNT(*) FROM cookies")
+                        db_count = cursor.fetchone()[0]
+                        conn.close()
+                        log.info("  ✅ Cookie DB %s has %d cookies", cookie_path, db_count)
+                    except Exception as e:
+                        log.warning("  Could not read cookie DB: %s", e)
+
         except Exception as e:
             log.error("Failed to export cookies after login: %s", e)
             result["error"] = str(e)
