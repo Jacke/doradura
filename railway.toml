@@ -1,3 +1,5 @@
+# Railway deployment configuration
+# Ensures Dockerfile.combined is used for multi-service setup
 [build]
 builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile.combined"
