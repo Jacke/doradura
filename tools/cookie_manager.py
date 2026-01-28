@@ -710,6 +710,42 @@ def check_session_valid(cookie_count: int) -> bool:
     return False
 
 
+def get_cookie_analysis() -> dict:
+    """Analyze cookies file and return detailed status."""
+    result = {
+        "required_found": [],
+        "required_missing": list(REQUIRED_COOKIES),
+        "session_valid": False,
+        "reason": "No cookies file",
+    }
+
+    if not os.path.exists(COOKIES_FILE):
+        return result
+
+    try:
+        with open(COOKIES_FILE, "r") as f:
+            content = f.read()
+
+        found = set()
+        for name in REQUIRED_COOKIES:
+            if f"\t{name}\t" in content:
+                found.add(name)
+
+        result["required_found"] = list(found)
+        result["required_missing"] = list(REQUIRED_COOKIES - found)
+
+        if found:
+            result["session_valid"] = True
+            result["reason"] = None
+        else:
+            result["reason"] = f"Missing all required cookies: {', '.join(REQUIRED_COOKIES)}"
+
+    except OSError as e:
+        result["reason"] = f"Could not read cookies file: {e}"
+
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Login flow (visual via noVNC)
 # ---------------------------------------------------------------------------
@@ -992,6 +1028,14 @@ async def handle_login_stop(request):
 async def handle_status(request):
     status["profile_exists"] = os.path.exists(BROWSER_PROFILE_DIR)
     status["cookies_exist"] = os.path.exists(COOKIES_FILE)
+
+    # Add detailed cookie analysis
+    analysis = get_cookie_analysis()
+    status["cookie_analysis"] = analysis
+    status["required_found"] = analysis["required_found"]
+    status["required_missing"] = analysis["required_missing"]
+    status["invalid_reason"] = analysis["reason"]
+
     return web.json_response(status)
 
 
