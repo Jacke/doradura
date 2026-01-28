@@ -116,7 +116,8 @@ RUN cat > /app/run-bot.sh << 'BOT_WRAPPER_EOF'
 chmod 775 /data
 cd /data
 # Switch to botuser and run the bot
-exec su -s /bin/sh botuser -c 'export DATABASE_URL=/data/database.sqlite TEMP_FILES_DIR=/data BOT_API_DATA_DIR=/data BOT_API_URL=http://localhost:8081 LOG_FILE_PATH=/data/app.log && exec /app/doradura'
+BOT_API="${BOT_API_URL:-http://localhost:8081}"
+exec su -s /bin/sh botuser -c "export DATABASE_URL=/data/database.sqlite TEMP_FILES_DIR=/data BOT_API_DATA_DIR=/data BOT_API_URL=$BOT_API LOG_FILE_PATH=/data/app.log && exec /app/doradura"
 BOT_WRAPPER_EOF
 
 RUN chmod +x /app/run-bot.sh && chown root:root /app/run-bot.sh
