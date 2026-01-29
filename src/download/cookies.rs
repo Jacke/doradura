@@ -53,8 +53,9 @@ pub async fn validate_cookies() -> Result<(), String> {
             .arg("--skip-download")
             .arg("--cookies")
             .arg(&cookies_path)
+            // PO Token provider for YouTube bot detection bypass
             .arg("--extractor-args")
-            .arg("youtube:player_client=web,web_safari,android_sdkless")
+            .arg("youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416")
             .arg("--js-runtimes")
             .arg("node")
             .arg("--print")

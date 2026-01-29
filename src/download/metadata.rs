@@ -55,9 +55,10 @@ pub fn validate_cookies_file_format(cookies_file: &str) -> bool {
     }
 }
 
-/// Adds cookie arguments to yt-dlp command arguments.
+/// Adds cookie and PO Token arguments to yt-dlp command arguments.
 ///
 /// Uses either a cookies file (YTDL_COOKIES_FILE) or browser (YTDL_COOKIES_BROWSER).
+/// Also configures PO Token provider (bgutil HTTP server) for YouTube bot detection bypass.
 /// Priority: file > browser
 ///
 /// # Arguments
@@ -69,6 +70,11 @@ pub fn validate_cookies_file_format(cookies_file: &str) -> bool {
 /// This function uses `Box::leak` to create static string references for the cookies
 /// path. This is intentional for lifetime purposes in the yt-dlp argument handling.
 pub fn add_cookies_args(args: &mut Vec<&str>) {
+    // Add PO Token provider configuration for YouTube
+    // bgutil HTTP server runs on port 4416 by default
+    args.push("--extractor-args");
+    args.push("youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416");
+
     // Priority 1: Cookies file
     if let Some(ref cookies_file) = *config::YTDL_COOKIES_FILE {
         if !cookies_file.is_empty() {
