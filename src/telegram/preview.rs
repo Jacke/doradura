@@ -1,8 +1,8 @@
 use crate::core::config;
 use crate::core::error::AppError;
 use crate::core::escape_markdown;
-use crate::download::metadata::add_cookies_args;
-use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message};
+use crate::download::metadata::{add_cookies_args_with_proxy, get_proxy_chain, is_proxy_related_error};
+use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message, YtDlpErrorType};
 use crate::storage::cache;
 use crate::storage::db::DbPool;
 use crate::telegram::Bot;
@@ -32,48 +32,113 @@ fn filter_video_formats_by_size(formats: &[VideoFormatInfo]) -> Vec<VideoFormatI
 
 /// Получает метаданные из JSON ответа yt-dlp
 ///
-/// Использует --dump-json для получения всех метаданных за один вызов
+/// Использует --dump-json для получения всех метаданных за один вызов.
+/// При ошибке связанной с прокси автоматически пробует следующий прокси из цепочки.
 async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<Value, AppError> {
-    let mut args: Vec<&str> = vec![
-        "--dump-json",
-        "--no-playlist",
-        "--socket-timeout",
-        "30",
-        "--retries",
-        "2",
-        "--extractor-args",
-        "youtube:player_client=web,web_safari",
-        "--js-runtimes",
-        "node",
-    ];
-    add_cookies_args(&mut args);
-    args.push(url.as_str());
+    let proxy_chain = get_proxy_chain();
+    let total_proxies = proxy_chain.len();
+    let mut last_error: Option<AppError> = None;
 
-    let command_str = format!("{} {}", ytdl_bin, args.join(" "));
-    log::info!("[DEBUG] yt-dlp command for preview metadata (JSON): {}", command_str);
+    for (attempt, proxy_option) in proxy_chain.into_iter().enumerate() {
+        let proxy_name = proxy_option
+            .as_ref()
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| "Direct (no proxy)".to_string());
 
-    let json_output = timeout(
-        config::download::ytdlp_timeout(),
-        TokioCommand::new(ytdl_bin).args(&args).output(),
-    )
-    .await
-    .map_err(|_| AppError::Download("yt-dlp command timed out getting metadata".to_string()))?
-    .map_err(|e| AppError::Download(format!("Failed to get metadata: {}", e)))?;
+        log::info!(
+            "📡 Preview metadata attempt {}/{} using [{}]",
+            attempt + 1,
+            total_proxies,
+            proxy_name
+        );
 
-    if !json_output.status.success() {
+        let mut args: Vec<&str> = vec![
+            "--dump-json",
+            "--no-playlist",
+            "--socket-timeout",
+            "30",
+            "--retries",
+            "2",
+            "--extractor-args",
+            "youtube:player_client=web,web_safari",
+            "--js-runtimes",
+            "node",
+        ];
+
+        // Add proxy and cookies
+        add_cookies_args_with_proxy(&mut args, proxy_option.as_ref());
+        args.push(url.as_str());
+
+        let command_str = format!("{} {}", ytdl_bin, args.join(" "));
+        log::info!("[DEBUG] yt-dlp command for preview metadata (JSON): {}", command_str);
+
+        let json_output = match timeout(
+            config::download::ytdlp_timeout(),
+            TokioCommand::new(ytdl_bin).args(&args).output(),
+        )
+        .await
+        {
+            Ok(Ok(output)) => output,
+            Ok(Err(e)) => {
+                log::warn!("🔄 Failed to execute yt-dlp with [{}]: {}", proxy_name, e);
+                last_error = Some(AppError::Download(format!("Failed to get metadata: {}", e)));
+                continue;
+            }
+            Err(_) => {
+                log::warn!("🔄 yt-dlp command timed out with [{}], trying next proxy", proxy_name);
+                last_error = Some(AppError::Download(
+                    "yt-dlp command timed out getting metadata".to_string(),
+                ));
+                continue;
+            }
+        };
+
+        if json_output.status.success() {
+            let json_str = String::from_utf8_lossy(&json_output.stdout);
+            match serde_json::from_str(&json_str) {
+                Ok(value) => {
+                    log::info!("✅ Preview metadata succeeded using [{}]", proxy_name);
+                    return Ok(value);
+                }
+                Err(e) => {
+                    log::warn!("🔄 Failed to parse JSON with [{}]: {}", proxy_name, e);
+                    last_error = Some(AppError::Download(format!("Failed to parse JSON metadata: {}", e)));
+                    continue;
+                }
+            }
+        }
+
         let stderr = String::from_utf8_lossy(&json_output.stderr);
         let error_type = analyze_ytdlp_error(&stderr);
 
         // Логируем детальную информацию об ошибке
-        log::error!("Failed to get metadata, error type: {:?}", error_type);
+        log::error!(
+            "❌ Preview metadata failed with [{}], error type: {:?}",
+            proxy_name,
+            error_type
+        );
         log::error!("yt-dlp stderr: {}", stderr);
 
-        // Возвращаем пользовательское сообщение об ошибке
+        // Check if proxy-related error that should trigger fallback
+        let should_try_next = is_proxy_related_error(&stderr)
+            || matches!(error_type, YtDlpErrorType::BotDetection | YtDlpErrorType::NetworkError);
+
+        if should_try_next && attempt + 1 < total_proxies {
+            log::warn!(
+                "🔄 Proxy-related error detected, will try next proxy (attempt {}/{})",
+                attempt + 2,
+                total_proxies
+            );
+            last_error = Some(AppError::Download(get_error_message(&error_type)));
+            continue;
+        }
+
+        // Non-recoverable error or last proxy
         return Err(AppError::Download(get_error_message(&error_type)));
     }
 
-    let json_str = String::from_utf8_lossy(&json_output.stdout);
-    serde_json::from_str(&json_str).map_err(|e| AppError::Download(format!("Failed to parse JSON metadata: {}", e)))
+    log::error!("❌ All {} proxies failed for preview metadata", total_proxies);
+    Err(last_error.unwrap_or_else(|| AppError::Download("All proxies failed".to_string())))
 }
 
 /// Извлекает значение из JSON по ключу
@@ -552,46 +617,101 @@ pub async fn get_preview_metadata(
 /// - 1080p, 720p, 480p, 360p
 /// - Размеры файлов
 /// - Разрешения
+///
+/// При ошибке связанной с прокси автоматически пробует следующий прокси из цепочки.
 async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<VideoFormatInfo>, AppError> {
-    let mut list_formats_args: Vec<String> = vec!["--list-formats".to_string(), "--no-playlist".to_string()];
+    let proxy_chain = get_proxy_chain();
+    let total_proxies = proxy_chain.len();
+    let mut last_error: Option<AppError> = None;
 
-    let mut temp_args: Vec<&str> = vec![];
-    add_cookies_args(&mut temp_args);
-    for arg in temp_args {
-        list_formats_args.push(arg.to_string());
-    }
-    list_formats_args.push("--extractor-args".to_string());
-    list_formats_args.push("youtube:player_client=web,web_safari".to_string());
-    list_formats_args.push("--js-runtimes".to_string());
-    list_formats_args.push("node".to_string());
-    list_formats_args.push(url.as_str().to_string());
+    // Try each proxy in the chain
+    let formats_output: String = 'proxy_loop: {
+        for (attempt, proxy_option) in proxy_chain.into_iter().enumerate() {
+            let proxy_name = proxy_option
+                .as_ref()
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| "Direct (no proxy)".to_string());
 
-    let command_str = format!("{} {}", ytdl_bin, list_formats_args.join(" "));
-    log::info!("[DEBUG] yt-dlp command for preview formats: {}", command_str);
+            log::info!(
+                "📡 Formats list attempt {}/{} using [{}]",
+                attempt + 1,
+                total_proxies,
+                proxy_name
+            );
 
-    let list_formats_output = timeout(
-        // Используем тот же таймаут, что и для остальных вызовов yt-dlp,
-        // чтобы не обрывать долгие запросы к YouTube раньше времени
-        config::download::ytdlp_timeout(),
-        TokioCommand::new(ytdl_bin).args(&list_formats_args).output(),
-    )
-    .await
-    .map_err(|_| AppError::Download("yt-dlp command timed out getting formats list".to_string()))?
-    .map_err(|e| AppError::Download(format!("Failed to get formats list: {}", e)))?;
+            let mut list_formats_args: Vec<&str> = vec!["--list-formats", "--no-playlist"];
 
-    if !list_formats_output.status.success() {
-        let stderr = String::from_utf8_lossy(&list_formats_output.stderr);
-        let error_type = analyze_ytdlp_error(&stderr);
+            // Add proxy and cookies
+            add_cookies_args_with_proxy(&mut list_formats_args, proxy_option.as_ref());
 
-        // Логируем детальную информацию об ошибке
-        log::error!("Failed to get formats list, error type: {:?}", error_type);
-        log::error!("yt-dlp stderr: {}", stderr);
+            list_formats_args.push("--extractor-args");
+            list_formats_args.push("youtube:player_client=web,web_safari");
+            list_formats_args.push("--js-runtimes");
+            list_formats_args.push("node");
+            list_formats_args.push(url.as_str());
 
-        // Возвращаем пользовательское сообщение об ошибке
-        return Err(AppError::Download(get_error_message(&error_type)));
-    }
+            let command_str = format!("{} {}", ytdl_bin, list_formats_args.join(" "));
+            log::info!("[DEBUG] yt-dlp command for preview formats: {}", command_str);
 
-    let formats_output = String::from_utf8_lossy(&list_formats_output.stdout);
+            let list_formats_output = match timeout(
+                config::download::ytdlp_timeout(),
+                TokioCommand::new(ytdl_bin).args(&list_formats_args).output(),
+            )
+            .await
+            {
+                Ok(Ok(output)) => output,
+                Ok(Err(e)) => {
+                    log::warn!("🔄 Failed to execute yt-dlp with [{}]: {}", proxy_name, e);
+                    last_error = Some(AppError::Download(format!("Failed to get formats list: {}", e)));
+                    continue;
+                }
+                Err(_) => {
+                    log::warn!("🔄 yt-dlp command timed out with [{}], trying next proxy", proxy_name);
+                    last_error = Some(AppError::Download(
+                        "yt-dlp command timed out getting formats list".to_string(),
+                    ));
+                    continue;
+                }
+            };
+
+            if list_formats_output.status.success() {
+                log::info!("✅ Formats list succeeded using [{}]", proxy_name);
+                break 'proxy_loop String::from_utf8_lossy(&list_formats_output.stdout).to_string();
+            }
+
+            let stderr = String::from_utf8_lossy(&list_formats_output.stderr);
+            let error_type = analyze_ytdlp_error(&stderr);
+
+            log::error!(
+                "❌ Formats list failed with [{}], error type: {:?}",
+                proxy_name,
+                error_type
+            );
+            log::error!("yt-dlp stderr: {}", stderr);
+
+            // Check if proxy-related error that should trigger fallback
+            let should_try_next = is_proxy_related_error(&stderr)
+                || matches!(error_type, YtDlpErrorType::BotDetection | YtDlpErrorType::NetworkError);
+
+            if should_try_next && attempt + 1 < total_proxies {
+                log::warn!(
+                    "🔄 Proxy-related error detected, will try next proxy (attempt {}/{})",
+                    attempt + 2,
+                    total_proxies
+                );
+                last_error = Some(AppError::Download(get_error_message(&error_type)));
+                continue;
+            }
+
+            // Non-recoverable error or last proxy
+            return Err(AppError::Download(get_error_message(&error_type)));
+        }
+
+        // All proxies failed
+        log::error!("❌ All {} proxies failed for formats list", total_proxies);
+        return Err(last_error.unwrap_or_else(|| AppError::Download("All proxies failed".to_string())));
+    };
+
     let output_line_count = formats_output.lines().count();
     log::debug!(
         "yt-dlp --list-formats output received ({} bytes, {} lines)",
@@ -599,7 +719,6 @@ async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<VideoFo
         output_line_count
     );
     let mut formats: Vec<VideoFormatInfo> = Vec::new();
-    // log::info!("formats: {:?}", formats_output);
 
     // Ищем форматы для разных разрешений
     // Включаем как горизонтальные (обычные видео), так и вертикальные (YouTube Shorts)
