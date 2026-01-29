@@ -26,7 +26,7 @@ use url::Url;
 
 /// Masks password in proxy URL for safe logging.
 /// Transforms "http://user:secret@host:port" to "http://user:***@host:port"
-fn mask_proxy_password(proxy_url: &str) -> String {
+pub fn mask_proxy_password(proxy_url: &str) -> String {
     if let Some(at_pos) = proxy_url.rfind('@') {
         if let Some(colon_pos) = proxy_url[..at_pos].rfind(':') {
             let prefix = &proxy_url[..colon_pos + 1];
@@ -35,6 +35,80 @@ fn mask_proxy_password(proxy_url: &str) -> String {
         }
     }
     proxy_url.to_string()
+}
+
+/// Represents a proxy configuration with URL and description for logging
+#[derive(Debug, Clone)]
+pub struct ProxyConfig {
+    /// Proxy URL (e.g., "socks5://host:port" or "http://user:pass@host:port")
+    pub url: String,
+    /// Human-readable description for logs (e.g., "WARP", "Geonode residential")
+    pub name: String,
+}
+
+impl ProxyConfig {
+    pub fn new(url: String, name: &str) -> Self {
+        Self {
+            url,
+            name: name.to_string(),
+        }
+    }
+
+    /// Returns masked URL for safe logging
+    pub fn masked_url(&self) -> String {
+        mask_proxy_password(&self.url)
+    }
+}
+
+/// Returns ordered list of proxies to try: WARP (primary) → PROXY_LIST (fallback) → None (direct)
+///
+/// This enables automatic failover when a proxy fails:
+/// 1. First try WARP proxy (free Cloudflare IP)
+/// 2. If WARP fails, try residential proxy from PROXY_LIST
+/// 3. If all proxies fail, try direct connection (no proxy)
+pub fn get_proxy_chain() -> Vec<Option<ProxyConfig>> {
+    let mut chain = Vec::new();
+
+    // Primary: WARP proxy (free Cloudflare)
+    if let Some(ref warp_proxy) = *config::proxy::WARP_PROXY {
+        if !warp_proxy.trim().is_empty() {
+            chain.push(Some(ProxyConfig::new(
+                warp_proxy.trim().to_string(),
+                "WARP (Cloudflare)",
+            )));
+        }
+    }
+
+    // Fallback: Residential proxy from PROXY_LIST
+    if let Some(ref proxy_list) = *config::proxy::PROXY_LIST {
+        let first_proxy = proxy_list.split(',').next().unwrap_or("").trim();
+        if !first_proxy.is_empty() {
+            chain.push(Some(ProxyConfig::new(
+                first_proxy.to_string(),
+                "Residential (fallback)",
+            )));
+        }
+    }
+
+    // Last resort: No proxy (direct connection)
+    chain.push(None);
+
+    chain
+}
+
+/// Checks if an error is proxy-related and should trigger fallback to next proxy
+pub fn is_proxy_related_error(error_msg: &str) -> bool {
+    let error_lower = error_msg.to_lowercase();
+    error_lower.contains("403")
+        || error_lower.contains("forbidden")
+        || error_lower.contains("proxy")
+        || error_lower.contains("connection")
+        || error_lower.contains("timeout")
+        || error_lower.contains("bot")
+        || error_lower.contains("sign in")
+        || error_lower.contains("confirm you")
+        || error_lower.contains("socks")
+        || error_lower.contains("tunnel")
 }
 
 /// Validates Netscape HTTP Cookie File format.
@@ -70,50 +144,36 @@ pub fn validate_cookies_file_format(cookies_file: &str) -> bool {
 
 /// Adds proxy, cookie, and PO Token arguments to yt-dlp command arguments.
 ///
-/// Uses either a cookies file (YTDL_COOKIES_FILE) or browser (YTDL_COOKIES_BROWSER).
-/// Also configures PO Token provider (bgutil HTTP server) for YouTube bot detection bypass.
-/// Adds proxy from PROXY_LIST environment variable if configured.
-/// Priority: file > browser
+/// This is a convenience wrapper that uses the default proxy chain (WARP → residential → direct).
+/// For retry logic with specific proxy, use `add_cookies_args_with_proxy` instead.
+pub fn add_cookies_args(args: &mut Vec<&str>) {
+    // Use first available proxy from the chain (WARP or PROXY_LIST)
+    let proxy_chain = get_proxy_chain();
+    let first_proxy = proxy_chain.into_iter().find(|p| p.is_some()).flatten();
+    add_cookies_args_with_proxy(args, first_proxy.as_ref());
+}
+
+/// Adds proxy, cookie, and PO Token arguments with a specific proxy configuration.
 ///
 /// # Arguments
 ///
 /// * `args` - Vector of arguments for yt-dlp to modify
+/// * `proxy` - Optional proxy configuration. If None, no proxy is used (direct connection)
 ///
 /// # Note
 ///
 /// This function uses `Box::leak` to create static string references for the cookies
 /// path. This is intentional for lifetime purposes in the yt-dlp argument handling.
-pub fn add_cookies_args(args: &mut Vec<&str>) {
-    // Add proxy for YouTube anti-bot bypass
-    // Priority: WARP_PROXY (free Cloudflare) > PROXY_LIST (residential fallback)
-    let proxy_url = if let Some(ref warp_proxy) = *config::proxy::WARP_PROXY {
-        if !warp_proxy.trim().is_empty() {
-            log::info!("Using WARP proxy (primary): {}", mask_proxy_password(warp_proxy));
-            Some(warp_proxy.trim().to_string())
-        } else {
-            None
-        }
-    } else if let Some(ref proxy_list) = *config::proxy::PROXY_LIST {
-        // Fallback to first proxy from PROXY_LIST
-        let first_proxy = proxy_list.split(',').next().unwrap_or("").trim();
-        if !first_proxy.is_empty() {
-            log::info!(
-                "Using residential proxy (fallback): {}",
-                mask_proxy_password(first_proxy)
-            );
-            Some(first_proxy.to_string())
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    if let Some(proxy) = proxy_url {
+pub fn add_cookies_args_with_proxy(args: &mut Vec<&str>, proxy: Option<&ProxyConfig>) {
+    // Add proxy if provided
+    if let Some(proxy_config) = proxy {
+        log::info!("Using proxy [{}]: {}", proxy_config.name, proxy_config.masked_url());
         args.push("--proxy");
         // SAFETY: This reference lives long enough as it's from Box::leak
-        let leaked_proxy = Box::leak(proxy.into_boxed_str());
+        let leaked_proxy = Box::leak(proxy_config.url.clone().into_boxed_str());
         args.push(unsafe { std::mem::transmute::<&str, &'static str>(leaked_proxy) });
+    } else {
+        log::info!("No proxy configured, using direct connection");
     }
 
     // Add PO Token provider configuration for YouTube
