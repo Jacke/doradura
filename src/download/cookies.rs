@@ -8,7 +8,9 @@
 use anyhow::Result;
 use base64::{engine::general_purpose, Engine as _};
 use std::path::PathBuf;
+use std::time::Duration;
 use tokio::process::Command;
+use tokio::time::timeout;
 
 use crate::download::metadata::{get_proxy_chain, is_proxy_related_error};
 
@@ -89,7 +91,18 @@ pub async fn validate_cookies() -> Result<(), String> {
             .arg("%(id)s %(title)s")
             .arg(test_url);
 
-        let output = cmd.output().await;
+        // Use 60 second timeout for validation (shorter than download timeout)
+        let output = match timeout(Duration::from_secs(60), cmd.output()).await {
+            Ok(result) => result,
+            Err(_) => {
+                log::warn!(
+                    "🔄 Cookies validation timed out with [{}], trying next proxy",
+                    proxy_name
+                );
+                last_error = Some("Validation timed out".to_string());
+                continue;
+            }
+        };
 
         match output {
             Ok(output) => {
