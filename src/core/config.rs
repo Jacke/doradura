@@ -395,8 +395,19 @@ pub mod proxy {
     use once_cell::sync::Lazy;
     use std::env;
 
-    /// Proxy list (comma-separated, e.g., "http://127.0.0.1:8080,socks5://127.0.0.1:1080")
+    /// Primary WARP proxy URL (Cloudflare WARP for free YouTube access)
+    /// Read from WARP_PROXY environment variable
+    /// Example: socks5://your-vps-ip:1080
+    /// This is the PRIMARY proxy - used first before falling back to PROXY_LIST
+    pub static WARP_PROXY: Lazy<Option<String>> = Lazy::new(|| {
+        env::var("WARP_PROXY")
+            .ok()
+            .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
+    });
+
+    /// Fallback proxy list (comma-separated, e.g., "http://127.0.0.1:8080,socks5://127.0.0.1:1080")
     /// Read from PROXY_LIST environment variable
+    /// Used as FALLBACK when WARP_PROXY is not set or fails
     /// Default: empty (no proxies)
     pub static PROXY_LIST: Lazy<Option<String>> = Lazy::new(|| {
         env::var("PROXY_LIST")
