@@ -11,7 +11,10 @@ use crate::core::rate_limiter::RateLimiter;
 use crate::core::truncate_tail_utf8;
 use crate::core::utils::escape_filename;
 use crate::download::downloader::{generate_file_name, parse_progress, spawn_downloader_with_fallback, ProgressInfo};
-use crate::download::metadata::{add_cookies_args, get_metadata_from_ytdlp, probe_duration_seconds};
+use crate::download::metadata::{
+    add_cookies_args_with_proxy, get_metadata_from_ytdlp, get_proxy_chain, is_proxy_related_error,
+    probe_duration_seconds,
+};
 use crate::download::progress::{DownloadStatus, ProgressMessage};
 use crate::download::send::{send_audio_with_retry, send_error_with_sticker, send_error_with_sticker_and_message};
 use crate::download::ytdlp_errors::{
@@ -91,123 +94,176 @@ pub async fn download_audio_file_with_progress(
     let handle = tokio::task::spawn_blocking(move || {
         let postprocessor_args = format!("-acodec libmp3lame -b:a {}", bitrate_str);
 
-        let mut args: Vec<&str> = vec![
-            "-o",
-            &download_path_clone,
-            "--newline",
-            "--extract-audio",
-            "--audio-format",
-            "mp3",
-            "--audio-quality",
-            "0",
-            "--add-metadata",
-            "--embed-thumbnail",
-            "--no-playlist",
-            "--concurrent-fragments",
-            "1",
-            "--fragment-retries",
-            "10",
-            "--socket-timeout",
-            "30",
-            "--http-chunk-size",
-            "2097152",
-            "--sleep-requests",
-            "1",
-            "--sleep-interval",
-            "2",
-            "--max-sleep-interval",
-            "5",
-            // Exponential backoff for 403/rate-limit errors
-            "--retry-sleep",
-            "http:exp=1:30", // 1s -> 2s -> 4s -> ... up to 30s
-            "--retry-sleep",
-            "fragment:exp=1:30", // same for fragment errors
-            "--retries",
-            "5", // retry main request up to 5 times
-        ];
-        add_cookies_args(&mut args);
+        // Get proxy chain for fallback: WARP → Residential → Direct
+        let proxy_chain = get_proxy_chain();
+        let total_proxies = proxy_chain.len();
+        let mut last_error: Option<AppError> = None;
 
-        // Use web client with PO Token support (bgutil plugin provides tokens automatically)
-        // NOTE: android_sdkless removed - it now requires PO Token and may conflict
-        args.push("--extractor-args");
-        args.push("youtube:player_client=web,web_safari");
+        // Try each proxy in the chain until one succeeds
+        for (attempt, proxy_option) in proxy_chain.into_iter().enumerate() {
+            let proxy_name = proxy_option
+                .as_ref()
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| "Direct (no proxy)".to_string());
 
-        // Use Node.js for YouTube n-challenge solving and BotGuard token generation
-        args.push("--js-runtimes");
-        args.push("node");
+            log::info!(
+                "📡 Audio download attempt {}/{} using [{}]",
+                attempt + 1,
+                total_proxies,
+                proxy_name
+            );
 
-        args.extend_from_slice(&[
-            "--no-check-certificate",
-            "--postprocessor-args",
-            &postprocessor_args,
-            &url_str,
-        ]);
+            // Clean up any partial download from previous attempt
+            if attempt > 0 {
+                let _ = std::fs::remove_file(&download_path_clone);
+                // Also clean up potential .part files
+                let part_file = format!("{}.part", download_path_clone);
+                let _ = std::fs::remove_file(&part_file);
+            }
 
-        let command_str = format!("{} {}", ytdl_bin, args.join(" "));
-        log::info!("[DEBUG] yt-dlp command for audio download: {}", command_str);
+            let mut args: Vec<&str> = vec![
+                "-o",
+                &download_path_clone,
+                "--newline",
+                "--extract-audio",
+                "--audio-format",
+                "mp3",
+                "--audio-quality",
+                "0",
+                "--add-metadata",
+                "--embed-thumbnail",
+                "--no-playlist",
+                "--concurrent-fragments",
+                "1",
+                "--fragment-retries",
+                "10",
+                "--socket-timeout",
+                "30",
+                "--http-chunk-size",
+                "2097152",
+                "--sleep-requests",
+                "1",
+                "--sleep-interval",
+                "2",
+                "--max-sleep-interval",
+                "5",
+                // Exponential backoff for 403/rate-limit errors
+                "--retry-sleep",
+                "http:exp=1:30", // 1s -> 2s -> 4s -> ... up to 30s
+                "--retry-sleep",
+                "fragment:exp=1:30", // same for fragment errors
+                "--retries",
+                "5", // retry main request up to 5 times
+            ];
 
-        let mut child = Command::new(&ytdl_bin)
-            .args(&args)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| AppError::Download(format!("Failed to spawn yt-dlp: {}", e)))?;
+            // Add proxy and cookies for this attempt
+            add_cookies_args_with_proxy(&mut args, proxy_option.as_ref());
 
-        let stdout = child.stdout.take();
-        let stderr = child.stderr.take();
+            // Use web client with PO Token support (bgutil plugin provides tokens automatically)
+            // NOTE: android_sdkless removed - it now requires PO Token and may conflict
+            args.push("--extractor-args");
+            args.push("youtube:player_client=web,web_safari");
 
-        let stderr_lines = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-        let stdout_lines = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+            // Use Node.js for YouTube n-challenge solving and BotGuard token generation
+            args.push("--js-runtimes");
+            args.push("node");
 
-        use std::thread;
-        let tx_clone = tx.clone();
-        let stderr_lines_clone = Arc::clone(&stderr_lines);
-        let stdout_lines_clone = Arc::clone(&stdout_lines);
+            args.extend_from_slice(&[
+                "--no-check-certificate",
+                "--postprocessor-args",
+                &postprocessor_args,
+                &url_str,
+            ]);
 
-        if let Some(stderr_stream) = stderr {
-            thread::spawn(move || {
-                let reader = BufReader::new(stderr_stream);
+            let command_str = format!("{} {}", ytdl_bin, args.join(" "));
+            log::info!("[DEBUG] yt-dlp command for audio download: {}", command_str);
+
+            let child_result = Command::new(&ytdl_bin)
+                .args(&args)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn();
+
+            let mut child = match child_result {
+                Ok(c) => c,
+                Err(e) => {
+                    log::error!("Failed to spawn yt-dlp: {}", e);
+                    last_error = Some(AppError::Download(format!("Failed to spawn yt-dlp: {}", e)));
+                    continue;
+                }
+            };
+
+            let stdout = child.stdout.take();
+            let stderr = child.stderr.take();
+
+            let stderr_lines = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+            let stdout_lines = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+
+            use std::thread;
+            let tx_clone = tx.clone();
+            let stderr_lines_clone = Arc::clone(&stderr_lines);
+            let stdout_lines_clone = Arc::clone(&stdout_lines);
+
+            if let Some(stderr_stream) = stderr {
+                thread::spawn(move || {
+                    let reader = BufReader::new(stderr_stream);
+                    for line in reader.lines() {
+                        if let Ok(line_str) = line {
+                            log::debug!("yt-dlp stderr: {}", line_str);
+                            if let Ok(mut lines) = stderr_lines_clone.lock() {
+                                lines.push(line_str.clone());
+                                if lines.len() > 200 {
+                                    lines.remove(0);
+                                }
+                            }
+                            if let Some(progress_info) = parse_progress(&line_str) {
+                                log::info!("Parsed progress from stderr: {}%", progress_info.percent);
+                                let _ = tx_clone.send(progress_info);
+                            }
+                        }
+                    }
+                });
+            }
+
+            if let Some(stdout_stream) = stdout {
+                let reader = BufReader::new(stdout_stream);
                 for line in reader.lines() {
                     if let Ok(line_str) = line {
-                        log::debug!("yt-dlp stderr: {}", line_str);
-                        if let Ok(mut lines) = stderr_lines_clone.lock() {
+                        log::debug!("yt-dlp stdout: {}", line_str);
+                        if let Ok(mut lines) = stdout_lines_clone.lock() {
                             lines.push(line_str.clone());
                             if lines.len() > 200 {
                                 lines.remove(0);
                             }
                         }
                         if let Some(progress_info) = parse_progress(&line_str) {
-                            log::info!("Parsed progress from stderr: {}%", progress_info.percent);
-                            let _ = tx_clone.send(progress_info);
+                            let _ = tx.send(progress_info);
                         }
-                    }
-                }
-            });
-        }
-
-        if let Some(stdout_stream) = stdout {
-            let reader = BufReader::new(stdout_stream);
-            for line in reader.lines() {
-                if let Ok(line_str) = line {
-                    log::debug!("yt-dlp stdout: {}", line_str);
-                    if let Ok(mut lines) = stdout_lines_clone.lock() {
-                        lines.push(line_str.clone());
-                        if lines.len() > 200 {
-                            lines.remove(0);
-                        }
-                    }
-                    if let Some(progress_info) = parse_progress(&line_str) {
-                        let _ = tx.send(progress_info);
                     }
                 }
             }
-        }
 
-        let status = child
-            .wait()
-            .map_err(|e| AppError::Download(format!("downloader process failed: {}", e)))?;
+            let status = match child.wait() {
+                Ok(s) => s,
+                Err(e) => {
+                    log::error!("Downloader process failed: {}", e);
+                    last_error = Some(AppError::Download(format!("downloader process failed: {}", e)));
+                    continue;
+                }
+            };
 
-        if !status.success() {
+            if status.success() {
+                // Success! Log which proxy worked
+                log::info!(
+                    "✅ Audio download succeeded using [{}] (attempt {}/{})",
+                    proxy_name,
+                    attempt + 1,
+                    total_proxies
+                );
+                return Ok(probe_duration_seconds(&download_path_clone));
+            }
+
+            // Download failed - check if we should try next proxy
             let stderr_text = if let Ok(lines) = stderr_lines.lock() {
                 lines.join("\n")
             } else {
@@ -219,48 +275,68 @@ pub async fn download_audio_file_with_progress(
                 String::new()
             };
 
-            if !stderr_text.is_empty() {
-                let error_type = analyze_ytdlp_error(&stderr_text);
+            let error_type = analyze_ytdlp_error(&stderr_text);
+            let error_msg = get_error_message(&error_type);
 
-                let error_category = match error_type {
-                    YtDlpErrorType::InvalidCookies => "invalid_cookies",
-                    YtDlpErrorType::BotDetection => "bot_detection",
-                    YtDlpErrorType::VideoUnavailable => "video_unavailable",
-                    YtDlpErrorType::NetworkError => "network",
-                    YtDlpErrorType::FragmentError => "fragment_error",
-                    YtDlpErrorType::Unknown => "ytdlp_unknown",
-                };
-                let operation = format!("audio_download:{}", error_category);
-                metrics::record_error("download", &operation);
+            log::error!(
+                "❌ Download failed with [{}]: {:?} - {}",
+                proxy_name,
+                error_type,
+                &stderr_text[..std::cmp::min(500, stderr_text.len())]
+            );
 
-                log::error!("yt-dlp download failed, error type: {:?}", error_type);
-                log::error!("yt-dlp stderr: {}", stderr_text);
+            // Check if this is a proxy-related error that warrants trying next proxy
+            let should_try_next = is_proxy_related_error(&stderr_text)
+                || matches!(error_type, YtDlpErrorType::BotDetection | YtDlpErrorType::NetworkError);
 
-                if should_notify_admin(&error_type) {
-                    log::warn!("This error requires administrator attention!");
-                    let admin_message = format!(
-                        "YTDLP ERROR (audio download)\nuser_chat_id: {}\nurl: {}\nerror_type: {:?}\n\ncommand:\n{}\n\nstdout (tail):\n{}\n\nstderr (tail):\n{}",
-                        user_chat_id.0,
-                        url_str,
-                        error_type,
-                        command_str,
-                        truncate_tail_utf8(&stdout_text, 6000),
-                        truncate_tail_utf8(&stderr_text, 6000),
-                    );
-                    let bot_for_admin = admin_bot.clone();
-                    runtime_handle.spawn(async move {
-                        notify_admin_text(&bot_for_admin, &admin_message).await;
-                    });
-                }
-
-                return Err(AppError::Download(get_error_message(&error_type)));
-            } else {
-                metrics::record_error("download", "audio_download");
-                return Err(AppError::Download(format!("downloader exited with status: {}", status)));
+            if should_try_next && attempt + 1 < total_proxies {
+                log::warn!(
+                    "🔄 Proxy-related error detected, will try next proxy (attempt {}/{})",
+                    attempt + 2,
+                    total_proxies
+                );
+                last_error = Some(AppError::Download(error_msg));
+                continue;
             }
+
+            // Not a proxy error or last attempt - report and return
+            let error_category = match error_type {
+                YtDlpErrorType::InvalidCookies => "invalid_cookies",
+                YtDlpErrorType::BotDetection => "bot_detection",
+                YtDlpErrorType::VideoUnavailable => "video_unavailable",
+                YtDlpErrorType::NetworkError => "network",
+                YtDlpErrorType::FragmentError => "fragment_error",
+                YtDlpErrorType::Unknown => "ytdlp_unknown",
+            };
+            let operation = format!("audio_download:{}", error_category);
+            metrics::record_error("download", &operation);
+
+            if should_notify_admin(&error_type) {
+                log::warn!("This error requires administrator attention!");
+                let admin_message = format!(
+                    "YTDLP ERROR (audio download)\nuser_chat_id: {}\nurl: {}\nerror_type: {:?}\nproxy: {}\nattempt: {}/{}\n\ncommand:\n{}\n\nstdout (tail):\n{}\n\nstderr (tail):\n{}",
+                    user_chat_id.0,
+                    url_str,
+                    error_type,
+                    proxy_name,
+                    attempt + 1,
+                    total_proxies,
+                    command_str,
+                    truncate_tail_utf8(&stdout_text, 6000),
+                    truncate_tail_utf8(&stderr_text, 6000),
+                );
+                let bot_for_admin = admin_bot.clone();
+                runtime_handle.spawn(async move {
+                    notify_admin_text(&bot_for_admin, &admin_message).await;
+                });
+            }
+
+            return Err(AppError::Download(error_msg));
         }
 
-        Ok(probe_duration_seconds(&download_path_clone))
+        // All proxies exhausted
+        log::error!("❌ All {} proxies failed for audio download", total_proxies);
+        Err(last_error.unwrap_or_else(|| AppError::Download("All proxies failed".to_string())))
     });
 
     Ok((rx, handle))
