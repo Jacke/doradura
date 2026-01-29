@@ -98,9 +98,9 @@ pub async fn download_video_file_with_progress(
         add_cookies_args(&mut args);
 
         // Use web client with PO Token support (bgutil plugin provides tokens automatically)
-        // web client provides better quality formats than android_sdkless
+        // NOTE: android_sdkless removed - it now requires PO Token and may conflict
         args.push("--extractor-args");
-        args.push("youtube:player_client=web,web_safari,android_sdkless");
+        args.push("youtube:player_client=web,web_safari");
 
         // Use Node.js for YouTube n-challenge solving and BotGuard token generation
         args.push("--js-runtimes");
