@@ -84,18 +84,36 @@ pub fn validate_cookies_file_format(cookies_file: &str) -> bool {
 /// This function uses `Box::leak` to create static string references for the cookies
 /// path. This is intentional for lifetime purposes in the yt-dlp argument handling.
 pub fn add_cookies_args(args: &mut Vec<&str>) {
-    // Add proxy if configured (residential proxy for YouTube anti-bot bypass)
-    // PROXY_LIST format: "http://user:pass@host:port" or comma-separated list
-    if let Some(ref proxy_list) = *config::proxy::PROXY_LIST {
-        // Use first proxy from the list (for simplicity; full rotation is in downloader.rs)
+    // Add proxy for YouTube anti-bot bypass
+    // Priority: WARP_PROXY (free Cloudflare) > PROXY_LIST (residential fallback)
+    let proxy_url = if let Some(ref warp_proxy) = *config::proxy::WARP_PROXY {
+        if !warp_proxy.trim().is_empty() {
+            log::info!("Using WARP proxy (primary): {}", mask_proxy_password(warp_proxy));
+            Some(warp_proxy.trim().to_string())
+        } else {
+            None
+        }
+    } else if let Some(ref proxy_list) = *config::proxy::PROXY_LIST {
+        // Fallback to first proxy from PROXY_LIST
         let first_proxy = proxy_list.split(',').next().unwrap_or("").trim();
         if !first_proxy.is_empty() {
-            args.push("--proxy");
-            // SAFETY: This reference lives long enough as it's from Box::leak
-            let leaked_proxy = Box::leak(first_proxy.to_string().into_boxed_str());
-            args.push(unsafe { std::mem::transmute::<&str, &'static str>(leaked_proxy) });
-            log::info!("Using proxy for yt-dlp: {}", mask_proxy_password(first_proxy));
+            log::info!(
+                "Using residential proxy (fallback): {}",
+                mask_proxy_password(first_proxy)
+            );
+            Some(first_proxy.to_string())
+        } else {
+            None
         }
+    } else {
+        None
+    };
+
+    if let Some(proxy) = proxy_url {
+        args.push("--proxy");
+        // SAFETY: This reference lives long enough as it's from Box::leak
+        let leaked_proxy = Box::leak(proxy.into_boxed_str());
+        args.push(unsafe { std::mem::transmute::<&str, &'static str>(leaked_proxy) });
     }
 
     // Add PO Token provider configuration for YouTube
