@@ -10,7 +10,12 @@ use base64::{engine::general_purpose, Engine as _};
 use std::path::PathBuf;
 use tokio::process::Command;
 
+use crate::download::metadata::{get_proxy_chain, is_proxy_related_error};
+
 /// Validates YouTube cookies by testing video URLs that require authentication
+///
+/// Uses proxy chain (WARP → Residential → Direct) for validation to avoid
+/// false negatives from datacenter IP blocks.
 ///
 /// Returns `Ok(())` if cookies are valid, or `Err(reason)` with a human-readable failure reason.
 pub async fn validate_cookies() -> Result<(), String> {
@@ -38,20 +43,42 @@ pub async fn validate_cookies() -> Result<(), String> {
         _ => {}
     }
 
-    // Test with multiple videos - some require auth more strictly
-    let test_urls = [
-        "https://www.youtube.com/watch?v=jNQXAC9IVRw", // "Me at the zoo" - first YouTube video
-        "https://www.youtube.com/watch?v=dQw4w9WgXcQ", // Rick Astley
-    ];
-
+    // Test URL - use a simple video that requires auth
+    let test_url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"; // "Me at the zoo" - first YouTube video
     let ytdl_bin = crate::core::config::YTDL_BIN.as_str();
 
-    for test_url in &test_urls {
-        let output = Command::new(ytdl_bin)
-            .arg("--no-warnings")
+    // Get proxy chain and try each proxy
+    let proxy_chain = get_proxy_chain();
+    let total_proxies = proxy_chain.len();
+    let mut last_error: Option<String> = None;
+
+    for (attempt, proxy_option) in proxy_chain.into_iter().enumerate() {
+        let proxy_name = proxy_option
+            .as_ref()
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| "Direct (no proxy)".to_string());
+
+        log::info!(
+            "🍪 Cookies validation attempt {}/{} using [{}]",
+            attempt + 1,
+            total_proxies,
+            proxy_name
+        );
+
+        let mut cmd = Command::new(ytdl_bin);
+        cmd.arg("--no-warnings")
             .arg("--no-playlist")
             .arg("--skip-download")
-            .arg("--cookies")
+            .arg("--socket-timeout")
+            .arg("30");
+
+        // Add proxy if configured
+        if let Some(ref proxy_config) = proxy_option {
+            log::debug!("Using proxy: {}", proxy_config.masked_url());
+            cmd.arg("--proxy").arg(&proxy_config.url);
+        }
+
+        cmd.arg("--cookies")
             .arg(&cookies_path)
             // PO Token provider for YouTube bot detection bypass
             .arg("--extractor-args")
@@ -60,44 +87,63 @@ pub async fn validate_cookies() -> Result<(), String> {
             .arg("node")
             .arg("--print")
             .arg("%(id)s %(title)s")
-            .arg(test_url)
-            .output()
-            .await;
+            .arg(test_url);
+
+        let output = cmd.output().await;
 
         match output {
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
 
-                if stderr.contains("Sign in to confirm") || stderr.contains("not a bot") {
-                    log::error!("🔴 Cookies validation failed for {}: {}", test_url, stderr);
-                    return Err("YouTube требует авторизацию — cookies истекли или сессия недействительна".to_string());
-                }
-
-                if stderr.contains("Cookie") || stderr.contains("cookies") {
-                    log::error!("🔴 Cookies validation failed for {}: {}", test_url, stderr);
+                // Check for actual cookies problems (not proxy-related)
+                if stderr.contains("Cookie") && stderr.contains("invalid") {
+                    log::error!("🔴 Cookies validation failed: {}", stderr);
                     return Err("Ошибка чтения cookies — файл повреждён или имеет неверный формат".to_string());
                 }
 
-                if stderr.contains("login") || stderr.contains("authentication") {
-                    log::error!("🔴 Cookies validation failed for {}: {}", test_url, stderr);
+                if stderr.contains("login") && stderr.contains("required") {
+                    log::error!("🔴 Cookies validation failed: {}", stderr);
                     return Err("YouTube требует повторный вход — сессия истекла".to_string());
                 }
 
-                if !output.status.success() {
-                    let stderr_short = stderr.lines().next().unwrap_or("unknown error");
-                    log::warn!("❌ Cookies validation failed for {}: {}", test_url, stderr);
-                    return Err(format!("yt-dlp завершился с ошибкой: {}", stderr_short));
+                // Check for proxy-related errors that should trigger fallback
+                if is_proxy_related_error(&stderr) {
+                    log::warn!(
+                        "🔄 Proxy-related error with [{}], trying next proxy: {}",
+                        proxy_name,
+                        stderr.lines().next().unwrap_or("unknown")
+                    );
+                    last_error = Some(format!("Proxy error: {}", stderr.lines().next().unwrap_or("unknown")));
+                    continue;
+                }
+
+                if output.status.success() {
+                    log::info!("✅ Cookies validation passed using [{}]", proxy_name);
+                    return Ok(());
+                }
+
+                // Non-proxy error - might still be worth trying next proxy
+                let stderr_short = stderr.lines().next().unwrap_or("unknown error");
+                log::warn!("❌ Cookies validation failed with [{}]: {}", proxy_name, stderr_short);
+                last_error = Some(stderr_short.to_string());
+
+                // If it's a definitive cookies error, don't try other proxies
+                if stderr.contains("Sign in to confirm") || stderr.contains("not a bot") {
+                    // This might be a proxy issue, try next
+                    continue;
                 }
             }
             Err(e) => {
-                log::error!("Failed to execute yt-dlp for cookies validation: {}", e);
-                return Err(format!("Не удалось запустить yt-dlp: {}", e));
+                log::error!("Failed to execute yt-dlp with [{}]: {}", proxy_name, e);
+                last_error = Some(format!("Не удалось запустить yt-dlp: {}", e));
+                continue;
             }
         }
     }
 
-    log::debug!("✅ Cookies validation passed");
-    Ok(())
+    // All proxies failed
+    log::error!("❌ Cookies validation failed with all {} proxies", total_proxies);
+    Err(last_error.unwrap_or_else(|| "Cookies validation failed".to_string()))
 }
 
 /// Validates YouTube cookies (bool wrapper for backward compatibility)
