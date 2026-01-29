@@ -42,7 +42,7 @@ async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<Value, AppE
         "--retries",
         "2",
         "--extractor-args",
-        "youtube:player_client=web,web_safari,android_sdkless",
+        "youtube:player_client=web,web_safari",
         "--js-runtimes",
         "node",
     ];
@@ -561,7 +561,7 @@ async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<VideoFo
         list_formats_args.push(arg.to_string());
     }
     list_formats_args.push("--extractor-args".to_string());
-    list_formats_args.push("youtube:player_client=web,web_safari,android_sdkless".to_string());
+    list_formats_args.push("youtube:player_client=web,web_safari".to_string());
     list_formats_args.push("--js-runtimes".to_string());
     list_formats_args.push("node".to_string());
     list_formats_args.push(url.as_str().to_string());
