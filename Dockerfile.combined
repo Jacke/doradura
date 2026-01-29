@@ -50,20 +50,8 @@ RUN apk add --no-cache \
   nodejs \
   git
 
-# Install Chromium and display server for cookie management
+# Build dependencies for canvas (bgutil PO Token server)
 RUN apk add --no-cache \
-  chromium \
-  chromium-chromedriver \
-  nss \
-  freetype \
-  harfbuzz \
-  ttf-freefont \
-  font-noto \
-  xorg-server \
-  xvfb-run \
-  x11vnc \
-  py3-aiohttp \
-  # Build dependencies for canvas (bgutil PO Token server)
   build-base \
   pkgconfig \
   cairo-dev \
@@ -71,12 +59,6 @@ RUN apk add --no-cache \
   jpeg-dev \
   giflib-dev \
   pixman-dev
-
-# Install noVNC (web-based VNC client for first-time login)
-RUN mkdir -p /opt/novnc && \
-  wget -qO- https://github.com/novnc/noVNC/archive/refs/tags/v1.5.0.tar.gz | \
-  tar xz -C /opt/novnc --strip-components=1 && \
-  ln -s /opt/novnc/vnc_lite.html /opt/novnc/index.html
 
 # Node.js 22+ is already installed (required for yt-dlp YouTube n-challenge solving)
 RUN node --version && echo "Node.js available for yt-dlp --js-runtimes node"
@@ -90,7 +72,7 @@ RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp-nightly-builds/rel
 
 # Install Python dependencies (including yt-dlp PO Token plugin)
 RUN pip3 install --no-cache-dir --break-system-packages \
-  keyring pycryptodomex websockify undetected-chromedriver bgutil-ytdlp-pot-provider
+  keyring pycryptodomex bgutil-ytdlp-pot-provider
 
 # Install bgutil PO Token HTTP server (generates tokens for yt-dlp)
 # This server runs BotGuard JavaScript via Node.js to generate valid PO tokens
@@ -111,10 +93,7 @@ RUN addgroup -g 2000 shareddata && \
   mkdir -p /app /data && \
   chown 1000:2000 /app && \
   chown telegram-bot-api:shareddata /data && \
-  chmod 775 /data && \
-  cp /usr/bin/chromedriver /home/botuser/chromedriver && \
-  chown 1000:2000 /home/botuser/chromedriver && \
-  chmod 755 /home/botuser/chromedriver
+  chmod 775 /data
 
 # Copy the compiled binary from rust-builder and set permissions
 COPY --from=rust-builder --chown=1000:2000 /app/target/release/doradura /app/doradura
@@ -123,9 +102,6 @@ RUN chmod 755 /app/doradura && \
 
 # Copy migrations for auto-migration on startup
 COPY --from=rust-builder --chown=1000:2000 /app/migrations /app/migrations
-
-# Copy cookie manager script
-COPY --chown=1000:2000 tools/cookie_manager.py /app/cookie_manager.py
 
 # Set environment variables for the bot to access Bot API files
 ENV BOT_API_DATA_DIR=/data
@@ -199,18 +175,6 @@ stderr_logfile=/dev/stderr
 stderr_logfile_maxbytes=0
 priority=10
 
-[program:cookie-manager]
-command=python3 /app/cookie_manager.py
-user=botuser
-autostart=true
-autorestart=true
-stdout_logfile=/dev/stdout
-stdout_logfile_maxbytes=0
-stderr_logfile=/dev/stderr
-stderr_logfile_maxbytes=0
-priority=15
-environment=DISPLAY=":99",HOME="/home/botuser",CHROMEDRIVER_PATH="/home/botuser/chromedriver"
-
 [program:bgutil-pot-server]
 command=node /opt/bgutil/server/build/main.js
 user=botuser
@@ -257,7 +221,7 @@ find /data -name "*.binlog" -delete 2>/dev/null && echo "  ✅ Removed *.binlog 
 find /data -name "*.binlog.lock" -delete 2>/dev/null && echo "  ✅ Removed *.binlog.lock files"
 # Also remove any telegram-bot-api subdirectories (they contain binlog)
 for d in /data/*/; do
-  if [ -d "$d" ] && [ "$d" != "/data/browser_profile/" ]; then
+  if [ -d "$d" ]; then
     # Check if it looks like a bot API directory (contains binlog or is numeric hash)
     if [ -f "${d}binlog" ] || ls "${d}"*.binlog 2>/dev/null | head -1 > /dev/null; then
       echo "  🗑️  Removing Bot API directory: $d"
@@ -349,8 +313,8 @@ ENTRYPOINT_EOF
 
 RUN chmod +x /entrypoint.sh
 
-# Expose ports (8080=webapp, 8081=bot-api, 8082=bot-api-stats, 6080=noVNC)
-EXPOSE 6080 8080 8081 8082
+# Expose ports (8080=webapp, 8081=bot-api, 8082=bot-api-stats)
+EXPOSE 8080 8081 8082
 
 # Health check for both services
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \

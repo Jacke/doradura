@@ -24,6 +24,19 @@ use tokio::process::Command as TokioCommand;
 use tokio::time::timeout;
 use url::Url;
 
+/// Masks password in proxy URL for safe logging.
+/// Transforms "http://user:secret@host:port" to "http://user:***@host:port"
+fn mask_proxy_password(proxy_url: &str) -> String {
+    if let Some(at_pos) = proxy_url.rfind('@') {
+        if let Some(colon_pos) = proxy_url[..at_pos].rfind(':') {
+            let prefix = &proxy_url[..colon_pos + 1];
+            let suffix = &proxy_url[at_pos..];
+            return format!("{}***{}", prefix, suffix);
+        }
+    }
+    proxy_url.to_string()
+}
+
 /// Validates Netscape HTTP Cookie File format.
 ///
 /// The Netscape format starts with "# Netscape HTTP Cookie File" or "# HTTP Cookie File"
@@ -55,10 +68,11 @@ pub fn validate_cookies_file_format(cookies_file: &str) -> bool {
     }
 }
 
-/// Adds cookie and PO Token arguments to yt-dlp command arguments.
+/// Adds proxy, cookie, and PO Token arguments to yt-dlp command arguments.
 ///
 /// Uses either a cookies file (YTDL_COOKIES_FILE) or browser (YTDL_COOKIES_BROWSER).
 /// Also configures PO Token provider (bgutil HTTP server) for YouTube bot detection bypass.
+/// Adds proxy from PROXY_LIST environment variable if configured.
 /// Priority: file > browser
 ///
 /// # Arguments
@@ -70,6 +84,20 @@ pub fn validate_cookies_file_format(cookies_file: &str) -> bool {
 /// This function uses `Box::leak` to create static string references for the cookies
 /// path. This is intentional for lifetime purposes in the yt-dlp argument handling.
 pub fn add_cookies_args(args: &mut Vec<&str>) {
+    // Add proxy if configured (residential proxy for YouTube anti-bot bypass)
+    // PROXY_LIST format: "http://user:pass@host:port" or comma-separated list
+    if let Some(ref proxy_list) = *config::proxy::PROXY_LIST {
+        // Use first proxy from the list (for simplicity; full rotation is in downloader.rs)
+        let first_proxy = proxy_list.split(',').next().unwrap_or("").trim();
+        if !first_proxy.is_empty() {
+            args.push("--proxy");
+            // SAFETY: This reference lives long enough as it's from Box::leak
+            let leaked_proxy = Box::leak(first_proxy.to_string().into_boxed_str());
+            args.push(unsafe { std::mem::transmute::<&str, &'static str>(leaked_proxy) });
+            log::info!("Using proxy for yt-dlp: {}", mask_proxy_password(first_proxy));
+        }
+    }
+
     // Add PO Token provider configuration for YouTube
     // bgutil HTTP server runs on port 4416 by default
     args.push("--extractor-args");
