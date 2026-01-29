@@ -250,14 +250,22 @@ chmod 1777 /tmp
 
 # Always clear Bot API binlog files on startup to prevent "restart" loop
 # The Bot API will re-sync from Telegram servers (safe, no data loss)
-echo "🔄 Clearing Bot API binlog files for clean start..."
-for f in /data/*.binlog /data/6310079371/*.binlog; do
-  if [ -e "$f" ]; then
-    echo "  🗑️  Removing: $f"
-    rm -f "$f"
+echo "🔄 Clearing ALL Bot API data for clean start..."
+# telegram-bot-api stores data in /data/<token_hash>/ subdirectories
+# Clear everything except cookies and database
+find /data -name "*.binlog" -delete 2>/dev/null && echo "  ✅ Removed *.binlog files"
+find /data -name "*.binlog.lock" -delete 2>/dev/null && echo "  ✅ Removed *.binlog.lock files"
+# Also remove any telegram-bot-api subdirectories (they contain binlog)
+for d in /data/*/; do
+  if [ -d "$d" ] && [ "$d" != "/data/browser_profile/" ]; then
+    # Check if it looks like a bot API directory (contains binlog or is numeric hash)
+    if [ -f "${d}binlog" ] || ls "${d}"*.binlog 2>/dev/null | head -1 > /dev/null; then
+      echo "  🗑️  Removing Bot API directory: $d"
+      rm -rf "$d"
+    fi
   fi
 done
-echo "✅ Binlog files cleared."
+echo "✅ Bot API data cleared."
 
 # Set ownership and permissions for /data
 if id telegram-bot-api >/dev/null 2>&1 && getent group shareddata >/dev/null 2>&1; then
