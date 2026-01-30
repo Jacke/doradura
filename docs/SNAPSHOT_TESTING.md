@@ -1,53 +1,53 @@
-# 📸 Snapshot Testing - Полная Система Тестирования Telegram Бота
+# Snapshot Testing - Complete Telegram Bot Testing System
 
-Система для записи реальных взаимодействий с Telegram API и их воспроизведения в тестах.
+System for recording real Telegram API interactions and replaying them in tests.
 
-## 🎯 Что это даёт?
+## What This Provides
 
-✅ **Снимаете кальку с живого бота** - все ответы взяты из реальных API вызовов
-✅ **Быстрые тесты** - нет реальных сетевых запросов
-✅ **Детерминированность** - тесты всегда дают одинаковый результат
-✅ **Оффлайн работа** - можно тестировать без интернета
-✅ **Документация** - snapshots показывают как работает API
+- **Capture real bot interactions** - all responses are taken from real API calls
+- **Fast tests** - no real network requests
+- **Deterministic** - tests always give the same result
+- **Offline work** - can test without internet
+- **Documentation** - snapshots show how the API works
 
-## 📊 Текущее состояние
+## Current State
 
-- **Snapshots**: 7 штук
-- **API методов**: 7 различных (sendMessage, sendPhoto, sendAudio, ...)
-- **Тестов**: 18 автоматических тестов
-- **Сценариев**: Команды, настройки, загрузка, ошибки
+- **Snapshots**: 7
+- **API methods**: 7 different (sendMessage, sendPhoto, sendAudio, ...)
+- **Tests**: 18 automatic tests
+- **Scenarios**: Commands, settings, downloads, errors
 
-## 🚀 Быстрый старт
+## Quick Start
 
-### 1. Посмотрите существующие snapshots
+### 1. View existing snapshots
 
 ```bash
 ls tests/snapshots/*.json
 ```
 
-Доступны:
-- `start_command.json` - Команда /start
-- `info_command.json` - Информация о форматах
-- `settings_menu.json` - Меню настроек
-- `youtube_processing.json` - Обработка YouTube URL
-- `audio_download_complete.json` - Полный цикл скачивания
-- `language_selection.json` - Выбор языка
-- `rate_limit_error.json` - Ошибка лимита
+Available:
+- `start_command.json` - /start command
+- `info_command.json` - Format information
+- `settings_menu.json` - Settings menu
+- `youtube_processing.json` - YouTube URL processing
+- `audio_download_complete.json` - Complete download cycle
+- `language_selection.json` - Language selection
+- `rate_limit_error.json` - Rate limit error
 
-### 2. Запустите тесты
+### 2. Run tests
 
 ```bash
-# Все snapshot тесты
+# All snapshot tests
 cargo test --test bot_snapshots_test --test bot_commands_test
 
-# Конкретный тест
+# Specific test
 cargo test test_youtube_processing_flow
 
-# С выводом
+# With output
 cargo test --test bot_commands_test -- --nocapture
 ```
 
-### 3. Используйте в своих тестах
+### 3. Use in your tests
 
 ```rust
 use common::TelegramMock;
@@ -56,18 +56,18 @@ use common::TelegramMock;
 async fn test_my_feature() {
     let mock = TelegramMock::from_snapshot("youtube_processing").await?;
     let bot = mock.create_bot()?;
-    
-    // Используйте bot - все ответы будут из snapshot
+
+    // Use bot - all responses will be from snapshot
     // handle_youtube_url(&bot, url).await?;
 }
 ```
 
-## 📁 Структура проекта
+## Project Structure
 
 ```
 doradura/
 ├── src/
-│   └── testing/              # (только для unit tests)
+│   └── testing/              # (for unit tests only)
 │       ├── mod.rs
 │       ├── snapshots.rs
 │       └── recorder.rs
@@ -78,7 +78,7 @@ doradura/
 │   │   ├── snapshots.rs      # TelegramMock, TelegramSnapshot
 │   │   └── recorder.rs       # RecordingClient (helper)
 │   │
-│   ├── snapshots/            # JSON snapshots ⭐
+│   ├── snapshots/            # JSON snapshots
 │   │   ├── README.md
 │   │   ├── SNAPSHOT_INDEX.md
 │   │   ├── start_command.json
@@ -89,31 +89,31 @@ doradura/
 │   │   ├── audio_download_complete.json
 │   │   └── rate_limit_error.json
 │   │
-│   ├── bot_snapshots_test.rs    # Базовые тесты
-│   └── bot_commands_test.rs     # Детальные тесты команд
+│   ├── bot_snapshots_test.rs    # Basic tests
+│   └── bot_commands_test.rs     # Detailed command tests
 │
 ├── tools/
-│   └── log_to_snapshot.py    # Конвертер логов → JSON
+│   └── log_to_snapshot.py    # Log to JSON converter
 │
 └── docs/
-    ├── SNAPSHOT_TESTING.md           # Полная документация
-    └── SNAPSHOT_TESTING_QUICKSTART.md # Быстрый старт
+    ├── SNAPSHOT_TESTING.md           # Full documentation
+    └── SNAPSHOT_TESTING_QUICKSTART.md # Quick start
 ```
 
-## 🎬 Как создать новый snapshot
+## How to Create a New Snapshot
 
-### Способ 1: Вручную (рекомендуется)
+### Method 1: Manual (recommended)
 
-1. Запустите бота с логированием:
+1. Run the bot with logging:
    ```bash
    RUST_LOG=debug cargo run
    ```
 
-2. Выполните действие в Telegram (например, отправьте /info)
+2. Perform the action in Telegram (e.g., send /info)
 
-3. Скопируйте JSON из логов
+3. Copy JSON from logs
 
-4. Создайте файл `tests/snapshots/my_test.json`:
+4. Create file `tests/snapshots/my_test.json`:
    ```json
    {
      "name": "my_test",
@@ -129,162 +129,162 @@ doradura/
    }
    ```
 
-### Способ 2: Python утилита
+### Method 2: Python utility
 
 ```bash
-# Интерактивный режим
+# Interactive mode
 ./tools/log_to_snapshot.py --interactive
 
-# Из файла логов
+# From log file
 ./tools/log_to_snapshot.py --input bot.log --name my_test
 
-# Из потока
+# From stream
 cargo run 2>&1 | ./tools/log_to_snapshot.py --stdin --name my_test
 ```
 
-## 📚 Документация
+## Documentation
 
-- **[SNAPSHOT_TESTING.md](docs/SNAPSHOT_TESTING.md)** - Полное руководство (200+ строк)
-- **[SNAPSHOT_TESTING_QUICKSTART.md](docs/SNAPSHOT_TESTING_QUICKSTART.md)** - Быстрый старт
-- **[tests/snapshots/README.md](tests/snapshots/README.md)** - Список всех snapshots
-- **[tests/snapshots/SNAPSHOT_INDEX.md](tests/snapshots/SNAPSHOT_INDEX.md)** - Индекс с деталями
+- **[SNAPSHOT_TESTING.md](docs/SNAPSHOT_TESTING.md)** - Full guide (200+ lines)
+- **[SNAPSHOT_TESTING_QUICKSTART.md](docs/SNAPSHOT_TESTING_QUICKSTART.md)** - Quick start
+- **[tests/snapshots/README.md](tests/snapshots/README.md)** - List of all snapshots
+- **[tests/snapshots/SNAPSHOT_INDEX.md](tests/snapshots/SNAPSHOT_INDEX.md)** - Index with details
 
-## 🧪 Примеры тестов
+## Test Examples
 
-### Базовый тест команды
+### Basic command test
 ```rust
 #[tokio::test]
 async fn test_info_command() {
     let mock = TelegramMock::from_snapshot("info_command").await?;
     let snapshot = mock.snapshot();
-    
+
     assert_eq!(snapshot.interactions.len(), 1);
     let (_call, response) = &snapshot.interactions[0];
-    
+
     let text = response.body["result"]["text"].as_str().unwrap();
-    assert!(text.contains("Видео"));
+    assert!(text.contains("Video"));
     assert!(text.contains("320 kbps"));
 }
 ```
 
-### Тест сложного flow
+### Complex flow test
 ```rust
 #[tokio::test]
 async fn test_audio_download_flow() {
     let snapshot = TelegramSnapshot::load_by_name("audio_download_complete")?;
-    
-    // 5 шагов: 0% → 45% → 100% → sendAudio → cleanup
+
+    // 5 steps: 0% -> 45% -> 100% -> sendAudio -> cleanup
     assert_eq!(snapshot.interactions.len(), 5);
-    
-    // Проверка прогресса
+
+    // Check progress
     let (_call1, resp1) = &snapshot.interactions[0];
     assert!(resp1.body["result"]["caption"].as_str().unwrap().contains("0%"));
-    
-    // Проверка файла
+
+    // Check file
     let (_call4, resp4) = &snapshot.interactions[3];
     let audio = &resp4.body["result"]["audio"];
     assert_eq!(audio["performer"].as_str().unwrap(), "Rick Astley");
 }
 ```
 
-## 🎨 Что можно тестировать?
+## What Can Be Tested
 
-### ✅ Команды бота
+### Commands
 - `/start`, `/info`, `/settings`, `/help`
-- Проверка текста, кнопок, форматирования
+- Text, buttons, formatting verification
 
-### ✅ Callback queries
-- Выбор языка, качества, формата
-- Проверка answerCallbackQuery, обновления сообщений
+### Callback queries
+- Language, quality, format selection
+- answerCallbackQuery, message update verification
 
-### ✅ Сложные flows
-- Обработка URL → preview → скачивание → отправка
-- Многошаговые взаимодействия
+### Complex flows
+- URL processing -> preview -> download -> send
+- Multi-step interactions
 
-### ✅ Обработка ошибок
-- Rate limiting, неверные URL, сетевые ошибки
-- Проверка корректных сообщений об ошибках
+### Error handling
+- Rate limiting, invalid URLs, network errors
+- Correct error message verification
 
-### ✅ Прогресс операций
-- Обновление прогресса скачивания
-- editMessage операции
+### Operation progress
+- Download progress updates
+- editMessage operations
 
-## 📈 Метрики покрытия
+## Coverage Metrics
 
 ```
-API методы покрыты:
-  ✅ sendMessage        (6 snapshots)
-  ✅ sendPhoto          (1 snapshot)
-  ✅ sendAudio          (1 snapshot)
-  ✅ deleteMessage      (2 snapshots)
-  ✅ editMessageCaption (1 snapshot)
-  ✅ editMessageText    (1 snapshot)
-  ✅ answerCallbackQuery(1 snapshot)
+API methods covered:
+  sendMessage        (6 snapshots)
+  sendPhoto          (1 snapshot)
+  sendAudio          (1 snapshot)
+  deleteMessage      (2 snapshots)
+  editMessageCaption (1 snapshot)
+  editMessageText    (1 snapshot)
+  answerCallbackQuery(1 snapshot)
 
-Всего: 7/20+ методов Bot API
+Total: 7/20+ Bot API methods
 ```
 
-## 🔧 Расширение
+## Extension
 
-### Добавьте новые snapshots для:
+### Add new snapshots for:
 
-1. **Скачивание видео** - `video_download_complete.json`
-2. **История загрузок** - `downloads_list.json`
-3. **Вырезки** - `cuts_menu.json`, `cut_creation.json`
-4. **Админ команды** - `admin_users_list.json`, `admin_backup.json`
-5. **Подписки** - `subscription_purchase.json`
-6. **Ошибки** - `invalid_url.json`, `network_error.json`
+1. **Video download** - `video_download_complete.json`
+2. **Download history** - `downloads_list.json`
+3. **Cuts** - `cuts_menu.json`, `cut_creation.json`
+4. **Admin commands** - `admin_users_list.json`, `admin_backup.json`
+5. **Subscriptions** - `subscription_purchase.json`
+6. **Errors** - `invalid_url.json`, `network_error.json`
 
-### Шаблон для нового snapshot:
+### Template for new snapshot:
 ```bash
 cp tests/snapshots/start_command.json tests/snapshots/my_new_test.json
-# Отредактируйте JSON
-# Добавьте тест в tests/bot_commands_test.rs
+# Edit JSON
+# Add test in tests/bot_commands_test.rs
 ```
 
-## 🎯 Следующие шаги
+## Next Steps
 
-1. **Изучите** существующие snapshots в [tests/snapshots/](tests/snapshots/)
-2. **Запустите** тесты: `cargo test --test bot_commands_test`
-3. **Создайте** свой snapshot для нового функционала
-4. **Добавьте** тест в `tests/bot_commands_test.rs`
-5. **Проверьте**: `cargo test`
+1. **Study** existing snapshots in [tests/snapshots/](tests/snapshots/)
+2. **Run** tests: `cargo test --test bot_commands_test`
+3. **Create** your snapshot for new functionality
+4. **Add** test in `tests/bot_commands_test.rs`
+5. **Verify**: `cargo test`
 
-## 💡 Best Practices
+## Best Practices
 
-- Один snapshot = один сценарий
-- Говорящие имена файлов
-- Комментарии в metadata
-- Минимальные данные (без лишних полей)
-- Версионирование в Git
-- Регулярное обновление при изменении API
+- One snapshot = one scenario
+- Descriptive file names
+- Comments in metadata
+- Minimal data (no extra fields)
+- Version control in Git
+- Regular updates when API changes
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
-**Snapshot не загружается:**
+**Snapshot doesn't load:**
 ```bash
-# Проверьте JSON
+# Check JSON
 jq . tests/snapshots/my_test.json
 
-# Посмотрите ошибку
+# See error
 cargo test test_my_snapshot -- --nocapture
 ```
 
-**Тест падает:**
+**Test fails:**
 ```rust
-// Добавьте отладку
+// Add debugging
 let snapshot = TelegramSnapshot::load_by_name("my_test")?;
 println!("Loaded: {:?}", snapshot);
 ```
 
-## 📞 Помощь
+## Help
 
-- Документация: [docs/SNAPSHOT_TESTING.md](docs/SNAPSHOT_TESTING.md)
-- Примеры: [tests/bot_commands_test.rs](tests/bot_commands_test.rs)
-- Индекс: [tests/snapshots/SNAPSHOT_INDEX.md](tests/snapshots/SNAPSHOT_INDEX.md)
+- Documentation: [docs/SNAPSHOT_TESTING.md](docs/SNAPSHOT_TESTING.md)
+- Examples: [tests/bot_commands_test.rs](tests/bot_commands_test.rs)
+- Index: [tests/snapshots/SNAPSHOT_INDEX.md](tests/snapshots/SNAPSHOT_INDEX.md)
 
 ---
 
-**Статус**: ✅ Полностью рабочая система
-**Тестов**: 18 passing
-**Покрытие**: Команды, настройки, загрузка, ошибки
+**Status**: Fully working system
+**Tests**: 18 passing
+**Coverage**: Commands, settings, downloads, errors

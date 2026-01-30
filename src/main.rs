@@ -296,6 +296,19 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
         }
     }
 
+    // Start health check scheduler (runs smoke tests every hour)
+    let _health_scheduler = {
+        use doradura::smoke_tests::start_health_check_scheduler;
+        let bot_arc = Arc::new(bot.clone());
+        start_health_check_scheduler(bot_arc)
+    };
+    if doradura::smoke_tests::HealthCheckScheduler::is_enabled() {
+        log::info!(
+            "Health check scheduler started (interval: {}s)",
+            doradura::smoke_tests::HealthCheckScheduler::get_interval_secs()
+        );
+    }
+
     // DISABLED: Mini App web server — not ready for production yet
     // To re-enable, uncomment the block below and set WEBAPP_PORT env var
     //

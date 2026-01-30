@@ -68,3 +68,41 @@ jobs:
 
       - name: Run clippy
         run: cargo clippy -- -D warnings
+
+  smoke-tests:
+    name: Smoke Tests
+    runs-on: ubuntu-latest
+    # Run after tests pass
+    needs: [test]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg python3-pip
+          pip3 install yt-dlp
+
+      - name: Verify dependencies
+        run: |
+          ffmpeg -version
+          ffprobe -version
+          yt-dlp --version
+
+      - name: Run quick smoke tests (toolchain only)
+        run: cargo test --test smoke_test smoke_test_quick smoke_test_toolchain smoke_test_cookies -- --nocapture
+
+      # Full smoke tests are disabled by default because they:
+      # - Require network access to YouTube
+      # - Can be flaky due to YouTube rate limiting
+      # - Take longer to run
+      # Uncomment to enable full smoke tests:
+      # - name: Run full smoke tests
+      #   run: cargo test --test smoke_test smoke_test_full_suite -- --nocapture
+      #   env:
+      #     RUST_LOG: info

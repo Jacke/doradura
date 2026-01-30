@@ -1,18 +1,18 @@
-# E2E Тестирование без Реального Telegram
+# E2E Testing Without Real Telegram
 
-## 🎯 Цель
+## Goal
 
-Создать **полностью изолированные E2E тесты** которые:
-- ✅ Проверяют ВСЮ логику бота от начала до конца
-- ✅ Не делают НИКАКИХ реальных HTTP запросов
-- ✅ Тестируют внутренние состояния (БД, кэш, очереди)
-- ✅ Запускаются быстро и детерминированно
+Create **fully isolated E2E tests** that:
+- Check ALL bot logic from start to finish
+- Make NO real HTTP requests
+- Test internal states (DB, cache, queues)
+- Run fast and deterministically
 
-## 🏗️ Архитектура
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    Ваш код бота                          │
+│                    Your bot code                         │
 │  (handlers, commands, download logic)                    │
 └────────────────────┬────────────────────────────────────┘
                      │
@@ -26,9 +26,9 @@
 └─────────────────────────────────────────────────────────┘
 ```
 
-## 🔧 Решение 1: Trait-based Abstraction (Рекомендуется)
+## Solution 1: Trait-based Abstraction (Recommended)
 
-### Шаг 1: Создать trait для Bot операций
+### Step 1: Create trait for Bot operations
 
 ```rust
 // src/bot_trait.rs
@@ -39,10 +39,10 @@ pub trait BotOperations: Clone + Send + Sync + 'static {
     async fn send_photo(&self, chat_id: ChatId, photo: InputFile) -> Result<Message>;
     async fn send_audio(&self, chat_id: ChatId, audio: InputFile) -> Result<Message>;
     async fn edit_message_text(&self, chat_id: ChatId, message_id: MessageId, text: String) -> Result<()>;
-    // ... остальные методы
+    // ... other methods
 }
 
-// Реализация для реального бота
+// Implementation for real bot
 #[async_trait]
 impl BotOperations for Bot {
     async fn send_message(&self, chat_id: ChatId, text: String) -> Result<Message> {
@@ -51,7 +51,7 @@ impl BotOperations for Bot {
     // ...
 }
 
-// Реализация для мока
+// Implementation for mock
 pub struct MockBot {
     mock_server: Arc<TelegramMock>,
     bot: Bot,
@@ -66,11 +66,11 @@ impl BotOperations for MockBot {
 }
 ```
 
-**Проблема:** teloxide::Bot не реализует Clone, методы сложные для обёртывания.
+**Problem:** teloxide::Bot doesn't implement Clone, methods are complex to wrap.
 
-## 🔧 Решение 2: Wrapper Pattern (Проще)
+## Solution 2: Wrapper Pattern (Simpler)
 
-### Создать обёртку вокруг Bot
+### Create wrapper around Bot
 
 ```rust
 // src/testing/test_bot.rs
@@ -120,13 +120,13 @@ impl TestableBot {
 }
 ```
 
-**Проблема:** Нужно обернуть ВСЕ методы Bot (100+ методов).
+**Problem:** Need to wrap ALL Bot methods (100+ methods).
 
-## 🔧 Решение 3: Test Fixtures (Практично)
+## Solution 3: Test Fixtures (Practical)
 
-### Полная тестовая среда
+### Complete test environment
 
-Вместо оборачивания Bot, создадим **тестовые фикстуры** которые настраивают всё окружение:
+Instead of wrapping Bot, create **test fixtures** that set up the entire environment:
 
 ```rust
 // tests/common/fixtures.rs
@@ -184,9 +184,9 @@ impl TestEnvironment {
 }
 ```
 
-## 📝 Пример E2E теста
+## E2E Test Example
 
-### Test: Полный flow команды /start
+### Test: Complete /start command flow
 
 ```rust
 // tests/e2e/test_start_command.rs
@@ -278,9 +278,9 @@ async fn test_settings_change_quality_e2e() {
 }
 ```
 
-## 🎨 Создание фейковых Message объектов
+## Creating Fake Message Objects
 
-### Вариант 1: JSON Deserialization
+### Option 1: JSON Deserialization
 
 ```rust
 pub fn create_message_from_json(user_id: i64, text: &str) -> Message {
@@ -297,7 +297,7 @@ pub fn create_message_from_json(user_id: i64, text: &str) -> Message {
 }
 ```
 
-### Вариант 2: Builder Pattern
+### Option 2: Builder Pattern
 
 ```rust
 pub struct MessageBuilder {
@@ -329,7 +329,7 @@ impl MessageBuilder {
 let msg = MessageBuilder::new(123).text("/start").build();
 ```
 
-## 🗄️ Database Setup для тестов
+## Database Setup for Tests
 
 ```rust
 // tests/common/test_db.rs
@@ -356,7 +356,7 @@ pub fn insert_test_user(pool: &DbPool, user_id: i64) -> anyhow::Result<()> {
 }
 ```
 
-## 🧪 Полный E2E Test Suite
+## Complete E2E Test Suite
 
 ```rust
 // tests/e2e/mod.rs
@@ -394,9 +394,9 @@ async fn test_all_commands() {
 }
 ```
 
-## 📊 Что можно проверять в E2E
+## What Can Be Verified in E2E
 
-### ✅ API Calls
+### API Calls
 ```rust
 env.verify_api_calls(&[
     ("POST", "/sendMessage"),
@@ -405,67 +405,67 @@ env.verify_api_calls(&[
 ]);
 ```
 
-### ✅ Database State
+### Database State
 ```rust
 let user = db::get_user(&env.db_pool, user_id).unwrap().unwrap();
 assert_eq!(user.video_quality, "1080p");
 assert_eq!(user.downloads_count, 1);
 ```
 
-### ✅ Queue State
+### Queue State
 ```rust
 assert_eq!(env.download_queue.pending_count(), 1);
 let task = env.download_queue.pop().await.unwrap();
 assert_eq!(task.url, "https://youtube.com/...");
 ```
 
-### ✅ Cache State
+### Cache State
 ```rust
 let cached = cache::get(&env.cache, "preview:video_id").unwrap();
 assert!(cached.is_some());
 ```
 
-### ✅ Rate Limiter
+### Rate Limiter
 ```rust
 assert!(!env.rate_limiter.is_limited(user_id).await);
 env.rate_limiter.record(user_id).await;
 assert!(env.rate_limiter.is_limited(user_id).await);
 ```
 
-## 🚀 Запуск E2E тестов
+## Running E2E Tests
 
 ```bash
-# Все E2E тесты
+# All E2E tests
 cargo test --test e2e
 
-# Конкретная категория
+# Specific category
 cargo test --test e2e test_commands
 
-# С выводом
+# With output
 cargo test --test e2e -- --nocapture
 
-# Параллельно (быстро)
+# In parallel (fast)
 cargo test --test e2e -- --test-threads=4
 ```
 
-## 📈 Преимущества
+## Benefits
 
-✅ **Полная изоляция** - никаких внешних зависимостей
-✅ **Быстро** - нет сетевых запросов
-✅ **Детерминированно** - всегда одинаковый результат
-✅ **Проверяет ВСЁ** - от команды до состояния БД
-✅ **CI/CD friendly** - запускается в любом окружении
+- **Full isolation** - no external dependencies
+- **Fast** - no network requests
+- **Deterministic** - always the same result
+- **Tests EVERYTHING** - from command to DB state
+- **CI/CD friendly** - runs in any environment
 
-## 🎯 Следующие шаги
+## Next Steps
 
-1. **Реализовать** TestEnvironment в `tests/common/fixtures.rs`
-2. **Создать** message builders в `tests/common/builders.rs`
-3. **Написать** первый E2E тест для `/start`
-4. **Расширить** на остальные команды
-5. **Добавить** в CI pipeline
+1. **Implement** TestEnvironment in `tests/common/fixtures.rs`
+2. **Create** message builders in `tests/common/builders.rs`
+3. **Write** first E2E test for `/start`
+4. **Extend** to other commands
+5. **Add** to CI pipeline
 
-## 📚 См. также
+## See Also
 
-- [Пример реализации](../tests/e2e/) (будет создан)
-- [SNAPSHOT_TESTING.md](SNAPSHOT_TESTING.md) - база для E2E
-- [SNAPSHOT_TESTING_INTEGRATION.md](SNAPSHOT_TESTING_INTEGRATION.md) - интеграция
+- [Example implementation](../tests/e2e/) (to be created)
+- [SNAPSHOT_TESTING.md](SNAPSHOT_TESTING.md) - base for E2E
+- [SNAPSHOT_TESTING_INTEGRATION.md](SNAPSHOT_TESTING_INTEGRATION.md) - integration

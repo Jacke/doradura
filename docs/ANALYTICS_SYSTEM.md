@@ -1,21 +1,21 @@
-# Система Аналитики для Telegram Бота
+# Analytics System for Telegram Bot
 
-## 📊 Обзор
+## Overview
 
-Реализована полнофункциональная система аналитики с метриками Prometheus, админскими командами в Telegram и системой оповещений.
+A full-featured analytics system with Prometheus metrics, admin commands in Telegram, and an alerting system.
 
-## ✅ Что Реализовано
+## What's Implemented
 
-### Фаза 1: Инфраструктура Метрик
+### Phase 1: Metrics Infrastructure
 
-#### 1. **Модуль метрик** (`src/core/metrics.rs`)
-- **30+ метрик** в 4 категориях:
+#### 1. **Metrics Module** (`src/core/metrics.rs`)
+- **30+ metrics** in 4 categories:
   - **Performance**: duration, success/failure, queue metrics
   - **Business**: revenue, subscriptions, conversions
   - **System Health**: errors, queue depth, uptime
   - **User Engagement**: DAU/MAU, command usage, format preferences
 
-**Основные метрики:**
+**Key metrics:**
 ```rust
 // Performance
 - doradura_download_duration_seconds (histogram)
@@ -40,28 +40,28 @@
 - doradura_format_requests_total (counter)
 ```
 
-#### 2. **HTTP сервер метрик** (`src/core/metrics_server.rs`)
-- Запускается на порту 9090 (настраивается)
+#### 2. **HTTP Metrics Server** (`src/core/metrics_server.rs`)
+- Runs on port 9090 (configurable)
 - **Endpoints:**
   - `GET /metrics` - Prometheus metrics (text format)
   - `GET /health` - Health check
   - `GET /` - Info page
 
-#### 3. **База данных** (`migrations/V8__add_analytics_tables.sql`)
-Три новые таблицы:
-- `metric_aggregates` - агрегированные метрики
-- `alert_history` - история оповещений
-- `user_activity` - активность пользователей (для DAU/MAU)
+#### 3. **Database** (`migrations/V8__add_analytics_tables.sql`)
+Three new tables:
+- `metric_aggregates` - aggregated metrics
+- `alert_history` - alert history
+- `user_activity` - user activity (for DAU/MAU)
 
-### Фаза 2: Инструментация Кода
+### Phase 2: Code Instrumentation
 
 #### 1. **Downloads** (`src/download/downloader.rs`)
-Инструментированы функции:
-- `download_and_send_audio()` - таймер + success/failure tracking
-- `download_and_send_video()` - таймер + success/failure tracking
-- `download_and_send_subtitles()` - таймер + success/failure tracking
+Instrumented functions:
+- `download_and_send_audio()` - timer + success/failure tracking
+- `download_and_send_video()` - timer + success/failure tracking
+- `download_and_send_subtitles()` - timer + success/failure tracking
 
-**Паттерн использования:**
+**Usage pattern:**
 ```rust
 let timer = metrics::DOWNLOAD_DURATION_SECONDS
     .with_label_values(&["mp3", quality])
@@ -82,21 +82,21 @@ match result {
 ```
 
 #### 2. **Queue** (`src/download/queue.rs`)
-Трекинг глубины очереди:
-- `add_task()` - увеличивает счетчик при добавлении
-- `get_task()` - уменьшает счетчик при извлечении
-- Отдельные метрики по приоритетам (low/medium/high)
+Queue depth tracking:
+- `add_task()` - increments counter when adding
+- `get_task()` - decrements counter when retrieving
+- Separate metrics by priority (low/medium/high)
 
 #### 3. **Subscriptions** (`src/core/subscription.rs`)
-Бизнес-метрики:
-- Начало checkout процесса
-- Успешные/неудачные платежи
-- Revenue tracking по планам
-- Новые подписки
-- Отмены подписок
+Business metrics:
+- Checkout process start
+- Successful/failed payments
+- Revenue tracking by plan
+- New subscriptions
+- Subscription cancellations
 
 #### 4. **Errors** (`src/core/error.rs`)
-Централизованный трекинг ошибок:
+Centralized error tracking:
 ```rust
 impl AppError {
     pub fn track(&self) {
@@ -107,84 +107,84 @@ impl AppError {
 }
 ```
 
-### Фаза 3: Админские Команды
+### Phase 3: Admin Commands
 
 #### **Telegram Analytics** (`src/telegram/analytics.rs`)
 
-4 админские команды для просмотра метрик прямо в Telegram:
+4 admin commands for viewing metrics directly in Telegram:
 
-**1. `/analytics` - Общий Dashboard**
+**1. `/analytics` - General Dashboard**
 ```
-📊 Analytics Dashboard
+Analytics Dashboard
 
-⚡ Performance (last 24h)
-• Downloads: 1,234 (↑ -%)
+Performance (last 24h)
+• Downloads: 1,234
 • Success rate: 98.5%
 • Avg duration: 8.3s
 
-💰 Business
-• Revenue: 150⭐
+Business
+• Revenue: 150 Stars
 • Active subs: 42
 • New today: 5
 
-🏥 Health
+Health
 • Queue: 3 tasks
 • Error rate: 1.5%
-• yt-dlp: ✅ OK
+• yt-dlp: OK
 
-👥 Engagement
+Engagement
 • DAU: 85
 • Commands: --
 • Top format: MP3
 ```
 
-**2. `/health` - Состояние Системы**
+**2. `/health` - System Status**
 - Bot uptime
-- Queue status по приоритетам
-- Breakdown ошибок по категориям
-- Системный статус
+- Queue status by priority
+- Error breakdown by category
+- System status
 
-**3. `/metrics [category]` - Детальные Метрики**
-Категории:
-- `performance` - загрузки, success rate, duration
+**3. `/metrics [category]` - Detailed Metrics**
+Categories:
+- `performance` - downloads, success rate, duration
 - `business` - revenue, subscriptions, conversions
-- `engagement` - активность пользователей, популярные форматы
-- `system` - ошибки, очереди, rate limits
+- `engagement` - user activity, popular formats
+- `system` - errors, queues, rate limits
 
-**4. `/revenue` - Финансовая Аналитика**
+**4. `/revenue` - Financial Analytics**
 - Total revenue (all-time)
-- Breakdown по планам (premium/vip)
+- Breakdown by plan (premium/vip)
 - Conversion funnel
-- Статистика платежей
+- Payment statistics
 
-### Фаза 4: Система Оповещений
+### Phase 4: Alerting System
 
 #### **AlertManager** (`src/core/alerts.rs`)
 
-**Типы оповещений:**
-- `HighErrorRate` - высокий процент ошибок
-- `QueueBackup` - переполнение очереди
-- `PaymentFailure` - ошибка платежа (критично!)
-- `YtdlpDown` - yt-dlp не работает
-- `DatabaseIssues` - проблемы с БД
-- `LowConversion` - низкая конверсия
-- `HighRetryRate` - много повторных попыток
+**Alert types:**
+- `HighErrorRate` - high error percentage
+- `QueueBackup` - queue overflow
+- `PaymentFailure` - payment error (critical!)
+- `YtdlpDown` - yt-dlp not working
+- `DatabaseIssues` - database problems
+- `LowConversion` - low conversion
+- `HighRetryRate` - many retry attempts
 
 **Severity levels:**
-- 🟡 **Warning** - требует внимания
-- 🔴 **Critical** - требует немедленного действия
+- **Warning** - requires attention
+- **Critical** - requires immediate action
 
 **Features:**
-- Throttling (предотвращает спам)
-- Resolution tracking (уведомление о решении проблемы)
-- Database persistence (история оповещений)
-- Настраиваемые пороги через .env
+- Throttling (prevents spam)
+- Resolution tracking (notification when problem is resolved)
+- Database persistence (alert history)
+- Configurable thresholds via .env
 
-**Пример оповещения:**
+**Alert example:**
 ```
-🔴 CRITICAL ALERT
+CRITICAL ALERT
 
-⚠️ High Error Rate Detected
+High Error Rate Detected
 
 Current: 12.5% (threshold: 5.0%)
 Affected: 125/1000 downloads
@@ -195,12 +195,12 @@ Recent performance issues detected. Check logs for details.
 Triggered: 2025-12-13 10:30:00 UTC
 ```
 
-**Мониторинг работает автоматически:**
-- Проверка каждые 60 секунд
-- Автоматическая отправка в Telegram админу
-- Уведомления о решении проблем
+**Monitoring runs automatically:**
+- Check every 60 seconds
+- Automatic sending to Telegram admin
+- Notifications when problems are resolved
 
-## 🔧 Конфигурация
+## Configuration
 
 ### Environment Variables (`.env.example`)
 
@@ -220,11 +220,11 @@ ALERT_RETRY_RATE_THRESHOLD=30.0
 ANALYTICS_CACHE_UPDATE_INTERVAL=300
 ```
 
-## 📈 Prometheus + Grafana Integration
+## Prometheus + Grafana Integration
 
 ### 1. Prometheus Configuration
 
-Добавь в `prometheus.yml`:
+Add to `prometheus.yml`:
 ```yaml
 scrape_configs:
   - job_name: 'doradura-bot'
@@ -235,7 +235,7 @@ scrape_configs:
 
 ### 2. Grafana Dashboards
 
-Импортируй готовые дашборды или создай свои:
+Import ready-made dashboards or create your own:
 
 **Performance Dashboard:**
 - Download success rate timeline
@@ -255,23 +255,23 @@ scrape_configs:
 - Bot uptime
 - Rate limit hits
 
-## 🚀 Запуск
+## Getting Started
 
-### 1. Обновить .env
+### 1. Update .env
 ```bash
 METRICS_ENABLED=true
 METRICS_PORT=9090
 ALERTS_ENABLED=true
 ```
 
-### 2. Запустить бота
+### 2. Start the bot
 ```bash
 cargo run --release
 ```
 
-Метрики будут доступны на `http://localhost:9090/metrics`
+Metrics will be available at `http://localhost:9090/metrics`
 
-### 3. (Опционально) Запустить Prometheus
+### 3. (Optional) Start Prometheus
 ```bash
 docker run -d \
   -p 9090:9090 \
@@ -279,18 +279,18 @@ docker run -d \
   prom/prometheus
 ```
 
-### 4. (Опционально) Запустить Grafana
+### 4. (Optional) Start Grafana
 ```bash
 docker run -d \
   -p 3000:3000 \
   grafana/grafana
 ```
 
-## 📝 Следующие Шаги (Integration)
+## Next Steps (Integration)
 
-### 1. Добавить команды в dispatcher (main.rs)
+### 1. Add commands to dispatcher (main.rs)
 
-Нужно зарегистрировать админские команды в bot dispatcher:
+Register admin commands in bot dispatcher:
 
 ```rust
 use doradura::telegram::{
@@ -300,7 +300,7 @@ use doradura::telegram::{
     handle_revenue_command,
 };
 
-// В функции setup dispatcher:
+// In dispatcher setup function:
 let handler = dptree::entry()
     .branch(
         Update::filter_message()
@@ -320,7 +320,7 @@ let handler = dptree::entry()
     );
 ```
 
-### 2. Добавить команды в enum (src/telegram/bot.rs или commands.rs)
+### 2. Add commands to enum (src/telegram/bot.rs or commands.rs)
 
 ```rust
 #[derive(BotCommands, Clone)]
@@ -341,14 +341,14 @@ pub enum Command {
 }
 ```
 
-### 3. Запустить AlertManager в main.rs
+### 3. Start AlertManager in main.rs
 
 ```rust
 use doradura::core::alerts;
 
-// После инициализации metrics server:
+// After initializing metrics server:
 if *config::alerts::ENABLED {
-    let admin_chat_id = ChatId(ADMIN_USER_ID); // получить из config
+    let admin_chat_id = ChatId(ADMIN_USER_ID); // get from config
 
     let alert_manager = alerts::start_alert_monitor(
         bot.clone(),
@@ -360,21 +360,21 @@ if *config::alerts::ENABLED {
 }
 ```
 
-### 4. Интегрировать error tracking
+### 4. Integrate error tracking
 
-В местах обработки ошибок добавить:
+In error handling locations add:
 ```rust
 match result {
     Err(e) => {
-        e.track(); // Автоматически увеличивает error counter
+        e.track(); // Automatically increments error counter
         // ... handle error ...
     }
 }
 ```
 
-### 5. Добавить user activity tracking
+### 5. Add user activity tracking
 
-В обработчике команд:
+In command handler:
 ```rust
 // Record user activity for DAU/MAU tracking
 if let Ok(conn) = db::get_connection(&db_pool) {
@@ -388,14 +388,14 @@ if let Ok(conn) = db::get_connection(&db_pool) {
 }
 ```
 
-## 🧪 Тестирование
+## Testing
 
-### Проверка метрик
+### Check metrics
 ```bash
 curl http://localhost:9090/metrics
 ```
 
-Должны увидеть:
+You should see:
 ```
 # HELP doradura_download_duration_seconds Time spent downloading files
 # TYPE doradura_download_duration_seconds histogram
@@ -403,9 +403,9 @@ doradura_download_duration_seconds_bucket{format="mp3",quality="320k",le="1"} 45
 ...
 ```
 
-### Проверка админских команд
+### Check admin commands
 
-В Telegram (от имени админа):
+In Telegram (as admin):
 ```
 /analytics
 /health
@@ -413,16 +413,16 @@ doradura_download_duration_seconds_bucket{format="mp3",quality="320k",le="1"} 45
 /revenue
 ```
 
-### Тестирование оповещений
+### Testing alerts
 
-Можно искусственно вызвать alert:
+You can artificially trigger an alert:
 ```rust
 if let Some(alert_manager) = &alert_manager {
     alert_manager.alert_payment_failure("premium", "test").await?;
 }
 ```
 
-## 📊 Архитектура
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -461,65 +461,65 @@ if let Some(alert_manager) = &alert_manager {
           └─────────────┘
 ```
 
-## 🎯 Преимущества Реализации
+## Implementation Benefits
 
-### 1. **Минимальный overhead**
-- Prometheus metrics очень быстрые (<0.1% CPU)
+### 1. **Minimal overhead**
+- Prometheus metrics are very fast (<0.1% CPU)
 - Lazy evaluation
-- Эффективное хранение в памяти
+- Efficient in-memory storage
 
 ### 2. **Production-ready**
 - Industry standard (Prometheus)
-- Proven in production by тысячи компаний
+- Proven in production by thousands of companies
 - Rich ecosystem (Grafana, AlertManager)
 
-### 3. **Масштабируемость**
-- Metrics агрегируются автоматически
-- Не нагружает базу данных
+### 3. **Scalability**
+- Metrics are aggregated automatically
+- Doesn't load the database
 - Horizontal scaling ready
 
-### 4. **Удобство**
-- Админ видит метрики прямо в Telegram
-- Автоматические оповещения
-- Красивые дашборды в Grafana
+### 4. **Convenience**
+- Admin sees metrics directly in Telegram
+- Automatic alerts
+- Beautiful dashboards in Grafana
 
 ### 5. **Observability**
-- Full visibility в работу бота
-- Быстрая диагностика проблем
+- Full visibility into bot operation
+- Fast problem diagnosis
 - Data-driven decision making
 
-## 📚 Документация Кода
+## Code Documentation
 
-Все модули полностью задокументированы с примерами использования:
-- `src/core/metrics.rs` - описание всех метрик + helper functions
+All modules are fully documented with usage examples:
+- `src/core/metrics.rs` - description of all metrics + helper functions
 - `src/core/metrics_server.rs` - HTTP server endpoints
-- `src/core/alerts.rs` - система оповещений + примеры
-- `src/telegram/analytics.rs` - админские команды
+- `src/core/alerts.rs` - alerting system + examples
+- `src/telegram/analytics.rs` - admin commands
 
-## ⚠️ Important Notes
+## Important Notes
 
-1. **Admin Only**: Все analytics команды доступны только администратору (проверка через `is_admin()`)
+1. **Admin Only**: All analytics commands are available only to administrators (checked via `is_admin()`)
 
-2. **Throttling**: Alerts имеют throttling для предотвращения спама:
-   - Payment failures: no throttle (немедленно)
-   - High error rate: 30 минут
-   - Queue backup: 15 минут
+2. **Throttling**: Alerts have throttling to prevent spam:
+   - Payment failures: no throttle (immediate)
+   - High error rate: 30 minutes
+   - Queue backup: 15 minutes
 
-3. **Database**: User activity трекинг требует запись в БД, но это происходит асинхронно и не блокирует
+3. **Database**: User activity tracking requires DB writes, but this happens asynchronously and doesn't block
 
-4. **Memory**: Метрики хранятся в памяти. При большом количестве label combinations может вырасти использование RAM
+4. **Memory**: Metrics are stored in memory. With many label combinations, RAM usage can grow
 
-## 🔮 Будущие Улучшения
+## Future Improvements
 
-- [ ] Dashboard в Web UI (вместо только Telegram)
-- [ ] Export метрик в CSV
+- [ ] Dashboard in Web UI (not just Telegram)
+- [ ] Export metrics to CSV
 - [ ] A/B testing framework
 - [ ] User cohort analysis
 - [ ] Predictive analytics (ML)
-- [ ] Custom alerts через Web UI
+- [ ] Custom alerts via Web UI
 
 ---
 
-**Status**: ✅ Полностью реализовано и компилируется без ошибок
+**Status**: Fully implemented and compiles without errors
 
-**Next Step**: Интеграция в main.rs (добавление команд в dispatcher и запуск AlertManager)
+**Next Step**: Integration in main.rs (adding commands to dispatcher and starting AlertManager)
