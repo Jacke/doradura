@@ -13,8 +13,62 @@ use tokio::process::Command;
 /// Maximum duration for video notes in seconds
 pub const VIDEO_NOTE_MAX_DURATION: u64 = 60;
 
+/// Maximum number of video note parts for split
+pub const VIDEO_NOTE_MAX_PARTS: u32 = 6;
+
 /// Video note dimensions (square)
 pub const VIDEO_NOTE_SIZE: u32 = 640;
+
+/// Result of video note split calculation
+#[derive(Debug, Clone, PartialEq)]
+pub struct VideoNoteSplitInfo {
+    /// Total duration of the source video
+    pub total_duration: u64,
+    /// Number of parts to split into
+    pub num_parts: u32,
+    /// Duration of each part (last part may be shorter)
+    pub part_durations: Vec<u64>,
+}
+
+/// Calculate how to split a video into multiple circles
+///
+/// # Arguments
+/// * `total_duration` - Total duration of the video in seconds
+///
+/// # Returns
+/// * `None` if no split is needed (duration <= 60s) or video is too long (> 360s)
+/// * `Some(VideoNoteSplitInfo)` with split details otherwise
+pub fn calculate_video_note_split(total_duration: u64) -> Option<VideoNoteSplitInfo> {
+    if total_duration <= VIDEO_NOTE_MAX_DURATION {
+        return None; // No split needed
+    }
+
+    let num_parts = ((total_duration as f64) / (VIDEO_NOTE_MAX_DURATION as f64)).ceil() as u32;
+
+    if num_parts > VIDEO_NOTE_MAX_PARTS {
+        return None; // Too long, can't split
+    }
+
+    // Calculate part durations (last part may be shorter)
+    let part_durations: Vec<u64> = (0..num_parts)
+        .map(|i| {
+            let start = i as u64 * VIDEO_NOTE_MAX_DURATION;
+            let remaining = total_duration - start;
+            remaining.min(VIDEO_NOTE_MAX_DURATION)
+        })
+        .collect();
+
+    Some(VideoNoteSplitInfo {
+        total_duration,
+        num_parts,
+        part_durations,
+    })
+}
+
+/// Check if video duration exceeds maximum for split (360 seconds)
+pub fn is_too_long_for_split(total_duration: u64) -> bool {
+    total_duration > VIDEO_NOTE_MAX_DURATION * VIDEO_NOTE_MAX_PARTS as u64
+}
 
 /// Options for video note conversion
 #[derive(Debug, Clone, Default)]
@@ -120,6 +174,63 @@ pub async fn to_video_note<P: AsRef<Path>>(
     }
 
     Ok(output_path)
+}
+
+/// Convert video to multiple video notes (circles) by splitting
+///
+/// Splits a long video into multiple 60-second parts for Telegram video notes.
+/// Maximum 6 parts (360 seconds total).
+///
+/// # Arguments
+/// * `input_path` - Path to input video file
+/// * `total_duration` - Total duration of the video in seconds
+/// * `speed` - Optional speed multiplier
+///
+/// # Returns
+/// Vector of paths to the created video note files
+pub async fn to_video_notes_split<P: AsRef<Path>>(
+    input_path: P,
+    total_duration: u64,
+    speed: Option<f64>,
+) -> ConversionResult<Vec<std::path::PathBuf>> {
+    let split_info = calculate_video_note_split(total_duration).ok_or_else(|| {
+        ConversionError::InvalidInput(format!(
+            "Duration {} exceeds maximum for split ({}s)",
+            total_duration,
+            VIDEO_NOTE_MAX_DURATION * VIDEO_NOTE_MAX_PARTS as u64
+        ))
+    })?;
+
+    log::info!(
+        "Splitting video into {} parts: {:?}",
+        split_info.num_parts,
+        split_info.part_durations
+    );
+
+    let mut output_paths = Vec::new();
+
+    for (i, part_duration) in split_info.part_durations.iter().enumerate() {
+        let start_time = i as f64 * VIDEO_NOTE_MAX_DURATION as f64;
+
+        let part_options = VideoNoteOptions {
+            duration: Some(*part_duration),
+            start_time: Some(start_time),
+            speed,
+        };
+
+        log::info!(
+            "Creating video note part {}/{}: start={}s, duration={}s",
+            i + 1,
+            split_info.num_parts,
+            start_time,
+            part_duration
+        );
+
+        let output_path = to_video_note(&input_path, part_options).await?;
+        output_paths.push(output_path);
+    }
+
+    Ok(output_paths)
 }
 
 /// Extract audio from video as MP3
@@ -383,5 +494,67 @@ mod tests {
         assert_eq!(opts.crf, Some(28));
         assert_eq!(opts.audio_bitrate, Some("128k".to_string()));
         assert_eq!(opts.preset, Some("slow".to_string()));
+    }
+
+    #[test]
+    fn test_calculate_split_no_split_needed() {
+        // Video <= 60s should return None (no split needed)
+        assert!(calculate_video_note_split(30).is_none());
+        assert!(calculate_video_note_split(60).is_none());
+    }
+
+    #[test]
+    fn test_calculate_split_two_parts() {
+        let result = calculate_video_note_split(90).unwrap();
+        assert_eq!(result.num_parts, 2);
+        assert_eq!(result.part_durations, vec![60, 30]);
+        assert_eq!(result.total_duration, 90);
+    }
+
+    #[test]
+    fn test_calculate_split_three_parts() {
+        let result = calculate_video_note_split(150).unwrap();
+        assert_eq!(result.num_parts, 3);
+        assert_eq!(result.part_durations, vec![60, 60, 30]);
+    }
+
+    #[test]
+    fn test_calculate_split_exact_parts() {
+        // Exactly 120 seconds = 2 full parts
+        let result = calculate_video_note_split(120).unwrap();
+        assert_eq!(result.num_parts, 2);
+        assert_eq!(result.part_durations, vec![60, 60]);
+    }
+
+    #[test]
+    fn test_calculate_split_max_parts() {
+        // Exactly 360 seconds = 6 full parts (maximum)
+        let result = calculate_video_note_split(360).unwrap();
+        assert_eq!(result.num_parts, 6);
+        assert_eq!(result.part_durations, vec![60, 60, 60, 60, 60, 60]);
+    }
+
+    #[test]
+    fn test_calculate_split_near_max() {
+        // 350 seconds = 6 parts, last one is 50s
+        let result = calculate_video_note_split(350).unwrap();
+        assert_eq!(result.num_parts, 6);
+        assert_eq!(result.part_durations, vec![60, 60, 60, 60, 60, 50]);
+    }
+
+    #[test]
+    fn test_calculate_split_too_long() {
+        // > 360 seconds should return None (too long)
+        assert!(calculate_video_note_split(361).is_none());
+        assert!(calculate_video_note_split(400).is_none());
+        assert!(calculate_video_note_split(1000).is_none());
+    }
+
+    #[test]
+    fn test_is_too_long_for_split() {
+        assert!(!is_too_long_for_split(60));
+        assert!(!is_too_long_for_split(360));
+        assert!(is_too_long_for_split(361));
+        assert!(is_too_long_for_split(1000));
     }
 }
