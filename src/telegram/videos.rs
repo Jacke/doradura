@@ -3,7 +3,8 @@
 //! Handles displaying and managing user-uploaded media files with conversion options.
 
 use crate::conversion::video::{
-    compress, extract_audio, to_gif, to_video_note, CompressionOptions, GifOptions, VideoNoteOptions,
+    calculate_video_note_split, compress, extract_audio, is_too_long_for_split, to_gif, to_video_note,
+    to_video_notes_split, CompressionOptions, GifOptions, VideoNoteOptions, VIDEO_NOTE_MAX_DURATION,
 };
 use crate::core::escape_markdown;
 use crate::storage::uploads::{delete_upload, get_upload_by_id, get_uploads_filtered, UploadEntry};
@@ -566,6 +567,7 @@ pub async fn handle_videos_callback(
                 match convert_type {
                     "circle" => {
                         // Show duration selection for video note
+                        let video_duration = upload.duration.unwrap_or(60) as u64;
                         let durations = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60];
                         let mut rows: Vec<Vec<InlineKeyboardButton>> = vec![];
                         let mut current_row: Vec<InlineKeyboardButton> = vec![];
@@ -587,6 +589,23 @@ pub async fn handle_videos_callback(
                             rows.push(current_row);
                         }
 
+                        // Add "Full video" option for videos longer than 60s (splits into multiple circles)
+                        if video_duration > VIDEO_NOTE_MAX_DURATION {
+                            if let Some(split_info) = calculate_video_note_split(video_duration) {
+                                let full_video_label = format!("📼 Всё видео ({} кружков)", split_info.num_parts);
+                                rows.push(vec![InlineKeyboardButton::callback(
+                                    full_video_label,
+                                    format!("convert:circle:{}:{}", upload_id, video_duration),
+                                )]);
+                            } else if is_too_long_for_split(video_duration) {
+                                // Video too long - show warning button (disabled)
+                                rows.push(vec![InlineKeyboardButton::callback(
+                                    "⚠️ Видео слишком длинное (макс. 6 мин)".to_string(),
+                                    "videos:noop".to_string(),
+                                )]);
+                            }
+                        }
+
                         rows.push(vec![InlineKeyboardButton::callback(
                             "❌ Отмена".to_string(),
                             "videos:cancel".to_string(),
@@ -594,17 +613,33 @@ pub async fn handle_videos_callback(
 
                         let keyboard = InlineKeyboardMarkup::new(rows);
 
-                        bot.edit_message_text(
-                            chat_id,
-                            message_id,
+                        // Build status message based on video duration
+                        let status_text = if video_duration > VIDEO_NOTE_MAX_DURATION {
+                            if is_too_long_for_split(video_duration) {
+                                format!(
+                                    "⭕️ *Выбери длительность кружка* для *{}*:\n\n⚠️ Видео длиннее 6 минут — можно создать только кружок до 60с\\.\n\nИли отправь интервал в формате `мм:сс\\-мм:сс`\\.",
+                                    escape_markdown(&upload.title)
+                                )
+                            } else {
+                                let split_info = calculate_video_note_split(video_duration);
+                                let num_circles = split_info.map(|s| s.num_parts).unwrap_or(1);
+                                format!(
+                                    "⭕️ *Выбери длительность кружка* для *{}*:\n\n💡 Видео длиннее 60с — можно создать {} кружков\\.\n\nИли отправь интервал в формате `мм:сс\\-мм:сс`\\.",
+                                    escape_markdown(&upload.title),
+                                    num_circles
+                                )
+                            }
+                        } else {
                             format!(
                                 "⭕️ *Выбери длительность кружка* для *{}*:\n\nИли отправь интервал в формате `мм:сс\\-мм:сс`\\.",
                                 escape_markdown(&upload.title)
-                            ),
-                        )
-                        .parse_mode(ParseMode::MarkdownV2)
-                        .reply_markup(keyboard)
-                        .await?;
+                            )
+                        };
+
+                        bot.edit_message_text(chat_id, message_id, status_text)
+                            .parse_mode(ParseMode::MarkdownV2)
+                            .reply_markup(keyboard)
+                            .await?;
                     }
                     "audio" | "gif" | "compress" => {
                         // TODO: Implement these conversions in the conversion module
@@ -676,14 +711,36 @@ async fn handle_convert_callback(
             {
                 bot.delete_message(chat_id, message_id).await.ok();
 
-                let status_msg = bot
-                    .send_message(
+                // Check if video is too long for splitting (> 360s)
+                if is_too_long_for_split(duration) {
+                    bot.send_message(
                         chat_id,
-                        format!(
-                            "⏳ Создаю кружок из *{}*\\.\\.\\.\n\n_Это может занять несколько минут_",
-                            escape_markdown(&upload.title)
-                        ),
+                        "❌ Видео слишком длинное\\. Максимум 6 минут для разбивки на кружки\\.",
                     )
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .await?;
+                    return Ok(());
+                }
+
+                // Calculate split info for status message
+                let split_info = calculate_video_note_split(duration);
+                let num_circles = split_info.as_ref().map(|s| s.num_parts).unwrap_or(1);
+
+                let status_text = if num_circles > 1 {
+                    format!(
+                        "⏳ Создаю {} кружков из *{}*\\.\\.\\.\n\n_Это может занять несколько минут_",
+                        num_circles,
+                        escape_markdown(&upload.title)
+                    )
+                } else {
+                    format!(
+                        "⏳ Создаю кружок из *{}*\\.\\.\\.\n\n_Это может занять несколько минут_",
+                        escape_markdown(&upload.title)
+                    )
+                };
+
+                let status_msg = bot
+                    .send_message(chat_id, status_text)
                     .parse_mode(ParseMode::MarkdownV2)
                     .await?;
 
@@ -697,45 +754,109 @@ async fn handle_convert_callback(
                     }
                 };
 
-                // Convert to video note
-                let options = VideoNoteOptions {
-                    duration: Some(duration),
-                    start_time: None,
-                    speed: None,
-                };
+                // Check if we need to split into multiple circles
+                if duration > VIDEO_NOTE_MAX_DURATION {
+                    // Create multiple video notes
+                    match to_video_notes_split(&temp_input, duration, None).await {
+                        Ok(output_paths) => {
+                            let total = output_paths.len();
+                            for (i, output_path) in output_paths.iter().enumerate() {
+                                let progress_text = format!("📤 Отправляю кружок {}/{}...", i + 1, total);
+                                bot.edit_message_text(chat_id, status_msg.id, &progress_text).await.ok();
 
-                match to_video_note(&temp_input, options).await {
-                    Ok(output_path) => {
-                        bot.edit_message_text(chat_id, status_msg.id, "📤 Отправляю кружок...")
-                            .await
-                            .ok();
+                                // Calculate duration for this part
+                                let part_duration = if i == total - 1 {
+                                    // Last part may be shorter
+                                    duration - (i as u64 * VIDEO_NOTE_MAX_DURATION)
+                                } else {
+                                    VIDEO_NOTE_MAX_DURATION
+                                };
 
-                        // Send as video note
-                        match bot
-                            .send_video_note(chat_id, InputFile::file(&output_path))
-                            .duration(duration.min(60) as u32)
-                            .length(640)
-                            .await
-                        {
-                            Ok(_) => {
-                                bot.delete_message(chat_id, status_msg.id).await.ok();
+                                match bot
+                                    .send_video_note(chat_id, InputFile::file(output_path))
+                                    .duration(part_duration.min(VIDEO_NOTE_MAX_DURATION) as u32)
+                                    .length(640)
+                                    .await
+                                {
+                                    Ok(_) => {}
+                                    Err(e) => {
+                                        log::error!("Failed to send video note {}/{}: {}", i + 1, total, e);
+                                        bot.edit_message_text(
+                                            chat_id,
+                                            status_msg.id,
+                                            format!("❌ Не удалось отправить кружок {}/{}: {}", i + 1, total, e),
+                                        )
+                                        .await?;
+                                        // Clean up remaining files
+                                        for path in &output_paths {
+                                            tokio::fs::remove_file(path).await.ok();
+                                        }
+                                        tokio::fs::remove_file(&temp_input).await.ok();
+                                        return Ok(());
+                                    }
+                                }
                             }
-                            Err(e) => {
-                                bot.edit_message_text(
-                                    chat_id,
-                                    status_msg.id,
-                                    format!("❌ Не удалось отправить кружок: {}", e),
-                                )
-                                .await?;
+
+                            // Success - clean up status message
+                            bot.delete_message(chat_id, status_msg.id).await.ok();
+
+                            // Clean up all output files
+                            for path in &output_paths {
+                                tokio::fs::remove_file(path).await.ok();
                             }
                         }
-
-                        // Clean up
-                        tokio::fs::remove_file(&output_path).await.ok();
-                    }
-                    Err(e) => {
-                        bot.edit_message_text(chat_id, status_msg.id, format!("❌ Ошибка при создании кружка: {}", e))
+                        Err(e) => {
+                            bot.edit_message_text(
+                                chat_id,
+                                status_msg.id,
+                                format!("❌ Ошибка при создании кружков: {}", e),
+                            )
                             .await?;
+                        }
+                    }
+                } else {
+                    // Single video note (original logic)
+                    let options = VideoNoteOptions {
+                        duration: Some(duration),
+                        start_time: None,
+                        speed: None,
+                    };
+
+                    match to_video_note(&temp_input, options).await {
+                        Ok(output_path) => {
+                            bot.edit_message_text(chat_id, status_msg.id, "📤 Отправляю кружок...")
+                                .await
+                                .ok();
+
+                            match bot
+                                .send_video_note(chat_id, InputFile::file(&output_path))
+                                .duration(duration.min(VIDEO_NOTE_MAX_DURATION) as u32)
+                                .length(640)
+                                .await
+                            {
+                                Ok(_) => {
+                                    bot.delete_message(chat_id, status_msg.id).await.ok();
+                                }
+                                Err(e) => {
+                                    bot.edit_message_text(
+                                        chat_id,
+                                        status_msg.id,
+                                        format!("❌ Не удалось отправить кружок: {}", e),
+                                    )
+                                    .await?;
+                                }
+                            }
+
+                            tokio::fs::remove_file(&output_path).await.ok();
+                        }
+                        Err(e) => {
+                            bot.edit_message_text(
+                                chat_id,
+                                status_msg.id,
+                                format!("❌ Ошибка при создании кружка: {}", e),
+                            )
+                            .await?;
+                        }
                     }
                 }
 

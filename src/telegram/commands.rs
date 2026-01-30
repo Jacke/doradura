@@ -1,3 +1,7 @@
+use crate::conversion::video::{
+    calculate_video_note_split, is_too_long_for_split, to_video_notes_split, VIDEO_NOTE_MAX_DURATION,
+    VIDEO_NOTE_MAX_PARTS,
+};
 use crate::core::alerts::AlertManager;
 use crate::core::config;
 use crate::core::error::AppError;
@@ -1062,31 +1066,50 @@ pub async fn process_video_clip(
     let total_len: i64 = segments.iter().map(|s| (s.end_secs - s.start_secs).max(0)).sum();
     let is_video_note = session.output_kind == "video_note";
     let is_ringtone = session.output_kind == "iphone_ringtone";
-    let max_len_secs = if is_video_note {
-        60
+
+    // For video notes, determine if we need multi-circle split
+    let video_note_needs_split =
+        is_video_note && total_len > VIDEO_NOTE_MAX_DURATION as i64 && !is_too_long_for_split(total_len as u64);
+
+    // Check if video note is too long for splitting (> 360s)
+    if is_video_note && is_too_long_for_split(total_len as u64) {
+        let mut args = FluentArgs::new();
+        args.set("max_minutes", VIDEO_NOTE_MAX_PARTS as i64);
+        bot.send_message(
+            chat_id,
+            i18n::t_args(&lang, "commands.video_note_too_long_for_split", &args),
+        )
+        .await
+        .ok();
+        return Ok(());
+    }
+
+    let max_len_secs = if is_video_note && !video_note_needs_split {
+        VIDEO_NOTE_MAX_DURATION as i64
+    } else if is_video_note && video_note_needs_split {
+        (VIDEO_NOTE_MAX_DURATION * VIDEO_NOTE_MAX_PARTS as u64) as i64 // Allow full duration for split
     } else if is_ringtone {
         30
     } else {
         60 * 10
     };
 
-    // For video notes and ringtones, truncate segments to fit within limit and notify user
-    let (adjusted_segments, truncated) = if (is_video_note || is_ringtone) && total_len > max_len_secs {
+    // For ringtones only, truncate segments to fit within limit and notify user
+    // Video notes with split don't need truncation
+    let (adjusted_segments, truncated) = if is_ringtone && total_len > max_len_secs {
         let mut adjusted = Vec::new();
         let mut accumulated = 0i64;
 
         for seg in &segments {
             let seg_len = seg.end_secs - seg.start_secs;
             if accumulated >= max_len_secs {
-                break; // Already reached limit
+                break;
             }
 
             if accumulated + seg_len <= max_len_secs {
-                // Segment fits completely
                 adjusted.push(*seg);
                 accumulated += seg_len;
             } else {
-                // Partial segment to fill remaining time
                 let remaining = max_len_secs - accumulated;
                 adjusted.push(CutSegment {
                     start_secs: seg.start_secs,
@@ -1113,13 +1136,20 @@ pub async fn process_video_clip(
         .map(|s| (s.end_secs - s.start_secs).max(0))
         .sum();
 
-    // Notify user if segments were truncated
+    // Notify user about multi-circle split
+    if video_note_needs_split {
+        if let Some(split_info) = calculate_video_note_split(actual_total_len as u64) {
+            let mut args = FluentArgs::new();
+            args.set("count", split_info.num_parts as i64);
+            bot.send_message(chat_id, i18n::t_args(&lang, "commands.video_note_will_split", &args))
+                .await
+                .ok();
+        }
+    }
+
+    // Notify user if segments were truncated (only for ringtones now)
     if truncated {
-        let limit_text = if is_ringtone {
-            i18n::t(&lang, "commands.cut_limit_ringtone")
-        } else {
-            i18n::t(&lang, "commands.cut_limit_video_note")
-        };
+        let limit_text = i18n::t(&lang, "commands.cut_limit_ringtone");
         let mut args = FluentArgs::new();
         args.set("total", total_len);
         args.set("limit", limit_text);
@@ -1328,11 +1358,12 @@ pub async fn process_video_clip(
     };
 
     // Apply speed modification if requested
-    let (filter_av, filter_v, map_v_label, map_a_label, crf) = if is_video_note {
+    // For multi-circle video notes, don't apply circle formatting here - it will be done in split step
+    let (filter_av, filter_v, map_v_label, map_a_label, crf) = if is_video_note && !video_note_needs_split {
+        // Single circle - apply video note formatting in ffmpeg
         let video_note_post = "scale=640:640:force_original_aspect_ratio=increase,crop=640:640,format=yuv420p";
 
         if let Some(spd) = speed {
-            // Apply speed change: setpts for video, atempo for audio
             let setpts_factor = 1.0 / spd;
             let atempo_filter = if spd > 2.0 {
                 format!("atempo=2.0,atempo={}", spd / 2.0)
@@ -1363,6 +1394,31 @@ pub async fn process_video_clip(
                 "[a]",
                 "28",
             )
+        }
+    } else if is_video_note && video_note_needs_split {
+        // Multi-circle - create regular cut, circle formatting will be done in to_video_notes_split
+        if let Some(spd) = speed {
+            let setpts_factor = 1.0 / spd;
+            let atempo_filter = if spd > 2.0 {
+                format!("atempo=2.0,atempo={}", spd / 2.0)
+            } else if spd < 0.5 {
+                format!("atempo=0.5,atempo={}", spd / 0.5)
+            } else {
+                format!("atempo={}", spd)
+            };
+
+            (
+                format!(
+                    "{base_filter_av};[v]setpts={}*PTS[vout];[a]{atempo_filter}[aout]",
+                    setpts_factor
+                ),
+                format!("{base_filter_v};[v]setpts={}*PTS[vout]", setpts_factor),
+                "[vout]",
+                "[aout]",
+                "23",
+            )
+        } else {
+            (base_filter_av, base_filter_v, "[v]", "[a]", "23")
         }
     } else if is_ringtone {
         let atempo_filter = if let Some(spd) = speed {
@@ -1547,7 +1603,97 @@ pub async fn process_video_clip(
         actual_total_len
     );
 
-    let sent = if is_video_note {
+    let sent = if is_video_note && video_note_needs_split {
+        // Multi-circle: split the cut video into multiple circles and send each
+        match to_video_notes_split(&output_path, actual_total_len as u64, None).await {
+            Ok(circle_paths) => {
+                let total_circles = circle_paths.len();
+                log::info!("📤 Sending {} video notes (circles)", total_circles);
+
+                for (i, circle_path) in circle_paths.iter().enumerate() {
+                    // Calculate duration for this part
+                    let part_duration = if i == total_circles - 1 {
+                        actual_total_len - (i as i64 * VIDEO_NOTE_MAX_DURATION as i64)
+                    } else {
+                        VIDEO_NOTE_MAX_DURATION as i64
+                    };
+
+                    // Update status message with progress
+                    let mut args = FluentArgs::new();
+                    args.set("current", (i + 1) as i64);
+                    args.set("total", total_circles as i64);
+                    bot.edit_message_text(
+                        chat_id,
+                        status.id,
+                        i18n::t_args(&lang, "commands.video_note_sending_progress", &args),
+                    )
+                    .await
+                    .ok();
+
+                    match bot
+                        .send_video_note(chat_id, teloxide::types::InputFile::file(circle_path))
+                        .duration(part_duration.max(1) as u32)
+                        .length(640)
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(e) => {
+                            log::error!("❌ Failed to send video note {}/{}: {}", i + 1, total_circles, e);
+                            bot.delete_message(chat_id, status.id).await.ok();
+                            let msg = if e.to_string().to_lowercase().contains("file is too big") {
+                                i18n::t(&lang, "commands.video_note_too_big")
+                            } else {
+                                let mut args = FluentArgs::new();
+                                args.set("error", e.to_string());
+                                i18n::t_args(&lang, "commands.video_note_send_failed", &args)
+                            };
+                            bot.send_message(chat_id, msg).await.ok();
+
+                            // Clean up all circle files
+                            for path in &circle_paths {
+                                tokio::fs::remove_file(path).await.ok();
+                            }
+                            tokio::fs::remove_file(&input_path).await.ok();
+                            tokio::fs::remove_file(&output_path).await.ok();
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Clean up circle files
+                for path in &circle_paths {
+                    tokio::fs::remove_file(path).await.ok();
+                }
+
+                // Delete status message after successful send
+                bot.delete_message(chat_id, status.id).await.ok();
+
+                // Send clip title as separate message
+                bot.send_message(chat_id, &clip_title).await.ok();
+
+                // Clean up
+                tokio::fs::remove_file(&input_path).await.ok();
+                tokio::fs::remove_file(&output_path).await.ok();
+
+                // Skip the rest of the function since we handled everything
+                // Save to history not needed for multi-circle (complex structure)
+                return Ok(());
+            }
+            Err(e) => {
+                log::error!("❌ Failed to split video into circles: {}", e);
+                bot.delete_message(chat_id, status.id).await.ok();
+                let mut args = FluentArgs::new();
+                args.set("error", e.to_string());
+                bot.send_message(chat_id, i18n::t_args(&lang, "commands.video_note_split_failed", &args))
+                    .await
+                    .ok();
+                tokio::fs::remove_file(&input_path).await.ok();
+                tokio::fs::remove_file(&output_path).await.ok();
+                return Ok(());
+            }
+        }
+    } else if is_video_note {
+        // Single circle
         match bot
             .send_video_note(chat_id, teloxide::types::InputFile::file(output_path.clone()))
             .duration(actual_total_len.max(1) as u32)
