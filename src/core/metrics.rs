@@ -378,6 +378,46 @@ lazy_static! {
     .unwrap();
 }
 
+// ======================
+// HEALTH CHECK / SMOKE TEST METRICS
+// ======================
+
+lazy_static! {
+    /// Health check status (1 = healthy, 0 = unhealthy)
+    pub static ref HEALTH_CHECK_STATUS: Gauge = register_gauge!(
+        "doradura_health_check_status",
+        "Health check status (1 = healthy, 0 = unhealthy)"
+    )
+    .unwrap();
+
+    /// Last health check run timestamp (Unix seconds)
+    pub static ref HEALTH_CHECK_LAST_RUN: Gauge = register_gauge!(
+        "doradura_health_check_last_run_timestamp",
+        "Timestamp of last health check run (Unix seconds)"
+    )
+    .unwrap();
+
+    /// Smoke test results count by test name and status
+    /// Labels: test_name (ffmpeg_toolchain/cookies_validation/metadata_extraction/audio_download/video_download)
+    ///         status (passed/failed/timeout/skipped)
+    pub static ref SMOKE_TEST_RESULTS: CounterVec = register_counter_vec!(
+        "doradura_smoke_test_results_total",
+        "Total number of smoke test results by test and status",
+        &["test_name", "status"]
+    )
+    .unwrap();
+
+    /// Smoke test duration in seconds by test name
+    /// Labels: test_name
+    pub static ref SMOKE_TEST_DURATION: HistogramVec = register_histogram_vec!(
+        "doradura_smoke_test_duration_seconds",
+        "Duration of smoke tests in seconds",
+        &["test_name"],
+        vec![1.0, 5.0, 10.0, 30.0, 60.0, 120.0, 180.0]
+    )
+    .unwrap();
+}
+
 /// Initialize metrics (call this at startup to register all metrics)
 pub fn init_metrics() {
     log::info!("Initializing metrics registry...");
@@ -531,6 +571,29 @@ pub fn init_metrics() {
 
     // Set cookies status to valid by default
     COOKIES_STATUS.set(1.0);
+
+    // Initialize health check / smoke test metrics
+    let _ = &*HEALTH_CHECK_STATUS;
+    let _ = &*HEALTH_CHECK_LAST_RUN;
+    let _ = &*SMOKE_TEST_RESULTS;
+    let _ = &*SMOKE_TEST_DURATION;
+
+    // Set health check status to unknown (0) initially
+    HEALTH_CHECK_STATUS.set(0.0);
+
+    // Initialize smoke test result counters
+    for test_name in [
+        "ffmpeg_toolchain",
+        "cookies_validation",
+        "metadata_extraction",
+        "audio_download",
+        "video_download",
+    ] {
+        SMOKE_TEST_RESULTS.with_label_values(&[test_name, "passed"]);
+        SMOKE_TEST_RESULTS.with_label_values(&[test_name, "failed"]);
+        SMOKE_TEST_RESULTS.with_label_values(&[test_name, "timeout"]);
+        SMOKE_TEST_RESULTS.with_label_values(&[test_name, "skipped"]);
+    }
 
     log::info!("Metrics registry initialized successfully");
 }
