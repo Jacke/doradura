@@ -38,6 +38,9 @@ pub enum ConversionError {
 
     #[error("File size exceeds limit: {actual} > {limit}")]
     SizeExceeded { actual: u64, limit: u64 },
+
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
 }
 
 pub type ConversionResult<T> = Result<T, ConversionError>;
