@@ -30,6 +30,9 @@ pub mod timestamps;
 #[cfg(test)]
 pub mod testing;
 
+// Smoke tests module (available for tests and health checks)
+pub mod smoke_tests;
+
 // Re-export commonly used types for convenience
 pub use core::{config, BotError};
 pub use download::{download_and_send_audio, download_and_send_subtitles, download_and_send_video, DownloadQueue};

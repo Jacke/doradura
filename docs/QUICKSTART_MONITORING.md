@@ -1,61 +1,61 @@
-# 🚀 Быстрый Старт Мониторинга
+# Monitoring Quick Start
 
-## За 3 Команды
+## In 3 Commands
 
 ```bash
-# 1. Запустить бота (с metrics сервером)
+# 1. Start the bot (with metrics server)
 cargo run --release
 
-# 2. В новом терминале - запустить мониторинг
+# 2. In a new terminal - start monitoring
 ./scripts/start-monitoring.sh
 
-# 3. Открыть Grafana
+# 3. Open Grafana
 open http://localhost:3000
-# Логин: admin / Пароль: admin
+# Login: admin / Password: admin
 ```
 
-## Что Получите
+## What You Get
 
-✅ **Prometheus** собирает метрики каждые 15 секунд
-✅ **Grafana** показывает красивые дашборды
-✅ **AlertManager** отслеживает проблемы
-✅ **30+ метрик** по performance, business, health
+- **Prometheus** collects metrics every 15 seconds
+- **Grafana** shows beautiful dashboards
+- **AlertManager** tracks problems
+- **30+ metrics** for performance, business, health
 
-## Основные URL
+## Main URLs
 
-| Сервис | URL | Описание |
-|--------|-----|----------|
-| 📊 Bot Metrics | http://localhost:9094/metrics | Raw metrics |
-| 📈 Prometheus | http://localhost:9091 | Metrics storage & queries |
-| 📊 Grafana | http://localhost:3000 | Dashboards |
-| 🔔 AlertManager | http://localhost:9093 | Alert management |
+| Service | URL | Description |
+|---------|-----|-------------|
+| Bot Metrics | http://localhost:9094/metrics | Raw metrics |
+| Prometheus | http://localhost:9091 | Metrics storage & queries |
+| Grafana | http://localhost:3000 | Dashboards |
+| AlertManager | http://localhost:9093 | Alert management |
 
-## Полезные Скрипты
+## Useful Scripts
 
 ```bash
-# Проверить здоровье системы
+# Check system health
 ./scripts/check-metrics.sh
 
-# Остановить мониторинг
+# Stop monitoring
 ./scripts/stop-monitoring.sh
 
-# Посмотреть логи
+# View logs
 docker-compose -f docker-compose.monitoring.yml logs -f
 ```
 
-## Альтернатива: Только Telegram
+## Alternative: Telegram Only
 
-Если не хотите запускать Docker, используйте встроенные команды:
+If you don't want to run Docker, use the built-in commands:
 
 ```
-/analytics - общий дашборд
-/health - состояние системы
-/metrics performance - детальные метрики
-/revenue - финансы
+/analytics - general dashboard
+/health - system status
+/metrics performance - detailed metrics
+/revenue - finances
 ```
 
-Все работает из коробки! ✨
+Everything works out of the box!
 
 ---
 
-**Полная документация:** [MONITORING_SETUP.md](MONITORING_SETUP.md)
+**Full documentation:** [MONITORING_SETUP.md](MONITORING_SETUP.md)

@@ -1,44 +1,44 @@
-# 📊 Руководство по Развертыванию Prometheus + Grafana
+# Prometheus + Grafana Deployment Guide
 
-## Быстрый Старт
+## Quick Start
 
-### 1. Запуск системы мониторинга
+### 1. Start the monitoring stack
 
 ```bash
-# Запустить бота (с metrics сервером на порту 9090)
+# Start the bot (with metrics server on port 9090)
 cargo run --release
 
-# В отдельном терминале - запустить Prometheus + Grafana
+# In a separate terminal - start Prometheus + Grafana
 docker-compose -f docker-compose.monitoring.yml up -d
 ```
 
-### 2. Доступ к сервисам
+### 2. Access services
 
 - **Bot Metrics**: http://localhost:9090/metrics
 - **Prometheus**: http://localhost:9091
-- **Grafana**: http://localhost:3000 (логин: admin / пароль: admin)
+- **Grafana**: http://localhost:3000 (login: admin / password: admin)
 - **AlertManager**: http://localhost:9093
 
-### 3. Проверка работы
+### 3. Verify everything works
 
 ```bash
-# Проверить что метрики доступны
+# Check that metrics are available
 curl http://localhost:9090/metrics
 
-# Проверить что Prometheus собирает метрики
+# Check that Prometheus is scraping metrics
 curl http://localhost:9091/api/v1/targets
 
-# Проверить логи
+# Check logs
 docker-compose -f docker-compose.monitoring.yml logs -f
 ```
 
 ---
 
-## Подробная Настройка
+## Detailed Setup
 
-### Шаг 1: Настройка переменных окружения
+### Step 1: Configure environment variables
 
-Обновите `.env`:
+Update `.env`:
 
 ```bash
 # Analytics & Metrics
@@ -51,95 +51,95 @@ ALERT_ERROR_RATE_THRESHOLD=5.0
 ALERT_QUEUE_DEPTH_THRESHOLD=50
 ```
 
-### Шаг 2: Настройка для Linux
+### Step 2: Linux configuration
 
-Если вы на Linux, отредактируйте `prometheus.yml`:
+If you're on Linux, edit `prometheus.yml`:
 
 ```yaml
 scrape_configs:
   - job_name: 'doradura-bot'
     static_configs:
-      # Для Linux используйте IP хост-машины вместо host.docker.internal
+      # For Linux use the host machine IP instead of host.docker.internal
       - targets: ['172.17.0.1:9090']
-      # Или найдите IP: ip addr show docker0
+      # Or find IP: ip addr show docker0
 ```
 
-Для Railway/production:
+For Railway/production:
 
 ```yaml
 scrape_configs:
   - job_name: 'doradura-bot'
     static_configs:
-      - targets: ['doradura-bot:9090']  # Имя сервиса в Railway
+      - targets: ['doradura-bot:9090']  # Service name in Railway
 ```
 
-### Шаг 3: Настройка Grafana
+### Step 3: Grafana setup
 
-1. Откройте http://localhost:3000
-2. Войдите с admin/admin (смените пароль)
-3. Дашборд "Doradura Bot - Overview" должен появиться автоматически
-4. Если нет - импортируйте из `grafana/dashboards/doradura_overview.json`
+1. Open http://localhost:3000
+2. Login with admin/admin (change the password)
+3. The "Doradura Bot - Overview" dashboard should appear automatically
+4. If not - import from `grafana/dashboards/doradura_overview.json`
 
-#### Создание дополнительных дашбордов
+#### Creating additional dashboards
 
 **Performance Dashboard:**
-- Добавьте панель с `rate(doradura_download_success_total[5m])`
-- Добавьте heat map для duration: `histogram_quantile(0.95, rate(doradura_download_duration_seconds_bucket[5m]))`
+- Add a panel with `rate(doradura_download_success_total[5m])`
+- Add a heat map for duration: `histogram_quantile(0.95, rate(doradura_download_duration_seconds_bucket[5m]))`
 
 **Business Dashboard:**
 - Revenue timeline: `increase(doradura_revenue_total_stars[1h])`
 - Conversion rate: `rate(doradura_new_subscriptions_total[1h]) / rate(doradura_command_usage_total{command="start"}[1h])`
 
-### Шаг 4: Настройка Alerts
+### Step 4: Configure Alerts
 
-Alerts уже настроены в `prometheus/rules/doradura_alerts.yml`.
+Alerts are already configured in `prometheus/rules/doradura_alerts.yml`.
 
-**Типы алертов:**
-- 🔴 Critical: Требуют немедленного действия
-- 🟡 Warning: Требуют внимания
+**Alert types:**
+- Critical: Require immediate action
+- Warning: Require attention
 
-**Основные алерты:**
+**Main alerts:**
 - `HighErrorRate` - error rate > 10%
-- `QueueBackup` - очередь > 100 задач
-- `BotDown` - бот недоступен > 2 мин
+- `QueueBackup` - queue > 100 tasks
+- `BotDown` - bot unavailable > 2 min
 - `SlowDownloads` - p95 duration > 60s
-- `PaymentFailures` - ошибки платежей
+- `PaymentFailures` - payment errors
 
-**Просмотр активных алертов:**
+**View active alerts:**
 ```bash
-# В Prometheus
+# In Prometheus
 curl http://localhost:9091/api/v1/alerts
 
-# В AlertManager
+# In AlertManager
 curl http://localhost:9093/api/v1/alerts
 ```
 
-### Шаг 5: Интеграция с Telegram (опционально)
+### Step 5: Telegram integration (optional)
 
-Чтобы получать алерты в Telegram, у вас есть 2 варианта:
+To receive alerts in Telegram, you have 2 options:
 
-#### Вариант 1: Использовать встроенную систему алертов бота
+#### Option 1: Use the bot's built-in alert system
 
-Ваш бот уже имеет `AlertManager` в `src/core/alerts.rs`, который отправляет уведомления в Telegram. Просто убедитесь что он запущен в `main.rs`.
+Your bot already has an `AlertManager` in `src/core/alerts.rs` that sends notifications to Telegram. Just make sure it's running in `main.rs`.
 
-#### Вариант 2: Настроить webhook от AlertManager
+#### Option 2: Set up webhook from AlertManager
 
-1. Добавьте endpoint в бот для приема webhooks:
+1. Add an endpoint in the bot to receive webhooks:
 
 ```rust
-// В metrics_server.rs
+// In metrics_server.rs
 .route("/alerts", post(alert_webhook_handler))
 
 async fn alert_webhook_handler(
     State(bot): State<Bot>,
     Json(payload): Json<AlertWebhook>
 ) -> impl IntoResponse {
-    // Обработать алерт от Prometheus AlertManager
-    // Отправить в Telegram админу
+    // Process alert from Prometheus AlertManager
+    // Send to Telegram admin
 }
 ```
 
-2. Обновите `alertmanager.yml`:
+2. Update `alertmanager.yml`:
 
 ```yaml
 receivers:
@@ -150,26 +150,26 @@ receivers:
 
 ---
 
-## Развертывание в Production (Railway)
+## Production Deployment (Railway)
 
-### Вариант 1: Встроенный мониторинг (рекомендуется)
+### Option 1: Built-in monitoring (recommended)
 
-Используйте только встроенный metrics server и Telegram команды:
-- `/analytics` - основной дашборд
-- `/health` - состояние системы
-- `/metrics performance` - детальные метрики
+Use only the built-in metrics server and Telegram commands:
+- `/analytics` - main dashboard
+- `/health` - system status
+- `/metrics performance` - detailed metrics
 
-Преимущества:
-- ✅ Нет дополнительных сервисов
-- ✅ Работает из коробки
-- ✅ Метрики в Telegram
-- ✅ Автоматические алерты
+Benefits:
+- No additional services
+- Works out of the box
+- Metrics in Telegram
+- Automatic alerts
 
-### Вариант 2: Полный стек с Prometheus + Grafana
+### Option 2: Full stack with Prometheus + Grafana
 
-#### На Railway
+#### On Railway
 
-1. Добавьте Prometheus как отдельный сервис:
+1. Add Prometheus as a separate service:
 
 ```yaml
 # railway.toml
@@ -184,7 +184,7 @@ source = "docker"
 dockerfile = "Dockerfile.grafana"
 ```
 
-2. Создайте Dockerfiles:
+2. Create Dockerfiles:
 
 **Dockerfile.prometheus:**
 ```dockerfile
@@ -200,25 +200,25 @@ COPY grafana/provisioning /etc/grafana/provisioning
 COPY grafana/dashboards /var/lib/grafana/dashboards
 ```
 
-3. Настройте networking в Railway:
-   - Сервисы в одном проекте могут общаться по внутренним доменам
+3. Configure networking in Railway:
+   - Services in the same project can communicate via internal domains
    - `prometheus.railway.internal:9090`
    - `doradura-bot.railway.internal:9090`
 
-#### На обычном VPS/сервере
+#### On a regular VPS/server
 
 ```bash
-# Скопируйте файлы на сервер
+# Copy files to the server
 scp -r docker-compose.monitoring.yml prometheus.yml grafana/ prometheus/ user@server:~/monitoring/
 
-# На сервере
+# On the server
 cd ~/monitoring
 docker-compose -f docker-compose.monitoring.yml up -d
 
-# Настройте reverse proxy (nginx) для доступа к Grafana
+# Set up reverse proxy (nginx) for Grafana access
 ```
 
-**nginx config для Grafana:**
+**nginx config for Grafana:**
 ```nginx
 server {
     listen 80;
@@ -234,46 +234,46 @@ server {
 
 ---
 
-## Полезные Запросы в Prometheus
+## Useful Prometheus Queries
 
 ### Performance
 
 ```promql
-# Средняя длительность загрузки
+# Average download duration
 histogram_quantile(0.5, rate(doradura_download_duration_seconds_bucket[5m]))
 
 # Success rate
 sum(rate(doradura_download_success_total[5m])) /
 (sum(rate(doradura_download_success_total[5m])) + sum(rate(doradura_download_failure_total[5m])))
 
-# Количество загрузок в час
+# Downloads per hour
 increase(doradura_download_success_total[1h])
 ```
 
 ### Business
 
 ```promql
-# Выручка за сегодня
+# Revenue today
 increase(doradura_revenue_total_stars[1d])
 
-# Конверсия в подписку
+# Subscription conversion
 rate(doradura_new_subscriptions_total[1h]) / rate(doradura_command_usage_total{command="start"}[1h])
 
-# Активные подписки
+# Active subscriptions
 sum(doradura_active_subscriptions)
 ```
 
 ### Health
 
 ```promql
-# Процент ошибок
+# Error percentage
 sum(rate(doradura_errors_total[5m])) /
 sum(rate(doradura_download_success_total[5m]) + rate(doradura_download_failure_total[5m]))
 
-# Глубина очереди
+# Queue depth
 doradura_queue_depth
 
-# Uptime в днях
+# Uptime in days
 doradura_bot_uptime_seconds / 86400
 ```
 
@@ -281,106 +281,106 @@ doradura_bot_uptime_seconds / 86400
 
 ## Troubleshooting
 
-### Prometheus не видит метрики бота
+### Prometheus can't see bot metrics
 
 ```bash
-# Проверьте что metrics сервер запущен
+# Check that the metrics server is running
 curl http://localhost:9090/metrics
 
-# Проверьте targets в Prometheus
+# Check targets in Prometheus
 curl http://localhost:9091/api/v1/targets | jq
 
-# Для Docker на Mac/Windows используйте host.docker.internal
-# Для Linux найдите IP docker0: ip addr show docker0
+# For Docker on Mac/Windows use host.docker.internal
+# For Linux find the docker0 IP: ip addr show docker0
 ```
 
-### Grafana не показывает данные
+### Grafana shows no data
 
-1. Проверьте datasource: Configuration → Data Sources → Prometheus
-2. Проверьте что URL правильный: `http://prometheus:9090`
-3. Нажмите "Test" чтобы проверить соединение
-4. Проверьте что в Prometheus есть данные: http://localhost:9091/graph
+1. Check datasource: Configuration -> Data Sources -> Prometheus
+2. Check that the URL is correct: `http://prometheus:9090`
+3. Click "Test" to verify the connection
+4. Check that Prometheus has data: http://localhost:9091/graph
 
-### Alerts не срабатывают
+### Alerts not firing
 
 ```bash
-# Проверьте что rules загружены
+# Check that rules are loaded
 curl http://localhost:9091/api/v1/rules | jq
 
-# Проверьте активные алерты
+# Check active alerts
 curl http://localhost:9091/api/v1/alerts | jq
 
-# Проверьте логи Prometheus
+# Check Prometheus logs
 docker-compose -f docker-compose.monitoring.yml logs prometheus
 ```
 
-### Высокое использование памяти
+### High memory usage
 
-Prometheus хранит метрики в памяти. Если памяти мало:
+Prometheus stores metrics in memory. If memory is low:
 
-1. Уменьшите retention:
+1. Reduce retention:
 ```yaml
-# В docker-compose.monitoring.yml
+# In docker-compose.monitoring.yml
 command:
-  - '--storage.tsdb.retention.time=7d'  # Вместо 30d
+  - '--storage.tsdb.retention.time=7d'  # Instead of 30d
 ```
 
-2. Уменьшите scrape interval:
+2. Reduce scrape interval:
 ```yaml
-# В prometheus.yml
+# In prometheus.yml
 global:
-  scrape_interval: 30s  # Вместо 15s
+  scrape_interval: 30s  # Instead of 15s
 ```
 
 ---
 
-## Backup и Restore
+## Backup and Restore
 
-### Backup данных Prometheus
+### Backup Prometheus data
 
 ```bash
-# Остановить Prometheus
+# Stop Prometheus
 docker-compose -f docker-compose.monitoring.yml stop prometheus
 
-# Создать backup
+# Create backup
 docker run --rm -v doradura_prometheus_data:/data -v $(pwd):/backup \
   alpine tar czf /backup/prometheus-backup.tar.gz -C /data .
 
-# Запустить снова
+# Start again
 docker-compose -f docker-compose.monitoring.yml start prometheus
 ```
 
-### Backup дашбордов Grafana
+### Backup Grafana dashboards
 
 ```bash
-# Экспорт дашборда через API
+# Export dashboard via API
 curl -H "Authorization: Bearer YOUR_API_KEY" \
   http://localhost:3000/api/dashboards/uid/doradura-overview > dashboard-backup.json
 ```
 
 ---
 
-## Мониторинг Расходов
+## Monitoring Costs
 
-Для Railway/cloud провайдеров отслеживайте:
+For Railway/cloud providers, track:
 
-1. **CPU Usage** - Prometheus может использовать много CPU при большом количестве метрик
-2. **Memory** - Метрики хранятся в RAM
-3. **Storage** - Prometheus сохраняет данные на диск
-4. **Network** - Scraping метрик генерирует трафик
+1. **CPU Usage** - Prometheus can use a lot of CPU with many metrics
+2. **Memory** - Metrics are stored in RAM
+3. **Storage** - Prometheus saves data to disk
+4. **Network** - Scraping metrics generates traffic
 
-**Рекомендации:**
-- Используйте встроенные Telegram команды для production
-- Prometheus + Grafana разворачивайте на отдельном сервере
-- Или используйте managed сервисы (Grafana Cloud, Datadog и т.д.)
+**Recommendations:**
+- Use built-in Telegram commands for production
+- Deploy Prometheus + Grafana on a separate server
+- Or use managed services (Grafana Cloud, Datadog, etc.)
 
 ---
 
-## Дополнительные Возможности
+## Additional Features
 
-### 1. Node Exporter (системные метрики)
+### 1. Node Exporter (system metrics)
 
-Добавьте в `docker-compose.monitoring.yml`:
+Add to `docker-compose.monitoring.yml`:
 
 ```yaml
   node-exporter:
@@ -397,23 +397,23 @@ curl -H "Authorization: Bearer YOUR_API_KEY" \
       - monitoring
 ```
 
-### 2. Blackbox Exporter (проверка доступности)
+### 2. Blackbox Exporter (availability checks)
 
-Мониторинг доступности внешних сервисов (YouTube, bot API и т.д.)
+Monitor availability of external services (YouTube, bot API, etc.)
 
-### 3. Loki для логов
+### 3. Loki for logs
 
-Централизованное хранение логов с интеграцией в Grafana
+Centralized log storage with Grafana integration
 
 ---
 
-## Рекомендуемая Архитектура
+## Recommended Architecture
 
 ### Development
 
 ```
-Ваш компьютер:
-├── doradura bot (с metrics на :9090)
+Your computer:
+├── doradura bot (with metrics on :9090)
 └── docker-compose:
     ├── Prometheus (:9091)
     ├── Grafana (:3000)
@@ -424,10 +424,10 @@ curl -H "Authorization: Bearer YOUR_API_KEY" \
 
 ```
 Railway/VPS:
-└── doradura bot (с metrics + Telegram команды)
-    - Используйте /analytics для мониторинга
-    - Автоматические алерты в Telegram
-    - Нет дополнительных сервисов
+└── doradura bot (with metrics + Telegram commands)
+    - Use /analytics for monitoring
+    - Automatic alerts in Telegram
+    - No additional services
 ```
 
 ### Production (Advanced)
@@ -435,15 +435,15 @@ Railway/VPS:
 ```
 Railway/VPS:
 ├── doradura bot (:9090 internal)
-└── Отдельный VPS для мониторинга:
+└── Separate VPS for monitoring:
     ├── Prometheus (scrapes bot)
     ├── Grafana (+ reverse proxy nginx)
-    └── AlertManager (webhooks в Telegram)
+    └── AlertManager (webhooks to Telegram)
 ```
 
 ---
 
-## Полезные Ссылки
+## Useful Links
 
 - [Prometheus Documentation](https://prometheus.io/docs/)
 - [Grafana Documentation](https://grafana.com/docs/)
