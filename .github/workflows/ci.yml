@@ -94,8 +94,8 @@ jobs:
           ffprobe -version
           yt-dlp --version
 
-      - name: Run quick smoke tests (toolchain only)
-        run: cargo test --test smoke_test smoke_test_quick smoke_test_toolchain smoke_test_cookies -- --nocapture
+      - name: Run smoke tests
+        run: cargo test --test smoke_test -- --nocapture
 
       # Full smoke tests are disabled by default because they:
       # - Require network access to YouTube
