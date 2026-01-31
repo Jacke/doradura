@@ -282,13 +282,16 @@ pub fn escape_markdown_v2(text: &str) -> String {
 /// // Результат: *Artist* — _Song Name_
 /// ```
 pub fn format_media_caption(title: &str, artist: &str) -> String {
-    if artist.trim().is_empty() {
+    let base_caption = if artist.trim().is_empty() {
         // Только название (курсив)
         format!("_{}_", escape_markdown_v2(title))
     } else {
         // Автор (жирный) — Название (курсив)
         format!("*{}* — _{}_", escape_markdown_v2(artist), escape_markdown_v2(title))
-    }
+    };
+
+    // Add copyright signature
+    crate::core::copyright::format_caption_with_copyright(&base_caption)
 }
 
 /// Возвращает правильную форму слова "секунд" для русского языка.
