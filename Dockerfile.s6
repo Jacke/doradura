@@ -135,6 +135,7 @@ RUN echo "oneshot" > /etc/s6-overlay/s6-rc.d/init-data/type && \
 # Create init-data script
 RUN printf '%s\n' \
     '#!/command/execlineb -P' \
+    'foreground { /bin/sh -c "echo \"[init-data] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/init_start_ms" }' \
     'foreground { echo "================================================" }' \
     'foreground { echo "Initializing Combined Telegram Bot API + Doradura Bot" }' \
     'foreground { echo "================================================" }' \
@@ -197,6 +198,7 @@ RUN printf '%s\n' \
     '  "' \
     '}' \
     'foreground { echo "================================================" }' \
+    'foreground { /bin/sh -c "START=$(cat /tmp/init_start_ms 2>/dev/null || echo 0); END=$(($(date +%s%N)/1000000)); ELAPSED=$((END - START)); echo \"[init-data] COMPLETE in ${ELAPSED}ms at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\"" }' \
     'foreground { echo "Initialization complete, starting services..." }' \
     'echo "================================================"' \
     > /etc/s6-overlay/scripts/init-data && \
@@ -207,6 +209,7 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/telegram-bot-api/type && \
     touch /etc/s6-overlay/s6-rc.d/telegram-bot-api/dependencies.d/init-data && \
     printf '%s\n' \
     '#!/command/execlineb -P' \
+    'foreground { /bin/sh -c "echo \"[telegram-bot-api] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\"" }' \
     's6-setuidgid telegram-bot-api' \
     'fdmove -c 2 1' \
     '/bin/sh -c "umask 007 && exec telegram-bot-api --local --api-id=${TELEGRAM_API_ID} --api-hash=${TELEGRAM_API_HASH} --http-port=8081 --http-stat-port=8082 --dir=/data --temp-dir=/tmp --verbosity=1"' \
@@ -218,6 +221,7 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/type && \
     touch /etc/s6-overlay/s6-rc.d/bgutil-pot-server/dependencies.d/init-data && \
     printf '%s\n' \
     '#!/command/execlineb -P' \
+    'foreground { /bin/sh -c "echo \"[bgutil-pot-server] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\"" }' \
     's6-setuidgid botuser' \
     's6-env HOME=/home/botuser' \
     's6-env TOKEN_TTL=6' \
@@ -232,20 +236,25 @@ RUN cat > /etc/s6-overlay/scripts/wait-for-bot-api << 'WAIT_SCRIPT'
 BOT_API="${BOT_API_URL:-http://localhost:8081}"
 BOT_TOKEN="${TELOXIDE_TOKEN:-}"
 READY=0
-echo "Waiting for Telegram Bot API at $BOT_API..."
+START_TIME=$(date +%s)
+echo "[wait-for-bot-api] Waiting for Telegram Bot API at $BOT_API..."
 for i in $(seq 1 180); do
   if wget -q --spider "$BOT_API" 2>/dev/null; then
     if [ -n "$BOT_TOKEN" ]; then
       RESP=$(wget -q -O - "$BOT_API/bot$BOT_TOKEN/getMe" 2>/dev/null || echo "")
       if echo "$RESP" | grep -q '"ok":true'; then
-        echo "Bot API is fully ready after ${i}s"
+        END_TIME=$(date +%s)
+        ELAPSED=$((END_TIME - START_TIME))
+        echo "[wait-for-bot-api] Bot API is fully ready after ${ELAPSED}s (${i} checks)"
         READY=1
         break
       elif echo "$RESP" | grep -q 'restart'; then
-        [ $((i % 10)) -eq 0 ] && echo "  Bot API initializing... (${i}s)"
+        [ $((i % 10)) -eq 0 ] && echo "[wait-for-bot-api] Bot API initializing... (${i}s)"
       fi
     else
-      echo "Bot API server responding after ${i}s"
+      END_TIME=$(date +%s)
+      ELAPSED=$((END_TIME - START_TIME))
+      echo "[wait-for-bot-api] Bot API server responding after ${ELAPSED}s"
       READY=1
       break
     fi
@@ -253,7 +262,7 @@ for i in $(seq 1 180); do
   sleep 1
 done
 if [ $READY -eq 0 ]; then
-  echo "Warning: Bot API not fully ready after 180s, starting anyway..."
+  echo "[wait-for-bot-api] WARNING: Bot API not fully ready after 180s, starting anyway..."
 fi
 WAIT_SCRIPT
 RUN chmod +x /etc/s6-overlay/scripts/wait-for-bot-api
@@ -265,7 +274,9 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/doradura-bot/type && \
 # Create doradura-bot run script
 RUN printf '%s\n' \
     '#!/command/execlineb -P' \
+    'foreground { /bin/sh -c "echo \"[doradura-bot] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/doradura_start_ms" }' \
     'foreground { /etc/s6-overlay/scripts/wait-for-bot-api }' \
+    'foreground { /bin/sh -c "START=$(cat /tmp/doradura_start_ms 2>/dev/null || echo 0); END=$(($(date +%s%N)/1000000)); ELAPSED=$((END - START)); echo \"[doradura-bot] Bot API ready, waited ${ELAPSED}ms. Launching bot...\"" }' \
     's6-setuidgid botuser' \
     's6-env DATABASE_PATH=/data/database.sqlite' \
     's6-env TEMP_FILES_DIR=/data' \
