@@ -122,7 +122,7 @@ pub async fn download_video_file_with_progress(
                 "--retries",
                 "5", // retry main request up to 5 times
                 "--postprocessor-args",
-                "ffmpeg:-movflags +faststart",
+                "Merger:-movflags +faststart",
             ];
 
             // Add proxy and cookies for this attempt
