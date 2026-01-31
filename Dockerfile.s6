@@ -252,7 +252,7 @@ RUN printf '%s\n' \
     '  '"'"'' \
     '}' \
     's6-setuidgid botuser' \
-    's6-env DATABASE_URL=/data/database.sqlite' \
+    's6-env DATABASE_PATH=/data/database.sqlite' \
     's6-env TEMP_FILES_DIR=/data' \
     's6-env BOT_API_DATA_DIR=/data' \
     's6-env LOG_FILE_PATH=/data/app.log' \
