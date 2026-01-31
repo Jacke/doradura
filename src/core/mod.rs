@@ -2,6 +2,7 @@
 
 pub mod alerts;
 pub mod config;
+pub mod copyright;
 pub mod error;
 pub mod error_logger;
 pub mod export;
