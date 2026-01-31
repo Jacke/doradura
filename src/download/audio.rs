@@ -53,7 +53,7 @@ pub fn download_audio_file(url: &Url, download_path: &str) -> Result<Option<u32>
         "--concurrent-fragments",
         "1",
         "--postprocessor-args",
-        "-acodec libmp3lame -b:a 320k",
+        "ffmpeg:-acodec libmp3lame -b:a 320k",
         url.as_str(),
     ];
     let mut child = spawn_downloader_with_fallback(ytdl_bin, &args)?;
@@ -92,7 +92,7 @@ pub async fn download_audio_file_with_progress(
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
 
     let handle = tokio::task::spawn_blocking(move || {
-        let postprocessor_args = format!("-acodec libmp3lame -b:a {}", bitrate_str);
+        let postprocessor_args = format!("ffmpeg:-acodec libmp3lame -b:a {}", bitrate_str);
 
         // Get proxy chain for fallback: WARP → Residential → Direct
         let proxy_chain = get_proxy_chain();
