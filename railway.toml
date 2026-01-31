@@ -2,7 +2,7 @@
 # Ensures Dockerfile.combined is used for multi-service setup
 [build]
 builder = "DOCKERFILE"
-dockerfilePath = "Dockerfile.combined"
+dockerfilePath = "Dockerfile.s6"
 
 [deploy]
 numReplicas = 1
