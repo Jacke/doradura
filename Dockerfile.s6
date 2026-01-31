@@ -166,9 +166,11 @@ RUN printf '%s\n' \
     '  "' \
     '}' \
     'foreground { echo "Setting database permissions..." }' \
-    'foreground { chown 1000:2000 /data/database.sqlite }' \
-    'foreground { chmod 664 /data/database.sqlite }' \
-    'foreground { ls -la /data/database.sqlite }' \
+    'foreground { chown -R 1000:2000 /data }' \
+    'foreground { chmod 775 /data }' \
+    'foreground { find /data -name "*.sqlite*" -exec chown 1000:2000 {} \\; }' \
+    'foreground { find /data -name "*.sqlite*" -exec chmod 664 {} \\; }' \
+    'foreground { ls -la /data }' \
     'foreground {' \
     '  /bin/sh -c "' \
     '    if [ -n \"\$YTDL_COOKIES_B64\" ]; then' \
