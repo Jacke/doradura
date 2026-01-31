@@ -75,6 +75,21 @@ RUN node --version && echo "Node.js available for yt-dlp --js-runtimes node"
 # Install npm (for bgutil PO Token provider)
 RUN apk add --no-cache npm
 
+# Headless browser for cookie_manager (auto-refresh YouTube cookies)
+RUN apk add --no-cache \
+  chromium \
+  chromium-chromedriver \
+  xvfb \
+  x11vnc \
+  ttf-freefont \
+  fontconfig \
+  dbus
+
+# noVNC for visual login (first-time setup)
+RUN mkdir -p /opt/novnc && \
+  wget -qO- https://github.com/novnc/noVNC/archive/v1.4.0.tar.gz | \
+  tar xz -C /opt/novnc --strip-components=1
+
 # Install yt-dlp from nightly builds (latest fixes for YouTube compatibility)
 RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
   chmod a+rx /usr/local/bin/yt-dlp
@@ -82,6 +97,13 @@ RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp-nightly-builds/rel
 # Install Python dependencies (including yt-dlp PO Token plugin)
 RUN pip3 install --no-cache-dir --break-system-packages \
   keyring pycryptodomex bgutil-ytdlp-pot-provider
+
+# Python dependencies for cookie_manager (headless browser automation)
+RUN pip3 install --no-cache-dir --break-system-packages \
+  websockify \
+  undetected-chromedriver \
+  aiohttp \
+  selenium
 
 # Install bgutil PO Token HTTP server (generates tokens for yt-dlp)
 RUN mkdir -p /opt/bgutil && \
@@ -110,12 +132,22 @@ RUN chmod 755 /app/doradura && \
 # Copy migrations for auto-migration on startup
 COPY --from=rust-builder --chown=1000:2000 /app/migrations /app/migrations
 
+# Copy cookie_manager for YouTube cookies auto-refresh
+COPY --chown=1000:2000 tools/cookie_manager.py /app/tools/
+RUN chmod +x /app/tools/cookie_manager.py
+
 # Set environment variables
 ENV BOT_API_DATA_DIR=/data
 ENV BOT_API_URL=http://localhost:8081
 ENV S6_KEEP_ENV=1
 ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2
 ENV S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0
+# Cookie manager settings
+ENV YTDL_COOKIES_FILE=/data/youtube_cookies.txt
+ENV BROWSER_PROFILE_DIR=/data/browser_profile
+ENV COOKIE_MANAGER_PORT=9876
+ENV CHROMIUM_PATH=/usr/bin/chromium-browser
+ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 
 # === s6-overlay service definitions ===
 
@@ -125,6 +157,7 @@ RUN mkdir -p /etc/s6-overlay/s6-rc.d/user/contents.d \
              /etc/s6-overlay/s6-rc.d/telegram-bot-api/dependencies.d \
              /etc/s6-overlay/s6-rc.d/bgutil-pot-server/dependencies.d \
              /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d \
+             /etc/s6-overlay/s6-rc.d/cookie-manager/dependencies.d \
              /etc/s6-overlay/scripts
 
 # === init-data oneshot service (runs migrations, sets up directories) ===
@@ -291,14 +324,34 @@ RUN printf '%s\n' \
     > /etc/s6-overlay/s6-rc.d/doradura-bot/run && \
     chmod +x /etc/s6-overlay/s6-rc.d/doradura-bot/run
 
+# === cookie-manager longrun service (YouTube cookies auto-refresh) ===
+RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/cookie-manager/type && \
+    touch /etc/s6-overlay/s6-rc.d/cookie-manager/dependencies.d/init-data && \
+    printf '%s\n' \
+    '#!/command/execlineb -P' \
+    'foreground { /bin/sh -c "echo \"[cookie-manager] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\"" }' \
+    's6-setuidgid botuser' \
+    's6-env HOME=/home/botuser' \
+    's6-env DISPLAY=:99' \
+    's6-env YTDL_COOKIES_FILE=/data/youtube_cookies.txt' \
+    's6-env BROWSER_PROFILE_DIR=/data/browser_profile' \
+    's6-env COOKIE_MANAGER_PORT=9876' \
+    's6-env CHROMIUM_PATH=/usr/bin/chromium-browser' \
+    's6-env CHROMEDRIVER_PATH=/usr/bin/chromedriver' \
+    'fdmove -c 2 1' \
+    'python3 /app/tools/cookie_manager.py' \
+    > /etc/s6-overlay/s6-rc.d/cookie-manager/run && \
+    chmod +x /etc/s6-overlay/s6-rc.d/cookie-manager/run
+
 # Enable all services
 RUN touch /etc/s6-overlay/s6-rc.d/user/contents.d/init-data \
           /etc/s6-overlay/s6-rc.d/user/contents.d/telegram-bot-api \
           /etc/s6-overlay/s6-rc.d/user/contents.d/bgutil-pot-server \
-          /etc/s6-overlay/s6-rc.d/user/contents.d/doradura-bot
+          /etc/s6-overlay/s6-rc.d/user/contents.d/doradura-bot \
+          /etc/s6-overlay/s6-rc.d/user/contents.d/cookie-manager
 
-# Expose ports (8080=webapp, 8081=bot-api, 8082=bot-api-stats, 9090=metrics)
-EXPOSE 8080 8081 8082 9090
+# Expose ports (8080=webapp, 8081=bot-api, 8082=bot-api-stats, 9090=metrics, 6080=noVNC)
+EXPOSE 8080 8081 8082 9090 6080
 
 # Note: Health check disabled - Railway uses port checks
 # Bot API takes 2-3 minutes to initialize, health check kills container prematurely
