@@ -163,6 +163,8 @@ RUN printf '%s\n' \
     '      done' \
     '      echo Migrations complete' \
     '    fi' \
+    '    chown 1000:2000 \"\$DB_PATH\" 2>/dev/null || true' \
+    '    chmod 664 \"\$DB_PATH\" 2>/dev/null || true' \
     '  "' \
     '}' \
     'foreground {' \
