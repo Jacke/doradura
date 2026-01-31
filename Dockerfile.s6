@@ -1,0 +1,271 @@
+# Build stage for Rust application
+FROM rust:1.85-alpine AS rust-builder
+
+RUN apk add --no-cache \
+  musl-dev \
+  pkgconfig \
+  openssl-dev \
+  openssl-libs-static \
+  sqlite-dev \
+  sqlite-static \
+  build-base
+
+WORKDIR /app
+
+COPY Cargo.toml Cargo.lock ./
+COPY build.rs ./
+COPY c_code ./c_code
+COPY src ./src
+COPY locales ./locales
+COPY migrations ./migrations
+
+RUN cargo build --release && \
+  echo "Binary built successfully:" && \
+  ls -lh /app/target/release/doradura && \
+  file /app/target/release/doradura && \
+  ldd /app/target/release/doradura || echo "Static binary (no dynamic libs)"
+
+# Runtime stage - based on aiogram/telegram-bot-api
+FROM aiogram/telegram-bot-api:latest
+
+USER root
+
+# s6-overlay version
+ARG S6_OVERLAY_VERSION=3.2.0.2
+
+# Install s6-overlay
+ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz /tmp
+ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-x86_64.tar.xz /tmp
+RUN tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz && \
+    tar -C / -Jxpf /tmp/s6-overlay-x86_64.tar.xz && \
+    rm /tmp/s6-overlay-*.tar.xz
+
+# Install runtime dependencies for the bot
+RUN apk add --no-cache \
+  ca-certificates \
+  musl \
+  libssl3 \
+  libcrypto3 \
+  ffmpeg \
+  python3 \
+  py3-pip \
+  sqlite-libs \
+  libgcc \
+  libstdc++ \
+  wget \
+  curl \
+  unzip \
+  bash \
+  nodejs \
+  git
+
+# Build dependencies for canvas (bgutil PO Token server)
+RUN apk add --no-cache \
+  build-base \
+  pkgconfig \
+  cairo-dev \
+  pango-dev \
+  jpeg-dev \
+  giflib-dev \
+  pixman-dev
+
+# Node.js 22+ is already installed (required for yt-dlp YouTube n-challenge solving)
+RUN node --version && echo "Node.js available for yt-dlp --js-runtimes node"
+
+# Install npm (for bgutil PO Token provider)
+RUN apk add --no-cache npm
+
+# Install yt-dlp from nightly builds (latest fixes for YouTube compatibility)
+RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
+  chmod a+rx /usr/local/bin/yt-dlp
+
+# Install Python dependencies (including yt-dlp PO Token plugin)
+RUN pip3 install --no-cache-dir --break-system-packages \
+  keyring pycryptodomex bgutil-ytdlp-pot-provider
+
+# Install bgutil PO Token HTTP server (generates tokens for yt-dlp)
+RUN mkdir -p /opt/bgutil && \
+  cd /opt/bgutil && \
+  git clone --single-branch --branch 1.2.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git . && \
+  cd server && \
+  npm install && \
+  npx tsc && \
+  echo "bgutil PO Token server built successfully"
+
+# Create shared group and users, then set up directories
+RUN addgroup -g 2000 shareddata && \
+  adduser -D -u 1000 -G shareddata botuser && \
+  addgroup telegram-bot-api shareddata && \
+  addgroup botuser telegram-bot-api && \
+  mkdir -p /app /data && \
+  chown 1000:2000 /app && \
+  chown telegram-bot-api:shareddata /data && \
+  chmod 775 /data
+
+# Copy the compiled binary from rust-builder and set permissions
+COPY --from=rust-builder --chown=1000:2000 /app/target/release/doradura /app/doradura
+RUN chmod 755 /app/doradura && \
+  ls -la /app/doradura
+
+# Copy migrations for auto-migration on startup
+COPY --from=rust-builder --chown=1000:2000 /app/migrations /app/migrations
+
+# Set environment variables
+ENV BOT_API_DATA_DIR=/data
+ENV BOT_API_URL=http://localhost:8081
+ENV S6_KEEP_ENV=1
+ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2
+ENV S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0
+
+# === s6-overlay service definitions ===
+
+# Create s6-rc service directories
+RUN mkdir -p /etc/s6-overlay/s6-rc.d/user/contents.d \
+             /etc/s6-overlay/s6-rc.d/init-data/dependencies.d \
+             /etc/s6-overlay/s6-rc.d/telegram-bot-api/dependencies.d \
+             /etc/s6-overlay/s6-rc.d/bgutil-pot-server/dependencies.d \
+             /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d \
+             /etc/s6-overlay/scripts
+
+# === init-data oneshot service (runs migrations, sets up directories) ===
+RUN echo "oneshot" > /etc/s6-overlay/s6-rc.d/init-data/type && \
+    touch /etc/s6-overlay/s6-rc.d/init-data/dependencies.d/base && \
+    echo "/etc/s6-overlay/scripts/init-data" > /etc/s6-overlay/s6-rc.d/init-data/up
+
+# Create init-data script
+RUN printf '%s\n' \
+    '#!/command/execlineb -P' \
+    'foreground { echo "================================================" }' \
+    'foreground { echo "Initializing Combined Telegram Bot API + Doradura Bot" }' \
+    'foreground { echo "================================================" }' \
+    'foreground { mkdir -p /data /tmp }' \
+    'foreground { chmod 1777 /tmp }' \
+    'foreground { echo "Clearing Bot API data for clean start..." }' \
+    'foreground { find /data -name "*.binlog" -delete }' \
+    'foreground { find /data -name "*.binlog.lock" -delete }' \
+    'foreground { chown telegram-bot-api:shareddata /data }' \
+    'foreground { chmod 775 /data }' \
+    'foreground { chown -R 1000:2000 /app }' \
+    'foreground { chmod 755 /app }' \
+    'foreground {' \
+    '  /bin/sh -c "' \
+    '    DB_PATH=\${DATABASE_URL:-/data/database.sqlite}' \
+    '    DB_DIR=\$(dirname \"\$DB_PATH\")' \
+    '    mkdir -p \"\$DB_DIR\"' \
+    '    chmod 755 \"\$DB_DIR\" 2>/dev/null || true' \
+    '    echo Running database migrations...' \
+    '    MIGRATIONS_DIR=/app/migrations' \
+    '    if [ -d \"\$MIGRATIONS_DIR\" ]; then' \
+    '      for migration in \$(ls -1 \"\$MIGRATIONS_DIR\"/*.sql 2>/dev/null | sort -V); do' \
+    '        migration_name=\$(basename \"\$migration\")' \
+    '        echo \"  Applying: \$migration_name\"' \
+    '        sqlite3 \"\$DB_PATH\" < \"\$migration\" 2>&1 || echo \"  (already applied or error)\"' \
+    '      done' \
+    '      echo Migrations complete' \
+    '    fi' \
+    '  "' \
+    '}' \
+    'foreground {' \
+    '  /bin/sh -c "' \
+    '    if [ -n \"\$YTDL_COOKIES_B64\" ]; then' \
+    '      COOKIES_PATH=\${YTDL_COOKIES_FILE:-/data/youtube_cookies.txt}' \
+    '      COOKIES_DIR=\$(dirname \"\$COOKIES_PATH\")' \
+    '      mkdir -p \"\$COOKIES_DIR\"' \
+    '      echo \"\$YTDL_COOKIES_B64\" | base64 -d > \"\$COOKIES_PATH\"' \
+    '      chown 1000:2000 \"\$COOKIES_PATH\"' \
+    '      chmod 644 \"\$COOKIES_PATH\"' \
+    '      echo YouTube cookies written to \$COOKIES_PATH' \
+    '    fi' \
+    '  "' \
+    '}' \
+    'foreground { echo "================================================" }' \
+    'foreground { echo "Initialization complete, starting services..." }' \
+    'echo "================================================"' \
+    > /etc/s6-overlay/scripts/init-data && \
+    chmod +x /etc/s6-overlay/scripts/init-data
+
+# === telegram-bot-api longrun service ===
+RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/telegram-bot-api/type && \
+    touch /etc/s6-overlay/s6-rc.d/telegram-bot-api/dependencies.d/init-data && \
+    printf '%s\n' \
+    '#!/command/execlineb -P' \
+    's6-setuidgid telegram-bot-api' \
+    'fdmove -c 2 1' \
+    '/bin/sh -c "umask 007 && exec telegram-bot-api --local --api-id=${TELEGRAM_API_ID} --api-hash=${TELEGRAM_API_HASH} --http-port=8081 --http-stat-port=8082 --dir=/data --temp-dir=/tmp --verbosity=1"' \
+    > /etc/s6-overlay/s6-rc.d/telegram-bot-api/run && \
+    chmod +x /etc/s6-overlay/s6-rc.d/telegram-bot-api/run
+
+# === bgutil-pot-server longrun service ===
+RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/type && \
+    touch /etc/s6-overlay/s6-rc.d/bgutil-pot-server/dependencies.d/init-data && \
+    printf '%s\n' \
+    '#!/command/execlineb -P' \
+    's6-setuidgid botuser' \
+    's6-env HOME=/home/botuser' \
+    's6-env TOKEN_TTL=6' \
+    'fdmove -c 2 1' \
+    'node /opt/bgutil/server/build/main.js' \
+    > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/run && \
+    chmod +x /etc/s6-overlay/s6-rc.d/bgutil-pot-server/run
+
+# === doradura-bot longrun service ===
+RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/doradura-bot/type && \
+    touch /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d/telegram-bot-api
+
+# Create doradura-bot run script
+RUN printf '%s\n' \
+    '#!/command/execlineb -P' \
+    'foreground { echo "Waiting for Telegram Bot API..." }' \
+    'foreground {' \
+    '  /bin/sh -c '"'"'' \
+    '    BOT_API="${BOT_API_URL:-http://localhost:8081}"' \
+    '    BOT_TOKEN="${TELOXIDE_TOKEN:-}"' \
+    '    READY=0' \
+    '    for i in $(seq 1 180); do' \
+    '      if wget -q --spider "$BOT_API" 2>/dev/null; then' \
+    '        if [ -n "$BOT_TOKEN" ]; then' \
+    '          RESP=$(wget -q -O - "$BOT_API/bot$BOT_TOKEN/getMe" 2>/dev/null || echo "")' \
+    '          if echo "$RESP" | grep -q "ok.*true"; then' \
+    '            echo "Bot API is fully ready after ${i}s"' \
+    '            READY=1' \
+    '            break' \
+    '          elif echo "$RESP" | grep -q "restart"; then' \
+    '            [ $((i % 10)) -eq 0 ] && echo "  Bot API initializing... (${i}s)"' \
+    '          fi' \
+    '        else' \
+    '          echo "Bot API server responding after ${i}s"' \
+    '          READY=1' \
+    '          break' \
+    '        fi' \
+    '      fi' \
+    '      sleep 1' \
+    '    done' \
+    '    if [ $READY -eq 0 ]; then' \
+    '      echo "Warning: Bot API not fully ready after 180s, starting anyway..."' \
+    '    fi' \
+    '  '"'"'' \
+    '}' \
+    's6-setuidgid botuser' \
+    's6-env DATABASE_URL=/data/database.sqlite' \
+    's6-env TEMP_FILES_DIR=/data' \
+    's6-env BOT_API_DATA_DIR=/data' \
+    's6-env LOG_FILE_PATH=/data/app.log' \
+    'fdmove -c 2 1' \
+    '/app/doradura' \
+    > /etc/s6-overlay/s6-rc.d/doradura-bot/run && \
+    chmod +x /etc/s6-overlay/s6-rc.d/doradura-bot/run
+
+# Enable all services
+RUN touch /etc/s6-overlay/s6-rc.d/user/contents.d/init-data \
+          /etc/s6-overlay/s6-rc.d/user/contents.d/telegram-bot-api \
+          /etc/s6-overlay/s6-rc.d/user/contents.d/bgutil-pot-server \
+          /etc/s6-overlay/s6-rc.d/user/contents.d/doradura-bot
+
+# Expose ports (8080=webapp, 8081=bot-api, 8082=bot-api-stats)
+EXPOSE 8080 8081 8082
+
+# Health check for both services
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD pgrep telegram-bot-api && pgrep doradura || exit 1
+
+ENTRYPOINT ["/init"]
