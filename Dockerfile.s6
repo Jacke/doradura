@@ -180,8 +180,8 @@ RUN printf '%s\n' \
     'foreground { echo "Setting database permissions..." }' \
     'foreground { chown -R 1000:2000 /data }' \
     'foreground { chmod 775 /data }' \
-    'foreground { find /data -name "*.sqlite*" -exec chown 1000:2000 {} \\; }' \
-    'foreground { find /data -name "*.sqlite*" -exec chmod 664 {} \\; }' \
+    'foreground { /bin/sh -c "chown 1000:2000 /data/*.sqlite* 2>/dev/null || true" }' \
+    'foreground { /bin/sh -c "chmod 664 /data/*.sqlite* 2>/dev/null || true" }' \
     'foreground { ls -la /data }' \
     'foreground {' \
     '  /bin/sh -c "' \
@@ -289,7 +289,7 @@ RUN touch /etc/s6-overlay/s6-rc.d/user/contents.d/init-data \
 EXPOSE 8080 8081 8082 9090
 
 # Health check for both services
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=5 \
   CMD pgrep telegram-bot-api && pgrep doradura || exit 1
 
 ENTRYPOINT ["/init"]
