@@ -275,6 +275,7 @@ RUN printf '%s\n' \
     's6-env METRICS_ENABLED=true' \
     's6-env METRICS_PORT=9090' \
     'fdmove -c 2 1' \
+    'cd /app' \
     '/app/doradura' \
     > /etc/s6-overlay/s6-rc.d/doradura-bot/run && \
     chmod +x /etc/s6-overlay/s6-rc.d/doradura-bot/run
