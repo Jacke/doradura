@@ -288,8 +288,7 @@ RUN touch /etc/s6-overlay/s6-rc.d/user/contents.d/init-data \
 # Expose ports (8080=webapp, 8081=bot-api, 8082=bot-api-stats, 9090=metrics)
 EXPOSE 8080 8081 8082 9090
 
-# Health check for both services
-HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=5 \
-  CMD pgrep telegram-bot-api && pgrep doradura || exit 1
+# Note: Health check disabled - Railway uses port checks
+# Bot API takes 2-3 minutes to initialize, health check kills container prematurely
 
 ENTRYPOINT ["/init"]
