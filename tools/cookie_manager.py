@@ -272,10 +272,16 @@ class PersistentBrowserManager:
 
                 # Check if still logged in
                 if not _check_youtube_logged_in(self.driver):
-                    log.error("SESSION LOGGED OUT! Need re-login.")
-                    status["needs_relogin"] = True
+                    log.warning("SESSION LOGGED OUT! Attempting auto-relogin...")
                     self._take_screenshot("signout_detected")
-                    return 0
+
+                    # Try auto-relogin using saved browser profile
+                    if self._attempt_auto_relogin():
+                        log.info("✅ Auto-relogin successful!")
+                    else:
+                        log.error("❌ Auto-relogin failed, manual login required via /browser_login")
+                        status["needs_relogin"] = True
+                        return 0
 
                 # Export cookies
                 cookie_count = self._export_cookies_internal()
@@ -479,6 +485,79 @@ class PersistentBrowserManager:
                 log.info("Screenshot saved: %s", path)
         except Exception as e:
             log.warning("Could not save screenshot: %s", e)
+
+    def _attempt_auto_relogin(self) -> bool:
+        """
+        Attempt automatic re-login using saved browser profile.
+
+        When a user has previously logged in, Google remembers the device.
+        Navigating to accounts.google.com may automatically restore the session
+        without requiring password or 2FA (device is trusted).
+
+        Returns True if re-login was successful.
+        """
+        if self.driver is None:
+            return False
+
+        log.info("=" * 60)
+        log.info("ATTEMPTING AUTO-RELOGIN (using saved profile)")
+        log.info("=" * 60)
+
+        try:
+            # Step 1: Navigate to Google accounts
+            log.info("Step 1: Navigating to accounts.google.com...")
+            self.driver.get("https://accounts.google.com/")
+            time.sleep(5)
+            self._take_screenshot("auto_relogin_step1_accounts")
+
+            # Step 2: Navigate to YouTube (may trigger automatic login)
+            log.info("Step 2: Navigating to YouTube...")
+            self.driver.get("https://www.youtube.com/")
+            time.sleep(5)
+            self._take_screenshot("auto_relogin_step2_youtube")
+
+            # Step 3: Check if logged in now
+            if _check_youtube_logged_in(self.driver):
+                log.info("✅ Auto-relogin SUCCEEDED! Session restored from profile.")
+                status["needs_relogin"] = False
+                return True
+
+            # Step 4: Try clicking on account avatar or sign-in prompt
+            log.info("Step 3: Checking for sign-in prompt...")
+            try:
+                # Look for "Sign in" button and click it
+                sign_in_selectors = [
+                    "a[href*='accounts.google.com/ServiceLogin']",
+                    "ytd-button-renderer a[href*='accounts.google']",
+                    "[aria-label='Sign in']",
+                ]
+                for selector in sign_in_selectors:
+                    elements = self.driver.find_elements("css selector", selector)
+                    if elements:
+                        log.info("Found sign-in element: %s, clicking...", selector)
+                        elements[0].click()
+                        time.sleep(5)
+                        break
+            except Exception as e:
+                log.warning("Could not click sign-in: %s", e)
+
+            # Step 5: Navigate back to YouTube and check again
+            self.driver.get("https://www.youtube.com/")
+            time.sleep(5)
+            self._take_screenshot("auto_relogin_step3_final")
+
+            if _check_youtube_logged_in(self.driver):
+                log.info("✅ Auto-relogin SUCCEEDED after sign-in click!")
+                status["needs_relogin"] = False
+                return True
+
+            log.warning("❌ Auto-relogin FAILED. Manual login required.")
+            return False
+
+        except Exception as e:
+            log.error("Error during auto-relogin: %s", e)
+            self._take_screenshot("auto_relogin_error")
+            return False
 
     def _get_chrome_pid(self) -> Optional[int]:
         """Get the PID of the Chrome browser process."""
