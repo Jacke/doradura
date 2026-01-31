@@ -14,10 +14,14 @@ use teloxide::prelude::*;
 use teloxide::types::InputFile;
 use tokio::time::{sleep, Duration};
 
+/// Primary voice file - has higher selection priority (50% chance)
+pub const PRIMARY_VOICE_FILE: &str = "assets/voices/fifth.wav";
+
 /// List of voice files for random sending on /start
 ///
 /// To add a new file, simply add its name to this vector
 pub const VOICE_FILES: &[&str] = &[
+    "assets/voices/fifth.wav", // Primary voice file
     "assets/voices/first.wav",
     "assets/voices/second.wav",
     "assets/voices/third.wav",
@@ -209,8 +213,15 @@ pub async fn send_random_voice_message(bot: Bot, chat_id: ChatId) {
         return;
     }
 
-    // Randomly select one of the available files
-    let selected_file = available_files[rand::thread_rng().gen_range(0..available_files.len())];
+    // Select voice file with priority for PRIMARY_VOICE_FILE (50% chance)
+    let primary_available = Path::new(PRIMARY_VOICE_FILE).exists();
+    let selected_file = if primary_available && rand::thread_rng().gen_bool(0.5) {
+        // 50% chance to select primary voice file
+        PRIMARY_VOICE_FILE
+    } else {
+        // 50% chance to select from all available files (including primary)
+        available_files[rand::thread_rng().gen_range(0..available_files.len())]
+    };
     log::debug!("Selected voice file: {} for chat {}", selected_file, chat_id);
 
     // Send the selected voice file with waveform
@@ -223,11 +234,13 @@ mod tests {
 
     #[test]
     fn test_voice_files_constant() {
-        assert_eq!(VOICE_FILES.len(), 4);
+        assert_eq!(VOICE_FILES.len(), 5);
+        assert!(VOICE_FILES.contains(&"assets/voices/fifth.wav"));
         assert!(VOICE_FILES.contains(&"assets/voices/first.wav"));
         assert!(VOICE_FILES.contains(&"assets/voices/second.wav"));
         assert!(VOICE_FILES.contains(&"assets/voices/third.wav"));
         assert!(VOICE_FILES.contains(&"assets/voices/fourth.wav"));
+        assert_eq!(PRIMARY_VOICE_FILE, "assets/voices/fifth.wav");
     }
 
     #[test]
