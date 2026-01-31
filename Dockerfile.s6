@@ -163,10 +163,12 @@ RUN printf '%s\n' \
     '      done' \
     '      echo Migrations complete' \
     '    fi' \
-    '    chown 1000:2000 \"\$DB_PATH\" 2>/dev/null || true' \
-    '    chmod 664 \"\$DB_PATH\" 2>/dev/null || true' \
     '  "' \
     '}' \
+    'foreground { echo "Setting database permissions..." }' \
+    'foreground { chown 1000:2000 /data/database.sqlite }' \
+    'foreground { chmod 664 /data/database.sqlite }' \
+    'foreground { ls -la /data/database.sqlite }' \
     'foreground {' \
     '  /bin/sh -c "' \
     '    if [ -n \"\$YTDL_COOKIES_B64\" ]; then' \
