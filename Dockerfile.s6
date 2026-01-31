@@ -226,6 +226,38 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/type && \
     > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/run && \
     chmod +x /etc/s6-overlay/s6-rc.d/bgutil-pot-server/run
 
+# Create wait script for Bot API
+RUN cat > /etc/s6-overlay/scripts/wait-for-bot-api << 'WAIT_SCRIPT'
+#!/bin/sh
+BOT_API="${BOT_API_URL:-http://localhost:8081}"
+BOT_TOKEN="${TELOXIDE_TOKEN:-}"
+READY=0
+echo "Waiting for Telegram Bot API at $BOT_API..."
+for i in $(seq 1 180); do
+  if wget -q --spider "$BOT_API" 2>/dev/null; then
+    if [ -n "$BOT_TOKEN" ]; then
+      RESP=$(wget -q -O - "$BOT_API/bot$BOT_TOKEN/getMe" 2>/dev/null || echo "")
+      if echo "$RESP" | grep -q '"ok":true'; then
+        echo "Bot API is fully ready after ${i}s"
+        READY=1
+        break
+      elif echo "$RESP" | grep -q 'restart'; then
+        [ $((i % 10)) -eq 0 ] && echo "  Bot API initializing... (${i}s)"
+      fi
+    else
+      echo "Bot API server responding after ${i}s"
+      READY=1
+      break
+    fi
+  fi
+  sleep 1
+done
+if [ $READY -eq 0 ]; then
+  echo "Warning: Bot API not fully ready after 180s, starting anyway..."
+fi
+WAIT_SCRIPT
+RUN chmod +x /etc/s6-overlay/scripts/wait-for-bot-api
+
 # === doradura-bot longrun service ===
 RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/doradura-bot/type && \
     touch /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d/telegram-bot-api
@@ -233,36 +265,7 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/doradura-bot/type && \
 # Create doradura-bot run script
 RUN printf '%s\n' \
     '#!/command/execlineb -P' \
-    'foreground { echo "Waiting for Telegram Bot API..." }' \
-    'foreground {' \
-    '  /bin/sh -c '"'"'' \
-    '    BOT_API="${BOT_API_URL:-http://localhost:8081}"' \
-    '    BOT_TOKEN="${TELOXIDE_TOKEN:-}"' \
-    '    READY=0' \
-    '    for i in $(seq 1 180); do' \
-    '      if wget -q --spider "$BOT_API" 2>/dev/null; then' \
-    '        if [ -n "$BOT_TOKEN" ]; then' \
-    '          RESP=$(wget -q -O - "$BOT_API/bot$BOT_TOKEN/getMe" 2>/dev/null || echo "")' \
-    '          if echo "$RESP" | grep -q "ok.*true"; then' \
-    '            echo "Bot API is fully ready after ${i}s"' \
-    '            READY=1' \
-    '            break' \
-    '          elif echo "$RESP" | grep -q "restart"; then' \
-    '            [ $((i % 10)) -eq 0 ] && echo "  Bot API initializing... (${i}s)"' \
-    '          fi' \
-    '        else' \
-    '          echo "Bot API server responding after ${i}s"' \
-    '          READY=1' \
-    '          break' \
-    '        fi' \
-    '      fi' \
-    '      sleep 1' \
-    '    done' \
-    '    if [ $READY -eq 0 ]; then' \
-    '      echo "Warning: Bot API not fully ready after 180s, starting anyway..."' \
-    '    fi' \
-    '  '"'"'' \
-    '}' \
+    'foreground { /etc/s6-overlay/scripts/wait-for-bot-api }' \
     's6-setuidgid botuser' \
     's6-env DATABASE_PATH=/data/database.sqlite' \
     's6-env TEMP_FILES_DIR=/data' \
