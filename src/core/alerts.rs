@@ -17,9 +17,23 @@ use crate::telegram::Bot;
 use chrono::{DateTime, Duration, Utc};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::time::Duration as StdDuration;
 use teloxide::prelude::*;
 use teloxide::types::{ChatId, ParseMode};
 use tokio::sync::Mutex;
+
+/// Check if PO Token server (bgutil) is available on port 4416
+async fn check_po_token_server() -> bool {
+    let client = match reqwest::Client::builder().timeout(StdDuration::from_secs(2)).build() {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+
+    match client.get("http://127.0.0.1:4416").send().await {
+        Ok(resp) => resp.status().is_success() || resp.status().as_u16() == 404,
+        Err(_) => false,
+    }
+}
 
 /// Alert severity level
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -104,6 +118,95 @@ impl AlertType {
             AlertType::UserComplaint => "user_complaint",
             AlertType::HighResourceUsage => "high_resource_usage",
         }
+    }
+}
+
+/// Context information about a download attempt for better error reporting
+#[derive(Debug, Clone, Default)]
+pub struct DownloadContext {
+    /// Which proxy was used (e.g., "WARP (Cloudflare)", "Residential (fallback)", "Direct")
+    pub proxy_used: Option<String>,
+    /// Whether cookies file was configured
+    pub cookies_configured: bool,
+    /// Whether PO Token server is available
+    pub po_token_available: bool,
+    /// Error type classification
+    pub error_type: Option<String>,
+    /// Player client used (e.g., "web,web_safari")
+    pub player_client: Option<String>,
+    /// Attempt number in proxy chain
+    pub attempt_number: Option<u32>,
+    /// Total proxies in chain
+    pub total_proxies: Option<u32>,
+}
+
+impl DownloadContext {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create context with live status checks for cookies and PO Token
+    pub async fn with_live_status() -> Self {
+        let cookies_configured = config::YTDL_COOKIES_FILE.is_some();
+
+        // Check PO Token server availability
+        let po_token_available = check_po_token_server().await;
+
+        // Get proxy info
+        let proxy_used = config::proxy::WARP_PROXY
+            .as_ref()
+            .map(|_| "WARP (Cloudflare)".to_string());
+
+        Self {
+            cookies_configured,
+            po_token_available,
+            proxy_used,
+            player_client: Some("web,web_safari".to_string()),
+            ..Default::default()
+        }
+    }
+
+    /// Format context as a human-readable string for alerts
+    pub fn format_for_alert(&self) -> String {
+        let mut lines = Vec::new();
+
+        lines.push("📊 *Контекст скачивания:*".to_string());
+
+        // Proxy info
+        if let Some(ref proxy) = self.proxy_used {
+            let attempt_info = match (self.attempt_number, self.total_proxies) {
+                (Some(n), Some(t)) => format!(" (попытка {}/{})", n, t),
+                _ => String::new(),
+            };
+            lines.push(format!("├ Прокси: {}{}", proxy, attempt_info));
+        } else {
+            lines.push("├ Прокси: не задан".to_string());
+        }
+
+        // Cookies status
+        let cookies_status = if self.cookies_configured { "✅" } else { "❌" };
+        lines.push(format!("├ Cookies: {}", cookies_status));
+
+        // PO Token status
+        let pot_status = if self.po_token_available { "✅" } else { "❌" };
+        lines.push(format!("├ PO Token: {}", pot_status));
+
+        // Player client
+        if let Some(ref client) = self.player_client {
+            lines.push(format!("├ Player: {}", client));
+        }
+
+        // Error type
+        if let Some(ref err_type) = self.error_type {
+            lines.push(format!("└ Тип ошибки: {}", err_type));
+        } else {
+            // Replace last ├ with └
+            if let Some(last) = lines.last_mut() {
+                *last = last.replace("├", "└");
+            }
+        }
+
+        lines.join("\n")
     }
 }
 
@@ -612,12 +715,15 @@ impl AlertManager {
     }
 
     /// Sends a download failure alert for a specific user
+    ///
+    /// Optionally includes download context (proxy used, cookies status, etc.)
     pub async fn alert_download_failure(
         &self,
         user_id: i64,
         url: &str,
         error: &str,
         retry_count: u32,
+        context: Option<&DownloadContext>,
     ) -> Result<(), String> {
         // Only alert if retries exhausted
         if retry_count < 3 {
@@ -632,10 +738,21 @@ impl AlertManager {
             url.to_string()
         };
 
-        let truncated_error = if error.len() > 200 {
-            format!("{}...", &error[..200])
+        let truncated_error = if error.len() > 500 {
+            format!("{}...", &error[..500])
         } else {
             error.to_string()
+        };
+
+        // Build details with context if available
+        let details = if let Some(ctx) = context {
+            format!(
+                "{}\n\n🔴 *Ошибка:*\n```\n{}\n```",
+                ctx.format_for_alert(),
+                truncated_error
+            )
+        } else {
+            format!("Error: {}", truncated_error)
         };
 
         let alert = Alert::new(
@@ -646,7 +763,7 @@ impl AlertManager {
                 "User {} failed to download after {} attempts:\n{}",
                 user_id, retry_count, truncated_url
             ),
-            Some(format!("Error: {}", truncated_error)),
+            Some(details),
         );
 
         self.send_alert(alert).await
