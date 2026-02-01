@@ -736,8 +736,10 @@ pub async fn handle_message(
                             if let Some(ref alert_mgr) = alert_manager {
                                 let user_id = msg.chat.id.0;
                                 let error_str = format!("{:?}", e);
+                                // Get live status of download dependencies
+                                let context = crate::core::alerts::DownloadContext::with_live_status().await;
                                 if let Err(alert_err) = alert_mgr
-                                    .alert_download_failure(user_id, url.as_str(), &error_str, 3)
+                                    .alert_download_failure(user_id, url.as_str(), &error_str, 3, Some(&context))
                                     .await
                                 {
                                     log::error!("Failed to send alert: {}", alert_err);
