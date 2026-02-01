@@ -72,6 +72,7 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
     let deps_webapp = deps.clone();
     let deps_payment = deps.clone();
     let deps_cookies = deps.clone();
+    let deps_diagnose_cookies = deps.clone();
     let deps_ytdlp = deps.clone();
     let deps_commands = deps.clone();
     let deps_media_upload = deps.clone();
@@ -88,6 +89,7 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
         .branch(successful_payment_handler(deps_payment))
         // Hidden admin commands (not in Command enum)
         .branch(update_cookies_handler(deps_cookies))
+        .branch(diagnose_cookies_handler(deps_diagnose_cookies))
         .branch(update_ytdlp_handler(deps_ytdlp))
         .branch(browser_login_handler(deps_browser_login))
         .branch(browser_status_handler(deps_browser_status))
@@ -271,6 +273,30 @@ fn update_cookies_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                 }
                 Ok(())
             }
+        })
+}
+
+/// Handler for /diagnose_cookies admin command (hidden, not in Command enum)
+fn diagnose_cookies_handler(_deps: HandlerDeps) -> UpdateHandler<HandlerError> {
+    Update::filter_message()
+        .filter(|msg: Message| {
+            msg.text()
+                .map(|text| text.starts_with("/diagnose_cookies"))
+                .unwrap_or(false)
+        })
+        .endpoint(move |bot: Bot, msg: Message| async move {
+            use crate::telegram::admin::handle_diagnose_cookies_command;
+
+            log::info!("🎯 /diagnose_cookies handler matched");
+            let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+
+            if let Err(e) = handle_diagnose_cookies_command(&bot, msg.chat.id, user_id).await {
+                log::error!("❌ /diagnose_cookies handler failed for user {}: {}", user_id, e);
+                let _ = bot
+                    .send_message(msg.chat.id, format!("❌ /diagnose_cookies failed: {}", e))
+                    .await;
+            }
+            Ok(())
         })
 }
 

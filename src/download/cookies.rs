@@ -14,6 +14,329 @@ use tokio::time::timeout;
 
 use crate::download::metadata::{get_proxy_chain, is_proxy_related_error};
 
+/// Required YouTube authentication cookies for full functionality
+const REQUIRED_AUTH_COOKIES: &[&str] = &[
+    "SID",     // Session ID
+    "HSID",    // HTTP Session ID
+    "SSID",    // Secure Session ID
+    "APISID",  // API Session ID
+    "SAPISID", // Secure API Session ID
+];
+
+/// Secondary cookies that help with YouTube access
+const SECONDARY_COOKIES: &[&str] = &[
+    "__Secure-1PSID",
+    "__Secure-3PSID",
+    "__Secure-1PAPISID",
+    "__Secure-3PAPISID",
+    "LOGIN_INFO",
+    "PREF",
+    "VISITOR_INFO1_LIVE",
+];
+
+/// Parsed cookie from Netscape format
+#[derive(Debug, Clone)]
+pub struct ParsedCookie {
+    pub domain: String,
+    pub name: String,
+    pub value: String,
+    pub expires: Option<i64>, // Unix timestamp, 0 means session cookie
+    pub secure: bool,
+}
+
+impl ParsedCookie {
+    /// Check if cookie is expired
+    pub fn is_expired(&self) -> bool {
+        match self.expires {
+            Some(0) => false, // Session cookie - never expires (until browser close)
+            Some(ts) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                ts < now
+            }
+            None => false,
+        }
+    }
+
+    /// Get human-readable expiration info
+    pub fn expiration_info(&self) -> String {
+        match self.expires {
+            Some(0) => "сессионный".to_string(),
+            Some(ts) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+
+                if ts < now {
+                    let diff = now - ts;
+                    let days = diff / 86400;
+                    format!("истёк {} дней назад", days)
+                } else {
+                    let diff = ts - now;
+                    let days = diff / 86400;
+                    if days > 365 {
+                        format!("через {} лет", days / 365)
+                    } else if days > 30 {
+                        format!("через {} месяцев", days / 30)
+                    } else if days > 0 {
+                        format!("через {} дней", days)
+                    } else {
+                        let hours = diff / 3600;
+                        format!("через {} часов", hours)
+                    }
+                }
+            }
+            None => "неизвестно".to_string(),
+        }
+    }
+}
+
+/// Detailed cookies diagnostic result
+#[derive(Debug, Clone)]
+pub struct CookiesDiagnostic {
+    pub file_exists: bool,
+    pub file_size: u64,
+    pub total_cookies: usize,
+    pub youtube_cookies: usize,
+    pub auth_cookies_found: Vec<String>,
+    pub auth_cookies_missing: Vec<String>,
+    pub auth_cookies_expired: Vec<String>,
+    pub secondary_cookies_found: Vec<String>,
+    pub issues: Vec<String>,
+    pub is_valid: bool,
+}
+
+impl CookiesDiagnostic {
+    /// Format as human-readable report
+    pub fn format_report(&self) -> String {
+        let mut report = String::new();
+
+        // File status
+        if !self.file_exists {
+            return "❌ Файл cookies не найден".to_string();
+        }
+
+        report.push_str(&format!("📄 Размер файла: {} байт\n", self.file_size));
+        report.push_str(&format!(
+            "🍪 Всего cookies: {} (YouTube: {})\n\n",
+            self.total_cookies, self.youtube_cookies
+        ));
+
+        // Auth cookies status
+        report.push_str("*Обязательные auth cookies:*\n");
+        for name in &self.auth_cookies_found {
+            if self.auth_cookies_expired.contains(name) {
+                report.push_str(&format!("  ⚠️ {} — ИСТЁК\n", name));
+            } else {
+                report.push_str(&format!("  ✅ {}\n", name));
+            }
+        }
+        for name in &self.auth_cookies_missing {
+            report.push_str(&format!("  ❌ {} — отсутствует\n", name));
+        }
+
+        // Secondary cookies
+        if !self.secondary_cookies_found.is_empty() {
+            report.push_str(&format!(
+                "\n*Дополнительные cookies:* {}\n",
+                self.secondary_cookies_found.join(", ")
+            ));
+        }
+
+        // Issues summary
+        if !self.issues.is_empty() {
+            report.push_str("\n*⚠️ Проблемы:*\n");
+            for issue in &self.issues {
+                report.push_str(&format!("  • {}\n", issue));
+            }
+        }
+
+        // Overall status
+        report.push('\n');
+        if self.is_valid {
+            report.push_str("✅ *Cookies выглядят корректно*");
+        } else {
+            report.push_str("❌ *Cookies невалидны — требуется переэкспорт*");
+        }
+
+        report
+    }
+}
+
+/// Parse Netscape cookie file and return detailed diagnostics
+pub fn diagnose_cookies_content(content: &str) -> CookiesDiagnostic {
+    let mut diagnostic = CookiesDiagnostic {
+        file_exists: true,
+        file_size: content.len() as u64,
+        total_cookies: 0,
+        youtube_cookies: 0,
+        auth_cookies_found: Vec::new(),
+        auth_cookies_missing: Vec::new(),
+        auth_cookies_expired: Vec::new(),
+        secondary_cookies_found: Vec::new(),
+        issues: Vec::new(),
+        is_valid: false,
+    };
+
+    // Check for Netscape format header
+    let has_header = content.lines().any(|l| l.contains("Netscape HTTP Cookie File"));
+    if !has_header {
+        diagnostic
+            .issues
+            .push("Отсутствует заголовок Netscape HTTP Cookie File".to_string());
+    }
+
+    let mut parsed_cookies: Vec<ParsedCookie> = Vec::new();
+
+    for line in content.lines() {
+        let line = line.trim();
+
+        // Skip comments and empty lines
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+
+        // Netscape format: domain TAB flag TAB path TAB secure TAB expires TAB name TAB value
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() >= 7 {
+            diagnostic.total_cookies += 1;
+
+            let domain = parts[0].to_string();
+            let secure = parts[3] == "TRUE";
+            let expires: Option<i64> = parts[4].parse().ok();
+            let name = parts[5].to_string();
+            let value = parts[6].to_string();
+
+            let cookie = ParsedCookie {
+                domain: domain.clone(),
+                name: name.clone(),
+                value,
+                expires,
+                secure,
+            };
+
+            // Check if YouTube cookie
+            if domain.contains("youtube.com") || domain.contains("google.com") {
+                diagnostic.youtube_cookies += 1;
+
+                // Check if required auth cookie
+                if REQUIRED_AUTH_COOKIES.contains(&name.as_str()) {
+                    diagnostic.auth_cookies_found.push(name.clone());
+                    if cookie.is_expired() {
+                        diagnostic.auth_cookies_expired.push(name.clone());
+                    }
+                }
+
+                // Check secondary cookies
+                if SECONDARY_COOKIES.contains(&name.as_str()) {
+                    diagnostic.secondary_cookies_found.push(name.clone());
+                }
+            }
+
+            parsed_cookies.push(cookie);
+        }
+    }
+
+    // Find missing required cookies
+    for &required in REQUIRED_AUTH_COOKIES {
+        if !diagnostic.auth_cookies_found.iter().any(|n| n == required) {
+            diagnostic.auth_cookies_missing.push(required.to_string());
+        }
+    }
+
+    // Analyze issues
+    if diagnostic.youtube_cookies == 0 {
+        diagnostic
+            .issues
+            .push("Не найдено ни одного YouTube cookie".to_string());
+    }
+
+    if !diagnostic.auth_cookies_missing.is_empty() {
+        diagnostic.issues.push(format!(
+            "Отсутствуют обязательные cookies: {}",
+            diagnostic.auth_cookies_missing.join(", ")
+        ));
+    }
+
+    if !diagnostic.auth_cookies_expired.is_empty() {
+        diagnostic.issues.push(format!(
+            "Истекли cookies: {}",
+            diagnostic.auth_cookies_expired.join(", ")
+        ));
+    }
+
+    // Check for __Secure- cookies which are critical for authenticated access
+    let has_secure_psid = diagnostic.secondary_cookies_found.iter().any(|n| n.contains("PSID"));
+    if !has_secure_psid {
+        diagnostic
+            .issues
+            .push("Отсутствуют __Secure-*PSID cookies (требуются для аутентификации)".to_string());
+    }
+
+    // Determine overall validity
+    diagnostic.is_valid = diagnostic.auth_cookies_missing.is_empty()
+        && diagnostic.auth_cookies_expired.is_empty()
+        && diagnostic.youtube_cookies > 0
+        && has_secure_psid;
+
+    diagnostic
+}
+
+/// Diagnose cookies from file path
+pub async fn diagnose_cookies_file() -> CookiesDiagnostic {
+    let cookies_path = match get_cookies_path() {
+        Some(path) => path,
+        None => {
+            return CookiesDiagnostic {
+                file_exists: false,
+                file_size: 0,
+                total_cookies: 0,
+                youtube_cookies: 0,
+                auth_cookies_found: Vec::new(),
+                auth_cookies_missing: REQUIRED_AUTH_COOKIES.iter().map(|s| s.to_string()).collect(),
+                auth_cookies_expired: Vec::new(),
+                secondary_cookies_found: Vec::new(),
+                issues: vec!["YTDL_COOKIES_FILE не настроен".to_string()],
+                is_valid: false,
+            };
+        }
+    };
+
+    if !cookies_path.exists() {
+        return CookiesDiagnostic {
+            file_exists: false,
+            file_size: 0,
+            total_cookies: 0,
+            youtube_cookies: 0,
+            auth_cookies_found: Vec::new(),
+            auth_cookies_missing: REQUIRED_AUTH_COOKIES.iter().map(|s| s.to_string()).collect(),
+            auth_cookies_expired: Vec::new(),
+            secondary_cookies_found: Vec::new(),
+            issues: vec![format!("Файл не найден: {}", cookies_path.display())],
+            is_valid: false,
+        };
+    }
+
+    match tokio::fs::read_to_string(&cookies_path).await {
+        Ok(content) => diagnose_cookies_content(&content),
+        Err(e) => CookiesDiagnostic {
+            file_exists: true,
+            file_size: 0,
+            total_cookies: 0,
+            youtube_cookies: 0,
+            auth_cookies_found: Vec::new(),
+            auth_cookies_missing: REQUIRED_AUTH_COOKIES.iter().map(|s| s.to_string()).collect(),
+            auth_cookies_expired: Vec::new(),
+            secondary_cookies_found: Vec::new(),
+            issues: vec![format!("Ошибка чтения файла: {}", e)],
+            is_valid: false,
+        },
+    }
+}
+
 /// Validates YouTube cookies by testing video URLs that require authentication
 ///
 /// Uses proxy chain (WARP → Residential → Direct) for validation to avoid
