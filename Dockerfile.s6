@@ -84,7 +84,8 @@ RUN apk add --no-cache \
   x11vnc \
   ttf-freefont \
   fontconfig \
-  dbus
+  dbus && \
+  chmod +x /usr/bin/chromedriver /usr/bin/chromium-browser || true
 
 # noVNC for visual login (first-time setup)
 RUN mkdir -p /opt/novnc && \
