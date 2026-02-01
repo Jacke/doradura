@@ -30,7 +30,10 @@ use crate::core::config::admin::{ADMIN_IDS, ADMIN_USER_ID};
 use crate::storage::backup::{create_backup, list_backups};
 use crate::storage::db::{get_all_users, get_connection, update_user_plan, update_user_plan_with_expiry, DbPool};
 use std::path::PathBuf;
+use std::time::Duration;
+use tokio::net::TcpStream;
 use tokio::process::Command as TokioCommand;
+use tokio::time::timeout;
 use url::Url;
 
 // truncate_for_telegram is imported from crate::core
@@ -93,9 +96,96 @@ async fn get_ytdlp_version() -> Option<String> {
     }
 }
 
+/// Check WARP SOCKS5 proxy connectivity
+async fn check_warp_status() -> (bool, String, Option<String>) {
+    let warp_proxy = match &*crate::core::config::proxy::WARP_PROXY {
+        Some(url) => url.clone(),
+        None => return (false, "Не настроен".to_string(), None),
+    };
+
+    // Parse proxy URL to get host:port
+    let url = match Url::parse(&warp_proxy) {
+        Ok(u) => u,
+        Err(_) => return (false, "Неверный URL".to_string(), Some(warp_proxy)),
+    };
+
+    let host = url.host_str().unwrap_or("127.0.0.1");
+    let port = url.port().unwrap_or(1080);
+    let addr = format!("{}:{}", host, port);
+
+    match timeout(Duration::from_secs(3), TcpStream::connect(&addr)).await {
+        Ok(Ok(_)) => (true, "Подключен".to_string(), Some(warp_proxy)),
+        Ok(Err(e)) => (false, format!("Ошибка: {}", e), Some(warp_proxy)),
+        Err(_) => (false, "Таймаут".to_string(), Some(warp_proxy)),
+    }
+}
+
+/// Check PO Token server (bgutil) on port 4416
+async fn check_pot_server_status() -> (bool, String) {
+    let client = match reqwest::Client::builder().timeout(Duration::from_secs(3)).build() {
+        Ok(c) => c,
+        Err(_) => return (false, "Ошибка клиента".to_string()),
+    };
+
+    match client.get("http://127.0.0.1:4416").send().await {
+        Ok(resp) => {
+            // 404 is OK - server is running but no route at /
+            if resp.status().is_success() || resp.status().as_u16() == 404 {
+                (true, "Работает".to_string())
+            } else {
+                (false, format!("HTTP {}", resp.status()))
+            }
+        }
+        Err(e) => {
+            if e.is_connect() {
+                (false, "Не запущен".to_string())
+            } else {
+                (false, format!("{}", e))
+            }
+        }
+    }
+}
+
+/// Check YouTube cookies file and required cookies presence
+async fn check_cookies_status() -> (bool, String, Vec<(&'static str, bool)>) {
+    const REQUIRED_COOKIES: &[&str] = &["APISID", "SAPISID", "HSID", "SID", "SSID"];
+
+    let cookies_path = match crate::core::config::YTDL_COOKIES_FILE.as_ref() {
+        Some(path) => path,
+        None => return (false, "Путь не настроен".to_string(), vec![]),
+    };
+
+    let path = std::path::Path::new(cookies_path);
+    if !path.exists() {
+        return (false, "Файл не найден".to_string(), vec![]);
+    }
+
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return (false, "Ошибка чтения".to_string(), vec![]),
+    };
+
+    let mut found_cookies = Vec::new();
+    for &cookie_name in REQUIRED_COOKIES {
+        let found = content
+            .lines()
+            .any(|line| !line.starts_with('#') && line.contains(cookie_name));
+        found_cookies.push((cookie_name, found));
+    }
+
+    let all_found = found_cookies.iter().all(|(_, found)| *found);
+    let status = if all_found {
+        "Найдены"
+    } else {
+        "Неполные"
+    };
+
+    (all_found, status.to_string(), found_cookies)
+}
+
 /// Handles the /version command (admin only)
 ///
-/// Shows yt-dlp version and provides a button to update.
+/// Shows system diagnostics: yt-dlp version, WARP proxy status, PO Token server, and cookies.
 pub async fn handle_version_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> Result<()> {
     log::info!(
         "📦 /version command received from user_id={}, chat_id={}",
@@ -110,18 +200,59 @@ pub async fn handle_version_command(bot: &Bot, chat_id: ChatId, user_id: i64) ->
         return Ok(());
     }
 
-    let version = get_ytdlp_version()
-        .await
-        .unwrap_or_else(|| "не удалось получить".to_string());
+    // Collect all statuses in parallel
+    let (ytdlp_version, warp_status, pot_status, cookies_status) = tokio::join!(
+        get_ytdlp_version(),
+        check_warp_status(),
+        check_pot_server_status(),
+        check_cookies_status()
+    );
 
+    let ytdlp_ver = ytdlp_version.unwrap_or_else(|| "не получено".to_string());
     let ytdl_bin = &*config::YTDL_BIN;
 
+    let (warp_ok, warp_msg, warp_url) = warp_status;
+    let (pot_ok, pot_msg) = pot_status;
+    let (cookies_ok, cookies_msg, cookies_list) = cookies_status;
+
+    // Format cookies list
+    let cookies_detail = cookies_list
+        .iter()
+        .map(|(name, found)| format!("{} {}", name, if *found { "✓" } else { "✗" }))
+        .collect::<Vec<_>>()
+        .join("  ");
+
+    let cookies_path = crate::core::config::YTDL_COOKIES_FILE
+        .as_ref()
+        .map(|s| s.as_str())
+        .unwrap_or("не задан");
+
     let text = format!(
-        "📦 *yt\\-dlp версия*\n\n\
-        Версия: `{}`\n\
-        Бинарник: `{}`",
-        escape_markdown(&version),
-        escape_markdown(ytdl_bin)
+        "📦 *Версия и статус системы*\n\n\
+        🔧 *yt\\-dlp*\n\
+        ├ Версия: `{}`\n\
+        └ Бинарник: `{}`\n\n\
+        🌐 *WARP Proxy*\n\
+        ├ Статус: {} {}\n\
+        └ Адрес: `{}`\n\n\
+        🎫 *PO Token Server*\n\
+        ├ Статус: {} {}\n\
+        └ Порт: `4416`\n\n\
+        🍪 *YouTube Cookies*\n\
+        ├ Статус: {} {}\n\
+        ├ Файл: `{}`\n\
+        └ {}",
+        escape_markdown(&ytdlp_ver),
+        escape_markdown(ytdl_bin),
+        if warp_ok { "✅" } else { "❌" },
+        escape_markdown(&warp_msg),
+        escape_markdown(warp_url.as_deref().unwrap_or("не задан")),
+        if pot_ok { "✅" } else { "❌" },
+        escape_markdown(&pot_msg),
+        if cookies_ok { "✅" } else { "❌" },
+        escape_markdown(&cookies_msg),
+        escape_markdown(cookies_path),
+        escape_markdown(&cookies_detail)
     );
 
     let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
