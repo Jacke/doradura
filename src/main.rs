@@ -581,6 +581,11 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
     let bot_id = bot_info.id;
     log::info!("Bot username: {:?}, Bot ID: {}", bot_username, bot_id);
 
+    // Set bot username for copyright branding
+    if let Some(username) = bot_username {
+        doradura::core::copyright::set_bot_username(username);
+    }
+
     // Set up bot commands for all languages
     setup_all_language_commands(&bot).await?;
 
