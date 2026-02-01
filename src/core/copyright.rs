@@ -31,7 +31,7 @@ fn get_bot_tag() -> String {
     }
 
     // Fallback to env var or default
-    env::var("BOT_TAG").unwrap_or_else(|_| "@SaveAsBot".to_string())
+    env::var("BOT_TAG").unwrap_or_else(|_| "@DoraDuraDoraDuraBot".to_string())
 }
 
 /// Enable copyright/branding in captions
