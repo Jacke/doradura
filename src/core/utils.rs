@@ -444,28 +444,31 @@ mod tests {
 
     #[test]
     fn test_format_media_caption() {
+        // Note: format_media_caption now appends copyright signature
+        // Tests check that caption starts with expected base part
+
         // С автором
-        assert_eq!(format_media_caption("Song Name", "Artist"), "*Artist* — _Song Name_");
+        assert!(format_media_caption("Song Name", "Artist").starts_with("*Artist* — _Song Name_"));
 
         // Без автора (пустая строка)
-        assert_eq!(format_media_caption("Song Name", ""), "_Song Name_");
+        assert!(format_media_caption("Song Name", "").starts_with("_Song Name_"));
 
         // Без автора (только пробелы)
-        assert_eq!(format_media_caption("Song Name", "   "), "_Song Name_");
+        assert!(format_media_caption("Song Name", "   ").starts_with("_Song Name_"));
 
         // С кириллицей
-        assert_eq!(format_media_caption("Дорадура", "NA"), "*NA* — _Дорадура_");
+        assert!(format_media_caption("Дорадура", "NA").starts_with("*NA* — _Дорадура_"));
 
         // Со специальными символами, требующими экранирования
-        assert_eq!(
-            format_media_caption("Song (live).mp3", "Artist-Name"),
-            "*Artist\\-Name* — _Song \\(live\\)\\.mp3_"
-        );
+        assert!(format_media_caption("Song (live).mp3", "Artist-Name")
+            .starts_with("*Artist\\-Name* — _Song \\(live\\)\\.mp3_"));
 
         // Сложный пример
-        assert_eq!(
-            format_media_caption("Дорадура (акустическая версия).mp3", "NA - дора"),
-            "*NA \\- дора* — _Дорадура \\(акустическая версия\\)\\.mp3_"
-        );
+        assert!(format_media_caption("Дорадура (акустическая версия).mp3", "NA - дора")
+            .starts_with("*NA \\- дора* — _Дорадура \\(акустическая версия\\)\\.mp3_"));
+
+        // Check copyright is appended
+        let caption = format_media_caption("Test", "Artist");
+        assert!(caption.contains("Ваш,"));
     }
 }
