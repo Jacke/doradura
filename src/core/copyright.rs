@@ -6,13 +6,33 @@
 use once_cell::sync::Lazy;
 use rand::Rng;
 use std::env;
+use std::sync::OnceLock;
 
 use super::utils::escape_markdown_v2;
 
-/// Bot tag for branding (e.g., @SaveAsBot)
-/// Read from BOT_TAG environment variable
-/// Default: @SaveAsBot
-pub static BOT_TAG: Lazy<String> = Lazy::new(|| env::var("BOT_TAG").unwrap_or_else(|_| "@SaveAsBot".to_string()));
+/// Global bot username, set at startup from getMe()
+static BOT_USERNAME: OnceLock<String> = OnceLock::new();
+
+/// Set the bot username (called once at startup from main.rs)
+pub fn set_bot_username(username: &str) {
+    let tag = if username.starts_with('@') {
+        username.to_string()
+    } else {
+        format!("@{}", username)
+    };
+    let _ = BOT_USERNAME.set(tag);
+}
+
+/// Get the bot tag for branding
+/// Priority: 1) Username from getMe(), 2) BOT_TAG env var, 3) Default
+fn get_bot_tag() -> String {
+    if let Some(username) = BOT_USERNAME.get() {
+        return username.clone();
+    }
+
+    // Fallback to env var or default
+    env::var("BOT_TAG").unwrap_or_else(|_| "@SaveAsBot".to_string())
+}
 
 /// Enable copyright/branding in captions
 /// Read from COPYRIGHT_ENABLED environment variable
@@ -102,12 +122,12 @@ pub fn format_copyright_signature() -> String {
     }
 
     let message = get_random_dora_message();
-    let tag = BOT_TAG.as_str();
+    let tag = get_bot_tag();
 
     format!(
         "\n\n_{}_\nВаш, {}",
         escape_markdown_v2(message),
-        escape_markdown_v2(tag)
+        escape_markdown_v2(&tag)
     )
 }
 
@@ -143,7 +163,7 @@ mod tests {
     #[test]
     fn test_format_copyright_signature() {
         let sig = format_copyright_signature();
-        // Should contain bot tag (or be empty if disabled)
-        assert!(sig.contains("SaveAsBot") || sig.is_empty());
+        // Should contain "Ваш," and be non-empty (when enabled) or empty (when disabled)
+        assert!(sig.contains("Ваш,") || sig.is_empty());
     }
 }
