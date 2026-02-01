@@ -367,12 +367,19 @@ mod utils_tests {
 
     #[test]
     fn test_format_media_caption() {
+        // Note: format_media_caption now appends copyright signature
+        // Tests check that caption starts with expected base part
+
         // With artist
-        assert_eq!(format_media_caption("Song Name", "Artist"), "*Artist* — _Song Name_");
+        assert!(format_media_caption("Song Name", "Artist").starts_with("*Artist* — _Song Name_"));
 
         // Without artist
-        assert_eq!(format_media_caption("Song Name", ""), "_Song Name_");
-        assert_eq!(format_media_caption("Song Name", "   "), "_Song Name_");
+        assert!(format_media_caption("Song Name", "").starts_with("_Song Name_"));
+        assert!(format_media_caption("Song Name", "   ").starts_with("_Song Name_"));
+
+        // Check copyright is appended
+        let caption = format_media_caption("Test", "Artist");
+        assert!(caption.contains("Ваш,"));
     }
 }
 
