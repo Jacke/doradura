@@ -349,6 +349,42 @@ pub async fn handle_check_ytdlp_version_callback(bot: &Bot, chat_id: ChatId, mes
     Ok(())
 }
 
+/// Handles the admin:test_cookies callback - tests cookies with yt-dlp
+pub async fn handle_test_cookies_callback(bot: &Bot, chat_id: ChatId, message_id: MessageId) -> Result<()> {
+    // Update message to show testing in progress
+    bot.edit_message_text(chat_id, message_id, "⏳ Тестирую cookies с yt\\-dlp\\.\\.\\.")
+        .parse_mode(ParseMode::MarkdownV2)
+        .await?;
+
+    // Run validation
+    let result = cookies::validate_cookies().await;
+
+    let text = match result {
+        Ok(()) => "✅ *Cookies работают\\!*\n\n\
+            Тест загрузки прошёл успешно\\.\n\
+            Cookies валидны и могут использоваться для скачивания\\."
+            .to_string(),
+        Err(reason) => {
+            format!(
+                "❌ *Cookies не работают*\n\n\
+                *Ошибка:* {}\n\n\
+                *Возможные причины:*\n\
+                • YouTube заблокировал IP адрес\n\
+                • Cookies истекли или были ротированы\n\
+                • Аккаунт требует подтверждение\n\n\
+                Используй /update\\_cookies для загрузки новых\\.",
+                escape_markdown(&reason)
+            )
+        }
+    };
+
+    bot.edit_message_text(chat_id, message_id, text)
+        .parse_mode(ParseMode::MarkdownV2)
+        .await?;
+
+    Ok(())
+}
+
 fn format_subscription_period_for_log(period: &Seconds) -> String {
     let seconds = period.seconds();
     let days = seconds as f64 / 86_400.0;
@@ -2081,6 +2117,48 @@ pub async fn handle_sent_files_command(
     Ok(())
 }
 
+/// Handles the /diagnose_cookies command (admin only)
+///
+/// Shows detailed diagnostic information about the current cookies file
+pub async fn handle_diagnose_cookies_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> Result<()> {
+    if !is_admin(user_id) {
+        bot.send_message(chat_id, "❌ Команда только для администраторов.")
+            .await?;
+        return Ok(());
+    }
+
+    let processing_msg = bot.send_message(chat_id, "⏳ Анализирую cookies...").await?;
+
+    // Get diagnostic
+    let diagnostic = cookies::diagnose_cookies_file().await;
+    let report = diagnostic.format_report();
+
+    // Delete processing message
+    let _ = bot.delete_message(chat_id, processing_msg.id).await;
+
+    // Send report
+    let message = format!("🍪 *Диагностика YouTube Cookies*\n\n{}", escape_markdown(&report));
+
+    bot.send_message(chat_id, message)
+        .parse_mode(ParseMode::MarkdownV2)
+        .await?;
+
+    // If cookies look valid structurally, offer to test with yt-dlp
+    if diagnostic.is_valid {
+        let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+            "🧪 Тестировать с yt-dlp",
+            "admin:test_cookies",
+        )]]);
+
+        bot.send_message(chat_id, "Хочешь протестировать cookies с yt\\-dlp?")
+            .parse_mode(ParseMode::MarkdownV2)
+            .reply_markup(keyboard)
+            .await?;
+    }
+
+    Ok(())
+}
+
 /// Handles the /update_cookies command (admin only)
 ///
 /// Starts a session to receive a cookies file and updates the YTDL_COOKIES_FILE
@@ -2317,6 +2395,15 @@ pub async fn handle_cookies_file_upload(
                     log::info!("✅ Cookies file read successfully, {} bytes", content.len());
 
                     // Update cookies file
+                    // First run diagnostic on the content before saving
+                    let diagnostic = cookies::diagnose_cookies_content(&content);
+                    log::info!(
+                        "🍪 Cookies diagnostic: {} total, {} youtube, valid={}",
+                        diagnostic.total_cookies,
+                        diagnostic.youtube_cookies,
+                        diagnostic.is_valid
+                    );
+
                     match cookies::update_cookies_from_content(&content).await {
                         Ok(path) => {
                             log::info!("✅ Cookies file successfully written to: {:?}", path);
@@ -2324,53 +2411,92 @@ pub async fn handle_cookies_file_upload(
                             // Delete temp file
                             let _ = tokio::fs::remove_file(&file_path).await;
 
-                            // Validate new cookies
-                            bot.edit_message_text(chat_id, processing_msg.id, "⏳ Проверяю новые cookies...")
-                                .await?;
-
-                            let validation_result = cookies::validate_cookies().await;
+                            // Delete session
+                            crate::storage::db::delete_cookies_upload_session_by_user(&conn, user_id)?;
 
                             // Delete processing message
                             let _ = bot.delete_message(chat_id, processing_msg.id).await;
 
-                            // Delete session
-                            crate::storage::db::delete_cookies_upload_session_by_user(&conn, user_id)?;
+                            // Build detailed diagnostic report
+                            let diagnostic_report = diagnostic.format_report();
 
-                            match validation_result {
-                                Ok(()) => {
-                                    let success_message = format!(
-                                        "✅ *Cookies успешно обновлены и проверены\\!*\n\n\
-                                        📁 Путь: `{}`\n\
-                                        ✓ Cookies валидны и работают\n\n\
-                                        Бот теперь использует новые cookies для загрузки видео\\.",
-                                        escape_markdown(&path.display().to_string())
-                                    );
+                            if diagnostic.is_valid {
+                                // Cookies look good structurally, now test with yt-dlp
+                                let test_msg = bot.send_message(chat_id, "⏳ Тестирую cookies с YouTube...").await?;
 
-                                    bot.send_message(chat_id, success_message)
-                                        .parse_mode(ParseMode::MarkdownV2)
-                                        .await?;
+                                let validation_result = cookies::validate_cookies().await;
+                                let _ = bot.delete_message(chat_id, test_msg.id).await;
 
-                                    log::info!("✅ Cookies update completed successfully for admin {}", user_id);
+                                match validation_result {
+                                    Ok(()) => {
+                                        let success_message = format!(
+                                            "✅ *Cookies успешно обновлены и проверены\\!*\n\n\
+                                            📁 Путь: `{}`\n\n\
+                                            {}\n\n\
+                                            ✓ Тест загрузки с YouTube прошёл успешно\\!\n\n\
+                                            Бот теперь использует новые cookies для загрузки видео\\.",
+                                            escape_markdown(&path.display().to_string()),
+                                            escape_markdown(&diagnostic_report)
+                                        );
+
+                                        bot.send_message(chat_id, success_message)
+                                            .parse_mode(ParseMode::MarkdownV2)
+                                            .await?;
+
+                                        log::info!("✅ Cookies update completed successfully for admin {}", user_id);
+                                    }
+                                    Err(reason) => {
+                                        let warning_message = format!(
+                                            "⚠️ *Cookies обновлены, но тест с YouTube не прошёл*\n\n\
+                                            📁 Путь: `{}`\n\n\
+                                            {}\n\n\
+                                            *⚠️ Ошибка yt\\-dlp:* {}\n\n\
+                                            *Возможные причины:*\n\
+                                            • YouTube заблокировал IP адрес \\(нужен другой proxy\\)\n\
+                                            • Cookies были ротированы после экспорта\n\
+                                            • Аккаунт требует подтверждение \\(капча/SMS\\)\n\n\
+                                            Попробуй:\n\
+                                            1\\. Зайди на YouTube в браузере\n\
+                                            2\\. Посмотри любое видео до конца\n\
+                                            3\\. Экспортируй cookies заново",
+                                            escape_markdown(&path.display().to_string()),
+                                            escape_markdown(&diagnostic_report),
+                                            escape_markdown(&reason)
+                                        );
+
+                                        bot.send_message(chat_id, warning_message)
+                                            .parse_mode(ParseMode::MarkdownV2)
+                                            .await?;
+
+                                        log::warn!(
+                                            "⚠️ Cookies update: file valid but yt-dlp test failed for admin {}",
+                                            user_id
+                                        );
+                                    }
                                 }
-                                Err(reason) => {
-                                    let warning_message = format!(
-                                        "⚠️ *Cookies обновлены, но валидация не удалась*\n\n\
-                                        📁 Путь: `{}`\n\
-                                        ⚠️ Причина: {}\n\n\
-                                        Попробуй экспортировать cookies заново или используй /browser\\_login\\.",
-                                        escape_markdown(&path.display().to_string()),
-                                        escape_markdown(&reason)
-                                    );
+                            } else {
+                                // Cookies have structural issues - report them without testing
+                                let warning_message = format!(
+                                    "⚠️ *Cookies обновлены, но обнаружены проблемы*\n\n\
+                                    📁 Путь: `{}`\n\n\
+                                    {}\n\n\
+                                    *Как исправить:*\n\
+                                    1\\. Залогинься в YouTube в браузере\n\
+                                    2\\. Убедись что используешь правильное расширение для экспорта\n\
+                                    3\\. Экспортируй cookies заново \\(\"Get cookies\\.txt LOCALLY\"\\)",
+                                    escape_markdown(&path.display().to_string()),
+                                    escape_markdown(&diagnostic_report)
+                                );
 
-                                    bot.send_message(chat_id, warning_message)
-                                        .parse_mode(ParseMode::MarkdownV2)
-                                        .await?;
+                                bot.send_message(chat_id, warning_message)
+                                    .parse_mode(ParseMode::MarkdownV2)
+                                    .await?;
 
-                                    log::warn!(
-                                        "⚠️ Cookies update completed with validation failure for admin {}",
-                                        user_id
-                                    );
-                                }
+                                log::warn!(
+                                    "⚠️ Cookies update: structural issues found for admin {}: {:?}",
+                                    user_id,
+                                    diagnostic.issues
+                                );
                             }
                         }
                         Err(e) => {

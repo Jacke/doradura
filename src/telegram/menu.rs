@@ -2166,6 +2166,13 @@ pub async fn handle_menu_callback(
                     return Ok(());
                 }
 
+                if data == "admin:test_cookies" {
+                    if let Err(e) = admin::handle_test_cookies_callback(&bot, chat_id, message_id).await {
+                        log::error!("Failed to handle test_cookies callback: {}", e);
+                    }
+                    return Ok(());
+                }
+
                 if let Some(user_id_str) = data.strip_prefix("admin:user:") {
                     // Show the management menu for a specific user
                     // Remove "admin:user:" prefix
