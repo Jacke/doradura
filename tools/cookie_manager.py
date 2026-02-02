@@ -46,7 +46,8 @@ LOGIN_TIMEOUT = int(os.environ.get("COOKIE_LOGIN_TIMEOUT", "900"))  # 15 min
 API_PORT = int(os.environ.get("COOKIE_MANAGER_PORT", "9876"))
 API_HOST = os.environ.get("COOKIE_MANAGER_HOST", "127.0.0.1")
 NOVNC_HOST = os.environ.get("NOVNC_HOST", "")
-NOVNC_PORT = int(os.environ.get("NOVNC_PORT", "6080"))
+NOVNC_PORT = int(os.environ.get("NOVNC_PORT", "6080"))  # Internal port websockify listens on
+NOVNC_EXTERNAL_PORT = int(os.environ.get("NOVNC_EXTERNAL_PORT", "0"))  # External port for URL (0 = same as NOVNC_PORT)
 VNC_PORT = 5900
 VNC_PASSWORD = os.environ.get("VNC_PASSWORD", "")
 DISPLAY = ":99"
@@ -1035,7 +1036,9 @@ async def start_login() -> dict:
     status["login_started_at"] = datetime.now(timezone.utc).isoformat()
 
     host = NOVNC_HOST or "localhost"
-    novnc_url = f"http://{host}:{NOVNC_PORT}/vnc.html?autoconnect=true"
+    # Use external port for URL if set, otherwise use internal port
+    url_port = NOVNC_EXTERNAL_PORT if NOVNC_EXTERNAL_PORT else NOVNC_PORT
+    novnc_url = f"http://{host}:{url_port}/vnc.html?autoconnect=true"
 
     log.info("Login session started. noVNC URL: %s", novnc_url)
 
