@@ -85,7 +85,11 @@ RUN apk add --no-cache \
   ttf-freefont \
   fontconfig \
   dbus && \
-  chmod +x /usr/bin/chromedriver /usr/bin/chromium-browser || true
+  # Copy chromedriver to writable location for undetected_chromedriver patching
+  # undetected_chromedriver needs to patch the binary to avoid bot detection
+  mkdir -p /app/bin && \
+  cp /usr/bin/chromedriver /app/bin/chromedriver && \
+  chmod 777 /app/bin/chromedriver
 
 # noVNC for visual login (first-time setup)
 RUN mkdir -p /opt/novnc && \
@@ -149,7 +153,7 @@ ENV YTDL_COOKIES_FILE=/data/youtube_cookies.txt
 ENV BROWSER_PROFILE_DIR=/data/browser_profile
 ENV COOKIE_MANAGER_PORT=9876
 ENV CHROMIUM_PATH=/usr/bin/chromium-browser
-ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
+ENV CHROMEDRIVER_PATH=/app/bin/chromedriver
 
 # === s6-overlay service definitions ===
 
@@ -326,7 +330,7 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/cookie-manager/type && \
     's6-env BROWSER_PROFILE_DIR=/data/browser_profile' \
     's6-env COOKIE_MANAGER_PORT=9876' \
     's6-env CHROMIUM_PATH=/usr/bin/chromium-browser' \
-    's6-env CHROMEDRIVER_PATH=/usr/bin/chromedriver' \
+    's6-env CHROMEDRIVER_PATH=/app/bin/chromedriver' \
     'fdmove -c 2 1' \
     'python3 /app/tools/cookie_manager.py' \
     > /etc/s6-overlay/s6-rc.d/cookie-manager/run && \
