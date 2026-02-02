@@ -4,6 +4,7 @@
 //! - Validate YouTube cookies
 //! - Update cookies file from base64 string
 //! - Check cookies freshness periodically
+//! - Background watchdog for cookie health
 
 use anyhow::Result;
 use base64::{engine::general_purpose, Engine as _};
@@ -13,6 +14,137 @@ use tokio::process::Command;
 use tokio::time::timeout;
 
 use crate::download::metadata::{get_proxy_chain, is_proxy_related_error};
+
+/// Reason why cookies validation failed
+#[derive(Debug, Clone, PartialEq)]
+pub enum CookieInvalidReason {
+    /// File not found or not configured
+    FileNotFound,
+    /// File is empty
+    FileEmpty,
+    /// File format is corrupted
+    FileCorrupted,
+    /// Cookies were rotated by YouTube (security measure)
+    RotatedByYouTube,
+    /// Session expired - need to login again
+    SessionExpired,
+    /// Bot detection triggered - need fresh cookies from human session
+    BotDetected,
+    /// IP address blocked or flagged
+    IpBlocked,
+    /// Account requires verification (captcha, SMS, etc.)
+    VerificationRequired,
+    /// Rate limited by YouTube
+    RateLimited,
+    /// Generic/unknown error
+    Unknown(String),
+    /// All proxies failed
+    AllProxiesFailed(String),
+}
+
+impl CookieInvalidReason {
+    /// Parse yt-dlp stderr to determine the reason
+    pub fn from_ytdlp_error(stderr: &str) -> Self {
+        let stderr_lower = stderr.to_lowercase();
+
+        // Cookies rotated/invalidated by YouTube
+        if stderr.contains("cookies are no longer valid")
+            || stderr.contains("cookies have likely been rotated")
+            || stderr.contains("cookies have expired")
+        {
+            return Self::RotatedByYouTube;
+        }
+
+        // Session expired
+        if (stderr_lower.contains("login") && stderr_lower.contains("required"))
+            || stderr.contains("Please sign in")
+            || stderr.contains("Sign in to confirm your age")
+        {
+            return Self::SessionExpired;
+        }
+
+        // Bot detection
+        if stderr.contains("Sign in to confirm you're not a bot")
+            || stderr.contains("confirm you're not a bot")
+            || stderr.contains("unusual traffic")
+        {
+            return Self::BotDetected;
+        }
+
+        // IP blocked
+        if stderr.contains("blocked") || stderr.contains("IP address") || stderr.contains("access denied") {
+            return Self::IpBlocked;
+        }
+
+        // Verification required
+        if stderr.contains("verify")
+            || stderr.contains("verification")
+            || stderr.contains("captcha")
+            || stderr.contains("two-factor")
+            || stderr.contains("2FA")
+        {
+            return Self::VerificationRequired;
+        }
+
+        // Rate limited
+        if stderr.contains("rate limit") || stderr.contains("too many requests") || stderr.contains("429") {
+            return Self::RateLimited;
+        }
+
+        // File corrupted
+        if (stderr_lower.contains("cookie") && stderr_lower.contains("invalid"))
+            || stderr.contains("could not read")
+            || stderr.contains("malformed")
+        {
+            return Self::FileCorrupted;
+        }
+
+        Self::Unknown(stderr.lines().next().unwrap_or("unknown").to_string())
+    }
+
+    /// Get human-readable description in Russian
+    pub fn description(&self) -> String {
+        match self {
+            Self::FileNotFound => "Файл cookies не найден".to_string(),
+            Self::FileEmpty => "Файл cookies пуст".to_string(),
+            Self::FileCorrupted => "Файл cookies повреждён или имеет неверный формат".to_string(),
+            Self::RotatedByYouTube => {
+                "🔄 YouTube ротировал cookies (защита от бота). Нужно переэкспортировать из браузера.".to_string()
+            }
+            Self::SessionExpired => "⏰ Сессия истекла — YouTube требует повторный вход".to_string(),
+            Self::BotDetected => {
+                "🤖 YouTube обнаружил бота. Нужны свежие cookies после ручного просмотра видео.".to_string()
+            }
+            Self::IpBlocked => "🚫 IP адрес заблокирован YouTube".to_string(),
+            Self::VerificationRequired => "🔐 Аккаунт требует верификацию (капча/SMS/2FA)".to_string(),
+            Self::RateLimited => "⏳ Превышен лимит запросов — подожди немного".to_string(),
+            Self::Unknown(msg) => format!("❓ Неизвестная ошибка: {}", msg),
+            Self::AllProxiesFailed(msg) => format!("🌐 Все прокси не сработали: {}", msg),
+        }
+    }
+
+    /// Should we notify admin immediately?
+    pub fn is_critical(&self) -> bool {
+        matches!(
+            self,
+            Self::RotatedByYouTube | Self::SessionExpired | Self::BotDetected | Self::VerificationRequired
+        )
+    }
+
+    /// Can this be fixed by trying a different proxy?
+    pub fn is_proxy_related(&self) -> bool {
+        matches!(self, Self::IpBlocked | Self::RateLimited)
+    }
+}
+
+/// Result of cookie validation with detailed reason
+#[derive(Debug, Clone)]
+pub struct CookieValidationResult {
+    pub is_valid: bool,
+    pub reason: Option<CookieInvalidReason>,
+    pub proxy_used: Option<String>,
+    pub raw_error: Option<String>,
+}
 
 /// Required YouTube authentication cookies for full functionality
 const REQUIRED_AUTH_COOKIES: &[&str] = &[
@@ -620,6 +752,123 @@ pub async fn validate_cookies_ok() -> bool {
     validate_cookies().await.is_ok()
 }
 
+/// Detailed validation that returns structured result with reason
+pub async fn validate_cookies_detailed() -> CookieValidationResult {
+    let cookies_path = match get_cookies_path() {
+        Some(path) => path,
+        None => {
+            return CookieValidationResult {
+                is_valid: false,
+                reason: Some(CookieInvalidReason::FileNotFound),
+                proxy_used: None,
+                raw_error: Some("YTDL_COOKIES_FILE not set".to_string()),
+            };
+        }
+    };
+
+    if !cookies_path.exists() {
+        return CookieValidationResult {
+            is_valid: false,
+            reason: Some(CookieInvalidReason::FileNotFound),
+            proxy_used: None,
+            raw_error: Some(format!("File not found: {}", cookies_path.display())),
+        };
+    }
+
+    if let Ok(meta) = std::fs::metadata(&cookies_path) {
+        if meta.len() == 0 {
+            return CookieValidationResult {
+                is_valid: false,
+                reason: Some(CookieInvalidReason::FileEmpty),
+                proxy_used: None,
+                raw_error: None,
+            };
+        }
+    }
+
+    let test_url = "https://www.youtube.com/watch?v=jNQXAC9IVRw";
+    let ytdl_bin = crate::core::config::YTDL_BIN.as_str();
+    let proxy_chain = get_proxy_chain();
+    let mut last_reason: Option<CookieInvalidReason> = None;
+    let mut last_error: Option<String> = None;
+
+    for proxy_option in proxy_chain {
+        let proxy_name = proxy_option
+            .as_ref()
+            .map(|p| p.name.clone())
+            .unwrap_or_else(|| "Direct".to_string());
+
+        let mut cmd = Command::new(ytdl_bin);
+        cmd.arg("--no-warnings")
+            .arg("--no-playlist")
+            .arg("--skip-download")
+            .arg("--socket-timeout")
+            .arg("30");
+
+        if let Some(ref proxy_config) = proxy_option {
+            cmd.arg("--proxy").arg(&proxy_config.url);
+        }
+
+        cmd.arg("--cookies")
+            .arg(&cookies_path)
+            .arg("--extractor-args")
+            .arg("youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416")
+            .arg("--js-runtimes")
+            .arg("node")
+            .arg("--print")
+            .arg("%(id)s %(title)s")
+            .arg(test_url);
+
+        let output = match timeout(Duration::from_secs(60), cmd.output()).await {
+            Ok(Ok(output)) => output,
+            Ok(Err(e)) => {
+                last_error = Some(e.to_string());
+                continue;
+            }
+            Err(_) => {
+                last_error = Some("Timeout".to_string());
+                continue;
+            }
+        };
+
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+        if output.status.success() {
+            return CookieValidationResult {
+                is_valid: true,
+                reason: None,
+                proxy_used: Some(proxy_name),
+                raw_error: None,
+            };
+        }
+
+        // Parse the reason
+        let reason = CookieInvalidReason::from_ytdlp_error(&stderr);
+
+        // If it's a critical cookie error (not proxy-related), return immediately
+        if reason.is_critical() {
+            return CookieValidationResult {
+                is_valid: false,
+                reason: Some(reason),
+                proxy_used: Some(proxy_name),
+                raw_error: Some(stderr),
+            };
+        }
+
+        last_reason = Some(reason);
+        last_error = Some(stderr);
+    }
+
+    CookieValidationResult {
+        is_valid: false,
+        reason: Some(last_reason.unwrap_or_else(|| {
+            CookieInvalidReason::AllProxiesFailed(last_error.clone().unwrap_or_else(|| "Unknown".to_string()))
+        })),
+        proxy_used: None,
+        raw_error: last_error,
+    }
+}
+
 /// Returns the configured cookies file path from environment
 fn get_cookies_path() -> Option<PathBuf> {
     crate::core::config::YTDL_COOKIES_FILE.as_ref().map(PathBuf::from)
@@ -686,6 +935,142 @@ pub async fn update_cookies_from_content(content: &str) -> Result<PathBuf> {
 
     Ok(cookies_path)
 }
+
+// ============================================================================
+// Cookies Watchdog - Background health monitoring
+// ============================================================================
+
+/// Status from watchdog check
+#[derive(Debug, Clone)]
+pub struct WatchdogStatus {
+    pub cookies_valid: bool,
+    pub invalid_reason: Option<CookieInvalidReason>,
+    pub expiring_soon: Option<(String, i64)>, // (cookie_name, days_until_expiry)
+    pub needs_attention: bool,
+    pub message: String,
+}
+
+/// Run a single watchdog check
+pub async fn watchdog_check() -> WatchdogStatus {
+    // First check structural validity and expiration
+    let diagnostic = diagnose_cookies_file().await;
+
+    // Check for expiring cookies
+    let expiring_soon =
+        if let (Some(days), Some(name)) = (diagnostic.soonest_expiry_days, &diagnostic.soonest_expiry_name) {
+            if days < 7 {
+                Some((name.clone(), days))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+    // If structural issues found, report without testing yt-dlp
+    if !diagnostic.is_valid {
+        let issues = diagnostic.issues.join("; ");
+        return WatchdogStatus {
+            cookies_valid: false,
+            invalid_reason: if !diagnostic.auth_cookies_expired.is_empty() {
+                Some(CookieInvalidReason::SessionExpired)
+            } else if !diagnostic.auth_cookies_missing.is_empty() {
+                Some(CookieInvalidReason::FileCorrupted)
+            } else {
+                Some(CookieInvalidReason::Unknown(issues.clone()))
+            },
+            expiring_soon,
+            needs_attention: true,
+            message: format!("Структурные проблемы: {}", issues),
+        };
+    }
+
+    // Test with yt-dlp
+    let validation = validate_cookies_detailed().await;
+
+    if validation.is_valid {
+        let message = if let Some((ref name, days)) = expiring_soon {
+            format!("✅ Cookies работают. ⚠️ {} истекает через {} дн.", name, days)
+        } else {
+            "✅ Cookies работают".to_string()
+        };
+
+        let needs_attention = expiring_soon.as_ref().map(|(_, d)| *d < 3).unwrap_or(false);
+        return WatchdogStatus {
+            cookies_valid: true,
+            invalid_reason: None,
+            expiring_soon,
+            needs_attention,
+            message,
+        };
+    }
+
+    // Cookies failed validation
+    let reason = validation
+        .reason
+        .unwrap_or(CookieInvalidReason::Unknown("Unknown".to_string()));
+    WatchdogStatus {
+        cookies_valid: false,
+        invalid_reason: Some(reason.clone()),
+        expiring_soon,
+        needs_attention: reason.is_critical(),
+        message: reason.description(),
+    }
+}
+
+/// Format watchdog status for Telegram notification
+pub fn format_watchdog_alert(status: &WatchdogStatus) -> String {
+    let mut msg = String::new();
+
+    if status.cookies_valid {
+        msg.push_str("🍪 *Cookies Watchdog*\n\n");
+        msg.push_str(&status.message);
+    } else {
+        msg.push_str("🚨 *Cookies Alert*\n\n");
+        msg.push_str(&status.message);
+
+        if let Some(ref reason) = status.invalid_reason {
+            msg.push_str("\n\n*Рекомендация:*\n");
+            match reason {
+                CookieInvalidReason::RotatedByYouTube | CookieInvalidReason::BotDetected => {
+                    msg.push_str("1. Открой YouTube в браузере\n");
+                    msg.push_str("2. Посмотри видео до конца (не пропускай)\n");
+                    msg.push_str("3. Экспортируй cookies через расширение\n");
+                    msg.push_str("4. Отправь файл через /update\\_cookies");
+                }
+                CookieInvalidReason::SessionExpired => {
+                    msg.push_str("1. Залогинься в YouTube заново\n");
+                    msg.push_str("2. Экспортируй cookies\n");
+                    msg.push_str("3. Отправь через /update\\_cookies");
+                }
+                CookieInvalidReason::IpBlocked => {
+                    msg.push_str("Смени прокси или подожди несколько часов");
+                }
+                CookieInvalidReason::RateLimited => {
+                    msg.push_str("Подожди 15-30 минут");
+                }
+                CookieInvalidReason::VerificationRequired => {
+                    msg.push_str("Пройди верификацию в браузере, затем переэкспортируй cookies");
+                }
+                _ => {
+                    msg.push_str("Попробуй /update\\_cookies с новыми cookies");
+                }
+            }
+        }
+    }
+
+    // Add expiry warning if relevant
+    if let Some((ref name, days)) = status.expiring_soon {
+        if days < 0 {
+            msg.push_str(&format!("\n\n🚨 {} истёк {} дн. назад!", name, -days));
+        } else if days < 3 {
+            msg.push_str(&format!("\n\n⚠️ {} истекает через {} дн.!", name, days));
+        }
+    }
+
+    msg
+}
+
 mod tests {
     #[test]
     fn test_get_cookies_path() {
