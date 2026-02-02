@@ -219,19 +219,6 @@ RUN printf '%s\n' \
     'foreground { /bin/sh -c "chown 1000:2000 /data/*.sqlite* 2>/dev/null || true" }' \
     'foreground { /bin/sh -c "chmod 664 /data/*.sqlite* 2>/dev/null || true" }' \
     'foreground { ls -la /data }' \
-    'foreground {' \
-    '  /bin/sh -c "' \
-    '    if [ -n \"\$YTDL_COOKIES_B64\" ]; then' \
-    '      COOKIES_PATH=\${YTDL_COOKIES_FILE:-/data/youtube_cookies.txt}' \
-    '      COOKIES_DIR=\$(dirname \"\$COOKIES_PATH\")' \
-    '      mkdir -p \"\$COOKIES_DIR\"' \
-    '      echo \"\$YTDL_COOKIES_B64\" | base64 -d > \"\$COOKIES_PATH\"' \
-    '      chown 1000:2000 \"\$COOKIES_PATH\"' \
-    '      chmod 644 \"\$COOKIES_PATH\"' \
-    '      echo YouTube cookies written to \$COOKIES_PATH' \
-    '    fi' \
-    '  "' \
-    '}' \
     'foreground { echo "================================================" }' \
     'foreground { /bin/sh -c "START=$(cat /tmp/init_start_ms 2>/dev/null || echo 0); END=$(($(date +%s%N)/1000000)); ELAPSED=$((END - START)); echo \"[init-data] COMPLETE in ${ELAPSED}ms at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\"" }' \
     'foreground { echo "Initialization complete, starting services..." }' \

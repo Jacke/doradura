@@ -412,8 +412,17 @@ class PersistentBrowserManager:
         _kill_chrome_on_profile(BROWSER_PROFILE_DIR)
         _cleanup_profile_locks(BROWSER_PROFILE_DIR)
 
-    def _export_cookies_internal(self) -> int:
-        """Export cookies from the running browser. Called with lock held."""
+    def _export_cookies_internal(self, force: bool = False) -> int:
+        """
+        Export cookies from the running browser. Called with lock held.
+
+        PROTECTION: Will NOT overwrite existing valid cookies if browser
+        doesn't have a valid session (missing required cookies like SID, HSID, etc.)
+        This prevents destroying manually uploaded cookies when browser is not logged in.
+
+        Args:
+            force: If True, skip protection and always write (used after manual login)
+        """
         if self.driver is None:
             return 0
 
@@ -455,6 +464,37 @@ class PersistentBrowserManager:
             if any(d in c.get("domain", "") for d in ["youtube.com", "google.com", "googleapis.com"])
         ]
 
+        # === PROTECTION: Check if browser has valid session cookies ===
+        browser_cookie_names = {c.get("name", "") for c in relevant}
+        browser_has_session = bool(REQUIRED_COOKIES & browser_cookie_names)
+        browser_required_count = len(REQUIRED_COOKIES & browser_cookie_names)
+
+        if not force and not browser_has_session:
+            # Browser doesn't have valid session - check if existing file has better cookies
+            existing_required_count = 0
+            if os.path.exists(COOKIES_FILE):
+                try:
+                    with open(COOKIES_FILE, "r") as f:
+                        existing_content = f.read()
+                    for name in REQUIRED_COOKIES:
+                        if f"\t{name}\t" in existing_content:
+                            existing_required_count += 1
+                except Exception as e:
+                    log.warning("Could not read existing cookies file: %s", e)
+
+            if existing_required_count > browser_required_count:
+                log.warning("=" * 60)
+                log.warning("⚠️  PROTECTION: NOT overwriting cookies!")
+                log.warning("Browser has %d/%d required cookies (missing: %s)",
+                           browser_required_count, len(REQUIRED_COOKIES),
+                           REQUIRED_COOKIES - browser_cookie_names)
+                log.warning("Existing file has %d/%d required cookies",
+                           existing_required_count, len(REQUIRED_COOKIES))
+                log.warning("To update cookies, use /browser_login or /update_cookies")
+                log.warning("=" * 60)
+                status["needs_relogin"] = True
+                return 0
+
         # Write Netscape format
         lines = [
             "# Netscape HTTP Cookie File",
@@ -473,7 +513,8 @@ class PersistentBrowserManager:
         os.rename(tmp_path, COOKIES_FILE)
         os.chmod(COOKIES_FILE, 0o644)
 
-        log.info("✅ Exported %d cookies to %s", len(relevant), COOKIES_FILE)
+        log.info("✅ Exported %d cookies to %s (required: %d/%d)",
+                len(relevant), COOKIES_FILE, browser_required_count, len(REQUIRED_COOKIES))
         return len(relevant)
 
     def _take_screenshot(self, name: str):
