@@ -360,6 +360,12 @@ class PersistentBrowserManager:
         """Watchdog loop that runs in a separate thread."""
         while not self._shutdown_event.is_set():
             try:
+                # Skip watchdog checks when login session is active
+                # Login uses a separate headed browser, not the persistent one
+                if status.get("login_active"):
+                    self._shutdown_event.wait(timeout=30)
+                    continue
+
                 health = self.get_health()
 
                 if not health["running"]:
