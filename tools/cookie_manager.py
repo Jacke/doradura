@@ -976,20 +976,24 @@ async def start_login() -> dict:
         return {"error": "Browser is busy, try again in a moment"}
 
     log.info("Starting login session...")
+    log.info("  DISPLAY=%s, VNC_PORT=%d, NOVNC_PORT=%d", DISPLAY, VNC_PORT, NOVNC_PORT)
 
     os.makedirs(BROWSER_PROFILE_DIR, exist_ok=True)
 
     # 1. Start Xvfb
+    log.info("Starting Xvfb on display %s...", DISPLAY)
     xvfb_proc = subprocess.Popen(
         ["Xvfb", DISPLAY, "-screen", "0", "1920x1080x24"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     login_state["xvfb_proc"] = xvfb_proc
     await asyncio.sleep(1)
 
     if xvfb_proc.poll() is not None:
-        return {"error": "Failed to start Xvfb"}
+        _, stderr = xvfb_proc.communicate()
+        log.error("Xvfb failed to start: %s", stderr.decode() if stderr else "unknown error")
+        return {"error": f"Failed to start Xvfb: {stderr.decode() if stderr else 'unknown'}"}
 
     # 2. Launch Chromium
     os.environ["DISPLAY"] = DISPLAY
@@ -1013,6 +1017,7 @@ async def start_login() -> dict:
         return {"error": f"Failed to start Chromium: {e}"}
 
     # 3. Start x11vnc
+    log.info("Starting x11vnc on display %s, port %d...", DISPLAY, VNC_PORT)
     vnc_cmd = [
         "x11vnc",
         "-display", DISPLAY,
@@ -1025,18 +1030,36 @@ async def start_login() -> dict:
     else:
         vnc_cmd += ["-nopw"]
 
-    vnc_proc = subprocess.Popen(vnc_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    vnc_proc = subprocess.Popen(vnc_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     login_state["vnc_proc"] = vnc_proc
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(1)
+
+    # Check if x11vnc started
+    if vnc_proc.poll() is not None:
+        _, stderr = vnc_proc.communicate()
+        log.error("x11vnc failed to start: %s", stderr.decode() if stderr else "unknown error")
+        _kill_proc(xvfb_proc)
+        return {"error": f"Failed to start x11vnc: {stderr.decode() if stderr else 'unknown'}"}
+    log.info("✅ x11vnc started successfully")
 
     # 4. Start noVNC websockify
+    log.info("Starting websockify on port %d -> localhost:%d...", NOVNC_PORT, VNC_PORT)
     novnc_proc = subprocess.Popen(
         ["websockify", "--web=/opt/novnc", str(NOVNC_PORT), f"localhost:{VNC_PORT}"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     login_state["novnc_proc"] = novnc_proc
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(1)
+
+    # Check if websockify started
+    if novnc_proc.poll() is not None:
+        _, stderr = novnc_proc.communicate()
+        log.error("websockify failed to start: %s", stderr.decode() if stderr else "unknown error")
+        _kill_proc(vnc_proc)
+        _kill_proc(xvfb_proc)
+        return {"error": f"Failed to start websockify: {stderr.decode() if stderr else 'unknown'}"}
+    log.info("✅ websockify started successfully on port %d", NOVNC_PORT)
 
     status["login_active"] = True
     status["login_started_at"] = datetime.now(timezone.utc).isoformat()
@@ -1046,7 +1069,8 @@ async def start_login() -> dict:
     url_port = NOVNC_EXTERNAL_PORT if NOVNC_EXTERNAL_PORT else NOVNC_PORT
     novnc_url = f"http://{host}:{url_port}/vnc.html?autoconnect=true"
 
-    log.info("Login session started. noVNC URL: %s", novnc_url)
+    log.info("✅ Login session started. noVNC URL: %s", novnc_url)
+    log.info("   Internal: websockify :%d -> x11vnc :%d -> Xvfb %s", NOVNC_PORT, VNC_PORT, DISPLAY)
 
     asyncio.get_running_loop().call_later(LOGIN_TIMEOUT, _auto_stop_login)
 
