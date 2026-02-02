@@ -1042,10 +1042,10 @@ async def start_login() -> dict:
         return {"error": f"Failed to start x11vnc: {stderr.decode() if stderr else 'unknown'}"}
     log.info("✅ x11vnc started successfully")
 
-    # 4. Start noVNC websockify
-    log.info("Starting websockify on port %d -> localhost:%d...", NOVNC_PORT, VNC_PORT)
+    # 4. Start noVNC websockify (listen on 0.0.0.0 for Railway TCP proxy)
+    log.info("Starting websockify on 0.0.0.0:%d -> localhost:%d...", NOVNC_PORT, VNC_PORT)
     novnc_proc = subprocess.Popen(
-        ["websockify", "--web=/opt/novnc", str(NOVNC_PORT), f"localhost:{VNC_PORT}"],
+        ["websockify", "--web=/opt/novnc", f"0.0.0.0:{NOVNC_PORT}", f"localhost:{VNC_PORT}"],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
