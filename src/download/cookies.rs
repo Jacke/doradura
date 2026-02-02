@@ -60,6 +60,21 @@ impl ParsedCookie {
         }
     }
 
+    /// Get days until expiration (negative if expired)
+    pub fn days_until_expiry(&self) -> Option<i64> {
+        match self.expires {
+            Some(0) => None, // Session cookie
+            Some(ts) => {
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs() as i64)
+                    .unwrap_or(0);
+                Some((ts - now) / 86400)
+            }
+            None => None,
+        }
+    }
+
     /// Get human-readable expiration info
     pub fn expiration_info(&self) -> String {
         match self.expires {
@@ -73,25 +88,75 @@ impl ParsedCookie {
                 if ts < now {
                     let diff = now - ts;
                     let days = diff / 86400;
-                    format!("истёк {} дней назад", days)
+                    if days == 0 {
+                        let hours = diff / 3600;
+                        format!("истёк {} ч. назад", hours)
+                    } else {
+                        format!("истёк {} дн. назад", days)
+                    }
                 } else {
                     let diff = ts - now;
                     let days = diff / 86400;
                     if days > 365 {
-                        format!("через {} лет", days / 365)
+                        format!("{} г.", days / 365)
                     } else if days > 30 {
-                        format!("через {} месяцев", days / 30)
+                        format!("{} мес.", days / 30)
                     } else if days > 0 {
-                        format!("через {} дней", days)
+                        format!("{} дн.", days)
                     } else {
                         let hours = diff / 3600;
-                        format!("через {} часов", hours)
+                        format!("{} ч.", hours)
                     }
                 }
             }
-            None => "неизвестно".to_string(),
+            None => "?".to_string(),
         }
     }
+
+    /// Get masked value (for security - show only first and last few chars)
+    pub fn masked_value(&self) -> String {
+        let len = self.value.len();
+        if len <= 8 {
+            "*".repeat(len)
+        } else {
+            format!("{}...{}", &self.value[..4], &self.value[len - 4..])
+        }
+    }
+
+    /// Format expiration as date string
+    pub fn expiration_date(&self) -> String {
+        match self.expires {
+            Some(0) => "session".to_string(),
+            Some(ts) => {
+                use std::time::{Duration, UNIX_EPOCH};
+                let datetime = UNIX_EPOCH + Duration::from_secs(ts as u64);
+                // Format as simple date
+                let secs_since_epoch = datetime.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+
+                // Simple date calculation
+                let days_since_1970 = secs_since_epoch / 86400;
+                let years = 1970 + (days_since_1970 / 365);
+                let remaining_days = days_since_1970 % 365;
+                let month = remaining_days / 30 + 1;
+                let day = remaining_days % 30 + 1;
+
+                format!("{:04}-{:02}-{:02}", years, month.min(12), day.min(31))
+            }
+            None => "unknown".to_string(),
+        }
+    }
+}
+
+/// Cookie detail for diagnostic report
+#[derive(Debug, Clone)]
+pub struct CookieDetail {
+    pub name: String,
+    pub masked_value: String,
+    pub expiration: String,      // Human readable (e.g., "5 дн.")
+    pub expiration_date: String, // Date (e.g., "2025-02-10")
+    pub days_until_expiry: Option<i64>,
+    pub is_expired: bool,
+    pub is_critical: bool, // true for required auth cookies
 }
 
 /// Detailed cookies diagnostic result
@@ -107,6 +172,12 @@ pub struct CookiesDiagnostic {
     pub secondary_cookies_found: Vec<String>,
     pub issues: Vec<String>,
     pub is_valid: bool,
+    /// Detailed info for important cookies
+    pub cookie_details: Vec<CookieDetail>,
+    /// Soonest expiring auth cookie (days)
+    pub soonest_expiry_days: Option<i64>,
+    /// Name of soonest expiring cookie
+    pub soonest_expiry_name: Option<String>,
 }
 
 impl CookiesDiagnostic {
@@ -125,25 +196,40 @@ impl CookiesDiagnostic {
             self.total_cookies, self.youtube_cookies
         ));
 
-        // Auth cookies status
+        // Auth cookies status with details
         report.push_str("*Обязательные auth cookies:*\n");
-        for name in &self.auth_cookies_found {
-            if self.auth_cookies_expired.contains(name) {
-                report.push_str(&format!("  ⚠️ {} — ИСТЁК\n", name));
-            } else {
-                report.push_str(&format!("  ✅ {}\n", name));
-            }
+
+        for detail in self.cookie_details.iter().filter(|d| d.is_critical) {
+            let status = if detail.is_expired { "⚠️" } else { "✅" };
+            report.push_str(&format!(
+                "  {} {} | {} | `{}`\n",
+                status, detail.name, detail.expiration, detail.masked_value
+            ));
         }
+
         for name in &self.auth_cookies_missing {
             report.push_str(&format!("  ❌ {} — отсутствует\n", name));
         }
 
-        // Secondary cookies
+        // Secondary cookies with details
         if !self.secondary_cookies_found.is_empty() {
-            report.push_str(&format!(
-                "\n*Дополнительные cookies:* {}\n",
-                self.secondary_cookies_found.join(", ")
-            ));
+            report.push_str("\n*Дополнительные cookies:*\n");
+            for detail in self.cookie_details.iter().filter(|d| !d.is_critical) {
+                let status = if detail.is_expired { "⚠️" } else { "✅" };
+                report.push_str(&format!("  {} {} | {}\n", status, detail.name, detail.expiration));
+            }
+        }
+
+        // Expiration warning
+        if let (Some(days), Some(name)) = (self.soonest_expiry_days, &self.soonest_expiry_name) {
+            report.push('\n');
+            if days < 0 {
+                report.push_str(&format!("🚨 *{} истёк {} дн. назад!*\n", name, -days));
+            } else if days < 3 {
+                report.push_str(&format!("⚠️ *{} истекает через {} дн.!*\n", name, days));
+            } else if days < 7 {
+                report.push_str(&format!("⏰ {} истекает через {} дн.\n", name, days));
+            }
         }
 
         // Issues summary
@@ -179,6 +265,9 @@ pub fn diagnose_cookies_content(content: &str) -> CookiesDiagnostic {
         secondary_cookies_found: Vec::new(),
         issues: Vec::new(),
         is_valid: false,
+        cookie_details: Vec::new(),
+        soonest_expiry_days: None,
+        soonest_expiry_name: None,
     };
 
     // Check for Netscape format header
@@ -222,8 +311,11 @@ pub fn diagnose_cookies_content(content: &str) -> CookiesDiagnostic {
             if domain.contains("youtube.com") || domain.contains("google.com") {
                 diagnostic.youtube_cookies += 1;
 
+                let is_auth = REQUIRED_AUTH_COOKIES.contains(&name.as_str());
+                let is_secondary = SECONDARY_COOKIES.contains(&name.as_str());
+
                 // Check if required auth cookie
-                if REQUIRED_AUTH_COOKIES.contains(&name.as_str()) {
+                if is_auth {
                     diagnostic.auth_cookies_found.push(name.clone());
                     if cookie.is_expired() {
                         diagnostic.auth_cookies_expired.push(name.clone());
@@ -231,8 +323,40 @@ pub fn diagnose_cookies_content(content: &str) -> CookiesDiagnostic {
                 }
 
                 // Check secondary cookies
-                if SECONDARY_COOKIES.contains(&name.as_str()) {
+                if is_secondary {
                     diagnostic.secondary_cookies_found.push(name.clone());
+                }
+
+                // Create detail record for important cookies
+                if is_auth || is_secondary {
+                    let detail = CookieDetail {
+                        name: name.clone(),
+                        masked_value: cookie.masked_value(),
+                        expiration: cookie.expiration_info(),
+                        expiration_date: cookie.expiration_date(),
+                        days_until_expiry: cookie.days_until_expiry(),
+                        is_expired: cookie.is_expired(),
+                        is_critical: is_auth,
+                    };
+
+                    // Track soonest expiring auth cookie
+                    if is_auth {
+                        if let Some(days) = detail.days_until_expiry {
+                            match diagnostic.soonest_expiry_days {
+                                None => {
+                                    diagnostic.soonest_expiry_days = Some(days);
+                                    diagnostic.soonest_expiry_name = Some(name.clone());
+                                }
+                                Some(current) if days < current => {
+                                    diagnostic.soonest_expiry_days = Some(days);
+                                    diagnostic.soonest_expiry_name = Some(name.clone());
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+
+                    diagnostic.cookie_details.push(detail);
                 }
             }
 
@@ -301,6 +425,9 @@ pub async fn diagnose_cookies_file() -> CookiesDiagnostic {
                 secondary_cookies_found: Vec::new(),
                 issues: vec!["YTDL_COOKIES_FILE не настроен".to_string()],
                 is_valid: false,
+                cookie_details: Vec::new(),
+                soonest_expiry_days: None,
+                soonest_expiry_name: None,
             };
         }
     };
@@ -317,6 +444,9 @@ pub async fn diagnose_cookies_file() -> CookiesDiagnostic {
             secondary_cookies_found: Vec::new(),
             issues: vec![format!("Файл не найден: {}", cookies_path.display())],
             is_valid: false,
+            cookie_details: Vec::new(),
+            soonest_expiry_days: None,
+            soonest_expiry_name: None,
         };
     }
 
@@ -333,6 +463,9 @@ pub async fn diagnose_cookies_file() -> CookiesDiagnostic {
             secondary_cookies_found: Vec::new(),
             issues: vec![format!("Ошибка чтения файла: {}", e)],
             is_valid: false,
+            cookie_details: Vec::new(),
+            soonest_expiry_days: None,
+            soonest_expiry_name: None,
         },
     }
 }
