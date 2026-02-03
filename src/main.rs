@@ -207,7 +207,6 @@ async fn run_cli_download(
     if total_proxies == 1 && proxy_chain[0].is_none() {
         println!("⚠️ No proxy configured. For YouTube downloads, consider setting:");
         println!("   • WARP_PROXY=socks5://127.0.0.1:40000 (Cloudflare WARP)");
-        println!("   • PROXY_LIST=http://user:pass@host:port (residential proxy)");
         println!();
     }
 

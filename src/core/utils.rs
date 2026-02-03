@@ -117,22 +117,19 @@ pub fn truncate_for_telegram(text: &str) -> String {
 // Filename utilities
 // =============================================================================
 
-/// Экранирует специальные символы в имени файла для безопасного использования.
+/// Санитизирует имя файла для безопасного использования с ffmpeg и yt-dlp.
 ///
-/// Заменяет проблемные символы для предотвращения проблем с путями файлов
-/// и совместимости с различными файловыми системами.
+/// СТРОГАЯ ASCII-ONLY санитизация для предотвращения проблем с постобработкой.
+/// Non-ASCII символы и специальные символы могут вызывать сбои FixupM3u8 и других постпроцессоров.
 ///
-/// Заменяемые символы:
-/// - `/` -> `_` (разделитель путей Unix)
-/// - `\` -> `_` (разделитель путей Windows)
-/// - `:` -> `_` (зарезервирован в Windows)
-/// - `*` -> `_` (wildcard)
-/// - `?` -> `_` (wildcard)
-/// - `"` -> `'` (кавычки)
-/// - `<` -> `_` (перенаправление)
-/// - `>` -> `_` (перенаправление)
-/// - `|` -> `_` (pipe)
-/// - Управляющие символы (0x00-0x1F) -> `_`
+/// Поведение:
+/// - ASCII буквы, цифры, `_`, `-`, `.` - сохраняются
+/// - Пробелы -> `_`
+/// - Латинские акцентированные символы (á, é, ñ и т.д.) -> ASCII эквивалент
+/// - Кириллица -> транслитерация
+/// - Все остальные символы (запятые, скобки, кавычки и т.д.) -> `_`
+/// - Множественные `_` -> один `_`
+/// - Ограничение длины: 200 символов
 ///
 /// # Arguments
 ///
@@ -140,15 +137,21 @@ pub fn truncate_for_telegram(text: &str) -> String {
 ///
 /// # Returns
 ///
-/// Безопасное имя файла с экранированными символами.
+/// Безопасное ASCII-only имя файла.
 ///
 /// # Example
 ///
 /// ```
 /// use doradura::core::utils::escape_filename;
 ///
-/// let safe = escape_filename("song/name*.mp3");
-/// assert_eq!(safe, "song_name_.mp3");
+/// // Специальные символы -> underscore
+/// assert_eq!(escape_filename("song/name*.mp3"), "song_name.mp3");
+/// // Акценты -> ASCII
+/// assert_eq!(escape_filename("Nacho Barón.mp4"), "Nacho_Baron.mp4");
+/// // Кириллица -> транслит
+/// assert_eq!(escape_filename("Привет.mp3"), "Privet.mp3");
+/// // Запятые -> underscore (collapsed)
+/// assert_eq!(escape_filename("A, B, C.mp4"), "A_B_C.mp4");
 /// ```
 /// Заменяет пробелы на подчеркивания в имени файла.
 ///
@@ -175,31 +178,139 @@ pub fn sanitize_filename(filename: &str) -> String {
 }
 
 pub fn escape_filename(filename: &str) -> String {
+    // STRICT ASCII-ONLY sanitization to prevent ffmpeg/postprocessing issues
+    // Non-ASCII characters can cause FixupM3u8 and other postprocessors to fail
     let mut result = String::with_capacity(filename.len());
 
     for c in filename.chars() {
         match c {
-            // Разделители путей
-            '/' | '\\' => result.push('_'),
-            // Зарезервированные символы Windows
-            ':' | '*' | '?' | '<' | '>' | '|' => result.push('_'),
-            // Кавычки заменяем на одинарные
-            '"' => result.push('\''),
-            // Управляющие символы
-            c if c.is_control() => result.push('_'),
-            // Остальные символы оставляем как есть
-            _ => result.push(c),
+            // Safe ASCII: letters, digits, underscore, hyphen, dot (for extension)
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '-' | '.' => result.push(c),
+            // Space becomes underscore
+            ' ' => result.push('_'),
+            // Common transliterations for accented characters
+            'á' | 'à' | 'â' | 'ä' | 'ã' | 'å' => result.push('a'),
+            'Á' | 'À' | 'Â' | 'Ä' | 'Ã' | 'Å' => result.push('A'),
+            'é' | 'è' | 'ê' | 'ë' => result.push('e'),
+            'É' | 'È' | 'Ê' | 'Ë' => result.push('E'),
+            'í' | 'ì' | 'î' | 'ï' => result.push('i'),
+            'Í' | 'Ì' | 'Î' | 'Ï' => result.push('I'),
+            'ó' | 'ò' | 'ô' | 'ö' | 'õ' => result.push('o'),
+            'Ó' | 'Ò' | 'Ô' | 'Ö' | 'Õ' => result.push('O'),
+            'ú' | 'ù' | 'û' | 'ü' => result.push('u'),
+            'Ú' | 'Ù' | 'Û' | 'Ü' => result.push('U'),
+            'ñ' => result.push('n'),
+            'Ñ' => result.push('N'),
+            'ç' => result.push('c'),
+            'Ç' => result.push('C'),
+            'ß' => result.push_str("ss"),
+            // Cyrillic transliteration (common in Russian music)
+            'а' => result.push('a'),
+            'б' => result.push('b'),
+            'в' => result.push('v'),
+            'г' => result.push('g'),
+            'д' => result.push('d'),
+            'е' | 'ё' => result.push('e'),
+            'ж' => result.push_str("zh"),
+            'з' => result.push('z'),
+            'и' | 'й' => result.push('i'),
+            'к' => result.push('k'),
+            'л' => result.push('l'),
+            'м' => result.push('m'),
+            'н' => result.push('n'),
+            'о' => result.push('o'),
+            'п' => result.push('p'),
+            'р' => result.push('r'),
+            'с' => result.push('s'),
+            'т' => result.push('t'),
+            'у' => result.push('u'),
+            'ф' => result.push('f'),
+            'х' => result.push('h'),
+            'ц' => result.push_str("ts"),
+            'ч' => result.push_str("ch"),
+            'ш' => result.push_str("sh"),
+            'щ' => result.push_str("sch"),
+            'ъ' | 'ь' => {} // Skip hard/soft sign
+            'ы' => result.push('y'),
+            'э' => result.push('e'),
+            'ю' => result.push_str("yu"),
+            'я' => result.push_str("ya"),
+            'А' => result.push('A'),
+            'Б' => result.push('B'),
+            'В' => result.push('V'),
+            'Г' => result.push('G'),
+            'Д' => result.push('D'),
+            'Е' | 'Ё' => result.push('E'),
+            'Ж' => result.push_str("Zh"),
+            'З' => result.push('Z'),
+            'И' | 'Й' => result.push('I'),
+            'К' => result.push('K'),
+            'Л' => result.push('L'),
+            'М' => result.push('M'),
+            'Н' => result.push('N'),
+            'О' => result.push('O'),
+            'П' => result.push('P'),
+            'Р' => result.push('R'),
+            'С' => result.push('S'),
+            'Т' => result.push('T'),
+            'У' => result.push('U'),
+            'Ф' => result.push('F'),
+            'Х' => result.push('H'),
+            'Ц' => result.push_str("Ts"),
+            'Ч' => result.push_str("Ch"),
+            'Ш' => result.push_str("Sh"),
+            'Щ' => result.push_str("Sch"),
+            'Ъ' | 'Ь' => {} // Skip hard/soft sign
+            'Ы' => result.push('Y'),
+            'Э' => result.push('E'),
+            'Ю' => result.push_str("Yu"),
+            'Я' => result.push_str("Ya"),
+            // All other characters (commas, brackets, quotes, non-ASCII) become underscore
+            _ => result.push('_'),
         }
     }
 
-    // Убираем начальные и конечные пробелы и точки (проблемно в Windows)
-    let result = result.trim_matches(|c: char| c.is_whitespace() || c == '.');
+    // Collapse multiple underscores into one and remove underscore before dot
+    let mut collapsed = String::with_capacity(result.len());
+    let chars: Vec<char> = result.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '_' {
+            // Skip consecutive underscores
+            while i < chars.len() && chars[i] == '_' {
+                i += 1;
+            }
+            // Don't add underscore if next char is a dot (extension separator)
+            if i < chars.len() && chars[i] != '.' {
+                collapsed.push('_');
+            }
+        } else {
+            collapsed.push(c);
+            i += 1;
+        }
+    }
 
-    // Если результат пустой, возвращаем безопасное имя по умолчанию
-    if result.is_empty() {
+    // Trim leading/trailing underscores and dots
+    let trimmed = collapsed.trim_matches(|c: char| c == '_' || c == '.');
+
+    // Limit filename length (leave room for extension)
+    let max_len = 200;
+    let final_name = if trimmed.len() > max_len {
+        // Find a good break point
+        let mut end = max_len;
+        while end > 0 && !trimmed.is_char_boundary(end) {
+            end -= 1;
+        }
+        &trimmed[..end]
+    } else {
+        trimmed
+    };
+
+    if final_name.is_empty() {
         "unnamed".to_string()
     } else {
-        result.to_string()
+        final_name.to_string()
     }
 }
 
@@ -345,12 +456,13 @@ mod tests {
         assert_eq!(escape_filename("song/name.mp3"), "song_name.mp3");
         assert_eq!(escape_filename("path\\to\\file.mp4"), "path_to_file.mp4");
 
-        // Зарезервированные символы Windows
-        assert_eq!(escape_filename("file:name*.mp3"), "file_name_.mp3");
-        assert_eq!(escape_filename("title?<>|.mp4"), "title____.mp4");
+        // Зарезервированные символы Windows - все становятся _ и схлопываются
+        assert_eq!(escape_filename("file:name*.mp3"), "file_name.mp3");
+        assert_eq!(escape_filename("title?<>|.mp4"), "title.mp4"); // Multiple _ collapsed
 
-        // Кавычки
-        assert_eq!(escape_filename("song \"live\".mp3"), "song 'live'.mp3");
+        // Кавычки и скобки -> underscore (collapsed)
+        assert_eq!(escape_filename("song \"live\".mp3"), "song_live.mp3");
+        assert_eq!(escape_filename("Song (live) [2024].mp3"), "Song_live_2024.mp3");
 
         // Начальные и конечные пробелы и точки
         assert_eq!(escape_filename("  file.mp3  "), "file.mp3");
@@ -361,9 +473,19 @@ mod tests {
         assert_eq!(escape_filename("..."), "unnamed");
         assert_eq!(escape_filename("   "), "unnamed");
 
-        // Кириллица и специальные символы
-        assert_eq!(escape_filename("Дорадура - трек.mp3"), "Дорадура - трек.mp3");
-        assert_eq!(escape_filename("Song (live) [2024].mp3"), "Song (live) [2024].mp3");
+        // Кириллица -> транслитерация (NEW BEHAVIOR!)
+        assert_eq!(escape_filename("Дорадура - трек.mp3"), "Doradura_-_trek.mp3");
+
+        // Акценты -> ASCII
+        assert_eq!(escape_filename("Nacho Barón.mp4"), "Nacho_Baron.mp4");
+        assert_eq!(escape_filename("Café.mp3"), "Cafe.mp3");
+
+        // Запятые -> underscore (collapsed)
+        assert_eq!(escape_filename("A, B, C.mp4"), "A_B_C.mp4");
+        assert_eq!(
+            escape_filename("JLLY, Flyy Armani - LUNA.mp4"),
+            "JLLY_Flyy_Armani_-_LUNA.mp4"
+        );
     }
 
     #[test]

@@ -2560,10 +2560,10 @@ pub async fn handle_proxy_stats_command(bot: &Bot, chat_id: ChatId, _user_id: i6
     use crate::download::proxy::ProxyListManager;
 
     // Check if proxies are configured
-    if config::proxy::PROXY_LIST.is_none() && config::proxy::PROXY_FILE.is_none() {
+    if config::proxy::WARP_PROXY.is_none() && config::proxy::PROXY_FILE.is_none() {
         bot.send_message(
             chat_id,
-            "❌ *No proxies configured*\n\nSet PROXY_LIST or PROXY_FILE environment variables.",
+            "❌ *No proxies configured*\n\nSet WARP_PROXY or PROXY_FILE environment variables.",
         )
         .parse_mode(ParseMode::MarkdownV2)
         .await?;
@@ -2634,7 +2634,7 @@ pub async fn handle_proxy_reset_command(bot: &Bot, chat_id: ChatId, _user_id: i6
     use crate::core::config;
     use crate::download::proxy::ProxyListManager;
 
-    if config::proxy::PROXY_LIST.is_none() && config::proxy::PROXY_FILE.is_none() {
+    if config::proxy::WARP_PROXY.is_none() && config::proxy::PROXY_FILE.is_none() {
         bot.send_message(chat_id, "❌ *No proxies configured*")
             .parse_mode(ParseMode::MarkdownV2)
             .await?;

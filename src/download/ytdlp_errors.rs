@@ -15,6 +15,10 @@ pub enum YtDlpErrorType {
     NetworkError,
     /// Ошибки при загрузке фрагментов видео (обычно временные)
     FragmentError,
+    /// Ошибка постобработки (ffmpeg FixupM3u8, конвертация и т.д.)
+    PostprocessingError,
+    /// Недостаточно места на диске
+    DiskSpaceError,
     /// Неизвестная ошибка
     Unknown,
 }
@@ -83,6 +87,29 @@ pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
         return YtDlpErrorType::NetworkError;
     }
 
+    // Проверяем ошибки постобработки (ffmpeg, FixupM3u8 и т.д.)
+    if stderr_lower.contains("postprocessing")
+        || stderr_lower.contains("conversion failed")
+        || stderr_lower.contains("fixupm3u8")
+        || stderr_lower.contains("ffmpeg")
+        || stderr_lower.contains("merger")
+        || stderr_lower.contains("error fixing")
+    {
+        return YtDlpErrorType::PostprocessingError;
+    }
+
+    // Проверяем ошибки нехватки места на диске
+    if stderr_lower.contains("no space left")
+        || stderr_lower.contains("disk quota")
+        || stderr_lower.contains("not enough space")
+        || stderr_lower.contains("insufficient disk space")
+        || stderr_lower.contains("enospc")
+        || stderr_lower.contains("no free space")
+        || stderr_lower.contains("disk full")
+    {
+        return YtDlpErrorType::DiskSpaceError;
+    }
+
     // Неизвестная ошибка
     YtDlpErrorType::Unknown
 }
@@ -109,6 +136,10 @@ pub fn get_error_message(error_type: &YtDlpErrorType) -> String {
         YtDlpErrorType::FragmentError => {
             "❌ Временная проблема при загрузке видео.\n\nПопробуй повторить попытку.".to_string()
         }
+        YtDlpErrorType::PostprocessingError => "❌ Ошибка обработки видео.\n\nПопробуй повторить попытку.".to_string(),
+        YtDlpErrorType::DiskSpaceError => {
+            "❌ Сервер перегружен.\n\nПопробуй позже — мы уже работаем над этим.".to_string()
+        }
         YtDlpErrorType::Unknown => "❌ Не удалось скачать видео.\n\nПроверь, что ссылка корректна.".to_string(),
     }
 }
@@ -127,6 +158,8 @@ pub fn should_notify_admin(error_type: &YtDlpErrorType) -> bool {
         YtDlpErrorType::VideoUnavailable => false,
         YtDlpErrorType::NetworkError => false,
         YtDlpErrorType::FragmentError => false, // Временные ошибки фрагментов - не требуют внимания
+        YtDlpErrorType::PostprocessingError => false, // Пробуем retry с --fixup never
+        YtDlpErrorType::DiskSpaceError => true, // КРИТИЧНО: нужно срочно освободить место!
         YtDlpErrorType::Unknown => true,
     }
 }
@@ -212,6 +245,24 @@ pub fn get_fix_recommendations(error_type: &YtDlpErrorType) -> String {
               1. Проверь интернет-соединение\n\
               2. Попробуй загрузить позже (YouTube может ограничивать частые запросы)\n\
               3. Убедись что используешь актуальную версию yt-dlp"
+            .to_string(),
+        YtDlpErrorType::PostprocessingError => "🔧 РЕКОМЕНДАЦИИ ПО ИСПРАВЛЕНИЮ:\n\
+            • Ошибка постобработки видео (ffmpeg/FixupM3u8)\n\
+            • Бот автоматически попробует повторить без постобработки\n\
+            • Если проблема повторяется:\n\
+              1. Проверь версию ffmpeg\n\
+              2. Проверь место на диске\n\
+              3. Проверь права записи в /tmp"
+            .to_string(),
+        YtDlpErrorType::DiskSpaceError => "🚨 КРИТИЧНО - НЕХВАТКА МЕСТА НА ДИСКЕ:\n\
+            • Загрузки будут падать пока не освободить место!\n\
+            \n\
+            📋 СРОЧНЫЕ ДЕЙСТВИЯ:\n\
+              1. Проверь место: df -h\n\
+              2. Очисти downloads/: rm -rf /app/downloads/*\n\
+              3. Очисти /tmp: rm -rf /tmp/*\n\
+              4. Проверь логи: du -sh /app/logs/*\n\
+              5. Если Railway — увеличь размер диска в настройках"
             .to_string(),
         YtDlpErrorType::Unknown => "🔧 РЕКОМЕНДАЦИИ ПО ИСПРАВЛЕНИЮ:\n\
             • Проверь логи yt-dlp для деталей\n\
