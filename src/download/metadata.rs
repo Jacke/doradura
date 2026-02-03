@@ -42,7 +42,7 @@ pub fn mask_proxy_password(proxy_url: &str) -> String {
 pub struct ProxyConfig {
     /// Proxy URL (e.g., "socks5://host:port" or "http://user:pass@host:port")
     pub url: String,
-    /// Human-readable description for logs (e.g., "WARP", "Geonode residential")
+    /// Human-readable description for logs (e.g., "WARP")
     pub name: String,
 }
 
@@ -60,12 +60,11 @@ impl ProxyConfig {
     }
 }
 
-/// Returns ordered list of proxies to try: WARP (primary) → PROXY_LIST (fallback) → None (direct)
+/// Returns ordered list of proxies to try: WARP (primary) → None (direct)
 ///
 /// This enables automatic failover when a proxy fails:
 /// 1. First try WARP proxy (free Cloudflare IP)
-/// 2. If WARP fails, try residential proxy from PROXY_LIST
-/// 3. If all proxies fail, try direct connection (no proxy)
+/// 2. If WARP fails, try direct connection (no proxy)
 pub fn get_proxy_chain() -> Vec<Option<ProxyConfig>> {
     let mut chain = Vec::new();
 
@@ -75,17 +74,6 @@ pub fn get_proxy_chain() -> Vec<Option<ProxyConfig>> {
             chain.push(Some(ProxyConfig::new(
                 warp_proxy.trim().to_string(),
                 "WARP (Cloudflare)",
-            )));
-        }
-    }
-
-    // Fallback: Residential proxy from PROXY_LIST
-    if let Some(ref proxy_list) = *config::proxy::PROXY_LIST {
-        let first_proxy = proxy_list.split(',').next().unwrap_or("").trim();
-        if !first_proxy.is_empty() {
-            chain.push(Some(ProxyConfig::new(
-                first_proxy.to_string(),
-                "Residential (fallback)",
             )));
         }
     }
@@ -144,10 +132,10 @@ pub fn validate_cookies_file_format(cookies_file: &str) -> bool {
 
 /// Adds proxy, cookie, and PO Token arguments to yt-dlp command arguments.
 ///
-/// This is a convenience wrapper that uses the default proxy chain (WARP → residential → direct).
+/// This is a convenience wrapper that uses the default proxy chain (WARP → direct).
 /// For retry logic with specific proxy, use `add_cookies_args_with_proxy` instead.
 pub fn add_cookies_args(args: &mut Vec<&str>) {
-    // Use first available proxy from the chain (WARP or PROXY_LIST)
+    // Use first available proxy from the chain (WARP or direct)
     let proxy_chain = get_proxy_chain();
     let first_proxy = proxy_chain.into_iter().find(|p| p.is_some()).flatten();
     add_cookies_args_with_proxy(args, first_proxy.as_ref());
@@ -277,6 +265,38 @@ pub fn add_cookies_args_with_proxy(args: &mut Vec<&str>, proxy: Option<&ProxyCon
 
         log::warn!("-----------------------------------------------------------");
     }
+}
+
+/// Adds ONLY PO Token arguments WITHOUT cookies (v4.0 fallback mode).
+///
+/// This is used when cookies fail but we want to try downloading anyway.
+/// PO Token alone works for ~80% of public videos without authentication.
+///
+/// # Arguments
+///
+/// * `args` - Vector of arguments for yt-dlp to modify
+/// * `proxy` - Optional proxy configuration
+pub fn add_po_token_only_args(args: &mut Vec<&str>, proxy: Option<&ProxyConfig>) {
+    // Add proxy if provided
+    if let Some(proxy_config) = proxy {
+        log::info!(
+            "[PO_TOKEN_ONLY] Using proxy [{}]: {}",
+            proxy_config.name,
+            proxy_config.masked_url()
+        );
+        args.push("--proxy");
+        let leaked_proxy = Box::leak(proxy_config.url.clone().into_boxed_str());
+        args.push(unsafe { std::mem::transmute::<&str, &'static str>(leaked_proxy) });
+    } else {
+        log::info!("[PO_TOKEN_ONLY] No proxy, using direct connection");
+    }
+
+    // Add PO Token provider configuration for YouTube
+    // This is the key - PO Token works WITHOUT cookies for most public videos
+    args.push("--extractor-args");
+    args.push("youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416");
+
+    log::info!("[PO_TOKEN_ONLY] Running WITHOUT cookies, using PO Token only");
 }
 
 /// Probes media file duration using ffprobe.
@@ -646,6 +666,8 @@ pub async fn get_metadata_from_ytdlp(
             YtDlpErrorType::VideoUnavailable => "video_unavailable",
             YtDlpErrorType::NetworkError => "network",
             YtDlpErrorType::FragmentError => "fragment_error",
+            YtDlpErrorType::PostprocessingError => "postprocessing_error",
+            YtDlpErrorType::DiskSpaceError => "disk_space_error",
             YtDlpErrorType::Unknown => "ytdlp_unknown",
         };
         let operation = format!("metadata:{}", error_category);

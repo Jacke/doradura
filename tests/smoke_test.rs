@@ -21,7 +21,6 @@
 //! - `YTDL_COOKIES_FILE` - Path to cookies file for YouTube authentication
 //! - `YTDL_COOKIES_BROWSER` - Browser to extract cookies from (chrome, firefox, etc.)
 //! - `WARP_PROXY` - WARP proxy URL (optional)
-//! - `PROXY_LIST` - Residential proxy list (optional)
 
 use doradura::smoke_tests::{
     is_ffmpeg_available, is_ffprobe_available, is_ytdlp_available, run_all_smoke_tests, test_audio_download,
@@ -37,7 +36,7 @@ fn init_logging() {
 
 /// Helper to get proxy chain for tests
 fn get_test_proxy_chain() -> Vec<Option<doradura::download::metadata::ProxyConfig>> {
-    doradura::smoke_tests::runner::get_smoke_test_proxy_chain(true)
+    doradura::smoke_tests::runner::get_smoke_test_proxy_chain()
 }
 
 /// Full smoke test suite - runs all 5 tests.

@@ -133,14 +133,28 @@ export DATABASE_URL="$DB_PATH"
 # Run any pending migrations from Rust code
 echo "Ready to start bot (migrations will run if needed)"
 
+# Ensure yt-dlp and ffmpeg have proper directories
+export HOME=/home/botuser
+export XDG_CACHE_HOME=/home/botuser/.cache
+export TMPDIR=/tmp
+mkdir -p /home/botuser/.cache/yt-dlp 2>/dev/null || true
+chown -R botuser:botuser /home/botuser 2>/dev/null || true
+
 echo "Starting bot..."
 exec gosu botuser /app/doradura "$@"
 EOF
 
 # Create necessary directories and non-root user
-RUN mkdir -p downloads logs backups /data && \
+RUN mkdir -p downloads logs backups /data /tmp && \
+    chmod 1777 /tmp && \
     useradd -m -u 1000 botuser && \
-    chown -R botuser:botuser /app /data
+    mkdir -p /home/botuser/.cache/yt-dlp && \
+    chown -R botuser:botuser /app /data /home/botuser
+
+# Set environment for botuser (fixes yt-dlp cache permission errors)
+ENV HOME=/home/botuser
+ENV XDG_CACHE_HOME=/home/botuser/.cache
+ENV TMPDIR=/tmp
 
 # Expose port for webapp (optional)
 EXPOSE 8080

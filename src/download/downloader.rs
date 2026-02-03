@@ -40,7 +40,7 @@ pub type CommandError = AppError;
 #[allow(dead_code)]
 async fn get_proxy_for_download() -> Option<String> {
     // Skip if proxy system is not configured
-    if config::proxy::PROXY_LIST.is_none() && config::proxy::PROXY_FILE.is_none() {
+    if config::proxy::WARP_PROXY.is_none() && config::proxy::PROXY_FILE.is_none() {
         return None;
     }
 

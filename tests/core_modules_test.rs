@@ -317,14 +317,16 @@ mod utils_tests {
 
     #[test]
     fn test_escape_filename_basic() {
+        // New behavior: ASCII-only, underscores collapsed, underscore before dot removed
         assert_eq!(escape_filename("song/name.mp3"), "song_name.mp3");
         assert_eq!(escape_filename("file:name.mp4"), "file_name.mp4");
-        assert_eq!(escape_filename("song*title?.mp3"), "song_title_.mp3");
+        assert_eq!(escape_filename("song*title?.mp3"), "song_title.mp3"); // underscores collapsed
     }
 
     #[test]
     fn test_escape_filename_quotes() {
-        assert_eq!(escape_filename("song \"live\".mp3"), "song 'live'.mp3");
+        // New behavior: quotes become underscore and collapse
+        assert_eq!(escape_filename("song \"live\".mp3"), "song_live.mp3");
     }
 
     #[test]

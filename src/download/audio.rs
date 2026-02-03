@@ -10,10 +10,11 @@ use crate::core::metrics;
 use crate::core::rate_limiter::RateLimiter;
 use crate::core::truncate_tail_utf8;
 use crate::core::utils::escape_filename;
+use crate::download::cookies::report_and_wait_for_refresh;
 use crate::download::downloader::{generate_file_name, parse_progress, spawn_downloader_with_fallback, ProgressInfo};
 use crate::download::metadata::{
-    add_cookies_args_with_proxy, get_metadata_from_ytdlp, get_proxy_chain, is_proxy_related_error,
-    probe_duration_seconds,
+    add_cookies_args_with_proxy, add_po_token_only_args, get_metadata_from_ytdlp, get_proxy_chain,
+    is_proxy_related_error, probe_duration_seconds,
 };
 use crate::download::progress::{DownloadStatus, ProgressMessage};
 use crate::download::send::{send_audio_with_retry, send_error_with_sticker, send_error_with_sticker_and_message};
@@ -125,6 +126,7 @@ pub async fn download_audio_file_with_progress(
                 "-o",
                 &download_path_clone,
                 "--newline",
+                "--force-overwrites", // Prevent postprocessing conflicts
                 "--extract-audio",
                 "--audio-format",
                 "mp3",
@@ -299,6 +301,169 @@ pub async fn download_audio_file_with_progress(
                 continue;
             }
 
+            // UNKILLABLE COOKIES v4.0: Multi-layer fallback strategy
+            // If InvalidCookies or BotDetection:
+            // 1. First try PO Token ONLY (no cookies) - works for 80% of public videos
+            // 2. If that fails, try cookie refresh + retry
+            if matches!(
+                error_type,
+                YtDlpErrorType::InvalidCookies | YtDlpErrorType::BotDetection
+            ) {
+                log::warn!("🍪 Cookie error detected, trying PO Token only fallback...");
+
+                // ATTEMPT 2: Try PO Token only (without cookies)
+                // Clean up partial download
+                let _ = std::fs::remove_file(&download_path_clone);
+                let part_file = format!("{}.part", download_path_clone);
+                let _ = std::fs::remove_file(&part_file);
+
+                let mut po_args: Vec<&str> = vec![
+                    "-o",
+                    &download_path_clone,
+                    "--newline",
+                    "--force-overwrites",
+                    "--extract-audio",
+                    "--audio-format",
+                    "mp3",
+                    "--audio-quality",
+                    "0",
+                    "--add-metadata",
+                    "--embed-thumbnail",
+                    "--no-playlist",
+                    "--concurrent-fragments",
+                    "1",
+                    "--fragment-retries",
+                    "10",
+                    "--socket-timeout",
+                    "30",
+                ];
+
+                // Add PO Token ONLY (no cookies!)
+                add_po_token_only_args(&mut po_args, proxy_option.as_ref());
+
+                po_args.push("--extractor-args");
+                po_args.push("youtube:player_client=web,web_safari");
+                po_args.push("--js-runtimes");
+                po_args.push("node");
+                po_args.push("--no-check-certificate");
+                po_args.push("--postprocessor-args");
+                po_args.push(&postprocessor_args);
+                po_args.push(&url_str);
+
+                log::info!("🔑 [PO_TOKEN_ONLY] Attempting download without cookies...");
+
+                let po_child = Command::new(&ytdl_bin)
+                    .args(&po_args)
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn();
+
+                if let Ok(child) = po_child {
+                    // Simple wait without progress tracking for fallback
+                    if let Ok(output) = child.wait_with_output() {
+                        if output.status.success() {
+                            log::info!("✅ [PO_TOKEN_ONLY] Download succeeded WITHOUT cookies!");
+                            return Ok(probe_duration_seconds(&download_path_clone));
+                        } else {
+                            let po_stderr = String::from_utf8_lossy(&output.stderr);
+                            log::warn!(
+                                "❌ [PO_TOKEN_ONLY] Failed: {}",
+                                &po_stderr[..std::cmp::min(200, po_stderr.len())]
+                            );
+                        }
+                    }
+                }
+
+                // PO Token only failed, try cookie refresh
+                log::warn!("🍪 PO Token only failed, attempting cookie refresh via cookie manager...");
+
+                let error_type_str = match error_type {
+                    YtDlpErrorType::InvalidCookies => "InvalidCookies",
+                    YtDlpErrorType::BotDetection => "BotDetection",
+                    _ => "Unknown",
+                };
+
+                // Call cookie manager to refresh (blocking call from sync context)
+                let url_for_report = url_str.clone();
+                let should_retry = runtime_handle
+                    .block_on(async { report_and_wait_for_refresh(error_type_str, &url_for_report).await });
+
+                if should_retry {
+                    log::info!("🔄 Cookie refresh successful, will retry download with fresh cookies");
+                    last_error = Some(AppError::Download(error_msg.clone()));
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    continue;
+                } else {
+                    log::warn!("Cookie refresh failed or not available, proceeding with error");
+                }
+            }
+
+            // If PostprocessingError (ffmpeg failed):
+            // Retry with --fixup never to skip problematic postprocessing
+            if error_type == YtDlpErrorType::PostprocessingError {
+                log::warn!("🔧 Postprocessing error detected, retrying with --fixup never...");
+
+                // Clean up partial/corrupted download
+                let _ = std::fs::remove_file(&download_path_clone);
+                let part_file = format!("{}.part", download_path_clone);
+                let _ = std::fs::remove_file(&part_file);
+
+                let mut fixup_args: Vec<&str> = vec![
+                    "-o",
+                    &download_path_clone,
+                    "--newline",
+                    "--force-overwrites",
+                    "--fixup",
+                    "never", // Skip postprocessors
+                    "--extract-audio",
+                    "--audio-format",
+                    "mp3",
+                    "--audio-quality",
+                    "0",
+                    "--add-metadata",
+                    "--no-playlist",
+                    "--concurrent-fragments",
+                    "1",
+                    "--fragment-retries",
+                    "10",
+                    "--socket-timeout",
+                    "30",
+                ];
+
+                // Add proxy and cookies for this attempt
+                add_cookies_args_with_proxy(&mut fixup_args, proxy_option.as_ref());
+
+                fixup_args.push("--extractor-args");
+                fixup_args.push("youtube:player_client=web,web_safari");
+                fixup_args.push("--js-runtimes");
+                fixup_args.push("node");
+                fixup_args.push("--no-check-certificate");
+                fixup_args.push(&url_str);
+
+                log::info!("🔧 [FIXUP_NEVER] Attempting audio download without postprocessing...");
+
+                let fixup_child = Command::new(&ytdl_bin)
+                    .args(&fixup_args)
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn();
+
+                if let Ok(child) = fixup_child {
+                    if let Ok(output) = child.wait_with_output() {
+                        if output.status.success() {
+                            log::info!("✅ [FIXUP_NEVER] Audio download succeeded without postprocessing!");
+                            return Ok(probe_duration_seconds(&download_path_clone));
+                        } else {
+                            let fixup_stderr = String::from_utf8_lossy(&output.stderr);
+                            log::warn!(
+                                "❌ [FIXUP_NEVER] Failed: {}",
+                                &fixup_stderr[..std::cmp::min(500, fixup_stderr.len())]
+                            );
+                        }
+                    }
+                }
+            }
+
             // Not a proxy error or last attempt - report and return
             let error_category = match error_type {
                 YtDlpErrorType::InvalidCookies => "invalid_cookies",
@@ -306,6 +471,8 @@ pub async fn download_audio_file_with_progress(
                 YtDlpErrorType::VideoUnavailable => "video_unavailable",
                 YtDlpErrorType::NetworkError => "network",
                 YtDlpErrorType::FragmentError => "fragment_error",
+                YtDlpErrorType::PostprocessingError => "postprocessing_error",
+                YtDlpErrorType::DiskSpaceError => "disk_space_error",
                 YtDlpErrorType::Unknown => "ytdlp_unknown",
             };
             let operation = format!("audio_download:{}", error_category);

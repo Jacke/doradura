@@ -1,8 +1,8 @@
 //! Smoke test configuration and runner.
 //!
 //! Provides configuration for running smoke tests in different environments:
-//! - CI: Full parallel tests with residential proxy allowed
-//! - Production: Sequential tests without residential proxy
+//! - CI: Full parallel tests
+//! - Production: Sequential tests
 
 use super::results::SmokeTestReport;
 use super::test_cases::{
@@ -21,8 +21,6 @@ pub struct SmokeTestConfig {
     pub timeout: Duration,
     /// Whether to run tests in parallel
     pub parallel: bool,
-    /// Whether to allow residential proxy for tests
-    pub allow_residential_proxy: bool,
     /// Temporary directory for downloaded files
     pub temp_dir: String,
 }
@@ -33,7 +31,6 @@ impl Default for SmokeTestConfig {
             test_url: DEFAULT_TEST_URL.to_string(),
             timeout: Duration::from_secs(DEFAULT_TEST_TIMEOUT_SECS),
             parallel: false,
-            allow_residential_proxy: true,
             temp_dir: std::env::temp_dir().to_string_lossy().to_string(),
         }
     }
@@ -44,13 +41,11 @@ impl SmokeTestConfig {
     ///
     /// - Longer timeout (180s)
     /// - Parallel execution enabled
-    /// - Residential proxy allowed
     pub fn for_ci() -> Self {
         Self {
             test_url: DEFAULT_TEST_URL.to_string(),
             timeout: Duration::from_secs(DEFAULT_TEST_TIMEOUT_SECS),
             parallel: true,
-            allow_residential_proxy: true,
             temp_dir: std::env::temp_dir().to_string_lossy().to_string(),
         }
     }
@@ -59,42 +54,34 @@ impl SmokeTestConfig {
     ///
     /// - Shorter timeout (120s)
     /// - Sequential execution (less load)
-    /// - NO residential proxy (avoid costs)
     pub fn for_production() -> Self {
         Self {
             test_url: DEFAULT_TEST_URL.to_string(),
             timeout: Duration::from_secs(PRODUCTION_TEST_TIMEOUT_SECS),
             parallel: false,
-            allow_residential_proxy: false,
             temp_dir: std::env::temp_dir().to_string_lossy().to_string(),
         }
     }
 
     /// Creates a custom configuration.
-    pub fn custom(test_url: &str, timeout_secs: u64, parallel: bool, allow_residential: bool) -> Self {
+    pub fn custom(test_url: &str, timeout_secs: u64, parallel: bool) -> Self {
         Self {
             test_url: test_url.to_string(),
             timeout: Duration::from_secs(timeout_secs),
             parallel,
-            allow_residential_proxy: allow_residential,
             temp_dir: std::env::temp_dir().to_string_lossy().to_string(),
         }
     }
 }
 
-/// Returns proxy chain for smoke tests based on configuration.
-///
-/// # Arguments
-///
-/// * `allow_residential` - Whether to include residential proxy in the chain
+/// Returns proxy chain for smoke tests.
 ///
 /// # Returns
 ///
 /// List of proxy configurations to try in order:
-/// 1. WARP (always)
-/// 2. Residential (only if allow_residential=true)
-/// 3. Direct (fallback)
-pub fn get_smoke_test_proxy_chain(allow_residential: bool) -> Vec<Option<ProxyConfig>> {
+/// 1. WARP (if configured)
+/// 2. Direct (fallback)
+pub fn get_smoke_test_proxy_chain() -> Vec<Option<ProxyConfig>> {
     use crate::core::config;
 
     let mut chain = Vec::new();
@@ -106,19 +93,6 @@ pub fn get_smoke_test_proxy_chain(allow_residential: bool) -> Vec<Option<ProxyCo
                 warp_proxy.trim().to_string(),
                 "WARP (Cloudflare)",
             )));
-        }
-    }
-
-    // Fallback: Residential proxy (only if allowed)
-    if allow_residential {
-        if let Some(ref proxy_list) = *config::proxy::PROXY_LIST {
-            let first_proxy = proxy_list.split(',').next().unwrap_or("").trim();
-            if !first_proxy.is_empty() {
-                chain.push(Some(ProxyConfig::new(
-                    first_proxy.to_string(),
-                    "Residential (fallback)",
-                )));
-            }
         }
     }
 
@@ -156,7 +130,7 @@ pub async fn run_all_smoke_tests(config: &SmokeTestConfig) -> SmokeTestReport {
     results.push(result);
 
     // Get proxy chain for download tests (NO cookies used - see test_cases.rs)
-    let proxy_chain = get_smoke_test_proxy_chain(config.allow_residential_proxy);
+    let proxy_chain = get_smoke_test_proxy_chain();
 
     // Test 3: Metadata extraction
     log::info!("Running test: metadata_extraction");
@@ -192,7 +166,6 @@ mod tests {
     fn test_config_for_ci() {
         let config = SmokeTestConfig::for_ci();
         assert!(config.parallel);
-        assert!(config.allow_residential_proxy);
         assert_eq!(config.timeout, Duration::from_secs(180));
     }
 
@@ -200,22 +173,12 @@ mod tests {
     fn test_config_for_production() {
         let config = SmokeTestConfig::for_production();
         assert!(!config.parallel);
-        assert!(!config.allow_residential_proxy);
         assert_eq!(config.timeout, Duration::from_secs(120));
     }
 
     #[test]
-    fn test_proxy_chain_with_residential() {
-        let chain = get_smoke_test_proxy_chain(true);
-        // Should have at least direct connection
-        assert!(!chain.is_empty());
-        // Last should be None (direct)
-        assert!(chain.last().unwrap().is_none());
-    }
-
-    #[test]
-    fn test_proxy_chain_without_residential() {
-        let chain = get_smoke_test_proxy_chain(false);
+    fn test_proxy_chain() {
+        let chain = get_smoke_test_proxy_chain();
         // Should have at least direct connection
         assert!(!chain.is_empty());
         // Last should be None (direct)
