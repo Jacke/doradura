@@ -89,26 +89,63 @@ pub mod rate_limit {
 /// Queue processing configuration
 pub mod queue {
     use super::Duration;
+    use once_cell::sync::Lazy;
+    use std::env;
 
     /// Maximum number of concurrent downloads
     /// Reduced to 2 to avoid YouTube 403 rate limiting
+    /// Can be overridden via QUEUE_MAX_CONCURRENT env var for testing
     pub const MAX_CONCURRENT_DOWNLOADS: usize = 2;
 
     /// Global delay between starting new download tasks (milliseconds)
     /// Helps avoid rate limiting when multiple users download simultaneously
+    /// Can be overridden via QUEUE_INTER_DOWNLOAD_DELAY_MS env var for testing
     pub const INTER_DOWNLOAD_DELAY_MS: u64 = 3000;
 
     /// Interval between queue checks (in milliseconds)
+    /// Can be overridden via QUEUE_CHECK_INTERVAL_MS env var for testing
     pub const CHECK_INTERVAL_MS: u64 = 100;
 
-    /// Queue check interval duration
-    pub fn check_interval() -> Duration {
-        Duration::from_millis(CHECK_INTERVAL_MS)
+    /// Runtime-configurable max concurrent downloads
+    /// Reads from QUEUE_MAX_CONCURRENT environment variable at startup
+    pub static MAX_CONCURRENT: Lazy<usize> = Lazy::new(|| {
+        env::var("QUEUE_MAX_CONCURRENT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(MAX_CONCURRENT_DOWNLOADS)
+    });
+
+    /// Runtime-configurable inter-download delay
+    /// Reads from QUEUE_INTER_DOWNLOAD_DELAY_MS environment variable at startup
+    pub static INTER_DOWNLOAD_DELAY: Lazy<u64> = Lazy::new(|| {
+        env::var("QUEUE_INTER_DOWNLOAD_DELAY_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(INTER_DOWNLOAD_DELAY_MS)
+    });
+
+    /// Runtime-configurable queue check interval
+    /// Reads from QUEUE_CHECK_INTERVAL_MS environment variable at startup
+    pub static CHECK_INTERVAL: Lazy<u64> = Lazy::new(|| {
+        env::var("QUEUE_CHECK_INTERVAL_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(CHECK_INTERVAL_MS)
+    });
+
+    /// Get max concurrent downloads (uses runtime config)
+    pub fn max_concurrent_downloads() -> usize {
+        *MAX_CONCURRENT
     }
 
-    /// Inter-download delay duration
+    /// Queue check interval duration (uses runtime config)
+    pub fn check_interval() -> Duration {
+        Duration::from_millis(*CHECK_INTERVAL)
+    }
+
+    /// Inter-download delay duration (uses runtime config)
     pub fn inter_download_delay() -> Duration {
-        Duration::from_millis(INTER_DOWNLOAD_DELAY_MS)
+        Duration::from_millis(*INTER_DOWNLOAD_DELAY)
     }
 }
 
