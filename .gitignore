@@ -42,3 +42,4 @@ grafana/grafana.ini
 mtproto_session*.bin
 run-staging.sh
 __pycache__/
+.env.bot-api
