@@ -8,25 +8,26 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::ParseMode;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 use crate::core::config::admin::ADMIN_USER_ID;
 use crate::i18n;
 
 /// State management for feedback collection
 /// Maps user_id -> waiting for feedback
-static FEEDBACK_STATES: once_cell::sync::Lazy<Arc<Mutex<HashMap<i64, bool>>>> =
-    once_cell::sync::Lazy::new(|| Arc::new(Mutex::new(HashMap::new())));
+/// Uses RwLock for better concurrent read performance (read-heavy workload)
+static FEEDBACK_STATES: once_cell::sync::Lazy<Arc<RwLock<HashMap<i64, bool>>>> =
+    once_cell::sync::Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 /// Check if user is waiting to provide feedback
 pub async fn is_waiting_for_feedback(user_id: i64) -> bool {
-    let states = FEEDBACK_STATES.lock().await;
+    let states = FEEDBACK_STATES.read().await;
     states.get(&user_id).copied().unwrap_or(false)
 }
 
 /// Set user feedback waiting state
 pub async fn set_waiting_for_feedback(user_id: i64, waiting: bool) {
-    let mut states = FEEDBACK_STATES.lock().await;
+    let mut states = FEEDBACK_STATES.write().await;
     if waiting {
         states.insert(user_id, true);
     } else {

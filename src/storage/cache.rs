@@ -1,8 +1,16 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
 use url::Url;
+
+/// Maximum number of entries in the metadata cache
+/// Prevents unbounded memory growth from URL variations
+const MAX_CACHE_SIZE: usize = 10_000;
+
+/// Number of entries to evict when cache is full (10% of max)
+const EVICTION_BATCH_SIZE: usize = 1_000;
 
 /// Структура для хранения метаданных в кэше
 #[derive(Debug, Clone)]
@@ -19,42 +27,102 @@ struct CachedMetadata {
 }
 
 /// Кэш метаданных с TTL
+/// Uses RwLock for concurrent reads (most operations are reads)
+/// Uses AtomicU64 for hit/miss counters (lock-free)
 pub struct MetadataCache {
-    cache: Arc<Mutex<HashMap<String, CachedMetadata>>>,
+    cache: Arc<RwLock<HashMap<String, CachedMetadata>>>,
     ttl: Duration,
-    hit_count: Arc<Mutex<u64>>,
-    miss_count: Arc<Mutex<u64>>,
+    hit_count: AtomicU64,
+    miss_count: AtomicU64,
 }
 
 impl MetadataCache {
     /// Создает новый кэш с указанным TTL
     pub fn new(ttl: Duration) -> Self {
         Self {
-            cache: Arc::new(Mutex::new(HashMap::new())),
+            cache: Arc::new(RwLock::new(HashMap::new())),
             ttl,
-            hit_count: Arc::new(Mutex::new(0)),
-            miss_count: Arc::new(Mutex::new(0)),
+            hit_count: AtomicU64::new(0),
+            miss_count: AtomicU64::new(0),
         }
     }
 
     /// Получает метаданные из кэша или возвращает None если их нет или они устарели
+    /// Uses read lock for better concurrency - multiple readers allowed
     pub async fn get(&self, url: &Url) -> Option<(String, String)> {
         let url_str = url.as_str();
-        let mut cache = self.cache.lock().await;
 
-        if let Some(cached) = cache.get(url_str) {
-            // Проверяем, не устарел ли кэш
-            if Instant::now().duration_since(cached.cached_at) < self.ttl {
-                *self.hit_count.lock().await += 1;
-                return Some((cached.title.clone(), cached.artist.clone()));
+        // First try with read lock (allows concurrent readers)
+        {
+            let cache = self.cache.read().await;
+            if let Some(cached) = cache.get(url_str) {
+                if Instant::now().duration_since(cached.cached_at) < self.ttl {
+                    self.hit_count.fetch_add(1, Ordering::Relaxed);
+                    return Some((cached.title.clone(), cached.artist.clone()));
+                }
+                // Entry expired - need write lock to remove it
             } else {
-                // Удаляем устаревший кэш
-                cache.remove(url_str);
+                // Entry not found
+                self.miss_count.fetch_add(1, Ordering::Relaxed);
+                return None;
             }
         }
 
-        *self.miss_count.lock().await += 1;
+        // Entry expired - upgrade to write lock and remove
+        let mut cache = self.cache.write().await;
+        // Double-check after acquiring write lock
+        if let Some(cached) = cache.get(url_str) {
+            if Instant::now().duration_since(cached.cached_at) < self.ttl {
+                // Another thread may have updated it
+                self.hit_count.fetch_add(1, Ordering::Relaxed);
+                return Some((cached.title.clone(), cached.artist.clone()));
+            }
+            cache.remove(url_str);
+        }
+
+        self.miss_count.fetch_add(1, Ordering::Relaxed);
         None
+    }
+
+    /// Evicts entries using random sampling to avoid O(n log n) full sort.
+    /// Samples SAMPLE_SIZE entries and removes the oldest EVICTION_BATCH_SIZE from sample.
+    /// Called with cache lock already held.
+    fn evict_oldest_if_needed(cache: &mut HashMap<String, CachedMetadata>) {
+        if cache.len() <= MAX_CACHE_SIZE {
+            return;
+        }
+
+        use rand::seq::IteratorRandom;
+        let mut rng = rand::thread_rng();
+
+        // Sample random entries instead of sorting entire cache
+        const SAMPLE_SIZE: usize = 500;
+        let sample: Vec<_> = cache
+            .iter()
+            .choose_multiple(&mut rng, SAMPLE_SIZE.min(cache.len()))
+            .into_iter()
+            .map(|(k, v)| (k.clone(), v.cached_at))
+            .collect();
+
+        // Sort only the sample and remove oldest from it
+        let mut sorted_sample = sample;
+        sorted_sample.sort_by_key(|(_, time)| *time);
+
+        let to_remove: Vec<_> = sorted_sample
+            .iter()
+            .take(EVICTION_BATCH_SIZE)
+            .map(|(k, _)| k.clone())
+            .collect();
+
+        for key in &to_remove {
+            cache.remove(key);
+        }
+
+        log::info!(
+            "🗑️ Cache LRU eviction (sampled): removed {} entries, cache size now {}",
+            to_remove.len(),
+            cache.len()
+        );
     }
 
     /// Сохраняет метаданные в кэш
@@ -72,7 +140,10 @@ impl MetadataCache {
         }
 
         let url_str = url.as_str();
-        let mut cache = self.cache.lock().await;
+        let mut cache = self.cache.write().await;
+
+        // Evict oldest entries if cache is full
+        Self::evict_oldest_if_needed(&mut cache);
 
         cache.insert(
             url_str.to_string(),
@@ -104,7 +175,10 @@ impl MetadataCache {
         }
 
         let url_str = url.as_str();
-        let mut cache = self.cache.lock().await;
+        let mut cache = self.cache.write().await;
+
+        // Evict oldest entries if cache is full
+        Self::evict_oldest_if_needed(&mut cache);
 
         cache.insert(
             url_str.to_string(),
@@ -121,7 +195,7 @@ impl MetadataCache {
 
     /// Очищает устаревшие записи из кэша
     pub async fn cleanup(&self) -> usize {
-        let mut cache = self.cache.lock().await;
+        let mut cache = self.cache.write().await;
         let before = cache.len();
         cache.retain(|_, cached| Instant::now().duration_since(cached.cached_at) < self.ttl);
         let removed = before - cache.len();
@@ -129,11 +203,11 @@ impl MetadataCache {
         removed
     }
 
-    /// Получает статистику кэша
+    /// Получает статистику кэша (uses read lock for cache, atomic for counters)
     pub async fn stats(&self) -> CacheStats {
-        let cache = self.cache.lock().await;
-        let hits = *self.hit_count.lock().await;
-        let misses = *self.miss_count.lock().await;
+        let cache = self.cache.read().await;
+        let hits = self.hit_count.load(Ordering::Relaxed);
+        let misses = self.miss_count.load(Ordering::Relaxed);
         let total = hits + misses;
         let hit_rate = if total > 0 {
             (hits as f64 / total as f64) * 100.0
@@ -151,10 +225,10 @@ impl MetadataCache {
 
     /// Очищает весь кэш
     pub async fn clear(&self) {
-        let mut cache = self.cache.lock().await;
+        let mut cache = self.cache.write().await;
         cache.clear();
-        *self.hit_count.lock().await = 0;
-        *self.miss_count.lock().await = 0;
+        self.hit_count.store(0, Ordering::Relaxed);
+        self.miss_count.store(0, Ordering::Relaxed);
         log::info!("Cache cleared");
     }
 }

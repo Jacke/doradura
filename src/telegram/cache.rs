@@ -4,13 +4,19 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{Duration, Instant};
 
+/// Maximum number of entries in the preview cache
+const MAX_PREVIEW_CACHE_SIZE: usize = 5_000;
+
+/// Number of entries to evict when cache is full
+const PREVIEW_EVICTION_BATCH: usize = 500;
+
 /// Структура для хранения кэшированных данных
 struct CachedItem {
     data: PreviewMetadata,
     cached_at: Instant,
 }
 
-/// Кэш для PreviewMetadata
+/// Кэш для PreviewMetadata with size limit
 pub struct PreviewCache {
     cache: Arc<Mutex<HashMap<String, CachedItem>>>,
     ttl: Duration,
@@ -36,8 +42,50 @@ impl PreviewCache {
         None
     }
 
+    /// Evict oldest entries using random sampling when cache is full
+    fn evict_if_needed(cache: &mut HashMap<String, CachedItem>) {
+        if cache.len() <= MAX_PREVIEW_CACHE_SIZE {
+            return;
+        }
+
+        use rand::seq::IteratorRandom;
+        let mut rng = rand::thread_rng();
+
+        // Sample random entries and evict oldest ones
+        const SAMPLE_SIZE: usize = 300;
+        let sample: Vec<_> = cache
+            .iter()
+            .choose_multiple(&mut rng, SAMPLE_SIZE.min(cache.len()))
+            .into_iter()
+            .map(|(k, v)| (k.clone(), v.cached_at))
+            .collect();
+
+        let mut sorted_sample = sample;
+        sorted_sample.sort_by_key(|(_, time)| *time);
+
+        let to_remove: Vec<_> = sorted_sample
+            .iter()
+            .take(PREVIEW_EVICTION_BATCH)
+            .map(|(k, _)| k.clone())
+            .collect();
+
+        for key in &to_remove {
+            cache.remove(key);
+        }
+
+        log::debug!(
+            "🗑️ PreviewCache eviction: removed {} entries, size now {}",
+            to_remove.len(),
+            cache.len()
+        );
+    }
+
     pub async fn set(&self, key: String, data: PreviewMetadata) {
         let mut cache = self.cache.lock().await;
+
+        // Evict if cache is full
+        Self::evict_if_needed(&mut cache);
+
         cache.insert(
             key,
             CachedItem {
@@ -50,7 +98,17 @@ impl PreviewCache {
     /// Очистка устаревших записей
     pub async fn cleanup(&self) {
         let mut cache = self.cache.lock().await;
+        let before = cache.len();
         cache.retain(|_, item| item.cached_at.elapsed() < self.ttl);
+        let removed = before - cache.len();
+        if removed > 0 {
+            log::debug!("PreviewCache cleanup: removed {} expired entries", removed);
+        }
+    }
+
+    /// Returns current cache size
+    pub async fn len(&self) -> usize {
+        self.cache.lock().await.len()
     }
 }
 
@@ -58,6 +116,12 @@ impl PreviewCache {
 /// TTL = 1 час (достаточно для сессии пользователя)
 pub static PREVIEW_CACHE: once_cell::sync::Lazy<PreviewCache> =
     once_cell::sync::Lazy::new(|| PreviewCache::new(Duration::from_secs(3600)));
+
+/// Maximum number of entries in the link message cache
+const MAX_LINK_CACHE_SIZE: usize = 2_000;
+
+/// Number of entries to evict when cache is full
+const LINK_EVICTION_BATCH: usize = 200;
 
 struct LinkMessageItem {
     message_id: i32,
@@ -77,8 +141,50 @@ impl LinkMessageCache {
         }
     }
 
+    /// Evict oldest entries using random sampling when cache is full
+    fn evict_if_needed(cache: &mut HashMap<String, LinkMessageItem>) {
+        if cache.len() <= MAX_LINK_CACHE_SIZE {
+            return;
+        }
+
+        use rand::seq::IteratorRandom;
+        let mut rng = rand::thread_rng();
+
+        // Sample random entries and evict oldest ones
+        const SAMPLE_SIZE: usize = 200;
+        let sample: Vec<_> = cache
+            .iter()
+            .choose_multiple(&mut rng, SAMPLE_SIZE.min(cache.len()))
+            .into_iter()
+            .map(|(k, v)| (k.clone(), v.cached_at))
+            .collect();
+
+        let mut sorted_sample = sample;
+        sorted_sample.sort_by_key(|(_, time)| *time);
+
+        let to_remove: Vec<_> = sorted_sample
+            .iter()
+            .take(LINK_EVICTION_BATCH)
+            .map(|(k, _)| k.clone())
+            .collect();
+
+        for key in &to_remove {
+            cache.remove(key);
+        }
+
+        log::debug!(
+            "🗑️ LinkMessageCache eviction: removed {} entries, size now {}",
+            to_remove.len(),
+            cache.len()
+        );
+    }
+
     pub async fn set(&self, url: &str, message_id: i32) {
         let mut cache = self.cache.lock().await;
+
+        // Evict if cache is full
+        Self::evict_if_needed(&mut cache);
+
         cache.insert(
             url.to_string(),
             LinkMessageItem {

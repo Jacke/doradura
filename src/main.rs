@@ -76,9 +76,10 @@ async fn main() -> Result<()> {
         Some(Commands::RunWithCookies { cookies, webhook }) => {
             log::info!("Running bot with cookies refresh (webhook: {})", webhook);
             if let Some(cookies_path) = cookies {
-                unsafe {
-                    env::set_var("YOUTUBE_COOKIES_PATH", cookies_path);
-                }
+                // Set YTDL_COOKIES_FILE env var before any config is read
+                // Safety: This runs before any concurrent access to env vars
+                // and before the bot starts processing requests
+                std::env::set_var("YTDL_COOKIES_FILE", cookies_path);
             }
             run_bot(webhook).await
         }
@@ -599,7 +600,14 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
     // Start audio effects cleanup task
     doradura::download::audio_effects::start_cleanup_task(Arc::clone(&db_pool));
 
+    // Start disk space monitoring task (checks every 5 minutes, logs warnings)
+    // Store handle to prevent "unused" warning; task runs until stop_disk_monitor_task() is called
+    let _disk_monitor_handle = doradura::core::disk::start_disk_monitor_task();
+
     let rate_limiter = Arc::new(RateLimiter::new());
+    // Start periodic cleanup of expired rate limit entries (every 5 minutes)
+    Arc::clone(&rate_limiter).spawn_cleanup_task(std::time::Duration::from_secs(300));
+
     let download_queue = Arc::new(DownloadQueue::new());
     let downsub_gateway = Arc::new(DownsubGateway::from_env().await);
     if downsub_gateway.is_available() {
