@@ -131,7 +131,11 @@ impl RateLimiter {
         limits.retain(|_, instant| now < *instant);
         let removed = initial_len - limits.len();
         if removed > 0 {
-            log::debug!("Rate limiter cleanup: removed {} expired entries, {} remaining", removed, limits.len());
+            log::debug!(
+                "Rate limiter cleanup: removed {} expired entries, {} remaining",
+                removed,
+                limits.len()
+            );
         }
         removed
     }
@@ -139,6 +143,11 @@ impl RateLimiter {
     /// Returns the current number of tracked users.
     pub async fn len(&self) -> usize {
         self.limits.lock().await.len()
+    }
+
+    /// Returns true if no users are currently tracked.
+    pub async fn is_empty(&self) -> bool {
+        self.limits.lock().await.is_empty()
     }
 
     /// Spawns a background task that periodically cleans up expired entries.

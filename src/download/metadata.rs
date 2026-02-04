@@ -271,7 +271,10 @@ pub fn add_cookies_args_with_proxy(args: &mut Vec<&str>, proxy: Option<&ProxyCon
             }
             // File exists but wasn't cached - this means it was created after startup
             // Log warning but don't use it (would require leak or owned strings)
-            log::warn!("Cookies file found but not cached (created after startup?): {}", cookies_path);
+            log::warn!(
+                "Cookies file found but not cached (created after startup?): {}",
+                cookies_path
+            );
             log::warn!("Restart the bot to use the new cookies file");
         }
     }

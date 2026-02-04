@@ -195,8 +195,12 @@ pub fn get_connection(pool: &DbPool) -> Result<DbConnection, r2d2::Error> {
         Ok(conn) => Ok(conn),
         Err(e) => {
             // Track pool exhaustion for monitoring
-            log::error!("DB pool exhaustion: {} (pool state: {} idle, {} in use)",
-                e, pool.state().idle_connections, pool.state().connections - pool.state().idle_connections);
+            log::error!(
+                "DB pool exhaustion: {} (pool state: {} idle, {} in use)",
+                e,
+                pool.state().idle_connections,
+                pool.state().connections - pool.state().idle_connections
+            );
             crate::core::metrics::record_error("db_pool_timeout", "get_connection");
             Err(e)
         }

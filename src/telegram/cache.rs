@@ -110,6 +110,11 @@ impl PreviewCache {
     pub async fn len(&self) -> usize {
         self.cache.lock().await.len()
     }
+
+    /// Returns true if cache has no entries
+    pub async fn is_empty(&self) -> bool {
+        self.cache.lock().await.is_empty()
+    }
 }
 
 /// Глобальный экземпляр кэша превью (singleton)
