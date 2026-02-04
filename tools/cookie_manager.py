@@ -1437,6 +1437,13 @@ class PersistentBrowserManager:
                 self.driver.get("https://www.youtube.com")
                 time.sleep(3)
 
+                # Import cookies from file into browser
+                # This fixes issue where headed browser exports to file but
+                # headless browser doesn't see them in profile
+                imported = self._import_cookies_from_file()
+                if imported > 0:
+                    log.info("Imported %d cookies from file", imported)
+
                 log.info("Persistent browser started successfully")
                 status["browser_running"] = True
                 status["browser_started_at"] = self.started_at.isoformat()
@@ -1683,6 +1690,60 @@ class PersistentBrowserManager:
         _kill_chrome_on_profile(BROWSER_PROFILE_DIR)
         _cleanup_profile_locks(BROWSER_PROFILE_DIR)
 
+    def _import_cookies_from_file(self) -> int:
+        """
+        Import cookies from Netscape file into browser.
+
+        This fixes the issue where headed browser (noVNC login) exports cookies
+        to file, but headless browser doesn't see them because they weren't
+        synced to the browser profile before quit.
+
+        Returns number of cookies imported.
+        """
+        if self.driver is None:
+            return 0
+
+        cookies = parse_netscape_to_selenium(COOKIES_FILE)
+        if not cookies:
+            log.debug("No cookies to import from file")
+            return 0
+
+        imported = 0
+        youtube_cookies = [c for c in cookies if 'youtube.com' in c.get('domain', '')]
+        google_cookies = [c for c in cookies if 'google.com' in c.get('domain', '') and 'youtube' not in c.get('domain', '')]
+
+        # Import YouTube cookies (browser should already be on youtube.com)
+        for cookie in youtube_cookies:
+            try:
+                self.driver.add_cookie(cookie)
+                imported += 1
+            except Exception as e:
+                log.debug("Failed to add YouTube cookie %s: %s", cookie.get('name'), e)
+
+        # Navigate to Google to import Google cookies
+        if google_cookies:
+            try:
+                self.driver.get("https://accounts.google.com")
+                time.sleep(2)
+                for cookie in google_cookies:
+                    try:
+                        self.driver.add_cookie(cookie)
+                        imported += 1
+                    except Exception as e:
+                        log.debug("Failed to add Google cookie %s: %s", cookie.get('name'), e)
+            except Exception as e:
+                log.warning("Could not navigate to Google for cookie import: %s", e)
+
+        # Go back to YouTube and refresh to apply cookies
+        try:
+            self.driver.get("https://www.youtube.com")
+            time.sleep(2)
+        except Exception:
+            pass
+
+        log.info("Imported %d cookies from file into browser", imported)
+        return imported
+
     def _export_cookies_internal(self, force: bool = False) -> int:
         """Export cookies from the running browser."""
         if self.driver is None:
@@ -1878,6 +1939,51 @@ def format_netscape_cookie(cookie: dict) -> str:
     name = cookie.get("name", "")
     value = cookie.get("value", "")
     return f"{domain}\t{subdomain}\t{path}\t{secure}\t{expires}\t{name}\t{value}"
+
+
+def parse_netscape_to_selenium(filepath: str) -> list:
+    """
+    Parse Netscape cookie file to list of Selenium cookie dicts.
+
+    Returns list of cookies that can be added via driver.add_cookie()
+    """
+    cookies = []
+    if not os.path.exists(filepath):
+        return cookies
+
+    try:
+        with open(filepath, 'r') as f:
+            for line in f:
+                line = line.strip()
+                # Skip comments and empty lines
+                if not line or line.startswith('#'):
+                    continue
+
+                parts = line.split('\t')
+                if len(parts) >= 7:
+                    domain, _, path, secure, expiry, name, value = parts[:7]
+
+                    cookie = {
+                        'name': name,
+                        'value': value,
+                        'domain': domain,
+                        'path': path,
+                        'secure': secure.upper() == 'TRUE',
+                    }
+
+                    # Add expiry if not session cookie
+                    try:
+                        exp = int(expiry)
+                        if exp > 0:
+                            cookie['expiry'] = exp
+                    except ValueError:
+                        pass
+
+                    cookies.append(cookie)
+    except Exception as e:
+        log.warning("Failed to parse cookies file %s: %s", filepath, e)
+
+    return cookies
 
 
 def _check_youtube_logged_in(driver: uc.Chrome) -> bool:
@@ -2315,11 +2421,17 @@ async def quick_health_loop():
                 inc_metric("quick_health_checks_failed")
                 log.warning("Quick health check failed: %s", reason)
 
+                # NOTE: Disabled session_expired alert because browser health check
+                # is unreliable - headless browser often loses session even when
+                # cookie FILE is valid. yt-dlp validation is more accurate.
+                # See: https://github.com/user/repo/issues/XXX
                 if reason == "session_expired":
                     status["needs_relogin"] = True
-                    await send_telegram_alert(
-                        f"Quick health check: session expired!\n\nReason: {reason}"
-                    )
+                    # Alert disabled - browser session != cookie file validity
+                    # await send_telegram_alert(
+                    #     f"Quick health check: session expired!\n\nReason: {reason}"
+                    # )
+                    log.info("Quick health check session_expired (alert disabled, yt-dlp validation is authoritative)")
 
         except Exception as e:
             log.error("Quick health check error: %s", e)
