@@ -442,7 +442,10 @@ pub async fn download_and_send_subtitles(
             .map_err(|e| AppError::Download(format!("spawn_blocking failed: {}", e)))??;
 
             if !download_result.success() {
-                return Err(AppError::Download(format!("downloader exited with status: {}", download_result)));
+                return Err(AppError::Download(format!(
+                    "downloader exited with status: {}",
+                    download_result
+                )));
             }
 
             // Check if file exists

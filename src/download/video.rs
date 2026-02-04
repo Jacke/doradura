@@ -1508,6 +1508,15 @@ pub async fn download_and_send_video(
             // Определяем тип ошибки и формируем полезное сообщение
             let error_str = e.to_string();
             let user_error = sanitize_user_error_message(&error_str);
+            let is_bot_blocked = {
+                let lower = error_str.to_lowercase();
+                lower.contains("sign in to confirm you're not a bot")
+                    || lower.contains("sign in to confirm you’re not a bot")
+                    || lower.contains("confirm you're not a bot")
+                    || lower.contains("confirm you’re not a bot")
+                    || lower.contains("bot detection")
+            };
+
             let custom_message = if error_str.contains("Only images are available") {
                 Some(
                     "Это видео недоступно для скачивания\n\n\
@@ -1524,14 +1533,7 @@ pub async fn download_and_send_video(
                 Стэн уже знает и скоро обновит!\n\
                 Попробуй позже или другое видео.",
                 )
-            } else if {
-                let lower = error_str.to_lowercase();
-                lower.contains("sign in to confirm you're not a bot")
-                    || lower.contains("sign in to confirm you’re not a bot")
-                    || lower.contains("confirm you're not a bot")
-                    || lower.contains("confirm you’re not a bot")
-                    || lower.contains("bot detection")
-            } {
+            } else if is_bot_blocked {
                 Some(
                     "YouTube заблокировал бота\n\n\
                 Нужно настроить cookies.\n\
