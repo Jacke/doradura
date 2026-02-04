@@ -1078,7 +1078,12 @@ pub async fn download_and_send_audio(
             }
             Err(e) => {
                 e.track_with_operation("audio_download");
-                log::error!("An error occurred during audio download for chat {}: {:?}", chat_id, e);
+                log::error!(
+                    "An error occurred during audio download for chat {} ({}): {:?}",
+                    chat_id,
+                    url,
+                    e
+                );
                 timer.observe_duration();
                 let error_type = if e.to_string().contains("too large") {
                     "file_too_large"
