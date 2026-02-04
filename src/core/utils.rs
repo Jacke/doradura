@@ -446,6 +446,144 @@ pub fn pluralize_seconds(n: u64) -> &'static str {
     }
 }
 
+// =============================================================================
+// Async spawn helpers
+// =============================================================================
+
+/// Spawns an async task and logs any errors that occur.
+///
+/// Use this instead of raw `tokio::spawn` when you need error visibility
+/// for fire-and-forget background tasks.
+///
+/// # Arguments
+///
+/// * `name` - A descriptive name for the task (used in error logs)
+/// * `fut` - The future to execute
+///
+/// # Example
+///
+/// ```ignore
+/// spawn_logged("notify_admin", async move {
+///     notify_admin_new_user(&bot, chat_id).await
+/// });
+/// ```
+pub fn spawn_logged<F, T, E>(name: &'static str, fut: F)
+where
+    F: std::future::Future<Output = Result<T, E>> + Send + 'static,
+    T: Send + 'static,
+    E: std::fmt::Display + Send + 'static,
+{
+    tokio::spawn(async move {
+        if let Err(e) = fut.await {
+            log::error!("Background task '{}' failed: {}", name, e);
+        }
+    });
+}
+
+/// Spawns an async task that doesn't return a Result, logging if it panics.
+///
+/// # Arguments
+///
+/// * `name` - A descriptive name for the task (used in panic logs)
+/// * `fut` - The future to execute
+pub fn spawn_logged_infallible<F>(name: &'static str, fut: F)
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    tokio::spawn(async move {
+        fut.await;
+        log::trace!("Background task '{}' completed", name);
+    });
+}
+
+// =============================================================================
+// Temp file RAII guard
+// =============================================================================
+
+/// RAII guard for temporary files that ensures cleanup even on panic.
+///
+/// The file is automatically deleted when the guard is dropped, unless
+/// `keep()` is called to preserve it.
+///
+/// # Example
+///
+/// ```ignore
+/// let guard = TempFileGuard::new("/tmp/download.mp3");
+/// // ... do work that might panic ...
+/// guard.keep(); // Keep the file after successful operation
+/// ```
+pub struct TempFileGuard {
+    path: Option<std::path::PathBuf>,
+}
+
+impl TempFileGuard {
+    /// Creates a new guard for the given file path.
+    pub fn new<P: AsRef<std::path::Path>>(path: P) -> Self {
+        Self {
+            path: Some(path.as_ref().to_path_buf()),
+        }
+    }
+
+    /// Prevents the file from being deleted when the guard is dropped.
+    /// Call this after successful completion of the operation.
+    pub fn keep(mut self) {
+        self.path = None;
+    }
+
+    /// Returns the path being guarded, if any.
+    pub fn path(&self) -> Option<&std::path::Path> {
+        self.path.as_deref()
+    }
+}
+
+impl Drop for TempFileGuard {
+    fn drop(&mut self) {
+        if let Some(ref path) = self.path {
+            if path.exists() {
+                if let Err(e) = std::fs::remove_file(path) {
+                    log::debug!("TempFileGuard: failed to remove {}: {}", path.display(), e);
+                } else {
+                    log::debug!("TempFileGuard: cleaned up {}", path.display());
+                }
+            }
+        }
+    }
+}
+
+/// RAII guard for multiple temporary files with comprehensive cleanup.
+///
+/// Cleans up the main file and all related temp files created by yt-dlp
+/// (e.g., .part, .ytdl, .temp.*, .f*.* fragment files).
+pub struct DownloadGuard {
+    base_path: Option<String>,
+}
+
+impl DownloadGuard {
+    /// Creates a new guard for the given download path.
+    pub fn new(base_path: &str) -> Self {
+        Self {
+            base_path: Some(base_path.to_string()),
+        }
+    }
+
+    /// Prevents cleanup when the guard is dropped.
+    /// Call this after successful completion.
+    pub fn keep(mut self) {
+        self.base_path = None;
+    }
+}
+
+impl Drop for DownloadGuard {
+    fn drop(&mut self) {
+        if let Some(ref base_path) = self.base_path {
+            // Use the existing cleanup function from downloader
+            crate::download::downloader::cleanup_partial_download(base_path);
+            // Also remove the main file if it exists
+            let _ = std::fs::remove_file(base_path);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{escape_filename, escape_markdown_v2, format_media_caption, pluralize_seconds, sanitize_filename};

@@ -70,7 +70,7 @@ async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<Value, AppE
         args.push(url.as_str());
 
         let command_str = format!("{} {}", ytdl_bin, args.join(" "));
-        log::info!("[DEBUG] yt-dlp command for preview metadata (JSON): {}", command_str);
+        log::debug!("yt-dlp command for preview metadata (JSON): {}", command_str);
 
         let json_output = match timeout(
             config::download::ytdlp_timeout(),
@@ -651,7 +651,7 @@ async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<VideoFo
             list_formats_args.push(url.as_str());
 
             let command_str = format!("{} {}", ytdl_bin, list_formats_args.join(" "));
-            log::info!("[DEBUG] yt-dlp command for preview formats: {}", command_str);
+            log::debug!("yt-dlp command for preview formats: {}", command_str);
 
             let list_formats_output = match timeout(
                 config::download::ytdlp_timeout(),

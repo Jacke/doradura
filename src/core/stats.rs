@@ -140,12 +140,7 @@ pub async fn show_user_stats(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -
             "📊 *Твоя статистика*\n\nУ тебя пока нет загрузок\\. Отправь мне ссылку на трек или видео\\!".to_string();
     }
 
-    log::info!("=== STATS MESSAGE DEBUG ===");
-    log::info!("Sending stats message:");
-    log::info!("Text length: {}", text.len());
-    log::info!("Full text:\n{}", text);
-    log::info!("Text bytes: {:?}", text.as_bytes());
-    log::info!("=== END DEBUG ===");
+    log::debug!("Sending stats message, length: {}", text.len());
 
     bot.send_message(chat_id, text)
         .parse_mode(teloxide::types::ParseMode::MarkdownV2)

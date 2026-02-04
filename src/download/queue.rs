@@ -262,23 +262,8 @@ impl DownloadQueue {
             .position(|t| t.priority < task.priority)
             .unwrap_or(queue.len());
 
-        // Вставляем задачу в нужную позицию
-        let mut new_queue = VecDeque::new();
-        let mut inserted = false;
-
-        for (idx, existing_task) in queue.iter().enumerate() {
-            if idx == insert_pos && !inserted {
-                new_queue.push_back(task.clone());
-                inserted = true;
-            }
-            new_queue.push_back(existing_task.clone());
-        }
-
-        if !inserted {
-            new_queue.push_back(task);
-        }
-
-        *queue = new_queue;
+        // Вставляем задачу напрямую - O(n) вместо O(n) с копированием всех элементов
+        queue.insert(insert_pos, task);
 
         // Update queue depth metrics by priority
         let low_count = queue.iter().filter(|t| t.priority == TaskPriority::Low).count();

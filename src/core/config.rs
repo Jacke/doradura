@@ -131,6 +131,14 @@ pub mod download {
     pub fn ytdlp_timeout() -> Duration {
         Duration::from_secs(YTDLP_TIMEOUT_SECS)
     }
+
+    /// Global download timeout (in seconds) - maximum time for entire download operation
+    pub const GLOBAL_TIMEOUT_SECS: u64 = 600; // 10 minutes
+
+    /// Global download timeout duration
+    pub fn global_timeout() -> Duration {
+        Duration::from_secs(GLOBAL_TIMEOUT_SECS)
+    }
 }
 
 /// Retry configuration
@@ -477,6 +485,8 @@ pub mod proxy {
 
 /// Validation configuration
 pub mod validation {
+    use once_cell::sync::Lazy;
+
     /// Maximum URL length (RFC 7230 recommends 8000, but we use 2048 for safety)
     pub const MAX_URL_LENGTH: usize = 2048;
 
@@ -484,18 +494,10 @@ pub mod validation {
     /// Telegram Bot API allows up to 50MB for files
     pub const MAX_FILE_SIZE_BYTES: u64 = 50 * 1024 * 1024; // 50 MB
 
-    /// Maximum file size for audio files
-    ///
-    /// Standard Telegram Bot API (api.telegram.org): 50 MB
-    /// Local Bot API Server: up to 5 GB (see https://core.telegram.org/bots/api#using-a-local-bot-api-server)
-    ///
-    /// Check if local Bot API server is used via BOT_API_URL environment variable.
-    /// If BOT_API_URL is set and not pointing to api.telegram.org, assume local server is used.
-    pub fn max_audio_size_bytes() -> u64 {
-        // Check if local Bot API server is configured
+    /// Cached maximum audio file size (computed once at first access)
+    static MAX_AUDIO_SIZE_CACHED: Lazy<u64> = Lazy::new(|| {
         if let Ok(bot_api_url) = std::env::var("BOT_API_URL") {
             if !bot_api_url.contains("api.telegram.org") {
-                // Local Bot API server allows larger files - using 5 GB limit
                 log::info!(
                     "Local Bot API server detected (BOT_API_URL={}), using 5 GB limit for audio",
                     bot_api_url
@@ -503,9 +505,31 @@ pub mod validation {
                 return 5 * 1024 * 1024 * 1024; // 5 GB for local server
             }
         }
+        50 * 1024 * 1024 // 50 MB for standard API
+    });
 
-        // Default: 50 MB for standard API
-        50 * 1024 * 1024 // 50 MB
+    /// Cached maximum video file size (computed once at first access)
+    static MAX_VIDEO_SIZE_CACHED: Lazy<u64> = Lazy::new(|| {
+        if let Ok(bot_api_url) = std::env::var("BOT_API_URL") {
+            if !bot_api_url.contains("api.telegram.org") {
+                log::info!(
+                    "Local Bot API server detected (BOT_API_URL={}), using 5 GB limit for video",
+                    bot_api_url
+                );
+                return 5 * 1024 * 1024 * 1024; // 5 GB for local server
+            }
+        }
+        50 * 1024 * 1024 // 50 MB for standard API
+    });
+
+    /// Maximum file size for audio files
+    ///
+    /// Standard Telegram Bot API (api.telegram.org): 50 MB
+    /// Local Bot API Server: up to 5 GB (see https://core.telegram.org/bots/api#using-a-local-bot-api-server)
+    ///
+    /// Result is cached after first call to avoid repeated logging.
+    pub fn max_audio_size_bytes() -> u64 {
+        *MAX_AUDIO_SIZE_CACHED
     }
 
     /// Legacy constant for backward compatibility
@@ -517,23 +541,9 @@ pub mod validation {
     /// Standard Telegram Bot API (api.telegram.org): 50 MB
     /// Local Bot API Server: up to 5 GB (see https://core.telegram.org/bots/api#using-a-local-bot-api-server)
     ///
-    /// Check if local Bot API server is used via BOT_API_URL environment variable.
-    /// If BOT_API_URL is set and not pointing to api.telegram.org, assume local server is used.
+    /// Result is cached after first call to avoid repeated logging.
     pub fn max_video_size_bytes() -> u64 {
-        // Check if local Bot API server is configured
-        if let Ok(bot_api_url) = std::env::var("BOT_API_URL") {
-            if !bot_api_url.contains("api.telegram.org") {
-                // Local Bot API server allows larger files - using 5 GB limit
-                log::info!(
-                    "Local Bot API server detected (BOT_API_URL={}), using 5 GB limit",
-                    bot_api_url
-                );
-                return 5 * 1024 * 1024 * 1024; // 5 GB for local server
-            }
-        }
-
-        // Default: 50 MB for standard API
-        50 * 1024 * 1024 // 50 MB
+        *MAX_VIDEO_SIZE_CACHED
     }
 
     /// Legacy constant for backward compatibility

@@ -1,8 +1,12 @@
 use r2d2::{Pool, PooledConnection};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{Connection, Result};
+use std::time::Duration;
 
 use crate::storage::migrations;
+
+/// Connection timeout for pool.get() calls - prevents indefinite blocking
+const CONNECTION_TIMEOUT_SECS: u64 = 1;
 
 /// Структура, представляющая пользователя в базе данных.
 pub struct User {
@@ -150,7 +154,13 @@ pub fn create_pool(database_path: &str) -> Result<DbPool, r2d2::Error> {
     let manager = SqliteConnectionManager::file(database_path);
     let pool = Pool::builder()
         .max_size(10) // Maximum 10 connections in the pool
+        .connection_timeout(Duration::from_secs(CONNECTION_TIMEOUT_SECS)) // Prevent indefinite blocking
         .build(manager)?;
+
+    log::info!(
+        "Database pool created: max_size=10, connection_timeout={}s",
+        CONNECTION_TIMEOUT_SECS
+    );
 
     Ok(pool)
 }
@@ -181,7 +191,72 @@ pub fn create_pool(database_path: &str) -> Result<DbPool, r2d2::Error> {
 /// # }
 /// ```
 pub fn get_connection(pool: &DbPool) -> Result<DbConnection, r2d2::Error> {
-    pool.get()
+    match pool.get() {
+        Ok(conn) => Ok(conn),
+        Err(e) => {
+            // Track pool exhaustion for monitoring
+            log::error!("DB pool exhaustion: {} (pool state: {} idle, {} in use)",
+                e, pool.state().idle_connections, pool.state().connections - pool.state().idle_connections);
+            crate::core::metrics::record_error("db_pool_timeout", "get_connection");
+            Err(e)
+        }
+    }
+}
+
+/// Get a connection from the pool with retry and exponential backoff
+///
+/// Retries up to `max_retries` times with exponential backoff starting at 10ms.
+/// This is useful for handling transient pool exhaustion under high load.
+///
+/// # Arguments
+///
+/// * `pool` - Database connection pool
+/// * `max_retries` - Maximum number of retry attempts (recommended: 3)
+///
+/// # Returns
+///
+/// Returns a `DbConnection` on success or an `r2d2::Error` if all retries fail.
+pub fn get_connection_with_retry(pool: &DbPool, max_retries: u32) -> Result<DbConnection, r2d2::Error> {
+    let mut last_error = None;
+    let mut delay_ms = 10u64; // Start with 10ms
+
+    for attempt in 0..=max_retries {
+        match pool.get() {
+            Ok(conn) => {
+                if attempt > 0 {
+                    log::debug!("DB connection acquired after {} retries", attempt);
+                }
+                return Ok(conn);
+            }
+            Err(e) => {
+                last_error = Some(e);
+                if attempt < max_retries {
+                    log::debug!(
+                        "DB pool busy, retry {}/{} in {}ms (pool: {} idle, {} in use)",
+                        attempt + 1,
+                        max_retries,
+                        delay_ms,
+                        pool.state().idle_connections,
+                        pool.state().connections - pool.state().idle_connections
+                    );
+                    std::thread::sleep(Duration::from_millis(delay_ms));
+                    delay_ms = delay_ms.saturating_mul(2).min(500); // Cap at 500ms
+                }
+            }
+        }
+    }
+
+    // All retries failed
+    let e = last_error.expect("last_error must be set after loop");
+    log::error!(
+        "DB pool exhaustion after {} retries: {} (pool: {} idle, {} in use)",
+        max_retries,
+        e,
+        pool.state().idle_connections,
+        pool.state().connections - pool.state().idle_connections
+    );
+    crate::core::metrics::record_error("db_pool_timeout", "get_connection_with_retry");
+    Err(e)
 }
 
 /// Legacy function for backward compatibility (deprecated)
@@ -211,18 +286,34 @@ pub fn get_connection_legacy() -> Result<Connection> {
 ///
 /// Возвращает ошибку если пользователь с таким ID уже существует или произошла ошибка БД.
 pub fn create_user(conn: &DbConnection, telegram_id: i64, username: Option<String>) -> Result<()> {
-    conn.execute(
-        "INSERT INTO users (telegram_id, username, download_format, download_subtitles, video_quality, audio_bitrate, language, send_as_document, send_audio_as_document) VALUES (?1, ?2, 'mp3', 0, 'best', '320k', 'en', 0, 0)",
-        [
-            &telegram_id as &dyn rusqlite::ToSql,
-            &username as &dyn rusqlite::ToSql,
-        ],
-    )?;
-    conn.execute(
-        "INSERT OR IGNORE INTO subscriptions (user_id, plan) VALUES (?1, 'free')",
-        [&telegram_id as &dyn rusqlite::ToSql],
-    )?;
-    Ok(())
+    // Use a transaction to ensure both inserts succeed or fail together
+    conn.execute_batch("BEGIN")?;
+
+    let result = (|| {
+        conn.execute(
+            "INSERT INTO users (telegram_id, username, download_format, download_subtitles, video_quality, audio_bitrate, language, send_as_document, send_audio_as_document) VALUES (?1, ?2, 'mp3', 0, 'best', '320k', 'en', 0, 0)",
+            [
+                &telegram_id as &dyn rusqlite::ToSql,
+                &username as &dyn rusqlite::ToSql,
+            ],
+        )?;
+        conn.execute(
+            "INSERT OR IGNORE INTO subscriptions (user_id, plan) VALUES (?1, 'free')",
+            [&telegram_id as &dyn rusqlite::ToSql],
+        )?;
+        Ok(())
+    })();
+
+    match result {
+        Ok(()) => {
+            conn.execute_batch("COMMIT")?;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(e)
+        }
+    }
 }
 
 /// Создает нового пользователя в базе данных с указанным языком.
@@ -247,19 +338,35 @@ pub fn create_user_with_language(
     username: Option<String>,
     language: &str,
 ) -> Result<()> {
-    conn.execute(
-        "INSERT INTO users (telegram_id, username, download_format, download_subtitles, video_quality, audio_bitrate, language, send_as_document, send_audio_as_document) VALUES (?1, ?2, 'mp3', 0, 'best', '320k', ?3, 0, 0)",
-        [
-            &telegram_id as &dyn rusqlite::ToSql,
-            &username as &dyn rusqlite::ToSql,
-            &language as &dyn rusqlite::ToSql,
-        ],
-    )?;
-    conn.execute(
-        "INSERT OR IGNORE INTO subscriptions (user_id, plan) VALUES (?1, 'free')",
-        [&telegram_id as &dyn rusqlite::ToSql],
-    )?;
-    Ok(())
+    // Use a transaction to ensure both inserts succeed or fail together
+    conn.execute_batch("BEGIN")?;
+
+    let result = (|| {
+        conn.execute(
+            "INSERT INTO users (telegram_id, username, download_format, download_subtitles, video_quality, audio_bitrate, language, send_as_document, send_audio_as_document) VALUES (?1, ?2, 'mp3', 0, 'best', '320k', ?3, 0, 0)",
+            [
+                &telegram_id as &dyn rusqlite::ToSql,
+                &username as &dyn rusqlite::ToSql,
+                &language as &dyn rusqlite::ToSql,
+            ],
+        )?;
+        conn.execute(
+            "INSERT OR IGNORE INTO subscriptions (user_id, plan) VALUES (?1, 'free')",
+            [&telegram_id as &dyn rusqlite::ToSql],
+        )?;
+        Ok(())
+    })();
+
+    match result {
+        Ok(()) => {
+            conn.execute_batch("COMMIT")?;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(e)
+        }
+    }
 }
 
 /// Получает пользователя из базы данных по Telegram ID.
@@ -430,7 +537,7 @@ pub fn expire_old_subscriptions(conn: &DbConnection) -> Result<usize> {
         let mut stmt = conn.prepare(
             "SELECT user_id FROM subscriptions
              WHERE expires_at IS NOT NULL
-             AND expires_at < datetime('now')
+             AND expires_at < datetime('now', 'utc')
              AND plan != 'free'",
         )?;
         let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
@@ -456,7 +563,7 @@ pub fn expire_old_subscriptions(conn: &DbConnection) -> Result<usize> {
          WHERE user_id IN (
              SELECT user_id FROM subscriptions
              WHERE expires_at IS NOT NULL
-               AND expires_at < datetime('now')
+               AND expires_at < datetime('now', 'utc')
                AND plan != 'free'
          )",
         [],
@@ -2416,7 +2523,7 @@ pub fn is_subscription_active(conn: &DbConnection, telegram_id: i64) -> Result<b
     }
 
     if let Some(expires_at) = subscription.expires_at {
-        let mut stmt = conn.prepare("SELECT datetime('now') < datetime(?1)")?;
+        let mut stmt = conn.prepare("SELECT datetime('now', 'utc') < datetime(?1)")?;
         let is_active: bool = stmt.query_row([&expires_at], |row| row.get(0))?;
         Ok(is_active)
     } else {

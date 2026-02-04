@@ -21,6 +21,59 @@ use teloxide::types::InputFile;
 use tokio::process::Command as TokioCommand;
 use url::Url;
 
+/// Cleans up all partial/temporary files created by yt-dlp for a download path
+///
+/// yt-dlp creates various intermediate files during download:
+/// - `.part` - partial download
+/// - `.ytdl` - download state
+/// - `.temp.{ext}` - temporary merge files
+/// - `.f{N}.{ext}` - format-specific fragments
+/// - `.info.json` - metadata cache
+///
+/// This function removes all of them to prevent disk space leaks.
+pub fn cleanup_partial_download(base_path: &str) {
+    let base = Path::new(base_path);
+    let parent = base.parent().unwrap_or(Path::new("."));
+    let filename = base.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+    // Remove exact known patterns
+    let patterns = [".part", ".ytdl", ".temp.mp4", ".temp.webm", ".info.json"];
+    for pattern in patterns {
+        let path = format!("{}{}", base_path, pattern);
+        if let Err(e) = fs::remove_file(&path) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                log::debug!("Failed to remove {}: {}", path, e);
+            }
+        }
+    }
+
+    // Remove fragment files (.f{N}.{ext}) using glob pattern
+    // These are created when yt-dlp downloads separate audio/video streams
+    if let Ok(entries) = fs::read_dir(parent) {
+        let base_name = filename
+            .trim_end_matches(".mp4")
+            .trim_end_matches(".mp3")
+            .trim_end_matches(".webm");
+        for entry in entries.flatten() {
+            if let Some(name) = entry.file_name().to_str() {
+                // Match patterns like: basename.f123.mp4, basename.f456.webm, etc.
+                if name.starts_with(base_name)
+                    && (name.contains(".f") || name.ends_with(".part") || name.ends_with(".ytdl"))
+                {
+                    let path = entry.path();
+                    if let Err(e) = fs::remove_file(&path) {
+                        if e.kind() != std::io::ErrorKind::NotFound {
+                            log::debug!("Failed to remove fragment {}: {}", path.display(), e);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    log::debug!("Cleaned up partial files for: {}", base_path);
+}
+
 /// Legacy alias for backward compatibility
 /// Use AppError instead
 #[deprecated(note = "Use AppError instead")]
@@ -125,9 +178,10 @@ pub fn parse_progress(line: &str) -> Option<ProgressInfo> {
     let mut current_size = None;
     let mut total_size = None;
 
-    // Парсим процент
-    let parts: Vec<&str> = line.split_whitespace().collect();
-    for (i, part) in parts.iter().enumerate() {
+    // Парсим без аллокации Vec - используем peek iterator
+    let mut parts = line.split_whitespace().peekable();
+    while let Some(part) = parts.next() {
+        // Парсим процент
         if part.ends_with('%') {
             if let Ok(p) = part.trim_end_matches('%').parse::<f32>() {
                 // Обрезаем в разумные границы, чтобы не прыгать на 100% при мусорных данных
@@ -137,24 +191,30 @@ pub fn parse_progress(line: &str) -> Option<ProgressInfo> {
         }
 
         // Парсим размер: "of 10.00MiB"
-        if *part == "of" && i + 1 < parts.len() {
-            if let Some(size_bytes) = parse_size(parts[i + 1]) {
-                total_size = Some(size_bytes);
+        if part == "of" {
+            if let Some(&next) = parts.peek() {
+                if let Some(size_bytes) = parse_size(next) {
+                    total_size = Some(size_bytes);
+                }
             }
         }
 
         // Парсим скорость: "at 500.00KiB/s" или "at 2.3MiB/s"
-        if *part == "at" && i + 1 < parts.len() {
-            if let Some(speed) = parse_size(parts[i + 1]) {
-                // Конвертируем в MB/s
-                speed_mbs = Some(speed as f64 / (1024.0 * 1024.0));
+        if part == "at" {
+            if let Some(&next) = parts.peek() {
+                if let Some(speed) = parse_size(next) {
+                    // Конвертируем в MB/s
+                    speed_mbs = Some(speed as f64 / (1024.0 * 1024.0));
+                }
             }
         }
 
         // Парсим ETA: "ETA 00:10" или "ETA 1:23"
-        if *part == "ETA" && i + 1 < parts.len() {
-            if let Some(eta) = parse_eta(parts[i + 1]) {
-                eta_seconds = Some(eta);
+        if part == "ETA" {
+            if let Some(&next) = parts.peek() {
+                if let Some(eta) = parse_eta(next) {
+                    eta_seconds = Some(eta);
+                }
             }
         }
     }
@@ -207,13 +267,11 @@ fn parse_size(size_str: &str) -> Option<u64> {
 
 /// Парсит ETA из строки типа "00:10" или "1:23"
 fn parse_eta(eta_str: &str) -> Option<u64> {
-    let parts: Vec<&str> = eta_str.split(':').collect();
-    if parts.len() == 2 {
-        if let (Ok(minutes), Ok(seconds)) = (parts[0].parse::<u64>(), parts[1].parse::<u64>()) {
-            return Some(minutes * 60 + seconds);
-        }
-    }
-    None
+    // Use split_once to avoid Vec allocation
+    let (minutes_str, seconds_str) = eta_str.split_once(':')?;
+    let minutes: u64 = minutes_str.parse().ok()?;
+    let seconds: u64 = seconds_str.parse().ok()?;
+    Some(minutes * 60 + seconds)
 }
 
 // download_audio_file and download_audio_file_with_progress moved to audio.rs
@@ -367,15 +425,24 @@ pub async fn download_and_send_subtitles(
 
             // Логируем полную команду для отладки
             let command_str = format!("{} {}", ytdl_bin, args.join(" "));
-            log::info!("[DEBUG] yt-dlp command for subtitles download: {}", command_str);
+            log::debug!("yt-dlp command for subtitles download: {}", command_str);
 
-            let mut child = spawn_downloader_with_fallback(ytdl_bin, &args)?;
-            let status = child
-                .wait()
-                .map_err(|e| AppError::Download(format!("downloader process failed: {}", e)))?;
+            // Run blocking download in spawn_blocking to avoid blocking async runtime
+            let ytdl_bin_owned = ytdl_bin.to_string();
+            let args_owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+            let download_result = tokio::task::spawn_blocking(move || {
+                let args_refs: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
+                let mut child = spawn_downloader_with_fallback(&ytdl_bin_owned, &args_refs)?;
+                let status = child
+                    .wait()
+                    .map_err(|e| AppError::Download(format!("downloader process failed: {}", e)))?;
+                Ok::<_, AppError>(status)
+            })
+            .await
+            .map_err(|e| AppError::Download(format!("spawn_blocking failed: {}", e)))??;
 
-            if !status.success() {
-                return Err(AppError::Download(format!("downloader exited with status: {}", status)));
+            if !download_result.success() {
+                return Err(AppError::Download(format!("downloader exited with status: {}", download_result)));
             }
 
             // Check if file exists

@@ -14,10 +14,16 @@ static MIGRATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 pub fn run_migrations(conn: &mut Connection) -> Result<()> {
     // Serialize migrations per-process and take an exclusive SQLite lock
     // to avoid concurrent runners interleaving on multi-instance startups.
-    let _guard = MIGRATION_LOCK
-        .get_or_init(|| Mutex::new(()))
-        .lock()
-        .expect("migration lock poisoned");
+    let mutex = MIGRATION_LOCK.get_or_init(|| Mutex::new(()));
+    // Use into_inner on poisoned lock to recover from panics in other threads
+    // This is safe because migrations are idempotent
+    let _guard = match mutex.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => {
+            log::warn!("Migration lock was poisoned, recovering...");
+            poisoned.into_inner()
+        }
+    };
 
     conn.busy_timeout(Duration::from_secs(30))
         .context("set SQLite busy timeout")?;

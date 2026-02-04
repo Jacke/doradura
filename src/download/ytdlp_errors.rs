@@ -37,6 +37,9 @@ pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
     if stderr_lower.contains("cookies are no longer valid")
         || stderr_lower.contains("cookies have likely been rotated")
         || stderr_lower.contains("sign in to confirm you're not a bot")
+        || stderr_lower.contains("sign in to confirm you’re not a bot")
+        || stderr_lower.contains("confirm you're not a bot")
+        || stderr_lower.contains("confirm you’re not a bot")
         || stderr_lower.contains("please sign in")
         || stderr_lower.contains("use --cookies-from-browser")
         || stderr_lower.contains("use --cookies for the authentication")
@@ -189,7 +192,10 @@ pub fn sanitize_user_error_message(raw: &str) -> String {
         || lower.contains("error: [youtube]")
         || lower.contains("downloaded file is empty")
         || lower.contains("unable to download")
-        || lower.contains("sign in to confirm you're not a bot");
+        || lower.contains("sign in to confirm you're not a bot")
+        || lower.contains("sign in to confirm you’re not a bot")
+        || lower.contains("confirm you're not a bot")
+        || lower.contains("confirm you’re not a bot");
 
     if looks_like_ytdlp {
         let error_type = analyze_ytdlp_error(trimmed);

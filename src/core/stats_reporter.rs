@@ -33,37 +33,51 @@ pub struct PeriodStats {
     pub recent_errors: Vec<db::ErrorLogEntry>,
 }
 
+/// Helper to log database query errors and return default value
+fn query_with_logging<T: Default>(result: Result<T, rusqlite::Error>, query_name: &str) -> T {
+    match result {
+        Ok(value) => value,
+        Err(e) => {
+            log::warn!("Stats query '{}' failed: {}", query_name, e);
+            T::default()
+        }
+    }
+}
+
 /// Gets statistics for the last N hours
 pub fn get_period_stats(conn: &db::DbConnection, hours: i64) -> anyhow::Result<PeriodStats> {
     let since = Utc::now() - Duration::hours(hours);
     let since_str = since.format("%Y-%m-%d %H:%M:%S").to_string();
 
     // Total downloads in period
-    let total_downloads: i64 = conn
-        .query_row(
+    let total_downloads: i64 = query_with_logging(
+        conn.query_row(
             "SELECT COUNT(*) FROM download_history WHERE downloaded_at >= ?",
             [&since_str],
             |row| row.get(0),
-        )
-        .unwrap_or(0);
+        ),
+        "total_downloads",
+    );
 
     // Unique users
-    let unique_users: i64 = conn
-        .query_row(
+    let unique_users: i64 = query_with_logging(
+        conn.query_row(
             "SELECT COUNT(DISTINCT user_id) FROM download_history WHERE downloaded_at >= ?",
             [&since_str],
             |row| row.get(0),
-        )
-        .unwrap_or(0);
+        ),
+        "unique_users",
+    );
 
     // Total size
-    let total_size: i64 = conn
-        .query_row(
+    let total_size: i64 = query_with_logging(
+        conn.query_row(
             "SELECT COALESCE(SUM(file_size), 0) FROM download_history WHERE downloaded_at >= ?",
             [&since_str],
             |row| row.get(0),
-        )
-        .unwrap_or(0);
+        ),
+        "total_size",
+    );
 
     // By format
     let mut stmt = conn.prepare(
@@ -81,19 +95,26 @@ pub fn get_period_stats(conn: &db::DbConnection, hours: i64) -> anyhow::Result<P
     }
 
     // Failed downloads from task_queue
-    let failed_downloads: i64 = conn
-        .query_row(
+    let failed_downloads: i64 = query_with_logging(
+        conn.query_row(
             "SELECT COUNT(*) FROM task_queue WHERE status = 'failed' AND updated_at >= ?",
             [&since_str],
             |row| row.get(0),
-        )
-        .unwrap_or(0);
+        ),
+        "failed_downloads",
+    );
 
     // Get errors by type from error_log
-    let errors_by_type = db::get_error_stats(conn, hours).unwrap_or_default();
+    let errors_by_type = db::get_error_stats(conn, hours).unwrap_or_else(|e| {
+        log::warn!("Stats query 'errors_by_type' failed: {}", e);
+        Vec::new()
+    });
 
     // Get recent errors (last 5)
-    let recent_errors = db::get_recent_errors(conn, hours, 5).unwrap_or_default();
+    let recent_errors = db::get_recent_errors(conn, hours, 5).unwrap_or_else(|e| {
+        log::warn!("Stats query 'recent_errors' failed: {}", e);
+        Vec::new()
+    });
 
     Ok(PeriodStats {
         total_downloads,

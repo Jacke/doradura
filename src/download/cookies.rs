@@ -8,10 +8,15 @@
 
 use anyhow::Result;
 use base64::{engine::general_purpose, Engine as _};
+use once_cell::sync::Lazy;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::process::Command;
+use tokio::sync::Mutex;
 use tokio::time::timeout;
+
+/// Mutex to prevent concurrent cookie file writes (race condition protection)
+static COOKIES_WRITE_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
 
 use crate::download::metadata::{get_proxy_chain, is_proxy_related_error};
 
@@ -48,53 +53,61 @@ impl CookieInvalidReason {
         let stderr_lower = stderr.to_lowercase();
 
         // Cookies rotated/invalidated by YouTube
-        if stderr.contains("cookies are no longer valid")
-            || stderr.contains("cookies have likely been rotated")
-            || stderr.contains("cookies have expired")
+        if stderr_lower.contains("cookies are no longer valid")
+            || stderr_lower.contains("cookies have likely been rotated")
+            || stderr_lower.contains("cookies have expired")
         {
             return Self::RotatedByYouTube;
         }
 
         // Session expired
         if (stderr_lower.contains("login") && stderr_lower.contains("required"))
-            || stderr.contains("Please sign in")
-            || stderr.contains("Sign in to confirm your age")
+            || stderr_lower.contains("please sign in")
+            || stderr_lower.contains("sign in to confirm your age")
         {
             return Self::SessionExpired;
         }
 
         // Bot detection
-        if stderr.contains("Sign in to confirm you're not a bot")
-            || stderr.contains("confirm you're not a bot")
-            || stderr.contains("unusual traffic")
+        if stderr_lower.contains("sign in to confirm you're not a bot")
+            || stderr_lower.contains("sign in to confirm you’re not a bot")
+            || stderr_lower.contains("confirm you're not a bot")
+            || stderr_lower.contains("confirm you’re not a bot")
+            || stderr_lower.contains("unusual traffic")
         {
             return Self::BotDetected;
         }
 
         // IP blocked
-        if stderr.contains("blocked") || stderr.contains("IP address") || stderr.contains("access denied") {
+        if stderr_lower.contains("blocked")
+            || stderr_lower.contains("ip address")
+            || stderr_lower.contains("access denied")
+        {
             return Self::IpBlocked;
         }
 
         // Verification required
-        if stderr.contains("verify")
-            || stderr.contains("verification")
-            || stderr.contains("captcha")
-            || stderr.contains("two-factor")
-            || stderr.contains("2FA")
+        if stderr_lower.contains("verify")
+            || stderr_lower.contains("verification")
+            || stderr_lower.contains("captcha")
+            || stderr_lower.contains("two-factor")
+            || stderr_lower.contains("2fa")
         {
             return Self::VerificationRequired;
         }
 
         // Rate limited
-        if stderr.contains("rate limit") || stderr.contains("too many requests") || stderr.contains("429") {
+        if stderr_lower.contains("rate limit")
+            || stderr_lower.contains("too many requests")
+            || stderr_lower.contains("429")
+        {
             return Self::RateLimited;
         }
 
         // File corrupted
         if (stderr_lower.contains("cookie") && stderr_lower.contains("invalid"))
-            || stderr.contains("could not read")
-            || stderr.contains("malformed")
+            || stderr_lower.contains("could not read")
+            || stderr_lower.contains("malformed")
         {
             return Self::FileCorrupted;
         }
@@ -694,21 +707,22 @@ pub async fn validate_cookies() -> Result<(), String> {
 
         match output {
             Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-
-                // Check for actual cookies problems (not proxy-related)
-                if stderr.contains("Cookie") && stderr.contains("invalid") {
-                    log::error!("🔴 Cookies validation failed: {}", stderr);
-                    return Err("Ошибка чтения cookies — файл повреждён или имеет неверный формат".to_string());
+                if output.status.success() {
+                    log::info!("✅ Cookies validation passed using [{}]", proxy_name);
+                    return Ok(());
                 }
 
-                if stderr.contains("login") && stderr.contains("required") {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let reason = CookieInvalidReason::from_ytdlp_error(&stderr);
+
+                // Critical cookie problems: stop immediately (proxy won't help)
+                if reason.is_critical() || matches!(reason, CookieInvalidReason::FileCorrupted) {
                     log::error!("🔴 Cookies validation failed: {}", stderr);
-                    return Err("YouTube требует повторный вход — сессия истекла".to_string());
+                    return Err(reason.description());
                 }
 
                 // Check for proxy-related errors that should trigger fallback
-                if is_proxy_related_error(&stderr) {
+                if reason.is_proxy_related() || is_proxy_related_error(&stderr) {
                     log::warn!(
                         "🔄 Proxy-related error with [{}], trying next proxy: {}",
                         proxy_name,
@@ -718,21 +732,10 @@ pub async fn validate_cookies() -> Result<(), String> {
                     continue;
                 }
 
-                if output.status.success() {
-                    log::info!("✅ Cookies validation passed using [{}]", proxy_name);
-                    return Ok(());
-                }
-
                 // Non-proxy error - might still be worth trying next proxy
                 let stderr_short = stderr.lines().next().unwrap_or("unknown error");
                 log::warn!("❌ Cookies validation failed with [{}]: {}", proxy_name, stderr_short);
                 last_error = Some(stderr_short.to_string());
-
-                // If it's a definitive cookies error, don't try other proxies
-                if stderr.contains("Sign in to confirm") || stderr.contains("not a bot") {
-                    // This might be a proxy issue, try next
-                    continue;
-                }
             }
             Err(e) => {
                 log::error!("Failed to execute yt-dlp with [{}]: {}", proxy_name, e);
@@ -899,12 +902,24 @@ pub async fn update_cookies_from_base64(cookies_b64: &str) -> Result<PathBuf> {
         ));
     }
 
-    // Write to file
-    tokio::fs::write(&cookies_path, cookies_content)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to write cookies file: {}", e))?;
+    // Acquire lock to prevent concurrent writes (race condition protection)
+    let _lock = COOKIES_WRITE_MUTEX.lock().await;
 
-    log::info!("✅ Cookies file updated: {:?}", cookies_path);
+    // Atomic write: write to temp file, then rename
+    // This prevents file corruption if process is killed mid-write
+    let temp_path = format!("{}.tmp.{}", cookies_path.display(), std::process::id());
+
+    tokio::fs::write(&temp_path, &cookies_content)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to write temp cookies file: {}", e))?;
+
+    tokio::fs::rename(&temp_path, &cookies_path).await.map_err(|e| {
+        // Clean up temp file on rename failure
+        let _ = std::fs::remove_file(&temp_path);
+        anyhow::anyhow!("Failed to rename cookies file: {}", e)
+    })?;
+
+    log::info!("✅ Cookies file updated atomically: {:?}", cookies_path);
 
     Ok(cookies_path)
 }
@@ -926,12 +941,24 @@ pub async fn update_cookies_from_content(content: &str) -> Result<PathBuf> {
         ));
     }
 
-    // Write to file
-    tokio::fs::write(&cookies_path, content)
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to write cookies file: {}", e))?;
+    // Acquire lock to prevent concurrent writes (race condition protection)
+    let _lock = COOKIES_WRITE_MUTEX.lock().await;
 
-    log::info!("✅ Cookies file updated from content: {:?}", cookies_path);
+    // Atomic write: write to temp file, then rename
+    // This prevents file corruption if process is killed mid-write
+    let temp_path = format!("{}.tmp.{}", cookies_path.display(), std::process::id());
+
+    tokio::fs::write(&temp_path, content)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to write temp cookies file: {}", e))?;
+
+    tokio::fs::rename(&temp_path, &cookies_path).await.map_err(|e| {
+        // Clean up temp file on rename failure
+        let _ = std::fs::remove_file(&temp_path);
+        anyhow::anyhow!("Failed to rename cookies file: {}", e)
+    })?;
+
+    log::info!("✅ Cookies file updated atomically from content: {:?}", cookies_path);
 
     Ok(cookies_path)
 }
@@ -1169,7 +1196,10 @@ impl CookieManagerClient {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
-            .expect("Failed to build HTTP client");
+            .unwrap_or_else(|e| {
+                log::warn!("Failed to build HTTP client with timeout: {}, using default", e);
+                reqwest::Client::new()
+            });
 
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),

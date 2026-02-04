@@ -22,6 +22,10 @@ use teloxide::prelude::*;
 use teloxide::types::{ChatId, ParseMode};
 use tokio::sync::Mutex;
 
+/// Maximum number of download records to keep in memory for error rate calculation
+/// This prevents unbounded memory growth during high-traffic periods
+const MAX_RECENT_DOWNLOADS: usize = 10_000;
+
 /// Check if PO Token server (bgutil) is available on port 4416
 async fn check_po_token_server() -> bool {
     let client = match reqwest::Client::builder().timeout(StdDuration::from_secs(2)).build() {
@@ -502,6 +506,11 @@ impl AlertManager {
                 timestamp: now,
                 is_success: false,
             });
+        }
+
+        // Trim to max size if needed (keep most recent entries)
+        while recent.len() > MAX_RECENT_DOWNLOADS {
+            recent.pop_front();
         }
 
         // Update last known values

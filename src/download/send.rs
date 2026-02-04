@@ -603,7 +603,11 @@ where
         }
         let request_start = std::time::Instant::now();
         let response = send_fn(bot.clone(), chat_id, download_path.clone(), upload_progress).await;
-        log_bot_api_speed_for_file(&download_path);
+        // Run blocking log parsing in a separate thread to avoid blocking the async runtime
+        let download_path_for_log = download_path.clone();
+        tokio::task::spawn_blocking(move || {
+            log_bot_api_speed_for_file(&download_path_for_log);
+        });
 
         // Detailed logging for local API
         if is_local_api {

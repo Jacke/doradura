@@ -4,6 +4,7 @@
 //! tracking progress, and sending them to Telegram users.
 
 use crate::core::config;
+use crate::core::disk;
 use crate::core::error::AppError;
 use crate::core::error_logger::{self, ErrorType, UserContext};
 use crate::core::metrics;
@@ -12,12 +13,13 @@ use crate::core::truncate_tail_utf8;
 use crate::core::utils::escape_filename;
 use crate::download::cookies::report_and_wait_for_refresh;
 use crate::download::downloader::{
-    burn_subtitles_into_video, generate_file_name_with_ext, parse_progress, split_video_into_parts, ProgressInfo,
+    burn_subtitles_into_video, cleanup_partial_download, generate_file_name_with_ext, parse_progress,
+    split_video_into_parts, ProgressInfo,
 };
 use crate::download::metadata::{
     add_cookies_args, add_cookies_args_with_proxy, add_po_token_only_args, build_telegram_safe_format,
-    find_actual_downloaded_file, get_metadata_from_ytdlp, get_proxy_chain, has_both_video_and_audio,
-    is_proxy_related_error, probe_video_metadata,
+    find_actual_downloaded_file, get_estimated_filesize, get_metadata_from_ytdlp, get_proxy_chain,
+    has_both_video_and_audio, is_livestream, is_proxy_related_error, probe_video_metadata,
 };
 use crate::download::progress::{DownloadStatus, ProgressMessage};
 use crate::download::send::{send_error_with_sticker, send_error_with_sticker_and_message, send_video_with_retry};
@@ -87,11 +89,8 @@ pub async fn download_video_file_with_progress(
             // Clean up any partial download from previous attempt
             if attempt > 0 {
                 let _ = std::fs::remove_file(&download_path_clone);
-                // Also clean up potential .part files and temp files
-                let part_file = format!("{}.part", download_path_clone);
-                let _ = std::fs::remove_file(&part_file);
-                let temp_file = format!("{}.temp.mp4", download_path_clone);
-                let _ = std::fs::remove_file(&temp_file);
+                // Comprehensive cleanup of all temp files created by yt-dlp
+                cleanup_partial_download(&download_path_clone);
             }
 
             let mut args: Vec<&str> = vec![
@@ -144,7 +143,7 @@ pub async fn download_video_file_with_progress(
             args.extend_from_slice(&["--no-check-certificate", &url_str]);
 
             let command_str = format!("{} {}", ytdl_bin, args.join(" "));
-            log::info!("[DEBUG] yt-dlp command for video download: {}", command_str);
+            log::debug!("yt-dlp command for video download: {}", command_str);
 
             let child_result = Command::new(&ytdl_bin)
                 .args(&args)
@@ -164,8 +163,10 @@ pub async fn download_video_file_with_progress(
             let stdout = child.stdout.take();
             let stderr = child.stderr.take();
 
-            let stderr_lines = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-            let stdout_lines = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+            // Use VecDeque for O(1) pop_front instead of O(n) Vec::remove(0)
+            use std::collections::VecDeque;
+            let stderr_lines = Arc::new(std::sync::Mutex::new(VecDeque::<String>::new()));
+            let stdout_lines = Arc::new(std::sync::Mutex::new(VecDeque::<String>::new()));
 
             use std::thread;
             let tx_clone = tx.clone();
@@ -179,9 +180,9 @@ pub async fn download_video_file_with_progress(
                         if let Ok(line_str) = line {
                             log::debug!("yt-dlp stderr: {}", line_str);
                             if let Ok(mut lines) = stderr_lines_clone.lock() {
-                                lines.push(line_str.clone());
+                                lines.push_back(line_str.clone());
                                 if lines.len() > 200 {
-                                    lines.remove(0);
+                                    lines.pop_front();
                                 }
                             }
                             if let Some(progress_info) = parse_progress(&line_str) {
@@ -199,9 +200,9 @@ pub async fn download_video_file_with_progress(
                     if let Ok(line_str) = line {
                         log::debug!("yt-dlp stdout: {}", line_str);
                         if let Ok(mut lines) = stdout_lines_clone.lock() {
-                            lines.push(line_str.clone());
+                            lines.push_back(line_str.clone());
                             if lines.len() > 200 {
-                                lines.remove(0);
+                                lines.pop_front();
                             }
                         }
                         if let Some(progress_info) = parse_progress(&line_str) {
@@ -232,13 +233,13 @@ pub async fn download_video_file_with_progress(
             }
 
             // Download failed - check if we should try next proxy
-            let stderr_text = if let Ok(lines) = stderr_lines.lock() {
-                lines.join("\n")
+            let stderr_text = if let Ok(mut lines) = stderr_lines.lock() {
+                lines.make_contiguous().join("\n")
             } else {
                 String::new()
             };
-            let stdout_text = if let Ok(lines) = stdout_lines.lock() {
-                lines.join("\n")
+            let stdout_text = if let Ok(mut lines) = stdout_lines.lock() {
+                lines.make_contiguous().join("\n")
             } else {
                 String::new()
             };
@@ -278,10 +279,9 @@ pub async fn download_video_file_with_progress(
                 log::warn!("🍪 Cookie error detected, trying PO Token only fallback...");
 
                 // ATTEMPT 2: Try PO Token only (without cookies)
-                // Clean up partial download
+                // Comprehensive cleanup of all partial files
                 let _ = std::fs::remove_file(&download_path_clone);
-                let part_file = format!("{}.part", download_path_clone);
-                let _ = std::fs::remove_file(&part_file);
+                cleanup_partial_download(&download_path_clone);
 
                 let mut po_args: Vec<&str> = vec![
                     "-o",
@@ -366,12 +366,9 @@ pub async fn download_video_file_with_progress(
             if error_type == YtDlpErrorType::PostprocessingError {
                 log::warn!("🔧 Postprocessing error detected, retrying with --fixup never...");
 
-                // Clean up partial/corrupted download
+                // Comprehensive cleanup of all partial/corrupted files
                 let _ = std::fs::remove_file(&download_path_clone);
-                let part_file = format!("{}.part", download_path_clone);
-                let _ = std::fs::remove_file(&part_file);
-                let temp_file = format!("{}.temp.mp4", download_path_clone);
-                let _ = std::fs::remove_file(&temp_file);
+                cleanup_partial_download(&download_path_clone);
 
                 let mut fixup_args: Vec<&str> = vec![
                     "-o",
@@ -536,7 +533,10 @@ pub async fn download_and_send_video(
             .with_label_values(&["mp4", quality])
             .start_timer();
 
-        let result: Result<(), AppError> = async {
+        // Global timeout for entire download operation (10 minutes)
+        let result: Result<(), AppError> = match timeout(
+            config::download::global_timeout(),
+            async {
             // Step 1: Get metadata and show starting status
             let (title, artist) = match get_metadata_from_ytdlp(Some(&bot_clone), Some(chat_id), &url).await {
                 Ok(meta) => {
@@ -660,6 +660,87 @@ pub async fn download_and_send_video(
                     },
                 )
                 .await;
+
+            // Step 1.5: Check disk space before downloading
+            if let Err(e) = disk::check_disk_space_for_download() {
+                log::error!("Disk space check failed: {}", e);
+                send_error_with_sticker_and_message(
+                    &bot_clone,
+                    chat_id,
+                    Some("❌ Сервер перегружен. Попробуй позже."),
+                )
+                .await;
+                let _ = progress_msg
+                    .update(
+                        &bot_clone,
+                        DownloadStatus::Error {
+                            title: display_title.as_ref().to_string(),
+                            error: "Недостаточно места на сервере".to_string(),
+                            file_format: Some("mp4".to_string()),
+                        },
+                    )
+                    .await;
+                return Err(AppError::Download("Insufficient disk space".to_string()));
+            }
+
+            // Step 1.6: Check if URL is a livestream (not supported)
+            if is_livestream(&url).await {
+                log::warn!("🔴 Rejected livestream URL: {}", url);
+                send_error_with_sticker_and_message(
+                    &bot_clone,
+                    chat_id,
+                    Some("❌ Прямые трансляции не поддерживаются"),
+                )
+                .await;
+                let _ = progress_msg
+                    .update(
+                        &bot_clone,
+                        DownloadStatus::Error {
+                            title: display_title.as_ref().to_string(),
+                            error: "Прямые трансляции не поддерживаются".to_string(),
+                            file_format: Some("mp4".to_string()),
+                        },
+                    )
+                    .await;
+                return Err(AppError::Download("Livestreams are not supported".to_string()));
+            }
+
+            // Step 1.7: Pre-check file size before downloading
+            let max_video_size = config::validation::max_video_size_bytes();
+            if let Some(estimated_size) = get_estimated_filesize(&url).await {
+                if estimated_size > max_video_size {
+                    let size_mb = estimated_size as f64 / (1024.0 * 1024.0);
+                    let max_mb = max_video_size as f64 / (1024.0 * 1024.0);
+                    log::warn!(
+                        "🚫 File too large: estimated {:.2} MB > max {:.2} MB",
+                        size_mb,
+                        max_mb
+                    );
+                    send_error_with_sticker_and_message(
+                        &bot_clone,
+                        chat_id,
+                        Some(&format!(
+                            "❌ Видео слишком большое: ~{:.0} МБ (макс. {:.0} МБ)",
+                            size_mb, max_mb
+                        )),
+                    )
+                    .await;
+                    let _ = progress_msg
+                        .update(
+                            &bot_clone,
+                            DownloadStatus::Error {
+                                title: display_title.as_ref().to_string(),
+                                error: format!("Видео слишком большое: ~{:.0} МБ", size_mb),
+                                file_format: Some("mp4".to_string()),
+                            },
+                        )
+                        .await;
+                    return Err(AppError::Validation(format!(
+                        "Video too large: ~{:.2} MB",
+                        size_mb
+                    )));
+                }
+            }
 
             // Добавляем уникальный идентификатор к имени файла для избежания конфликтов
             use std::time::{SystemTime, UNIX_EPOCH};
@@ -1377,7 +1458,13 @@ pub async fn download_and_send_video(
 
             Ok(())
         }
-        .await;
+        ).await {
+            Ok(inner_result) => inner_result,
+            Err(_elapsed) => {
+                log::error!("🚨 Video download timed out after {} seconds", config::download::GLOBAL_TIMEOUT_SECS);
+                Err(AppError::Download("Таймаут загрузки видео (превышено 10 минут)".to_string()))
+            }
+        };
 
         // Record metrics based on result
         match &result {
@@ -1437,7 +1524,14 @@ pub async fn download_and_send_video(
                 Стэн уже знает и скоро обновит!\n\
                 Попробуй позже или другое видео.",
                 )
-            } else if error_str.contains("Sign in to confirm you're not a bot") || error_str.contains("bot detection") {
+            } else if {
+                let lower = error_str.to_lowercase();
+                lower.contains("sign in to confirm you're not a bot")
+                    || lower.contains("sign in to confirm you’re not a bot")
+                    || lower.contains("confirm you're not a bot")
+                    || lower.contains("confirm you’re not a bot")
+                    || lower.contains("bot detection")
+            } {
                 Some(
                     "YouTube заблокировал бота\n\n\
                 Нужно настроить cookies.\n\

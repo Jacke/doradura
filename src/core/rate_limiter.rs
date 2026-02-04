@@ -117,6 +117,69 @@ impl RateLimiter {
         let mut limits = self.limits.lock().await;
         limits.remove(&chat_id);
     }
+
+    /// Removes expired entries from the rate limiter HashMap.
+    ///
+    /// This prevents unbounded memory growth when many users use the bot.
+    /// Should be called periodically (e.g., every 5 minutes).
+    ///
+    /// Returns the number of entries removed.
+    pub async fn cleanup_expired(&self) -> usize {
+        let mut limits = self.limits.lock().await;
+        let now = Instant::now();
+        let initial_len = limits.len();
+        limits.retain(|_, instant| now < *instant);
+        let removed = initial_len - limits.len();
+        if removed > 0 {
+            log::debug!("Rate limiter cleanup: removed {} expired entries, {} remaining", removed, limits.len());
+        }
+        removed
+    }
+
+    /// Returns the current number of tracked users.
+    pub async fn len(&self) -> usize {
+        self.limits.lock().await.len()
+    }
+
+    /// Spawns a background task that periodically cleans up expired entries.
+    ///
+    /// * `interval` - How often to run cleanup (recommended: 5 minutes)
+    pub fn spawn_cleanup_task(self: Arc<Self>, interval: Duration) {
+        tokio::spawn(async move {
+            let mut interval_timer = tokio::time::interval(interval);
+            loop {
+                interval_timer.tick().await;
+                self.cleanup_expired().await;
+            }
+        });
+    }
+
+    /// Spawns a background task with graceful shutdown support.
+    ///
+    /// * `interval` - How often to run cleanup (recommended: 5 minutes)
+    /// * `shutdown_rx` - Receiver for shutdown signal (e.g., from tokio::sync::broadcast)
+    ///
+    /// Returns a JoinHandle that completes when shutdown is received.
+    pub fn spawn_cleanup_task_with_shutdown(
+        self: Arc<Self>,
+        interval: Duration,
+        mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut interval_timer = tokio::time::interval(interval);
+            loop {
+                tokio::select! {
+                    _ = interval_timer.tick() => {
+                        self.cleanup_expired().await;
+                    }
+                    _ = shutdown_rx.recv() => {
+                        log::info!("Rate limiter cleanup task received shutdown signal");
+                        break;
+                    }
+                }
+            }
+        })
+    }
 }
 
 #[cfg(test)]

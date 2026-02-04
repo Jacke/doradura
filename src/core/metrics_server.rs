@@ -41,12 +41,14 @@ pub async fn start_metrics_server(port: u16) -> Result<(), Box<dyn std::error::E
     let app = Router::new()
         .route("/metrics", get(metrics_handler))
         .route("/health", get(health_handler))
+        .route("/ready", get(ready_handler))
         .route("/", get(root_handler))
         .with_state(Arc::new(state));
 
     log::info!("Starting metrics server on http://{}", addr);
-    log::info!("Metrics available at http://{}/metrics", addr);
-    log::info!("Health check available at http://{}/health", addr);
+    log::info!("  /metrics - Prometheus metrics");
+    log::info!("  /health  - Health check (liveness)");
+    log::info!("  /ready   - Readiness check (K8s)");
 
     let listener = TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;
@@ -99,6 +101,32 @@ async fn health_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse
     (StatusCode::OK, axum::Json(health_status))
 }
 
+/// Handler for /ready endpoint (Kubernetes readiness probe)
+///
+/// Returns 200 if the service is ready to accept traffic (more thorough than /health)
+/// Checks: basic availability
+async fn ready_handler(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let uptime = state.start_time.elapsed();
+
+    // Service is ready if it's been running for at least 5 seconds
+    // (allows time for initialization)
+    if uptime.as_secs() < 5 {
+        let status = serde_json::json!({
+            "status": "starting",
+            "uptime_seconds": uptime.as_secs(),
+            "message": "Service is still initializing"
+        });
+        return (StatusCode::SERVICE_UNAVAILABLE, axum::Json(status));
+    }
+
+    let status = serde_json::json!({
+        "status": "ready",
+        "uptime_seconds": uptime.as_secs(),
+    });
+
+    (StatusCode::OK, axum::Json(status))
+}
+
 /// Handler for root endpoint
 ///
 /// Provides basic information about available endpoints
@@ -109,6 +137,7 @@ async fn root_handler() -> impl IntoResponse {
   "endpoints": {
     "/metrics": "Prometheus metrics (text format)",
     "/health": "Health check (JSON)",
+    "/ready": "Readiness check for K8s (JSON)",
     "/": "This information page"
   }
 }"#;

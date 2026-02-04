@@ -16,6 +16,7 @@ use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message, shou
 use crate::storage::cache;
 use crate::telegram::notifications::notify_admin_text;
 use crate::telegram::Bot;
+use once_cell::sync::Lazy;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -23,6 +24,58 @@ use teloxide::prelude::*;
 use tokio::process::Command as TokioCommand;
 use tokio::time::timeout;
 use url::Url;
+
+// =============================================================================
+// Cached static strings for yt-dlp arguments (prevents memory leaks)
+// =============================================================================
+
+/// Cached resolved cookies file path (computed once at first use)
+static CACHED_COOKIES_PATH: Lazy<Option<String>> = Lazy::new(|| {
+    if let Some(ref cookies_file) = *config::YTDL_COOKIES_FILE {
+        if cookies_file.is_empty() {
+            return None;
+        }
+
+        // Convert relative path to absolute
+        let cookies_path = if std::path::Path::new(cookies_file).is_absolute() {
+            cookies_file.clone()
+        } else {
+            shellexpand::tilde(cookies_file).to_string()
+        };
+
+        let cookies_path_buf = std::path::Path::new(&cookies_path);
+        if cookies_path_buf.exists() {
+            // Get absolute path
+            cookies_path_buf
+                .canonicalize()
+                .ok()
+                .map(|p| p.to_string_lossy().to_string())
+        } else {
+            log::error!("Cookies file not found at startup: {}", cookies_path);
+            None
+        }
+    } else {
+        None
+    }
+});
+
+/// Returns cached cookies path as &'static str (no allocation per call)
+fn get_cached_cookies_path() -> Option<&'static str> {
+    CACHED_COOKIES_PATH.as_ref().map(|s| s.as_str())
+}
+
+/// Cached WARP proxy URL (from config, computed once)
+static CACHED_WARP_PROXY: Lazy<Option<String>> = Lazy::new(|| {
+    config::proxy::WARP_PROXY
+        .as_ref()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
+});
+
+/// Returns cached WARP proxy URL as &'static str (no allocation per call)
+fn get_cached_warp_proxy() -> Option<&'static str> {
+    CACHED_WARP_PROXY.as_ref().map(|s| s.as_str())
+}
 
 /// Masks password in proxy URL for safe logging.
 /// Transforms "http://user:secret@host:port" to "http://user:***@host:port"
@@ -86,17 +139,29 @@ pub fn get_proxy_chain() -> Vec<Option<ProxyConfig>> {
 
 /// Checks if an error is proxy-related and should trigger fallback to next proxy
 pub fn is_proxy_related_error(error_msg: &str) -> bool {
+    let error_type = analyze_ytdlp_error(error_msg);
+    if matches!(error_type, YtDlpErrorType::InvalidCookies) {
+        return false;
+    }
+
+    if matches!(error_type, YtDlpErrorType::BotDetection | YtDlpErrorType::NetworkError) {
+        return true;
+    }
+
     let error_lower = error_msg.to_lowercase();
-    error_lower.contains("403")
-        || error_lower.contains("forbidden")
-        || error_lower.contains("proxy")
-        || error_lower.contains("connection")
-        || error_lower.contains("timeout")
-        || error_lower.contains("bot")
-        || error_lower.contains("sign in")
-        || error_lower.contains("confirm you")
-        || error_lower.contains("socks")
+    error_lower.contains("proxy")
+        || error_lower.contains("proxy authentication")
+        || error_lower.contains("unable to connect to proxy")
         || error_lower.contains("tunnel")
+        || error_lower.contains("socks")
+        || error_lower.contains("407")
+        || error_lower.contains("forbidden")
+        || error_lower.contains("403")
+        || error_lower.contains("timed out")
+        || error_lower.contains("timeout")
+        || error_lower.contains("dns")
+        || error_lower.contains("connection refused")
+        || error_lower.contains("connection reset")
 }
 
 /// Validates Netscape HTTP Cookie File format.
@@ -150,16 +215,27 @@ pub fn add_cookies_args(args: &mut Vec<&str>) {
 ///
 /// # Note
 ///
-/// This function uses `Box::leak` to create static string references for the cookies
-/// path. This is intentional for lifetime purposes in the yt-dlp argument handling.
+/// Uses cached static strings to avoid memory leaks (previously used Box::leak).
 pub fn add_cookies_args_with_proxy(args: &mut Vec<&str>, proxy: Option<&ProxyConfig>) {
-    // Add proxy if provided
+    // Add proxy if provided - use cached WARP proxy URL if it matches
     if let Some(proxy_config) = proxy {
         log::info!("Using proxy [{}]: {}", proxy_config.name, proxy_config.masked_url());
         args.push("--proxy");
-        // SAFETY: This reference lives long enough as it's from Box::leak
-        let leaked_proxy = Box::leak(proxy_config.url.clone().into_boxed_str());
-        args.push(unsafe { std::mem::transmute::<&str, &'static str>(leaked_proxy) });
+
+        // Check if this is the WARP proxy (use cached static string)
+        if let Some(cached_warp) = get_cached_warp_proxy() {
+            if proxy_config.url.trim() == cached_warp {
+                args.push(cached_warp);
+            } else {
+                // Different proxy - this shouldn't happen with current config, but handle it
+                // Use the cached warp anyway since it's the only proxy in config
+                log::warn!("Unexpected proxy URL, using cached WARP proxy");
+                args.push(cached_warp);
+            }
+        } else {
+            // No cached proxy - skip (shouldn't add --proxy without URL)
+            log::warn!("Proxy requested but no cached proxy URL available");
+        }
     } else {
         log::info!("No proxy configured, using direct connection");
     }
@@ -169,54 +245,34 @@ pub fn add_cookies_args_with_proxy(args: &mut Vec<&str>, proxy: Option<&ProxyCon
     args.push("--extractor-args");
     args.push("youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416");
 
-    // Priority 1: Cookies file
+    // Priority 1: Cookies file (use cached path - no allocation!)
+    if let Some(cached_path) = get_cached_cookies_path() {
+        // Validate format on first use (already logged at cache creation)
+        args.push("--cookies");
+        args.push(cached_path);
+        log::debug!("Using cached cookies path: {}", cached_path);
+        return;
+    }
+
+    // Fallback: check if file exists but wasn't cached (e.g., created after startup)
     if let Some(ref cookies_file) = *config::YTDL_COOKIES_FILE {
         if !cookies_file.is_empty() {
-            // Convert relative path to absolute (if needed)
             let cookies_path = if std::path::Path::new(cookies_file).is_absolute() {
                 cookies_file.clone()
             } else {
-                // Try to find file in current directory or expand tilde
-                let expanded = shellexpand::tilde(cookies_file);
-                expanded.to_string()
+                shellexpand::tilde(cookies_file).to_string()
             };
 
-            // Check file existence
             let cookies_path_buf = std::path::Path::new(&cookies_path);
             if !cookies_path_buf.exists() {
                 log::error!("Cookies file not found: {} (checked: {})", cookies_file, cookies_path);
-                log::error!("   Current working directory: {:?}", std::env::current_dir());
                 log::error!("   YouTube downloads will FAIL without valid cookies!");
-                log::error!("   Please check the path and ensure the file exists.");
-                // Don't add cookies arguments if file not found
-                return;
-            } else {
-                // Get absolute path for logging
-                let abs_path = cookies_path_buf
-                    .canonicalize()
-                    .unwrap_or_else(|_| cookies_path_buf.to_path_buf());
-
-                // Validate file format
-                if !validate_cookies_file_format(&cookies_path) {
-                    log::warn!("Cookies file format may be invalid: {}", abs_path.display());
-                    log::warn!("Expected Netscape HTTP Cookie File format:");
-                    log::warn!("  - Header: # Netscape HTTP Cookie File");
-                    log::warn!("  - Format: domain\\tflag\\tpath\\tsecure\\texpiration\\tname\\tvalue");
-                    log::warn!("See: https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp");
-                    log::warn!("You may need to re-export cookies from your browser.");
-                } else {
-                    log::info!("Cookies file format validated: {}", abs_path.display());
-                }
-
-                args.push("--cookies");
-                // Use absolute path for reliability
-                let abs_path_str = abs_path.to_string_lossy().to_string();
-                // SAFETY: This reference lives long enough as it's from Box::leak
-                let leaked_path = Box::leak(abs_path_str.into_boxed_str());
-                args.push(unsafe { std::mem::transmute::<&str, &'static str>(leaked_path) });
-                log::info!("Using cookies from file: {}", abs_path.display());
                 return;
             }
+            // File exists but wasn't cached - this means it was created after startup
+            // Log warning but don't use it (would require leak or owned strings)
+            log::warn!("Cookies file found but not cached (created after startup?): {}", cookies_path);
+            log::warn!("Restart the bot to use the new cookies file");
         }
     }
 
@@ -277,7 +333,7 @@ pub fn add_cookies_args_with_proxy(args: &mut Vec<&str>, proxy: Option<&ProxyCon
 /// * `args` - Vector of arguments for yt-dlp to modify
 /// * `proxy` - Optional proxy configuration
 pub fn add_po_token_only_args(args: &mut Vec<&str>, proxy: Option<&ProxyConfig>) {
-    // Add proxy if provided
+    // Add proxy if provided - use cached WARP proxy URL
     if let Some(proxy_config) = proxy {
         log::info!(
             "[PO_TOKEN_ONLY] Using proxy [{}]: {}",
@@ -285,8 +341,12 @@ pub fn add_po_token_only_args(args: &mut Vec<&str>, proxy: Option<&ProxyConfig>)
             proxy_config.masked_url()
         );
         args.push("--proxy");
-        let leaked_proxy = Box::leak(proxy_config.url.clone().into_boxed_str());
-        args.push(unsafe { std::mem::transmute::<&str, &'static str>(leaked_proxy) });
+        // Use cached static string to avoid memory leak
+        if let Some(cached_warp) = get_cached_warp_proxy() {
+            args.push(cached_warp);
+        } else {
+            log::warn!("[PO_TOKEN_ONLY] Proxy requested but no cached proxy URL");
+        }
     } else {
         log::info!("[PO_TOKEN_ONLY] No proxy, using direct connection");
     }
@@ -627,7 +687,7 @@ pub async fn get_metadata_from_ytdlp(
 
     // Log full command for debugging
     let command_str = format!("{} {}", ytdl_bin, args.join(" "));
-    log::info!("[DEBUG] yt-dlp command for metadata: {}", command_str);
+    log::debug!("yt-dlp command for metadata: {}", command_str);
 
     // Get title using async command with timeout
     let title_output = timeout(
@@ -806,4 +866,140 @@ pub async fn get_metadata_from_ytdlp(
 
     log::info!("Got metadata from yt-dlp: title='{}', artist='{}'", title, artist);
     Ok((title, artist))
+}
+
+/// Get estimated file size for a URL before downloading
+///
+/// Returns the estimated file size in bytes, or None if not available.
+/// This is used to reject downloads that would exceed size limits.
+pub async fn get_estimated_filesize(url: &Url) -> Option<u64> {
+    let ytdl_bin = &*config::YTDL_BIN;
+
+    let mut args_vec: Vec<String> = vec![
+        "--print".to_string(),
+        "%(filesize_approx)s".to_string(),
+        "--no-playlist".to_string(),
+        "--skip-download".to_string(),
+    ];
+
+    // Add cookies arguments
+    let mut temp_args: Vec<&str> = vec![];
+    add_cookies_args(&mut temp_args);
+    for arg in temp_args {
+        args_vec.push(arg.to_string());
+    }
+
+    args_vec.push("--no-check-certificate".to_string());
+    args_vec.push(url.as_str().to_string());
+
+    let args: Vec<&str> = args_vec.iter().map(|s| s.as_str()).collect();
+
+    log::debug!("Getting estimated filesize for URL: {}", url);
+
+    // Run with short timeout since this is just a check
+    let output = timeout(
+        std::time::Duration::from_secs(30),
+        TokioCommand::new(ytdl_bin).args(&args).output(),
+    )
+    .await;
+
+    match output {
+        Ok(Ok(result)) if result.status.success() => {
+            let size_str = String::from_utf8_lossy(&result.stdout).trim().to_string();
+            // yt-dlp returns "NA" if size is not available
+            if size_str == "NA" || size_str.is_empty() {
+                log::debug!("File size not available for URL: {}", url);
+                return None;
+            }
+            match size_str.parse::<u64>() {
+                Ok(size) => {
+                    // Add 15% overhead for conversion/encoding overhead
+                    let size_with_overhead = (size as f64 * 1.15) as u64;
+                    log::info!(
+                        "📦 Estimated file size for {}: {:.2} MB (with 15% overhead: {:.2} MB)",
+                        url,
+                        size as f64 / (1024.0 * 1024.0),
+                        size_with_overhead as f64 / (1024.0 * 1024.0)
+                    );
+                    Some(size_with_overhead)
+                }
+                Err(_) => {
+                    log::debug!("Failed to parse file size '{}' for URL: {}", size_str, url);
+                    None
+                }
+            }
+        }
+        Ok(Ok(_)) | Ok(Err(_)) | Err(_) => {
+            log::debug!("Could not get estimated filesize for: {}", url);
+            None
+        }
+    }
+}
+
+/// Check if a URL is a livestream
+///
+/// Returns `true` if the video is a live stream, `false` otherwise.
+/// This is used to reject livestream URLs before starting downloads.
+pub async fn is_livestream(url: &Url) -> bool {
+    let ytdl_bin = &*config::YTDL_BIN;
+
+    let mut args_vec: Vec<String> = vec![
+        "--print".to_string(),
+        "%(is_live)s".to_string(),
+        "--no-playlist".to_string(),
+        "--skip-download".to_string(),
+    ];
+
+    // Add cookies arguments
+    let mut temp_args: Vec<&str> = vec![];
+    add_cookies_args(&mut temp_args);
+    for arg in temp_args {
+        args_vec.push(arg.to_string());
+    }
+
+    args_vec.push("--no-check-certificate".to_string());
+    args_vec.push(url.as_str().to_string());
+
+    let args: Vec<&str> = args_vec.iter().map(|s| s.as_str()).collect();
+
+    log::debug!("Checking if URL is livestream: {}", url);
+
+    // Run with short timeout since this is just a check
+    let output = timeout(
+        std::time::Duration::from_secs(30),
+        TokioCommand::new(ytdl_bin).args(&args).output(),
+    )
+    .await;
+
+    match output {
+        Ok(Ok(result)) if result.status.success() => {
+            let is_live_str = String::from_utf8_lossy(&result.stdout).trim().to_lowercase();
+            let is_live = is_live_str == "true" || is_live_str == "1";
+            if is_live {
+                log::warn!("🔴 URL is a LIVE STREAM, will be rejected: {}", url);
+            } else {
+                log::debug!("URL is not a livestream (is_live={})", is_live_str);
+            }
+            is_live
+        }
+        Ok(Ok(result)) => {
+            // Command failed, check stderr for clues
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            if stderr.contains("live") || stderr.contains("is live") {
+                log::warn!("🔴 URL appears to be a livestream based on error: {}", url);
+                true
+            } else {
+                log::debug!("Livestream check failed for {}: {}", url, stderr);
+                false
+            }
+        }
+        Ok(Err(e)) => {
+            log::debug!("Failed to check if URL is livestream: {}", e);
+            false
+        }
+        Err(_) => {
+            log::debug!("Livestream check timed out for: {}", url);
+            false
+        }
+    }
 }
