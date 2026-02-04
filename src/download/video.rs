@@ -1503,7 +1503,12 @@ pub async fn download_and_send_video(
         }
 
         if let Err(e) = result {
-            log::error!("An error occurred during video download for chat {}: {:?}", chat_id, e);
+            log::error!(
+                "An error occurred during video download for chat {} ({}): {:?}",
+                chat_id,
+                url,
+                e
+            );
 
             // Определяем тип ошибки и формируем полезное сообщение
             let error_str = e.to_string();
