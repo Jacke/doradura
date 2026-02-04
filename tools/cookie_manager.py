@@ -2421,17 +2421,12 @@ async def quick_health_loop():
                 inc_metric("quick_health_checks_failed")
                 log.warning("Quick health check failed: %s", reason)
 
-                # NOTE: Disabled session_expired alert because browser health check
+                # NOTE: Disabled session_expired handling because browser health check
                 # is unreliable - headless browser often loses session even when
-                # cookie FILE is valid. yt-dlp validation is more accurate.
-                # See: https://github.com/user/repo/issues/XXX
+                # cookie FILE is valid. yt-dlp validation is the authoritative source.
+                # We no longer set needs_relogin or send alerts based on this check.
                 if reason == "session_expired":
-                    status["needs_relogin"] = True
-                    # Alert disabled - browser session != cookie file validity
-                    # await send_telegram_alert(
-                    #     f"Quick health check: session expired!\n\nReason: {reason}"
-                    # )
-                    log.info("Quick health check session_expired (alert disabled, yt-dlp validation is authoritative)")
+                    log.debug("Quick health check session_expired (ignored, yt-dlp validation is authoritative)")
 
         except Exception as e:
             log.error("Quick health check error: %s", e)
