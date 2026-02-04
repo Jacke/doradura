@@ -37,7 +37,7 @@
 ## Конфигурация
 
 Сервис настроен со следующими параметрами:
-- **API ID**: YOUR_API_ID
+- **API ID**: YOUR_API_ID (получить на https://my.telegram.org)
 - **API Hash**: YOUR_API_HASH
 - **HTTP Port**: 8081
 - **Mode**: --local

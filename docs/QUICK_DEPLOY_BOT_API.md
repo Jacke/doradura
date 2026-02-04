@@ -38,6 +38,8 @@ TELEGRAM_API_HASH=YOUR_API_HASH
 TELEGRAM_HTTP_PORT=8081
 ```
 
+> **Получить API_ID и API_HASH:** https://my.telegram.org/apps
+
 ## Шаг 5: Deploy
 
 Railway автоматически начнет деплой. Следите за прогрессом в разделе **Deployments**.
