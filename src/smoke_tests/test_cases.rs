@@ -28,6 +28,7 @@ use tokio::time::timeout;
 /// Uses:
 /// - PO Token provider (for bot detection bypass)
 /// - Proxy (if provided)
+/// - Node.js runtime for n-challenge solving
 /// - NO cookies
 fn add_smoke_test_args(args: &mut Vec<String>, proxy: Option<&ProxyConfig>) {
     // Add proxy if provided
@@ -47,6 +48,10 @@ fn add_smoke_test_args(args: &mut Vec<String>, proxy: Option<&ProxyConfig>) {
     // bgutil HTTP server runs on port 4416 by default
     args.push("--extractor-args".to_string());
     args.push("youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416".to_string());
+
+    // Use Node.js for YouTube n-challenge solving
+    args.push("--js-runtimes".to_string());
+    args.push("node".to_string());
 
     // NO cookies - smoke tests should not use personal accounts
     // This avoids risking account bans from hourly health checks
