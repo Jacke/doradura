@@ -71,6 +71,19 @@ grammers-mtsender = "0.5"
 tempfile = "3.8"
 teloxide_tests = { git = "https://github.com/LasterAlex/teloxide_tests", branch = "master" }
 serial_test = "3.0"
+criterion = { version = "0.5", features = ["async_tokio"] }
+fake = { version = "2.9", features = ["derive"] }
+parking_lot = "0.12"
+sysinfo = "0.31"
+
+[[test]]
+name = "load_test"
+path = "tests/load_test.rs"
+# harness = true (default) to use standard test runner
+
+[[bench]]
+name = "queue_benchmark"
+harness = false
 
 [build-dependencies]
 cc = "1.1.6"
