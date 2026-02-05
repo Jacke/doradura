@@ -62,7 +62,7 @@ async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<Value, AppE
             "--retries",
             "2",
             "--extractor-args",
-            "youtube:player_client=web,web_safari",
+            "youtube:player_client=android_vr,web_safari",
             "--js-runtimes",
             "deno",
         ];
