@@ -1,7 +1,9 @@
 use crate::core::config;
 use crate::core::error::AppError;
 use crate::core::escape_markdown;
-use crate::download::metadata::{add_cookies_args_with_proxy, get_proxy_chain, is_proxy_related_error};
+use crate::download::metadata::{
+    add_cookies_args_with_proxy, add_no_cookies_args, get_proxy_chain, is_proxy_related_error,
+};
 use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message, YtDlpErrorType};
 use crate::storage::cache;
 use crate::storage::db::DbPool;
@@ -62,11 +64,11 @@ async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<Value, AppE
             "--extractor-args",
             "youtube:player_client=web,web_safari",
             "--js-runtimes",
-            "node",
+            "deno,node",
         ];
 
-        // Add proxy and cookies
-        add_cookies_args_with_proxy(&mut args, proxy_option.as_ref());
+        // v5.0 FALLBACK CHAIN: First try WITHOUT cookies (new yt-dlp 2026+ mode)
+        add_no_cookies_args(&mut args, proxy_option.as_ref());
         args.push(url.as_str());
 
         let command_str = format!("{} {}", ytdl_bin, args.join(" "));
@@ -113,13 +115,63 @@ async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<Value, AppE
 
         // Логируем детальную информацию об ошибке
         log::error!(
-            "❌ Preview metadata failed with [{}], error type: {:?}",
+            "❌ Preview metadata (no-cookies) failed with [{}], error type: {:?}",
             proxy_name,
             error_type
         );
         log::error!("yt-dlp stderr: {}", stderr);
 
-        // Check if proxy-related error that should trigger fallback
+        // v5.0 FALLBACK: If no-cookies failed with bot detection, try WITH cookies + PO token
+        if matches!(
+            error_type,
+            YtDlpErrorType::InvalidCookies | YtDlpErrorType::BotDetection | YtDlpErrorType::NetworkError
+        ) {
+            log::warn!("🍪 No-cookies mode failed, trying WITH cookies + PO Token...");
+
+            let mut cookies_args: Vec<&str> = vec![
+                "--dump-json",
+                "--no-playlist",
+                "--socket-timeout",
+                "30",
+                "--retries",
+                "2",
+                "--extractor-args",
+                "youtube:player_client=web,web_safari",
+                "--js-runtimes",
+                "deno,node",
+            ];
+
+            // Add cookies + PO Token (full authentication)
+            add_cookies_args_with_proxy(&mut cookies_args, proxy_option.as_ref());
+            cookies_args.push(url.as_str());
+
+            log::info!("🔑 [WITH_COOKIES] Attempting preview metadata WITH cookies + PO Token...");
+
+            if let Ok(Ok(cookies_output)) = timeout(
+                config::download::ytdlp_timeout(),
+                TokioCommand::new(ytdl_bin).args(&cookies_args).output(),
+            )
+            .await
+            {
+                if cookies_output.status.success() {
+                    let json_str = String::from_utf8_lossy(&cookies_output.stdout);
+                    if let Ok(value) = serde_json::from_str(&json_str) {
+                        log::info!("✅ [WITH_COOKIES] Preview metadata succeeded WITH cookies!");
+                        return Ok(value);
+                    }
+                } else {
+                    let cookies_stderr = String::from_utf8_lossy(&cookies_output.stderr);
+                    log::warn!(
+                        "❌ [WITH_COOKIES] Failed: {}",
+                        &cookies_stderr[..std::cmp::min(200, cookies_stderr.len())]
+                    );
+                }
+            }
+
+            log::warn!("Both no-cookies and with-cookies modes failed for preview metadata");
+        }
+
+        // Check if proxy-related error that should trigger trying next proxy
         let should_try_next = is_proxy_related_error(&stderr)
             || matches!(error_type, YtDlpErrorType::BotDetection | YtDlpErrorType::NetworkError);
 
