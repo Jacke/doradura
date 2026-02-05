@@ -1,10 +1,8 @@
 # Build stage for Rust application
-# Railway rebuild trigger: 2026-02-05T12:15Z
-FROM rust:1.84-alpine AS rust-builder
+# Railway rebuild trigger: 2026-01-31T22:35Z
+FROM rust:1.85-alpine AS rust-builder
 
-# Force cache invalidation
-ARG CACHE_BUST=2026-02-05-v2
-RUN echo "Cache bust: $CACHE_BUST" && apk add --no-cache \
+RUN apk add --no-cache \
   musl-dev \
   pkgconfig \
   openssl-dev \
@@ -22,8 +20,6 @@ COPY src ./src
 COPY locales ./locales
 COPY migrations ./migrations
 
-# Limit parallel jobs to reduce memory usage (OOM prevention)
-ENV CARGO_BUILD_JOBS=2
 RUN cargo build --release && \
   echo "Binary built successfully:" && \
   ls -lh /app/target/release/doradura && \
