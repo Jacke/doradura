@@ -135,7 +135,7 @@ pub async fn download_video_file_with_progress(
 
             // Use Deno JS runtime for YouTube challenge solving (better than Node.js for yt-dlp 2026+)
             args.push("--js-runtimes");
-            args.push("deno,node");
+            args.push("deno");
 
             args.extend_from_slice(&["--no-check-certificate", &url_str]);
 
@@ -307,7 +307,7 @@ pub async fn download_video_file_with_progress(
                 cookies_args.push("--extractor-args");
                 cookies_args.push("youtube:player_client=web,web_safari");
                 cookies_args.push("--js-runtimes");
-                cookies_args.push("deno,node");
+                cookies_args.push("deno");
                 cookies_args.push("--no-check-certificate");
                 cookies_args.push(&url_str);
 
@@ -393,7 +393,7 @@ pub async fn download_video_file_with_progress(
                 fixup_args.push("--extractor-args");
                 fixup_args.push("youtube:player_client=web,web_safari");
                 fixup_args.push("--js-runtimes");
-                fixup_args.push("deno,node");
+                fixup_args.push("deno");
                 fixup_args.push("--no-check-certificate");
                 fixup_args.push(&url_str);
 
