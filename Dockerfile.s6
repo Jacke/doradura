@@ -1,6 +1,6 @@
 # Build stage for Rust application
 # Railway rebuild trigger: 2026-02-05T12:15Z
-FROM rust:1.85-alpine AS rust-builder
+FROM rust:1.84-alpine AS rust-builder
 
 # Force cache invalidation
 ARG CACHE_BUST=2026-02-05-v2
