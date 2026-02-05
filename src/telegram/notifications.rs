@@ -144,6 +144,83 @@ pub async fn notify_admin_task_failed(
     }
 }
 
+/// Sends a notification to admins that the bot has started/restarted.
+///
+/// # Arguments
+///
+/// * `bot` - Bot instance used to send messages
+/// * `bot_username` - The bot's username
+pub async fn notify_admin_startup(bot: &Bot, bot_username: Option<&str>) {
+    let admin_chat_ids = admin_chat_ids();
+    if admin_chat_ids.is_empty() {
+        log::warn!("ADMIN_IDS/ADMIN_USER_ID not configured; startup notification skipped");
+        return;
+    }
+
+    // Get commit info from environment variable (set by Docker build or CI)
+    let commit_info = std::env::var("GIT_COMMIT")
+        .or_else(|_| std::env::var("RAILWAY_GIT_COMMIT_SHA"))
+        .map(|sha| {
+            // Shorten to 7 characters like git does
+            if sha.len() > 7 {
+                sha[..7].to_string()
+            } else {
+                sha
+            }
+        })
+        .unwrap_or_else(|_| "unknown".to_string());
+
+    // Get branch info if available
+    let branch_info = std::env::var("GIT_BRANCH")
+        .or_else(|_| std::env::var("RAILWAY_GIT_BRANCH"))
+        .unwrap_or_else(|_| "main".to_string());
+
+    let bot_name = bot_username.unwrap_or("doradura");
+    let version = env!("CARGO_PKG_VERSION");
+
+    let message = format!(
+        "🚀 *Bot Restarted*\n\n\
+        🤖 Bot: @{}\n\
+        📦 Version: {}\n\
+        🔖 Commit: `{}`\n\
+        🌿 Branch: {}\n\
+        ⏰ Time: {}",
+        bot_name,
+        version,
+        commit_info,
+        branch_info,
+        chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+    );
+
+    for chat_id in admin_chat_ids {
+        if let Err(e) = bot
+            .send_message(chat_id, &message)
+            .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+            .await
+        {
+            // Fallback to plain text if markdown fails
+            let plain_message = format!(
+                "🚀 Bot Restarted\n\n\
+                Bot: @{}\n\
+                Version: {}\n\
+                Commit: {}\n\
+                Branch: {}\n\
+                Time: {}",
+                bot_name,
+                version,
+                commit_info,
+                branch_info,
+                chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+            );
+            if let Err(e2) = bot.send_message(chat_id, &plain_message).await {
+                log::error!("Failed to send startup notification: {} / {}", e, e2);
+            }
+        }
+    }
+
+    log::info!("Admin notified about bot startup (commit: {})", commit_info);
+}
+
 /// Sends a notification to admins about a new user registration.
 ///
 /// # Arguments

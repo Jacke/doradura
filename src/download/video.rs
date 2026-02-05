@@ -17,7 +17,7 @@ use crate::download::downloader::{
     split_video_into_parts, ProgressInfo,
 };
 use crate::download::metadata::{
-    add_cookies_args, add_cookies_args_with_proxy, add_po_token_only_args, build_telegram_safe_format,
+    add_cookies_args, add_cookies_args_with_proxy, add_no_cookies_args, build_telegram_safe_format,
     find_actual_downloaded_file, get_estimated_filesize, get_metadata_from_ytdlp, get_proxy_chain,
     has_both_video_and_audio, is_livestream, is_proxy_related_error, probe_video_metadata,
 };
@@ -128,17 +128,14 @@ pub async fn download_video_file_with_progress(
                 "Merger:-movflags +faststart",
             ];
 
-            // Add proxy and cookies for this attempt
-            add_cookies_args_with_proxy(&mut args, proxy_option.as_ref());
+            // v5.0 FALLBACK CHAIN: First try WITHOUT cookies (new yt-dlp 2026+ mode)
+            // yt-dlp 2026.02.04+ automatically uses android_vr + web_safari clients
+            // that don't require cookies or PO tokens for most videos
+            add_no_cookies_args(&mut args, proxy_option.as_ref());
 
-            // Use web client with PO Token support (bgutil plugin provides tokens automatically)
-            // NOTE: android_sdkless removed - it now requires PO Token and may conflict
-            args.push("--extractor-args");
-            args.push("youtube:player_client=web,web_safari");
-
-            // Use Node.js for YouTube n-challenge solving and BotGuard token generation
+            // Use Deno JS runtime for YouTube challenge solving (better than Node.js for yt-dlp 2026+)
             args.push("--js-runtimes");
-            args.push("node");
+            args.push("deno,node");
 
             args.extend_from_slice(&["--no-check-certificate", &url_str]);
 
@@ -268,22 +265,21 @@ pub async fn download_video_file_with_progress(
                 continue;
             }
 
-            // UNKILLABLE COOKIES v4.0: Multi-layer fallback strategy
-            // If InvalidCookies or BotDetection:
-            // 1. First try PO Token ONLY (no cookies) - works for 80% of public videos
-            // 2. If that fails, try cookie refresh + retry
+            // v5.0 FALLBACK CHAIN: No cookies failed, now try WITH cookies + PO Token
+            // If the first attempt (without cookies) fails with bot detection or network error,
+            // try again with full authentication (cookies + PO Token)
             if matches!(
                 error_type,
-                YtDlpErrorType::InvalidCookies | YtDlpErrorType::BotDetection
+                YtDlpErrorType::InvalidCookies | YtDlpErrorType::BotDetection | YtDlpErrorType::NetworkError
             ) {
-                log::warn!("🍪 Cookie error detected, trying PO Token only fallback...");
+                log::warn!("🍪 No-cookies mode failed, trying WITH cookies + PO Token...");
 
-                // ATTEMPT 2: Try PO Token only (without cookies)
+                // ATTEMPT 2: Try WITH cookies + PO Token
                 // Comprehensive cleanup of all partial files
                 let _ = std::fs::remove_file(&download_path_clone);
                 cleanup_partial_download(&download_path_clone);
 
-                let mut po_args: Vec<&str> = vec![
+                let mut cookies_args: Vec<&str> = vec![
                     "-o",
                     &download_path_clone,
                     "--newline",
@@ -299,66 +295,65 @@ pub async fn download_video_file_with_progress(
                     "10",
                     "--socket-timeout",
                     "30",
+                    "--http-chunk-size",
+                    "2097152",
                     "--postprocessor-args",
                     "Merger:-movflags +faststart",
                 ];
 
-                // Add PO Token ONLY (no cookies!)
-                add_po_token_only_args(&mut po_args, proxy_option.as_ref());
+                // Add cookies + PO Token (full authentication)
+                add_cookies_args_with_proxy(&mut cookies_args, proxy_option.as_ref());
 
-                po_args.push("--extractor-args");
-                po_args.push("youtube:player_client=web,web_safari");
-                po_args.push("--js-runtimes");
-                po_args.push("node");
-                po_args.push("--no-check-certificate");
-                po_args.push(&url_str);
+                cookies_args.push("--extractor-args");
+                cookies_args.push("youtube:player_client=web,web_safari");
+                cookies_args.push("--js-runtimes");
+                cookies_args.push("deno,node");
+                cookies_args.push("--no-check-certificate");
+                cookies_args.push(&url_str);
 
-                log::info!("🔑 [PO_TOKEN_ONLY] Attempting video download without cookies...");
+                log::info!("🔑 [WITH_COOKIES] Attempting video download WITH cookies + PO Token...");
 
-                let po_child = Command::new(&ytdl_bin)
-                    .args(&po_args)
+                let cookies_child = Command::new(&ytdl_bin)
+                    .args(&cookies_args)
                     .stdout(Stdio::piped())
                     .stderr(Stdio::piped())
                     .spawn();
 
-                if let Ok(child) = po_child {
+                if let Ok(child) = cookies_child {
                     // Simple wait without progress tracking for fallback
                     if let Ok(output) = child.wait_with_output() {
                         if output.status.success() {
-                            log::info!("✅ [PO_TOKEN_ONLY] Video download succeeded WITHOUT cookies!");
+                            log::info!("✅ [WITH_COOKIES] Video download succeeded WITH cookies!");
                             return Ok(());
                         } else {
-                            let po_stderr = String::from_utf8_lossy(&output.stderr);
+                            let cookies_stderr = String::from_utf8_lossy(&output.stderr);
                             log::warn!(
-                                "❌ [PO_TOKEN_ONLY] Failed: {}",
-                                &po_stderr[..std::cmp::min(200, po_stderr.len())]
+                                "❌ [WITH_COOKIES] Failed: {}",
+                                &cookies_stderr[..std::cmp::min(200, cookies_stderr.len())]
                             );
+
+                            // Check if this is a cookie-specific error that needs refresh
+                            let cookies_error_type = analyze_ytdlp_error(&cookies_stderr);
+                            if matches!(cookies_error_type, YtDlpErrorType::InvalidCookies) {
+                                log::warn!("🍪 Cookies are invalid, attempting cookie refresh...");
+
+                                let url_for_report = url_str.clone();
+                                let should_retry = runtime_handle.block_on(async {
+                                    report_and_wait_for_refresh("InvalidCookies", &url_for_report).await
+                                });
+
+                                if should_retry {
+                                    log::info!("🔄 Cookie refresh successful, will retry download");
+                                    last_error = Some(AppError::Download(error_msg.clone()));
+                                    std::thread::sleep(std::time::Duration::from_secs(3));
+                                    continue;
+                                }
+                            }
                         }
                     }
                 }
 
-                // PO Token only failed, try cookie refresh
-                log::warn!("🍪 PO Token only failed, attempting cookie refresh via cookie manager...");
-
-                let error_type_str = match error_type {
-                    YtDlpErrorType::InvalidCookies => "InvalidCookies",
-                    YtDlpErrorType::BotDetection => "BotDetection",
-                    _ => "Unknown",
-                };
-
-                // Call cookie manager to refresh (blocking call from sync context)
-                let url_for_report = url_str.clone();
-                let should_retry = runtime_handle
-                    .block_on(async { report_and_wait_for_refresh(error_type_str, &url_for_report).await });
-
-                if should_retry {
-                    log::info!("🔄 Cookie refresh successful, will retry download with fresh cookies");
-                    last_error = Some(AppError::Download(error_msg.clone()));
-                    std::thread::sleep(std::time::Duration::from_secs(3));
-                    continue;
-                } else {
-                    log::warn!("Cookie refresh failed or not available, proceeding with error");
-                }
+                log::warn!("Both no-cookies and with-cookies modes failed, proceeding with error");
             }
 
             // If PostprocessingError (ffmpeg FixupM3u8 failed):
@@ -398,7 +393,7 @@ pub async fn download_video_file_with_progress(
                 fixup_args.push("--extractor-args");
                 fixup_args.push("youtube:player_client=web,web_safari");
                 fixup_args.push("--js-runtimes");
-                fixup_args.push("node");
+                fixup_args.push("deno,node");
                 fixup_args.push("--no-check-certificate");
                 fixup_args.push(&url_str);
 

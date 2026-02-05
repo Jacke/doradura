@@ -326,6 +326,40 @@ pub fn add_cookies_args_with_proxy(args: &mut Vec<&str>, proxy: Option<&ProxyCon
     }
 }
 
+/// Adds NO cookies and NO PO Token arguments (v5.0 modern yt-dlp mode).
+///
+/// This is the PRIMARY mode for yt-dlp 2026.02.04+ which automatically uses
+/// `android_vr` + `web_safari` clients that don't require cookies or PO tokens.
+/// This mode works for the vast majority of public videos without any auth.
+///
+/// # Arguments
+///
+/// * `args` - Vector of arguments for yt-dlp to modify
+/// * `proxy` - Optional proxy configuration
+pub fn add_no_cookies_args(args: &mut Vec<&str>, proxy: Option<&ProxyConfig>) {
+    // Add proxy if provided - use cached WARP proxy URL
+    if let Some(proxy_config) = proxy {
+        log::info!(
+            "[NO_COOKIES] Using proxy [{}]: {}",
+            proxy_config.name,
+            proxy_config.masked_url()
+        );
+        args.push("--proxy");
+        // Use cached static string to avoid memory leak
+        if let Some(cached_warp) = get_cached_warp_proxy() {
+            args.push(cached_warp);
+        } else {
+            log::warn!("[NO_COOKIES] Proxy requested but no cached proxy URL");
+        }
+    } else {
+        log::info!("[NO_COOKIES] No proxy, using direct connection");
+    }
+
+    // NO PO Token, NO cookies - let yt-dlp 2026+ use its default client selection
+    // which automatically chooses android_vr + web_safari clients
+    log::info!("[NO_COOKIES] Running WITHOUT cookies and WITHOUT PO Token (modern yt-dlp mode)");
+}
+
 /// Adds ONLY PO Token arguments WITHOUT cookies (v4.0 fallback mode).
 ///
 /// This is used when cookies fail but we want to try downloading anyway.

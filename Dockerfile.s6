@@ -74,6 +74,10 @@ RUN apk add --no-cache \
 # Node.js 22+ is already installed (required for yt-dlp YouTube n-challenge solving)
 RUN node --version && echo "Node.js available for yt-dlp --js-runtimes node"
 
+# Install Deno (recommended JS runtime for yt-dlp 2026+, better than Node.js for YouTube)
+RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh && \
+  deno --version && echo "Deno available for yt-dlp --js-runtimes deno"
+
 # Install npm (for bgutil PO Token provider)
 RUN apk add --no-cache npm
 
@@ -252,14 +256,17 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/type && \
 #!/bin/sh
 echo "[bgutil-pot-server] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)"
 # Use HTTP proxy for Node.js (converts to SOCKS5 on gost server)
+# bgutil reads WARP_PROXY directly, so we must unset it and use HTTP_PROXY instead
 if [ -n "$WARP_PROXY" ]; then
     # Extract host from WARP_PROXY (e.g., socks5://89.124.69.143:1081 -> 89.124.69.143)
     PROXY_HOST=$(echo "$WARP_PROXY" | sed 's|.*://||' | cut -d: -f1)
     HTTP_PROXY_URL="http://${PROXY_HOST}:1082"
-    echo "[bgutil-pot-server] Using HTTP proxy: $HTTP_PROXY_URL"
+    echo "[bgutil-pot-server] Using HTTP proxy: $HTTP_PROXY_URL (unset WARP_PROXY)"
     export ALL_PROXY="$HTTP_PROXY_URL"
     export HTTPS_PROXY="$HTTP_PROXY_URL"
     export HTTP_PROXY="$HTTP_PROXY_URL"
+    # Unset WARP_PROXY so bgutil doesn't try to use SOCKS5 directly
+    unset WARP_PROXY
 fi
 export HOME=/home/botuser
 export TOKEN_TTL=6
