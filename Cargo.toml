@@ -57,7 +57,7 @@ lazy_static = "1.4"
 clap = { version = "4.5", features = ["derive", "cargo"] }
 tonic = { version = "0.10", features = ["transport"] }
 prost = "0.12"
-bytes = "1.5"
+bytes = "1.11"
 http = "0.2"
 
 # MTProto support via grammers (experimental)
