@@ -22,6 +22,8 @@ COPY src ./src
 COPY locales ./locales
 COPY migrations ./migrations
 
+# Limit parallel jobs to reduce memory usage (OOM prevention)
+ENV CARGO_BUILD_JOBS=2
 RUN cargo build --release && \
   echo "Binary built successfully:" && \
   ls -lh /app/target/release/doradura && \
