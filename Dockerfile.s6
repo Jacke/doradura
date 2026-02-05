@@ -74,9 +74,9 @@ RUN apk add --no-cache \
 # Node.js 22+ is already installed (required for yt-dlp YouTube n-challenge solving)
 RUN node --version && echo "Node.js available for yt-dlp --js-runtimes node"
 
-# Install Deno (recommended JS runtime for yt-dlp 2026+, better than Node.js for YouTube)
-RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh && \
-  /usr/local/bin/deno --version && echo "Deno available for yt-dlp --js-runtimes deno"
+# Install Deno from Alpine edge/testing (musl-compatible build)
+RUN apk add --no-cache deno --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing && \
+  deno --version && echo "Deno available for yt-dlp --js-runtimes deno"
 
 # Install npm (for bgutil PO Token provider)
 RUN apk add --no-cache npm
