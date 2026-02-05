@@ -244,18 +244,24 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/telegram-bot-api/type && \
     chmod +x /etc/s6-overlay/s6-rc.d/telegram-bot-api/run
 
 # === bgutil-pot-server longrun service ===
+# Note: WARP_PROXY env var is passed through to route traffic through proxy
 RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/type && \
     touch /etc/s6-overlay/s6-rc.d/bgutil-pot-server/dependencies.d/init-data && \
-    printf '%s\n' \
-    '#!/command/execlineb -P' \
-    'foreground { /bin/sh -c "echo \"[bgutil-pot-server] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\"" }' \
-    's6-setuidgid botuser' \
-    's6-env HOME=/home/botuser' \
-    's6-env TOKEN_TTL=6' \
-    'fdmove -c 2 1' \
-    'node /opt/bgutil/server/build/main.js' \
-    > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/run && \
-    chmod +x /etc/s6-overlay/s6-rc.d/bgutil-pot-server/run
+    cat > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/run << 'BGUTIL_RUN'
+#!/bin/sh
+echo "[bgutil-pot-server] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)"
+# Export proxy settings from WARP_PROXY if set
+if [ -n "$WARP_PROXY" ]; then
+    echo "[bgutil-pot-server] Using proxy: $WARP_PROXY"
+    export ALL_PROXY="$WARP_PROXY"
+    export HTTPS_PROXY="$WARP_PROXY"
+    export HTTP_PROXY="$WARP_PROXY"
+fi
+export HOME=/home/botuser
+export TOKEN_TTL=6
+exec s6-setuidgid botuser node /opt/bgutil/server/build/main.js 2>&1
+BGUTIL_RUN
+RUN chmod +x /etc/s6-overlay/s6-rc.d/bgutil-pot-server/run
 
 # Create wait script for Bot API
 RUN cat > /etc/s6-overlay/scripts/wait-for-bot-api << 'WAIT_SCRIPT'

@@ -1672,6 +1672,12 @@ class PersistentBrowserManager:
             "(KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36"
         )
 
+        # Use WARP proxy for browser to match yt-dlp IP (prevents bot detection)
+        warp_proxy = os.environ.get("WARP_PROXY", "")
+        if warp_proxy:
+            log.info("Browser using proxy: %s", warp_proxy.split("@")[-1] if "@" in warp_proxy else warp_proxy)
+            opts.add_argument(f"--proxy-server={warp_proxy}")
+
         home = os.environ.get("HOME", "/tmp")
         local_dir = os.path.join(home, ".local", "share", "undetected_chromedriver")
         os.makedirs(local_dir, exist_ok=True)
@@ -2065,6 +2071,13 @@ def _make_login_chrome_options(profile_dir: str) -> uc.ChromeOptions:
     opts.add_argument("--disable-extensions")
     opts.add_argument("--start-maximized")
     opts.add_argument("--window-size=1920,1080")
+
+    # Use WARP proxy for login browser to match yt-dlp IP
+    warp_proxy = os.environ.get("WARP_PROXY", "")
+    if warp_proxy:
+        log.info("Login browser using proxy: %s", warp_proxy.split("@")[-1] if "@" in warp_proxy else warp_proxy)
+        opts.add_argument(f"--proxy-server={warp_proxy}")
+
     return opts
 
 
