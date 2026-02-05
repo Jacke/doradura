@@ -589,6 +589,12 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
     // Set up bot commands for all languages
     setup_all_language_commands(&bot).await?;
 
+    // Notify admin about bot startup/restart
+    {
+        use doradura::telegram::notifications::notify_admin_startup;
+        notify_admin_startup(&bot, bot_username).await;
+    }
+
     // Create database connection pool
     let db_pool = Arc::new(
         create_pool(&config::DATABASE_PATH).map_err(|e| anyhow::anyhow!("Failed to create database pool: {}", e))?,
