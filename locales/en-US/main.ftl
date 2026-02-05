@@ -110,6 +110,8 @@ commands =
     .info_failed = ❌ Failed to get file info:\n{$error}
     .video_too_long = Video is too long
     .task_added = ✅ Task added to queue\! I'll send the file soon\\.
+    .task_added_position = ✅ Task added to queue\!\n\n📊 Your position: *\#{$position}* of {$total}\n\nI'll send the file soon\\.
+    .queue_upgrade_hint = \n\n💡 *High demand\!* Want to skip the queue?\n⭐ Premium/VIP = priority → /plan
     .link_expired = Link expired, send it again
     .wait_seconds = Wait {$seconds} seconds
     .wait = Wait a bit

@@ -175,7 +175,53 @@ async fn start_download_from_preview(
         download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
     }
 
+    // Send queue position notification
+    send_queue_position_message(bot, chat_id, &plan, &download_queue, &db_pool).await;
+
     Ok(())
+}
+
+/// Sends a queue position notification to the user after a task is added.
+///
+/// Shows the user's position in the queue and suggests upgrading if:
+/// - Queue size > 5 and user has free plan
+async fn send_queue_position_message(
+    bot: &Bot,
+    chat_id: ChatId,
+    plan: &str,
+    download_queue: &Arc<DownloadQueue>,
+    db_pool: &Arc<DbPool>,
+) {
+    let queue_size = download_queue.size().await;
+    let position = download_queue.get_queue_position(chat_id).await;
+    let lang = i18n::user_lang_from_pool(db_pool, chat_id.0);
+
+    let message = if queue_size > 0 {
+        // Show position in queue
+        let mut args = FluentArgs::new();
+        args.set("position", position.unwrap_or(queue_size) as i64);
+        args.set("total", queue_size as i64);
+
+        let mut msg = i18n::t_args(&lang, "commands.task_added_position", &args);
+
+        // If queue > 5 and user is on free plan, suggest upgrade
+        if queue_size > 5 && plan == "free" {
+            msg.push_str(&i18n::t(&lang, "commands.queue_upgrade_hint"));
+        }
+
+        msg
+    } else {
+        // Queue is empty (task is being processed immediately)
+        i18n::t(&lang, "commands.task_added")
+    };
+
+    if let Err(e) = bot
+        .send_message(chat_id, message)
+        .parse_mode(ParseMode::MarkdownV2)
+        .await
+    {
+        log::warn!("Failed to send queue position message: {:?}", e);
+    }
 }
 
 /// Shows the main settings menu for the download mode.
@@ -1883,6 +1929,10 @@ pub async fn handle_menu_callback(
                                             "Added 2 tasks to queue for mp4+mp3: MP4 and MP3 for chat {}",
                                             chat_id.0
                                         );
+
+                                        // Send queue position notification
+                                        send_queue_position_message(&bot, chat_id, &plan, &download_queue, &db_pool)
+                                            .await;
                                     } else {
                                         // Regular handling for a single format
                                         let video_quality = if format == "mp4" {
@@ -1921,6 +1971,10 @@ pub async fn handle_menu_callback(
                                             &plan,
                                         );
                                         download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
+
+                                        // Send queue position notification
+                                        send_queue_position_message(&bot, chat_id, &plan, &download_queue, &db_pool)
+                                            .await;
                                     }
                                 }
                                 Err(e) => {
