@@ -244,18 +244,22 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/telegram-bot-api/type && \
     chmod +x /etc/s6-overlay/s6-rc.d/telegram-bot-api/run
 
 # === bgutil-pot-server longrun service ===
-# Note: WARP_PROXY env var is passed through to route traffic through proxy
+# Note: bgutil uses HTTP proxy (port 1082) - Node.js doesn't support SOCKS5 via env vars
+# HTTP proxy on gost server forwards to SOCKS5 WARP
 RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/type && \
     touch /etc/s6-overlay/s6-rc.d/bgutil-pot-server/dependencies.d/init-data && \
     cat > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/run << 'BGUTIL_RUN'
 #!/bin/sh
 echo "[bgutil-pot-server] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)"
-# Export proxy settings from WARP_PROXY if set
+# Use HTTP proxy for Node.js (converts to SOCKS5 on gost server)
 if [ -n "$WARP_PROXY" ]; then
-    echo "[bgutil-pot-server] Using proxy: $WARP_PROXY"
-    export ALL_PROXY="$WARP_PROXY"
-    export HTTPS_PROXY="$WARP_PROXY"
-    export HTTP_PROXY="$WARP_PROXY"
+    # Extract host from WARP_PROXY (e.g., socks5://89.124.69.143:1081 -> 89.124.69.143)
+    PROXY_HOST=$(echo "$WARP_PROXY" | sed 's|.*://||' | cut -d: -f1)
+    HTTP_PROXY_URL="http://${PROXY_HOST}:1082"
+    echo "[bgutil-pot-server] Using HTTP proxy: $HTTP_PROXY_URL"
+    export ALL_PROXY="$HTTP_PROXY_URL"
+    export HTTPS_PROXY="$HTTP_PROXY_URL"
+    export HTTP_PROXY="$HTTP_PROXY_URL"
 fi
 export HOME=/home/botuser
 export TOKEN_TTL=6
