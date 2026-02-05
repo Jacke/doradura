@@ -2968,6 +2968,22 @@ pub async fn handle_browser_callback(
                     }
                 }
                 Err(e) => {
+                    // Request failed (likely timeout), but cookies might have been exported
+                    // Check status to verify
+                    if let Ok(status) = cookie_manager_request("GET", "/api/status").await {
+                        let cookie_count = status.get("cookie_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                        if cookie_count > 0 {
+                            // Cookies were exported successfully despite timeout
+                            bot.edit_message_text(
+                                chat_id,
+                                message_id,
+                                format!("✅ Login complete! Exported {} cookies.\n(Response was slow but operation succeeded)", cookie_count),
+                            )
+                            .await?;
+                            return Ok(());
+                        }
+                    }
+                    // If status check also failed or no cookies, show error
                     bot.edit_message_text(chat_id, message_id, format!("❌ Failed to export cookies: {}", e))
                         .await?;
                 }
