@@ -64,7 +64,7 @@ async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<Value, AppE
             "--extractor-args",
             "youtube:player_client=web,web_safari",
             "--js-runtimes",
-            "deno,node",
+            "deno",
         ];
 
         // v5.0 FALLBACK CHAIN: First try WITHOUT cookies (new yt-dlp 2026+ mode)
@@ -138,7 +138,7 @@ async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<Value, AppE
                 "--extractor-args",
                 "youtube:player_client=web,web_safari",
                 "--js-runtimes",
-                "deno,node",
+                "deno",
             ];
 
             // Add cookies + PO Token (full authentication)
