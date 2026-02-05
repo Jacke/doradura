@@ -133,6 +133,10 @@ pub async fn download_video_file_with_progress(
             // that don't require cookies or PO tokens for most videos
             add_no_cookies_args(&mut args, proxy_option.as_ref());
 
+            // Use android_vr client for no-cookies mode (doesn't require auth)
+            args.push("--extractor-args");
+            args.push("youtube:player_client=android_vr,web_safari");
+
             // Use Deno JS runtime for YouTube challenge solving (better than Node.js for yt-dlp 2026+)
             args.push("--js-runtimes");
             args.push("deno");
