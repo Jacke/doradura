@@ -2,7 +2,9 @@
 # Railway rebuild trigger: 2026-02-05T12:15Z
 FROM rust:1.85-alpine AS rust-builder
 
-RUN apk add --no-cache \
+# Force cache invalidation
+ARG CACHE_BUST=2026-02-05-v2
+RUN echo "Cache bust: $CACHE_BUST" && apk add --no-cache \
   musl-dev \
   pkgconfig \
   openssl-dev \
