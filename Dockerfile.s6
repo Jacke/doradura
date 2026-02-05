@@ -76,7 +76,7 @@ RUN node --version && echo "Node.js available for yt-dlp --js-runtimes node"
 
 # Install Deno (recommended JS runtime for yt-dlp 2026+, better than Node.js for YouTube)
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh && \
-  deno --version && echo "Deno available for yt-dlp --js-runtimes deno"
+  /usr/local/bin/deno --version && echo "Deno available for yt-dlp --js-runtimes deno"
 
 # Install npm (for bgutil PO Token provider)
 RUN apk add --no-cache npm
