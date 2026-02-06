@@ -135,7 +135,7 @@ pub async fn download_video_file_with_progress(
 
             // Use android_vr client for no-cookies mode (doesn't require auth)
             args.push("--extractor-args");
-            args.push("youtube:player_client=android_vr,web_safari");
+            args.push("youtube:player_client=android_vr,web,web_safari");
 
             // Use Deno JS runtime for YouTube challenge solving (better than Node.js for yt-dlp 2026+)
             args.push("--js-runtimes");
