@@ -689,7 +689,7 @@ pub async fn validate_cookies() -> Result<(), String> {
             .arg("--js-runtimes")
             .arg("deno")
             .arg("--impersonate")
-            .arg("chrome124,android")
+            .arg("Chrome-131:Android-14")
             .arg("--print")
             .arg("%(id)s %(title)s")
             .arg(test_url);
@@ -822,7 +822,7 @@ pub async fn validate_cookies_detailed() -> CookieValidationResult {
             .arg("--js-runtimes")
             .arg("deno")
             .arg("--impersonate")
-            .arg("chrome124,android")
+            .arg("Chrome-131:Android-14")
             .arg("--print")
             .arg("%(id)s %(title)s")
             .arg(test_url);

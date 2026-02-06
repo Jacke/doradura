@@ -719,7 +719,7 @@ pub async fn get_metadata_from_ytdlp(
 
     // Impersonate browser TLS/HTTP fingerprint
     args_vec.push("--impersonate".to_string());
-    args_vec.push("chrome124,android".to_string());
+    args_vec.push("Chrome-131:Android-14".to_string());
 
     args_vec.push("--no-check-certificate".to_string());
     args_vec.push(url.as_str().to_string());
@@ -834,7 +834,7 @@ pub async fn get_metadata_from_ytdlp(
     artist_args_vec.push("--js-runtimes".to_string());
     artist_args_vec.push("deno".to_string());
     artist_args_vec.push("--impersonate".to_string());
-    artist_args_vec.push("chrome124,android".to_string());
+    artist_args_vec.push("Chrome-131:Android-14".to_string());
 
     artist_args_vec.push("--no-check-certificate".to_string());
     artist_args_vec.push(url.as_str().to_string());
@@ -877,7 +877,7 @@ pub async fn get_metadata_from_ytdlp(
         uploader_args_vec.push("--js-runtimes".to_string());
         uploader_args_vec.push("deno".to_string());
         uploader_args_vec.push("--impersonate".to_string());
-        uploader_args_vec.push("chrome124,android".to_string());
+        uploader_args_vec.push("Chrome-131:Android-14".to_string());
 
         uploader_args_vec.push("--no-check-certificate".to_string());
         uploader_args_vec.push(url.as_str().to_string());

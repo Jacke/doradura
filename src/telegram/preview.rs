@@ -66,7 +66,7 @@ async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<Value, AppE
             "--js-runtimes",
             "deno",
             "--impersonate",
-            "chrome124,android",
+            "Chrome-131:Android-14",
         ];
 
         // v5.0 FALLBACK CHAIN: First try WITHOUT cookies (new yt-dlp 2026+ mode)
@@ -703,7 +703,7 @@ async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<VideoFo
             list_formats_args.push("--js-runtimes");
             list_formats_args.push("deno");
             list_formats_args.push("--impersonate");
-            list_formats_args.push("chrome124,android");
+            list_formats_args.push("Chrome-131:Android-14");
             list_formats_args.push(url.as_str());
 
             let command_str = format!("{} {}", ytdl_bin, list_formats_args.join(" "));
