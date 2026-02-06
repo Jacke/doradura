@@ -55,7 +55,7 @@ fn add_smoke_test_args(args: &mut Vec<String>, proxy: Option<&ProxyConfig>) {
 
     // Impersonate browser TLS/HTTP fingerprint to avoid bot detection
     args.push("--impersonate".to_string());
-    args.push("chrome124,android".to_string());
+    args.push("Chrome-131:Android-14".to_string());
 
     // NO cookies - smoke tests should not use personal accounts
     // This avoids risking account bans from hourly health checks

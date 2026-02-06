@@ -299,7 +299,7 @@ async fn run_cli_download(
             "--js-runtimes".to_string(),
             "deno".to_string(),
             "--impersonate".to_string(),
-            "chrome124,android".to_string(),
+            "Chrome-131:Android-14".to_string(),
         ]);
 
         args.push(url.clone());

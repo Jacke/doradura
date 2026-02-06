@@ -1,0 +1,23 @@
+# Minimal test image - same base as Dockerfile.s6 runtime stage
+FROM alpine:3.21
+
+# Same packages as production
+RUN apk add --no-cache \
+    python3 py3-pip py3-cryptography \
+    ffmpeg \
+    curl wget
+
+# Install Deno (same as production)
+RUN apk add deno --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing
+
+# Install yt-dlp nightly (same as production)
+RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
+    chmod a+rx /usr/local/bin/yt-dlp
+
+# Install curl_cffi for --impersonate support
+RUN pip3 install --break-system-packages curl_cffi
+
+COPY scripts/test_ytdlp_docker.sh /test.sh
+RUN chmod +x /test.sh
+
+CMD ["/bin/sh", "/test.sh"]

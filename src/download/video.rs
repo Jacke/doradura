@@ -145,7 +145,7 @@ pub async fn download_video_file_with_progress(
 
             // Impersonate browser TLS/HTTP fingerprint
             args.push("--impersonate");
-            args.push("chrome124,android");
+            args.push("Chrome-131:Android-14");
 
             args.extend_from_slice(&["--no-check-certificate", &url_str]);
 
