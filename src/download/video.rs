@@ -112,18 +112,20 @@ pub async fn download_video_file_with_progress(
                 "--http-chunk-size",
                 "2097152",
                 "--sleep-requests",
-                "1",
-                "--sleep-interval",
                 "2",
+                "--sleep-interval",
+                "3",
                 "--max-sleep-interval",
-                "5",
+                "10",
+                "--limit-rate",
+                "5M",
                 // Exponential backoff for 403/rate-limit errors
                 "--retry-sleep",
                 "http:exp=1:30", // 1s -> 2s -> 4s -> ... up to 30s
                 "--retry-sleep",
                 "fragment:exp=1:30", // same for fragment errors
                 "--retries",
-                "5", // retry main request up to 5 times
+                "15", // retry main request up to 15 times
                 "--postprocessor-args",
                 "Merger:-movflags +faststart",
             ];
@@ -133,13 +135,17 @@ pub async fn download_video_file_with_progress(
             // that don't require cookies or PO tokens for most videos
             add_no_cookies_args(&mut args, proxy_option.as_ref());
 
-            // Use android_vr client for no-cookies mode (doesn't require auth)
+            // Use android + web_music clients (minimal BotGuard/attestation checks with WARP)
             args.push("--extractor-args");
-            args.push("youtube:player_client=android_vr,web,web_safari");
+            args.push("youtube:player_client=android,web_music;formats=missing_pot");
 
-            // Use Deno JS runtime for YouTube challenge solving (better than Node.js for yt-dlp 2026+)
+            // Use Deno JS runtime for YouTube challenge solving (yt-dlp 2026+)
             args.push("--js-runtimes");
             args.push("deno");
+
+            // Impersonate browser TLS/HTTP fingerprint
+            args.push("--impersonate");
+            args.push("chrome124,android");
 
             args.extend_from_slice(&["--no-check-certificate", &url_str]);
 

@@ -683,12 +683,13 @@ pub async fn validate_cookies() -> Result<(), String> {
 
         cmd.arg("--cookies")
             .arg(&cookies_path)
-            // v5.0: Use android_vr + web_safari clients (works with or without cookies)
+            // Use web_music client (best for premium formats with cookies)
             .arg("--extractor-args")
-            .arg("youtube:player_client=android_vr,web,web_safari")
-            // Use Deno JS runtime for YouTube challenge solving (yt-dlp 2026+)
+            .arg("youtube:player_client=web_music;formats=missing_pot")
             .arg("--js-runtimes")
             .arg("deno")
+            .arg("--impersonate")
+            .arg("chrome124,android")
             .arg("--print")
             .arg("%(id)s %(title)s")
             .arg(test_url);
@@ -815,12 +816,13 @@ pub async fn validate_cookies_detailed() -> CookieValidationResult {
 
         cmd.arg("--cookies")
             .arg(&cookies_path)
-            // v5.0: Use android_vr + web_safari clients (works with or without cookies)
+            // Use web_music client (best for premium formats with cookies)
             .arg("--extractor-args")
-            .arg("youtube:player_client=android_vr,web,web_safari")
-            // Use Deno JS runtime for YouTube challenge solving (yt-dlp 2026+)
+            .arg("youtube:player_client=web_music;formats=missing_pot")
             .arg("--js-runtimes")
             .arg("deno")
+            .arg("--impersonate")
+            .arg("chrome124,android")
             .arg("--print")
             .arg("%(id)s %(title)s")
             .arg(test_url);

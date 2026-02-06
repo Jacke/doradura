@@ -44,13 +44,18 @@ fn add_smoke_test_args(args: &mut Vec<String>, proxy: Option<&ProxyConfig>) {
         log::info!("[smoke_test] No proxy, using direct connection");
     }
 
-    // v5.0: Use android_vr + web_safari clients (don't require cookies or PO tokens)
+    // Use android + web_music clients (minimal BotGuard/attestation checks with WARP)
+    // formats=missing_pot skips formats requiring PO Token (avoids 403 on fragments)
     args.push("--extractor-args".to_string());
-    args.push("youtube:player_client=android_vr,web,web_safari".to_string());
+    args.push("youtube:player_client=android,web_music;formats=missing_pot".to_string());
 
     // Use Deno JS runtime for YouTube challenge solving (yt-dlp 2026+)
     args.push("--js-runtimes".to_string());
     args.push("deno".to_string());
+
+    // Impersonate browser TLS/HTTP fingerprint to avoid bot detection
+    args.push("--impersonate".to_string());
+    args.push("chrome124,android".to_string());
 
     // NO cookies - smoke tests should not use personal accounts
     // This avoids risking account bans from hourly health checks
