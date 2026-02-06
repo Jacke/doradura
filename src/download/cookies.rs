@@ -683,11 +683,12 @@ pub async fn validate_cookies() -> Result<(), String> {
 
         cmd.arg("--cookies")
             .arg(&cookies_path)
-            // PO Token provider for YouTube bot detection bypass
+            // v5.0: Use android_vr + web_safari clients (works with or without cookies)
             .arg("--extractor-args")
-            .arg("youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416")
+            .arg("youtube:player_client=android_vr,web_safari")
+            // Use Deno JS runtime for YouTube challenge solving (yt-dlp 2026+)
             .arg("--js-runtimes")
-            .arg("node")
+            .arg("deno")
             .arg("--print")
             .arg("%(id)s %(title)s")
             .arg(test_url);
@@ -814,10 +815,12 @@ pub async fn validate_cookies_detailed() -> CookieValidationResult {
 
         cmd.arg("--cookies")
             .arg(&cookies_path)
+            // v5.0: Use android_vr + web_safari clients (works with or without cookies)
             .arg("--extractor-args")
-            .arg("youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416")
+            .arg("youtube:player_client=android_vr,web_safari")
+            // Use Deno JS runtime for YouTube challenge solving (yt-dlp 2026+)
             .arg("--js-runtimes")
-            .arg("node")
+            .arg("deno")
             .arg("--print")
             .arg("%(id)s %(title)s")
             .arg(test_url);
