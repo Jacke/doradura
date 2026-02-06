@@ -297,7 +297,7 @@ async fn run_cli_download(
             "--extractor-args".to_string(),
             "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416".to_string(),
             "--js-runtimes".to_string(),
-            "node".to_string(),
+            "deno".to_string(),
         ]);
 
         args.push(url.clone());

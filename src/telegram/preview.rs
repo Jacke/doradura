@@ -62,7 +62,7 @@ async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<Value, AppE
             "--retries",
             "2",
             "--extractor-args",
-            "youtube:player_client=android_vr,web_safari",
+            "youtube:player_client=android_vr,web,web_safari",
             "--js-runtimes",
             "deno",
         ];
@@ -699,7 +699,7 @@ async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<VideoFo
             list_formats_args.push("--extractor-args");
             list_formats_args.push("youtube:player_client=web,web_safari");
             list_formats_args.push("--js-runtimes");
-            list_formats_args.push("node");
+            list_formats_args.push("deno");
             list_formats_args.push(url.as_str());
 
             let command_str = format!("{} {}", ytdl_bin, list_formats_args.join(" "));

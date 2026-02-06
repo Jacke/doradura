@@ -713,9 +713,9 @@ pub async fn get_metadata_from_ytdlp(
     // YouTube changed policy: now Android requires PO Token
     // Use default web client which works with cookies
 
-    // Use Node.js for YouTube n-challenge solving
+    // Use Deno for YouTube n-challenge solving (yt-dlp 2026+)
     args_vec.push("--js-runtimes".to_string());
-    args_vec.push("node".to_string());
+    args_vec.push("deno".to_string());
 
     args_vec.push("--no-check-certificate".to_string());
     args_vec.push(url.as_str().to_string());
@@ -825,9 +825,9 @@ pub async fn get_metadata_from_ytdlp(
         artist_args_vec.push(arg.to_string());
     }
 
-    // Use Node.js for YouTube n-challenge solving
+    // Use Deno for YouTube n-challenge solving (yt-dlp 2026+)
     artist_args_vec.push("--js-runtimes".to_string());
-    artist_args_vec.push("node".to_string());
+    artist_args_vec.push("deno".to_string());
 
     artist_args_vec.push("--no-check-certificate".to_string());
     artist_args_vec.push(url.as_str().to_string());
@@ -865,9 +865,9 @@ pub async fn get_metadata_from_ytdlp(
             uploader_args_vec.push(arg.to_string());
         }
 
-        // Use Node.js for YouTube n-challenge solving
+        // Use Deno for YouTube n-challenge solving (yt-dlp 2026+)
         uploader_args_vec.push("--js-runtimes".to_string());
-        uploader_args_vec.push("node".to_string());
+        uploader_args_vec.push("deno".to_string());
 
         uploader_args_vec.push("--no-check-certificate".to_string());
         uploader_args_vec.push(url.as_str().to_string());

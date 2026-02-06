@@ -46,7 +46,7 @@ fn add_smoke_test_args(args: &mut Vec<String>, proxy: Option<&ProxyConfig>) {
 
     // v5.0: Use android_vr + web_safari clients (don't require cookies or PO tokens)
     args.push("--extractor-args".to_string());
-    args.push("youtube:player_client=android_vr,web_safari".to_string());
+    args.push("youtube:player_client=android_vr,web,web_safari".to_string());
 
     // Use Deno JS runtime for YouTube challenge solving (yt-dlp 2026+)
     args.push("--js-runtimes".to_string());
