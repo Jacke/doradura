@@ -292,12 +292,14 @@ async fn run_cli_download(
             }
         }
 
-        // Add PO Token provider (bgutil HTTP server)
+        // Use android + web_music clients (minimal BotGuard checks with WARP)
         args.extend_from_slice(&[
             "--extractor-args".to_string(),
-            "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416".to_string(),
+            "youtube:player_client=android,web_music;formats=missing_pot".to_string(),
             "--js-runtimes".to_string(),
             "deno".to_string(),
+            "--impersonate".to_string(),
+            "chrome124,android".to_string(),
         ]);
 
         args.push(url.clone());

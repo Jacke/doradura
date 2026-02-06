@@ -709,13 +709,17 @@ pub async fn get_metadata_from_ytdlp(
         args_vec.push(arg.to_string());
     }
 
-    // Do NOT use android client!
-    // YouTube changed policy: now Android requires PO Token
-    // Use default web client which works with cookies
+    // Use android + web_music clients (minimal BotGuard checks)
+    args_vec.push("--extractor-args".to_string());
+    args_vec.push("youtube:player_client=android,web_music;formats=missing_pot".to_string());
 
     // Use Deno for YouTube n-challenge solving (yt-dlp 2026+)
     args_vec.push("--js-runtimes".to_string());
     args_vec.push("deno".to_string());
+
+    // Impersonate browser TLS/HTTP fingerprint
+    args_vec.push("--impersonate".to_string());
+    args_vec.push("chrome124,android".to_string());
 
     args_vec.push("--no-check-certificate".to_string());
     args_vec.push(url.as_str().to_string());
@@ -825,9 +829,12 @@ pub async fn get_metadata_from_ytdlp(
         artist_args_vec.push(arg.to_string());
     }
 
-    // Use Deno for YouTube n-challenge solving (yt-dlp 2026+)
+    artist_args_vec.push("--extractor-args".to_string());
+    artist_args_vec.push("youtube:player_client=android,web_music;formats=missing_pot".to_string());
     artist_args_vec.push("--js-runtimes".to_string());
     artist_args_vec.push("deno".to_string());
+    artist_args_vec.push("--impersonate".to_string());
+    artist_args_vec.push("chrome124,android".to_string());
 
     artist_args_vec.push("--no-check-certificate".to_string());
     artist_args_vec.push(url.as_str().to_string());
@@ -865,9 +872,12 @@ pub async fn get_metadata_from_ytdlp(
             uploader_args_vec.push(arg.to_string());
         }
 
-        // Use Deno for YouTube n-challenge solving (yt-dlp 2026+)
+        uploader_args_vec.push("--extractor-args".to_string());
+        uploader_args_vec.push("youtube:player_client=android,web_music;formats=missing_pot".to_string());
         uploader_args_vec.push("--js-runtimes".to_string());
         uploader_args_vec.push("deno".to_string());
+        uploader_args_vec.push("--impersonate".to_string());
+        uploader_args_vec.push("chrome124,android".to_string());
 
         uploader_args_vec.push("--no-check-certificate".to_string());
         uploader_args_vec.push(url.as_str().to_string());

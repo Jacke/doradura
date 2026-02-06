@@ -62,9 +62,11 @@ async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<Value, AppE
             "--retries",
             "2",
             "--extractor-args",
-            "youtube:player_client=android_vr,web,web_safari",
+            "youtube:player_client=android,web_music;formats=missing_pot",
             "--js-runtimes",
             "deno",
+            "--impersonate",
+            "chrome124,android",
         ];
 
         // v5.0 FALLBACK CHAIN: First try WITHOUT cookies (new yt-dlp 2026+ mode)
@@ -697,9 +699,11 @@ async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<VideoFo
             add_cookies_args_with_proxy(&mut list_formats_args, proxy_option.as_ref());
 
             list_formats_args.push("--extractor-args");
-            list_formats_args.push("youtube:player_client=web,web_safari");
+            list_formats_args.push("youtube:player_client=android,web_music;formats=missing_pot");
             list_formats_args.push("--js-runtimes");
             list_formats_args.push("deno");
+            list_formats_args.push("--impersonate");
+            list_formats_args.push("chrome124,android");
             list_formats_args.push(url.as_str());
 
             let command_str = format!("{} {}", ytdl_bin, list_formats_args.join(" "));
