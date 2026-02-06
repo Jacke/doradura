@@ -276,7 +276,17 @@ pub async fn download_video_file_with_progress(
                 error_type,
                 YtDlpErrorType::InvalidCookies | YtDlpErrorType::BotDetection | YtDlpErrorType::NetworkError
             ) {
-                log::warn!("🍪 No-cookies mode failed, trying WITH cookies + PO Token...");
+                log::warn!(
+                    "🍪 [TIER1→TIER2] No-cookies mode failed (error={:?}), trying WITH cookies + PO Token...",
+                    error_type
+                );
+                log::warn!(
+                    "🍪 [TIER1_STDERR] {}",
+                    &stderr_text[..std::cmp::min(1000, stderr_text.len())]
+                );
+
+                // Log cookie file state before attempting with cookies
+                crate::download::cookies::log_cookie_file_diagnostics("VIDEO_TIER2_BEFORE");
 
                 // ATTEMPT 2: Try WITH cookies + PO Token
                 // Comprehensive cleanup of all partial files
@@ -331,15 +341,24 @@ pub async fn download_video_file_with_progress(
                             return Ok(());
                         } else {
                             let cookies_stderr = String::from_utf8_lossy(&output.stderr);
-                            log::warn!(
-                                "❌ [WITH_COOKIES] Failed: {}",
-                                &cookies_stderr[..std::cmp::min(200, cookies_stderr.len())]
+                            let cookies_error_type = analyze_ytdlp_error(&cookies_stderr);
+
+                            log::error!(
+                                "❌ [TIER2_FAILED] Video with-cookies failed: error={:?} exit_code={:?}",
+                                cookies_error_type,
+                                output.status.code(),
+                            );
+                            log::error!(
+                                "❌ [TIER2_STDERR] {}",
+                                &cookies_stderr[..std::cmp::min(1000, cookies_stderr.len())]
                             );
 
+                            // Log cookie file state after Tier 2 failure
+                            crate::download::cookies::log_cookie_file_diagnostics("VIDEO_TIER2_AFTER_FAIL");
+
                             // Check if this is a cookie-specific error that needs refresh
-                            let cookies_error_type = analyze_ytdlp_error(&cookies_stderr);
                             if matches!(cookies_error_type, YtDlpErrorType::InvalidCookies) {
-                                log::warn!("🍪 Cookies are invalid, attempting cookie refresh...");
+                                log::warn!("🍪 [COOKIE_INVALID] Cookies classified as invalid, attempting refresh...");
 
                                 let url_for_report = url_str.clone();
                                 let should_retry = runtime_handle.block_on(async {
@@ -352,12 +371,19 @@ pub async fn download_video_file_with_progress(
                                     std::thread::sleep(std::time::Duration::from_secs(3));
                                     continue;
                                 }
+                            } else if matches!(cookies_error_type, YtDlpErrorType::BotDetection) {
+                                log::error!(
+                                    "🤖 [BOT_DETECTED] Tier 2 got bot detection even WITH cookies. Possible IP ban or cookie rotation."
+                                );
+                                crate::download::cookies::log_cookie_file_diagnostics("BOT_DETECTED_WITH_COOKIES");
                             }
                         }
                     }
                 }
 
-                log::warn!("Both no-cookies and with-cookies modes failed, proceeding with error");
+                log::error!(
+                    "💀 [BOTH_TIERS_FAILED] Both no-cookies (Tier 1) and with-cookies (Tier 2) modes failed for video"
+                );
             }
 
             // If PostprocessingError (ffmpeg FixupM3u8 failed):

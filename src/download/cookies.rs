@@ -880,6 +880,93 @@ fn get_cookies_path() -> Option<PathBuf> {
     crate::core::config::YTDL_COOKIES_FILE.as_ref().map(PathBuf::from)
 }
 
+/// Log detailed cookie file diagnostics for debugging cookie invalidation.
+///
+/// Call this at key moments (before/after Tier 2 attempts, on cookie errors)
+/// to get a full snapshot of cookie file state in the logs.
+///
+/// # Arguments
+/// * `context` - Human-readable label for when/why this diagnostic was taken
+///   (e.g., "TIER2_BEFORE_ATTEMPT", "TIER2_AFTER_FAILURE", "COOKIE_REFRESH_TRIGGERED")
+pub fn log_cookie_file_diagnostics(context: &str) {
+    let cookies_path = match get_cookies_path() {
+        Some(path) => path,
+        None => {
+            log::warn!(
+                "[COOKIE_DIAG:{}] No cookies file configured (YTDL_COOKIES_FILE not set)",
+                context
+            );
+            return;
+        }
+    };
+
+    // File metadata
+    let metadata = match std::fs::metadata(&cookies_path) {
+        Ok(m) => m,
+        Err(e) => {
+            log::warn!(
+                "[COOKIE_DIAG:{}] Cannot read cookie file {:?}: {}",
+                context,
+                cookies_path,
+                e
+            );
+            return;
+        }
+    };
+
+    let file_size = metadata.len();
+    let file_age_secs = metadata
+        .modified()
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .map(|d| d.as_secs());
+
+    let age_str = match file_age_secs {
+        Some(s) if s < 60 => format!("{}s ago", s),
+        Some(s) if s < 3600 => format!("{}m {}s ago", s / 60, s % 60),
+        Some(s) => format!("{}h {}m ago", s / 3600, (s % 3600) / 60),
+        None => "unknown age".to_string(),
+    };
+
+    // Read and parse content for diagnostics
+    match std::fs::read_to_string(&cookies_path) {
+        Ok(content) => {
+            let diag = diagnose_cookies_content(&content);
+            log::warn!(
+                "[COOKIE_DIAG:{}] file={:?} size={}B age={} | cookies: total={} yt={} auth_found=[{}] auth_missing=[{}] auth_expired=[{}] secondary=[{}] valid={} | soonest_expiry={}",
+                context,
+                cookies_path,
+                file_size,
+                age_str,
+                diag.total_cookies,
+                diag.youtube_cookies,
+                diag.auth_cookies_found.join(","),
+                diag.auth_cookies_missing.join(","),
+                diag.auth_cookies_expired.join(","),
+                diag.secondary_cookies_found.join(","),
+                diag.is_valid,
+                diag.soonest_expiry_days
+                    .map(|d| format!("{}d ({})", d, diag.soonest_expiry_name.as_deref().unwrap_or("?")))
+                    .unwrap_or_else(|| "N/A".to_string()),
+            );
+
+            if !diag.issues.is_empty() {
+                log::warn!("[COOKIE_DIAG:{}] Issues: {}", context, diag.issues.join("; "));
+            }
+        }
+        Err(e) => {
+            log::warn!(
+                "[COOKIE_DIAG:{}] file={:?} size={}B age={} | CANNOT READ: {}",
+                context,
+                cookies_path,
+                file_size,
+                age_str,
+                e
+            );
+        }
+    }
+}
+
 /// Updates the cookies file from a base64-encoded string
 ///
 /// # Arguments
@@ -1381,38 +1468,83 @@ pub fn cookie_manager() -> &'static CookieManagerClient {
 /// * `true` if refresh was triggered and succeeded (caller should retry)
 /// * `false` if refresh failed or was not triggered (caller should not retry)
 pub async fn report_and_wait_for_refresh(error_type: &str, url: &str) -> bool {
+    let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC");
+    log::warn!(
+        "[COOKIE_EVENT:{}] Cookie error detected! type={} url={}",
+        timestamp,
+        error_type,
+        &url[..url.len().min(100)]
+    );
+
+    // Snapshot cookie file state BEFORE refresh attempt
+    log_cookie_file_diagnostics(&format!("BEFORE_REFRESH({})", error_type));
+
     let client = cookie_manager();
 
     // Check if cookie manager is available
     if !client.is_available().await {
-        log::debug!("Cookie manager not available, skipping error report");
+        log::warn!(
+            "[COOKIE_EVENT:{}] Cookie manager NOT available (http://127.0.0.1:4417 unreachable). Cannot refresh cookies.",
+            timestamp
+        );
         return false;
     }
 
     // Report error
     match client.report_error(error_type, url).await {
         Ok(response) => {
+            log::warn!(
+                "[COOKIE_EVENT:{}] Cookie manager response: action={} emergency={} recent_errors={} refresh_success={} refresh_method={}",
+                timestamp,
+                response.action,
+                response.emergency_mode.unwrap_or(false),
+                response.recent_errors.unwrap_or(0),
+                response.refresh_result.as_ref().map(|r| r.success).unwrap_or(false),
+                response.refresh_result.as_ref().and_then(|r| r.method.as_deref()).unwrap_or("none"),
+            );
+
             if response.action == "refresh_triggered" {
                 if let Some(ref result) = response.refresh_result {
                     if result.success {
-                        log::info!(
-                            "Cookie refresh successful via {}, retrying download...",
-                            result.method.as_deref().unwrap_or("unknown")
+                        log::warn!(
+                            "[COOKIE_EVENT:{}] Refresh SUCCESS via {} ({} cookies). Will retry download.",
+                            timestamp,
+                            result.method.as_deref().unwrap_or("unknown"),
+                            result.cookie_count.unwrap_or(0),
                         );
+                        // Snapshot cookie file state AFTER successful refresh
+                        log_cookie_file_diagnostics("AFTER_REFRESH_SUCCESS");
                         return true;
                     } else {
-                        log::warn!("Cookie refresh failed: {:?}", result.error);
+                        log::error!(
+                            "[COOKIE_EVENT:{}] Refresh FAILED: {}",
+                            timestamp,
+                            result.error.as_deref().unwrap_or("unknown error"),
+                        );
+                        log_cookie_file_diagnostics("AFTER_REFRESH_FAILURE");
                     }
                 }
             } else if response.action == "cooldown" {
-                log::info!("Cookie refresh on cooldown, waiting...");
-                // Wait a bit and assume cookies might be fresh from recent refresh
+                log::warn!(
+                    "[COOKIE_EVENT:{}] Refresh on COOLDOWN (recent refresh already happened). Waiting 5s...",
+                    timestamp,
+                );
                 tokio::time::sleep(Duration::from_secs(5)).await;
+                log_cookie_file_diagnostics("AFTER_COOLDOWN_WAIT");
                 return true;
+            } else if response.action == "ignored" {
+                log::warn!(
+                    "[COOKIE_EVENT:{}] Cookie manager IGNORED error (not classified as cookie error)",
+                    timestamp,
+                );
             }
         }
         Err(e) => {
-            log::warn!("Failed to report cookie error: {}", e);
+            log::error!(
+                "[COOKIE_EVENT:{}] Failed to communicate with cookie manager: {}",
+                timestamp,
+                e
+            );
         }
     }
 
