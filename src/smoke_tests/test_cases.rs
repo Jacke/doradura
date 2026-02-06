@@ -8,7 +8,7 @@
 //! - `test_video_download`: Downloads and validates an MP4 file
 //!
 //! **Important**: Smoke tests do NOT use personal cookies to avoid account bans.
-//! They rely on PO Token + proxy for YouTube access.
+//! They use the v5.0 strategy: `android_vr,web_safari` clients + Deno runtime.
 
 use super::results::SmokeTestResult;
 use super::validators::{
@@ -20,15 +20,15 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 use tokio::time::timeout;
 
-/// Adds yt-dlp arguments for smoke tests.
+/// Adds yt-dlp arguments for smoke tests (v5.0 strategy).
 ///
 /// Unlike production downloads, smoke tests do NOT use personal cookies
 /// to avoid risking account bans from hourly health checks.
 ///
 /// Uses:
-/// - PO Token provider (for bot detection bypass)
+/// - `android_vr,web_safari` player clients (no cookies/PO tokens needed)
+/// - Deno JS runtime for YouTube challenge solving (yt-dlp 2026+)
 /// - Proxy (if provided)
-/// - Node.js runtime for n-challenge solving
 /// - NO cookies
 fn add_smoke_test_args(args: &mut Vec<String>, proxy: Option<&ProxyConfig>) {
     // Add proxy if provided
@@ -44,14 +44,13 @@ fn add_smoke_test_args(args: &mut Vec<String>, proxy: Option<&ProxyConfig>) {
         log::info!("[smoke_test] No proxy, using direct connection");
     }
 
-    // Add PO Token provider for YouTube bot detection bypass
-    // bgutil HTTP server runs on port 4416 by default
+    // v5.0: Use android_vr + web_safari clients (don't require cookies or PO tokens)
     args.push("--extractor-args".to_string());
-    args.push("youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416".to_string());
+    args.push("youtube:player_client=android_vr,web_safari".to_string());
 
-    // Use Node.js for YouTube n-challenge solving
+    // Use Deno JS runtime for YouTube challenge solving (yt-dlp 2026+)
     args.push("--js-runtimes".to_string());
-    args.push("node".to_string());
+    args.push("deno".to_string());
 
     // NO cookies - smoke tests should not use personal accounts
     // This avoids risking account bans from hourly health checks
