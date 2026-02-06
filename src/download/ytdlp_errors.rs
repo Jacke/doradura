@@ -33,13 +33,19 @@ pub enum YtDlpErrorType {
 pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
     let stderr_lower = stderr.to_lowercase();
 
-    // Проверяем ошибки связанные с cookies
+    // Bot detection: YouTube требует подтверждения что ты не бот
+    // Это НЕ проблема cookies — это блокировка IP/fingerprint
+    if stderr_lower.contains("sign in to confirm you're not a bot")
+        || stderr_lower.contains("sign in to confirm you\u{2019}re not a bot")
+        || stderr_lower.contains("confirm you're not a bot")
+        || stderr_lower.contains("confirm you\u{2019}re not a bot")
+    {
+        return YtDlpErrorType::BotDetection;
+    }
+
+    // Проверяем ошибки связанные с cookies (реально невалидные cookies)
     if stderr_lower.contains("cookies are no longer valid")
         || stderr_lower.contains("cookies have likely been rotated")
-        || stderr_lower.contains("sign in to confirm you're not a bot")
-        || stderr_lower.contains("sign in to confirm you’re not a bot")
-        || stderr_lower.contains("confirm you're not a bot")
-        || stderr_lower.contains("confirm you’re not a bot")
         || stderr_lower.contains("please sign in")
         || stderr_lower.contains("use --cookies-from-browser")
         || stderr_lower.contains("use --cookies for the authentication")
@@ -289,7 +295,6 @@ mod tests {
         let cases = vec![
             "cookies are no longer valid",
             "Cookies have likely been rotated",
-            "Sign in to confirm you're not a bot",
             "Please sign in",
             "Use --cookies-from-browser",
             "Use --cookies for the authentication",
@@ -313,6 +318,8 @@ mod tests {
             "HTTP Error 403: Forbidden",
             "Unable to extract video data",
             "Signature extraction failed",
+            "Sign in to confirm you're not a bot",
+            "confirm you're not a bot",
         ];
 
         for case in cases {
@@ -552,7 +559,7 @@ mod tests {
         let cases = vec![
             (
                 "ERROR: [youtube] dQw4w9WgXcQ: Sign in to confirm you're not a bot. Use --cookies-from-browser",
-                YtDlpErrorType::InvalidCookies,
+                YtDlpErrorType::BotDetection,
             ),
             (
                 "ERROR: [youtube] abc123: Private video. Sign in if you've been granted access to this video",

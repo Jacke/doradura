@@ -175,7 +175,10 @@ async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<Value, AppE
 
         // Check if proxy-related error that should trigger trying next proxy
         let should_try_next = is_proxy_related_error(&stderr)
-            || matches!(error_type, YtDlpErrorType::BotDetection | YtDlpErrorType::NetworkError);
+            || matches!(
+                error_type,
+                YtDlpErrorType::BotDetection | YtDlpErrorType::InvalidCookies | YtDlpErrorType::NetworkError
+            );
 
         if should_try_next && attempt + 1 < total_proxies {
             log::warn!(
