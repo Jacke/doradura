@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Build stage for Rust application
 # Railway rebuild trigger: 2026-01-31T22:35Z
 FROM rust:1.85-alpine AS rust-builder
@@ -21,11 +22,15 @@ COPY locales ./locales
 COPY migrations ./migrations
 COPY benches ./benches
 
-RUN cargo build --release && \
-  echo "Binary built successfully:" && \
-  ls -lh /app/target/release/doradura && \
-  file /app/target/release/doradura && \
-  ldd /app/target/release/doradura || echo "Static binary (no dynamic libs)"
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/app/target \
+    cargo build --release && \
+    cp /app/target/release/doradura /app/doradura-bin && \
+    echo "Binary built successfully:" && \
+    ls -lh /app/doradura-bin && \
+    file /app/doradura-bin && \
+    ldd /app/doradura-bin || echo "Static binary (no dynamic libs)"
 
 # Runtime stage - based on aiogram/telegram-bot-api
 FROM aiogram/telegram-bot-api:latest
@@ -105,25 +110,21 @@ RUN mkdir -p /opt/novnc && \
 RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
   chmod a+rx /usr/local/bin/yt-dlp
 
-# Install Python dependencies (including yt-dlp PO Token plugin)
-RUN pip3 install --no-cache-dir --break-system-packages \
-  keyring pycryptodomex bgutil-ytdlp-pot-provider
-
-# Python dependencies for cookie_manager (headless browser automation)
-RUN pip3 install --no-cache-dir --break-system-packages \
-  websockify \
-  undetected-chromedriver \
-  aiohttp \
-  selenium
+# Install all Python dependencies in one layer with pip cache
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip3 install --break-system-packages \
+    keyring pycryptodomex bgutil-ytdlp-pot-provider \
+    websockify undetected-chromedriver aiohttp selenium
 
 # Install bgutil PO Token HTTP server (generates tokens for yt-dlp)
-RUN mkdir -p /opt/bgutil && \
-  cd /opt/bgutil && \
-  git clone --single-branch --branch 1.2.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git . && \
-  cd server && \
-  npm install && \
-  npx tsc && \
-  echo "bgutil PO Token server built successfully"
+RUN --mount=type=cache,target=/root/.npm \
+    mkdir -p /opt/bgutil && \
+    cd /opt/bgutil && \
+    git clone --single-branch --branch 1.2.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git . && \
+    cd server && \
+    npm install && \
+    npx tsc && \
+    echo "bgutil PO Token server built successfully"
 
 # Create shared group and users, then set up directories
 RUN addgroup -g 2000 shareddata && \
@@ -136,7 +137,7 @@ RUN addgroup -g 2000 shareddata && \
   chmod 775 /data
 
 # Copy the compiled binary from rust-builder and set permissions
-COPY --from=rust-builder --chown=1000:2000 /app/target/release/doradura /app/doradura
+COPY --from=rust-builder --chown=1000:2000 /app/doradura-bin /app/doradura
 RUN chmod 755 /app/doradura && \
   ls -la /app/doradura
 
