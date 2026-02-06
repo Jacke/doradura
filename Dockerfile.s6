@@ -22,10 +22,7 @@ COPY locales ./locales
 COPY migrations ./migrations
 COPY benches ./benches
 
-RUN --mount=type=cache,id=cargo-registry,target=/usr/local/cargo/registry \
-    --mount=type=cache,id=cargo-git,target=/usr/local/cargo/git \
-    --mount=type=cache,id=cargo-target,target=/app/target \
-    cargo build --release && \
+RUN cargo build --release && \
     cp /app/target/release/doradura /app/doradura-bin && \
     echo "Binary built successfully:" && \
     ls -lh /app/doradura-bin && \
@@ -111,14 +108,12 @@ RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp-nightly-builds/rel
   chmod a+rx /usr/local/bin/yt-dlp
 
 # Install all Python dependencies in one layer with pip cache
-RUN --mount=type=cache,id=pip-cache,target=/root/.cache/pip \
-    pip3 install --break-system-packages \
+RUN pip3 install --break-system-packages \
     keyring pycryptodomex bgutil-ytdlp-pot-provider \
     websockify undetected-chromedriver aiohttp selenium
 
 # Install bgutil PO Token HTTP server (generates tokens for yt-dlp)
-RUN --mount=type=cache,id=npm-cache,target=/root/.npm \
-    mkdir -p /opt/bgutil && \
+RUN mkdir -p /opt/bgutil && \
     cd /opt/bgutil && \
     git clone --single-branch --branch 1.2.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git . && \
     cd server && \
