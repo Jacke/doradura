@@ -121,18 +121,30 @@ impl ProxyConfig {
 pub fn get_proxy_chain() -> Vec<Option<ProxyConfig>> {
     let mut chain = Vec::new();
 
-    // Primary: WARP proxy (free Cloudflare)
+    // Primary: Proxy from WARP_PROXY environment variable
     if let Some(ref warp_proxy) = *config::proxy::WARP_PROXY {
         if !warp_proxy.trim().is_empty() {
-            chain.push(Some(ProxyConfig::new(
-                warp_proxy.trim().to_string(),
-                "WARP (Cloudflare)",
-            )));
+            let proxy_url = warp_proxy.trim();
+
+            // Auto-detect proxy name from URL
+            let proxy_name = if proxy_url.contains("geonode.com") {
+                "Geonode Residential"
+            } else if proxy_url.contains("89.124.69.143") || proxy_url.contains("cloudflare") {
+                "WARP (Cloudflare)"
+            } else {
+                "Custom Proxy"
+            };
+
+            log::info!("🌐 Using proxy: {} ({})", proxy_name, proxy_url);
+
+            chain.push(Some(ProxyConfig::new(proxy_url.to_string(), proxy_name)));
         }
     }
 
     // Last resort: No proxy (direct connection)
     chain.push(None);
+
+    log::info!("🔗 Proxy chain configured: {} proxy(ies)", chain.len());
 
     chain
 }
