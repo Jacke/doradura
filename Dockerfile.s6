@@ -1,8 +1,22 @@
 # syntax=docker/dockerfile:1
-# Build stage for Rust application
-# Railway rebuild trigger: 2026-01-31T22:35Z
-FROM rust:1.85-alpine AS rust-builder
+# Build stage for Rust application with cargo-chef for dependency caching
+# Railway rebuild trigger: 2026-02-07T10:15Z
+FROM rust:1.85-alpine AS chef
+RUN apk add --no-cache musl-dev && \
+    cargo install cargo-chef
+WORKDIR /app
 
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock ./
+COPY build.rs ./
+COPY c_code ./c_code
+COPY src ./src
+COPY locales ./locales
+COPY migrations ./migrations
+COPY benches ./benches
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS rust-builder
 RUN apk add --no-cache \
   musl-dev \
   pkgconfig \
@@ -12,8 +26,11 @@ RUN apk add --no-cache \
   sqlite-static \
   build-base
 
-WORKDIR /app
+COPY --from=planner /app/recipe.json recipe.json
+# Build dependencies - this is the caching layer
+RUN cargo chef cook --release --recipe-path recipe.json
 
+# Build application
 COPY Cargo.toml Cargo.lock ./
 COPY build.rs ./
 COPY c_code ./c_code
