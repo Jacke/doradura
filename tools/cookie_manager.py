@@ -1674,7 +1674,8 @@ class PersistentBrowserManager:
 
         # Use WARP proxy for browser to match yt-dlp IP (prevents bot detection)
         warp_proxy = os.environ.get("WARP_PROXY", "")
-        if warp_proxy:
+        # Ignore "none" or "disabled" values (allow disabling proxy)
+        if warp_proxy and warp_proxy.lower() not in ("none", "disabled", ""):
             log.info("Browser using proxy: %s", warp_proxy.split("@")[-1] if "@" in warp_proxy else warp_proxy)
             opts.add_argument(f"--proxy-server={warp_proxy}")
 
