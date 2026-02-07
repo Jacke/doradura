@@ -721,9 +721,10 @@ pub async fn get_metadata_from_ytdlp(
         args_vec.push(arg.to_string());
     }
 
-    // Use android + web_music clients (minimal BotGuard checks)
+    // Use android_testsuite client (minimal bot detection, no attestation required)
+    // Falls back to android if testsuite unavailable
     args_vec.push("--extractor-args".to_string());
-    args_vec.push("youtube:player_client=android,web_music;formats=missing_pot".to_string());
+    args_vec.push("youtube:player_client=android_testsuite,android;formats=missing_pot".to_string());
 
     // Use Deno for YouTube n-challenge solving (yt-dlp 2026+)
     args_vec.push("--js-runtimes".to_string());
@@ -842,7 +843,7 @@ pub async fn get_metadata_from_ytdlp(
     }
 
     artist_args_vec.push("--extractor-args".to_string());
-    artist_args_vec.push("youtube:player_client=android,web_music;formats=missing_pot".to_string());
+    artist_args_vec.push("youtube:player_client=android_testsuite,android;formats=missing_pot".to_string());
     artist_args_vec.push("--js-runtimes".to_string());
     artist_args_vec.push("deno".to_string());
     artist_args_vec.push("--impersonate".to_string());
@@ -885,7 +886,7 @@ pub async fn get_metadata_from_ytdlp(
         }
 
         uploader_args_vec.push("--extractor-args".to_string());
-        uploader_args_vec.push("youtube:player_client=android,web_music;formats=missing_pot".to_string());
+        uploader_args_vec.push("youtube:player_client=android_testsuite,android;formats=missing_pot".to_string());
         uploader_args_vec.push("--js-runtimes".to_string());
         uploader_args_vec.push("deno".to_string());
         uploader_args_vec.push("--impersonate".to_string());

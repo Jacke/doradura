@@ -47,7 +47,7 @@ fn add_smoke_test_args(args: &mut Vec<String>, proxy: Option<&ProxyConfig>) {
     // Use android + web_music clients (minimal BotGuard/attestation checks with WARP)
     // formats=missing_pot skips formats requiring PO Token (avoids 403 on fragments)
     args.push("--extractor-args".to_string());
-    args.push("youtube:player_client=android,web_music;formats=missing_pot".to_string());
+    args.push("youtube:player_client=android_testsuite,android;formats=missing_pot".to_string());
 
     // Use Deno JS runtime for YouTube challenge solving (yt-dlp 2026+)
     args.push("--js-runtimes".to_string());
