@@ -11,11 +11,12 @@ pub use crate::core::escape_markdown;
 use crate::downsub::DownsubGateway;
 use crate::telegram::Bot;
 use anyhow::Result;
+use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use teloxide::prelude::*;
 use teloxide::types::{
     InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode, Seconds, TransactionPartner,
@@ -42,6 +43,12 @@ const DEFAULT_BOT_API_LOG_TAIL_BYTES: u64 = 2 * 1024 * 1024;
 
 /// Maximum message length for Telegram (with margin) - for backward compatibility
 pub const MAX_MESSAGE_LENGTH: usize = crate::core::TELEGRAM_MESSAGE_LIMIT;
+
+/// Cooldown period for cookie refresh notifications (6 hours)
+const COOKIE_NOTIFICATION_COOLDOWN: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// Timestamp of the last cookie refresh notification sent to admin
+static LAST_COOKIE_NOTIFICATION: Lazy<Mutex<Option<Instant>>> = Lazy::new(|| Mutex::new(None));
 
 /// Truncate message for Telegram - for backward compatibility with original behavior
 fn truncate_message(text: &str) -> String {
@@ -2281,6 +2288,24 @@ pub async fn handle_update_ytdlp_command(bot: &Bot, chat_id: ChatId, user_id: i6
 /// * `admin_id` - Admin's Telegram user ID
 /// * `reason` - Reason why cookies need refresh (e.g., "validation failed", "file missing")
 pub async fn notify_admin_cookies_refresh(bot: &Bot, admin_id: i64, reason: &str) -> Result<()> {
+    // Check cooldown period - don't spam admin with repeated notifications
+    {
+        let mut last_notification = LAST_COOKIE_NOTIFICATION.lock().unwrap();
+        if let Some(last_time) = *last_notification {
+            let elapsed = last_time.elapsed();
+            if elapsed < COOKIE_NOTIFICATION_COOLDOWN {
+                let remaining = COOKIE_NOTIFICATION_COOLDOWN - elapsed;
+                log::info!(
+                    "⏸️  Skipping cookie refresh notification (cooldown active, {:.1} hours remaining)",
+                    remaining.as_secs_f64() / 3600.0
+                );
+                return Ok(());
+            }
+        }
+        // Update timestamp before sending to prevent race conditions
+        *last_notification = Some(Instant::now());
+    }
+
     // Try to get detailed cookie info from cookie manager
     let cookie_detail = match cookie_manager_request("GET", "/api/status").await {
         Ok(data) => {
