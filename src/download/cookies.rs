@@ -673,7 +673,7 @@ pub async fn validate_cookies() -> Result<(), String> {
             .arg("--no-playlist")
             .arg("--skip-download")
             .arg("--socket-timeout")
-            .arg("30");
+            .arg("120");
 
         // Add proxy if configured
         if let Some(ref proxy_config) = proxy_option {
@@ -695,7 +695,7 @@ pub async fn validate_cookies() -> Result<(), String> {
             .arg(test_url);
 
         // Use 60 second timeout for validation (shorter than download timeout)
-        let output = match timeout(Duration::from_secs(60), cmd.output()).await {
+        let output = match timeout(Duration::from_secs(180), cmd.output()).await {
             Ok(result) => result,
             Err(_) => {
                 log::warn!(
@@ -808,7 +808,7 @@ pub async fn validate_cookies_detailed() -> CookieValidationResult {
             .arg("--no-playlist")
             .arg("--skip-download")
             .arg("--socket-timeout")
-            .arg("30");
+            .arg("120");
 
         if let Some(ref proxy_config) = proxy_option {
             cmd.arg("--proxy").arg(&proxy_config.url);
@@ -827,7 +827,7 @@ pub async fn validate_cookies_detailed() -> CookieValidationResult {
             .arg("%(id)s %(title)s")
             .arg(test_url);
 
-        let output = match timeout(Duration::from_secs(60), cmd.output()).await {
+        let output = match timeout(Duration::from_secs(180), cmd.output()).await {
             Ok(Ok(output)) => output,
             Ok(Err(e)) => {
                 last_error = Some(e.to_string());
@@ -1364,7 +1364,7 @@ impl CookieManagerClient {
             &url[..url.len().min(80)]
         );
 
-        let resp = timeout(Duration::from_secs(60), self.client.post(&api_url).json(&body).send())
+        let resp = timeout(Duration::from_secs(180), self.client.post(&api_url).json(&body).send())
             .await
             .map_err(|_| anyhow::anyhow!("Cookie manager report_error timed out"))?
             .map_err(|e| anyhow::anyhow!("Cookie manager request failed: {}", e))?;
@@ -1398,7 +1398,7 @@ impl CookieManagerClient {
 
         log::info!("Triggering cookie refresh via cookie manager");
 
-        let resp = timeout(Duration::from_secs(60), self.client.post(&url).send())
+        let resp = timeout(Duration::from_secs(180), self.client.post(&url).send())
             .await
             .map_err(|_| anyhow::anyhow!("Cookie manager refresh timed out"))?
             .map_err(|e| anyhow::anyhow!("Cookie manager request failed: {}", e))?;
