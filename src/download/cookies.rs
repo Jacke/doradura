@@ -688,8 +688,6 @@ pub async fn validate_cookies() -> Result<(), String> {
             .arg("youtube:player_client=android_vr,web_safari;formats=missing_pot")
             .arg("--js-runtimes")
             .arg("deno")
-            .arg("--impersonate")
-            .arg("Chrome-131:Android-14")
             .arg("--print")
             .arg("%(id)s %(title)s")
             .arg(test_url);
@@ -821,8 +819,6 @@ pub async fn validate_cookies_detailed() -> CookieValidationResult {
             .arg("youtube:player_client=android_vr,web_safari;formats=missing_pot")
             .arg("--js-runtimes")
             .arg("deno")
-            .arg("--impersonate")
-            .arg("Chrome-131:Android-14")
             .arg("--print")
             .arg("%(id)s %(title)s")
             .arg(test_url);

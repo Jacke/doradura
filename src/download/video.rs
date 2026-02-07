@@ -143,9 +143,7 @@ pub async fn download_video_file_with_progress(
             args.push("--js-runtimes");
             args.push("deno");
 
-            // Impersonate browser TLS/HTTP fingerprint
-            args.push("--impersonate");
-            args.push("Chrome-131:Android-14");
+            // Note: impersonate removed - not needed for android_vr client
 
             args.extend_from_slice(&["--no-check-certificate", &url_str]);
 
