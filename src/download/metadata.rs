@@ -123,9 +123,9 @@ pub fn get_proxy_chain() -> Vec<Option<ProxyConfig>> {
 
     // Primary: Proxy from WARP_PROXY environment variable
     if let Some(ref warp_proxy) = *config::proxy::WARP_PROXY {
-        if !warp_proxy.trim().is_empty() {
-            let proxy_url = warp_proxy.trim();
-
+        let proxy_url = warp_proxy.trim();
+        // Ignore "none", "disabled", or empty values
+        if !proxy_url.is_empty() && proxy_url != "none" && proxy_url != "disabled" {
             // Auto-detect proxy name from URL
             let proxy_name = if proxy_url.contains("geonode.com") {
                 "Geonode Residential"
