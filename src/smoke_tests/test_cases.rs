@@ -44,10 +44,10 @@ fn add_smoke_test_args(args: &mut Vec<String>, proxy: Option<&ProxyConfig>) {
         log::info!("[smoke_test] No proxy, using direct connection");
     }
 
-    // Use android + web_music clients (minimal BotGuard/attestation checks with WARP)
+    // Use android_vr + web_safari clients (minimal bot detection, no PO token required)
     // formats=missing_pot skips formats requiring PO Token (avoids 403 on fragments)
     args.push("--extractor-args".to_string());
-    args.push("youtube:player_client=android_testsuite,android;formats=missing_pot".to_string());
+    args.push("youtube:player_client=android_vr,web_safari;formats=missing_pot".to_string());
 
     // Use Deno JS runtime for YouTube challenge solving (yt-dlp 2026+)
     args.push("--js-runtimes".to_string());
