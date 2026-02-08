@@ -270,7 +270,7 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/tailscaled/type && \
     'foreground { mkdir -p /var/lib/tailscale /var/run/tailscale }' \
     'foreground { chmod 755 /var/lib/tailscale /var/run/tailscale }' \
     'fdmove -c 2 1' \
-    '/usr/sbin/tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock' \
+    '/usr/sbin/tailscaled --tun=userspace-networking --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock' \
     > /etc/s6-overlay/s6-rc.d/tailscaled/run && \
     chmod +x /etc/s6-overlay/s6-rc.d/tailscaled/run
 
