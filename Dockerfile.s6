@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Build stage for Rust application with cargo-chef for dependency caching
-# Railway rebuild trigger: 2026-02-08T14:00Z - Simplified with SSH tunnel proxy
+# Railway rebuild trigger: 2026-02-08T15:40Z - Direct HTTP proxy (no SSH tunnel)
 FROM rust:1.85-alpine AS chef
 RUN apk add --no-cache musl-dev && \
     cargo install cargo-chef
@@ -78,9 +78,7 @@ RUN apk add --no-cache \
   unzip \
   bash \
   nodejs \
-  git \
-  openssh-client \
-  sshpass
+  git
 
 # Build dependencies for canvas (bgutil PO Token server)
 RUN apk add --no-cache \
@@ -148,19 +146,12 @@ ENV BOT_API_URL=http://localhost:8081
 ENV S6_KEEP_ENV=1
 ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2
 ENV S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0
-# SSH tunnel proxy settings
-ENV PROXY_SSH_HOST=80.76.33.93
-ENV PROXY_SSH_USER=root
-ENV PROXY_SSH_PASS=f953YH4oF9k1
-ENV PROXY_REMOTE_PORT=8888
-ENV PROXY_LOCAL_PORT=8888
 
 # === s6-overlay service definitions ===
 
 # Create s6-rc service directories
 RUN mkdir -p /etc/s6-overlay/s6-rc.d/user/contents.d \
              /etc/s6-overlay/s6-rc.d/init-data/dependencies.d \
-             /etc/s6-overlay/s6-rc.d/ssh-tunnel/dependencies.d \
              /etc/s6-overlay/s6-rc.d/telegram-bot-api/dependencies.d \
              /etc/s6-overlay/s6-rc.d/bgutil-pot-server/dependencies.d \
              /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d \
@@ -225,24 +216,10 @@ RUN printf '%s\n' \
     'foreground { ls -la /data }' \
     'foreground { echo "================================================" }' \
     'foreground { /bin/sh -c "START=$(cat /tmp/init_start_ms 2>/dev/null || echo 0); END=$(($(date +%s%N)/1000000)); ELAPSED=$((END - START)); echo \"✅ [init-data] COMPLETE in ${ELAPSED}ms at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\"" }' \
-    'foreground { echo "🚀 Starting services (ssh-tunnel, telegram-bot-api, bgutil, doradura-bot)..." }' \
+    'foreground { echo "🚀 Starting services (telegram-bot-api, bgutil, doradura-bot)..." }' \
     'echo "================================================"' \
     > /etc/s6-overlay/scripts/init-data && \
     chmod +x /etc/s6-overlay/scripts/init-data
-
-# === ssh-tunnel longrun service (SSH tunnel to proxy server) ===
-RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/ssh-tunnel/type && \
-    touch /etc/s6-overlay/s6-rc.d/ssh-tunnel/dependencies.d/init-data && \
-    printf '%s\n' \
-    '#!/command/execlineb -P' \
-    'foreground { /bin/sh -c "echo \"⏱️  [ssh-tunnel] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/ssh_tunnel_start_ms" }' \
-    'foreground { mkdir -p /root/.ssh }' \
-    'foreground { chmod 700 /root/.ssh }' \
-    'foreground { /bin/sh -c "echo \"StrictHostKeyChecking no\" > /root/.ssh/config && chmod 600 /root/.ssh/config" }' \
-    'fdmove -c 2 1' \
-    '/bin/sh -c "exec sshpass -p \"${PROXY_SSH_PASS}\" ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -N -L ${PROXY_LOCAL_PORT}:127.0.0.1:${PROXY_REMOTE_PORT} ${PROXY_SSH_USER}@${PROXY_SSH_HOST}"' \
-    > /etc/s6-overlay/s6-rc.d/ssh-tunnel/run && \
-    chmod +x /etc/s6-overlay/s6-rc.d/ssh-tunnel/run
 
 # === telegram-bot-api longrun service ===
 RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/telegram-bot-api/type && \
@@ -259,21 +236,10 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/telegram-bot-api/type && \
 # === bgutil-pot-server longrun service ===
 RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/type && \
     touch /etc/s6-overlay/s6-rc.d/bgutil-pot-server/dependencies.d/init-data && \
-    touch /etc/s6-overlay/s6-rc.d/bgutil-pot-server/dependencies.d/ssh-tunnel && \
     cat > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/run << 'BGUTIL_RUN'
 #!/bin/sh
 echo "⏱️  [bgutil-pot-server] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)"
 echo $(($(date +%s%N)/1000000)) > /tmp/bgutil_start_ms
-# Wait for SSH tunnel to be ready
-sleep 3
-# Use HTTP proxy via SSH tunnel
-if [ -n "$PROXY_LOCAL_PORT" ]; then
-    HTTP_PROXY_URL="http://127.0.0.1:${PROXY_LOCAL_PORT}"
-    echo "[bgutil-pot-server] Using HTTP proxy: $HTTP_PROXY_URL"
-    export ALL_PROXY="$HTTP_PROXY_URL"
-    export HTTPS_PROXY="$HTTP_PROXY_URL"
-    export HTTP_PROXY="$HTTP_PROXY_URL"
-fi
 export HOME=/home/botuser
 export TOKEN_TTL=6
 exec s6-setuidgid botuser node /opt/bgutil/server/build/main.js 2>&1
@@ -336,8 +302,7 @@ RUN chmod +x /etc/s6-overlay/scripts/wait-for-bot-api
 
 # === doradura-bot longrun service ===
 RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/doradura-bot/type && \
-    touch /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d/telegram-bot-api && \
-    touch /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d/ssh-tunnel
+    touch /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d/telegram-bot-api
 
 # Create doradura-bot run script
 RUN printf '%s\n' \
@@ -345,7 +310,6 @@ RUN printf '%s\n' \
     'foreground { /bin/sh -c "echo \"⏱️  [doradura-bot] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/doradura_start_ms" }' \
     'foreground { /etc/s6-overlay/scripts/wait-for-bot-api }' \
     'foreground { /bin/sh -c "START=$(cat /tmp/doradura_start_ms 2>/dev/null || echo 0); END=$(($(date +%s%N)/1000000)); ELAPSED=$((END - START)); echo \"✅ [doradura-bot] Bot API check complete, waited ${ELAPSED}ms. Launching bot at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)...\"" }' \
-    'foreground { /bin/sh -c "echo \"⏳ [doradura-bot] Waiting 5s for SSH tunnel to be ready...\" && sleep 5" }' \
     's6-setuidgid botuser' \
     's6-env DATABASE_PATH=/data/database.sqlite' \
     's6-env TEMP_FILES_DIR=/data' \
@@ -362,7 +326,6 @@ RUN printf '%s\n' \
 
 # Enable all services
 RUN touch /etc/s6-overlay/s6-rc.d/user/contents.d/init-data \
-          /etc/s6-overlay/s6-rc.d/user/contents.d/ssh-tunnel \
           /etc/s6-overlay/s6-rc.d/user/contents.d/telegram-bot-api \
           /etc/s6-overlay/s6-rc.d/user/contents.d/bgutil-pot-server \
           /etc/s6-overlay/s6-rc.d/user/contents.d/doradura-bot
