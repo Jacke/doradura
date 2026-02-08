@@ -17,6 +17,7 @@ pub mod stats;
 pub mod stats_reporter;
 pub mod subscription;
 pub mod utils;
+pub mod validation;
 
 // Re-exports for convenience
 pub use config::*;
