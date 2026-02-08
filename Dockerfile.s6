@@ -97,9 +97,21 @@ RUN node --version && echo "Node.js available for yt-dlp --js-runtimes node"
 RUN apk add --no-cache deno --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing && \
   deno --version && echo "Deno available for yt-dlp --js-runtimes deno"
 
-# Install Tailscale (for proxy access via Tailscale network)
-RUN apk add --no-cache tailscale --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing && \
+# Install Tailscale and Go (for railtail)
+RUN apk add --no-cache \
+  tailscale --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing \
+  go \
+  git && \
   tailscale version && echo "Tailscale available for network connectivity"
+
+# Build and install railtail (HTTP/TCP proxy for Tailscale)
+RUN cd /tmp && \
+  git clone https://github.com/half0wl/railtail.git && \
+  cd railtail && \
+  go build -o /usr/local/bin/railtail . && \
+  chmod +x /usr/local/bin/railtail && \
+  cd / && rm -rf /tmp/railtail && \
+  echo "railtail built successfully"
 
 # Install npm (for bgutil PO Token provider)
 RUN apk add --no-cache npm
@@ -187,15 +199,13 @@ ENV CHROMEDRIVER_PATH=/app/bin/chromedriver
 # Create s6-rc service directories
 RUN mkdir -p /etc/s6-overlay/s6-rc.d/user/contents.d \
              /etc/s6-overlay/s6-rc.d/init-data/dependencies.d \
-             /etc/s6-overlay/s6-rc.d/tailscaled/dependencies.d \
-             /etc/s6-overlay/s6-rc.d/tailscale-up/dependencies.d \
+             /etc/s6-overlay/s6-rc.d/railtail/dependencies.d \
              /etc/s6-overlay/s6-rc.d/telegram-bot-api/dependencies.d \
              /etc/s6-overlay/s6-rc.d/bgutil-pot-server/dependencies.d \
              /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d \
              /etc/s6-overlay/s6-rc.d/cookie-manager/dependencies.d \
              /etc/s6-overlay/scripts \
-             /var/lib/tailscale \
-             /var/run/tailscale
+             /var/lib/tailscale
 
 # === init-data oneshot service (runs migrations, sets up directories) ===
 RUN echo "oneshot" > /etc/s6-overlay/s6-rc.d/init-data/type && \
@@ -261,59 +271,18 @@ RUN printf '%s\n' \
     > /etc/s6-overlay/scripts/init-data && \
     chmod +x /etc/s6-overlay/scripts/init-data
 
-# === tailscaled longrun service (Tailscale daemon) ===
-RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/tailscaled/type && \
-    touch /etc/s6-overlay/s6-rc.d/tailscaled/dependencies.d/init-data && \
+# === railtail longrun service (Tailscale HTTP proxy) ===
+RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/railtail/type && \
+    touch /etc/s6-overlay/s6-rc.d/railtail/dependencies.d/init-data && \
     printf '%s\n' \
     '#!/command/execlineb -P' \
-    'foreground { /bin/sh -c "echo \"⏱️  [tailscaled] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/tailscaled_start_ms" }' \
-    'foreground { mkdir -p /var/lib/tailscale /var/run/tailscale }' \
-    'foreground { chmod 755 /var/lib/tailscale /var/run/tailscale }' \
+    'foreground { /bin/sh -c "echo \"⏱️  [railtail] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/railtail_start_ms" }' \
+    'foreground { mkdir -p /var/lib/tailscale }' \
+    'foreground { chmod 755 /var/lib/tailscale }' \
     'fdmove -c 2 1' \
-    '/usr/sbin/tailscaled --tun=userspace-networking --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock' \
-    > /etc/s6-overlay/s6-rc.d/tailscaled/run && \
-    chmod +x /etc/s6-overlay/s6-rc.d/tailscaled/run
-
-# === tailscale-up oneshot service (connect to Tailscale network) ===
-RUN echo "oneshot" > /etc/s6-overlay/s6-rc.d/tailscale-up/type && \
-    touch /etc/s6-overlay/s6-rc.d/tailscale-up/dependencies.d/tailscaled && \
-    printf '%s\n' \
-    '#!/command/execlineb -P' \
-    '/bin/sh -c "' \
-    'echo \"⏱️  [tailscale-up] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\"' \
-    '' \
-    'echo \"🔍 [tailscale-up] Waiting for tailscaled socket...\"' \
-    'for i in $(seq 1 30); do' \
-    '  if [ -S /var/run/tailscale/tailscaled.sock ]; then' \
-    '    echo \"✅ [tailscale-up] Socket ready after ${i}s\"' \
-    '    break' \
-    '  fi' \
-    '  sleep 1' \
-    'done' \
-    '' \
-    'if [ ! -S /var/run/tailscale/tailscaled.sock ]; then' \
-    '  echo \"❌ [tailscale-up] ERROR: Socket not ready after 30s\"' \
-    '  exit 1' \
-    'fi' \
-    '' \
-    'if [ -z \"$TS_AUTHKEY\" ]; then' \
-    '  echo \"❌ [tailscale-up] ERROR: TS_AUTHKEY not set\"' \
-    '  exit 1' \
-    'fi' \
-    '' \
-    'echo \"🔐 [tailscale-up] Connecting to Tailscale...\"' \
-    'tailscale up --authkey=\"$TS_AUTHKEY\" --accept-routes=false --hostname=doradura-railway' \
-    '' \
-    'if [ $? -eq 0 ]; then' \
-    '  TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || echo unknown)' \
-    '  echo \"✅ [tailscale-up] Connected! IP: $TAILSCALE_IP\"' \
-    'else' \
-    '  echo \"❌ [tailscale-up] ERROR: Connection failed\"' \
-    '  exit 1' \
-    'fi' \
-    '"' \
-    > /etc/s6-overlay/s6-rc.d/tailscale-up/up && \
-    chmod +x /etc/s6-overlay/s6-rc.d/tailscale-up/up
+    '/bin/sh -c "export TS_STATEDIR_PATH=/var/lib/tailscale && export TS_HOSTNAME=doradura-railway && export TARGET_ADDR=100.127.84.48:7777 && export LISTEN_PORT=8080 && exec /usr/local/bin/railtail"' \
+    > /etc/s6-overlay/s6-rc.d/railtail/run && \
+    chmod +x /etc/s6-overlay/s6-rc.d/railtail/run
 
 # === telegram-bot-api longrun service ===
 RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/telegram-bot-api/type && \
@@ -412,7 +381,7 @@ RUN chmod +x /etc/s6-overlay/scripts/wait-for-bot-api
 # === doradura-bot longrun service ===
 RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/doradura-bot/type && \
     touch /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d/telegram-bot-api && \
-    touch /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d/tailscale-up
+    touch /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d/railtail
 
 # Create doradura-bot run script
 RUN printf '%s\n' \
@@ -455,8 +424,7 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/cookie-manager/type && \
 
 # Enable all services
 RUN touch /etc/s6-overlay/s6-rc.d/user/contents.d/init-data \
-          /etc/s6-overlay/s6-rc.d/user/contents.d/tailscaled \
-          /etc/s6-overlay/s6-rc.d/user/contents.d/tailscale-up \
+          /etc/s6-overlay/s6-rc.d/user/contents.d/railtail \
           /etc/s6-overlay/s6-rc.d/user/contents.d/telegram-bot-api \
           /etc/s6-overlay/s6-rc.d/user/contents.d/bgutil-pot-server \
           /etc/s6-overlay/s6-rc.d/user/contents.d/doradura-bot \
