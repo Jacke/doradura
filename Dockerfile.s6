@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Build stage for Rust application with cargo-chef for dependency caching
-# Railway rebuild trigger: 2026-02-07T10:15Z
+# Railway rebuild trigger: 2026-02-08T14:00Z - Simplified with SSH tunnel proxy
 FROM rust:1.85-alpine AS chef
 RUN apk add --no-cache musl-dev && \
     cargo install cargo-chef
@@ -46,16 +46,6 @@ RUN cargo build --release && \
     file /app/doradura-bin && \
     ldd /app/doradura-bin || echo "Static binary (no dynamic libs)"
 
-# Go builder stage for railtail
-FROM golang:1.22-alpine AS go-builder
-RUN apk add --no-cache git
-WORKDIR /build
-RUN git clone https://github.com/half0wl/railtail.git . && \
-    CGO_ENABLED=0 go build -ldflags="-s -w" -o railtail . && \
-    echo "railtail built successfully:" && \
-    ls -lh railtail && \
-    file railtail
-
 # Runtime stage - based on aiogram/telegram-bot-api
 FROM aiogram/telegram-bot-api:latest
 
@@ -88,7 +78,9 @@ RUN apk add --no-cache \
   unzip \
   bash \
   nodejs \
-  git
+  git \
+  openssh-client \
+  sshpass
 
 # Build dependencies for canvas (bgutil PO Token server)
 RUN apk add --no-cache \
@@ -107,37 +99,8 @@ RUN node --version && echo "Node.js available for yt-dlp --js-runtimes node"
 RUN apk add --no-cache deno --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing && \
   deno --version && echo "Deno available for yt-dlp --js-runtimes deno"
 
-# Install Tailscale (railtail needs it)
-RUN apk add --no-cache tailscale --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing && \
-  tailscale version && echo "Tailscale available for network connectivity"
-
-# Copy railtail binary from go-builder stage
-COPY --from=go-builder /build/railtail /usr/local/bin/railtail
-RUN chmod +x /usr/local/bin/railtail && \
-  /usr/local/bin/railtail --version 2>&1 || echo "railtail binary ready"
-
 # Install npm (for bgutil PO Token provider)
 RUN apk add --no-cache npm
-
-# Headless browser for cookie_manager (auto-refresh YouTube cookies)
-RUN apk add --no-cache \
-  chromium \
-  chromium-chromedriver \
-  xvfb \
-  x11vnc \
-  ttf-freefont \
-  fontconfig \
-  dbus && \
-  # Copy chromedriver to writable location for undetected_chromedriver patching
-  # undetected_chromedriver needs to patch the binary to avoid bot detection
-  mkdir -p /app/bin && \
-  cp /usr/bin/chromedriver /app/bin/chromedriver && \
-  chmod 777 /app/bin/chromedriver
-
-# noVNC for visual login (first-time setup)
-RUN mkdir -p /opt/novnc && \
-  wget -qO- https://github.com/novnc/noVNC/archive/v1.4.0.tar.gz | \
-  tar xz -C /opt/novnc --strip-components=1
 
 # Install yt-dlp from nightly builds (latest fixes for YouTube compatibility)
 RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
@@ -146,7 +109,6 @@ RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp-nightly-builds/rel
 # Install all Python dependencies in one layer with pip cache
 RUN pip3 install --break-system-packages \
     keyring pycryptodomex bgutil-ytdlp-pot-provider \
-    websockify undetected-chromedriver aiohttp selenium \
     curl_cffi
 
 # Install bgutil PO Token HTTP server (generates tokens for yt-dlp)
@@ -176,10 +138,6 @@ RUN chmod 755 /app/doradura && \
 # Copy migrations for auto-migration on startup
 COPY --from=rust-builder --chown=1000:2000 /app/migrations /app/migrations
 
-# Copy cookie_manager for YouTube cookies auto-refresh
-COPY --chown=1000:2000 tools/cookie_manager.py /app/tools/
-RUN chmod +x /app/tools/cookie_manager.py
-
 # Copy test_ytdlp.py for testing yt-dlp with production parameters
 COPY --chown=1000:2000 test_ytdlp.py /app/
 RUN chmod +x /app/test_ytdlp.py
@@ -190,25 +148,23 @@ ENV BOT_API_URL=http://localhost:8081
 ENV S6_KEEP_ENV=1
 ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2
 ENV S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0
-# Cookie manager settings
-ENV YTDL_COOKIES_FILE=/data/youtube_cookies.txt
-ENV BROWSER_PROFILE_DIR=/data/browser_profile
-ENV COOKIE_MANAGER_PORT=9876
-ENV CHROMIUM_PATH=/usr/bin/chromium-browser
-ENV CHROMEDRIVER_PATH=/app/bin/chromedriver
+# SSH tunnel proxy settings
+ENV PROXY_SSH_HOST=80.76.33.93
+ENV PROXY_SSH_USER=root
+ENV PROXY_SSH_PASS=f953YH4oF9k1
+ENV PROXY_REMOTE_PORT=8888
+ENV PROXY_LOCAL_PORT=8888
 
 # === s6-overlay service definitions ===
 
 # Create s6-rc service directories
 RUN mkdir -p /etc/s6-overlay/s6-rc.d/user/contents.d \
              /etc/s6-overlay/s6-rc.d/init-data/dependencies.d \
-             /etc/s6-overlay/s6-rc.d/railtail/dependencies.d \
+             /etc/s6-overlay/s6-rc.d/ssh-tunnel/dependencies.d \
              /etc/s6-overlay/s6-rc.d/telegram-bot-api/dependencies.d \
              /etc/s6-overlay/s6-rc.d/bgutil-pot-server/dependencies.d \
              /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d \
-             /etc/s6-overlay/s6-rc.d/cookie-manager/dependencies.d \
-             /etc/s6-overlay/scripts \
-             /var/lib/tailscale
+             /etc/s6-overlay/scripts
 
 # === init-data oneshot service (runs migrations, sets up directories) ===
 RUN echo "oneshot" > /etc/s6-overlay/s6-rc.d/init-data/type && \
@@ -269,23 +225,24 @@ RUN printf '%s\n' \
     'foreground { ls -la /data }' \
     'foreground { echo "================================================" }' \
     'foreground { /bin/sh -c "START=$(cat /tmp/init_start_ms 2>/dev/null || echo 0); END=$(($(date +%s%N)/1000000)); ELAPSED=$((END - START)); echo \"✅ [init-data] COMPLETE in ${ELAPSED}ms at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\"" }' \
-    'foreground { echo "🚀 Starting services (telegram-bot-api, bgutil, cookie-manager, doradura-bot)..." }' \
+    'foreground { echo "🚀 Starting services (ssh-tunnel, telegram-bot-api, bgutil, doradura-bot)..." }' \
     'echo "================================================"' \
     > /etc/s6-overlay/scripts/init-data && \
     chmod +x /etc/s6-overlay/scripts/init-data
 
-# === railtail longrun service (Tailscale HTTP proxy) ===
-RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/railtail/type && \
-    touch /etc/s6-overlay/s6-rc.d/railtail/dependencies.d/init-data && \
+# === ssh-tunnel longrun service (SSH tunnel to proxy server) ===
+RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/ssh-tunnel/type && \
+    touch /etc/s6-overlay/s6-rc.d/ssh-tunnel/dependencies.d/init-data && \
     printf '%s\n' \
     '#!/command/execlineb -P' \
-    'foreground { /bin/sh -c "echo \"⏱️  [railtail] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/railtail_start_ms" }' \
-    'foreground { mkdir -p /var/lib/tailscale }' \
-    'foreground { chmod 755 /var/lib/tailscale }' \
+    'foreground { /bin/sh -c "echo \"⏱️  [ssh-tunnel] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/ssh_tunnel_start_ms" }' \
+    'foreground { mkdir -p /root/.ssh }' \
+    'foreground { chmod 700 /root/.ssh }' \
+    'foreground { /bin/sh -c "echo \"StrictHostKeyChecking no\" > /root/.ssh/config && chmod 600 /root/.ssh/config" }' \
     'fdmove -c 2 1' \
-    '/bin/sh -c "export TS_STATEDIR_PATH=/var/lib/tailscale && export TS_HOSTNAME=doradura-railway && export TARGET_ADDR=100.127.84.48:7777 && export LISTEN_PORT=8080 && exec /usr/local/bin/railtail"' \
-    > /etc/s6-overlay/s6-rc.d/railtail/run && \
-    chmod +x /etc/s6-overlay/s6-rc.d/railtail/run
+    '/bin/sh -c "exec sshpass -p \"${PROXY_SSH_PASS}\" ssh -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -N -L ${PROXY_LOCAL_PORT}:127.0.0.1:${PROXY_REMOTE_PORT} ${PROXY_SSH_USER}@${PROXY_SSH_HOST}"' \
+    > /etc/s6-overlay/s6-rc.d/ssh-tunnel/run && \
+    chmod +x /etc/s6-overlay/s6-rc.d/ssh-tunnel/run
 
 # === telegram-bot-api longrun service ===
 RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/telegram-bot-api/type && \
@@ -300,26 +257,22 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/telegram-bot-api/type && \
     chmod +x /etc/s6-overlay/s6-rc.d/telegram-bot-api/run
 
 # === bgutil-pot-server longrun service ===
-# Note: bgutil uses HTTP proxy (port 1082) - Node.js doesn't support SOCKS5 via env vars
-# HTTP proxy on gost server forwards to SOCKS5 WARP
 RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/type && \
     touch /etc/s6-overlay/s6-rc.d/bgutil-pot-server/dependencies.d/init-data && \
+    touch /etc/s6-overlay/s6-rc.d/bgutil-pot-server/dependencies.d/ssh-tunnel && \
     cat > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/run << 'BGUTIL_RUN'
 #!/bin/sh
 echo "⏱️  [bgutil-pot-server] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)"
 echo $(($(date +%s%N)/1000000)) > /tmp/bgutil_start_ms
-# Use HTTP proxy for Node.js (converts to SOCKS5 on gost server)
-# bgutil reads WARP_PROXY directly, so we must unset it and use HTTP_PROXY instead
-if [ -n "$WARP_PROXY" ]; then
-    # Extract host from WARP_PROXY (e.g., socks5://89.124.69.143:1081 -> 89.124.69.143)
-    PROXY_HOST=$(echo "$WARP_PROXY" | sed 's|.*://||' | cut -d: -f1)
-    HTTP_PROXY_URL="http://${PROXY_HOST}:1082"
-    echo "[bgutil-pot-server] Using HTTP proxy: $HTTP_PROXY_URL (unset WARP_PROXY)"
+# Wait for SSH tunnel to be ready
+sleep 3
+# Use HTTP proxy via SSH tunnel
+if [ -n "$PROXY_LOCAL_PORT" ]; then
+    HTTP_PROXY_URL="http://127.0.0.1:${PROXY_LOCAL_PORT}"
+    echo "[bgutil-pot-server] Using HTTP proxy: $HTTP_PROXY_URL"
     export ALL_PROXY="$HTTP_PROXY_URL"
     export HTTPS_PROXY="$HTTP_PROXY_URL"
     export HTTP_PROXY="$HTTP_PROXY_URL"
-    # Unset WARP_PROXY so bgutil doesn't try to use SOCKS5 directly
-    unset WARP_PROXY
 fi
 export HOME=/home/botuser
 export TOKEN_TTL=6
@@ -384,7 +337,7 @@ RUN chmod +x /etc/s6-overlay/scripts/wait-for-bot-api
 # === doradura-bot longrun service ===
 RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/doradura-bot/type && \
     touch /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d/telegram-bot-api && \
-    touch /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d/railtail
+    touch /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d/ssh-tunnel
 
 # Create doradura-bot run script
 RUN printf '%s\n' \
@@ -392,6 +345,7 @@ RUN printf '%s\n' \
     'foreground { /bin/sh -c "echo \"⏱️  [doradura-bot] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/doradura_start_ms" }' \
     'foreground { /etc/s6-overlay/scripts/wait-for-bot-api }' \
     'foreground { /bin/sh -c "START=$(cat /tmp/doradura_start_ms 2>/dev/null || echo 0); END=$(($(date +%s%N)/1000000)); ELAPSED=$((END - START)); echo \"✅ [doradura-bot] Bot API check complete, waited ${ELAPSED}ms. Launching bot at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)...\"" }' \
+    'foreground { /bin/sh -c "echo \"⏳ [doradura-bot] Waiting 5s for SSH tunnel to be ready...\" && sleep 5" }' \
     's6-setuidgid botuser' \
     's6-env DATABASE_PATH=/data/database.sqlite' \
     's6-env TEMP_FILES_DIR=/data' \
@@ -406,35 +360,15 @@ RUN printf '%s\n' \
     > /etc/s6-overlay/s6-rc.d/doradura-bot/run && \
     chmod +x /etc/s6-overlay/s6-rc.d/doradura-bot/run
 
-# === cookie-manager longrun service (YouTube cookies auto-refresh) ===
-RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/cookie-manager/type && \
-    touch /etc/s6-overlay/s6-rc.d/cookie-manager/dependencies.d/init-data && \
-    printf '%s\n' \
-    '#!/command/execlineb -P' \
-    'foreground { /bin/sh -c "echo \"⏱️  [cookie-manager] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/cookie_manager_start_ms" }' \
-    's6-setuidgid botuser' \
-    's6-env HOME=/home/botuser' \
-    's6-env DISPLAY=:99' \
-    's6-env YTDL_COOKIES_FILE=/data/youtube_cookies.txt' \
-    's6-env BROWSER_PROFILE_DIR=/data/browser_profile' \
-    's6-env COOKIE_MANAGER_PORT=9876' \
-    's6-env CHROMIUM_PATH=/usr/bin/chromium-browser' \
-    's6-env CHROMEDRIVER_PATH=/app/bin/chromedriver' \
-    'fdmove -c 2 1' \
-    'python3 /app/tools/cookie_manager.py' \
-    > /etc/s6-overlay/s6-rc.d/cookie-manager/run && \
-    chmod +x /etc/s6-overlay/s6-rc.d/cookie-manager/run
-
 # Enable all services
 RUN touch /etc/s6-overlay/s6-rc.d/user/contents.d/init-data \
-          /etc/s6-overlay/s6-rc.d/user/contents.d/railtail \
+          /etc/s6-overlay/s6-rc.d/user/contents.d/ssh-tunnel \
           /etc/s6-overlay/s6-rc.d/user/contents.d/telegram-bot-api \
           /etc/s6-overlay/s6-rc.d/user/contents.d/bgutil-pot-server \
-          /etc/s6-overlay/s6-rc.d/user/contents.d/doradura-bot \
-          /etc/s6-overlay/s6-rc.d/user/contents.d/cookie-manager
+          /etc/s6-overlay/s6-rc.d/user/contents.d/doradura-bot
 
-# Expose ports (8080=webapp, 8081=bot-api, 8082=bot-api-stats, 9090=metrics, 6080=noVNC)
-EXPOSE 8080 8081 8082 9090 6080
+# Expose ports (8080=webapp, 8081=bot-api, 8082=bot-api-stats, 9090=metrics)
+EXPOSE 8080 8081 8082 9090
 
 # Note: Health check disabled - Railway uses port checks
 # Bot API takes 2-3 minutes to initialize, health check kills container prematurely
