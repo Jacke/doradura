@@ -1,11 +1,24 @@
 # Claude Code Instructions for doradura
 
+## ⚠️ CRITICAL: Railway Commands
+
+**`railway run` выполняется ЛОКАЛЬНО на Mac, НЕ в Railway контейнере!**
+
+- ❌ `railway run --service doradura <command>` - запускает команду на ЛОКАЛЬНОЙ машине
+- ✅ `railway ssh --service doradura` - заходит В Railway контейнер
+- ✅ После `railway ssh` можно выполнять команды внутри контейнера
+
+**Всегда помни:** если нужно проверить что-то ВНУТРИ Railway контейнера - используй `railway ssh`, НЕ `railway run`!
+
 ## CRITICAL RULES
 
-### Commits
-- **NEVER make commits without explicit user permission**
-- Always ask before committing: "Можно закоммитить?"
-- Wait for user confirmation before `git commit` and `git push`
+### Commits and Deployments
+- **NEVER make commits without explicit user confirmation**
+- **NEVER push to GitHub without explicit user confirmation**
+- **NEVER deploy without explicit user confirmation**
+- Always ask: "Можно закоммитить и задеплоить?" and WAIT for response
+- Do NOT commit, push, or deploy automatically - ALWAYS ask first
+- After making code changes, show what changed and ASK before committing
 
 ### Code Changes
 - Explain what you're going to change before doing it
