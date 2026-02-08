@@ -529,6 +529,7 @@ pub async fn download_and_send_video(
     db_pool: Option<Arc<DbPool>>,
     video_quality: Option<String>,
     message_id: Option<i32>,
+    alert_manager: Option<Arc<crate::core::alerts::AlertManager>>,
 ) -> ResponseResult<()> {
     let bot_clone = bot.clone();
     let _rate_limiter = Arc::clone(&rate_limiter);
@@ -1579,6 +1580,23 @@ pub async fn download_and_send_video(
             };
 
             let display_error = custom_message.unwrap_or(user_error.as_str());
+
+            // Send immediate alert to admin for critical errors
+            if let Some(ref alert_mgr) = alert_manager {
+                let is_critical = error_str.contains("Signature extraction failed")
+                    || is_bot_blocked
+                    || error_str.contains("Only images are available");
+
+                if is_critical {
+                    let context = crate::core::alerts::DownloadContext::with_live_status().await;
+                    if let Err(alert_err) = alert_mgr
+                        .alert_download_failure(chat_id.0, url.as_str(), &error_str, 3, Some(&context))
+                        .await
+                    {
+                        log::error!("Failed to send critical error alert: {}", alert_err);
+                    }
+                }
+            }
 
             // Send error sticker and message
             send_error_with_sticker_and_message(&bot_clone, chat_id, custom_message).await;

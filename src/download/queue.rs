@@ -2,7 +2,7 @@ use crate::core::metrics;
 use crate::storage::db::{save_task_to_queue, DbPool};
 use chrono::{DateTime, Utc};
 use log::info; // Использование логирования вместо println
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use teloxide::types::ChatId;
 use tokio::sync::Mutex;
@@ -171,6 +171,9 @@ pub struct DownloadQueue {
     /// Внутренняя очередь задач, защищенная мьютексом
     /// Задачи хранятся в порядке приоритета: High -> Medium -> Low
     pub queue: Mutex<VecDeque<DownloadTask>>,
+    /// Множество активных задач (в очереди + обрабатываются)
+    /// Хранит (URL, chat_id, format) для предотвращения дублирования
+    active_tasks: Mutex<HashSet<(String, i64, String)>>,
 }
 
 impl Default for DownloadQueue {
@@ -196,6 +199,7 @@ impl DownloadQueue {
     pub fn new() -> Self {
         Self {
             queue: Mutex::new(VecDeque::new()),
+            active_tasks: Mutex::new(HashSet::new()),
         }
     }
 
@@ -231,6 +235,24 @@ impl DownloadQueue {
     /// ```
     pub async fn add_task(&self, task: DownloadTask, db_pool: Option<Arc<DbPool>>) {
         info!("Добавляем задачу с приоритетом {:?}: {:?}", task.priority, task);
+
+        // Проверяем дубликаты: если задача с таким URL, chat_id и форматом уже существует - не добавляем
+        let task_key = (task.url.clone(), task.chat_id.0, task.format.clone());
+        let mut active_tasks = self.active_tasks.lock().await;
+
+        if active_tasks.contains(&task_key) {
+            log::warn!(
+                "⚠️ Duplicate task detected for URL '{}', chat_id {} and format '{}'. Skipping.",
+                task.url,
+                task.chat_id.0,
+                task.format
+            );
+            return;
+        }
+
+        // Добавляем в множество активных задач
+        active_tasks.insert(task_key);
+        drop(active_tasks); // Освобождаем lock раньше
 
         // Сохраняем задачу в БД для гарантированной обработки
         if let Some(ref pool) = db_pool {
@@ -420,6 +442,49 @@ impl DownloadQueue {
         let removed_count = before - queue.len();
         info!("Удалено старых задач: {}", removed_count);
         removed_count
+    }
+
+    /// Удаляет задачу из множества активных задач после завершения обработки.
+    ///
+    /// Должна вызываться ПОСЛЕ завершения обработки задачи (успешной или с ошибкой)
+    /// для освобождения места в очереди для повторных попыток.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - URL видео/аудио
+    /// * `chat_id` - ID чата пользователя
+    /// * `format` - Формат задачи (mp3, mp4, srt, txt)
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use teloxide::types::ChatId;
+    /// use doradura::download::queue::DownloadQueue;
+    ///
+    /// # async fn example() {
+    /// let queue = DownloadQueue::new();
+    /// // После завершения обработки задачи
+    /// queue.remove_active_task("https://youtube.com/watch?v=...", ChatId(123), "mp4").await;
+    /// # }
+    /// ```
+    pub async fn remove_active_task(&self, url: &str, chat_id: ChatId, format: &str) {
+        let mut active_tasks = self.active_tasks.lock().await;
+        let task_key = (url.to_string(), chat_id.0, format.to_string());
+        if active_tasks.remove(&task_key) {
+            log::debug!(
+                "✅ Removed task from active_tasks: {} (chat: {}, format: {})",
+                url,
+                chat_id.0,
+                format
+            );
+        } else {
+            log::warn!(
+                "⚠️ Tried to remove non-existent task: {} (chat: {}, format: {})",
+                url,
+                chat_id.0,
+                format
+            );
+        }
     }
 }
 

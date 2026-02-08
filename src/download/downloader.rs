@@ -340,6 +340,7 @@ pub async fn download_and_send_subtitles(
     subtitle_format: String,
     db_pool: Option<Arc<DbPool>>,
     message_id: Option<i32>,
+    _alert_manager: Option<Arc<crate::core::alerts::AlertManager>>,
 ) -> ResponseResult<()> {
     let bot_clone = bot.clone();
     let _rate_limiter = Arc::clone(&rate_limiter);

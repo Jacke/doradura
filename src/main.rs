@@ -744,6 +744,7 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
         Arc::clone(&download_queue),
         Arc::clone(&rate_limiter),
         Arc::clone(&db_pool),
+        alert_manager.clone(),
     ));
 
     // Start automatic backup scheduler (daily backups)
@@ -1083,6 +1084,7 @@ async fn process_queue(
     queue: Arc<DownloadQueue>,
     rate_limiter: Arc<rate_limiter::RateLimiter>,
     db_pool: Arc<db::DbPool>,
+    alert_manager: Option<Arc<alerts::AlertManager>>,
 ) {
     // Semaphore to limit concurrent downloads
     let semaphore = Arc::new(tokio::sync::Semaphore::new(config::queue::MAX_CONCURRENT_DOWNLOADS));
@@ -1099,6 +1101,8 @@ async fn process_queue(
             let semaphore = Arc::clone(&semaphore);
             let db_pool = Arc::clone(&db_pool);
             let last_download_start = Arc::clone(&last_download_start);
+            let alert_manager = alert_manager.clone();
+            let queue_for_cleanup = Arc::clone(&queue);
 
             tokio::spawn(async move {
                 // Acquire permit from semaphore (will wait if all permits are taken)
@@ -1111,6 +1115,10 @@ async fn process_queue(
                             let _ =
                                 db::mark_task_failed(&conn, &task.id, &format!("Failed to acquire semaphore: {}", e));
                         }
+                        // Remove from active_tasks before returning
+                        queue_for_cleanup
+                            .remove_active_task(&task.url, task.chat_id, &task.format)
+                            .await;
                         return;
                     }
                 };
@@ -1164,6 +1172,10 @@ async fn process_queue(
                             )
                             .await;
                         }
+                        // Remove from active_tasks before returning
+                        queue_for_cleanup
+                            .remove_active_task(&task.url, task.chat_id, &task.format)
+                            .await;
                         return;
                     }
                 };
@@ -1198,6 +1210,7 @@ async fn process_queue(
                             Some(db_pool_clone.clone()),
                             video_quality,
                             task.message_id,
+                            alert_manager.clone(),
                         )
                         .await
                     }
@@ -1211,6 +1224,7 @@ async fn process_queue(
                             task.format.clone(),
                             Some(db_pool_clone.clone()),
                             task.message_id,
+                            alert_manager.clone(),
                         )
                         .await
                     }
@@ -1225,6 +1239,7 @@ async fn process_queue(
                             Some(db_pool_clone.clone()),
                             audio_bitrate,
                             task.message_id,
+                            alert_manager.clone(),
                         )
                         .await
                     }
@@ -1276,6 +1291,11 @@ async fn process_queue(
                         }
                     }
                 }
+
+                // Remove task from active_tasks to allow retries
+                queue_for_cleanup
+                    .remove_active_task(&task_url, task_chat_id, &task_format)
+                    .await;
 
                 log::info!("Task {} processing finished, permit released", task_id);
                 // Permit is automatically released when _permit goes out of scope

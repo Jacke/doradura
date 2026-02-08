@@ -308,6 +308,15 @@ pub async fn send_error_with_sticker_and_message(bot: &Bot, chat_id: ChatId, cus
 
     // Send error message
     let error_text = custom_message.unwrap_or("У меня не получилось, все сломалось. Я написала Стэну");
+
+    // CRITICAL LOG: Track every time we send "У меня не получилось" message
+    log::error!(
+        "🚨 SENDING ERROR MESSAGE TO USER: chat_id={}, message=\"{}\", custom_message={:?}",
+        chat_id.0,
+        error_text,
+        custom_message
+    );
+
     if let Err(e) = bot.send_message(chat_id, error_text).await {
         log::error!("Failed to send error message: {}", e);
     }

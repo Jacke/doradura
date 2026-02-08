@@ -575,6 +575,7 @@ pub async fn download_and_send_audio(
     db_pool: Option<Arc<DbPool>>,
     audio_bitrate: Option<String>,
     message_id: Option<i32>,
+    alert_manager: Option<Arc<crate::core::alerts::AlertManager>>,
 ) -> ResponseResult<()> {
     log::info!(
         "Starting download_and_send_audio for chat {} with URL: {}",
@@ -1176,6 +1177,23 @@ pub async fn download_and_send_audio(
                 };
 
                 let display_error = custom_message.unwrap_or(user_error.as_str());
+
+                // Send immediate alert to admin for critical errors
+                if let Some(ref alert_mgr) = alert_manager {
+                    let is_critical = error_str.contains("Signature extraction failed")
+                        || is_bot_blocked
+                        || error_str.contains("Only images are available");
+
+                    if is_critical {
+                        let context = crate::core::alerts::DownloadContext::with_live_status().await;
+                        if let Err(alert_err) = alert_mgr
+                            .alert_download_failure(chat_id.0, url.as_str(), &error_str, 3, Some(&context))
+                            .await
+                        {
+                            log::error!("Failed to send critical error alert: {}", alert_err);
+                        }
+                    }
+                }
 
                 send_error_with_sticker_and_message(&bot_clone, chat_id, custom_message).await;
                 let _ = progress_msg
