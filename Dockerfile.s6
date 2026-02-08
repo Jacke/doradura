@@ -46,6 +46,16 @@ RUN cargo build --release && \
     file /app/doradura-bin && \
     ldd /app/doradura-bin || echo "Static binary (no dynamic libs)"
 
+# Go builder stage for railtail
+FROM golang:1.22-alpine AS go-builder
+RUN apk add --no-cache git
+WORKDIR /build
+RUN git clone https://github.com/half0wl/railtail.git . && \
+    CGO_ENABLED=0 go build -ldflags="-s -w" -o railtail . && \
+    echo "railtail built successfully:" && \
+    ls -lh railtail && \
+    file railtail
+
 # Runtime stage - based on aiogram/telegram-bot-api
 FROM aiogram/telegram-bot-api:latest
 
@@ -97,21 +107,14 @@ RUN node --version && echo "Node.js available for yt-dlp --js-runtimes node"
 RUN apk add --no-cache deno --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing && \
   deno --version && echo "Deno available for yt-dlp --js-runtimes deno"
 
-# Install Tailscale and Go (for railtail)
-RUN apk add --no-cache \
-  tailscale --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing \
-  go \
-  git && \
+# Install Tailscale (railtail needs it)
+RUN apk add --no-cache tailscale --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing && \
   tailscale version && echo "Tailscale available for network connectivity"
 
-# Build and install railtail (HTTP/TCP proxy for Tailscale)
-RUN cd /tmp && \
-  git clone https://github.com/half0wl/railtail.git && \
-  cd railtail && \
-  go build -o /usr/local/bin/railtail . && \
-  chmod +x /usr/local/bin/railtail && \
-  cd / && rm -rf /tmp/railtail && \
-  echo "railtail built successfully"
+# Copy railtail binary from go-builder stage
+COPY --from=go-builder /build/railtail /usr/local/bin/railtail
+RUN chmod +x /usr/local/bin/railtail && \
+  /usr/local/bin/railtail --version 2>&1 || echo "railtail binary ready"
 
 # Install npm (for bgutil PO Token provider)
 RUN apk add --no-cache npm
