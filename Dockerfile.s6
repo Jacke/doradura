@@ -277,44 +277,43 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/tailscaled/type && \
 # === tailscale-up oneshot service (connect to Tailscale network) ===
 RUN echo "oneshot" > /etc/s6-overlay/s6-rc.d/tailscale-up/type && \
     touch /etc/s6-overlay/s6-rc.d/tailscale-up/dependencies.d/tailscaled && \
-    cat > /etc/s6-overlay/s6-rc.d/tailscale-up/up << 'TAILSCALE_UP'
-#!/bin/sh
-echo "⏱️  [tailscale-up] START connecting to Tailscale network at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)"
-
-# Wait for tailscaled socket to be ready
-for i in $(seq 1 30); do
-  if [ -S /var/run/tailscale/tailscaled.sock ]; then
-    echo "✅ [tailscale-up] tailscaled socket ready after ${i}s"
-    break
-  fi
-  echo "⏳ [tailscale-up] Waiting for tailscaled socket... (${i}s)"
-  sleep 1
-done
-
-if [ ! -S /var/run/tailscale/tailscaled.sock ]; then
-  echo "❌ [tailscale-up] ERROR: tailscaled socket not ready after 30s"
-  exit 1
-fi
-
-# Connect to Tailscale network
-if [ -z "$TS_AUTHKEY" ]; then
-  echo "❌ [tailscale-up] ERROR: TS_AUTHKEY environment variable not set"
-  exit 1
-fi
-
-echo "🔐 [tailscale-up] Connecting with auth key..."
-tailscale up --authkey="$TS_AUTHKEY" --accept-routes=false --hostname=doradura-railway
-
-if [ $? -eq 0 ]; then
-  TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || echo "unknown")
-  echo "✅ [tailscale-up] Connected to Tailscale network at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)"
-  echo "📡 [tailscale-up] Tailscale IP: $TAILSCALE_IP"
-else
-  echo "❌ [tailscale-up] ERROR: Failed to connect to Tailscale"
-  exit 1
-fi
-TAILSCALE_UP
-RUN chmod +x /etc/s6-overlay/s6-rc.d/tailscale-up/up
+    printf '%s\n' \
+    '#!/command/execlineb -P' \
+    '/bin/sh -c "' \
+    'echo \"⏱️  [tailscale-up] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\"' \
+    '' \
+    'echo \"🔍 [tailscale-up] Waiting for tailscaled socket...\"' \
+    'for i in $(seq 1 30); do' \
+    '  if [ -S /var/run/tailscale/tailscaled.sock ]; then' \
+    '    echo \"✅ [tailscale-up] Socket ready after ${i}s\"' \
+    '    break' \
+    '  fi' \
+    '  sleep 1' \
+    'done' \
+    '' \
+    'if [ ! -S /var/run/tailscale/tailscaled.sock ]; then' \
+    '  echo \"❌ [tailscale-up] ERROR: Socket not ready after 30s\"' \
+    '  exit 1' \
+    'fi' \
+    '' \
+    'if [ -z \"$TS_AUTHKEY\" ]; then' \
+    '  echo \"❌ [tailscale-up] ERROR: TS_AUTHKEY not set\"' \
+    '  exit 1' \
+    'fi' \
+    '' \
+    'echo \"🔐 [tailscale-up] Connecting to Tailscale...\"' \
+    'tailscale up --authkey=\"$TS_AUTHKEY\" --accept-routes=false --hostname=doradura-railway' \
+    '' \
+    'if [ $? -eq 0 ]; then' \
+    '  TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || echo unknown)' \
+    '  echo \"✅ [tailscale-up] Connected! IP: $TAILSCALE_IP\"' \
+    'else' \
+    '  echo \"❌ [tailscale-up] ERROR: Connection failed\"' \
+    '  exit 1' \
+    'fi' \
+    '"' \
+    > /etc/s6-overlay/s6-rc.d/tailscale-up/up && \
+    chmod +x /etc/s6-overlay/s6-rc.d/tailscale-up/up
 
 # === telegram-bot-api longrun service ===
 RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/telegram-bot-api/type && \
