@@ -97,6 +97,10 @@ RUN node --version && echo "Node.js available for yt-dlp --js-runtimes node"
 RUN apk add --no-cache deno --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing && \
   deno --version && echo "Deno available for yt-dlp --js-runtimes deno"
 
+# Install Tailscale (for proxy access via Tailscale network)
+RUN apk add --no-cache tailscale --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing && \
+  tailscale version && echo "Tailscale available for network connectivity"
+
 # Install npm (for bgutil PO Token provider)
 RUN apk add --no-cache npm
 
@@ -161,6 +165,10 @@ COPY --from=rust-builder --chown=1000:2000 /app/migrations /app/migrations
 COPY --chown=1000:2000 tools/cookie_manager.py /app/tools/
 RUN chmod +x /app/tools/cookie_manager.py
 
+# Copy test_ytdlp.py for testing yt-dlp with production parameters
+COPY --chown=1000:2000 test_ytdlp.py /app/
+RUN chmod +x /app/test_ytdlp.py
+
 # Set environment variables
 ENV BOT_API_DATA_DIR=/data
 ENV BOT_API_URL=http://localhost:8081
@@ -179,11 +187,15 @@ ENV CHROMEDRIVER_PATH=/app/bin/chromedriver
 # Create s6-rc service directories
 RUN mkdir -p /etc/s6-overlay/s6-rc.d/user/contents.d \
              /etc/s6-overlay/s6-rc.d/init-data/dependencies.d \
+             /etc/s6-overlay/s6-rc.d/tailscaled/dependencies.d \
+             /etc/s6-overlay/s6-rc.d/tailscale-up/dependencies.d \
              /etc/s6-overlay/s6-rc.d/telegram-bot-api/dependencies.d \
              /etc/s6-overlay/s6-rc.d/bgutil-pot-server/dependencies.d \
              /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d \
              /etc/s6-overlay/s6-rc.d/cookie-manager/dependencies.d \
-             /etc/s6-overlay/scripts
+             /etc/s6-overlay/scripts \
+             /var/lib/tailscale \
+             /var/run/tailscale
 
 # === init-data oneshot service (runs migrations, sets up directories) ===
 RUN echo "oneshot" > /etc/s6-overlay/s6-rc.d/init-data/type && \
@@ -193,7 +205,7 @@ RUN echo "oneshot" > /etc/s6-overlay/s6-rc.d/init-data/type && \
 # Create init-data script
 RUN printf '%s\n' \
     '#!/command/execlineb -P' \
-    'foreground { /bin/sh -c "echo \"[init-data] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/init_start_ms" }' \
+    'foreground { /bin/sh -c "echo \"⏱️  [init-data] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/init_start_ms && echo $(($(date +%s%N)/1000000)) > /tmp/container_start_ms" }' \
     'foreground { echo "================================================" }' \
     'foreground { echo "Initializing Combined Telegram Bot API + Doradura Bot" }' \
     'foreground { echo "================================================" }' \
@@ -243,18 +255,73 @@ RUN printf '%s\n' \
     'foreground { /bin/sh -c "chmod 664 /data/*.sqlite* 2>/dev/null || true" }' \
     'foreground { ls -la /data }' \
     'foreground { echo "================================================" }' \
-    'foreground { /bin/sh -c "START=$(cat /tmp/init_start_ms 2>/dev/null || echo 0); END=$(($(date +%s%N)/1000000)); ELAPSED=$((END - START)); echo \"[init-data] COMPLETE in ${ELAPSED}ms at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\"" }' \
-    'foreground { echo "Initialization complete, starting services..." }' \
+    'foreground { /bin/sh -c "START=$(cat /tmp/init_start_ms 2>/dev/null || echo 0); END=$(($(date +%s%N)/1000000)); ELAPSED=$((END - START)); echo \"✅ [init-data] COMPLETE in ${ELAPSED}ms at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\"" }' \
+    'foreground { echo "🚀 Starting services (telegram-bot-api, bgutil, cookie-manager, doradura-bot)..." }' \
     'echo "================================================"' \
     > /etc/s6-overlay/scripts/init-data && \
     chmod +x /etc/s6-overlay/scripts/init-data
+
+# === tailscaled longrun service (Tailscale daemon) ===
+RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/tailscaled/type && \
+    touch /etc/s6-overlay/s6-rc.d/tailscaled/dependencies.d/init-data && \
+    printf '%s\n' \
+    '#!/command/execlineb -P' \
+    'foreground { /bin/sh -c "echo \"⏱️  [tailscaled] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/tailscaled_start_ms" }' \
+    'foreground { mkdir -p /var/lib/tailscale /var/run/tailscale }' \
+    'foreground { chmod 755 /var/lib/tailscale /var/run/tailscale }' \
+    'fdmove -c 2 1' \
+    '/usr/sbin/tailscaled --state=/var/lib/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock' \
+    > /etc/s6-overlay/s6-rc.d/tailscaled/run && \
+    chmod +x /etc/s6-overlay/s6-rc.d/tailscaled/run
+
+# === tailscale-up oneshot service (connect to Tailscale network) ===
+RUN echo "oneshot" > /etc/s6-overlay/s6-rc.d/tailscale-up/type && \
+    touch /etc/s6-overlay/s6-rc.d/tailscale-up/dependencies.d/tailscaled && \
+    cat > /etc/s6-overlay/s6-rc.d/tailscale-up/up << 'TAILSCALE_UP'
+#!/bin/sh
+echo "⏱️  [tailscale-up] START connecting to Tailscale network at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)"
+
+# Wait for tailscaled socket to be ready
+for i in $(seq 1 30); do
+  if [ -S /var/run/tailscale/tailscaled.sock ]; then
+    echo "✅ [tailscale-up] tailscaled socket ready after ${i}s"
+    break
+  fi
+  echo "⏳ [tailscale-up] Waiting for tailscaled socket... (${i}s)"
+  sleep 1
+done
+
+if [ ! -S /var/run/tailscale/tailscaled.sock ]; then
+  echo "❌ [tailscale-up] ERROR: tailscaled socket not ready after 30s"
+  exit 1
+fi
+
+# Connect to Tailscale network
+if [ -z "$TS_AUTHKEY" ]; then
+  echo "❌ [tailscale-up] ERROR: TS_AUTHKEY environment variable not set"
+  exit 1
+fi
+
+echo "🔐 [tailscale-up] Connecting with auth key..."
+tailscale up --authkey="$TS_AUTHKEY" --accept-routes=false --hostname=doradura-railway
+
+if [ $? -eq 0 ]; then
+  TAILSCALE_IP=$(tailscale ip -4 2>/dev/null || echo "unknown")
+  echo "✅ [tailscale-up] Connected to Tailscale network at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)"
+  echo "📡 [tailscale-up] Tailscale IP: $TAILSCALE_IP"
+else
+  echo "❌ [tailscale-up] ERROR: Failed to connect to Tailscale"
+  exit 1
+fi
+TAILSCALE_UP
+RUN chmod +x /etc/s6-overlay/s6-rc.d/tailscale-up/up
 
 # === telegram-bot-api longrun service ===
 RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/telegram-bot-api/type && \
     touch /etc/s6-overlay/s6-rc.d/telegram-bot-api/dependencies.d/init-data && \
     printf '%s\n' \
     '#!/command/execlineb -P' \
-    'foreground { /bin/sh -c "echo \"[telegram-bot-api] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\"" }' \
+    'foreground { /bin/sh -c "echo \"⏱️  [telegram-bot-api] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/bot_api_start_ms" }' \
     's6-setuidgid telegram-bot-api' \
     'fdmove -c 2 1' \
     '/bin/sh -c "umask 007 && exec telegram-bot-api --local --api-id=${TELEGRAM_API_ID} --api-hash=${TELEGRAM_API_HASH} --http-port=8081 --http-stat-port=8082 --dir=/data --temp-dir=/tmp --verbosity=1"' \
@@ -268,7 +335,8 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/type && \
     touch /etc/s6-overlay/s6-rc.d/bgutil-pot-server/dependencies.d/init-data && \
     cat > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/run << 'BGUTIL_RUN'
 #!/bin/sh
-echo "[bgutil-pot-server] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)"
+echo "⏱️  [bgutil-pot-server] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)"
+echo $(($(date +%s%N)/1000000)) > /tmp/bgutil_start_ms
 # Use HTTP proxy for Node.js (converts to SOCKS5 on gost server)
 # bgutil reads WARP_PROXY directly, so we must unset it and use HTTP_PROXY instead
 if [ -n "$WARP_PROXY" ]; then
@@ -295,24 +363,39 @@ BOT_API="${BOT_API_URL:-http://localhost:8081}"
 BOT_TOKEN="${TELOXIDE_TOKEN:-}"
 READY=0
 START_TIME=$(date +%s)
-echo "[wait-for-bot-api] Waiting for Telegram Bot API at $BOT_API..."
+START_MS=$(($(date +%s%N)/1000000))
+echo "⏱️  [wait-for-bot-api] START checking at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)"
+echo "🔍 [wait-for-bot-api] Waiting for Telegram Bot API at $BOT_API..."
 for i in $(seq 1 180); do
+  # Log every 5 seconds for first minute, then every 10 seconds
+  if [ $i -le 60 ]; then
+    [ $((i % 5)) -eq 0 ] && echo "⏳ [wait-for-bot-api] Still waiting... (${i}s elapsed)"
+  else
+    [ $((i % 10)) -eq 0 ] && echo "⏳ [wait-for-bot-api] Still waiting... (${i}s elapsed)"
+  fi
+
   if wget -q --spider "$BOT_API" 2>/dev/null; then
     if [ -n "$BOT_TOKEN" ]; then
       RESP=$(wget -q -O - "$BOT_API/bot$BOT_TOKEN/getMe" 2>/dev/null || echo "")
       if echo "$RESP" | grep -q '"ok":true'; then
         END_TIME=$(date +%s)
+        END_MS=$(($(date +%s%N)/1000000))
         ELAPSED=$((END_TIME - START_TIME))
-        echo "[wait-for-bot-api] Bot API is fully ready after ${ELAPSED}s (${i} checks)"
+        ELAPSED_MS=$((END_MS - START_MS))
+        echo "✅ [wait-for-bot-api] Bot API READY after ${ELAPSED}s (${ELAPSED_MS}ms, ${i} checks) at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)"
         READY=1
         break
       elif echo "$RESP" | grep -q 'restart'; then
-        [ $((i % 10)) -eq 0 ] && echo "[wait-for-bot-api] Bot API initializing... (${i}s)"
+        [ $((i % 10)) -eq 0 ] && echo "🔄 [wait-for-bot-api] Bot API initializing... (${i}s)"
+      else
+        [ $((i % 30)) -eq 0 ] && echo "⚠️  [wait-for-bot-api] Bot API responding but /getMe not ready (${i}s)"
       fi
     else
       END_TIME=$(date +%s)
+      END_MS=$(($(date +%s%N)/1000000))
       ELAPSED=$((END_TIME - START_TIME))
-      echo "[wait-for-bot-api] Bot API server responding after ${ELAPSED}s"
+      ELAPSED_MS=$((END_MS - START_MS))
+      echo "✅ [wait-for-bot-api] Bot API server responding after ${ELAPSED}s (${ELAPSED_MS}ms)"
       READY=1
       break
     fi
@@ -320,21 +403,24 @@ for i in $(seq 1 180); do
   sleep 1
 done
 if [ $READY -eq 0 ]; then
-  echo "[wait-for-bot-api] WARNING: Bot API not fully ready after 180s, starting anyway..."
+  END_MS=$(($(date +%s%N)/1000000))
+  ELAPSED_MS=$((END_MS - START_MS))
+  echo "⚠️  [wait-for-bot-api] WARNING: Bot API not fully ready after 180s (${ELAPSED_MS}ms), starting anyway..."
 fi
 WAIT_SCRIPT
 RUN chmod +x /etc/s6-overlay/scripts/wait-for-bot-api
 
 # === doradura-bot longrun service ===
 RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/doradura-bot/type && \
-    touch /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d/telegram-bot-api
+    touch /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d/telegram-bot-api && \
+    touch /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d/tailscale-up
 
 # Create doradura-bot run script
 RUN printf '%s\n' \
     '#!/command/execlineb -P' \
-    'foreground { /bin/sh -c "echo \"[doradura-bot] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/doradura_start_ms" }' \
+    'foreground { /bin/sh -c "echo \"⏱️  [doradura-bot] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/doradura_start_ms" }' \
     'foreground { /etc/s6-overlay/scripts/wait-for-bot-api }' \
-    'foreground { /bin/sh -c "START=$(cat /tmp/doradura_start_ms 2>/dev/null || echo 0); END=$(($(date +%s%N)/1000000)); ELAPSED=$((END - START)); echo \"[doradura-bot] Bot API ready, waited ${ELAPSED}ms. Launching bot...\"" }' \
+    'foreground { /bin/sh -c "START=$(cat /tmp/doradura_start_ms 2>/dev/null || echo 0); END=$(($(date +%s%N)/1000000)); ELAPSED=$((END - START)); echo \"✅ [doradura-bot] Bot API check complete, waited ${ELAPSED}ms. Launching bot at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)...\"" }' \
     's6-setuidgid botuser' \
     's6-env DATABASE_PATH=/data/database.sqlite' \
     's6-env TEMP_FILES_DIR=/data' \
@@ -345,7 +431,7 @@ RUN printf '%s\n' \
     's6-env METRICS_PORT=9090' \
     'fdmove -c 2 1' \
     'cd /app' \
-    '/app/doradura' \
+    '/bin/sh -c "export CONTAINER_START_MS=$(cat /tmp/container_start_ms 2>/dev/null || echo 0) && exec /app/doradura"' \
     > /etc/s6-overlay/s6-rc.d/doradura-bot/run && \
     chmod +x /etc/s6-overlay/s6-rc.d/doradura-bot/run
 
@@ -354,7 +440,7 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/cookie-manager/type && \
     touch /etc/s6-overlay/s6-rc.d/cookie-manager/dependencies.d/init-data && \
     printf '%s\n' \
     '#!/command/execlineb -P' \
-    'foreground { /bin/sh -c "echo \"[cookie-manager] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\"" }' \
+    'foreground { /bin/sh -c "echo \"⏱️  [cookie-manager] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/cookie_manager_start_ms" }' \
     's6-setuidgid botuser' \
     's6-env HOME=/home/botuser' \
     's6-env DISPLAY=:99' \
@@ -370,6 +456,8 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/cookie-manager/type && \
 
 # Enable all services
 RUN touch /etc/s6-overlay/s6-rc.d/user/contents.d/init-data \
+          /etc/s6-overlay/s6-rc.d/user/contents.d/tailscaled \
+          /etc/s6-overlay/s6-rc.d/user/contents.d/tailscale-up \
           /etc/s6-overlay/s6-rc.d/user/contents.d/telegram-bot-api \
           /etc/s6-overlay/s6-rc.d/user/contents.d/bgutil-pot-server \
           /etc/s6-overlay/s6-rc.d/user/contents.d/doradura-bot \

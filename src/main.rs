@@ -521,6 +521,7 @@ async fn run_cli_info(url: String, json: bool) -> Result<()> {
 
 /// Run the Telegram bot
 async fn run_bot(use_webhook: bool) -> Result<()> {
+    let bot_init_start = std::time::Instant::now();
     log::info!("Starting bot...");
 
     // Initialize metrics registry
@@ -863,7 +864,27 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
         }
     } else {
         // Long polling mode (default)
+        let init_elapsed = bot_init_start.elapsed();
         log::info!("Starting bot in long polling mode");
+        log::info!("================================================");
+        log::info!("🎉 Bot initialization complete in {:.2}s", init_elapsed.as_secs_f64());
+        log::info!("📡 Ready to receive updates!");
+        log::info!("================================================");
+
+        // Print startup timing summary if env vars are available
+        if let Ok(container_start) = std::env::var("CONTAINER_START_MS") {
+            if let Ok(start_ms) = container_start.parse::<u64>() {
+                let now_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as u64;
+                let total_elapsed = now_ms - start_ms;
+                log::info!(
+                    "⏱️  Total startup time from container start: {:.2}s",
+                    total_elapsed as f64 / 1000.0
+                );
+            }
+        }
 
         // Run the dispatcher with retry logic
         loop {
