@@ -1,46 +1,68 @@
 <div align="center">
 
-# 🎵 Doradura
+# Doradura
 
 <img src="logo.webp" width="55%" height="350" alt="Doradura Logo">
 
-### High-performance Telegram bot for downloading music and videos
+### High-performance Telegram bot for downloading and converting media
 
 [![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Telegram](https://img.shields.io/badge/Telegram-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/DoraDuraDoraDuraBot?start)
 
-**Download audio & video from YouTube and SoundCloud with ease**
+**Download media from multiple sources and convert between formats**
 
 </div>
 
 ---
 
-## ✨ Features
+## Features
 
-- 🎵 **Audio Downloads** - High-quality MP3 downloads (320kbps) with embedded metadata and thumbnails
-- 🎥 **Video Downloads** - Get videos in the best available quality
-- ⚡ **Fast & Efficient** - Built with Rust for maximum performance
-- 🔄 **Retry Logic** - Automatic retries for reliable file delivery
-- 🛡️ **Rate Limiting** - Prevent abuse with intelligent rate limiting (30s cooldown per user)
-- 📊 **Queue System** - Handle multiple downloads seamlessly
-- 🗄️ **Database Logging** - Track all user requests and history
-- 🔧 **Multi-Platform** - Support for both `youtube-dl` and `yt-dlp`
-- 💾 **Auto-Cleanup** - Temporary files are automatically removed after sending
+- **Multi-source downloads** — pluggable backend architecture via `DownloadSource` trait. Built-in support for 1000+ sites (YouTube, SoundCloud, TikTok, Instagram, VK, Twitch, Spotify, Bandcamp, and more) plus direct file URLs
+- **Format conversion** — convert documents (DOCX to PDF), video (circles, GIF, compression), audio (effects, ringtones, cuts), and images (resize, format change) directly from sent files
+- **Audio processing** — pitch, tempo, bass boost effects; ringtone creation; segment cutting with speed control
+- **High performance** — built with Rust and async Tokio runtime for maximum throughput
+- **Download pipeline** — source-agnostic pipeline with progress tracking, retry logic, and automatic cleanup
+- **Queue system** — handle multiple concurrent downloads with per-user rate limiting and priority tiers
+- **Subscription system** — Free / Premium / VIP tiers with Telegram Stars payments and auto-renewal
+- **Multi-language** — Russian, English, French, German with per-user language selection
+- **Database & history** — SQLite-backed download history, user stats, and export (TXT/CSV/JSON)
 
-## 🚀 Quick Start
+## Architecture
+
+```
+DownloadSource trait          SourceRegistry (URL routing)
+  ├── YtDlpSource  ───────►  ┌──────────────────────┐
+  │   (1000+ sites)           │  resolve(url) → src  │
+  ├── HttpSource   ───────►  │  register(source)     │
+  │   (direct files)          └──────────────────────┘
+  └── (your backend)                    │
+                                        ▼
+                              Pipeline (download_phase / execute)
+                                        │
+                              ┌─────────┴─────────┐
+                              │  audio.rs  video.rs │
+                              └───────────────────┘
+
+conversion/
+  ├── video.rs    (circles, GIF, compression)
+  ├── image.rs    (resize, format conversion)
+  └── document.rs (DOCX → PDF via LibreOffice)
+```
+
+New download backends are added by implementing the `DownloadSource` trait and registering them in `SourceRegistry::default_registry()`.
+
+## Quick Start
 
 ### Prerequisites
 
-Install the required system tools:
-
 ```bash
-# Install FFmpeg (audio/video processing)
+# Install FFmpeg (media processing)
 brew install ffmpeg  # macOS
 # or
 sudo apt install ffmpeg  # Ubuntu/Debian
 
-# Install youtube-dl or yt-dlp
-brew install yt-dlp  # macOS (recommended)
+# Install yt-dlp (for platform downloads)
+brew install yt-dlp  # macOS
 # or
 pip install yt-dlp  # Python alternative
 ```
@@ -73,7 +95,7 @@ cargo build --release
 cargo run -- run
 ```
 
-> **💡 Note:** The bot now supports CLI commands. See [CLI_USAGE.md](CLI_USAGE.md) for all available commands including `run-staging`, `run-with-cookies`, and `refresh-metadata`.
+> **Note:** The bot supports CLI commands. See [CLI_USAGE.md](CLI_USAGE.md) for all available commands including `run-staging`, `run-with-cookies`, and `refresh-metadata`.
 
 ### Environment Variables
 
@@ -81,231 +103,78 @@ Create a `.env` file in the project root:
 
 ```env
 TELOXIDE_TOKEN=your_telegram_bot_token_here
-ADMIN_USERNAME=your_telegram_username  # Admin user (without @) for /admin, /users, /setplan commands
-YTDL_BIN=yt-dlp  # Optional: override default youtube-dl
-BOT_API_URL=http://localhost:8081  # Optional: use local Bot API server (allows files up to 2GB)
-DOWNSUB_GRPC_ENDPOINT=http://localhost:50051  # Optional: gRPC endpoint for Downsub summarization/subtitles
-
-# YouTube Cookies (required for YouTube downloads)
-# Option 1: Automatic extraction from browser (Linux/Windows recommended)
-YTDL_COOKIES_BROWSER=chrome  # chrome, firefox, safari, brave, chromium, edge, opera, vivaldi
-
-# Option 2: Export cookies to file (macOS recommended)
-YTDL_COOKIES_FILE=youtube_cookies.txt
+ADMIN_USERNAME=your_telegram_username  # Admin user (without @)
+YTDL_BIN=yt-dlp  # Optional: override default
+BOT_API_URL=http://localhost:8081  # Optional: local Bot API server (files up to 2GB)
+DOWNSUB_GRPC_ENDPOINT=http://localhost:50051  # Optional: Downsub gRPC for summarization/subtitles
 ```
 
-**📋 Quick Setup for Cookies:**
+### Local Bot API Server (Optional)
 
-**Linux/Windows (Automatic):**
+For sending files larger than 50 MB (up to 2 GB):
+
 ```bash
-# 1. Install dependencies
-pip3 install keyring pycryptodomex
-
-# 2. Login to YouTube in your browser
-# 3. Set environment variable
-export YTDL_COOKIES_BROWSER=chrome
-
-# 4. Restart bot
+./scripts/start_local_bot_api.sh
 ```
 
-**macOS (File-based, recommended):**
-```bash
-# 1. Export cookies using browser extension (see MACOS_COOKIES_FIX.md)
-# 2. Set environment variable
-export YTDL_COOKIES_FILE=youtube_cookies.txt
+See [LOCAL_BOT_API_SETUP.md](docs/LOCAL_BOT_API_SETUP.md) for details.
 
-# 3. Restart bot
-```
+## Usage
 
-See [docs/YOUTUBE_COOKIES.md](docs/YOUTUBE_COOKIES.md) for detailed instructions.
+Interact with the bot on Telegram:
 
-### 🚀 Local Bot API Server (Optional)
+- **Send a link** — downloads audio/video from supported platforms
+- **Send a file** — offers conversion options
+- `/start` — main menu
+- `/settings` — download and conversion settings
+- `/info <URL>` — show available formats for a URL
+- `/downsub summary <URL>` — get a summary via Downsub
+- `/downsub subtitles <URL>` — fetch subtitles via Downsub
 
-For sending files larger than 50 MB (up to 2 GB), you can use a local Bot API server:
-
-1. **Quick start with Docker:**
-   ```bash
-   ./scripts/start_local_bot_api.sh
-   ```
-   
-   See [LOCAL_BOT_API_SETUP.md](docs/LOCAL_BOT_API_SETUP.md) for detailed instructions.
-
-2. **Benefits:**
-   - Upload files up to **2 GB** (instead of 50 MB)
-   - Lower latency
-   - More flexibility with webhooks
-
-## 📖 Usage
-
-Once running, interact with the bot on Telegram:
-
-- **Send a YouTube/SoundCloud link** - Downloads audio by default
-- **Send "video" + link** - Downloads video instead
-- `/start` - Shows welcome message
-- `/help` - Display bot commands
-- `/settings` - View your settings
-- `/tasks` - Check active downloads
-- `/downsub summary <URL> [lang=<code>]` - Ask your Downsub service for a summary/highlights for a link
-- `/downsub subtitles <URL> [format=<srt|vtt>] [lang=<code>]` - Fetch subtitles via Downsub and receive them as a document
-
-The `/downsub` commands only work if you set `DOWNSUB_GRPC_ENDPOINT` to a running Downsub gRPC server (local calls only).
-### Examples
-
-```
-https://youtube.com/watch?v=...
-https://soundcloud.com/...
-video https://youtube.com/watch?v=...
-```
-
-## 🏗️ Architecture
-
-### Core Components
-
-- **`src/main.rs`** - Bot initialization, dispatcher setup, queue processing
-- **`src/downloader.rs`** - Audio/video download logic with retry mechanisms
-- **`src/queue.rs`** - Thread-safe download queue system
-- **`src/rate_limiter.rs`** - Per-user rate limiting
-- **`src/commands.rs`** - Message and URL parsing handlers
-- **`src/db.rs`** - SQLite database for logging
-- **`src/fetch.rs`** - Metadata fetching from URLs
-
-## 🧪 Testing
+## Testing
 
 ```bash
 # Run all tests
 cargo test
 
-# Run tests including integration tests
+# Run with integration tests
 cargo test -- --ignored
 
-# Test specific module
-cargo test --test download_video
+# Clippy
+cargo clippy
 ```
 
-## 🛠️ Development
+## Dependencies
 
-### Build
+Key technologies:
 
-```bash
-# Development build
-cargo build
+- **[teloxide](https://github.com/teloxide/teloxide)** — Telegram bot framework
+- **[tokio](https://tokio.rs/)** — async runtime
+- **[rusqlite](https://github.com/rusqlite/rusqlite)** — SQLite database
+- **[reqwest](https://github.com/seanmonstar/reqwest)** — HTTP client
+- **[fluent-templates](https://github.com/XAMPPRocky/fluent-templates)** — i18n
 
-# Release build (optimized)
-cargo build --release
-```
+## Documentation
 
-### Run
-
-```bash
-# Run with default settings
-cargo run
-
-# Run with custom logger
-RUST_LOG=info cargo run
-```
-
-## 📦 Dependencies
-
-Key technologies used:
-
-- **[teloxide](https://github.com/teloxide/teloxide)** - Modern Telegram bot framework
-- **[tokio](https://tokio.rs/)** - Async runtime
-- **[rusqlite](https://github.com/rusqlite/rusqlite)** - Database integration
-- **[reqwest](https://github.com/seanmonstar/reqwest)** - HTTP client
-- **[anyhow](https://github.com/dtolnay/anyhow)** - Error handling
-- **[chrono](https://github.com/chronotope/chrono)** - Date and time handling
-
-## 🔧 Configuration
-
-### Rate Limiting
-
-Default rate limit: **30 seconds** between downloads per user
-
-To modify, edit `src/main.rs`:
-
-```rust
-let rate_limiter = Arc::new(RateLimiter::new(Duration::from_secs(30)));
-```
-
-### Download Location
-
-Files are downloaded to a configurable folder with platform-specific defaults:
-
-- **macOS**: `~/downloads/dora-files/`
-- **Other platforms**: `~/downloads/`
-
-To customize the download folder, set the `DOWNLOAD_FOLDER` environment variable in your `.env` file:
-
-```env
-DOWNLOAD_FOLDER=~/downloads/my-custom-folder
-```
-
-The path supports tilde (`~`) expansion for the home directory.
-
-### Retry Logic
-
-Default: **3 attempts** with **10 second** delays
-
-Configure in `src/downloader.rs`:
-
-```rust
-let max_attempts = 3;
-// ...
-tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
-```
-
-## 📚 Documentation
-
-- [AGENTS.md](docs/AGENTS.md)
-- [BOT_FLOWS.md](docs/BOT_FLOWS.md)
-- [CACHE_ISSUE.md](docs/CACHE_ISSUE.md)
-- [CLAUDE.md](docs/CLAUDE.md)
-- [CODE_QUALITY_ANALYSIS.md](docs/CODE_QUALITY_ANALYSIS.md)
-- [COOKIE_FIX_SUMMARY.md](docs/COOKIE_FIX_SUMMARY.md)
-- [FILENAME_FIX.md](docs/FILENAME_FIX.md)
-- [FIX_UNKNOWN_TRACK.md](docs/FIX_UNKNOWN_TRACK.md)
-- [FIX_YOUTUBE_ERRORS.md](docs/FIX_YOUTUBE_ERRORS.md)
-- [IDEAS.md](docs/IDEAS.md)
-- [IMPROVEMENTS.md](docs/IMPROVEMENTS.md)
-- [LOCAL_BOT_API_SETUP.md](docs/LOCAL_BOT_API_SETUP.md)
-- [MACOS_COOKIES_FIX.md](docs/MACOS_COOKIES_FIX.md)
-- **[TELEGRAM_FILE_DOWNLOAD.md](TELEGRAM_FILE_DOWNLOAD.md)** - Admin feature for downloading files from Telegram
-- [OPTIMIZATION_OPPORTUNITIES.md](docs/OPTIMIZATION_OPPORTUNITIES.md)
-- [OPTIMIZATION_REALISTIC_ANALYSIS.md](docs/OPTIMIZATION_REALISTIC_ANALYSIS.md)
-- [PROGRESS_BAR_FIX.md](docs/PROGRESS_BAR_FIX.md)
 - [QUICKSTART.md](docs/QUICKSTART.md)
-- [QUICK_FIX.md](docs/QUICK_FIX.md)
-- [REMAINING_TASKS.md](docs/REMAINING_TASKS.md)
-- [RUN_TESTS.md](docs/RUN_TESTS.md)
-- [SESSION_SUMMARY.md](docs/SESSION_SUMMARY.md)
+- [BOT_FLOWS.md](docs/BOT_FLOWS.md)
+- [LOCAL_BOT_API_SETUP.md](docs/LOCAL_BOT_API_SETUP.md)
+- [YOUTUBE_COOKIES.md](docs/YOUTUBE_COOKIES.md)
 - [SUBSCRIPTIONS.md](docs/SUBSCRIPTIONS.md)
 - [TESTING.md](docs/TESTING.md)
-- [TEST_SUMMARY.md](docs/TEST_SUMMARY.md)
-- [VIDEO_BLACK_SCREEN_FIX.md](docs/VIDEO_BLACK_SCREEN_FIX.md)
-- [VIDEO_BLACK_SCREEN_FIX_V2.md](docs/VIDEO_BLACK_SCREEN_FIX_V2.md)
-- [YOUTUBE_COOKIES.md](docs/YOUTUBE_COOKIES.md)
-- [YOUTUBE_PO_TOKEN_FIX.md](docs/YOUTUBE_PO_TOKEN_FIX.md)
 
-## 📝 License
+## License
 
-MIT License - see LICENSE file for details
+MIT License - see LICENSE file for details.
 
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## ⚠️ Disclaimer
+## Disclaimer
 
 This bot is for personal use only. Please respect copyright laws and terms of service of the platforms you download from.
-
-## 💡 Credits
-
-Built with ❤️ using Rust and the amazing teloxide library.
 
 ---
 
 <div align="center">
 
-Made with 🔥 by Dora
+Made with Rust by Dora
 
 </div>

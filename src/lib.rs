@@ -1,4 +1,4 @@
-//! Doradura - High-performance Telegram bot for downloading music and videos
+//! Doradura - High-performance Telegram bot for downloading and converting media
 //!
 //! This library provides all the core functionality for the Doradura bot,
 //! including download management, database operations, queue management,

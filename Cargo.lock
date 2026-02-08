@@ -1325,6 +1325,7 @@ dependencies = [
  "dotenvy",
  "fake",
  "fluent-templates",
+ "futures-util",
  "grammers-client",
  "grammers-mtsender",
  "grammers-session",

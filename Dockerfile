@@ -1,167 +1,328 @@
-# Build stage
-FROM rust:1.85-slim AS builder
-
-# Install system dependencies required for building
-# hadolint ignore=DL3008
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    pkg-config \
-    libssl-dev \
-    libsqlite3-dev \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
+# syntax=docker/dockerfile:1
+# Build stage for Rust application with cargo-chef for dependency caching
+FROM rust:1.85-alpine AS chef
+# hadolint ignore=DL3018
+RUN apk add --no-cache musl-dev && \
+    cargo install cargo-chef
 WORKDIR /app
 
-# Copy manifests
+FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY build.rs ./
-
-# Copy C code for build.rs
 COPY c_code ./c_code
-
-# Copy source code
 COPY src ./src
 COPY locales ./locales
 COPY migrations ./migrations
+COPY benches ./benches
+RUN cargo chef prepare --recipe-path recipe.json
 
-# Build the application
-RUN cargo build --release
+FROM chef AS rust-builder
+# hadolint ignore=DL3018
+RUN apk add --no-cache \
+  musl-dev \
+  pkgconfig \
+  openssl-dev \
+  openssl-libs-static \
+  sqlite-dev \
+  sqlite-static \
+  build-base
 
-# Runtime stage
-FROM debian:bookworm-slim
+COPY --from=planner /app/recipe.json recipe.json
+# Build dependencies - this is the caching layer
+RUN cargo chef cook --release --recipe-path recipe.json
 
-# Install runtime dependencies
-# hadolint ignore=DL3008
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    ffmpeg \
-    gosu \
-    python3 \
-    python3-pip \
-    sqlite3 \
-    unzip \
-    wget \
-    && rm -rf /var/lib/apt/lists/*
+# Build application
+COPY Cargo.toml Cargo.lock ./
+COPY build.rs ./
+COPY c_code ./c_code
+COPY src ./src
+COPY locales ./locales
+COPY migrations ./migrations
+COPY benches ./benches
 
-# Install Deno (JavaScript runtime required for yt-dlp YouTube n-challenge solving)
-RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh && \
-    deno --version
+RUN cargo build --release && \
+    cp /app/target/release/doradura /app/doradura-bin && \
+    echo "Binary built successfully:" && \
+    ls -lh /app/doradura-bin && \
+    file /app/doradura-bin && \
+    ldd /app/doradura-bin || echo "Static binary (no dynamic libs)"
+
+# Runtime stage - based on aiogram/telegram-bot-api
+# hadolint ignore=DL3007
+FROM aiogram/telegram-bot-api:latest
+
+# hadolint ignore=DL3002
+USER root
+
+# s6-overlay version
+ARG S6_OVERLAY_VERSION=3.2.0.2
+
+# Install s6-overlay
+ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz /tmp
+ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-x86_64.tar.xz /tmp
+RUN tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz && \
+    tar -C / -Jxpf /tmp/s6-overlay-x86_64.tar.xz && \
+    rm /tmp/s6-overlay-*.tar.xz
+
+# Install runtime dependencies + build deps for canvas (bgutil PO Token server)
+# hadolint ignore=DL3018
+RUN apk add --no-cache \
+  ca-certificates \
+  musl \
+  libssl3 \
+  libcrypto3 \
+  ffmpeg \
+  python3 \
+  py3-pip \
+  sqlite-libs \
+  libgcc \
+  libstdc++ \
+  wget \
+  curl \
+  unzip \
+  bash \
+  nodejs \
+  npm \
+  git \
+  build-base \
+  pkgconfig \
+  cairo-dev \
+  pango-dev \
+  jpeg-dev \
+  giflib-dev \
+  pixman-dev && \
+  node --version && echo "Node.js available for yt-dlp --js-runtimes node"
+
+# Install Deno from Alpine edge/testing (musl-compatible build)
+# hadolint ignore=DL3018
+RUN apk add --no-cache deno --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing && \
+  deno --version && echo "Deno available for yt-dlp --js-runtimes deno"
 
 # Install yt-dlp from nightly builds (latest fixes for YouTube compatibility)
 RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
-    chmod a+rx /usr/local/bin/yt-dlp
+  chmod a+rx /usr/local/bin/yt-dlp
 
-# Install Python dependencies for browser cookie extraction (optional)
+# Install all Python dependencies in one layer
 # hadolint ignore=DL3013
-RUN pip3 install --no-cache-dir --break-system-packages keyring pycryptodomex
+RUN pip3 install --no-cache-dir --break-system-packages \
+    keyring pycryptodomex bgutil-ytdlp-pot-provider \
+    curl_cffi
 
+# Install bgutil PO Token HTTP server (generates tokens for yt-dlp)
+WORKDIR /opt/bgutil
+RUN git clone --single-branch --branch 1.2.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git .
+WORKDIR /opt/bgutil/server
+RUN npm install && \
+    npx tsc && \
+    echo "bgutil PO Token server built successfully"
 WORKDIR /app
 
-# Copy the compiled binary from builder
-COPY --from=builder /app/target/release/doradura /app/doradura
+# Create shared group and users, then set up directories
+RUN addgroup -g 2000 shareddata && \
+  adduser -D -u 1000 -G shareddata botuser && \
+  addgroup telegram-bot-api shareddata && \
+  addgroup botuser telegram-bot-api && \
+  mkdir -p /app /data && \
+  chown 1000:2000 /app && \
+  chown telegram-bot-api:shareddata /data && \
+  chmod 775 /data
 
-# Copy migration script (for fallback)
+# Copy the compiled binary from rust-builder and set permissions
+COPY --from=rust-builder --chown=1000:2000 /app/doradura-bin /app/doradura
+RUN chmod 755 /app/doradura && \
+  ls -la /app/doradura
 
-# Create startup script
-RUN cat <<'EOF' > /app/entrypoint.sh && chmod +x /app/entrypoint.sh
-#!/bin/bash
-set -e
+# Copy migrations for auto-migration on startup
+COPY --from=rust-builder --chown=1000:2000 /app/migrations /app/migrations
 
-if [ "$(id -u)" -eq 0 ]; then
-  if [ -d /data ]; then
-    chown -R botuser:botuser /data || true
-  fi
-  if [ -d /telegram-bot-api ]; then
-    chown -R botuser:botuser /telegram-bot-api || true
-    chmod 755 /telegram-bot-api || true
-  fi
-fi
+# Copy test_ytdlp.py for testing yt-dlp with production parameters
+COPY --chown=1000:2000 test_ytdlp.py /app/
+RUN chmod +x /app/test_ytdlp.py
 
-# Set TEMP_FILES_DIR environment variable
-export TEMP_FILES_DIR="${TEMP_FILES_DIR:-/telegram-bot-api}"
+# Set environment variables
+ENV BOT_API_DATA_DIR=/data
+ENV BOT_API_URL=http://localhost:8081
+ENV S6_KEEP_ENV=1
+ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2
+ENV S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0
 
-echo "Temporary files directory: $TEMP_FILES_DIR"
-if [ -d "$TEMP_FILES_DIR" ]; then
-  echo "✅ Temporary files directory exists"
-  mkdir -p "$TEMP_FILES_DIR" || true
-else
-  echo "⚠️  Temporary files directory does not exist, creating..."
-  mkdir -p "$TEMP_FILES_DIR" || echo "Failed to create $TEMP_FILES_DIR, falling back to /tmp"
-  export TEMP_FILES_DIR="/tmp"
-fi
+# === s6-overlay service definitions ===
 
-echo "Database initialization..."
+# Create s6-rc service directories
+RUN mkdir -p /etc/s6-overlay/s6-rc.d/user/contents.d \
+             /etc/s6-overlay/s6-rc.d/init-data/dependencies.d \
+             /etc/s6-overlay/s6-rc.d/telegram-bot-api/dependencies.d \
+             /etc/s6-overlay/s6-rc.d/bgutil-pot-server/dependencies.d \
+             /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d \
+             /etc/s6-overlay/scripts
 
-# Use DATABASE_URL if provided, else default to /data/database.sqlite
-DB_PATH=${DATABASE_URL:-/data/database.sqlite}
-DB_DIR=$(dirname "$DB_PATH")
+# === init-data oneshot service (runs migrations, sets up directories) ===
+RUN echo "oneshot" > /etc/s6-overlay/s6-rc.d/init-data/type && \
+    touch /etc/s6-overlay/s6-rc.d/init-data/dependencies.d/base && \
+    echo "/etc/s6-overlay/scripts/init-data" > /etc/s6-overlay/s6-rc.d/init-data/up
 
-# Ensure directory exists and has correct permissions
-mkdir -p "$DB_DIR" || true
-chmod 755 "$DB_DIR" 2>/dev/null || true
-chown -R botuser:botuser "$DB_DIR" 2>/dev/null || true
+# Create init-data script
+# hadolint ignore=SC2016
+RUN printf '%s\n' \
+    '#!/command/execlineb -P' \
+    'foreground { /bin/sh -c "echo \"[init-data] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/init_start_ms && echo $(($(date +%s%N)/1000000)) > /tmp/container_start_ms" }' \
+    'foreground { echo "================================================" }' \
+    'foreground { echo "Initializing Telegram Bot API + Doradura Bot" }' \
+    'foreground { echo "================================================" }' \
+    'foreground { mkdir -p /data /tmp }' \
+    'foreground { chmod 1777 /tmp }' \
+    'foreground { echo "Clearing Bot API data for clean start..." }' \
+    'foreground {' \
+    '  /bin/sh -c "' \
+    '    for d in /data/*/; do' \
+    '      if [ -d \"\$d\" ]; then' \
+    '        if [ -f \"\${d}binlog\" ] || ls \"\${d}\"*.binlog 2>/dev/null | head -1 > /dev/null; then' \
+    '          echo Removing Bot API directory: \$d' \
+    '          rm -rf \"\$d\"' \
+    '        fi' \
+    '      fi' \
+    '    done' \
+    '    find /data -name \"*.binlog\" -delete 2>/dev/null || true' \
+    '    find /data -name \"*.binlog.lock\" -delete 2>/dev/null || true' \
+    '  "' \
+    '}' \
+    'foreground { chown telegram-bot-api:shareddata /data }' \
+    'foreground { chmod 775 /data }' \
+    'foreground { chown -R 1000:2000 /app }' \
+    'foreground { chmod 755 /app }' \
+    'foreground {' \
+    '  /bin/sh -c "' \
+    '    DB_PATH=\${DATABASE_URL:-/data/database.sqlite}' \
+    '    DB_DIR=\$(dirname \"\$DB_PATH\")' \
+    '    mkdir -p \"\$DB_DIR\"' \
+    '    chmod 755 \"\$DB_DIR\" 2>/dev/null || true' \
+    '    echo Running database migrations...' \
+    '    MIGRATIONS_DIR=/app/migrations' \
+    '    if [ -d \"\$MIGRATIONS_DIR\" ]; then' \
+    '      for migration in \$(ls -1 \"\$MIGRATIONS_DIR\"/*.sql 2>/dev/null | sort -V); do' \
+    '        migration_name=\$(basename \"\$migration\")' \
+    '        echo \"  Applying: \$migration_name\"' \
+    '        sqlite3 \"\$DB_PATH\" < \"\$migration\" 2>&1 || echo \"  (already applied or error)\"' \
+    '      done' \
+    '      echo Migrations complete' \
+    '    fi' \
+    '  "' \
+    '}' \
+    'foreground { echo "Setting database permissions..." }' \
+    'foreground { chown -R 1000:2000 /data }' \
+    'foreground { chmod 775 /data }' \
+    'foreground { /bin/sh -c "chown 1000:2000 /data/*.sqlite* 2>/dev/null || true" }' \
+    'foreground { /bin/sh -c "chmod 664 /data/*.sqlite* 2>/dev/null || true" }' \
+    'foreground { ls -la /data }' \
+    'foreground { echo "================================================" }' \
+    'foreground { /bin/sh -c "START=$(cat /tmp/init_start_ms 2>/dev/null || echo 0); END=$(($(date +%s%N)/1000000)); ELAPSED=$((END - START)); echo \"[init-data] COMPLETE in ${ELAPSED}ms at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\"" }' \
+    'foreground { echo "Starting services (telegram-bot-api, bgutil, doradura-bot)..." }' \
+    'echo "================================================"' \
+    > /etc/s6-overlay/scripts/init-data && \
+    chmod +x /etc/s6-overlay/scripts/init-data
 
-echo "🔍 Testing write permissions for $DB_DIR..."
-if ! touch "$DB_DIR/.rw_test" 2>/dev/null; then
-  echo "⚠️  Database directory not writable: $DB_DIR"
-  echo "Directory info:"
-  ls -lah "$DB_DIR" || echo "Directory does not exist"
-  echo "Current user: $(whoami)"
-  echo "Falling back to /app/database.sqlite"
-  DB_PATH="/app/database.sqlite"
-  DB_DIR="/app"
-  mkdir -p "$DB_DIR"
-  chmod 755 "$DB_DIR"
-fi
-rm -f "$DB_DIR/.rw_test"
+# === telegram-bot-api longrun service ===
+# hadolint ignore=SC2016
+RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/telegram-bot-api/type && \
+    touch /etc/s6-overlay/s6-rc.d/telegram-bot-api/dependencies.d/init-data && \
+    printf '%s\n' \
+    '#!/command/execlineb -P' \
+    'foreground { /bin/sh -c "echo \"[telegram-bot-api] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/bot_api_start_ms" }' \
+    's6-setuidgid telegram-bot-api' \
+    'fdmove -c 2 1' \
+    '/bin/sh -c "umask 007 && exec telegram-bot-api --local --api-id=${TELEGRAM_API_ID} --api-hash=${TELEGRAM_API_HASH} --http-port=8081 --http-stat-port=8082 --dir=/data --temp-dir=/tmp --verbosity=1"' \
+    > /etc/s6-overlay/s6-rc.d/telegram-bot-api/run && \
+    chmod +x /etc/s6-overlay/s6-rc.d/telegram-bot-api/run
 
-echo "🔍 Checking for database at: $DB_PATH"
-ls -lah "$DB_DIR" 2>/dev/null || echo "Directory $DB_DIR is empty or does not exist"
+# === bgutil-pot-server longrun service ===
+# hadolint ignore=SC2016
+RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/type && \
+    touch /etc/s6-overlay/s6-rc.d/bgutil-pot-server/dependencies.d/init-data && \
+    printf '%s\n' \
+    '#!/bin/sh' \
+    'echo "[bgutil-pot-server] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)"' \
+    'echo $(($(date +%s%N)/1000000)) > /tmp/bgutil_start_ms' \
+    'export HOME=/home/botuser' \
+    'export TOKEN_TTL=6' \
+    'exec s6-setuidgid botuser node /opt/bgutil/server/build/main.js 2>&1' \
+    > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/run && \
+    chmod +x /etc/s6-overlay/s6-rc.d/bgutil-pot-server/run
 
-if [ -f "$DB_PATH" ]; then
-  echo "✅ Using existing database at $DB_PATH"
-  echo "📊 Database file size: $(du -h "$DB_PATH" | cut -f1)"
-  echo "📅 Last modified: $(stat -c %y "$DB_PATH" 2>/dev/null || stat -f "%Sm" "$DB_PATH" 2>/dev/null || echo "unknown")"
-else
-  echo "⚠️  Database not found at $DB_PATH; it will be initialized by migrations on startup."
-  echo "✅ Database created at $DB_PATH"
-fi
+# Create wait script for Bot API
+# hadolint ignore=SC2016
+RUN printf '%s\n' \
+    '#!/bin/sh' \
+    'BOT_API="${BOT_API_URL:-http://localhost:8081}"' \
+    'BOT_TOKEN="${TELOXIDE_TOKEN:-}"' \
+    'READY=0' \
+    'START_TIME=$(date +%s)' \
+    'START_MS=$(($(date +%s%N)/1000000))' \
+    'echo "[wait-for-bot-api] Waiting for Bot API at $BOT_API..."' \
+    'for i in $(seq 1 180); do' \
+    '  if [ $i -le 60 ]; then' \
+    '    [ $((i % 5)) -eq 0 ] && echo "[wait-for-bot-api] Still waiting... (${i}s elapsed)"' \
+    '  else' \
+    '    [ $((i % 10)) -eq 0 ] && echo "[wait-for-bot-api] Still waiting... (${i}s elapsed)"' \
+    '  fi' \
+    '  if wget -q --spider "$BOT_API" 2>/dev/null; then' \
+    '    if [ -n "$BOT_TOKEN" ]; then' \
+    '      RESP=$(wget -q -O - "$BOT_API/bot$BOT_TOKEN/getMe" 2>/dev/null || echo "")' \
+    '      if echo "$RESP" | grep -q "\"ok\":true"; then' \
+    '        END_TIME=$(date +%s)' \
+    '        ELAPSED=$((END_TIME - START_TIME))' \
+    '        echo "[wait-for-bot-api] Bot API READY after ${ELAPSED}s (${i} checks)"' \
+    '        READY=1' \
+    '        break' \
+    '      elif echo "$RESP" | grep -q "restart"; then' \
+    '        [ $((i % 10)) -eq 0 ] && echo "[wait-for-bot-api] Bot API initializing... (${i}s)"' \
+    '      fi' \
+    '    else' \
+    '      echo "[wait-for-bot-api] Bot API server responding"' \
+    '      READY=1' \
+    '      break' \
+    '    fi' \
+    '  fi' \
+    '  sleep 1' \
+    'done' \
+    'if [ $READY -eq 0 ]; then' \
+    '  echo "[wait-for-bot-api] WARNING: Bot API not ready after 180s, starting anyway..."' \
+    'fi' \
+    > /etc/s6-overlay/scripts/wait-for-bot-api && \
+    chmod +x /etc/s6-overlay/scripts/wait-for-bot-api
 
-export DATABASE_URL="$DB_PATH"
+# === doradura-bot longrun service ===
+# hadolint ignore=SC2016
+RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/doradura-bot/type && \
+    touch /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d/telegram-bot-api && \
+    printf '%s\n' \
+    '#!/command/execlineb -P' \
+    'foreground { /bin/sh -c "echo \"[doradura-bot] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/doradura_start_ms" }' \
+    'foreground { /etc/s6-overlay/scripts/wait-for-bot-api }' \
+    'foreground { /bin/sh -c "START=$(cat /tmp/doradura_start_ms 2>/dev/null || echo 0); END=$(($(date +%s%N)/1000000)); ELAPSED=$((END - START)); echo \"[doradura-bot] Bot API check complete, waited ${ELAPSED}ms. Launching bot at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)...\"" }' \
+    's6-setuidgid botuser' \
+    's6-env DATABASE_PATH=/data/database.sqlite' \
+    's6-env TEMP_FILES_DIR=/data' \
+    's6-env BOT_API_DATA_DIR=/data' \
+    's6-env BOT_API_URL=http://localhost:8081' \
+    's6-env LOG_FILE_PATH=/data/app.log' \
+    's6-env METRICS_ENABLED=true' \
+    's6-env METRICS_PORT=9090' \
+    'fdmove -c 2 1' \
+    'cd /app' \
+    '/bin/sh -c "export CONTAINER_START_MS=$(cat /tmp/container_start_ms 2>/dev/null || echo 0) && exec /app/doradura"' \
+    > /etc/s6-overlay/s6-rc.d/doradura-bot/run && \
+    chmod +x /etc/s6-overlay/s6-rc.d/doradura-bot/run
 
-# Run any pending migrations from Rust code
-echo "Ready to start bot (migrations will run if needed)"
+# Enable all services
+RUN touch /etc/s6-overlay/s6-rc.d/user/contents.d/init-data \
+          /etc/s6-overlay/s6-rc.d/user/contents.d/telegram-bot-api \
+          /etc/s6-overlay/s6-rc.d/user/contents.d/bgutil-pot-server \
+          /etc/s6-overlay/s6-rc.d/user/contents.d/doradura-bot
 
-# Ensure yt-dlp and ffmpeg have proper directories
-export HOME=/home/botuser
-export XDG_CACHE_HOME=/home/botuser/.cache
-export TMPDIR=/tmp
-mkdir -p /home/botuser/.cache/yt-dlp 2>/dev/null || true
-chown -R botuser:botuser /home/botuser 2>/dev/null || true
+# Expose ports (8080=webapp, 8081=bot-api, 8082=bot-api-stats, 9090=metrics)
+EXPOSE 8080 8081 8082 9090
 
-echo "Starting bot..."
-exec gosu botuser /app/doradura "$@"
-EOF
+# Note: Health check disabled - Railway uses port checks
+# Bot API takes 2-3 minutes to initialize, health check kills container prematurely
 
-# Create necessary directories and non-root user
-RUN mkdir -p downloads logs backups /data /tmp && \
-    chmod 1777 /tmp && \
-    useradd -m -u 1000 botuser && \
-    mkdir -p /home/botuser/.cache/yt-dlp && \
-    chown -R botuser:botuser /app /data /home/botuser
-
-# Set environment for botuser (fixes yt-dlp cache permission errors)
-ENV HOME=/home/botuser
-ENV XDG_CACHE_HOME=/home/botuser/.cache
-ENV TMPDIR=/tmp
-
-# Expose port for webapp (optional)
-EXPOSE 8080
-
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD pgrep doradura || exit 1
-
-# Run the bot via entrypoint script
-CMD ["/app/entrypoint.sh"]
+ENTRYPOINT ["/init"]

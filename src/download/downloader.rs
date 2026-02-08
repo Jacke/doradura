@@ -274,9 +274,6 @@ fn parse_eta(eta_str: &str) -> Option<u64> {
     Some(minutes * 60 + seconds)
 }
 
-// download_audio_file and download_audio_file_with_progress moved to audio.rs
-// download_video_file_with_progress moved to video.rs
-
 // download_and_send_audio moved to audio.rs
 
 // send_file_with_retry, send_audio_with_retry, send_video_with_retry moved to send.rs
@@ -818,7 +815,6 @@ pub async fn burn_subtitles_into_video(
 mod download_tests {
     use super::*;
     use crate::core::{extract_retry_after, is_timeout_or_network_error, truncate_tail_utf8};
-    use crate::download::audio::download_audio_file;
     use crate::download::metadata::{build_telegram_safe_format, probe_duration_seconds, validate_cookies_file_format};
     use crate::download::send::{read_log_tail, UploadProgress};
     use std::path::PathBuf;
@@ -1143,36 +1139,5 @@ mod download_tests {
         assert!(result.len() <= 60); // Allow some margin for line boundaries
                                      // Should not contain the first lines
         assert!(!result.contains("Line number 0"));
-    }
-
-    // Integration-ish test: requires network and yt-dlp (or youtube-dl) + ffmpeg installed.
-    // It downloads to a temp path and ensures file appears, then cleans up.
-    #[test]
-    #[ignore]
-    fn test_download_audio_file_from_youtube() {
-        if !(tool_exists("yt-dlp") || tool_exists("youtube-dl")) {
-            eprintln!("skipping: no yt-dlp/youtube-dl in PATH");
-            return;
-        }
-        if !tool_exists("ffprobe") {
-            // ffmpeg suite
-            eprintln!("skipping: no ffprobe in PATH");
-            return;
-        }
-        let url = Url::parse("https://www.youtube.com/watch?v=0CAltmPaNZY").expect("Test URL should be valid");
-        let tmp_dir = std::env::temp_dir();
-        let dest = tmp_dir.join(format!("test_dl_{}.mp3", uuid::Uuid::new_v4()));
-        let dest_str = dest.to_string_lossy().to_string();
-        let res = download_audio_file(&url, &dest_str);
-        match res {
-            Ok(_dur_opt) => {
-                assert!(std::path::Path::new(&dest_str).exists());
-                let _ = fs::remove_file(&dest_str);
-            }
-            Err(e) => {
-                let _ = fs::remove_file(&dest_str); // Cleanup on error
-                panic!("Download test failed: {:?}", e);
-            }
-        }
     }
 }

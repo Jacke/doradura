@@ -17,11 +17,11 @@ use crate::telegram::bot_api_logger::Bot;
 
 /// Bot commands enum with descriptions
 #[derive(BotCommands, Clone, Debug)]
-#[command(rename_rule = "lowercase", description = "Я умею:")]
+#[command(rename_rule = "lowercase", description = "Медиа-бот:")]
 pub enum Command {
     #[command(description = "показывает главное меню")]
     Start,
-    #[command(description = "настройки режима загрузки")]
+    #[command(description = "настройки загрузки и конвертации")]
     Settings,
     #[command(description = "показать информацию о доступных форматах")]
     Info,
@@ -75,7 +75,7 @@ pub enum Command {
         description = "скорость загрузки через локальный Bot API (только для администратора)"
     )]
     BotApiSpeed,
-    #[command(description = "версия yt-dlp и обновление (только для администратора)")]
+    #[command(description = "версия и обновление (только для администратора)")]
     Version,
 }
 
@@ -251,7 +251,7 @@ mod tests {
         let command_list = format!("{}", commands);
 
         // Check that the description header is present
-        assert!(command_list.contains("Я умею"));
+        assert!(command_list.contains("Медиа-бот"));
 
         // Check that some key commands are present
         assert!(command_list.contains("start"));

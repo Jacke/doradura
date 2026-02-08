@@ -3,11 +3,11 @@ name = "doradura"
 version = "0.2.0"
 edition = "2021"
 authors = ["Stan <iamjacke@gmail.com>"]
-description = "High-performance Telegram bot for downloading music and videos from YouTube and other platforms"
+description = "High-performance Telegram bot for downloading and converting media from multiple sources"
 license = "MIT"
 repository = "https://github.com/Jacke/doradura"
 readme = "README.md"
-keywords = ["telegram", "bot", "download", "youtube", "yt-dlp"]
+keywords = ["telegram", "bot", "download", "convert", "media"]
 categories = ["command-line-utilities"]
 default-run = "doradura"
 
@@ -59,6 +59,7 @@ tonic = { version = "0.10", features = ["transport"] }
 prost = "0.12"
 bytes = "1.5"
 http = "0.2"
+futures-util = "0.3"
 
 # MTProto support via grammers (experimental)
 # Using 0.6.x to avoid sqlite conflict with rusqlite

@@ -1,9 +1,13 @@
-//! Media conversion module
+//! Media conversion engine — a core feature of Doradura.
 //!
-//! Provides conversion utilities for different media types:
+//! Converts between media formats without requiring a URL download.
+//! Users send a file directly and receive the converted result.
+//!
+//! Supported conversions:
 //! - Video: to video note (circle), audio extraction, GIF, compression
-//! - Image: resize, format conversion
-//! - Document: DOCX to PDF
+//! - Image: resize, format conversion (PNG, JPEG, WebP, etc.)
+//! - Document: DOCX/ODT to PDF via LibreOffice
+//! - Audio: effects (pitch, tempo, bass boost), ringtone creation
 
 pub mod document;
 pub mod image;
