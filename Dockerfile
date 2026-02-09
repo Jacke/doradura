@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Build stage for Rust application with cargo-chef for dependency caching
-FROM rust:1.85-alpine AS chef
+FROM rust:1.93-alpine AS chef
 # hadolint ignore=DL3018
 RUN apk add --no-cache musl-dev && \
     cargo install cargo-chef
