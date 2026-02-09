@@ -170,7 +170,7 @@ pub mod download {
     }
 
     /// Global download timeout (in seconds) - maximum time for entire download operation
-    pub const GLOBAL_TIMEOUT_SECS: u64 = 600; // 10 minutes
+    pub const GLOBAL_TIMEOUT_SECS: u64 = 900; // 15 minutes
 
     /// Global download timeout duration
     pub fn global_timeout() -> Duration {

@@ -1056,10 +1056,14 @@ pub async fn send_preview(
         text.push_str(&format!("{}\n", escape_markdown(&tr_text)));
     }
 
-    let filtered_formats = metadata
-        .video_formats
-        .as_ref()
-        .map(|formats| filter_video_formats_by_size(formats));
+    // When time_range is set, skip size filter — partial downloads are much smaller than full video
+    let filtered_formats = metadata.video_formats.as_ref().map(|formats| {
+        if time_range.is_some() {
+            formats.clone()
+        } else {
+            filter_video_formats_by_size(formats)
+        }
+    });
 
     let has_video_formats = filtered_formats.as_ref().is_some_and(|formats| !formats.is_empty());
     let raw_formats_len = metadata
@@ -1290,10 +1294,14 @@ pub async fn update_preview_message(
         text.push_str(&format!("{}\n", escape_markdown(&tr_text)));
     }
 
-    let filtered_formats = metadata
-        .video_formats
-        .as_ref()
-        .map(|formats| filter_video_formats_by_size(formats));
+    // When time_range is set, skip size filter — partial downloads are much smaller than full video
+    let filtered_formats = metadata.video_formats.as_ref().map(|formats| {
+        if time_range.is_some() {
+            formats.clone()
+        } else {
+            filter_video_formats_by_size(formats)
+        }
+    });
 
     let has_video_formats = filtered_formats.as_ref().is_some_and(|formats| !formats.is_empty());
     let raw_formats_len = metadata

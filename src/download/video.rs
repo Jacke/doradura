@@ -335,9 +335,10 @@ pub async fn download_and_send_video(
                     "🚨 Video download timed out after {} seconds",
                     config::download::GLOBAL_TIMEOUT_SECS
                 );
-                Err(AppError::Download(
-                    "Таймаут загрузки видео (превышено 10 минут)".to_string(),
-                ))
+                Err(AppError::Download(format!(
+                    "Таймаут загрузки видео (превышено {} минут)",
+                    config::download::GLOBAL_TIMEOUT_SECS / 60
+                )))
             }
         };
 
