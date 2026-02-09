@@ -635,6 +635,13 @@ pub async fn handle_message(
 
                 crate::telegram::cache::store_link_message_id(url.as_str(), msg.id.0).await;
 
+                // Parse time range from text following the URL (e.g. "00:01:00-00:02:30")
+                let time_range = parse_download_time_range(text, url_text);
+                if let Some(ref tr) = time_range {
+                    log::info!("Parsed time range for {}: {} - {}", url, tr.0, tr.1);
+                    crate::telegram::cache::store_time_range(url.as_str(), tr.clone()).await;
+                }
+
                 // Send "processing" message
                 let processing_msg = bot
                     .send_message(msg.chat.id, i18n::t(&lang, "commands.processing"))
@@ -704,6 +711,7 @@ pub async fn handle_message(
                             default_quality,
                             Some(processing_msg.id),
                             Arc::clone(&db_pool),
+                            time_range.as_ref(),
                         )
                         .await
                         {
@@ -840,6 +848,24 @@ fn parse_command_segment(text: &str, video_duration: Option<i64>) -> Option<(i64
     }
 
     None
+}
+
+/// Parse time range from text following a URL.
+/// Accepts "HH:MM:SS-HH:MM:SS" or "MM:SS-MM:SS" after the URL.
+fn parse_download_time_range(text: &str, url_text: &str) -> Option<(String, String)> {
+    let after = text.split(url_text).nth(1)?.trim();
+    let range_text = after.split_whitespace().next()?;
+    if range_text.is_empty() {
+        return None;
+    }
+    let normalized = range_text.replace(['—', '–', '−'], "-");
+    let (start_str, end_str) = normalized.split_once('-')?;
+    let start_secs = parse_timestamp_secs(start_str)?;
+    let end_secs = parse_timestamp_secs(end_str)?;
+    if end_secs <= start_secs {
+        return None;
+    }
+    Some((start_str.to_string(), end_str.to_string()))
 }
 
 fn parse_time_range_secs(text: &str) -> Option<(i64, i64)> {
@@ -2936,5 +2962,79 @@ mod tests {
         let text = "No URLs here";
         let urls: Vec<&str> = URL_REGEX.find_iter(text).map(|m| m.as_str()).collect();
         assert!(urls.is_empty());
+    }
+
+    // ==================== parse_download_time_range tests ====================
+
+    #[test]
+    fn test_parse_download_time_range_basic() {
+        let text = "https://youtu.be/abc123 00:01:00-00:02:30";
+        let url = "https://youtu.be/abc123";
+        let result = parse_download_time_range(text, url);
+        assert_eq!(result, Some(("00:01:00".to_string(), "00:02:30".to_string())));
+    }
+
+    #[test]
+    fn test_parse_download_time_range_mmss() {
+        let text = "https://youtu.be/abc123 01:00-02:30";
+        let url = "https://youtu.be/abc123";
+        let result = parse_download_time_range(text, url);
+        assert_eq!(result, Some(("01:00".to_string(), "02:30".to_string())));
+    }
+
+    #[test]
+    fn test_parse_download_time_range_em_dash() {
+        let text = "https://youtu.be/abc123 01:00—02:30";
+        let url = "https://youtu.be/abc123";
+        let result = parse_download_time_range(text, url);
+        assert_eq!(result, Some(("01:00".to_string(), "02:30".to_string())));
+    }
+
+    #[test]
+    fn test_parse_download_time_range_en_dash() {
+        let text = "https://youtu.be/abc123 01:00–02:30";
+        let url = "https://youtu.be/abc123";
+        let result = parse_download_time_range(text, url);
+        assert_eq!(result, Some(("01:00".to_string(), "02:30".to_string())));
+    }
+
+    #[test]
+    fn test_parse_download_time_range_no_range() {
+        let text = "https://youtu.be/abc123";
+        let url = "https://youtu.be/abc123";
+        let result = parse_download_time_range(text, url);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_download_time_range_invalid_order() {
+        let text = "https://youtu.be/abc123 02:30-01:00";
+        let url = "https://youtu.be/abc123";
+        let result = parse_download_time_range(text, url);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_download_time_range_equal_times() {
+        let text = "https://youtu.be/abc123 01:00-01:00";
+        let url = "https://youtu.be/abc123";
+        let result = parse_download_time_range(text, url);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_download_time_range_extra_text_after() {
+        let text = "https://youtu.be/abc123 00:10-00:30 some extra text";
+        let url = "https://youtu.be/abc123";
+        let result = parse_download_time_range(text, url);
+        assert_eq!(result, Some(("00:10".to_string(), "00:30".to_string())));
+    }
+
+    #[test]
+    fn test_parse_download_time_range_garbage_after_url() {
+        let text = "https://youtu.be/abc123 hello world";
+        let url = "https://youtu.be/abc123";
+        let result = parse_download_time_range(text, url);
+        assert_eq!(result, None);
     }
 }

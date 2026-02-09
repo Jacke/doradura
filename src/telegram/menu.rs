@@ -89,6 +89,7 @@ async fn start_download_from_preview(
     };
 
     let original_message_id = tg_cache::get_link_message_id(&url_str).await;
+    let time_range = tg_cache::get_time_range(&url_str).await;
     let conn = db::get_connection(&db_pool)
         .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
     let plan = match db::get_user(&conn, chat_id.0) {
@@ -121,7 +122,7 @@ async fn start_download_from_preview(
         } else {
             Some(db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string()))
         };
-        let task_mp4 = DownloadTask::from_plan(
+        let mut task_mp4 = DownloadTask::from_plan(
             url.as_str().to_string(),
             chat_id,
             original_message_id,
@@ -131,10 +132,11 @@ async fn start_download_from_preview(
             None,
             &plan,
         );
+        task_mp4.time_range = time_range.clone();
         download_queue.add_task(task_mp4, Some(Arc::clone(&db_pool))).await;
 
         let audio_bitrate = Some(db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string()));
-        let task_mp3 = DownloadTask::from_plan(
+        let mut task_mp3 = DownloadTask::from_plan(
             url.as_str().to_string(),
             chat_id,
             original_message_id,
@@ -144,6 +146,7 @@ async fn start_download_from_preview(
             audio_bitrate,
             &plan,
         );
+        task_mp3.time_range = time_range.clone();
         download_queue.add_task(task_mp3, Some(Arc::clone(&db_pool))).await;
     } else {
         let video_quality = if format == "mp4" {
@@ -162,7 +165,7 @@ async fn start_download_from_preview(
         };
 
         let is_video = format == "mp4";
-        let task = DownloadTask::from_plan(
+        let mut task = DownloadTask::from_plan(
             url.as_str().to_string(),
             chat_id,
             original_message_id,
@@ -172,6 +175,7 @@ async fn start_download_from_preview(
             audio_bitrate,
             &plan,
         );
+        task.time_range = time_range.clone();
         download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
     }
 
@@ -1706,6 +1710,7 @@ pub async fn handle_menu_callback(
                                     {
                                         Ok(metadata) => {
                                             // Update existing preview message
+                                            let time_range = tg_cache::get_time_range(url.as_str()).await;
                                             match crate::telegram::preview::update_preview_message(
                                                 &bot,
                                                 chat_id,
@@ -1715,6 +1720,7 @@ pub async fn handle_menu_callback(
                                                 &current_format,
                                                 video_quality.as_deref(),
                                                 Arc::clone(&db_pool),
+                                                time_range.as_ref(),
                                             )
                                             .await
                                             {

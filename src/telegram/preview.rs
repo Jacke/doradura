@@ -1013,6 +1013,7 @@ pub async fn send_preview(
     default_quality: Option<&str>,
     old_preview_msg_id: Option<MessageId>,
     db_pool: Arc<DbPool>,
+    time_range: Option<&(String, String)>,
 ) -> ResponseResult<Message> {
     let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
 
@@ -1023,6 +1024,14 @@ pub async fn send_preview(
     if metadata.duration.is_some() {
         let duration_str = metadata.format_duration();
         text.push_str(&format!("⏱️ Длительность: {}\n", escape_markdown(&duration_str)));
+    }
+
+    if let Some((start, end)) = time_range {
+        let mut args = fluent_templates::fluent_bundle::FluentArgs::new();
+        args.set("start", start.clone());
+        args.set("end", end.clone());
+        let tr_text = crate::i18n::t_args(&lang, "preview.time_range_detected", &args);
+        text.push_str(&format!("{}\n", escape_markdown(&tr_text)));
     }
 
     let filtered_formats = metadata
@@ -1238,6 +1247,7 @@ pub async fn update_preview_message(
     default_format: &str,
     default_quality: Option<&str>,
     db_pool: Arc<DbPool>,
+    time_range: Option<&(String, String)>,
 ) -> ResponseResult<()> {
     let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
 
@@ -1248,6 +1258,14 @@ pub async fn update_preview_message(
     if metadata.duration.is_some() {
         let duration_str = metadata.format_duration();
         text.push_str(&format!("⏱️ Длительность: {}\n", escape_markdown(&duration_str)));
+    }
+
+    if let Some((start, end)) = time_range {
+        let mut args = fluent_templates::fluent_bundle::FluentArgs::new();
+        args.set("start", start.clone());
+        args.set("end", end.clone());
+        let tr_text = crate::i18n::t_args(&lang, "preview.time_range_detected", &args);
+        text.push_str(&format!("{}\n", escape_markdown(&tr_text)));
     }
 
     let filtered_formats = metadata

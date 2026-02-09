@@ -221,3 +221,98 @@ pub async fn store_link_message_id(url: &str, message_id: i32) {
 pub async fn get_link_message_id(url: &str) -> Option<i32> {
     LINK_MESSAGE_CACHE.get(url).await
 }
+
+/// Maximum number of entries in the time range cache
+const MAX_TIME_RANGE_CACHE_SIZE: usize = 1_000;
+
+/// Number of entries to evict when cache is full
+const TIME_RANGE_EVICTION_BATCH: usize = 100;
+
+struct TimeRangeItem {
+    range: (String, String),
+    cached_at: Instant,
+}
+
+pub struct TimeRangeCache {
+    cache: Arc<Mutex<HashMap<String, TimeRangeItem>>>,
+    ttl: Duration,
+}
+
+impl TimeRangeCache {
+    pub fn new(ttl: Duration) -> Self {
+        Self {
+            cache: Arc::new(Mutex::new(HashMap::new())),
+            ttl,
+        }
+    }
+
+    fn evict_if_needed(cache: &mut HashMap<String, TimeRangeItem>) {
+        if cache.len() <= MAX_TIME_RANGE_CACHE_SIZE {
+            return;
+        }
+
+        use rand::seq::IteratorRandom;
+        let mut rng = rand::thread_rng();
+
+        const SAMPLE_SIZE: usize = 150;
+        let sample: Vec<_> = cache
+            .iter()
+            .choose_multiple(&mut rng, SAMPLE_SIZE.min(cache.len()))
+            .into_iter()
+            .map(|(k, v)| (k.clone(), v.cached_at))
+            .collect();
+
+        let mut sorted_sample = sample;
+        sorted_sample.sort_by_key(|(_, time)| *time);
+
+        let to_remove: Vec<_> = sorted_sample
+            .iter()
+            .take(TIME_RANGE_EVICTION_BATCH)
+            .map(|(k, _)| k.clone())
+            .collect();
+
+        for key in &to_remove {
+            cache.remove(key);
+        }
+
+        log::debug!(
+            "🗑️ TimeRangeCache eviction: removed {} entries, size now {}",
+            to_remove.len(),
+            cache.len()
+        );
+    }
+
+    pub async fn set(&self, url: &str, range: (String, String)) {
+        let mut cache = self.cache.lock().await;
+        Self::evict_if_needed(&mut cache);
+        cache.insert(
+            url.to_string(),
+            TimeRangeItem {
+                range,
+                cached_at: Instant::now(),
+            },
+        );
+    }
+
+    pub async fn get(&self, url: &str) -> Option<(String, String)> {
+        let mut cache = self.cache.lock().await;
+        if let Some(item) = cache.get(url) {
+            if item.cached_at.elapsed() < self.ttl {
+                return Some(item.range.clone());
+            }
+            cache.remove(url);
+        }
+        None
+    }
+}
+
+pub static TIME_RANGE_CACHE: once_cell::sync::Lazy<TimeRangeCache> =
+    once_cell::sync::Lazy::new(|| TimeRangeCache::new(Duration::from_secs(3600)));
+
+pub async fn store_time_range(url: &str, range: (String, String)) {
+    TIME_RANGE_CACHE.set(url, range).await;
+}
+
+pub async fn get_time_range(url: &str) -> Option<(String, String)> {
+    TIME_RANGE_CACHE.get(url).await
+}

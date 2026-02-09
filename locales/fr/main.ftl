@@ -18,7 +18,7 @@ menu =
     .burn_subtitles_button = 🔥 Incruster sous-titres: {$status}
     .burn_subtitles_on = ON
     .burn_subtitles_off = OFF
-    .services_text = 🌐 *Fonctionnalités de Dora*\n\n📹 *Plateformes vidéo*\n• YouTube, TikTok, Instagram, Twitch, VK, Vimeo et plus\n• MP4, sous\-titres \(SRT/TXT\)\n\n🎵 *Plateformes audio*\n• SoundCloud, Spotify, Bandcamp, YouTube Music\n• MP3 \(jusqu'à 320 kbps\)\n\n🔗 *Liens directs*\n• MP3, MP4, WAV, FLAC et autres fichiers par URL\n\n🔄 *Conversion*\n• Documents : DOCX → PDF\n• Vidéo : cercles, GIF, compression\n• Audio : effets, sonneries, extraits\n• Images : redimensionner, changer de format\n\nEnvoie un lien — je télécharge, ou envoie un fichier — je convertis\! ❤️‍🔥
+    .services_text = 🌐 *Fonctionnalités de Dora*\n\n📹 *Plateformes vidéo*\n• YouTube, TikTok, Instagram, Twitch, VK, Vimeo et plus\n• MP4, sous\-titres \(SRT/TXT\)\n\n🎵 *Plateformes audio*\n• SoundCloud, Spotify, Bandcamp, YouTube Music\n• MP3 \(jusqu'à 320 kbps\)\n\n🔗 *Liens directs*\n• MP3, MP4, WAV, FLAC et autres fichiers par URL\n\n🔄 *Conversion*\n• Documents : DOCX → PDF\n• Vidéo : cercles, GIF, compression\n• Audio : effets, sonneries, extraits\n• Images : redimensionner, changer de format\n\n✂️ *Télécharger une partie de la vidéo/audio :*\nAjoute le temps après le lien :\n`https://youtu.be/abc 00:01:00\-00:02:30`\nFormat : `mm:ss\-mm:ss` ou `hh:mm:ss\-hh:mm:ss`\n\nEnvoie un lien — je télécharge, ou envoie un fichier — je convertis\! ❤️‍🔥
     .language_prompt = 🌍 *Choisis ta langue*\n\nLa langue affecte les menus et les réponses\.
     .language_saved = ✅ Langue mise à jour
     .language_invalid = ❌ Langue inconnue
@@ -128,3 +128,6 @@ video_circle =
     .creating_with_speed = ⭕️ Création de la note vidéo: {$segments}… (vitesse {$speed}x)
     .truncated_warning = ⚠️ La durée demandée de {$requested} secondes dépasse la limite Telegram pour les notes vidéo (60 sec)\\.\n\n✂️ Utilisation des {$actual} premières secondes\\.
     .invalid_intervals = ❌ Intervalles invalides\\.\n\nEnvoie au format `mm:ss-mm:ss` ou `hh:mm:ss-hh:mm:ss`\\.\nTu peux en envoyer plusieurs séparés par des virgules\\.\nExemple: `00:10-00:25, 01:00-01:10`\n\nOu commandes: `full`, `first30`, `last30`, `middle30`\\.\n\n💡 Tu peux ajouter la vitesse: `first30 2x`, `full 1\\.5x`\\.\n\nOu tape `cancel`\\.\n\n💡 Si la durée dépasse 60 secondes \\(limite Telegram\\), la vidéo sera automatiquement coupée\\.
+
+preview =
+    .time_range_detected = ✂️ Téléchargement partiel: {$start} — {$end}
