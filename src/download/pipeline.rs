@@ -689,6 +689,19 @@ pub async fn handle_pipeline_error(
 
     send_error_with_sticker_and_message(bot, chat_id, custom_message).await;
 
+    // Notify admin about every download error with details
+    let admin_id = *config::admin::ADMIN_USER_ID;
+    if admin_id != 0 && chat_id.0 != admin_id {
+        let admin_msg = format!(
+            "🚨 Ошибка скачивания\nUser: {}\nURL: {}\nFormat: {}\nError: {}",
+            chat_id.0,
+            url,
+            format.label(),
+            error_str
+        );
+        let _ = bot.send_message(ChatId(admin_id), &admin_msg).await;
+    }
+
     // Record metrics
     let error_type = if error_str.contains("too large") {
         "file_too_large"
