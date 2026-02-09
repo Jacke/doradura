@@ -33,8 +33,14 @@ use url::Url;
 /// The format a pipeline download should produce.
 #[derive(Debug, Clone)]
 pub enum PipelineFormat {
-    Audio { bitrate: Option<String> },
-    Video { quality: Option<String> },
+    Audio {
+        bitrate: Option<String>,
+        time_range: Option<(String, String)>,
+    },
+    Video {
+        quality: Option<String>,
+        time_range: Option<(String, String)>,
+    },
 }
 
 impl PipelineFormat {
@@ -57,8 +63,8 @@ impl PipelineFormat {
     /// Returns the quality label for metrics.
     pub fn quality_label(&self) -> &str {
         match self {
-            PipelineFormat::Audio { ref bitrate } => bitrate.as_deref().unwrap_or("default"),
-            PipelineFormat::Video { ref quality } => quality.as_deref().unwrap_or("default"),
+            PipelineFormat::Audio { ref bitrate, .. } => bitrate.as_deref().unwrap_or("default"),
+            PipelineFormat::Video { ref quality, .. } => quality.as_deref().unwrap_or("default"),
         }
     }
 
@@ -67,6 +73,14 @@ impl PipelineFormat {
         match self {
             PipelineFormat::Audio { .. } => config::validation::max_audio_size_bytes(),
             PipelineFormat::Video { .. } => config::validation::max_video_size_bytes(),
+        }
+    }
+
+    /// Returns the time_range regardless of variant.
+    pub fn time_range(&self) -> &Option<(String, String)> {
+        match self {
+            PipelineFormat::Audio { ref time_range, .. } => time_range,
+            PipelineFormat::Video { ref time_range, .. } => time_range,
         }
     }
 }
@@ -238,16 +252,20 @@ pub async fn download_phase(
         .max_file_size(max_size);
 
     match format {
-        PipelineFormat::Audio { ref bitrate } => {
+        PipelineFormat::Audio { ref bitrate, .. } => {
             if let Some(ref br) = bitrate {
                 builder = builder.audio_bitrate(br);
             }
         }
-        PipelineFormat::Video { ref quality } => {
+        PipelineFormat::Video { ref quality, .. } => {
             if let Some(ref q) = quality {
                 builder = builder.video_quality(q);
             }
         }
+    }
+
+    if let Some((ref start, ref end)) = *format.time_range() {
+        builder = builder.time_range(start, end);
     }
 
     let request = builder.build(&title, &artist);
@@ -478,8 +496,8 @@ pub async fn execute(
             };
 
             let (video_quality_opt, audio_bitrate_opt) = match format {
-                PipelineFormat::Audio { ref bitrate } => (None, bitrate.as_deref().or(Some("320k"))),
-                PipelineFormat::Video { ref quality } => (quality.as_deref(), None),
+                PipelineFormat::Audio { ref bitrate, .. } => (None, bitrate.as_deref().or(Some("320k"))),
+                PipelineFormat::Video { ref quality, .. } => (quality.as_deref(), None),
             };
 
             match save_download_history(

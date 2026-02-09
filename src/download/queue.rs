@@ -55,6 +55,8 @@ pub struct DownloadTask {
     pub created_timestamp: DateTime<Utc>,
     /// Приоритет задачи (для приоритетной очереди)
     pub priority: TaskPriority,
+    /// Временной диапазон для частичного скачивания (start, end), например ("00:01:00", "00:02:30")
+    pub time_range: Option<(String, String)>,
 }
 
 impl DownloadTask {
@@ -108,6 +110,7 @@ impl DownloadTask {
             video_quality,
             audio_bitrate,
             TaskPriority::Low,
+            None,
         )
     }
 
@@ -121,6 +124,7 @@ impl DownloadTask {
         video_quality: Option<String>,
         audio_bitrate: Option<String>,
         priority: TaskPriority,
+        time_range: Option<(String, String)>,
     ) -> Self {
         let id = uuid::Uuid::new_v4().to_string();
         Self {
@@ -134,6 +138,7 @@ impl DownloadTask {
             audio_bitrate,
             created_timestamp: Utc::now(),
             priority,
+            time_range,
         }
     }
 
@@ -158,6 +163,7 @@ impl DownloadTask {
             video_quality,
             audio_bitrate,
             priority,
+            None,
         )
     }
 }
@@ -545,6 +551,7 @@ mod tests {
             Some("1080p".to_string()),
             None,
             TaskPriority::High,
+            None,
         );
         assert_eq!(task.priority, TaskPriority::High);
         assert!(task.is_video);
@@ -762,6 +769,7 @@ mod tests {
             audio_bitrate: Some("320k".to_string()),
             created_timestamp: Utc::now() - Duration::days(2),
             priority: TaskPriority::Low,
+            time_range: None,
         };
         let new_task = DownloadTask::new(
             "http://example.com/new".to_string(),

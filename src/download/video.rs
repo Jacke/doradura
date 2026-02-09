@@ -43,6 +43,7 @@ pub async fn download_and_send_video(
     video_quality: Option<String>,
     message_id: Option<i32>,
     alert_manager: Option<Arc<crate::core::alerts::AlertManager>>,
+    time_range: Option<(String, String)>,
 ) -> ResponseResult<()> {
     let bot_clone = bot.clone();
     let _rate_limiter = rate_limiter;
@@ -75,6 +76,7 @@ pub async fn download_and_send_video(
 
         let format = PipelineFormat::Video {
             quality: video_quality.clone(),
+            time_range,
         };
         let registry = SourceRegistry::default_registry();
 

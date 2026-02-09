@@ -32,6 +32,7 @@ pub async fn download_and_send_audio(
     audio_bitrate: Option<String>,
     message_id: Option<i32>,
     alert_manager: Option<Arc<crate::core::alerts::AlertManager>>,
+    time_range: Option<(String, String)>,
 ) -> ResponseResult<()> {
     log::info!(
         "Starting download_and_send_audio for chat {} with URL: {}",
@@ -67,6 +68,7 @@ pub async fn download_and_send_audio(
 
         let format = PipelineFormat::Audio {
             bitrate: audio_bitrate.clone(),
+            time_range,
         };
         let registry = SourceRegistry::default_registry();
 

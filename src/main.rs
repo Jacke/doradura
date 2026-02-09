@@ -1049,6 +1049,7 @@ async fn recover_failed_tasks(queue: &Arc<DownloadQueue>, db_pool: &Arc<db::DbPo
                                 .map(|dt| dt.with_timezone(&chrono::Utc))
                                 .unwrap_or_else(|_| chrono::Utc::now()),
                             priority,
+                            time_range: None,
                         };
 
                         // Add the task back to the queue
@@ -1196,6 +1197,7 @@ async fn process_queue(
                 let db_pool_clone = Arc::clone(&db_pool);
                 let video_quality = task.video_quality.clone();
                 let audio_bitrate = task.audio_bitrate.clone();
+                let time_range = task.time_range.clone();
                 let task_id = task.id.clone();
                 let task_url = task.url.clone();
                 let task_format = task.format.clone();
@@ -1212,6 +1214,7 @@ async fn process_queue(
                             video_quality,
                             task.message_id,
                             alert_manager.clone(),
+                            time_range.clone(),
                         )
                         .await
                     }
@@ -1241,6 +1244,7 @@ async fn process_queue(
                             audio_bitrate,
                             task.message_id,
                             alert_manager.clone(),
+                            time_range.clone(),
                         )
                         .await
                     }
