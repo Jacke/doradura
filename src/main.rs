@@ -609,9 +609,7 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
     // Start audio effects cleanup task
     doradura::download::audio_effects::start_cleanup_task(Arc::clone(&db_pool));
 
-    // Start disk space monitoring task (checks every 5 minutes, logs warnings)
-    // Store handle to prevent "unused" warning; task runs until stop_disk_monitor_task() is called
-    let _disk_monitor_handle = doradura::core::disk::start_disk_monitor_task();
+    // Disk monitor is started below, after alert_manager is initialized
 
     let rate_limiter = Arc::new(RateLimiter::new());
     // Start periodic cleanup of expired rate limit entries (every 5 minutes)
@@ -669,6 +667,9 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
         log::info!("Alerting disabled (ALERTS_ENABLED=false)");
         None
     };
+
+    // Start disk space monitoring task (checks every 5 minutes, logs warnings, alerts admin)
+    let _disk_monitor_handle = doradura::core::disk::start_disk_monitor_task(alert_manager.clone());
 
     // Start periodic stats reporter (sends statistics to admin every STATS_REPORT_INTERVAL hours)
     {

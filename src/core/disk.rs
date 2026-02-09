@@ -3,11 +3,13 @@
 //! Provides utilities for checking available disk space and preventing
 //! downloads when disk is full.
 
+use crate::core::alerts::AlertManager;
 use crate::core::config;
 use crate::core::error::AppError;
 use crate::core::metrics;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// Minimum required disk space for downloads (500 MB)
@@ -165,7 +167,8 @@ pub fn check_disk_space_for_download() -> Result<DiskSpaceInfo, AppError> {
 /// Check disk space and log status
 ///
 /// This function is meant to be called periodically to monitor disk space.
-pub async fn check_and_log_disk_space() {
+/// If an AlertManager is provided, sends a Telegram alert to the admin (throttled to once per day).
+pub async fn check_and_log_disk_space(alert_manager: Option<&AlertManager>) {
     let download_folder = &*config::DOWNLOAD_FOLDER;
 
     match get_disk_space(download_folder) {
@@ -177,12 +180,26 @@ pub async fn check_and_log_disk_space() {
                     info.used_percent
                 );
                 metrics::record_error("system", "disk_space_critical");
+
+                if let Some(am) = alert_manager {
+                    let threshold_gb = CRITICAL_DISK_SPACE_BYTES as f64 / (1024.0 * 1024.0 * 1024.0);
+                    if let Err(e) = am.alert_low_disk_space(info.available_gb(), threshold_gb).await {
+                        log::error!("Failed to send disk space alert: {}", e);
+                    }
+                }
             } else if info.is_warning() {
                 log::warn!(
                     "⚠️  Disk space warning: {:.2} GB available ({:.1}% used)",
                     info.available_gb(),
                     info.used_percent
                 );
+
+                if let Some(am) = alert_manager {
+                    let threshold_gb = WARNING_DISK_SPACE_BYTES as f64 / (1024.0 * 1024.0 * 1024.0);
+                    if let Err(e) = am.alert_low_disk_space(info.available_gb(), threshold_gb).await {
+                        log::error!("Failed to send disk space alert: {}", e);
+                    }
+                }
             } else {
                 log::debug!(
                     "💾 Disk space OK: {:.2} GB available ({:.1}% used)",
@@ -200,8 +217,9 @@ pub async fn check_and_log_disk_space() {
 /// Start background disk space monitoring task
 ///
 /// Checks disk space every N minutes and logs warnings if space is low.
+/// If an AlertManager is provided, sends Telegram alerts to the admin (throttled to once per day).
 /// Returns JoinHandle that can be used to await task completion or check for panics.
-pub fn start_disk_monitor_task() -> tokio::task::JoinHandle<()> {
+pub fn start_disk_monitor_task(alert_manager: Option<Arc<AlertManager>>) -> tokio::task::JoinHandle<()> {
     STOP_DISK_MONITOR.store(false, Ordering::SeqCst);
 
     let handle = tokio::spawn(async move {
@@ -213,7 +231,7 @@ pub fn start_disk_monitor_task() -> tokio::task::JoinHandle<()> {
         );
 
         // Initial check
-        check_and_log_disk_space().await;
+        check_and_log_disk_space(alert_manager.as_deref()).await;
 
         loop {
             tokio::time::sleep(interval).await;
@@ -223,7 +241,7 @@ pub fn start_disk_monitor_task() -> tokio::task::JoinHandle<()> {
                 break;
             }
 
-            check_and_log_disk_space().await;
+            check_and_log_disk_space(alert_manager.as_deref()).await;
         }
     });
 

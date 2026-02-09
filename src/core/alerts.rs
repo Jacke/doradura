@@ -100,7 +100,7 @@ impl AlertType {
             AlertType::HighRetryRate => 900,      // 15 minutes
             AlertType::CookiesExpired => 600,     // 10 minutes
             AlertType::HighTimeoutRate => 1800,   // 30 minutes
-            AlertType::LowDiskSpace => 3600,      // 1 hour
+            AlertType::LowDiskSpace => 86400,     // 24 hours
             AlertType::UserComplaint => 0,        // No throttle - immediate
             AlertType::HighResourceUsage => 1800, // 30 minutes
         }
