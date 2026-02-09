@@ -440,6 +440,25 @@ pub async fn get_preview_metadata(
     format: Option<&str>,
     video_quality: Option<&str>,
 ) -> Result<PreviewMetadata, AppError> {
+    get_preview_metadata_inner(url, format, video_quality, false).await
+}
+
+/// Same as `get_preview_metadata` but skips the duration limit check when `has_time_range` is true,
+/// because partial downloads can handle arbitrarily long videos.
+pub async fn get_preview_metadata_with_time_range(
+    url: &Url,
+    format: Option<&str>,
+    video_quality: Option<&str>,
+) -> Result<PreviewMetadata, AppError> {
+    get_preview_metadata_inner(url, format, video_quality, true).await
+}
+
+async fn get_preview_metadata_inner(
+    url: &Url,
+    format: Option<&str>,
+    video_quality: Option<&str>,
+    has_time_range: bool,
+) -> Result<PreviewMetadata, AppError> {
     let ytdl_bin = &*config::YTDL_BIN;
     log::debug!("Getting preview metadata for URL: {}", url);
 
@@ -541,15 +560,18 @@ pub async fn get_preview_metadata(
         .map(|d| d as u32);
 
     // Проверяем длительность видео: максимум 4 часа (14400 секунд)
-    if let Some(dur) = duration {
-        const MAX_DURATION_SECONDS: u32 = 14400; // 4 часа
-        if dur > MAX_DURATION_SECONDS {
-            let hours = dur / 3600;
-            let minutes = (dur % 3600) / 60;
-            return Err(AppError::Download(format!(
-                "Видео слишком длинное ({}ч {}мин). Максимальная длительность: 4 часа.",
-                hours, minutes
-            )));
+    // Skip this check when time_range is set — partial downloads handle long videos fine.
+    if !has_time_range {
+        if let Some(dur) = duration {
+            const MAX_DURATION_SECONDS: u32 = 14400; // 4 часа
+            if dur > MAX_DURATION_SECONDS {
+                let hours = dur / 3600;
+                let minutes = (dur % 3600) / 60;
+                return Err(AppError::Download(format!(
+                    "Видео слишком длинное ({}ч {}мин). Максимальная длительность: 4 часа.",
+                    hours, minutes
+                )));
+            }
         }
     }
 

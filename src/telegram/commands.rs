@@ -13,7 +13,7 @@ use crate::download::ytdlp_errors::sanitize_user_error_message;
 use crate::downsub::{DownsubError, DownsubGateway};
 use crate::i18n;
 use crate::storage::db::{self, DbPool};
-use crate::telegram::preview::{get_preview_metadata, send_preview};
+use crate::telegram::preview::{get_preview_metadata, get_preview_metadata_with_time_range, send_preview};
 use crate::telegram::Bot;
 use fluent_templates::fluent_bundle::FluentArgs;
 use once_cell::sync::Lazy;
@@ -664,7 +664,13 @@ pub async fn handle_message(
                     None
                 };
 
-                match get_preview_metadata(&url, Some(&format), video_quality.as_deref()).await {
+                let metadata_result = if time_range.is_some() {
+                    get_preview_metadata_with_time_range(&url, Some(&format), video_quality.as_deref()).await
+                } else {
+                    get_preview_metadata(&url, Some(&format), video_quality.as_deref()).await
+                };
+
+                match metadata_result {
                     Ok(metadata) => {
                         // Check file size during preview ONLY for audio
                         // Skip the check for MP4 so the user can pick a lower quality in the preview
