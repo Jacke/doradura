@@ -212,39 +212,42 @@ pub async fn download_phase(
         return Err(PipelineError::PreCheck("Livestreams are not supported".to_string()));
     }
 
-    // File size pre-check
+    // File size pre-check (skip when time_range is set — partial downloads are much smaller)
     let max_size = format.max_file_size();
-    if let Some(estimated_size) = source.estimate_size(url).await {
-        if estimated_size > max_size {
-            let size_mb = estimated_size as f64 / (1024.0 * 1024.0);
-            let max_mb = max_size as f64 / (1024.0 * 1024.0);
-            log::warn!(
-                "Pipeline: file too large: estimated {:.2} MB > max {:.2} MB",
-                size_mb,
-                max_mb
-            );
-            let msg = match format {
-                PipelineFormat::Audio { .. } => {
-                    format!("❌ Файл слишком большой: ~{:.0} МБ (макс. {:.0} МБ)", size_mb, max_mb)
-                }
-                PipelineFormat::Video { .. } => {
-                    format!("❌ Видео слишком большое: ~{:.0} МБ (макс. {:.0} МБ)", size_mb, max_mb)
-                }
-            };
-            send_error_with_sticker_and_message(bot, chat_id, Some(&msg)).await;
-            let _ = progress_msg
-                .update(
-                    bot,
-                    DownloadStatus::Error {
-                        title: display_title.as_ref().to_string(),
-                        error: msg.clone(),
-                        file_format: Some(file_format_str.clone()),
-                    },
-                )
-                .await;
-            return Err(PipelineError::PreCheck(format!("File too large: ~{:.2} MB", size_mb)));
+    let has_time_range = format.time_range().is_some();
+    if !has_time_range {
+        if let Some(estimated_size) = source.estimate_size(url).await {
+            if estimated_size > max_size {
+                let size_mb = estimated_size as f64 / (1024.0 * 1024.0);
+                let max_mb = max_size as f64 / (1024.0 * 1024.0);
+                log::warn!(
+                    "Pipeline: file too large: estimated {:.2} MB > max {:.2} MB",
+                    size_mb,
+                    max_mb
+                );
+                let msg = match format {
+                    PipelineFormat::Audio { .. } => {
+                        format!("❌ Файл слишком большой: ~{:.0} МБ (макс. {:.0} МБ)", size_mb, max_mb)
+                    }
+                    PipelineFormat::Video { .. } => {
+                        format!("❌ Видео слишком большое: ~{:.0} МБ (макс. {:.0} МБ)", size_mb, max_mb)
+                    }
+                };
+                send_error_with_sticker_and_message(bot, chat_id, Some(&msg)).await;
+                let _ = progress_msg
+                    .update(
+                        bot,
+                        DownloadStatus::Error {
+                            title: display_title.as_ref().to_string(),
+                            error: msg.clone(),
+                            file_format: Some(file_format_str.clone()),
+                        },
+                    )
+                    .await;
+                return Err(PipelineError::PreCheck(format!("File too large: ~{:.2} MB", size_mb)));
+            }
         }
-    }
+    } // end !has_time_range
 
     // ── Step 5: Build download request ──
     let mut builder = DownloadConfigBuilder::new(url.clone())

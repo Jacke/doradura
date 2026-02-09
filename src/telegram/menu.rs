@@ -1879,6 +1879,7 @@ pub async fn handle_menu_callback(
                             match Url::parse(&url_str) {
                                 Ok(url) => {
                                     let original_message_id = tg_cache::get_link_message_id(&url_str).await;
+                                    let time_range = tg_cache::get_time_range(&url_str).await;
                                     // Get user preferences for quality/bitrate and plan
                                     let conn = db::get_connection(&db_pool).map_err(|e| {
                                         RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
@@ -1902,7 +1903,7 @@ pub async fn handle_menu_callback(
                                                     .unwrap_or_else(|_| "best".to_string()),
                                             )
                                         };
-                                        let task_mp4 = DownloadTask::from_plan(
+                                        let mut task_mp4 = DownloadTask::from_plan(
                                             url.as_str().to_string(),
                                             chat_id,
                                             original_message_id,
@@ -1912,6 +1913,7 @@ pub async fn handle_menu_callback(
                                             None, // audio_bitrate is not needed for video
                                             &plan,
                                         );
+                                        task_mp4.time_range = time_range.clone();
                                         download_queue.add_task(task_mp4, Some(Arc::clone(&db_pool))).await;
 
                                         // Task 2: MP3 (audio)
@@ -1919,7 +1921,7 @@ pub async fn handle_menu_callback(
                                             db::get_user_audio_bitrate(&conn, chat_id.0)
                                                 .unwrap_or_else(|_| "320k".to_string()),
                                         );
-                                        let task_mp3 = DownloadTask::from_plan(
+                                        let mut task_mp3 = DownloadTask::from_plan(
                                             url.as_str().to_string(),
                                             chat_id,
                                             original_message_id,
@@ -1929,6 +1931,7 @@ pub async fn handle_menu_callback(
                                             audio_bitrate,
                                             &plan,
                                         );
+                                        task_mp3.time_range = time_range.clone();
                                         download_queue.add_task(task_mp3, Some(Arc::clone(&db_pool))).await;
 
                                         log::info!(
@@ -1966,7 +1969,7 @@ pub async fn handle_menu_callback(
 
                                         // Add task to queue
                                         let is_video = format == "mp4";
-                                        let task = DownloadTask::from_plan(
+                                        let mut task = DownloadTask::from_plan(
                                             url.as_str().to_string(),
                                             chat_id,
                                             original_message_id,
@@ -1976,6 +1979,7 @@ pub async fn handle_menu_callback(
                                             audio_bitrate,
                                             &plan,
                                         );
+                                        task.time_range = time_range.clone();
                                         download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
 
                                         // Send queue position notification
