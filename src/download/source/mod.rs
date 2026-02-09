@@ -60,6 +60,9 @@ pub struct DownloadRequest {
     pub video_quality: Option<String>,
     /// Maximum allowed file size in bytes
     pub max_file_size: Option<u64>,
+    /// Time range to download (start, end) e.g. ("00:01:00", "00:02:30").
+    /// Uses yt-dlp --download-sections under the hood.
+    pub time_range: Option<(String, String)>,
 }
 
 /// Output from a successful download operation.

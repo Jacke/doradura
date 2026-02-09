@@ -27,6 +27,7 @@ pub struct DownloadConfigBuilder {
     video_quality: Option<String>,
     max_file_size: Option<u64>,
     custom_output_path: Option<String>,
+    time_range: Option<(String, String)>,
 }
 
 impl DownloadConfigBuilder {
@@ -39,6 +40,7 @@ impl DownloadConfigBuilder {
             video_quality: None,
             max_file_size: None,
             custom_output_path: None,
+            time_range: None,
         }
     }
 
@@ -72,6 +74,12 @@ impl DownloadConfigBuilder {
         self
     }
 
+    /// Set a time range to download only a segment (e.g., "00:01:00", "00:02:30").
+    pub fn time_range(mut self, start: &str, end: &str) -> Self {
+        self.time_range = Some((start.to_string(), end.to_string()));
+        self
+    }
+
     /// Build the `DownloadRequest`, generating the output path from title and artist.
     ///
     /// Adds a timestamp to the filename to prevent race conditions with concurrent downloads.
@@ -89,6 +97,7 @@ impl DownloadConfigBuilder {
             audio_bitrate: self.audio_bitrate,
             video_quality: self.video_quality,
             max_file_size: self.max_file_size,
+            time_range: self.time_range,
         }
     }
 
@@ -171,5 +180,26 @@ mod tests {
             .build("Title", "Artist");
 
         assert_eq!(request.output_path, "/tmp/custom.mp3");
+    }
+
+    #[test]
+    fn test_builder_time_range() {
+        let url = Url::parse("https://youtube.com/watch?v=test").unwrap();
+        let request = DownloadConfigBuilder::new(url)
+            .format("mp4")
+            .time_range("00:01:00", "00:02:30")
+            .build("Video", "Channel");
+
+        assert_eq!(
+            request.time_range,
+            Some(("00:01:00".to_string(), "00:02:30".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_builder_no_time_range_by_default() {
+        let url = Url::parse("https://youtube.com/watch?v=test").unwrap();
+        let request = DownloadConfigBuilder::new(url).build("Song", "Artist");
+        assert!(request.time_range.is_none());
     }
 }

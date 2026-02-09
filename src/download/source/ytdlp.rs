@@ -140,6 +140,7 @@ impl YtDlpSource {
         let url_str = request.url.to_string();
         let download_path = request.output_path.clone();
         let bitrate_str = request.audio_bitrate.clone().unwrap_or_else(|| "320k".to_string());
+        let time_range = request.time_range.clone();
 
         let handle = tokio::task::spawn_blocking(move || {
             let postprocessor_args = format!("ffmpeg:-acodec libmp3lame -b:a {}", bitrate_str);
@@ -210,6 +211,7 @@ impl YtDlpSource {
                     args.push("--no-check-certificate");
                 },
                 &postprocessor_args,
+                time_range.as_ref(),
             )
         });
 
@@ -239,6 +241,7 @@ impl YtDlpSource {
         let ytdl_bin = config::YTDL_BIN.clone();
         let url_str = request.url.to_string();
         let download_path = request.output_path.clone();
+        let time_range = request.time_range.clone();
 
         let format_arg = match request.video_quality.as_deref() {
             Some("1080p") => build_telegram_safe_format(Some(1080)),
@@ -300,6 +303,7 @@ impl YtDlpSource {
                     args.push("--no-check-certificate");
                 },
                 &format_arg,
+                time_range.as_ref(),
             )
         });
 
@@ -342,6 +346,7 @@ fn download_with_fallback_chain<F1, F2, F3>(
     _tier2_args_fn: F2,
     _tier3_args_fn: F3,
     extra_arg: &str,
+    time_range: Option<&(String, String)>,
 ) -> Result<Option<u32>, AppError>
 where
     F1: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
@@ -352,6 +357,9 @@ where
     let proxy_chain = get_proxy_chain();
     let total_proxies = proxy_chain.len();
     let mut last_error: Option<AppError> = None;
+
+    // Pre-build the section spec string so it lives long enough to be borrowed
+    let section_spec = time_range.map(|(start, end)| format!("*{}-{}", start, end));
 
     for (attempt, proxy_option) in proxy_chain.into_iter().enumerate() {
         let proxy_name = proxy_option
@@ -388,6 +396,7 @@ where
                 args.insert(pos + 1, extra_arg);
             }
         }
+        append_section_args(&mut args, section_spec.as_deref());
         args.push(url_str);
 
         let command_str = format!("{} {}", ytdl_bin, args.join(" "));
@@ -454,6 +463,7 @@ where
                     } else if let Some(pos) = cookies_args.iter().position(|a| *a == "--format") {
                         cookies_args.insert(pos + 1, extra_arg);
                     }
+                    append_section_args(&mut cookies_args, section_spec.as_deref());
                     cookies_args.push(url_str);
 
                     log::info!(
@@ -527,6 +537,7 @@ where
                             fixup_args.insert(pos + 1, extra_arg);
                         }
                     }
+                    append_section_args(&mut fixup_args, section_spec.as_deref());
                     fixup_args.push(url_str);
 
                     log::info!(
@@ -589,6 +600,15 @@ where
     // All proxies exhausted
     log::error!("❌ All {} proxies failed for {} download", total_proxies, media_type);
     Err(last_error.unwrap_or_else(|| AppError::Download("All proxies failed".to_string())))
+}
+
+/// Append `--download-sections` and `--force-keyframes-at-cuts` when a time range is set.
+fn append_section_args<'a>(args: &mut Vec<&'a str>, section_spec: Option<&'a str>) {
+    if let Some(spec) = section_spec {
+        args.push("--download-sections");
+        args.push(spec);
+        args.push("--force-keyframes-at-cuts");
+    }
 }
 
 /// Build common yt-dlp arguments shared by all tiers (full set with rate limiting).
@@ -791,5 +811,28 @@ mod tests {
         assert!(!YtDlpSource::is_known_domain(
             &Url::parse("https://example.com/page").unwrap()
         ));
+    }
+
+    #[test]
+    fn test_append_section_args_with_range() {
+        let mut args = vec!["-o", "/tmp/test.mp4"];
+        append_section_args(&mut args, Some("*00:01:00-00:02:30"));
+        assert_eq!(
+            args,
+            vec![
+                "-o",
+                "/tmp/test.mp4",
+                "--download-sections",
+                "*00:01:00-00:02:30",
+                "--force-keyframes-at-cuts"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_append_section_args_without_range() {
+        let mut args = vec!["-o", "/tmp/test.mp4"];
+        append_section_args(&mut args, None);
+        assert_eq!(args, vec!["-o", "/tmp/test.mp4"]);
     }
 }
