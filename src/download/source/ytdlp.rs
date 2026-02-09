@@ -413,13 +413,16 @@ where
                     &stderr_text[..std::cmp::min(500, stderr_text.len())]
                 );
 
-                // Check if proxy-related → try next proxy
-                let should_try_next = is_proxy_related_error(&stderr_text)
-                    || matches!(error_type, YtDlpErrorType::BotDetection | YtDlpErrorType::NetworkError);
+                // For pure network errors (timeout, connection refused, DNS), skip
+                // straight to the next proxy — Tier 2 won't help if the proxy is down.
+                // But for BotDetection, try Tier 2 (cookies) on the SAME proxy first,
+                // because authentication often resolves bot detection even on flagged IPs.
+                let is_network_only = matches!(error_type, YtDlpErrorType::NetworkError)
+                    || (is_proxy_related_error(&stderr_text) && !matches!(error_type, YtDlpErrorType::BotDetection));
 
-                if should_try_next && attempt + 1 < total_proxies {
+                if is_network_only && attempt + 1 < total_proxies {
                     log::warn!(
-                        "🔄 Proxy-related error, trying next proxy (attempt {}/{})",
+                        "🔄 Network/proxy error, trying next proxy (attempt {}/{})",
                         attempt + 2,
                         total_proxies
                     );
@@ -565,6 +568,18 @@ where
                 };
                 let operation = format!("{}_download:{}", media_type, error_category);
                 crate::core::metrics::record_error("download", &operation);
+
+                // If more proxies available, try the next one
+                if attempt + 1 < total_proxies {
+                    log::warn!(
+                        "🔄 All tiers failed with [{}], trying next proxy (attempt {}/{})",
+                        proxy_name,
+                        attempt + 2,
+                        total_proxies
+                    );
+                    last_error = Some(AppError::Download(error_msg));
+                    continue;
+                }
 
                 return Err(AppError::Download(error_msg));
             }

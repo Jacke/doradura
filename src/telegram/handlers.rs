@@ -948,7 +948,7 @@ fn pre_checkout_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
 fn media_upload_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
     use crate::core::subscription::PlanLimits;
     use crate::storage::uploads::{find_duplicate_upload, save_upload, NewUpload};
-    use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, ParseMode};
+    use teloxide::types::ParseMode;
 
     let deps_filter = deps.clone();
 
@@ -1239,25 +1239,10 @@ fn media_upload_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                         let escaped_title = crate::core::escape_markdown(&title);
                         let escaped_info = crate::core::escape_markdown(&info_parts.join(" · "));
 
-                        // Build action keyboard
-                        let keyboard = InlineKeyboardMarkup::new(vec![
-                            vec![
-                                InlineKeyboardButton::callback("📤 Отправить", format!("videos:send:{}", upload_id)),
-                                InlineKeyboardButton::callback("🗑️ Удалить", format!("videos:delete:{}", upload_id)),
-                            ],
-                            vec![InlineKeyboardButton::callback(
-                                "📂 Все загрузки",
-                                "videos:page:0:all".to_string(),
-                            )],
-                        ]);
+                        let keyboard = build_upload_keyboard(media_type, upload_id);
+                        let upload_text = build_upload_text(media_type, media_icon, &escaped_title, &escaped_info);
 
-                        bot.send_message(
-                            chat_id,
-                            format!(
-                                "{} *Файл загружен:* {}\n└ {}\n\nИспользуй /videos чтобы конвертировать файлы\\.",
-                                media_icon, escaped_title, escaped_info
-                            ),
-                        )
+                        bot.send_message(chat_id, upload_text)
                         .parse_mode(ParseMode::MarkdownV2)
                         .reply_markup(keyboard)
                         .await?;
@@ -1294,4 +1279,171 @@ fn callback_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
     })
 }
 
+/// Build inline keyboard for upload response based on media type.
+fn build_upload_keyboard(media_type: &str, upload_id: i64) -> teloxide::types::InlineKeyboardMarkup {
+    use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
+
+    if media_type == "video" {
+        InlineKeyboardMarkup::new(vec![
+            vec![
+                InlineKeyboardButton::callback("📤 Как видео", format!("videos:send:video:{}", upload_id)),
+                InlineKeyboardButton::callback("📎 Как документ", format!("videos:send:document:{}", upload_id)),
+            ],
+            vec![
+                InlineKeyboardButton::callback("⭕️ Кружок", format!("videos:convert:circle:{}", upload_id)),
+                InlineKeyboardButton::callback("🎵 MP3", format!("videos:convert:audio:{}", upload_id)),
+                InlineKeyboardButton::callback("🎞️ GIF", format!("videos:convert:gif:{}", upload_id)),
+            ],
+            vec![
+                InlineKeyboardButton::callback("📦 Сжать", format!("videos:convert:compress:{}", upload_id)),
+                InlineKeyboardButton::callback("🗑️ Удалить", format!("videos:delete:{}", upload_id)),
+            ],
+        ])
+    } else {
+        InlineKeyboardMarkup::new(vec![
+            vec![
+                InlineKeyboardButton::callback("📤 Отправить", format!("videos:send:{}", upload_id)),
+                InlineKeyboardButton::callback("🗑️ Удалить", format!("videos:delete:{}", upload_id)),
+            ],
+            vec![InlineKeyboardButton::callback(
+                "📂 Все загрузки",
+                "videos:page:0:all".to_string(),
+            )],
+        ])
+    }
+}
+
+/// Build upload response text based on media type.
+fn build_upload_text(media_type: &str, media_icon: &str, escaped_title: &str, escaped_info: &str) -> String {
+    if media_type == "video" {
+        format!("{} *Файл загружен:* {}\n└ {}", media_icon, escaped_title, escaped_info)
+    } else {
+        format!(
+            "{} *Файл загружен:* {}\n└ {}\n\nИспользуй /videos чтобы конвертировать файлы\\.",
+            media_icon, escaped_title, escaped_info
+        )
+    }
+}
+
 // Integration tests are in tests/real_handlers_test.rs
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper: extract all callback_data strings from a keyboard
+    fn callback_data(keyboard: &teloxide::types::InlineKeyboardMarkup) -> Vec<Vec<String>> {
+        keyboard
+            .inline_keyboard
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .filter_map(|btn| match &btn.kind {
+                        teloxide::types::InlineKeyboardButtonKind::CallbackData(data) => Some(data.clone()),
+                        _ => None,
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    /// Helper: extract all button labels from a keyboard
+    fn button_labels(keyboard: &teloxide::types::InlineKeyboardMarkup) -> Vec<Vec<String>> {
+        keyboard
+            .inline_keyboard
+            .iter()
+            .map(|row| row.iter().map(|btn| btn.text.clone()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn test_video_keyboard_has_conversion_buttons() {
+        let kb = build_upload_keyboard("video", 42);
+        let data = callback_data(&kb);
+
+        assert_eq!(data.len(), 3, "video keyboard should have 3 rows");
+
+        // Row 1: send options
+        assert_eq!(data[0], vec!["videos:send:video:42", "videos:send:document:42"]);
+        // Row 2: conversion
+        assert_eq!(
+            data[1],
+            vec![
+                "videos:convert:circle:42",
+                "videos:convert:audio:42",
+                "videos:convert:gif:42"
+            ]
+        );
+        // Row 3: compress + delete
+        assert_eq!(data[2], vec!["videos:convert:compress:42", "videos:delete:42"]);
+    }
+
+    #[test]
+    fn test_video_keyboard_labels() {
+        let kb = build_upload_keyboard("video", 1);
+        let labels = button_labels(&kb);
+
+        assert_eq!(labels[0], vec!["📤 Как видео", "📎 Как документ"]);
+        assert_eq!(labels[1], vec!["⭕️ Кружок", "🎵 MP3", "🎞️ GIF"]);
+        assert_eq!(labels[2], vec!["📦 Сжать", "🗑️ Удалить"]);
+    }
+
+    #[test]
+    fn test_non_video_keyboard_has_send_and_delete() {
+        for media_type in &["photo", "audio", "document"] {
+            let kb = build_upload_keyboard(media_type, 99);
+            let data = callback_data(&kb);
+
+            assert_eq!(data.len(), 2, "{} keyboard should have 2 rows", media_type);
+            assert_eq!(data[0], vec!["videos:send:99", "videos:delete:99"]);
+            assert_eq!(data[1], vec!["videos:page:0:all"]);
+        }
+    }
+
+    #[test]
+    fn test_non_video_keyboard_no_conversion_buttons() {
+        let kb = build_upload_keyboard("photo", 5);
+        let all_data: Vec<String> = callback_data(&kb).into_iter().flatten().collect();
+
+        assert!(
+            !all_data.iter().any(|d| d.contains("convert:")),
+            "non-video keyboard must not have convert buttons"
+        );
+    }
+
+    #[test]
+    fn test_video_text_no_videos_hint() {
+        let text = build_upload_text("video", "🎬", "test\\.mp4", "10\\.0 MB");
+
+        assert!(
+            !text.contains("/videos"),
+            "video upload text should not contain /videos hint"
+        );
+        assert!(text.contains("Файл загружен"));
+    }
+
+    #[test]
+    fn test_non_video_text_has_videos_hint() {
+        let text = build_upload_text("photo", "📷", "photo\\.jpg", "2\\.0 MB");
+
+        assert!(
+            text.contains("/videos"),
+            "non-video upload text should contain /videos hint"
+        );
+        assert!(text.contains("Файл загружен"));
+    }
+
+    #[test]
+    fn test_upload_id_embedded_in_callbacks() {
+        let kb = build_upload_keyboard("video", 12345);
+        let all_data: Vec<String> = callback_data(&kb).into_iter().flatten().collect();
+
+        for data in &all_data {
+            assert!(
+                data.contains("12345") || data == "videos:page:0:all",
+                "callback '{}' should contain the upload_id",
+                data
+            );
+        }
+    }
+}
