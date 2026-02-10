@@ -43,3 +43,8 @@ mtproto_session*.bin
 run-staging.sh
 __pycache__/
 .env.bot-api
+# Media files (downloaded/test videos)
+*.mp4
+*.mkv
+*.webm
+*.avi
