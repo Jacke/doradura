@@ -14,6 +14,7 @@ use crate::core::alerts::AlertManager;
 use crate::core::rate_limiter::RateLimiter;
 use crate::download::queue::{self as queue, DownloadQueue};
 use crate::downsub::DownsubGateway;
+use crate::extension::ExtensionRegistry;
 use crate::i18n;
 use crate::storage::db::{self, create_user, create_user_with_language, get_user};
 use crate::storage::get_connection;
@@ -34,6 +35,7 @@ pub struct HandlerDeps {
     pub bot_username: Option<String>,
     pub bot_id: UserId,
     pub alert_manager: Option<Arc<AlertManager>>,
+    pub extension_registry: Arc<ExtensionRegistry>,
 }
 
 impl HandlerDeps {
@@ -46,6 +48,7 @@ impl HandlerDeps {
         bot_username: Option<String>,
         bot_id: UserId,
         alert_manager: Option<Arc<AlertManager>>,
+        extension_registry: Arc<ExtensionRegistry>,
     ) -> Self {
         Self {
             db_pool,
@@ -55,6 +58,7 @@ impl HandlerDeps {
             bot_username,
             bot_id,
             alert_manager,
+            extension_registry,
         }
     }
 }
@@ -1272,6 +1276,7 @@ fn callback_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                 deps.db_pool.clone(),
                 deps.download_queue.clone(),
                 deps.rate_limiter.clone(),
+                deps.extension_registry.clone(),
             )
             .await
             .map_err(|e| Box::new(e) as HandlerError)

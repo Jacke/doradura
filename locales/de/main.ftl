@@ -3,7 +3,7 @@ menu =
     .download_type_button = 📥 Download\-Typ: {$format}
     .video_quality_button = 🎬 Videoqualität: {$quality}
     .audio_bitrate_button = 🎵 Audio\-Bitrate: {$bitrate}
-    .services_button = 🌐 Unterstützte Dienste
+    .services_button = 🧩 Erweiterungen
     .subscription_button = 💳 Mein Abo
     .language_button = 🌍 Sprache
     .download_type_title = Wähle ein Format zum Herunterladen:\n\n*Aktuelles Format: {$format}*
@@ -131,3 +131,29 @@ video_circle =
 
 preview =
     .time_range_detected = ✂️ Teilweiser Download: {$start} — {$end}
+
+ext_ytdlp =
+    .name = Medien\-Downloader
+    .description = YouTube, TikTok, Instagram, SoundCloud und 1000\+ Seiten
+
+ext_http =
+    .name = Direkt\-Downloader
+    .description = MP3, MP4, WAV, FLAC und andere Dateien über direkte Links
+
+ext_converter =
+    .name = Konverter
+    .description = Video, Audio, Dokumente und Bilder
+
+ext_audio_effects =
+    .name = Audio\-Effekte
+    .description = Pitch, Tempo, Bass, Morph\-Presets
+
+extensions =
+    .header = 🧩 *Doras Erweiterungen*
+    .category_download = 📥 *Downloads*
+    .category_convert = 🔄 *Konvertierung*
+    .category_process = 🎛️ *Verarbeitung*
+    .status_active = ✅ Aktiv
+    .status_unavailable = ❌ Nicht verfügbar
+    .footer = _Jede Erweiterung arbeitet unabhängig\. Sende einen Link oder eine Datei — Dora wählt die richtige\!_
+    .detail_back = 🔙 Zurück zu Erweiterungen

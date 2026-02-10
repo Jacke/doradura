@@ -642,21 +642,10 @@ pub async fn handle_videos_callback(
                             .await?;
                     }
                     "audio" | "gif" | "compress" => {
-                        // TODO: Implement these conversions in the conversion module
-                        bot.send_message(
-                            chat_id,
-                            format!(
-                                "🚧 Конвертация в {} пока в разработке\\.\n\nСкоро будет доступна\\!",
-                                match convert_type {
-                                    "audio" => "MP3",
-                                    "gif" => "GIF",
-                                    "compress" => "сжатое видео",
-                                    _ => "неизвестный формат",
-                                }
-                            ),
-                        )
-                        .parse_mode(ParseMode::MarkdownV2)
-                        .await?;
+                        // Route to working conversion handler
+                        let upload_id = parts.get(3).unwrap_or(&"0");
+                        let convert_data = format!("convert:{}:{}", convert_type, upload_id);
+                        handle_convert_callback(bot, chat_id, message_id, &convert_data, db_pool.clone()).await?;
                     }
                     _ => {}
                 }
@@ -1142,5 +1131,275 @@ mod tests {
     #[test]
     fn test_items_per_page() {
         assert_eq!(ITEMS_PER_PAGE, 5);
+    }
+
+    #[test]
+    fn test_format_file_size_edge_cases() {
+        assert_eq!(format_file_size(0), "0 B");
+        assert_eq!(format_file_size(1), "1 B");
+        assert_eq!(format_file_size(1023), "1023 B");
+        assert_eq!(format_file_size(1024 * 1024 - 1), "1024.0 KB");
+        assert_eq!(format_file_size(500 * 1024), "500.0 KB");
+        assert_eq!(format_file_size(5 * 1024 * 1024), "5.0 MB");
+        assert_eq!(format_file_size(2 * 1024 * 1024 * 1024), "2.00 GB");
+    }
+
+    #[test]
+    fn test_format_duration_edge_cases() {
+        assert_eq!(format_duration(59), "0:59");
+        assert_eq!(format_duration(60), "1:00");
+        assert_eq!(format_duration(3600), "1:00:00");
+        assert_eq!(format_duration(7200), "2:00:00");
+        assert_eq!(format_duration(86400), "24:00:00");
+    }
+
+    #[test]
+    fn test_get_media_type_name() {
+        assert_eq!(get_media_type_name("photo"), "Фото");
+        assert_eq!(get_media_type_name("video"), "Видео");
+        assert_eq!(get_media_type_name("audio"), "Аудио");
+        assert_eq!(get_media_type_name("document"), "Документы");
+        assert_eq!(get_media_type_name("unknown"), "Все");
+    }
+
+    #[test]
+    fn test_build_upload_action_keyboard_video() {
+        let upload = UploadEntry {
+            id: 42,
+            user_id: 123,
+            original_filename: Some("test.mp4".to_string()),
+            title: "Test Video".to_string(),
+            media_type: "video".to_string(),
+            file_format: Some("mp4".to_string()),
+            file_id: "file_id_123".to_string(),
+            file_unique_id: Some("unique_123".to_string()),
+            file_size: Some(1024 * 1024),
+            duration: Some(120),
+            width: Some(1920),
+            height: Some(1080),
+            mime_type: Some("video/mp4".to_string()),
+            message_id: None,
+            chat_id: None,
+            uploaded_at: "2025-01-01".to_string(),
+            thumbnail_file_id: None,
+        };
+
+        let keyboard = build_upload_action_keyboard(&upload);
+        let rows = &keyboard.inline_keyboard;
+
+        // Video uploads should have: send row, convert row (circle+mp3+gif), compress row, delete row
+        assert!(
+            rows.len() >= 4,
+            "Video should have at least 4 button rows, got {}",
+            rows.len()
+        );
+
+        // Collect all callbacks
+        let all_callbacks: Vec<String> = rows
+            .iter()
+            .flat_map(|row| {
+                row.iter().filter_map(|btn| match &btn.kind {
+                    teloxide::types::InlineKeyboardButtonKind::CallbackData(data) => Some(data.clone()),
+                    _ => None,
+                })
+            })
+            .collect();
+
+        // Check send buttons
+        assert!(
+            all_callbacks.iter().any(|cb| cb.contains("send:video:42")),
+            "Should have send:video button"
+        );
+        assert!(
+            all_callbacks.iter().any(|cb| cb.contains("send:document:42")),
+            "Should have send:document button"
+        );
+
+        // Check convert buttons (Phase 1 wired buttons)
+        assert!(
+            all_callbacks.iter().any(|cb| cb.contains("convert:circle:42")),
+            "Should have circle button"
+        );
+        assert!(
+            all_callbacks.iter().any(|cb| cb.contains("convert:audio:42")),
+            "Should have MP3 button"
+        );
+        assert!(
+            all_callbacks.iter().any(|cb| cb.contains("convert:gif:42")),
+            "Should have GIF button"
+        );
+        assert!(
+            all_callbacks.iter().any(|cb| cb.contains("convert:compress:42")),
+            "Should have compress button"
+        );
+
+        // Check delete/cancel
+        assert!(
+            all_callbacks.iter().any(|cb| cb.contains("delete:42")),
+            "Should have delete button"
+        );
+        assert!(
+            all_callbacks.iter().any(|cb| cb.contains("cancel")),
+            "Should have cancel button"
+        );
+    }
+
+    #[test]
+    fn test_build_upload_action_keyboard_photo() {
+        let upload = UploadEntry {
+            id: 10,
+            user_id: 123,
+            original_filename: Some("photo.jpg".to_string()),
+            title: "Photo".to_string(),
+            media_type: "photo".to_string(),
+            file_format: Some("jpg".to_string()),
+            file_id: "photo_id".to_string(),
+            file_unique_id: None,
+            file_size: Some(500_000),
+            duration: None,
+            width: Some(1920),
+            height: Some(1080),
+            mime_type: Some("image/jpeg".to_string()),
+            message_id: None,
+            chat_id: None,
+            uploaded_at: "2025-01-01".to_string(),
+            thumbnail_file_id: None,
+        };
+
+        let keyboard = build_upload_action_keyboard(&upload);
+        let all_callbacks: Vec<String> = keyboard
+            .inline_keyboard
+            .iter()
+            .flat_map(|row| {
+                row.iter().filter_map(|btn| match &btn.kind {
+                    teloxide::types::InlineKeyboardButtonKind::CallbackData(data) => Some(data.clone()),
+                    _ => None,
+                })
+            })
+            .collect();
+
+        // Photos should have send:photo and send:document but NO convert buttons
+        assert!(
+            all_callbacks.iter().any(|cb| cb.contains("send:photo:10")),
+            "Should have send:photo button"
+        );
+        assert!(
+            all_callbacks.iter().any(|cb| cb.contains("send:document:10")),
+            "Should have send:document button"
+        );
+        assert!(
+            !all_callbacks.iter().any(|cb| cb.contains("convert:circle")),
+            "Photos should NOT have circle button"
+        );
+        assert!(
+            !all_callbacks.iter().any(|cb| cb.contains("convert:audio")),
+            "Photos should NOT have MP3 button"
+        );
+        assert!(
+            !all_callbacks.iter().any(|cb| cb.contains("convert:gif")),
+            "Photos should NOT have GIF button"
+        );
+        assert!(
+            !all_callbacks.iter().any(|cb| cb.contains("convert:compress")),
+            "Photos should NOT have compress button"
+        );
+    }
+
+    #[test]
+    fn test_build_upload_action_keyboard_audio() {
+        let upload = UploadEntry {
+            id: 20,
+            user_id: 123,
+            original_filename: Some("song.mp3".to_string()),
+            title: "Song".to_string(),
+            media_type: "audio".to_string(),
+            file_format: Some("mp3".to_string()),
+            file_id: "audio_id".to_string(),
+            file_unique_id: None,
+            file_size: Some(3_000_000),
+            duration: Some(180),
+            width: None,
+            height: None,
+            mime_type: Some("audio/mpeg".to_string()),
+            message_id: None,
+            chat_id: None,
+            uploaded_at: "2025-01-01".to_string(),
+            thumbnail_file_id: None,
+        };
+
+        let keyboard = build_upload_action_keyboard(&upload);
+        let all_callbacks: Vec<String> = keyboard
+            .inline_keyboard
+            .iter()
+            .flat_map(|row| {
+                row.iter().filter_map(|btn| match &btn.kind {
+                    teloxide::types::InlineKeyboardButtonKind::CallbackData(data) => Some(data.clone()),
+                    _ => None,
+                })
+            })
+            .collect();
+
+        // Audio should have send:audio and send:document but NO video convert buttons
+        assert!(
+            all_callbacks.iter().any(|cb| cb.contains("send:audio:20")),
+            "Should have send:audio button"
+        );
+        assert!(
+            all_callbacks.iter().any(|cb| cb.contains("send:document:20")),
+            "Should have send:document button"
+        );
+        assert!(
+            !all_callbacks.iter().any(|cb| cb.contains("convert:circle")),
+            "Audio should NOT have circle button"
+        );
+    }
+
+    #[test]
+    fn test_build_upload_action_keyboard_document() {
+        let upload = UploadEntry {
+            id: 30,
+            user_id: 123,
+            original_filename: Some("report.pdf".to_string()),
+            title: "Report".to_string(),
+            media_type: "document".to_string(),
+            file_format: Some("pdf".to_string()),
+            file_id: "doc_id".to_string(),
+            file_unique_id: None,
+            file_size: Some(2_000_000),
+            duration: None,
+            width: None,
+            height: None,
+            mime_type: Some("application/pdf".to_string()),
+            message_id: None,
+            chat_id: None,
+            uploaded_at: "2025-01-01".to_string(),
+            thumbnail_file_id: None,
+        };
+
+        let keyboard = build_upload_action_keyboard(&upload);
+        let all_callbacks: Vec<String> = keyboard
+            .inline_keyboard
+            .iter()
+            .flat_map(|row| {
+                row.iter().filter_map(|btn| match &btn.kind {
+                    teloxide::types::InlineKeyboardButtonKind::CallbackData(data) => Some(data.clone()),
+                    _ => None,
+                })
+            })
+            .collect();
+
+        // Documents should only have send:document (no send:video/photo/audio)
+        assert!(
+            all_callbacks.iter().any(|cb| cb.contains("send:document:30")),
+            "Should have send:document button"
+        );
+        assert!(
+            !all_callbacks.iter().any(|cb| cb.contains("send:video")),
+            "Documents should NOT have send:video"
+        );
+        assert!(
+            !all_callbacks.iter().any(|cb| cb.contains("send:photo")),
+            "Documents should NOT have send:photo"
+        );
     }
 }

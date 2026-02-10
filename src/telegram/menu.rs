@@ -5,6 +5,7 @@ use crate::core::history::handle_history_callback;
 use crate::core::rate_limiter::RateLimiter;
 use crate::core::subscription::{create_subscription_invoice, show_subscription_info};
 use crate::download::queue::{DownloadQueue, DownloadTask};
+use crate::extension::{ExtensionCategory, ExtensionRegistry};
 use crate::i18n;
 use crate::storage::cache;
 use crate::storage::db::{self, DbPool};
@@ -806,38 +807,108 @@ pub async fn show_audio_bitrate_menu(
     Ok(())
 }
 
-/// Shows information about supported services.
-///
-/// Displays the list of available services (YouTube, SoundCloud) and supported formats.
-///
-/// # Arguments
-///
-/// * `bot` - Telegram bot instance
-/// * `chat_id` - User chat ID
-/// * `message_id` - ID of the message to edit
-///
-/// # Returns
-///
-/// Returns `ResponseResult<()>` or an error while editing the message.
+/// Shows the extensions menu with dynamic cards from the ExtensionRegistry.
 pub async fn show_services_menu(
     bot: &Bot,
     chat_id: ChatId,
     message_id: MessageId,
     lang: &LanguageIdentifier,
+    registry: &ExtensionRegistry,
 ) -> ResponseResult<()> {
-    let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+    let mut text = i18n::t(lang, "extensions.header");
+    text.push_str("\n\n");
+
+    let categories = [
+        (ExtensionCategory::Downloader, "extensions.category_download"),
+        (ExtensionCategory::Converter, "extensions.category_convert"),
+        (ExtensionCategory::AudioProcessor, "extensions.category_process"),
+    ];
+
+    let status_active = i18n::t(lang, "extensions.status_active");
+    let status_unavailable = i18n::t(lang, "extensions.status_unavailable");
+
+    let mut buttons: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+
+    for (category, category_key) in &categories {
+        let exts = registry.by_category(*category);
+        if exts.is_empty() {
+            continue;
+        }
+
+        text.push_str(&i18n::t(lang, category_key));
+        text.push_str("\n\n");
+
+        for ext in &exts {
+            let name = ext.localized_name(lang);
+            let desc = ext.localized_description(lang);
+            let status = if ext.is_available() {
+                &status_active
+            } else {
+                &status_unavailable
+            };
+
+            text.push_str(&format!("{} *{}*\n└ {} \\| {}\n\n", ext.icon(), name, desc, status));
+
+            buttons.push(vec![InlineKeyboardButton::callback(
+                format!("{} {}", ext.icon(), name),
+                format!("ext:detail:{}", ext.id()),
+            )]);
+        }
+    }
+
+    text.push_str(&i18n::t(lang, "extensions.footer"));
+
+    buttons.push(vec![InlineKeyboardButton::callback(
         i18n::t(lang, "common.back"),
         "back:enhanced_main",
+    )]);
+
+    let keyboard = InlineKeyboardMarkup::new(buttons);
+
+    edit_caption_or_text(bot, chat_id, message_id, text, Some(keyboard)).await?;
+    Ok(())
+}
+
+/// Shows detailed info about a specific extension.
+async fn show_extension_detail(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    lang: &LanguageIdentifier,
+    registry: &ExtensionRegistry,
+    ext_id: &str,
+) -> ResponseResult<()> {
+    let Some(ext) = registry.get(ext_id) else {
+        return Ok(());
+    };
+
+    let name = ext.localized_name(lang);
+    let desc = ext.localized_description(lang);
+    let status = if ext.is_available() {
+        i18n::t(lang, "extensions.status_active")
+    } else {
+        i18n::t(lang, "extensions.status_unavailable")
+    };
+
+    let mut text = format!("{} *{}*\n\n{}\n\n{}\n\n", ext.icon(), name, desc, status);
+
+    let caps = ext.capabilities();
+    if !caps.is_empty() {
+        for cap in &caps {
+            text.push_str(&format!(
+                "• *{}* — {}\n",
+                escape_markdown(&cap.name),
+                escape_markdown(&cap.description)
+            ));
+        }
+    }
+
+    let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+        i18n::t(lang, "extensions.detail_back"),
+        "ext:back",
     )]]);
 
-    edit_caption_or_text(
-        bot,
-        chat_id,
-        message_id,
-        i18n::t(lang, "menu.services_text"),
-        Some(keyboard),
-    )
-    .await?;
+    edit_caption_or_text(bot, chat_id, message_id, text, Some(keyboard)).await?;
     Ok(())
 }
 
@@ -1190,6 +1261,7 @@ pub async fn handle_menu_callback(
     db_pool: Arc<DbPool>,
     download_queue: Arc<DownloadQueue>,
     rate_limiter: Arc<RateLimiter>,
+    extension_registry: Arc<ExtensionRegistry>,
 ) -> ResponseResult<()> {
     let callback_id = q.id.clone();
     let data_clone = q.data.clone();
@@ -1267,7 +1339,7 @@ pub async fn handle_menu_callback(
                         show_audio_bitrate_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), url_id).await?;
                     }
                     "services" => {
-                        show_services_menu(&bot, chat_id, message_id, &lang).await?;
+                        show_services_menu(&bot, chat_id, message_id, &lang, &extension_registry).await?;
                     }
                     "language" => {
                         show_language_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), url_id).await?;
@@ -1304,7 +1376,7 @@ pub async fn handle_menu_callback(
                     }
                     "services" => {
                         // Edit message to show services
-                        show_services_menu(&bot, chat_id, message_id, &lang).await?;
+                        show_services_menu(&bot, chat_id, message_id, &lang, &extension_registry).await?;
                     }
                     "subscription" => {
                         // Delete current message and show subscription info
@@ -1320,6 +1392,21 @@ pub async fn handle_menu_callback(
                         // Delete current message and send feedback prompt
                         let _ = bot.delete_message(chat_id, message_id).await;
                         let _ = crate::telegram::feedback::send_feedback_prompt(&bot, chat_id, &lang).await;
+                    }
+                    _ => {}
+                }
+            } else if data.starts_with("ext:") {
+                let _ = bot.answer_callback_query(callback_id.clone()).await;
+                let parts: Vec<&str> = data.split(':').collect();
+                match parts.get(1).copied().unwrap_or("") {
+                    "detail" => {
+                        if let Some(ext_id) = parts.get(2) {
+                            show_extension_detail(&bot, chat_id, message_id, &lang, &extension_registry, ext_id)
+                                .await?;
+                        }
+                    }
+                    "back" => {
+                        show_services_menu(&bot, chat_id, message_id, &lang, &extension_registry).await?;
                     }
                     _ => {}
                 }

@@ -24,6 +24,16 @@ struct RealHandlerTest {
     mock_server: MockServer,
     bot: CustomBot,
     deps: HandlerDeps,
+    db_path: String,
+}
+
+impl Drop for RealHandlerTest {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.db_path);
+        let _ = std::fs::remove_file(format!("{}-journal", &self.db_path));
+        let _ = std::fs::remove_file(format!("{}-wal", &self.db_path));
+        let _ = std::fs::remove_file(format!("{}-shm", &self.db_path));
+    }
 }
 
 impl RealHandlerTest {
@@ -38,8 +48,17 @@ impl RealHandlerTest {
         // Wrap with our custom Bot (for logging)
         let bot = CustomBot::new(teloxide_bot);
 
-        // Create in-memory database
-        let db_pool = Arc::new(create_pool(":memory:").expect("Failed to create test database"));
+        // Create file-based temp database (shared across all pool connections)
+        // Using process ID + timestamp + random suffix for uniqueness across parallel tests
+        let db_path = format!(
+            "/tmp/doradura_test_{}_{}.db",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        );
+        let db_pool = Arc::new(create_pool(&db_path).expect("Failed to create test database"));
 
         // Initialize database schema with all required tables
         {
@@ -92,6 +111,26 @@ impl RealHandlerTest {
                     request_text TEXT,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 );
+
+                CREATE TABLE IF NOT EXISTS uploads (
+                    id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    original_filename TEXT,
+                    title TEXT NOT NULL,
+                    media_type TEXT NOT NULL,
+                    file_format TEXT,
+                    file_id TEXT NOT NULL,
+                    file_unique_id TEXT,
+                    file_size INTEGER,
+                    duration INTEGER,
+                    width INTEGER,
+                    height INTEGER,
+                    mime_type TEXT,
+                    message_id INTEGER,
+                    chat_id INTEGER,
+                    thumbnail_file_id TEXT,
+                    uploaded_at TEXT DEFAULT CURRENT_TIMESTAMP
+                );
                 "#,
             )
             .expect("Failed to create tables");
@@ -101,6 +140,8 @@ impl RealHandlerTest {
         let rate_limiter = Arc::new(RateLimiter::new());
         let downsub_gateway = Arc::new(DownsubGateway::from_env().await);
 
+        let extension_registry = Arc::new(doradura::extension::ExtensionRegistry::default_registry());
+
         let deps = HandlerDeps::new(
             db_pool,
             download_queue,
@@ -109,9 +150,15 @@ impl RealHandlerTest {
             Some("test_bot".to_string()),
             UserId(987654321),
             None, // alert_manager - not needed for tests
+            extension_registry,
         );
 
-        Self { mock_server, bot, deps }
+        Self {
+            mock_server,
+            bot,
+            deps,
+            db_path,
+        }
     }
 
     /// Create a test user in the database
@@ -129,6 +176,18 @@ impl RealHandlerTest {
             rusqlite::params![telegram_id],
         )
         .expect("Failed to insert user settings");
+    }
+
+    /// Create a test upload entry in the database
+    fn create_test_upload(&self, user_id: i64, title: &str, media_type: &str, file_id: &str) -> i64 {
+        let conn = self.deps.db_pool.get().expect("Failed to get connection");
+        conn.execute(
+            "INSERT INTO uploads (user_id, title, media_type, file_id, file_unique_id, file_size, duration)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![user_id, title, media_type, file_id, "unique_123", 1024 * 1024, 120],
+        )
+        .expect("Failed to insert test upload");
+        conn.last_insert_rowid()
     }
 
     /// Mock a sendMessage API call
@@ -156,7 +215,7 @@ impl RealHandlerTest {
         });
 
         Mock::given(method("POST"))
-            .and(path_regex("/bot[^/]+/sendMessage"))
+            .and(path_regex("(?i)/bot[^/]+/sendMessage"))
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .mount(&self.mock_server)
             .await;
@@ -184,7 +243,7 @@ impl RealHandlerTest {
         });
 
         Mock::given(method("POST"))
-            .and(path_regex("/bot[^/]+/editMessageText"))
+            .and(path_regex("(?i)/bot[^/]+/editMessageText"))
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .mount(&self.mock_server)
             .await;
@@ -199,7 +258,7 @@ impl RealHandlerTest {
         });
 
         Mock::given(method("POST"))
-            .and(path_regex("/bot[^/]+/answerCallbackQuery"))
+            .and(path_regex("(?i)/bot[^/]+/answerCallbackQuery"))
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .mount(&self.mock_server)
             .await;
@@ -214,7 +273,7 @@ impl RealHandlerTest {
         });
 
         Mock::given(method("POST"))
-            .and(path_regex("/bot[^/]+/setMyCommands"))
+            .and(path_regex("(?i)/bot[^/]+/setMyCommands"))
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .mount(&self.mock_server)
             .await;
@@ -246,7 +305,7 @@ impl RealHandlerTest {
         });
 
         Mock::given(method("POST"))
-            .and(path_regex("/bot[^/]+/sendVoice"))
+            .and(path_regex("(?i)/bot[^/]+/sendVoice"))
             .respond_with(ResponseTemplate::new(200).set_body_json(response))
             .mount(&self.mock_server)
             .await;
@@ -266,21 +325,28 @@ impl RealHandlerTest {
             }
         });
         Mock::given(method("POST"))
-            .and(path_regex("/bot[^/]+/sendMessage"))
+            .and(path_regex("(?i)/bot[^/]+/sendMessage"))
             .respond_with(ResponseTemplate::new(200).set_body_json(send_msg.clone()))
             .mount(&self.mock_server)
             .await;
 
         // editMessageText
         Mock::given(method("POST"))
-            .and(path_regex("/bot[^/]+/editMessageText"))
+            .and(path_regex("(?i)/bot[^/]+/editMessageText"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(send_msg.clone()))
+            .mount(&self.mock_server)
+            .await;
+
+        // editMessageCaption
+        Mock::given(method("POST"))
+            .and(path_regex("(?i)/bot[^/]+/editMessageCaption"))
             .respond_with(ResponseTemplate::new(200).set_body_json(send_msg.clone()))
             .mount(&self.mock_server)
             .await;
 
         // editMessageReplyMarkup
         Mock::given(method("POST"))
-            .and(path_regex("/bot[^/]+/editMessageReplyMarkup"))
+            .and(path_regex("(?i)/bot[^/]+/editMessageReplyMarkup"))
             .respond_with(ResponseTemplate::new(200).set_body_json(send_msg.clone()))
             .mount(&self.mock_server)
             .await;
@@ -288,7 +354,7 @@ impl RealHandlerTest {
         // answerCallbackQuery
         let answer_cb = serde_json::json!({ "ok": true, "result": true });
         Mock::given(method("POST"))
-            .and(path_regex("/bot[^/]+/answerCallbackQuery"))
+            .and(path_regex("(?i)/bot[^/]+/answerCallbackQuery"))
             .respond_with(ResponseTemplate::new(200).set_body_json(answer_cb))
             .mount(&self.mock_server)
             .await;
@@ -296,7 +362,7 @@ impl RealHandlerTest {
         // setMyCommands
         let set_cmds = serde_json::json!({ "ok": true, "result": true });
         Mock::given(method("POST"))
-            .and(path_regex("/bot[^/]+/setMyCommands"))
+            .and(path_regex("(?i)/bot[^/]+/setMyCommands"))
             .respond_with(ResponseTemplate::new(200).set_body_json(set_cmds))
             .mount(&self.mock_server)
             .await;
@@ -304,7 +370,7 @@ impl RealHandlerTest {
         // deleteMessage
         let delete_msg = serde_json::json!({ "ok": true, "result": true });
         Mock::given(method("POST"))
-            .and(path_regex("/bot[^/]+/deleteMessage"))
+            .and(path_regex("(?i)/bot[^/]+/deleteMessage"))
             .respond_with(ResponseTemplate::new(200).set_body_json(delete_msg))
             .mount(&self.mock_server)
             .await;
@@ -321,7 +387,7 @@ impl RealHandlerTest {
             }
         });
         Mock::given(method("POST"))
-            .and(path_regex("/bot[^/]+/sendVoice"))
+            .and(path_regex("(?i)/bot[^/]+/sendVoice"))
             .respond_with(ResponseTemplate::new(200).set_body_json(voice))
             .mount(&self.mock_server)
             .await;
@@ -338,7 +404,7 @@ impl RealHandlerTest {
             }
         });
         Mock::given(method("POST"))
-            .and(path_regex("/bot[^/]+/sendPhoto"))
+            .and(path_regex("(?i)/bot[^/]+/sendPhoto"))
             .respond_with(ResponseTemplate::new(200).set_body_json(photo))
             .mount(&self.mock_server)
             .await;
@@ -357,12 +423,13 @@ impl RealHandlerTest {
             }
         });
         Mock::given(method("POST"))
-            .and(path_regex("/bot[^/]+/getMe"))
+            .and(path_regex("(?i)/bot[^/]+/getMe"))
             .respond_with(ResponseTemplate::new(200).set_body_json(get_me))
             .mount(&self.mock_server)
             .await;
 
         // Catch-all for any unhandled POST requests - returns a valid "ok" response
+        // Use lowest priority (255) so specific mocks above always win
         let fallback = serde_json::json!({
             "ok": true,
             "result": {
@@ -375,12 +442,14 @@ impl RealHandlerTest {
         });
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(200).set_body_json(fallback.clone()))
+            .with_priority(255)
             .mount(&self.mock_server)
             .await;
 
         // Also catch GET requests
         Mock::given(method("GET"))
             .respond_with(ResponseTemplate::new(200).set_body_json(fallback))
+            .with_priority(255)
             .mount(&self.mock_server)
             .await;
     }
@@ -648,7 +717,7 @@ async fn test_real_handle_info_command() {
     let body: serde_json::Value = serde_json::from_slice(&send_msg.body).unwrap();
 
     // Verify message has text
-    let text = body["text"].as_str().unwrap_or("");
+    let text = body["text"].as_str().or_else(|| body["caption"].as_str()).unwrap_or("");
     assert!(!text.is_empty(), "Should have message text");
 
     println!("✅ handle_info_command: sent message with {} chars", text.len());
@@ -678,6 +747,7 @@ async fn test_real_handle_menu_callback() {
         test.deps.db_pool.clone(),
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
+        test.deps.extension_registry.clone(),
     )
     .await;
     assert!(result.is_ok(), "handle_menu_callback should succeed");
@@ -725,6 +795,7 @@ async fn test_real_settings_callback() {
         test.deps.db_pool.clone(),
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
+        test.deps.extension_registry.clone(),
     )
     .await;
     assert!(result.is_ok(), "settings callback should succeed");
@@ -779,6 +850,7 @@ async fn test_real_downloads_callback() {
         test.deps.db_pool.clone(),
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
+        test.deps.extension_registry.clone(),
     )
     .await;
     assert!(result.is_ok(), "downloads callback should succeed");
@@ -833,6 +905,7 @@ async fn test_real_info_callback() {
         test.deps.db_pool.clone(),
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
+        test.deps.extension_registry.clone(),
     )
     .await;
     assert!(result.is_ok(), "info callback should succeed");
@@ -908,4 +981,1453 @@ async fn test_database_setup() {
     assert_eq!(settings_count, 1, "User settings should exist");
 
     println!("✅ Database setup verified - tables and data correct");
+}
+
+// =============================================================================
+// EXTENSION MENU UI/UX TESTS
+// =============================================================================
+
+/// Test show_services_menu renders extensions cards correctly
+#[tokio::test]
+#[serial]
+async fn test_show_services_menu_renders_extension_cards() {
+    use doradura::telegram::show_services_menu;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "en");
+    test.mock_all_telegram_api().await;
+
+    let lang = doradura::i18n::lang_from_code("en");
+    let registry = doradura::extension::ExtensionRegistry::default_registry();
+
+    let result = show_services_menu(
+        test.bot(),
+        ChatId(123456789),
+        teloxide::types::MessageId(42),
+        &lang,
+        &registry,
+    )
+    .await;
+    assert!(result.is_ok(), "show_services_menu should succeed");
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let edit_msg = requests
+        .iter()
+        .find(|r| {
+            let path = r.url.path().to_lowercase();
+            path.contains("editmessagetext") || path.contains("editmessagecaption")
+        })
+        .expect("Should have edit message request");
+
+    let body: serde_json::Value = serde_json::from_slice(&edit_msg.body).unwrap();
+
+    // Verify text contains extension header and categories
+    let text = body["text"].as_str().or_else(|| body["caption"].as_str()).unwrap_or("");
+    assert!(
+        text.contains("Extensions") || text.contains("Расширения") || text.contains("🧩"),
+        "Should contain extensions header, got: {}",
+        &text[..text.len().min(200)]
+    );
+
+    // Verify keyboard has extension buttons
+    let keyboard = &body["reply_markup"]["inline_keyboard"];
+    assert!(keyboard.is_array(), "Should have inline_keyboard");
+
+    let rows = keyboard.as_array().unwrap();
+    // 4 extensions + 1 back button = 5 rows minimum
+    assert!(
+        rows.len() >= 5,
+        "Should have at least 5 button rows (4 extensions + back), got {}",
+        rows.len()
+    );
+
+    // Verify extension detail buttons have correct callback format
+    let mut ext_buttons = Vec::new();
+    let mut has_back_button = false;
+    for row in rows {
+        let btns = row.as_array().unwrap();
+        for btn in btns {
+            let cb = btn["callback_data"].as_str().unwrap_or("");
+            if cb.starts_with("ext:detail:") {
+                ext_buttons.push(cb.to_string());
+            }
+            if cb == "back:enhanced_main" {
+                has_back_button = true;
+            }
+        }
+    }
+
+    assert_eq!(
+        ext_buttons.len(),
+        4,
+        "Should have 4 extension detail buttons, got {:?}",
+        ext_buttons
+    );
+    assert!(
+        ext_buttons.contains(&"ext:detail:ytdlp".to_string()),
+        "Should have ytdlp button"
+    );
+    assert!(
+        ext_buttons.contains(&"ext:detail:http".to_string()),
+        "Should have http button"
+    );
+    assert!(
+        ext_buttons.contains(&"ext:detail:converter".to_string()),
+        "Should have converter button"
+    );
+    assert!(
+        ext_buttons.contains(&"ext:detail:audio_effects".to_string()),
+        "Should have audio_effects button"
+    );
+    assert!(has_back_button, "Should have back button");
+
+    println!(
+        "✅ show_services_menu: {} extension buttons + back, text len={}",
+        ext_buttons.len(),
+        text.len()
+    );
+}
+
+/// Test show_services_menu in Russian locale
+#[tokio::test]
+#[serial]
+async fn test_show_services_menu_russian_locale() {
+    use doradura::telegram::show_services_menu;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "ru");
+    test.mock_all_telegram_api().await;
+
+    let lang = doradura::i18n::lang_from_code("ru");
+    let registry = doradura::extension::ExtensionRegistry::default_registry();
+
+    let result = show_services_menu(
+        test.bot(),
+        ChatId(123456789),
+        teloxide::types::MessageId(42),
+        &lang,
+        &registry,
+    )
+    .await;
+    assert!(result.is_ok(), "show_services_menu should succeed in Russian");
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let edit_msg = requests
+        .iter()
+        .find(|r| {
+            let path = r.url.path().to_lowercase();
+            path.contains("editmessagetext") || path.contains("editmessagecaption")
+        })
+        .expect("Should have edit message request");
+
+    let body: serde_json::Value = serde_json::from_slice(&edit_msg.body).unwrap();
+    let text = body["text"].as_str().or_else(|| body["caption"].as_str()).unwrap_or("");
+
+    // Russian locale should have Russian text
+    assert!(
+        text.contains("Расширения") || text.contains("🧩"),
+        "Russian locale should contain Russian header"
+    );
+
+    println!("✅ show_services_menu (ru): text len={}", text.len());
+}
+
+/// Test show_services_menu renders all categories
+#[tokio::test]
+#[serial]
+async fn test_show_services_menu_all_categories_present() {
+    use doradura::telegram::show_services_menu;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "en");
+    test.mock_all_telegram_api().await;
+
+    let lang = doradura::i18n::lang_from_code("en");
+    let registry = doradura::extension::ExtensionRegistry::default_registry();
+
+    let result = show_services_menu(
+        test.bot(),
+        ChatId(123456789),
+        teloxide::types::MessageId(42),
+        &lang,
+        &registry,
+    )
+    .await;
+    assert!(result.is_ok());
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let edit_msg = requests
+        .iter()
+        .find(|r| {
+            let path = r.url.path().to_lowercase();
+            path.contains("editmessagetext") || path.contains("editmessagecaption")
+        })
+        .unwrap();
+
+    let body: serde_json::Value = serde_json::from_slice(&edit_msg.body).unwrap();
+    let text = body["text"].as_str().or_else(|| body["caption"].as_str()).unwrap_or("");
+
+    // All 3 category icons should be present
+    assert!(text.contains("📥"), "Should contain Downloads category icon");
+    assert!(text.contains("🔄"), "Should contain Conversion category icon");
+    assert!(text.contains("🎛️"), "Should contain Processing category icon");
+
+    // Extension icons should be present
+    assert!(text.contains("🌐"), "Should contain yt-dlp icon");
+    assert!(text.contains("📥"), "Should contain HTTP downloader icon");
+
+    // Status should be present
+    assert!(text.contains("✅"), "Should contain active status indicator");
+
+    println!("✅ show_services_menu: all categories and icons verified");
+}
+
+/// Test handle_menu_callback with mode:services
+#[tokio::test]
+#[serial]
+async fn test_callback_mode_services() {
+    use doradura::telegram::handle_menu_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "en");
+    test.mock_all_telegram_api().await;
+
+    let callback = RealHandlerTest::create_callback_from_json("mode:services", 123456789, 123456789);
+
+    let result = handle_menu_callback(
+        test.bot().clone(),
+        callback,
+        test.deps.db_pool.clone(),
+        test.deps.download_queue.clone(),
+        test.deps.rate_limiter.clone(),
+        test.deps.extension_registry.clone(),
+    )
+    .await;
+    assert!(result.is_ok(), "mode:services callback should succeed");
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+
+    // Should have answerCallbackQuery
+    let has_answer = requests
+        .iter()
+        .any(|r| r.url.path().to_lowercase().contains("answercallbackquery"));
+    assert!(has_answer, "Should answer callback query");
+
+    // Should have editMessageText with extension content
+    let edit_msg = requests.iter().find(|r| {
+        let path = r.url.path().to_lowercase();
+        path.contains("editmessagetext") || path.contains("editmessagecaption")
+    });
+    assert!(edit_msg.is_some(), "Should edit message to show services");
+
+    let body: serde_json::Value = serde_json::from_slice(&edit_msg.unwrap().body).unwrap();
+    let text = body["text"].as_str().or_else(|| body["caption"].as_str()).unwrap_or("");
+    assert!(
+        text.contains("🧩") || text.contains("Extensions"),
+        "Should show extensions menu"
+    );
+
+    println!(
+        "✅ mode:services callback: extension menu shown, {} API calls",
+        requests.len()
+    );
+}
+
+/// Test handle_menu_callback with main:services
+#[tokio::test]
+#[serial]
+async fn test_callback_main_services() {
+    use doradura::telegram::handle_menu_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "en");
+    test.mock_all_telegram_api().await;
+
+    let callback = RealHandlerTest::create_callback_from_json("main:services", 123456789, 123456789);
+
+    let result = handle_menu_callback(
+        test.bot().clone(),
+        callback,
+        test.deps.db_pool.clone(),
+        test.deps.download_queue.clone(),
+        test.deps.rate_limiter.clone(),
+        test.deps.extension_registry.clone(),
+    )
+    .await;
+    assert!(result.is_ok(), "main:services callback should succeed");
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let edit_msg = requests.iter().find(|r| {
+        let path = r.url.path().to_lowercase();
+        path.contains("editmessagetext") || path.contains("editmessagecaption")
+    });
+    assert!(
+        edit_msg.is_some(),
+        "Should edit message to show services from main menu"
+    );
+
+    println!(
+        "✅ main:services callback: extension menu shown, {} API calls",
+        requests.len()
+    );
+}
+
+/// Test handle_menu_callback with ext:detail:ytdlp
+#[tokio::test]
+#[serial]
+async fn test_callback_ext_detail_ytdlp() {
+    use doradura::telegram::handle_menu_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "en");
+    test.mock_all_telegram_api().await;
+
+    let callback = RealHandlerTest::create_callback_from_json("ext:detail:ytdlp", 123456789, 123456789);
+
+    let result = handle_menu_callback(
+        test.bot().clone(),
+        callback,
+        test.deps.db_pool.clone(),
+        test.deps.download_queue.clone(),
+        test.deps.rate_limiter.clone(),
+        test.deps.extension_registry.clone(),
+    )
+    .await;
+    assert!(result.is_ok(), "ext:detail:ytdlp callback should succeed");
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let edit_msg = requests.iter().find(|r| {
+        let path = r.url.path().to_lowercase();
+        path.contains("editmessagetext") || path.contains("editmessagecaption")
+    });
+    assert!(edit_msg.is_some(), "Should edit message to show ytdlp detail");
+
+    let body: serde_json::Value = serde_json::from_slice(&edit_msg.unwrap().body).unwrap();
+    let text = body["text"].as_str().or_else(|| body["caption"].as_str()).unwrap_or("");
+
+    // Should contain ytdlp extension details
+    assert!(text.contains("🌐"), "Should contain ytdlp icon");
+    assert!(
+        text.contains("YouTube") || text.contains("TikTok"),
+        "Should contain ytdlp capabilities, got: {}",
+        &text[..text.len().min(300)]
+    );
+    assert!(text.contains("✅"), "Should contain active status");
+
+    // Verify back button
+    let keyboard = &body["reply_markup"]["inline_keyboard"];
+    let rows = keyboard.as_array().unwrap();
+    let has_back = rows.iter().any(|row| {
+        row.as_array()
+            .unwrap()
+            .iter()
+            .any(|btn| btn["callback_data"].as_str().unwrap_or("") == "ext:back")
+    });
+    assert!(has_back, "Should have ext:back button");
+
+    println!(
+        "✅ ext:detail:ytdlp: showed {} chars with capabilities and back button",
+        text.len()
+    );
+}
+
+/// Test handle_menu_callback with ext:detail:converter
+#[tokio::test]
+#[serial]
+async fn test_callback_ext_detail_converter() {
+    use doradura::telegram::handle_menu_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "en");
+    test.mock_all_telegram_api().await;
+
+    let callback = RealHandlerTest::create_callback_from_json("ext:detail:converter", 123456789, 123456789);
+
+    let result = handle_menu_callback(
+        test.bot().clone(),
+        callback,
+        test.deps.db_pool.clone(),
+        test.deps.download_queue.clone(),
+        test.deps.rate_limiter.clone(),
+        test.deps.extension_registry.clone(),
+    )
+    .await;
+    assert!(result.is_ok(), "ext:detail:converter callback should succeed");
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let edit_msg = requests.iter().find(|r| {
+        let path = r.url.path().to_lowercase();
+        path.contains("editmessagetext") || path.contains("editmessagecaption")
+    });
+    assert!(edit_msg.is_some(), "Should show converter detail");
+
+    let body: serde_json::Value = serde_json::from_slice(&edit_msg.unwrap().body).unwrap();
+    let text = body["text"].as_str().or_else(|| body["caption"].as_str()).unwrap_or("");
+
+    assert!(text.contains("🔄"), "Should contain converter icon");
+    assert!(
+        text.contains("GIF") || text.contains("Compress"),
+        "Should contain converter capabilities"
+    );
+
+    println!("✅ ext:detail:converter: showed capabilities");
+}
+
+/// Test handle_menu_callback with ext:detail:audio_effects
+#[tokio::test]
+#[serial]
+async fn test_callback_ext_detail_audio_effects() {
+    use doradura::telegram::handle_menu_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "en");
+    test.mock_all_telegram_api().await;
+
+    let callback = RealHandlerTest::create_callback_from_json("ext:detail:audio_effects", 123456789, 123456789);
+
+    let result = handle_menu_callback(
+        test.bot().clone(),
+        callback,
+        test.deps.db_pool.clone(),
+        test.deps.download_queue.clone(),
+        test.deps.rate_limiter.clone(),
+        test.deps.extension_registry.clone(),
+    )
+    .await;
+    assert!(result.is_ok(), "ext:detail:audio_effects callback should succeed");
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let edit_msg = requests.iter().find(|r| {
+        let path = r.url.path().to_lowercase();
+        path.contains("editmessagetext") || path.contains("editmessagecaption")
+    });
+    assert!(edit_msg.is_some(), "Should show audio effects detail");
+
+    let body: serde_json::Value = serde_json::from_slice(&edit_msg.unwrap().body).unwrap();
+    let text = body["text"].as_str().or_else(|| body["caption"].as_str()).unwrap_or("");
+
+    assert!(
+        text.contains("Pitch") || text.contains("Tempo") || text.contains("Bass"),
+        "Should contain audio effects capabilities"
+    );
+
+    println!("✅ ext:detail:audio_effects: showed capabilities");
+}
+
+/// Test handle_menu_callback with ext:detail:http
+#[tokio::test]
+#[serial]
+async fn test_callback_ext_detail_http() {
+    use doradura::telegram::handle_menu_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "en");
+    test.mock_all_telegram_api().await;
+
+    let callback = RealHandlerTest::create_callback_from_json("ext:detail:http", 123456789, 123456789);
+
+    let result = handle_menu_callback(
+        test.bot().clone(),
+        callback,
+        test.deps.db_pool.clone(),
+        test.deps.download_queue.clone(),
+        test.deps.rate_limiter.clone(),
+        test.deps.extension_registry.clone(),
+    )
+    .await;
+    assert!(result.is_ok(), "ext:detail:http callback should succeed");
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let edit_msg = requests.iter().find(|r| {
+        let path = r.url.path().to_lowercase();
+        path.contains("editmessagetext") || path.contains("editmessagecaption")
+    });
+    assert!(edit_msg.is_some(), "Should show http downloader detail");
+
+    let body: serde_json::Value = serde_json::from_slice(&edit_msg.unwrap().body).unwrap();
+    let text = body["text"].as_str().or_else(|| body["caption"].as_str()).unwrap_or("");
+
+    assert!(text.contains("📥"), "Should contain http downloader icon");
+    assert!(
+        text.contains("MP3") || text.contains("MP4") || text.contains("Resume"),
+        "Should contain http capabilities"
+    );
+
+    println!("✅ ext:detail:http: showed capabilities");
+}
+
+/// Test ext:back returns to extensions menu
+#[tokio::test]
+#[serial]
+async fn test_callback_ext_back() {
+    use doradura::telegram::handle_menu_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "en");
+    test.mock_all_telegram_api().await;
+
+    let callback = RealHandlerTest::create_callback_from_json("ext:back", 123456789, 123456789);
+
+    let result = handle_menu_callback(
+        test.bot().clone(),
+        callback,
+        test.deps.db_pool.clone(),
+        test.deps.download_queue.clone(),
+        test.deps.rate_limiter.clone(),
+        test.deps.extension_registry.clone(),
+    )
+    .await;
+    assert!(result.is_ok(), "ext:back callback should succeed");
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let edit_msg = requests.iter().find(|r| {
+        let path = r.url.path().to_lowercase();
+        path.contains("editmessagetext") || path.contains("editmessagecaption")
+    });
+    assert!(edit_msg.is_some(), "Should edit message back to extensions list");
+
+    let body: serde_json::Value = serde_json::from_slice(&edit_msg.unwrap().body).unwrap();
+    let text = body["text"].as_str().or_else(|| body["caption"].as_str()).unwrap_or("");
+
+    // Should show extensions list (not detail)
+    assert!(
+        text.contains("🧩") || text.contains("Extensions") || text.contains("Расширения"),
+        "ext:back should return to extensions list"
+    );
+
+    // Should have ext:detail buttons (extensions list, not detail page)
+    let keyboard = &body["reply_markup"]["inline_keyboard"];
+    let rows = keyboard.as_array().unwrap();
+    let ext_detail_count = rows
+        .iter()
+        .flat_map(|row| row.as_array().unwrap())
+        .filter(|btn| btn["callback_data"].as_str().unwrap_or("").starts_with("ext:detail:"))
+        .count();
+    assert!(
+        ext_detail_count >= 4,
+        "Should have extension detail buttons after going back"
+    );
+
+    println!(
+        "✅ ext:back: returned to extensions list with {} detail buttons",
+        ext_detail_count
+    );
+}
+
+/// Test ext:detail with nonexistent extension
+#[tokio::test]
+#[serial]
+async fn test_callback_ext_detail_nonexistent() {
+    use doradura::telegram::handle_menu_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "en");
+    test.mock_all_telegram_api().await;
+
+    let callback = RealHandlerTest::create_callback_from_json("ext:detail:nonexistent", 123456789, 123456789);
+
+    let result = handle_menu_callback(
+        test.bot().clone(),
+        callback,
+        test.deps.db_pool.clone(),
+        test.deps.download_queue.clone(),
+        test.deps.rate_limiter.clone(),
+        test.deps.extension_registry.clone(),
+    )
+    .await;
+    // Should not crash, just silently return Ok
+    assert!(result.is_ok(), "ext:detail with nonexistent ID should not crash");
+
+    println!("✅ ext:detail:nonexistent: handled gracefully without crash");
+}
+
+/// Test services menu button in enhanced main menu has correct callback
+#[tokio::test]
+#[serial]
+async fn test_enhanced_menu_has_services_button() {
+    use doradura::telegram::show_enhanced_main_menu;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "en");
+    test.mock_all_telegram_api().await;
+
+    let result = show_enhanced_main_menu(test.bot(), ChatId(123456789), test.deps.db_pool.clone()).await;
+    assert!(result.is_ok());
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let send_msg = requests
+        .iter()
+        .find(|r| r.url.path().to_lowercase().contains("sendmessage"))
+        .expect("Should have sendMessage");
+
+    let body: serde_json::Value = serde_json::from_slice(&send_msg.body).unwrap();
+    let keyboard = &body["reply_markup"]["inline_keyboard"];
+    let rows = keyboard.as_array().unwrap();
+
+    // Find the services/extensions button
+    let has_services_button = rows.iter().any(|row| {
+        row.as_array().unwrap().iter().any(|btn| {
+            let cb = btn["callback_data"].as_str().unwrap_or("");
+            let text = btn["text"].as_str().unwrap_or("");
+            cb == "main:services" && text.contains("🧩")
+        })
+    });
+    assert!(
+        has_services_button,
+        "Enhanced menu should have 🧩 Extensions button with main:services callback"
+    );
+
+    println!("✅ Enhanced menu has services/extensions button with correct callback");
+}
+
+/// Test all 4 locales render show_services_menu without errors
+#[tokio::test]
+#[serial]
+async fn test_show_services_menu_all_locales() {
+    use doradura::telegram::show_services_menu;
+
+    let locales = ["en", "ru", "fr", "de"];
+
+    for locale in &locales {
+        let test = RealHandlerTest::new().await;
+        test.create_test_user(123456789, "testuser", locale);
+        test.mock_all_telegram_api().await;
+
+        let lang = doradura::i18n::lang_from_code(locale);
+        let registry = doradura::extension::ExtensionRegistry::default_registry();
+
+        let result = show_services_menu(
+            test.bot(),
+            ChatId(123456789),
+            teloxide::types::MessageId(42),
+            &lang,
+            &registry,
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "show_services_menu should succeed for locale '{}'",
+            locale
+        );
+
+        let requests = test.mock_server.received_requests().await.unwrap();
+        let edit_msg = requests.iter().find(|r| {
+            let path = r.url.path().to_lowercase();
+            path.contains("editmessagetext") || path.contains("editmessagecaption")
+        });
+        assert!(edit_msg.is_some(), "Should edit message for locale '{}'", locale);
+
+        let body: serde_json::Value = serde_json::from_slice(&edit_msg.unwrap().body).unwrap();
+        let text = body["text"].as_str().or_else(|| body["caption"].as_str()).unwrap_or("");
+        assert!(!text.is_empty(), "Text should not be empty for locale '{}'", locale);
+        assert!(
+            text.contains("🧩"),
+            "Should have extensions header emoji for locale '{}'",
+            locale
+        );
+
+        println!("✅ show_services_menu ({}): text len={}", locale, text.len());
+    }
+}
+
+// =============================================================================
+// PHASE 1: VIDEO CONVERTER CALLBACK TESTS
+// =============================================================================
+
+/// Test handle_videos_callback with videos:convert:audio route (Phase 1 wiring)
+#[tokio::test]
+#[serial]
+async fn test_videos_convert_audio_callback_routing() {
+    use doradura::telegram::handle_videos_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "ru");
+    let upload_id = test.create_test_upload(123456789, "test_video.mp4", "video", "file_id_123");
+    test.mock_all_telegram_api().await;
+
+    let result = handle_videos_callback(
+        test.bot(),
+        "cb_123".into(),
+        ChatId(123456789),
+        teloxide::types::MessageId(42),
+        &format!("videos:convert:audio:{}", upload_id),
+        test.deps.db_pool.clone(),
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "videos:convert:audio should not crash: {:?}",
+        result.err()
+    );
+
+    // Verify status message was sent (extraction in progress)
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let has_answer_cb = requests
+        .iter()
+        .any(|r| r.url.path().to_lowercase().contains("answercallbackquery"));
+    assert!(has_answer_cb, "Should answer callback query");
+
+    // Should attempt to delete the original message and send status
+    let send_msgs: Vec<_> = requests
+        .iter()
+        .filter(|r| r.url.path().to_lowercase().contains("sendmessage"))
+        .collect();
+    assert!(!send_msgs.is_empty(), "Should send status message for audio extraction");
+
+    // Verify at least one message contains audio extraction text
+    let has_audio_status = send_msgs.iter().any(|r| {
+        let body = String::from_utf8_lossy(&r.body);
+        body.contains("аудио") || body.contains("audio") || body.contains("Извлекаю")
+    });
+    assert!(has_audio_status, "Should send audio extraction status message");
+
+    println!(
+        "✅ videos:convert:audio:{} routed correctly with status message",
+        upload_id
+    );
+}
+
+/// Test handle_videos_callback with videos:convert:gif route (Phase 1 wiring)
+#[tokio::test]
+#[serial]
+async fn test_videos_convert_gif_callback_routing() {
+    use doradura::telegram::handle_videos_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "ru");
+    let upload_id = test.create_test_upload(123456789, "test_video.mp4", "video", "file_id_456");
+    test.mock_all_telegram_api().await;
+
+    let result = handle_videos_callback(
+        test.bot(),
+        "cb_456".into(),
+        ChatId(123456789),
+        teloxide::types::MessageId(42),
+        &format!("videos:convert:gif:{}", upload_id),
+        test.deps.db_pool.clone(),
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "videos:convert:gif should not crash: {:?}",
+        result.err()
+    );
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let send_msgs: Vec<_> = requests
+        .iter()
+        .filter(|r| r.url.path().to_lowercase().contains("sendmessage"))
+        .collect();
+    assert!(!send_msgs.is_empty(), "Should send status message for GIF creation");
+
+    let has_gif_status = send_msgs.iter().any(|r| {
+        let body = String::from_utf8_lossy(&r.body);
+        body.contains("GIF") || body.contains("gif")
+    });
+    assert!(has_gif_status, "Should send GIF creation status message");
+
+    println!("✅ videos:convert:gif:{} routed correctly", upload_id);
+}
+
+/// Test handle_videos_callback with videos:convert:compress route (Phase 1 wiring)
+#[tokio::test]
+#[serial]
+async fn test_videos_convert_compress_callback_routing() {
+    use doradura::telegram::handle_videos_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "ru");
+    let upload_id = test.create_test_upload(123456789, "test_video.mp4", "video", "file_id_789");
+    test.mock_all_telegram_api().await;
+
+    let result = handle_videos_callback(
+        test.bot(),
+        "cb_789".into(),
+        ChatId(123456789),
+        teloxide::types::MessageId(42),
+        &format!("videos:convert:compress:{}", upload_id),
+        test.deps.db_pool.clone(),
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "videos:convert:compress should not crash: {:?}",
+        result.err()
+    );
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let send_msgs: Vec<_> = requests
+        .iter()
+        .filter(|r| r.url.path().to_lowercase().contains("sendmessage"))
+        .collect();
+    assert!(!send_msgs.is_empty(), "Should send status message for compression");
+
+    let has_compress_status = send_msgs.iter().any(|r| {
+        let body = String::from_utf8_lossy(&r.body);
+        body.contains("Сжимаю") || body.contains("compress")
+    });
+    assert!(has_compress_status, "Should send compression status message");
+
+    println!("✅ videos:convert:compress:{} routed correctly", upload_id);
+}
+
+/// Test handle_videos_callback with convert route when upload doesn't exist
+#[tokio::test]
+#[serial]
+async fn test_videos_convert_nonexistent_upload() {
+    use doradura::telegram::handle_videos_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "ru");
+    test.mock_all_telegram_api().await;
+
+    // Use non-existent upload ID
+    let result = handle_videos_callback(
+        test.bot(),
+        "cb_000".into(),
+        ChatId(123456789),
+        teloxide::types::MessageId(42),
+        "videos:convert:audio:99999",
+        test.deps.db_pool.clone(),
+    )
+    .await;
+    assert!(result.is_ok(), "Should handle non-existent upload gracefully");
+
+    println!("✅ videos:convert with non-existent upload handled gracefully");
+}
+
+/// Test handle_videos_callback with cancel/close action
+#[tokio::test]
+#[serial]
+async fn test_videos_cancel_callback() {
+    use doradura::telegram::handle_videos_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "ru");
+    test.mock_all_telegram_api().await;
+
+    let result = handle_videos_callback(
+        test.bot(),
+        "cb_cancel".into(),
+        ChatId(123456789),
+        teloxide::types::MessageId(42),
+        "videos:cancel",
+        test.deps.db_pool.clone(),
+    )
+    .await;
+    assert!(result.is_ok(), "videos:cancel should succeed: {:?}", result.err());
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let has_delete = requests
+        .iter()
+        .any(|r| r.url.path().to_lowercase().contains("deletemessage"));
+    assert!(has_delete, "Should delete message on cancel");
+
+    println!("✅ videos:cancel deletes message");
+}
+
+/// Test handle_videos_callback with unknown action
+#[tokio::test]
+#[serial]
+async fn test_videos_unknown_action() {
+    use doradura::telegram::handle_videos_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "ru");
+    test.mock_all_telegram_api().await;
+
+    let result = handle_videos_callback(
+        test.bot(),
+        "cb_unk".into(),
+        ChatId(123456789),
+        teloxide::types::MessageId(42),
+        "videos:unknown_action",
+        test.deps.db_pool.clone(),
+    )
+    .await;
+    assert!(result.is_ok(), "Unknown action should not crash");
+
+    println!("✅ videos:unknown_action handled without crash");
+}
+
+/// Test handle_videos_callback with malformed data
+#[tokio::test]
+#[serial]
+async fn test_videos_malformed_data() {
+    use doradura::telegram::handle_videos_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "ru");
+    test.mock_all_telegram_api().await;
+
+    // Too few parts
+    let result = handle_videos_callback(
+        test.bot(),
+        "cb_bad".into(),
+        ChatId(123456789),
+        teloxide::types::MessageId(42),
+        "videos",
+        test.deps.db_pool.clone(),
+    )
+    .await;
+    assert!(result.is_ok(), "Malformed data should not crash");
+
+    println!("✅ Malformed callback data handled gracefully");
+}
+
+// =============================================================================
+// SHOW VIDEOS PAGE TESTS
+// =============================================================================
+
+/// Test show_videos_page with no uploads
+#[tokio::test]
+#[serial]
+async fn test_show_videos_page_empty() {
+    use doradura::telegram::show_videos_page;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "ru");
+    test.mock_all_telegram_api().await;
+
+    let result = show_videos_page(test.bot(), ChatId(123456789), test.deps.db_pool.clone(), 0, None, None).await;
+    assert!(result.is_ok(), "show_videos_page should succeed with no uploads");
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let send_msgs: Vec<_> = requests
+        .iter()
+        .filter(|r| r.url.path().to_lowercase().contains("sendmessage"))
+        .collect();
+    assert!(!send_msgs.is_empty(), "Should send a message even with no uploads");
+
+    println!("✅ show_videos_page: empty uploads handled");
+}
+
+/// Test show_videos_page with uploads present
+#[tokio::test]
+#[serial]
+async fn test_show_videos_page_with_uploads() {
+    use doradura::telegram::show_videos_page;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "ru");
+    test.create_test_upload(123456789, "my_video.mp4", "video", "file_vid_1");
+    test.create_test_upload(123456789, "my_photo.jpg", "photo", "file_photo_1");
+    test.mock_all_telegram_api().await;
+
+    let result = show_videos_page(test.bot(), ChatId(123456789), test.deps.db_pool.clone(), 0, None, None).await;
+    assert!(result.is_ok(), "show_videos_page should succeed with uploads");
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let send_msgs: Vec<_> = requests
+        .iter()
+        .filter(|r| r.url.path().to_lowercase().contains("sendmessage"))
+        .collect();
+    assert!(!send_msgs.is_empty(), "Should send a message showing uploads");
+
+    // Verify message contains upload titles
+    let has_upload_content = send_msgs.iter().any(|r| {
+        let body = String::from_utf8_lossy(&r.body);
+        body.contains("my_video") || body.contains("my_photo")
+    });
+    assert!(has_upload_content, "Should show upload titles in message");
+
+    println!("✅ show_videos_page: uploads displayed");
+}
+
+/// Test show_videos_page with filter
+#[tokio::test]
+#[serial]
+async fn test_show_videos_page_with_filter() {
+    use doradura::telegram::show_videos_page;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "ru");
+    test.create_test_upload(123456789, "filtered_video.mp4", "video", "file_filt_1");
+    test.create_test_upload(123456789, "filtered_photo.jpg", "photo", "file_filt_2");
+    test.mock_all_telegram_api().await;
+
+    // Filter only videos
+    let result = show_videos_page(
+        test.bot(),
+        ChatId(123456789),
+        test.deps.db_pool.clone(),
+        0,
+        Some("video".to_string()),
+        None,
+    )
+    .await;
+    assert!(result.is_ok(), "show_videos_page with filter should succeed");
+
+    println!("✅ show_videos_page: filter works");
+}
+
+// =============================================================================
+// ENHANCED EXTENSION DETAIL CAPABILITY VERIFICATION
+// =============================================================================
+
+/// Test ext:detail:ytdlp shows ALL capabilities
+#[tokio::test]
+#[serial]
+async fn test_ext_detail_ytdlp_all_capabilities() {
+    use doradura::telegram::handle_menu_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "en");
+    test.mock_all_telegram_api().await;
+
+    let callback = RealHandlerTest::create_callback_from_json("ext:detail:ytdlp", 123456789, 123456789);
+    let result = handle_menu_callback(
+        test.bot().clone(),
+        callback,
+        test.deps.db_pool.clone(),
+        test.deps.download_queue.clone(),
+        test.deps.rate_limiter.clone(),
+        test.deps.extension_registry.clone(),
+    )
+    .await;
+    assert!(result.is_ok());
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let edit_msg = requests
+        .iter()
+        .find(|r| {
+            let path = r.url.path().to_lowercase();
+            path.contains("editmessagetext") || path.contains("editmessagecaption")
+        })
+        .unwrap();
+
+    let body: serde_json::Value = serde_json::from_slice(&edit_msg.body).unwrap();
+    let text = body["text"].as_str().or_else(|| body["caption"].as_str()).unwrap_or("");
+
+    // Verify ALL 5 ytdlp capabilities
+    assert!(text.contains("YouTube"), "Should contain YouTube capability");
+    assert!(text.contains("TikTok"), "Should contain TikTok capability");
+    assert!(text.contains("Instagram"), "Should contain Instagram capability");
+    assert!(text.contains("SoundCloud"), "Should contain SoundCloud capability");
+    assert!(text.contains("1000"), "Should contain 1000+ sites capability");
+    assert!(text.contains("🌐"), "Should contain ytdlp icon");
+    assert!(text.contains("✅"), "Should contain active status");
+
+    // Verify back button
+    let keyboard = &body["reply_markup"]["inline_keyboard"];
+    let has_back = keyboard.as_array().unwrap().iter().any(|row| {
+        row.as_array()
+            .unwrap()
+            .iter()
+            .any(|btn| btn["callback_data"] == "ext:back")
+    });
+    assert!(has_back, "Should have ext:back button");
+
+    println!("✅ ext:detail:ytdlp: all 5 capabilities verified");
+}
+
+/// Test ext:detail:http shows ALL capabilities
+#[tokio::test]
+#[serial]
+async fn test_ext_detail_http_all_capabilities() {
+    use doradura::telegram::handle_menu_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "en");
+    test.mock_all_telegram_api().await;
+
+    let callback = RealHandlerTest::create_callback_from_json("ext:detail:http", 123456789, 123456789);
+    let result = handle_menu_callback(
+        test.bot().clone(),
+        callback,
+        test.deps.db_pool.clone(),
+        test.deps.download_queue.clone(),
+        test.deps.rate_limiter.clone(),
+        test.deps.extension_registry.clone(),
+    )
+    .await;
+    assert!(result.is_ok());
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let edit_msg = requests
+        .iter()
+        .find(|r| {
+            let path = r.url.path().to_lowercase();
+            path.contains("editmessagetext") || path.contains("editmessagecaption")
+        })
+        .unwrap();
+
+    let body: serde_json::Value = serde_json::from_slice(&edit_msg.body).unwrap();
+    let text = body["text"].as_str().or_else(|| body["caption"].as_str()).unwrap_or("");
+
+    // Verify ALL 3 http capabilities
+    assert!(
+        text.contains("MP3") || text.contains("MP4"),
+        "Should contain MP3/MP4 capability"
+    );
+    assert!(
+        text.contains("WAV") || text.contains("FLAC"),
+        "Should contain WAV/FLAC capability"
+    );
+    assert!(text.contains("Resume"), "Should contain Resume capability");
+    assert!(text.contains("📥"), "Should contain http icon");
+
+    println!("✅ ext:detail:http: all 3 capabilities verified");
+}
+
+/// Test ext:detail:converter shows ALL capabilities
+#[tokio::test]
+#[serial]
+async fn test_ext_detail_converter_all_capabilities() {
+    use doradura::telegram::handle_menu_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "en");
+    test.mock_all_telegram_api().await;
+
+    let callback = RealHandlerTest::create_callback_from_json("ext:detail:converter", 123456789, 123456789);
+    let result = handle_menu_callback(
+        test.bot().clone(),
+        callback,
+        test.deps.db_pool.clone(),
+        test.deps.download_queue.clone(),
+        test.deps.rate_limiter.clone(),
+        test.deps.extension_registry.clone(),
+    )
+    .await;
+    assert!(result.is_ok());
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let edit_msg = requests
+        .iter()
+        .find(|r| {
+            let path = r.url.path().to_lowercase();
+            path.contains("editmessagetext") || path.contains("editmessagecaption")
+        })
+        .unwrap();
+
+    let body: serde_json::Value = serde_json::from_slice(&edit_msg.body).unwrap();
+    let text = body["text"].as_str().or_else(|| body["caption"].as_str()).unwrap_or("");
+
+    // Verify ALL 5 converter capabilities
+    assert!(text.contains("Video Note"), "Should contain Video Note capability");
+    assert!(text.contains("GIF"), "Should contain GIF capability");
+    assert!(text.contains("MP3 Extract"), "Should contain MP3 Extract capability");
+    assert!(text.contains("Compress"), "Should contain Compress capability");
+    assert!(text.contains("Documents"), "Should contain Documents capability");
+    assert!(text.contains("🔄"), "Should contain converter icon");
+
+    println!("✅ ext:detail:converter: all 5 capabilities verified");
+}
+
+/// Test ext:detail:audio_effects shows ALL capabilities
+#[tokio::test]
+#[serial]
+async fn test_ext_detail_audio_effects_all_capabilities() {
+    use doradura::telegram::handle_menu_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "en");
+    test.mock_all_telegram_api().await;
+
+    let callback = RealHandlerTest::create_callback_from_json("ext:detail:audio_effects", 123456789, 123456789);
+    let result = handle_menu_callback(
+        test.bot().clone(),
+        callback,
+        test.deps.db_pool.clone(),
+        test.deps.download_queue.clone(),
+        test.deps.rate_limiter.clone(),
+        test.deps.extension_registry.clone(),
+    )
+    .await;
+    assert!(result.is_ok());
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let edit_msg = requests
+        .iter()
+        .find(|r| {
+            let path = r.url.path().to_lowercase();
+            path.contains("editmessagetext") || path.contains("editmessagecaption")
+        })
+        .unwrap();
+
+    let body: serde_json::Value = serde_json::from_slice(&edit_msg.body).unwrap();
+    let text = body["text"].as_str().or_else(|| body["caption"].as_str()).unwrap_or("");
+
+    // Verify ALL 4 audio effects capabilities
+    assert!(text.contains("Pitch"), "Should contain Pitch capability");
+    assert!(text.contains("Tempo"), "Should contain Tempo capability");
+    assert!(text.contains("Bass"), "Should contain Bass Boost capability");
+    assert!(text.contains("Morph"), "Should contain Morph capability");
+    assert!(text.contains("🎛️"), "Should contain audio effects icon");
+
+    println!("✅ ext:detail:audio_effects: all 4 capabilities verified");
+}
+
+// =============================================================================
+// EXTENSION DETAIL LOCALE VERIFICATION
+// =============================================================================
+
+/// Test ext:detail renders correctly in all 4 locales
+#[tokio::test]
+#[serial]
+async fn test_ext_detail_all_locales() {
+    use doradura::telegram::handle_menu_callback;
+
+    let locales_and_expected: &[(&str, &str)] = &[
+        ("en", "Media Downloader"),
+        ("ru", "Медиа загрузчик"),
+        ("fr", "médias"),
+        ("de", "Medien"),
+    ];
+
+    for (locale, expected_fragment) in locales_and_expected {
+        let test = RealHandlerTest::new().await;
+        test.create_test_user(123456789, "testuser", locale);
+        test.mock_all_telegram_api().await;
+
+        let callback = RealHandlerTest::create_callback_from_json("ext:detail:ytdlp", 123456789, 123456789);
+        let result = handle_menu_callback(
+            test.bot().clone(),
+            callback,
+            test.deps.db_pool.clone(),
+            test.deps.download_queue.clone(),
+            test.deps.rate_limiter.clone(),
+            test.deps.extension_registry.clone(),
+        )
+        .await;
+        assert!(
+            result.is_ok(),
+            "ext:detail:ytdlp should succeed for locale '{}'",
+            locale
+        );
+
+        let requests = test.mock_server.received_requests().await.unwrap();
+        let edit_msg = requests
+            .iter()
+            .find(|r| {
+                let path = r.url.path().to_lowercase();
+                path.contains("editmessagetext") || path.contains("editmessagecaption")
+            })
+            .unwrap();
+
+        let body: serde_json::Value = serde_json::from_slice(&edit_msg.body).unwrap();
+        let text = body["text"].as_str().or_else(|| body["caption"].as_str()).unwrap_or("");
+
+        assert!(
+            text.contains(expected_fragment),
+            "Locale '{}' should contain '{}', got: {}",
+            locale,
+            expected_fragment,
+            &text[..text.len().min(200)]
+        );
+
+        // Should NOT contain raw locale keys (e.g., "ext_ytdlp.name")
+        assert!(
+            !text.contains("ext_ytdlp.name"),
+            "Should not contain raw locale key for '{}'",
+            locale
+        );
+        assert!(
+            !text.contains("ext_ytdlp.description"),
+            "Should not contain raw locale key for '{}'",
+            locale
+        );
+
+        println!("✅ ext:detail:ytdlp ({}): localized correctly", locale);
+    }
+}
+
+// =============================================================================
+// VIDEOS.RS UNIT TEST EXPANSION
+// =============================================================================
+
+/// Test handle_videos_callback with page navigation
+#[tokio::test]
+#[serial]
+async fn test_videos_page_callback() {
+    use doradura::telegram::handle_videos_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "ru");
+    test.create_test_upload(123456789, "page_video.mp4", "video", "file_page_1");
+    test.mock_all_telegram_api().await;
+
+    // Page navigation: videos:page:0:all:123456789
+    let result = handle_videos_callback(
+        test.bot(),
+        "cb_page".into(),
+        ChatId(123456789),
+        teloxide::types::MessageId(42),
+        "videos:page:0:all:123456789",
+        test.deps.db_pool.clone(),
+    )
+    .await;
+    assert!(result.is_ok(), "Page navigation should succeed");
+
+    println!("✅ videos:page callback works");
+}
+
+/// Test handle_videos_callback with delete action
+#[tokio::test]
+#[serial]
+async fn test_videos_delete_callback() {
+    use doradura::telegram::handle_videos_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "ru");
+    let upload_id = test.create_test_upload(123456789, "to_delete.mp4", "video", "file_del_1");
+    test.mock_all_telegram_api().await;
+
+    let result = handle_videos_callback(
+        test.bot(),
+        "cb_del".into(),
+        ChatId(123456789),
+        teloxide::types::MessageId(42),
+        &format!("videos:delete:{}", upload_id),
+        test.deps.db_pool.clone(),
+    )
+    .await;
+    assert!(result.is_ok(), "Delete action should succeed");
+
+    println!("✅ videos:delete:{} callback works", upload_id);
+}
+
+/// Test handle_videos_callback with send actions
+#[tokio::test]
+#[serial]
+async fn test_videos_send_callback() {
+    use doradura::telegram::handle_videos_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "ru");
+    let upload_id = test.create_test_upload(123456789, "to_send.mp4", "video", "file_send_1");
+    test.mock_all_telegram_api().await;
+
+    // Test send as video
+    let result = handle_videos_callback(
+        test.bot(),
+        "cb_send".into(),
+        ChatId(123456789),
+        teloxide::types::MessageId(42),
+        &format!("videos:send:video:{}", upload_id),
+        test.deps.db_pool.clone(),
+    )
+    .await;
+    assert!(result.is_ok(), "Send video action should succeed");
+
+    println!("✅ videos:send:video callback works");
+}
+
+/// Test handle_videos_callback open action for viewing upload detail
+#[tokio::test]
+#[serial]
+async fn test_videos_open_callback() {
+    use doradura::telegram::handle_videos_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "ru");
+    let upload_id = test.create_test_upload(123456789, "open_video.mp4", "video", "file_open_1");
+    test.mock_all_telegram_api().await;
+
+    let result = handle_videos_callback(
+        test.bot(),
+        "cb_open".into(),
+        ChatId(123456789),
+        teloxide::types::MessageId(42),
+        &format!("videos:open:{}", upload_id),
+        test.deps.db_pool.clone(),
+    )
+    .await;
+    assert!(result.is_ok(), "Open action should succeed");
+
+    // Verify message was sent with upload details and action keyboard
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let send_msgs: Vec<_> = requests
+        .iter()
+        .filter(|r| r.url.path().to_lowercase().contains("sendmessage"))
+        .collect();
+
+    // Should have sent a message with upload info (open uses sendMessage, not edit)
+    assert!(!send_msgs.is_empty(), "Should send message to show upload details");
+
+    // Find the message with the upload action keyboard (contains convert buttons)
+    let body: serde_json::Value = serde_json::from_slice(&send_msgs.last().unwrap().body).unwrap();
+    let keyboard = &body["reply_markup"]["inline_keyboard"];
+    if keyboard.is_array() {
+        let all_callbacks: Vec<String> = keyboard
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|row| {
+                row.as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|btn| btn["callback_data"].as_str().unwrap_or("").to_string())
+            })
+            .collect();
+
+        // Video uploads should have convert buttons
+        let has_mp3_btn = all_callbacks.iter().any(|cb| cb.contains("convert:audio"));
+        let has_gif_btn = all_callbacks.iter().any(|cb| cb.contains("convert:gif"));
+        let has_compress_btn = all_callbacks.iter().any(|cb| cb.contains("convert:compress"));
+        let has_circle_btn = all_callbacks.iter().any(|cb| cb.contains("convert:circle"));
+
+        assert!(
+            has_mp3_btn,
+            "Video upload should have MP3 conversion button, got: {:?}",
+            all_callbacks
+        );
+        assert!(has_gif_btn, "Video upload should have GIF conversion button");
+        assert!(has_compress_btn, "Video upload should have compress button");
+        assert!(has_circle_btn, "Video upload should have circle button");
+
+        println!(
+            "✅ videos:open:{} showed all 4 conversion buttons: circle, mp3, gif, compress",
+            upload_id
+        );
+    }
+}
+
+/// Test show_services_menu has proper MarkdownV2 escaping
+#[tokio::test]
+#[serial]
+async fn test_services_menu_markdown_escaping() {
+    use doradura::telegram::show_services_menu;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "en");
+    test.mock_all_telegram_api().await;
+
+    let lang = doradura::i18n::lang_from_code("en");
+    let registry = doradura::extension::ExtensionRegistry::default_registry();
+
+    let result = show_services_menu(
+        test.bot(),
+        ChatId(123456789),
+        teloxide::types::MessageId(42),
+        &lang,
+        &registry,
+    )
+    .await;
+    assert!(result.is_ok());
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let edit_msg = requests
+        .iter()
+        .find(|r| {
+            let path = r.url.path().to_lowercase();
+            path.contains("editmessagetext") || path.contains("editmessagecaption")
+        })
+        .unwrap();
+
+    let body: serde_json::Value = serde_json::from_slice(&edit_msg.body).unwrap();
+    let text = body["text"].as_str().or_else(|| body["caption"].as_str()).unwrap_or("");
+
+    // Text should not be empty or contain raw "extensions.header" key
+    assert!(!text.is_empty(), "Menu text should not be empty");
+    assert!(!text.contains("extensions.header"), "Should not contain raw locale key");
+    assert!(
+        !text.contains("extensions.category"),
+        "Should not contain raw category key"
+    );
+    assert!(!text.contains("extensions.status"), "Should not contain raw status key");
+    assert!(!text.contains("extensions.footer"), "Should not contain raw footer key");
+
+    println!("✅ Services menu: no raw locale keys, proper rendering");
 }

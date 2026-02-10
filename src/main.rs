@@ -821,6 +821,9 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
         }
     });
 
+    // Create extension registry
+    let extension_registry = Arc::new(doradura::extension::ExtensionRegistry::default_registry());
+
     // Create handler dependencies for the modular schema
     let handler_deps = HandlerDeps::new(
         Arc::clone(&db_pool),
@@ -830,6 +833,7 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
         bot_username.map(|s| s.to_string()),
         bot_id,
         alert_manager,
+        Arc::clone(&extension_registry),
     );
 
     // Create the dispatcher handler tree using the modular schema

@@ -329,6 +329,8 @@ async fn create_test_deps() -> HandlerDeps {
     // Create a downsub gateway (will be unavailable without DOWNSUB_GRPC_ENDPOINT)
     let downsub_gateway = Arc::new(DownsubGateway::from_env().await);
 
+    let extension_registry = Arc::new(doradura::extension::ExtensionRegistry::default_registry());
+
     HandlerDeps::new(
         db_pool,
         download_queue,
@@ -337,6 +339,7 @@ async fn create_test_deps() -> HandlerDeps {
         Some("test_bot".to_string()),
         UserId(123456789),
         None, // alert_manager - not needed for tests
+        extension_registry,
     )
 }
 

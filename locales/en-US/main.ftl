@@ -3,7 +3,7 @@ menu =
     .download_type_button = 📥 Download type: {$format}
     .video_quality_button = 🎬 Video quality: {$quality}
     .audio_bitrate_button = 🎵 Audio bitrate: {$bitrate}
-    .services_button = 🌐 Supported services
+    .services_button = 🧩 Extensions
     .subscription_button = 💳 My subscription
     .language_button = 🌍 Language
     .download_type_title = Choose a format to download:\n\n*Current format: {$format}*
@@ -324,3 +324,29 @@ video_circle =
     .creating_with_speed = ⭕️ Creating video note: {$segments}… (speed {$speed}x)
     .truncated_warning = ⚠️ Requested duration {$requested} seconds exceeds Telegram limit for video notes (60 sec)\\.\n\n✂️ Will use first {$actual} seconds\\.
     .invalid_intervals = ❌ Invalid intervals\\.\n\nSend in format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nYou can send multiple separated by commas\\.\nExample: `00:10-00:25, 01:00-01:10`\n\nOr commands: `full`, `first30`, `last30`, `middle30`\\.\n\n💡 You can add speed: `first30 2x`, `full 1\\.5x`\\.\n\nOr type `cancel`\\.\n\n💡 If duration exceeds 60 seconds \\(Telegram limit for video notes\\), video will be automatically trimmed\\.
+
+ext_ytdlp =
+    .name = Media Downloader
+    .description = YouTube, TikTok, Instagram, SoundCloud and 1000\+ sites
+
+ext_http =
+    .name = Direct Downloader
+    .description = MP3, MP4, WAV, FLAC and other files via direct links
+
+ext_converter =
+    .name = Converter
+    .description = Video, audio, documents and images
+
+ext_audio_effects =
+    .name = Audio Effects
+    .description = Pitch, tempo, bass, morph presets
+
+extensions =
+    .header = 🧩 *Dora's Extensions*
+    .category_download = 📥 *Downloads*
+    .category_convert = 🔄 *Conversion*
+    .category_process = 🎛️ *Processing*
+    .status_active = ✅ Active
+    .status_unavailable = ❌ Unavailable
+    .footer = _Each extension works independently\. Send a link or file — Dora will pick the right one\!_
+    .detail_back = 🔙 Back to extensions

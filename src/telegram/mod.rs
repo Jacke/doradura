@@ -37,7 +37,9 @@ pub use bot_api_logger::Bot;
 pub use commands::{handle_downsub_command, handle_info_command, handle_message};
 pub use handlers::{schema, HandlerDeps, HandlerError};
 pub use markdown::send_message_markdown_v2;
-pub use menu::{handle_menu_callback, show_enhanced_main_menu, show_language_selection_menu, show_main_menu};
+pub use menu::{
+    handle_menu_callback, show_enhanced_main_menu, show_language_selection_menu, show_main_menu, show_services_menu,
+};
 pub use operation::{
     Completed, InProgress, MarkdownV2Formatter, MessageFormatter, NotStarted, Operation, OperationBuilder,
     OperationError, OperationInfo, OperationStatus, PlainTextFormatter, DEFAULT_EMOJI,

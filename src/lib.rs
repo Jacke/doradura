@@ -20,6 +20,7 @@ pub mod core;
 pub mod download;
 pub mod downsub;
 pub mod experimental;
+pub mod extension;
 pub mod i18n;
 pub mod metadata_refresh;
 pub mod storage;

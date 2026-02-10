@@ -9,6 +9,7 @@
 //! - Document: DOCX/ODT to PDF via LibreOffice
 //! - Audio: effects (pitch, tempo, bass boost), ringtone creation
 
+pub mod audio;
 pub mod document;
 pub mod image;
 pub mod video;
@@ -111,4 +112,83 @@ pub fn temp_output_path(prefix: &str, extension: &str) -> std::path::PathBuf {
         .as_millis();
     let rand: u32 = rand::random();
     std::path::PathBuf::from(format!("/tmp/{}_{:x}_{:x}.{}", prefix, timestamp, rand, extension))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_temp_output_path_has_correct_extension() {
+        let path = temp_output_path("test", "mp3");
+        assert_eq!(path.extension().and_then(|e| e.to_str()), Some("mp3"));
+    }
+
+    #[test]
+    fn test_temp_output_path_has_prefix() {
+        let path = temp_output_path("myprefix", "wav");
+        let name = path.file_name().unwrap().to_str().unwrap();
+        assert!(name.starts_with("myprefix_"), "Path should start with prefix: {}", name);
+    }
+
+    #[test]
+    fn test_temp_output_path_uniqueness() {
+        let path1 = temp_output_path("test", "mp3");
+        let path2 = temp_output_path("test", "mp3");
+        assert_ne!(path1, path2, "Two calls should produce unique paths");
+    }
+
+    #[test]
+    fn test_temp_output_path_in_tmp_dir() {
+        let path = temp_output_path("test", "flac");
+        assert!(path.starts_with("/tmp/"), "Path should be in /tmp/");
+    }
+
+    #[tokio::test]
+    async fn test_check_ffmpeg() {
+        // ffmpeg should be available on dev machines
+        let available = check_ffmpeg().await;
+        // Don't assert true since CI may not have it, just check it runs
+        let _ = available;
+    }
+
+    #[tokio::test]
+    async fn test_get_file_size() {
+        let path = "/tmp/test_filesize_check.txt";
+        tokio::fs::write(path, "hello world").await.unwrap();
+
+        let size = get_file_size(path).await.unwrap();
+        assert_eq!(size, 11); // "hello world" = 11 bytes
+
+        let _ = tokio::fs::remove_file(path).await;
+    }
+
+    #[tokio::test]
+    async fn test_get_file_size_not_found() {
+        let result = get_file_size("/tmp/nonexistent_filesize_12345.txt").await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_conversion_error_display() {
+        let err = ConversionError::InputNotFound("/tmp/test.mp3".to_string());
+        assert!(err.to_string().contains("/tmp/test.mp3"));
+
+        let err = ConversionError::FfmpegError("codec not found".to_string());
+        assert!(err.to_string().contains("codec not found"));
+
+        let err = ConversionError::UnsupportedFormat("xyz".to_string());
+        assert!(err.to_string().contains("xyz"));
+
+        let err = ConversionError::DurationExceeded {
+            actual: 600,
+            limit: 300,
+        };
+        assert!(err.to_string().contains("600"));
+        assert!(err.to_string().contains("300"));
+
+        let err = ConversionError::SizeExceeded { actual: 100, limit: 50 };
+        assert!(err.to_string().contains("100"));
+        assert!(err.to_string().contains("50"));
+    }
 }
