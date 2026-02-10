@@ -12,7 +12,7 @@ use teloxide::types::Message;
 
 use crate::core::alerts::AlertManager;
 use crate::core::rate_limiter::RateLimiter;
-use crate::download::queue::{self as queue, DownloadQueue};
+use crate::download::queue::DownloadQueue;
 use crate::downsub::DownsubGateway;
 use crate::extension::ExtensionRegistry;
 use crate::i18n;
@@ -173,7 +173,6 @@ pub fn ensure_user_exists(
 /// # Returns
 /// The complete handler tree for the bot
 pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
-    let deps_webapp = deps.clone();
     let deps_payment = deps.clone();
     let deps_cookies = deps.clone();
     let deps_diagnose_cookies = deps.clone();
@@ -187,9 +186,7 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
     let deps_browser_status = deps.clone();
 
     dptree::entry()
-        // Web App Data handler must run FIRST to process Mini App data
-        .branch(webapp_handler(deps_webapp))
-        // Successful payment handler must be SECOND
+        // Successful payment handler must be first
         .branch(successful_payment_handler(deps_payment))
         // Hidden admin commands (not in Command enum)
         .branch(update_cookies_handler(deps_cookies))
@@ -207,122 +204,6 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
         .branch(pre_checkout_handler(deps_precheckout))
         // Callback query handler
         .branch(callback_handler(deps_callback))
-}
-
-/// Handler for Web App data from Telegram Mini Apps
-fn webapp_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
-    Update::filter_message()
-        .filter(|msg: Message| msg.web_app_data().is_some())
-        .endpoint(move |bot: Bot, msg: Message| {
-            let deps = deps.clone();
-            async move {
-                use crate::telegram::{WebAppAction, WebAppData};
-
-                log::info!("Received web_app_data message");
-
-                if let Some(web_app_data) = msg.web_app_data() {
-                    let data_str = &web_app_data.data;
-                    log::debug!("Web App Data: {}", data_str);
-
-                    // Create the user if they don't exist
-                    if let Ok(conn) = get_connection(&deps.db_pool) {
-                        let chat_id = msg.chat.id.0;
-                        if let Ok(None) = get_user(&conn, chat_id) {
-                            let username = msg.from.as_ref().and_then(|u| u.username.clone());
-                            if create_user(&conn, chat_id, username.clone()).is_ok() {
-                                // Notify admins about new user
-                                use crate::telegram::notifications::notify_admin_new_user;
-                                let bot_notify = bot.clone();
-                                let first_name = msg.from.as_ref().map(|u| u.first_name.clone());
-                                let lang_code = msg.from.as_ref().and_then(|u| u.language_code.clone());
-                                tokio::spawn(async move {
-                                    notify_admin_new_user(
-                                        &bot_notify,
-                                        chat_id,
-                                        username.as_deref(),
-                                        first_name.as_deref(),
-                                        lang_code.as_deref(),
-                                        Some("Web App"),
-                                    )
-                                    .await;
-                                });
-                            }
-                        }
-                    }
-
-                    // Try to parse as the new format with an action field
-                    if let Ok(action_data) = serde_json::from_str::<WebAppAction>(data_str) {
-                        log::info!("Parsed Web App Action: {:?}", action_data);
-
-                        if action_data.action == "upgrade_plan" {
-                            if let Some(plan) = action_data.plan {
-                                let lang = i18n::user_lang_from_pool(&deps.db_pool, msg.chat.id.0);
-                                let plan_name = match plan.as_str() {
-                                    "premium" => "Premium",
-                                    "vip" => "VIP",
-                                    _ => "Unknown",
-                                };
-
-                                let mut args = fluent_templates::fluent_bundle::FluentArgs::new();
-                                args.set("plan", plan_name);
-                                let message = i18n::t_args(&lang, "subscription.upgrade_prompt", &args);
-
-                                let _ = bot
-                                    .send_message(msg.chat.id, message)
-                                    .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-                                    .await;
-
-                                log::info!("User {} requested upgrade to {}", msg.chat.id, plan);
-                            }
-                        }
-                    }
-                    // Fall back to legacy WebAppData format
-                    else if let Ok(app_data) = serde_json::from_str::<WebAppData>(data_str) {
-                        log::info!("Parsed Web App Data (legacy): {:?}", app_data);
-
-                        match url::Url::parse(&app_data.url) {
-                            Ok(url) => {
-                                let is_video = app_data.format == "mp4";
-                                let format = app_data.format.clone();
-
-                                let task = queue::DownloadTask::new(
-                                    url.to_string(),
-                                    msg.chat.id,
-                                    Some(msg.id.0),
-                                    is_video,
-                                    format,
-                                    app_data.video_quality,
-                                    app_data.audio_bitrate,
-                                );
-
-                                deps.download_queue
-                                    .add_task(task, Some(Arc::clone(&deps.db_pool)))
-                                    .await;
-
-                                let _ = bot
-                                    .send_message(msg.chat.id, "✅ Задача добавлена в очередь! Скоро отправлю файл.")
-                                    .await;
-
-                                log::info!("Task from Mini App added to queue for user {}", msg.chat.id);
-                            }
-                            Err(e) => {
-                                log::error!("Invalid URL from Mini App: {}", e);
-                                let _ = bot
-                                    .send_message(msg.chat.id, "❌ Некорректная ссылка. Попробуй еще раз.")
-                                    .await;
-                            }
-                        }
-                    } else {
-                        log::error!("Failed to parse Web App Data as any known format");
-                        let _ = bot
-                            .send_message(msg.chat.id, "❌ Ошибка обработки данных. Попробуй еще раз.")
-                            .await;
-                    }
-                }
-
-                Ok(())
-            }
-        })
 }
 
 /// Handler for successful Telegram payments

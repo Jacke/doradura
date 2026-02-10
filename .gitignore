@@ -28,6 +28,8 @@ cursor/
 # IDE
 .idea/
 .vscode/
+# Claude Code instructions (private, not for repo)
+CLAUDE.md
 
 # Monitoring data (Prometheus & Grafana)
 prometheus/data/

@@ -17,7 +17,7 @@
 
 ## Features
 
-- **Multi-source downloads** — pluggable backend architecture via `DownloadSource` trait. Built-in support for 1000+ sites (YouTube, SoundCloud, TikTok, Instagram, VK, Twitch, Spotify, Bandcamp, and more) plus direct file URLs
+- **Multi-source downloads** — [pluggable backend architecture](docs/EXTENDING_SOURCES.md) via `DownloadSource` trait. Built-in support for 1000+ sites (YouTube, SoundCloud, TikTok, Instagram, VK, Twitch, Spotify, Bandcamp, and more) plus direct file URLs
 - **Format conversion** — convert documents (DOCX to PDF), video (circles, GIF, compression), audio (effects, ringtones, cuts), and images (resize, format change) directly from sent files
 - **Audio processing** — pitch, tempo, bass boost effects; ringtone creation; segment cutting with speed control
 - **High performance** — built with Rust and async Tokio runtime for maximum throughput
@@ -157,6 +157,7 @@ Key technologies:
 ## Documentation
 
 - [QUICKSTART.md](docs/QUICKSTART.md)
+- [EXTENDING_SOURCES.md](docs/EXTENDING_SOURCES.md) — how to add custom download backends
 - [BOT_FLOWS.md](docs/BOT_FLOWS.md)
 - [LOCAL_BOT_API_SETUP.md](docs/LOCAL_BOT_API_SETUP.md)
 - [YOUTUBE_COOKIES.md](docs/YOUTUBE_COOKIES.md)
