@@ -260,72 +260,148 @@ pub async fn show_videos_page(
         .await
 }
 
-/// Build action keyboard for a specific upload
+/// Build Level 1 action keyboard for a specific upload (category selection)
 fn build_upload_action_keyboard(upload: &UploadEntry) -> InlineKeyboardMarkup {
     let mut rows = Vec::new();
 
-    // Row 1: Send options
-    let mut send_row = Vec::new();
     match upload.media_type.as_str() {
         "video" => {
-            send_row.push(InlineKeyboardButton::callback(
-                "📤 Как видео".to_string(),
-                format!("videos:send:video:{}", upload.id),
-            ));
-            send_row.push(InlineKeyboardButton::callback(
-                "📎 Как документ".to_string(),
-                format!("videos:send:document:{}", upload.id),
-            ));
+            // Video: Send submenu + Convert submenu
+            rows.push(vec![
+                InlineKeyboardButton::callback(
+                    "📤 Отправить".to_string(),
+                    format!("videos:submenu:send:{}", upload.id),
+                ),
+                InlineKeyboardButton::callback(
+                    "🔄 Конвертировать".to_string(),
+                    format!("videos:submenu:convert:{}", upload.id),
+                ),
+            ]);
         }
-        "photo" => {
-            send_row.push(InlineKeyboardButton::callback(
-                "📤 Как фото".to_string(),
-                format!("videos:send:photo:{}", upload.id),
-            ));
-            send_row.push(InlineKeyboardButton::callback(
-                "📎 Как документ".to_string(),
-                format!("videos:send:document:{}", upload.id),
-            ));
-        }
-        "audio" => {
-            send_row.push(InlineKeyboardButton::callback(
-                "📤 Как аудио".to_string(),
-                format!("videos:send:audio:{}", upload.id),
-            ));
-            send_row.push(InlineKeyboardButton::callback(
-                "📎 Как документ".to_string(),
-                format!("videos:send:document:{}", upload.id),
-            ));
+        "photo" | "audio" => {
+            // Photo/Audio: Send submenu only (no conversions yet)
+            rows.push(vec![InlineKeyboardButton::callback(
+                "📤 Отправить".to_string(),
+                format!("videos:submenu:send:{}", upload.id),
+            )]);
         }
         _ => {
-            send_row.push(InlineKeyboardButton::callback(
+            // Document: Send directly (single option, no submenu)
+            rows.push(vec![InlineKeyboardButton::callback(
                 "📤 Отправить".to_string(),
                 format!("videos:send:document:{}", upload.id),
-            ));
+            )]);
         }
     }
-    rows.push(send_row);
 
-    // Row 2: Conversion options (only for video)
-    if upload.media_type == "video" {
-        rows.push(vec![
-            InlineKeyboardButton::callback("⭕️ Кружок".to_string(), format!("videos:convert:circle:{}", upload.id)),
-            InlineKeyboardButton::callback("🎵 MP3".to_string(), format!("videos:convert:audio:{}", upload.id)),
-            InlineKeyboardButton::callback("🎞️ GIF".to_string(), format!("videos:convert:gif:{}", upload.id)),
-        ]);
-        rows.push(vec![InlineKeyboardButton::callback(
-            "📦 Сжать".to_string(),
-            format!("videos:convert:compress:{}", upload.id),
-        )]);
-    }
-
-    // Row 3: Delete and cancel
+    // Delete + Cancel
     rows.push(vec![
         InlineKeyboardButton::callback("🗑️ Удалить".to_string(), format!("videos:delete:{}", upload.id)),
         InlineKeyboardButton::callback("❌ Отмена".to_string(), "videos:cancel".to_string()),
     ]);
 
     InlineKeyboardMarkup::new(rows)
+}
+
+/// Build Level 2 send submenu keyboard
+fn build_send_submenu_keyboard(upload: &UploadEntry) -> InlineKeyboardMarkup {
+    let mut rows = Vec::new();
+
+    match upload.media_type.as_str() {
+        "video" => {
+            rows.push(vec![
+                InlineKeyboardButton::callback("📤 Видео".to_string(), format!("videos:send:video:{}", upload.id)),
+                InlineKeyboardButton::callback(
+                    "📎 Документ".to_string(),
+                    format!("videos:send:document:{}", upload.id),
+                ),
+            ]);
+        }
+        "photo" => {
+            rows.push(vec![
+                InlineKeyboardButton::callback("📤 Фото".to_string(), format!("videos:send:photo:{}", upload.id)),
+                InlineKeyboardButton::callback(
+                    "📎 Документ".to_string(),
+                    format!("videos:send:document:{}", upload.id),
+                ),
+            ]);
+        }
+        "audio" => {
+            rows.push(vec![
+                InlineKeyboardButton::callback("📤 Аудио".to_string(), format!("videos:send:audio:{}", upload.id)),
+                InlineKeyboardButton::callback(
+                    "📎 Документ".to_string(),
+                    format!("videos:send:document:{}", upload.id),
+                ),
+            ]);
+        }
+        _ => {
+            rows.push(vec![InlineKeyboardButton::callback(
+                "📤 Отправить".to_string(),
+                format!("videos:send:document:{}", upload.id),
+            )]);
+        }
+    }
+
+    // Back button
+    rows.push(vec![InlineKeyboardButton::callback(
+        "⬅️ Назад".to_string(),
+        format!("videos:open:{}", upload.id),
+    )]);
+
+    InlineKeyboardMarkup::new(rows)
+}
+
+/// Build Level 2 convert submenu keyboard (video only)
+fn build_convert_submenu_keyboard(upload: &UploadEntry) -> InlineKeyboardMarkup {
+    let rows = vec![
+        vec![
+            InlineKeyboardButton::callback("⭕️ Кружок".to_string(), format!("videos:convert:circle:{}", upload.id)),
+            InlineKeyboardButton::callback("🎵 MP3".to_string(), format!("videos:convert:audio:{}", upload.id)),
+        ],
+        vec![
+            InlineKeyboardButton::callback("🎞️ GIF".to_string(), format!("videos:convert:gif:{}", upload.id)),
+            InlineKeyboardButton::callback("📦 Сжать".to_string(), format!("videos:convert:compress:{}", upload.id)),
+        ],
+        // Back button
+        vec![InlineKeyboardButton::callback(
+            "⬅️ Назад".to_string(),
+            format!("videos:open:{}", upload.id),
+        )],
+    ];
+
+    InlineKeyboardMarkup::new(rows)
+}
+
+/// Build upload info text for Level 1 display
+fn build_upload_info_text(upload: &UploadEntry) -> String {
+    let icon = get_media_icon(&upload.media_type);
+
+    let mut info_parts = Vec::new();
+    if let Some(size) = upload.file_size {
+        info_parts.push(format_file_size(size));
+    }
+    if let Some(dur) = upload.duration {
+        info_parts.push(format_duration(dur));
+    }
+    if let Some(w) = upload.width {
+        if let Some(h) = upload.height {
+            info_parts.push(format!("{}x{}", w, h));
+        }
+    }
+
+    let info_str = if info_parts.is_empty() {
+        String::new()
+    } else {
+        format!("\n└ {}", escape_markdown(&info_parts.join(" · ")))
+    };
+
+    format!(
+        "{} *Файл:* {}{}\n\nЧто сделать?",
+        icon,
+        escape_markdown(&upload.title),
+        info_str
+    )
 }
 
 /// Handle videos callback queries
@@ -398,44 +474,58 @@ pub async fn handle_videos_callback(
             if let Some(upload) = get_upload_by_id(&conn, chat_id.0, upload_id)
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
-                let icon = get_media_icon(&upload.media_type);
-
-                // Build info string
-                let mut info_parts = Vec::new();
-                if let Some(size) = upload.file_size {
-                    info_parts.push(format_file_size(size));
-                }
-                if let Some(dur) = upload.duration {
-                    info_parts.push(format_duration(dur));
-                }
-                if let Some(w) = upload.width {
-                    if let Some(h) = upload.height {
-                        info_parts.push(format!("{}x{}", w, h));
-                    }
-                }
-
-                let info_str = if info_parts.is_empty() {
-                    String::new()
-                } else {
-                    format!("\n└ {}", escape_markdown(&info_parts.join(" · ")))
-                };
-
+                let text = build_upload_info_text(&upload);
                 let keyboard = build_upload_action_keyboard(&upload);
 
-                bot.send_message(
-                    chat_id,
-                    format!(
-                        "Что сделать с {} *{}*?{}",
-                        icon,
-                        escape_markdown(&upload.title),
-                        info_str
-                    ),
-                )
-                .parse_mode(ParseMode::MarkdownV2)
-                .reply_markup(keyboard)
-                .await?;
+                // Try edit first (for "Back" navigation from submenu)
+                let edit_result = bot
+                    .edit_message_text(chat_id, message_id, &text)
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .reply_markup(keyboard.clone())
+                    .await;
 
-                bot.delete_message(chat_id, message_id).await.ok();
+                if edit_result.is_err() {
+                    // Fall back to send + delete (for /videos list click)
+                    bot.send_message(chat_id, text)
+                        .parse_mode(ParseMode::MarkdownV2)
+                        .reply_markup(keyboard)
+                        .await?;
+                    bot.delete_message(chat_id, message_id).await.ok();
+                }
+            }
+        }
+        "submenu" => {
+            // videos:submenu:{type}:{upload_id}
+            if parts.len() < 4 {
+                return Ok(());
+            }
+            let submenu_type = parts[2];
+            let upload_id = parts[3].parse::<i64>().unwrap_or(0);
+
+            let conn = db::get_connection(&db_pool)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+
+            if let Some(upload) = get_upload_by_id(&conn, chat_id.0, upload_id)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+            {
+                let (text, keyboard) = match submenu_type {
+                    "send" => {
+                        let text = format!("📤 *Отправить* _{}_*:*", escape_markdown(&upload.title));
+                        (text, build_send_submenu_keyboard(&upload))
+                    }
+                    "convert" => {
+                        let text = format!("🔄 *Конвертировать* _{}_*:*", escape_markdown(&upload.title));
+                        (text, build_convert_submenu_keyboard(&upload))
+                    }
+                    _ => return Ok(()),
+                };
+
+                bot.edit_message_text(chat_id, message_id, text)
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .reply_markup(keyboard)
+                    .await?;
+            } else {
+                bot.edit_message_text(chat_id, message_id, "❌ Файл не найден").await?;
             }
         }
         "send" => {
@@ -1162,112 +1252,32 @@ mod tests {
         assert_eq!(get_media_type_name("unknown"), "Все");
     }
 
-    #[test]
-    fn test_build_upload_action_keyboard_video() {
-        let upload = UploadEntry {
-            id: 42,
+    /// Helper to create a test UploadEntry
+    fn make_upload(id: i64, media_type: &str, title: &str) -> UploadEntry {
+        UploadEntry {
+            id,
             user_id: 123,
-            original_filename: Some("test.mp4".to_string()),
-            title: "Test Video".to_string(),
-            media_type: "video".to_string(),
+            original_filename: Some(format!("{}.test", title)),
+            title: title.to_string(),
+            media_type: media_type.to_string(),
             file_format: Some("mp4".to_string()),
-            file_id: "file_id_123".to_string(),
-            file_unique_id: Some("unique_123".to_string()),
+            file_id: format!("file_id_{}", id),
+            file_unique_id: Some(format!("unique_{}", id)),
             file_size: Some(1024 * 1024),
             duration: Some(120),
             width: Some(1920),
             height: Some(1080),
-            mime_type: Some("video/mp4".to_string()),
+            mime_type: None,
             message_id: None,
             chat_id: None,
             uploaded_at: "2025-01-01".to_string(),
             thumbnail_file_id: None,
-        };
-
-        let keyboard = build_upload_action_keyboard(&upload);
-        let rows = &keyboard.inline_keyboard;
-
-        // Video uploads should have: send row, convert row (circle+mp3+gif), compress row, delete row
-        assert!(
-            rows.len() >= 4,
-            "Video should have at least 4 button rows, got {}",
-            rows.len()
-        );
-
-        // Collect all callbacks
-        let all_callbacks: Vec<String> = rows
-            .iter()
-            .flat_map(|row| {
-                row.iter().filter_map(|btn| match &btn.kind {
-                    teloxide::types::InlineKeyboardButtonKind::CallbackData(data) => Some(data.clone()),
-                    _ => None,
-                })
-            })
-            .collect();
-
-        // Check send buttons
-        assert!(
-            all_callbacks.iter().any(|cb| cb.contains("send:video:42")),
-            "Should have send:video button"
-        );
-        assert!(
-            all_callbacks.iter().any(|cb| cb.contains("send:document:42")),
-            "Should have send:document button"
-        );
-
-        // Check convert buttons (Phase 1 wired buttons)
-        assert!(
-            all_callbacks.iter().any(|cb| cb.contains("convert:circle:42")),
-            "Should have circle button"
-        );
-        assert!(
-            all_callbacks.iter().any(|cb| cb.contains("convert:audio:42")),
-            "Should have MP3 button"
-        );
-        assert!(
-            all_callbacks.iter().any(|cb| cb.contains("convert:gif:42")),
-            "Should have GIF button"
-        );
-        assert!(
-            all_callbacks.iter().any(|cb| cb.contains("convert:compress:42")),
-            "Should have compress button"
-        );
-
-        // Check delete/cancel
-        assert!(
-            all_callbacks.iter().any(|cb| cb.contains("delete:42")),
-            "Should have delete button"
-        );
-        assert!(
-            all_callbacks.iter().any(|cb| cb.contains("cancel")),
-            "Should have cancel button"
-        );
+        }
     }
 
-    #[test]
-    fn test_build_upload_action_keyboard_photo() {
-        let upload = UploadEntry {
-            id: 10,
-            user_id: 123,
-            original_filename: Some("photo.jpg".to_string()),
-            title: "Photo".to_string(),
-            media_type: "photo".to_string(),
-            file_format: Some("jpg".to_string()),
-            file_id: "photo_id".to_string(),
-            file_unique_id: None,
-            file_size: Some(500_000),
-            duration: None,
-            width: Some(1920),
-            height: Some(1080),
-            mime_type: Some("image/jpeg".to_string()),
-            message_id: None,
-            chat_id: None,
-            uploaded_at: "2025-01-01".to_string(),
-            thumbnail_file_id: None,
-        };
-
-        let keyboard = build_upload_action_keyboard(&upload);
-        let all_callbacks: Vec<String> = keyboard
+    /// Helper: extract all callback_data strings from a keyboard
+    fn all_callbacks(keyboard: &InlineKeyboardMarkup) -> Vec<String> {
+        keyboard
             .inline_keyboard
             .iter()
             .flat_map(|row| {
@@ -1276,130 +1286,201 @@ mod tests {
                     _ => None,
                 })
             })
-            .collect();
+            .collect()
+    }
 
-        // Photos should have send:photo and send:document but NO convert buttons
+    /// Helper: extract all button labels from a keyboard
+    fn all_labels(keyboard: &InlineKeyboardMarkup) -> Vec<String> {
+        keyboard
+            .inline_keyboard
+            .iter()
+            .flat_map(|row| row.iter().map(|btn| btn.text.clone()))
+            .collect()
+    }
+
+    // === Level 1 keyboard tests ===
+
+    #[test]
+    fn test_video_level1_has_send_and_convert() {
+        let upload = make_upload(42, "video", "Test Video");
+        let keyboard = build_upload_action_keyboard(&upload);
+        let cbs = all_callbacks(&keyboard);
+
         assert!(
-            all_callbacks.iter().any(|cb| cb.contains("send:photo:10")),
-            "Should have send:photo button"
+            cbs.contains(&"videos:submenu:send:42".to_string()),
+            "Should have send submenu"
         );
         assert!(
-            all_callbacks.iter().any(|cb| cb.contains("send:document:10")),
-            "Should have send:document button"
+            cbs.contains(&"videos:submenu:convert:42".to_string()),
+            "Should have convert submenu"
+        );
+        assert!(cbs.contains(&"videos:delete:42".to_string()), "Should have delete");
+        assert!(cbs.contains(&"videos:cancel".to_string()), "Should have cancel");
+    }
+
+    #[test]
+    fn test_photo_level1_has_send_only() {
+        let upload = make_upload(10, "photo", "Photo");
+        let keyboard = build_upload_action_keyboard(&upload);
+        let cbs = all_callbacks(&keyboard);
+
+        assert!(
+            cbs.contains(&"videos:submenu:send:10".to_string()),
+            "Should have send submenu"
         );
         assert!(
-            !all_callbacks.iter().any(|cb| cb.contains("convert:circle")),
-            "Photos should NOT have circle button"
+            !cbs.iter().any(|cb| cb.contains("submenu:convert")),
+            "Photo should NOT have convert submenu"
         );
         assert!(
-            !all_callbacks.iter().any(|cb| cb.contains("convert:audio")),
-            "Photos should NOT have MP3 button"
-        );
-        assert!(
-            !all_callbacks.iter().any(|cb| cb.contains("convert:gif")),
-            "Photos should NOT have GIF button"
-        );
-        assert!(
-            !all_callbacks.iter().any(|cb| cb.contains("convert:compress")),
-            "Photos should NOT have compress button"
+            !cbs.iter().any(|cb| cb.contains("convert:")),
+            "Photo should NOT have any convert buttons"
         );
     }
 
     #[test]
-    fn test_build_upload_action_keyboard_audio() {
-        let upload = UploadEntry {
-            id: 20,
-            user_id: 123,
-            original_filename: Some("song.mp3".to_string()),
-            title: "Song".to_string(),
-            media_type: "audio".to_string(),
-            file_format: Some("mp3".to_string()),
-            file_id: "audio_id".to_string(),
-            file_unique_id: None,
-            file_size: Some(3_000_000),
-            duration: Some(180),
-            width: None,
-            height: None,
-            mime_type: Some("audio/mpeg".to_string()),
-            message_id: None,
-            chat_id: None,
-            uploaded_at: "2025-01-01".to_string(),
-            thumbnail_file_id: None,
-        };
-
+    fn test_audio_level1_has_send_only() {
+        let upload = make_upload(20, "audio", "Song");
         let keyboard = build_upload_action_keyboard(&upload);
-        let all_callbacks: Vec<String> = keyboard
-            .inline_keyboard
-            .iter()
-            .flat_map(|row| {
-                row.iter().filter_map(|btn| match &btn.kind {
-                    teloxide::types::InlineKeyboardButtonKind::CallbackData(data) => Some(data.clone()),
-                    _ => None,
-                })
-            })
-            .collect();
+        let cbs = all_callbacks(&keyboard);
 
-        // Audio should have send:audio and send:document but NO video convert buttons
         assert!(
-            all_callbacks.iter().any(|cb| cb.contains("send:audio:20")),
-            "Should have send:audio button"
+            cbs.contains(&"videos:submenu:send:20".to_string()),
+            "Should have send submenu"
         );
         assert!(
-            all_callbacks.iter().any(|cb| cb.contains("send:document:20")),
-            "Should have send:document button"
-        );
-        assert!(
-            !all_callbacks.iter().any(|cb| cb.contains("convert:circle")),
-            "Audio should NOT have circle button"
+            !cbs.iter().any(|cb| cb.contains("submenu:convert")),
+            "Audio should NOT have convert submenu"
         );
     }
 
     #[test]
-    fn test_build_upload_action_keyboard_document() {
-        let upload = UploadEntry {
-            id: 30,
-            user_id: 123,
-            original_filename: Some("report.pdf".to_string()),
-            title: "Report".to_string(),
-            media_type: "document".to_string(),
-            file_format: Some("pdf".to_string()),
-            file_id: "doc_id".to_string(),
-            file_unique_id: None,
-            file_size: Some(2_000_000),
-            duration: None,
-            width: None,
-            height: None,
-            mime_type: Some("application/pdf".to_string()),
-            message_id: None,
-            chat_id: None,
-            uploaded_at: "2025-01-01".to_string(),
-            thumbnail_file_id: None,
-        };
-
+    fn test_document_level1_sends_directly() {
+        let upload = make_upload(30, "document", "Report");
         let keyboard = build_upload_action_keyboard(&upload);
-        let all_callbacks: Vec<String> = keyboard
-            .inline_keyboard
-            .iter()
-            .flat_map(|row| {
-                row.iter().filter_map(|btn| match &btn.kind {
-                    teloxide::types::InlineKeyboardButtonKind::CallbackData(data) => Some(data.clone()),
-                    _ => None,
-                })
-            })
-            .collect();
+        let cbs = all_callbacks(&keyboard);
 
-        // Documents should only have send:document (no send:video/photo/audio)
+        // Document bypasses submenu — sends directly
         assert!(
-            all_callbacks.iter().any(|cb| cb.contains("send:document:30")),
-            "Should have send:document button"
+            cbs.contains(&"videos:send:document:30".to_string()),
+            "Document should send directly"
         );
         assert!(
-            !all_callbacks.iter().any(|cb| cb.contains("send:video")),
-            "Documents should NOT have send:video"
+            !cbs.iter().any(|cb| cb.contains("submenu:send")),
+            "Document should NOT have send submenu"
+        );
+    }
+
+    // === Send submenu tests ===
+
+    #[test]
+    fn test_send_submenu_video() {
+        let upload = make_upload(42, "video", "Test Video");
+        let keyboard = build_send_submenu_keyboard(&upload);
+        let cbs = all_callbacks(&keyboard);
+
+        assert!(
+            cbs.contains(&"videos:send:video:42".to_string()),
+            "Should have send:video"
         );
         assert!(
-            !all_callbacks.iter().any(|cb| cb.contains("send:photo")),
-            "Documents should NOT have send:photo"
+            cbs.contains(&"videos:send:document:42".to_string()),
+            "Should have send:document"
         );
+        assert!(cbs.contains(&"videos:open:42".to_string()), "Should have back button");
+    }
+
+    #[test]
+    fn test_send_submenu_photo() {
+        let upload = make_upload(10, "photo", "Photo");
+        let keyboard = build_send_submenu_keyboard(&upload);
+        let cbs = all_callbacks(&keyboard);
+
+        assert!(
+            cbs.contains(&"videos:send:photo:10".to_string()),
+            "Should have send:photo"
+        );
+        assert!(
+            cbs.contains(&"videos:send:document:10".to_string()),
+            "Should have send:document"
+        );
+        assert!(cbs.contains(&"videos:open:10".to_string()), "Should have back button");
+    }
+
+    #[test]
+    fn test_send_submenu_audio() {
+        let upload = make_upload(20, "audio", "Song");
+        let keyboard = build_send_submenu_keyboard(&upload);
+        let cbs = all_callbacks(&keyboard);
+
+        assert!(
+            cbs.contains(&"videos:send:audio:20".to_string()),
+            "Should have send:audio"
+        );
+        assert!(
+            cbs.contains(&"videos:send:document:20".to_string()),
+            "Should have send:document"
+        );
+        assert!(cbs.contains(&"videos:open:20".to_string()), "Should have back button");
+    }
+
+    // === Convert submenu tests ===
+
+    #[test]
+    fn test_convert_submenu_has_all_options() {
+        let upload = make_upload(42, "video", "Test Video");
+        let keyboard = build_convert_submenu_keyboard(&upload);
+        let cbs = all_callbacks(&keyboard);
+
+        assert!(
+            cbs.contains(&"videos:convert:circle:42".to_string()),
+            "Should have circle"
+        );
+        assert!(cbs.contains(&"videos:convert:audio:42".to_string()), "Should have MP3");
+        assert!(cbs.contains(&"videos:convert:gif:42".to_string()), "Should have GIF");
+        assert!(
+            cbs.contains(&"videos:convert:compress:42".to_string()),
+            "Should have compress"
+        );
+        assert!(cbs.contains(&"videos:open:42".to_string()), "Should have back button");
+    }
+
+    // === Back button tests ===
+
+    #[test]
+    fn test_all_submenus_have_back_button() {
+        let upload = make_upload(42, "video", "Test Video");
+
+        let send_kb = build_send_submenu_keyboard(&upload);
+        let send_labels = all_labels(&send_kb);
+        assert!(
+            send_labels.contains(&"⬅️ Назад".to_string()),
+            "Send submenu should have back"
+        );
+
+        let convert_kb = build_convert_submenu_keyboard(&upload);
+        let convert_labels = all_labels(&convert_kb);
+        assert!(
+            convert_labels.contains(&"⬅️ Назад".to_string()),
+            "Convert submenu should have back"
+        );
+
+        // Both back buttons should navigate to videos:open:{id}
+        let send_cbs = all_callbacks(&send_kb);
+        assert!(send_cbs.contains(&"videos:open:42".to_string()));
+        let convert_cbs = all_callbacks(&convert_kb);
+        assert!(convert_cbs.contains(&"videos:open:42".to_string()));
+    }
+
+    // === Info text test ===
+
+    #[test]
+    fn test_build_upload_info_text() {
+        let upload = make_upload(42, "video", "Test Video");
+        let text = build_upload_info_text(&upload);
+
+        assert!(text.contains("🎬"), "Should have video icon");
+        assert!(text.contains("Test Video"), "Should contain title");
+        assert!(text.contains("Что сделать"), "Should ask what to do");
     }
 }

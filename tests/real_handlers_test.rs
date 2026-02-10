@@ -2314,7 +2314,7 @@ async fn test_videos_send_callback() {
     println!("✅ videos:send:video callback works");
 }
 
-/// Test handle_videos_callback open action for viewing upload detail
+/// Test handle_videos_callback open action for viewing upload detail (Level 1 menu)
 #[tokio::test]
 #[serial]
 async fn test_videos_open_callback() {
@@ -2336,18 +2336,33 @@ async fn test_videos_open_callback() {
     .await;
     assert!(result.is_ok(), "Open action should succeed");
 
-    // Verify message was sent with upload details and action keyboard
+    // Open now tries editMessageText first (for back-navigation), falls back to sendMessage
     let requests = test.mock_server.received_requests().await.unwrap();
+
+    // Find editMessageText or sendMessage (whichever was used)
+    let edit_msgs: Vec<_> = requests
+        .iter()
+        .filter(|r| r.url.path().to_lowercase().contains("editmessagetext"))
+        .collect();
     let send_msgs: Vec<_> = requests
         .iter()
         .filter(|r| r.url.path().to_lowercase().contains("sendmessage"))
         .collect();
 
-    // Should have sent a message with upload info (open uses sendMessage, not edit)
-    assert!(!send_msgs.is_empty(), "Should send message to show upload details");
+    // Should have used either edit or send
+    assert!(
+        !edit_msgs.is_empty() || !send_msgs.is_empty(),
+        "Should edit or send message to show upload details"
+    );
 
-    // Find the message with the upload action keyboard (contains convert buttons)
-    let body: serde_json::Value = serde_json::from_slice(&send_msgs.last().unwrap().body).unwrap();
+    // Get the message body (prefer edit, fall back to send)
+    let msg = if !edit_msgs.is_empty() {
+        edit_msgs.last().unwrap()
+    } else {
+        send_msgs.last().unwrap()
+    };
+
+    let body: serde_json::Value = serde_json::from_slice(&msg.body).unwrap();
     let keyboard = &body["reply_markup"]["inline_keyboard"];
     if keyboard.is_array() {
         let all_callbacks: Vec<String> = keyboard
@@ -2362,23 +2377,21 @@ async fn test_videos_open_callback() {
             })
             .collect();
 
-        // Video uploads should have convert buttons
-        let has_mp3_btn = all_callbacks.iter().any(|cb| cb.contains("convert:audio"));
-        let has_gif_btn = all_callbacks.iter().any(|cb| cb.contains("convert:gif"));
-        let has_compress_btn = all_callbacks.iter().any(|cb| cb.contains("convert:compress"));
-        let has_circle_btn = all_callbacks.iter().any(|cb| cb.contains("convert:circle"));
+        // Level 1: Video should have Send + Convert category buttons (not individual convert buttons)
+        let has_send_submenu = all_callbacks.iter().any(|cb| cb.contains("submenu:send"));
+        let has_convert_submenu = all_callbacks.iter().any(|cb| cb.contains("submenu:convert"));
+        let has_delete = all_callbacks.iter().any(|cb| cb.contains("delete:"));
 
         assert!(
-            has_mp3_btn,
-            "Video upload should have MP3 conversion button, got: {:?}",
+            has_send_submenu,
+            "Video Level 1 should have send submenu button, got: {:?}",
             all_callbacks
         );
-        assert!(has_gif_btn, "Video upload should have GIF conversion button");
-        assert!(has_compress_btn, "Video upload should have compress button");
-        assert!(has_circle_btn, "Video upload should have circle button");
+        assert!(has_convert_submenu, "Video Level 1 should have convert submenu button");
+        assert!(has_delete, "Video Level 1 should have delete button");
 
         println!(
-            "✅ videos:open:{} showed all 4 conversion buttons: circle, mp3, gif, compress",
+            "✅ videos:open:{} showed Level 1 menu with Send + Convert categories",
             upload_id
         );
     }
@@ -2430,4 +2443,241 @@ async fn test_services_menu_markdown_escaping() {
     assert!(!text.contains("extensions.footer"), "Should not contain raw footer key");
 
     println!("✅ Services menu: no raw locale keys, proper rendering");
+}
+
+/// Test submenu:send callback edits message with send options
+#[tokio::test]
+#[serial]
+async fn test_videos_submenu_send_edits_message() {
+    use doradura::telegram::handle_videos_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "ru");
+    let upload_id = test.create_test_upload(123456789, "submenu_video.mp4", "video", "file_sub_1");
+    test.mock_all_telegram_api().await;
+
+    let result = handle_videos_callback(
+        test.bot(),
+        "cb_sub_send".into(),
+        ChatId(123456789),
+        teloxide::types::MessageId(42),
+        &format!("videos:submenu:send:{}", upload_id),
+        test.deps.db_pool.clone(),
+    )
+    .await;
+    assert!(result.is_ok(), "Submenu send should succeed");
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let edit_msgs: Vec<_> = requests
+        .iter()
+        .filter(|r| r.url.path().to_lowercase().contains("editmessagetext"))
+        .collect();
+
+    assert!(!edit_msgs.is_empty(), "Submenu send should use editMessageText");
+
+    let body: serde_json::Value = serde_json::from_slice(&edit_msgs.last().unwrap().body).unwrap();
+    let keyboard = &body["reply_markup"]["inline_keyboard"];
+    assert!(keyboard.is_array(), "Should have keyboard");
+
+    let all_callbacks: Vec<String> = keyboard
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|row| {
+            row.as_array()
+                .unwrap()
+                .iter()
+                .map(|btn| btn["callback_data"].as_str().unwrap_or("").to_string())
+        })
+        .collect();
+
+    // Should have send:video and send:document for video uploads
+    assert!(
+        all_callbacks.iter().any(|cb| cb.contains("send:video")),
+        "Should have send:video"
+    );
+    assert!(
+        all_callbacks.iter().any(|cb| cb.contains("send:document")),
+        "Should have send:document"
+    );
+    // Should have back button
+    assert!(
+        all_callbacks.iter().any(|cb| cb.contains("videos:open:")),
+        "Should have back button"
+    );
+
+    println!("✅ submenu:send showed send options with back button");
+}
+
+/// Test submenu:convert callback edits message with conversion options
+#[tokio::test]
+#[serial]
+async fn test_videos_submenu_convert_edits_message() {
+    use doradura::telegram::handle_videos_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "ru");
+    let upload_id = test.create_test_upload(123456789, "conv_video.mp4", "video", "file_conv_1");
+    test.mock_all_telegram_api().await;
+
+    let result = handle_videos_callback(
+        test.bot(),
+        "cb_sub_conv".into(),
+        ChatId(123456789),
+        teloxide::types::MessageId(42),
+        &format!("videos:submenu:convert:{}", upload_id),
+        test.deps.db_pool.clone(),
+    )
+    .await;
+    assert!(result.is_ok(), "Submenu convert should succeed");
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let edit_msgs: Vec<_> = requests
+        .iter()
+        .filter(|r| r.url.path().to_lowercase().contains("editmessagetext"))
+        .collect();
+
+    assert!(!edit_msgs.is_empty(), "Submenu convert should use editMessageText");
+
+    let body: serde_json::Value = serde_json::from_slice(&edit_msgs.last().unwrap().body).unwrap();
+    let keyboard = &body["reply_markup"]["inline_keyboard"];
+    assert!(keyboard.is_array());
+
+    let all_callbacks: Vec<String> = keyboard
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|row| {
+            row.as_array()
+                .unwrap()
+                .iter()
+                .map(|btn| btn["callback_data"].as_str().unwrap_or("").to_string())
+        })
+        .collect();
+
+    // Should have all 4 conversion options
+    assert!(
+        all_callbacks.iter().any(|cb| cb.contains("convert:circle")),
+        "Should have circle"
+    );
+    assert!(
+        all_callbacks.iter().any(|cb| cb.contains("convert:audio")),
+        "Should have MP3"
+    );
+    assert!(
+        all_callbacks.iter().any(|cb| cb.contains("convert:gif")),
+        "Should have GIF"
+    );
+    assert!(
+        all_callbacks.iter().any(|cb| cb.contains("convert:compress")),
+        "Should have compress"
+    );
+    assert!(
+        all_callbacks.iter().any(|cb| cb.contains("videos:open:")),
+        "Should have back button"
+    );
+
+    println!("✅ submenu:convert showed all 4 conversion options with back button");
+}
+
+/// Test submenu with deleted/non-existent upload shows error
+#[tokio::test]
+#[serial]
+async fn test_videos_submenu_deleted_upload() {
+    use doradura::telegram::handle_videos_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "ru");
+    test.mock_all_telegram_api().await;
+
+    // Use a non-existent upload ID
+    let result = handle_videos_callback(
+        test.bot(),
+        "cb_sub_gone".into(),
+        ChatId(123456789),
+        teloxide::types::MessageId(42),
+        "videos:submenu:send:99999",
+        test.deps.db_pool.clone(),
+    )
+    .await;
+    assert!(result.is_ok(), "Should not error on missing upload");
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let edit_msgs: Vec<_> = requests
+        .iter()
+        .filter(|r| r.url.path().to_lowercase().contains("editmessagetext"))
+        .collect();
+
+    assert!(!edit_msgs.is_empty(), "Should edit message with error");
+
+    let body: serde_json::Value = serde_json::from_slice(&edit_msgs.last().unwrap().body).unwrap();
+    let text = body["text"].as_str().unwrap_or("");
+    assert!(
+        text.contains("не найден"),
+        "Should show file-not-found error, got: {}",
+        text
+    );
+
+    println!("✅ submenu with deleted upload showed error message");
+}
+
+/// Test back navigation from submenu edits back to Level 1
+#[tokio::test]
+#[serial]
+async fn test_videos_back_navigation() {
+    use doradura::telegram::handle_videos_callback;
+
+    let test = RealHandlerTest::new().await;
+    test.create_test_user(123456789, "testuser", "ru");
+    let upload_id = test.create_test_upload(123456789, "back_video.mp4", "video", "file_back_1");
+    test.mock_all_telegram_api().await;
+
+    // Simulate clicking "Back" from submenu (uses videos:open:{id} which should edit the message)
+    let result = handle_videos_callback(
+        test.bot(),
+        "cb_back".into(),
+        ChatId(123456789),
+        teloxide::types::MessageId(42),
+        &format!("videos:open:{}", upload_id),
+        test.deps.db_pool.clone(),
+    )
+    .await;
+    assert!(result.is_ok(), "Back navigation should succeed");
+
+    let requests = test.mock_server.received_requests().await.unwrap();
+    let edit_msgs: Vec<_> = requests
+        .iter()
+        .filter(|r| r.url.path().to_lowercase().contains("editmessagetext"))
+        .collect();
+
+    // Since mock returns success for editMessageText, it should use edit (not send+delete)
+    assert!(!edit_msgs.is_empty(), "Back navigation should use editMessageText");
+
+    let body: serde_json::Value = serde_json::from_slice(&edit_msgs.last().unwrap().body).unwrap();
+    let keyboard = &body["reply_markup"]["inline_keyboard"];
+    assert!(keyboard.is_array());
+
+    let all_callbacks: Vec<String> = keyboard
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|row| {
+            row.as_array()
+                .unwrap()
+                .iter()
+                .map(|btn| btn["callback_data"].as_str().unwrap_or("").to_string())
+        })
+        .collect();
+
+    // Should be back to Level 1 with category buttons
+    assert!(
+        all_callbacks.iter().any(|cb| cb.contains("submenu:send")),
+        "Back should show Level 1 with send submenu"
+    );
+    assert!(
+        all_callbacks.iter().any(|cb| cb.contains("submenu:convert")),
+        "Back should show Level 1 with convert submenu"
+    );
+
+    println!("✅ Back navigation returned to Level 1 menu");
 }

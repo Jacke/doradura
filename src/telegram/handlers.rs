@@ -1284,50 +1284,46 @@ fn callback_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
     })
 }
 
-/// Build inline keyboard for upload response based on media type.
+/// Build inline keyboard for upload response based on media type (Level 1).
 fn build_upload_keyboard(media_type: &str, upload_id: i64) -> teloxide::types::InlineKeyboardMarkup {
     use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
 
-    if media_type == "video" {
-        InlineKeyboardMarkup::new(vec![
-            vec![
-                InlineKeyboardButton::callback("📤 Как видео", format!("videos:send:video:{}", upload_id)),
-                InlineKeyboardButton::callback("📎 Как документ", format!("videos:send:document:{}", upload_id)),
-            ],
-            vec![
-                InlineKeyboardButton::callback("⭕️ Кружок", format!("videos:convert:circle:{}", upload_id)),
-                InlineKeyboardButton::callback("🎵 MP3", format!("videos:convert:audio:{}", upload_id)),
-                InlineKeyboardButton::callback("🎞️ GIF", format!("videos:convert:gif:{}", upload_id)),
-            ],
-            vec![
-                InlineKeyboardButton::callback("📦 Сжать", format!("videos:convert:compress:{}", upload_id)),
-                InlineKeyboardButton::callback("🗑️ Удалить", format!("videos:delete:{}", upload_id)),
-            ],
-        ])
-    } else {
-        InlineKeyboardMarkup::new(vec![
-            vec![
-                InlineKeyboardButton::callback("📤 Отправить", format!("videos:send:{}", upload_id)),
-                InlineKeyboardButton::callback("🗑️ Удалить", format!("videos:delete:{}", upload_id)),
-            ],
-            vec![InlineKeyboardButton::callback(
-                "📂 Все загрузки",
-                "videos:page:0:all".to_string(),
-            )],
-        ])
+    let mut rows = Vec::new();
+
+    match media_type {
+        "video" => {
+            rows.push(vec![
+                InlineKeyboardButton::callback("📤 Отправить", format!("videos:submenu:send:{}", upload_id)),
+                InlineKeyboardButton::callback("🔄 Конвертировать", format!("videos:submenu:convert:{}", upload_id)),
+            ]);
+        }
+        "photo" | "audio" => {
+            rows.push(vec![InlineKeyboardButton::callback(
+                "📤 Отправить",
+                format!("videos:submenu:send:{}", upload_id),
+            )]);
+        }
+        _ => {
+            // Document: send directly
+            rows.push(vec![InlineKeyboardButton::callback(
+                "📤 Отправить",
+                format!("videos:send:document:{}", upload_id),
+            )]);
+        }
     }
+
+    rows.push(vec![
+        InlineKeyboardButton::callback("🗑️ Удалить", format!("videos:delete:{}", upload_id)),
+        InlineKeyboardButton::callback("📂 Все загрузки", "videos:page:0:all:".to_string()),
+    ]);
+
+    InlineKeyboardMarkup::new(rows)
 }
 
 /// Build upload response text based on media type.
 fn build_upload_text(media_type: &str, media_icon: &str, escaped_title: &str, escaped_info: &str) -> String {
-    if media_type == "video" {
-        format!("{} *Файл загружен:* {}\n└ {}", media_icon, escaped_title, escaped_info)
-    } else {
-        format!(
-            "{} *Файл загружен:* {}\n└ {}\n\nИспользуй /videos чтобы конвертировать файлы\\.",
-            media_icon, escaped_title, escaped_info
-        )
-    }
+    let _ = media_type; // all types use same format now
+    format!("{} *Файл загружен:* {}\n└ {}", media_icon, escaped_title, escaped_info)
 }
 
 // Integration tests are in tests/real_handlers_test.rs
@@ -1362,25 +1358,16 @@ mod tests {
     }
 
     #[test]
-    fn test_video_keyboard_has_conversion_buttons() {
+    fn test_video_keyboard_level1_categories() {
         let kb = build_upload_keyboard("video", 42);
         let data = callback_data(&kb);
 
-        assert_eq!(data.len(), 3, "video keyboard should have 3 rows");
+        assert_eq!(data.len(), 2, "video keyboard should have 2 rows (Level 1)");
 
-        // Row 1: send options
-        assert_eq!(data[0], vec!["videos:send:video:42", "videos:send:document:42"]);
-        // Row 2: conversion
-        assert_eq!(
-            data[1],
-            vec![
-                "videos:convert:circle:42",
-                "videos:convert:audio:42",
-                "videos:convert:gif:42"
-            ]
-        );
-        // Row 3: compress + delete
-        assert_eq!(data[2], vec!["videos:convert:compress:42", "videos:delete:42"]);
+        // Row 1: Send + Convert category buttons
+        assert_eq!(data[0], vec!["videos:submenu:send:42", "videos:submenu:convert:42"]);
+        // Row 2: Delete + All uploads
+        assert_eq!(data[1], vec!["videos:delete:42", "videos:page:0:all:"]);
     }
 
     #[test]
@@ -1388,54 +1375,69 @@ mod tests {
         let kb = build_upload_keyboard("video", 1);
         let labels = button_labels(&kb);
 
-        assert_eq!(labels[0], vec!["📤 Как видео", "📎 Как документ"]);
-        assert_eq!(labels[1], vec!["⭕️ Кружок", "🎵 MP3", "🎞️ GIF"]);
-        assert_eq!(labels[2], vec!["📦 Сжать", "🗑️ Удалить"]);
+        assert_eq!(labels[0], vec!["📤 Отправить", "🔄 Конвертировать"]);
+        assert_eq!(labels[1], vec!["🗑️ Удалить", "📂 Все загрузки"]);
     }
 
     #[test]
-    fn test_non_video_keyboard_has_send_and_delete() {
-        for media_type in &["photo", "audio", "document"] {
-            let kb = build_upload_keyboard(media_type, 99);
-            let data = callback_data(&kb);
+    fn test_photo_keyboard_level1_send_only() {
+        let kb = build_upload_keyboard("photo", 99);
+        let data = callback_data(&kb);
 
-            assert_eq!(data.len(), 2, "{} keyboard should have 2 rows", media_type);
-            assert_eq!(data[0], vec!["videos:send:99", "videos:delete:99"]);
-            assert_eq!(data[1], vec!["videos:page:0:all"]);
-        }
+        assert_eq!(data.len(), 2, "photo keyboard should have 2 rows");
+        // Row 1: Send submenu only (no convert)
+        assert_eq!(data[0], vec!["videos:submenu:send:99"]);
+        // Row 2: Delete + All uploads
+        assert_eq!(data[1], vec!["videos:delete:99", "videos:page:0:all:"]);
+    }
+
+    #[test]
+    fn test_audio_keyboard_level1_send_only() {
+        let kb = build_upload_keyboard("audio", 99);
+        let data = callback_data(&kb);
+
+        assert_eq!(data.len(), 2, "audio keyboard should have 2 rows");
+        assert_eq!(data[0], vec!["videos:submenu:send:99"]);
+        assert_eq!(data[1], vec!["videos:delete:99", "videos:page:0:all:"]);
+    }
+
+    #[test]
+    fn test_document_keyboard_sends_directly() {
+        let kb = build_upload_keyboard("document", 99);
+        let data = callback_data(&kb);
+
+        assert_eq!(data.len(), 2, "document keyboard should have 2 rows");
+        // Document: direct send (no submenu)
+        assert_eq!(data[0], vec!["videos:send:document:99"]);
+        assert_eq!(data[1], vec!["videos:delete:99", "videos:page:0:all:"]);
     }
 
     #[test]
     fn test_non_video_keyboard_no_conversion_buttons() {
-        let kb = build_upload_keyboard("photo", 5);
-        let all_data: Vec<String> = callback_data(&kb).into_iter().flatten().collect();
+        for media_type in &["photo", "audio", "document"] {
+            let kb = build_upload_keyboard(media_type, 5);
+            let all_data: Vec<String> = callback_data(&kb).into_iter().flatten().collect();
 
-        assert!(
-            !all_data.iter().any(|d| d.contains("convert:")),
-            "non-video keyboard must not have convert buttons"
-        );
+            assert!(
+                !all_data.iter().any(|d| d.contains("convert:")),
+                "{} keyboard must not have convert buttons",
+                media_type
+            );
+        }
     }
 
     #[test]
-    fn test_video_text_no_videos_hint() {
-        let text = build_upload_text("video", "🎬", "test\\.mp4", "10\\.0 MB");
-
-        assert!(
-            !text.contains("/videos"),
-            "video upload text should not contain /videos hint"
-        );
-        assert!(text.contains("Файл загружен"));
-    }
-
-    #[test]
-    fn test_non_video_text_has_videos_hint() {
-        let text = build_upload_text("photo", "📷", "photo\\.jpg", "2\\.0 MB");
-
-        assert!(
-            text.contains("/videos"),
-            "non-video upload text should contain /videos hint"
-        );
-        assert!(text.contains("Файл загружен"));
+    fn test_upload_text_no_videos_hint() {
+        // All media types now use same format (no /videos hint)
+        for media_type in &["video", "photo", "audio", "document"] {
+            let text = build_upload_text(media_type, "📷", "test\\.jpg", "2\\.0 MB");
+            assert!(
+                !text.contains("/videos"),
+                "{} upload text should not contain /videos hint",
+                media_type
+            );
+            assert!(text.contains("Файл загружен"));
+        }
     }
 
     #[test]
@@ -1445,7 +1447,7 @@ mod tests {
 
         for data in &all_data {
             assert!(
-                data.contains("12345") || data == "videos:page:0:all",
+                data.contains("12345") || data.starts_with("videos:page:"),
                 "callback '{}' should contain the upload_id",
                 data
             );
