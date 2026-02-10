@@ -1813,7 +1813,7 @@ async fn handle_iphone_ringtone(
     let output_path = temp_dir.join(format!("{}.m4r", title.replace("/", "_")));
 
     // Convert to ringtone (first 30 seconds)
-    crate::download::ringtone::create_iphone_ringtone(&input_path, &output_path, 0, 30)?;
+    crate::download::ringtone::create_iphone_ringtone(&input_path, &output_path, 0, 30).await?;
 
     // Send the ringtone as a document (required for iOS to recognize it)
     let caption = crate::i18n::t(lang, "history.iphone_ringtone_instructions");

@@ -1,6 +1,7 @@
 use crate::core::error::AppError;
+use crate::core::process::{run_with_timeout, FFMPEG_TIMEOUT};
 use std::path::Path;
-use std::process::Command;
+use tokio::process::Command;
 
 /// Maximum duration for an iPhone ringtone (30 seconds)
 pub const MAX_RINGTONE_DURATION_SECS: u32 = 30;
@@ -16,7 +17,7 @@ pub const MAX_RINGTONE_DURATION_SECS: u32 = 30;
 /// # Returns
 /// * `Ok(())` on success
 /// * `Err(AppError)` on failure
-pub fn create_iphone_ringtone<P: AsRef<Path>>(
+pub async fn create_iphone_ringtone<P: AsRef<Path>>(
     input_path: P,
     output_path: P,
     start_secs: u32,
@@ -38,34 +39,38 @@ pub fn create_iphone_ringtone<P: AsRef<Path>>(
 
     // FFmpeg command to convert to AAC and package as M4A (which is what .m4r is)
     // -i input -ss start -t duration -c:a aac -b:a 192k -movflags +faststart -y output
-    let status = Command::new("ffmpeg")
-        .arg("-ss")
-        .arg(start_secs.to_string())
-        .arg("-t")
-        .arg(duration.to_string())
-        .arg("-i")
-        .arg(input)
-        .arg("-c:a")
-        .arg("aac")
-        .arg("-b:a")
-        .arg("192k")
-        .arg("-movflags")
-        .arg("+faststart")
-        .arg("-f")
-        .arg("ipod")
-        .arg("-y")
-        .arg(output)
-        .status()
-        .map_err(|e| AppError::Download(format!("Failed to execute ffmpeg: {}", e)))?;
+    let start_str = start_secs.to_string();
+    let duration_str = duration.to_string();
+    let output = run_with_timeout(
+        Command::new("ffmpeg")
+            .arg("-ss")
+            .arg(&start_str)
+            .arg("-t")
+            .arg(&duration_str)
+            .arg("-i")
+            .arg(input)
+            .arg("-c:a")
+            .arg("aac")
+            .arg("-b:a")
+            .arg("192k")
+            .arg("-movflags")
+            .arg("+faststart")
+            .arg("-f")
+            .arg("ipod")
+            .arg("-y")
+            .arg(output),
+        FFMPEG_TIMEOUT,
+    )
+    .await?;
 
-    if !status.success() {
+    if !output.status.success() {
         return Err(AppError::Download(format!(
             "FFmpeg failed with exit status: {:?}",
-            status.code()
+            output.status.code()
         )));
     }
 
-    log::info!("✅ Ringtone created successfully: {:?}", output);
+    log::info!("✅ Ringtone created successfully: {:?}", input_path.as_ref());
     Ok(())
 }
 
@@ -79,19 +84,19 @@ mod tests {
         assert_eq!(MAX_RINGTONE_DURATION_SECS, 30);
     }
 
-    #[test]
-    fn test_ringtone_creation_invalid_input() {
-        let result = create_iphone_ringtone("non_existent_file.mp3", "output.m4r", 0, 30);
+    #[tokio::test]
+    async fn test_ringtone_creation_invalid_input() {
+        let result = create_iphone_ringtone("non_existent_file.mp3", "output.m4r", 0, 30).await;
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_ringtone_creation_valid() {
+    #[tokio::test]
+    async fn test_ringtone_creation_valid() {
         // Create a dummy input file (1 second of silence) using ffmpeg
         let input_path = "test_input.mp3";
         let output_path = "test_output.m4r";
 
-        let setup_status = Command::new("ffmpeg")
+        let setup_status = std::process::Command::new("ffmpeg")
             .arg("-f")
             .arg("lavfi")
             .arg("-i")
@@ -108,7 +113,7 @@ mod tests {
         }
 
         // Run the conversion
-        let result = create_iphone_ringtone(input_path, output_path, 0, 1);
+        let result = create_iphone_ringtone(input_path, output_path, 0, 1).await;
 
         // Assert success
         assert!(result.is_ok(), "Ringtone creation failed: {:?}", result.err());

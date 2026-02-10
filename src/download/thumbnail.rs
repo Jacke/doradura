@@ -7,8 +7,9 @@
 //! - Generating thumbnails from video files using ffmpeg
 
 use crate::core::error::AppError;
+use crate::core::process::{run_with_timeout, FFMPEG_TIMEOUT};
 use std::fs;
-use std::process::Command;
+use tokio::process::Command;
 
 /// Image format detected by magic bytes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,7 +70,7 @@ pub(crate) fn detect_image_format(bytes: &[u8]) -> ImageFormat {
 /// # Returns
 ///
 /// The JPEG image bytes on success, or an error if conversion fails
-pub(crate) fn convert_webp_to_jpeg(webp_bytes: &[u8]) -> Result<Vec<u8>, AppError> {
+pub(crate) async fn convert_webp_to_jpeg(webp_bytes: &[u8]) -> Result<Vec<u8>, AppError> {
     // Create temporary file for WebP
     let temp_dir = std::env::temp_dir();
     let temp_webp = temp_dir.join(format!(
@@ -92,16 +93,16 @@ pub(crate) fn convert_webp_to_jpeg(webp_bytes: &[u8]) -> Result<Vec<u8>, AppErro
         .map_err(|e| AppError::Download(format!("Failed to write WebP temp file: {}", e)))?;
 
     // Convert WebP to JPEG using ffmpeg
-    let output = Command::new("ffmpeg")
-        .args([
-            "-i",
-            temp_webp.to_str().unwrap_or(""),
-            "-q:v",
-            "2",  // High quality
-            "-y", // Overwrite output file
-            temp_jpeg.to_str().unwrap_or(""),
-        ])
-        .output();
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args([
+        "-i",
+        temp_webp.to_str().unwrap_or(""),
+        "-q:v",
+        "2",  // High quality
+        "-y", // Overwrite output file
+        temp_jpeg.to_str().unwrap_or(""),
+    ]);
+    let output = run_with_timeout(&mut cmd, FFMPEG_TIMEOUT).await;
 
     let _ = fs::remove_file(&temp_webp);
 
@@ -126,7 +127,7 @@ pub(crate) fn convert_webp_to_jpeg(webp_bytes: &[u8]) -> Result<Vec<u8>, AppErro
         }
         Err(e) => {
             let _ = fs::remove_file(&temp_jpeg);
-            Err(AppError::Download(format!("Failed to run ffmpeg: {}", e)))
+            Err(e)
         }
     }
 }
@@ -143,7 +144,7 @@ pub(crate) fn convert_webp_to_jpeg(webp_bytes: &[u8]) -> Result<Vec<u8>, AppErro
 /// # Returns
 ///
 /// The compressed JPEG bytes if successful and under 200KB, or `None` otherwise
-pub(crate) fn compress_thumbnail_jpeg(jpeg_bytes: &[u8]) -> Option<Vec<u8>> {
+pub(crate) async fn compress_thumbnail_jpeg(jpeg_bytes: &[u8]) -> Option<Vec<u8>> {
     // Create temporary files
     let temp_dir = std::env::temp_dir();
     let temp_input = temp_dir.join(format!(
@@ -166,18 +167,18 @@ pub(crate) fn compress_thumbnail_jpeg(jpeg_bytes: &[u8]) -> Option<Vec<u8>> {
     }
 
     // Compress using ffmpeg with reduced quality and size
-    let output = Command::new("ffmpeg")
-        .args([
-            "-i",
-            temp_input.to_str().unwrap_or(""),
-            "-vf",
-            "scale=320:320:force_original_aspect_ratio=decrease",
-            "-q:v",
-            "5", // Medium quality for size reduction
-            "-y",
-            temp_output.to_str().unwrap_or(""),
-        ])
-        .output();
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args([
+        "-i",
+        temp_input.to_str().unwrap_or(""),
+        "-vf",
+        "scale=320:320:force_original_aspect_ratio=decrease",
+        "-q:v",
+        "5", // Medium quality for size reduction
+        "-y",
+        temp_output.to_str().unwrap_or(""),
+    ]);
+    let output = run_with_timeout(&mut cmd, FFMPEG_TIMEOUT).await;
 
     let _ = fs::remove_file(&temp_input);
 
@@ -189,7 +190,6 @@ pub(crate) fn compress_thumbnail_jpeg(jpeg_bytes: &[u8]) -> Option<Vec<u8>> {
                     if compressed.len() <= 200 * 1024 {
                         Some(compressed)
                     } else {
-                        // If still too large, could try lower quality but return None for now
                         None
                     }
                 } else {
@@ -220,7 +220,7 @@ pub(crate) fn compress_thumbnail_jpeg(jpeg_bytes: &[u8]) -> Option<Vec<u8>> {
 /// # Returns
 ///
 /// The JPEG thumbnail bytes if successful, or `None` if extraction fails
-pub(crate) fn generate_thumbnail_from_video(video_path: &str) -> Option<Vec<u8>> {
+pub(crate) async fn generate_thumbnail_from_video(video_path: &str) -> Option<Vec<u8>> {
     log::info!("[THUMBNAIL] Generating thumbnail from video file: {}", video_path);
 
     // Create temporary file for thumbnail
@@ -236,21 +236,21 @@ pub(crate) fn generate_thumbnail_from_video(video_path: &str) -> Option<Vec<u8>>
     // Extract first frame using ffmpeg
     // vframes=1 gets a single frame
     // scale limits size to 320x320 max for Telegram
-    let output = Command::new("ffmpeg")
-        .args([
-            "-i",
-            video_path,
-            "-vframes",
-            "1",
-            "-vf",
-            "scale=320:320:force_original_aspect_ratio=decrease",
-            "-q:v",
-            "2", // High quality JPEG (2 = high, 31 = low)
-            "-f",
-            "image2",
-            temp_thumbnail_path.to_str().unwrap_or(""),
-        ])
-        .output();
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args([
+        "-i",
+        video_path,
+        "-vframes",
+        "1",
+        "-vf",
+        "scale=320:320:force_original_aspect_ratio=decrease",
+        "-q:v",
+        "2", // High quality JPEG (2 = high, 31 = low)
+        "-f",
+        "image2",
+        temp_thumbnail_path.to_str().unwrap_or(""),
+    ]);
+    let output = run_with_timeout(&mut cmd, FFMPEG_TIMEOUT).await;
 
     match output {
         Ok(result) => {
@@ -273,7 +273,6 @@ pub(crate) fn generate_thumbnail_from_video(video_path: &str) -> Option<Vec<u8>>
                                 "[THUMBNAIL] Generated thumbnail size ({} KB) exceeds Telegram limit (200 KB). Will try to compress.",
                                 bytes.len() as f64 / 1024.0
                             );
-                            // Telegram may accept files > 200KB but might not display preview
                         }
 
                         Some(bytes)

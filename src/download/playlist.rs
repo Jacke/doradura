@@ -3,6 +3,7 @@
 //! Extracts individual video URLs from playlists for processing.
 
 use crate::core::config;
+use crate::core::process::run_with_timeout;
 use crate::download::metadata::add_cookies_args;
 use serde::Deserialize;
 use std::process::Stdio;
@@ -119,11 +120,9 @@ pub async fn extract_playlist(url: &Url) -> Result<PlaylistInfo, String> {
 
     log::info!("Extracting playlist from: {}", url);
 
-    let output = Command::new(ytdl_bin)
-        .args(&args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
+    let mut cmd = Command::new(ytdl_bin);
+    cmd.args(&args).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let output = run_with_timeout(&mut cmd, config::download::ytdlp_timeout())
         .await
         .map_err(|e| format!("Failed to run yt-dlp: {}", e))?;
 

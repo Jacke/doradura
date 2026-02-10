@@ -21,10 +21,42 @@ use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message, YtDl
 use async_trait::async_trait;
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 use url::Url;
+
+/// Wait for a child process with a timeout. Kills the child on timeout.
+fn wait_with_output_timeout(mut child: Child, timeout: Duration) -> Result<std::process::Output, AppError> {
+    let deadline = std::time::Instant::now() + timeout;
+
+    // Poll with try_wait until the process exits or we time out
+    loop {
+        match child.try_wait() {
+            Ok(Some(_status)) => {
+                // Process exited, collect output
+                return child.wait_with_output().map_err(AppError::Io);
+            }
+            Ok(None) => {
+                // Still running
+                if std::time::Instant::now() >= deadline {
+                    log::error!("yt-dlp process timed out after {}s, killing", timeout.as_secs());
+                    let _ = child.kill();
+                    let _ = child.wait(); // Reap the zombie
+                    return Err(AppError::Download(format!(
+                        "yt-dlp process timed out after {}s",
+                        timeout.as_secs()
+                    )));
+                }
+                std::thread::sleep(Duration::from_millis(500));
+            }
+            Err(e) => {
+                return Err(AppError::Io(e));
+            }
+        }
+    }
+}
 
 /// Known domains handled by yt-dlp (non-exhaustive, used for `supports_url`).
 const YTDLP_DOMAINS: &[&str] = &[
@@ -478,7 +510,7 @@ where
                         .spawn();
 
                     if let Ok(child) = cookies_child {
-                        if let Ok(output) = child.wait_with_output() {
+                        if let Ok(output) = wait_with_output_timeout(child, config::download::ytdlp_timeout()) {
                             if output.status.success() {
                                 log::info!("✅ [WITH_COOKIES] {} download succeeded!", media_type);
                                 return Ok(probe_duration_seconds(download_path));
@@ -552,7 +584,7 @@ where
                         .spawn();
 
                     if let Ok(child) = fixup_child {
-                        if let Ok(output) = child.wait_with_output() {
+                        if let Ok(output) = wait_with_output_timeout(child, config::download::ytdlp_timeout()) {
                             if output.status.success() {
                                 log::info!("✅ [FIXUP_NEVER] {} download succeeded!", media_type);
                                 return Ok(probe_duration_seconds(download_path));
@@ -739,11 +771,28 @@ fn run_ytdlp_with_progress(
         }
     }
 
-    let status = match child.wait() {
-        Ok(s) => s,
-        Err(e) => {
-            log::error!("Downloader process failed: {}", e);
-            return Err((YtDlpErrorType::Unknown, format!("downloader process failed: {}", e)));
+    // Wait for the process with a timeout
+    let ytdlp_timeout = config::download::ytdlp_timeout();
+    let deadline = std::time::Instant::now() + ytdlp_timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(s)) => break s,
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    log::error!("yt-dlp process timed out after {}s, killing", ytdlp_timeout.as_secs());
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err((
+                        YtDlpErrorType::Unknown,
+                        format!("yt-dlp process timed out after {}s", ytdlp_timeout.as_secs()),
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(500));
+            }
+            Err(e) => {
+                log::error!("Downloader process failed: {}", e);
+                return Err((YtDlpErrorType::Unknown, format!("downloader process failed: {}", e)));
+            }
         }
     };
 

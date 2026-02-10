@@ -2,6 +2,7 @@ use crate::core::config;
 use crate::core::error::AppError;
 use crate::core::error_logger::{self, ErrorType, UserContext};
 use crate::core::metrics;
+use crate::core::process::{run_with_timeout, FFMPEG_TIMEOUT};
 use crate::core::rate_limiter::RateLimiter;
 use crate::core::utils::{escape_filename, sanitize_filename};
 use crate::download::metadata::{add_cookies_args, get_metadata_from_ytdlp, probe_video_metadata};
@@ -670,25 +671,23 @@ pub async fn split_video_into_parts(path: &str, target_part_size_bytes: u64) -> 
 
     let output_pattern = format!("{}_part_%03d.mp4", path.trim_end_matches(".mp4"));
 
-    let output = TokioCommand::new("ffmpeg")
-        .args([
-            "-i",
-            path,
-            "-f",
-            "segment",
-            "-segment_time",
-            &segment_duration.to_string(),
-            "-c",
-            "copy", // Use stream copy for speed
-            "-map",
-            "0",
-            "-reset_timestamps",
-            "1",
-            &output_pattern,
-        ])
-        .output()
-        .await
-        .map_err(|e| AppError::Download(format!("Failed to execute ffmpeg split: {}", e)))?;
+    let mut cmd = TokioCommand::new("ffmpeg");
+    cmd.args([
+        "-i",
+        path,
+        "-f",
+        "segment",
+        "-segment_time",
+        &segment_duration.to_string(),
+        "-c",
+        "copy", // Use stream copy for speed
+        "-map",
+        "0",
+        "-reset_timestamps",
+        "1",
+        &output_pattern,
+    ]);
+    let output = run_with_timeout(&mut cmd, FFMPEG_TIMEOUT).await?;
 
     if !output.status.success() {
         return Err(AppError::Download(format!(
@@ -783,10 +782,7 @@ pub async fn burn_subtitles_into_video(
         output_path
     );
 
-    let output = cmd
-        .output()
-        .await
-        .map_err(|e| AppError::Download(format!("Failed to execute ffmpeg: {}", e)))?;
+    let output = run_with_timeout(&mut cmd, FFMPEG_TIMEOUT).await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

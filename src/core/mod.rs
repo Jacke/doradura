@@ -11,6 +11,7 @@ pub mod history;
 pub mod logging;
 pub mod metrics;
 pub mod metrics_server;
+pub mod process;
 pub mod rate_limiter;
 pub mod retry;
 pub mod stats;

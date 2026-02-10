@@ -7,6 +7,7 @@
 use crate::core::config;
 use crate::core::error::AppError;
 use crate::core::metrics;
+use crate::core::process::{run_with_timeout, FFPROBE_TIMEOUT};
 use crate::core::rate_limiter::RateLimiter;
 use crate::download::downloader::{burn_subtitles_into_video, split_video_into_parts};
 use crate::download::metadata::{
@@ -21,7 +22,6 @@ use crate::telegram::cache::PREVIEW_CACHE;
 use crate::telegram::Bot;
 use chrono::{DateTime, Utc};
 use std::fs;
-use std::process::Command;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use tokio::process::Command as TokioCommand;
@@ -111,12 +111,11 @@ pub async fn download_and_send_video(
                 }
                 Ok(false) => {
                     log::error!("Video file missing video or audio stream!");
-                    let _ = Command::new("ffprobe")
-                        .args(["-v", "error", "-show_streams", &actual_file_path])
-                        .output()
-                        .map(|output| {
-                            log::error!("Streams info: {}", String::from_utf8_lossy(&output.stdout));
-                        });
+                    let mut probe_cmd = TokioCommand::new("ffprobe");
+                    probe_cmd.args(["-v", "error", "-show_streams", &*actual_file_path]);
+                    if let Ok(output) = run_with_timeout(&mut probe_cmd, FFPROBE_TIMEOUT).await {
+                        log::error!("Streams info: {}", String::from_utf8_lossy(&output.stdout));
+                    }
                     send_error_with_sticker(&bot_clone, chat_id).await;
                     let _ = progress_msg
                         .update(
@@ -450,7 +449,9 @@ async fn maybe_burn_subtitles(file_path: &str, url: &Url, db_pool: &Option<Arc<D
     add_cookies_args(&mut subtitle_args);
     subtitle_args.push(url.as_str());
 
-    let subtitle_output = TokioCommand::new(ytdl_bin).args(&subtitle_args).output().await;
+    let mut sub_cmd = TokioCommand::new(ytdl_bin);
+    sub_cmd.args(&subtitle_args);
+    let subtitle_output = run_with_timeout(&mut sub_cmd, config::download::ytdlp_timeout()).await;
 
     match subtitle_output {
         Ok(output) if output.status.success() => {

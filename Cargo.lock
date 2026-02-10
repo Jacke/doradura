@@ -1333,7 +1333,6 @@ dependencies = [
  "hex",
  "hmac",
  "http 0.2.12",
- "lazy_static",
  "log",
  "once_cell",
  "parking_lot",

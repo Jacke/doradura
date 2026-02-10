@@ -1003,10 +1003,12 @@ pub async fn send_video_with_retry(
     };
 
     // If thumbnail from URL is not available, generate from video
-    let thumbnail_bytes = thumbnail_bytes.or_else(|| {
+    let thumbnail_bytes = if thumbnail_bytes.is_some() {
+        thumbnail_bytes
+    } else {
         log::info!("[THUMBNAIL] Thumbnail URL not available, trying to generate from video file");
-        generate_thumbnail_from_video(download_path)
-    });
+        generate_thumbnail_from_video(download_path).await
+    };
 
     // Create temporary file for thumbnail if available
     // This is needed for proper thumbnail transmission to Telegram with file name
@@ -1018,7 +1020,7 @@ pub async fn send_video_with_retry(
         let (final_bytes, file_ext) = if format == ImageFormat::WebP {
             log::info!("[THUMBNAIL] Converting WebP thumbnail to JPEG for better Telegram compatibility");
             // Try to use ffmpeg to convert WebP to JPEG
-            match convert_webp_to_jpeg(thumb_bytes) {
+            match convert_webp_to_jpeg(thumb_bytes).await {
                 Ok(jpeg_bytes) => {
                     log::info!(
                         "[THUMBNAIL] Successfully converted WebP to JPEG: {} bytes",
@@ -1047,7 +1049,7 @@ pub async fn send_video_with_retry(
                 "[THUMBNAIL] Thumbnail too large ({} KB), trying to compress",
                 final_bytes.len() as f64 / 1024.0
             );
-            compress_thumbnail_jpeg(&final_bytes).unwrap_or(final_bytes)
+            compress_thumbnail_jpeg(&final_bytes).await.unwrap_or(final_bytes)
         } else {
             final_bytes
         };

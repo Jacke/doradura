@@ -1,7 +1,8 @@
+use crate::core::process::{run_with_timeout, FFPROBE_TIMEOUT};
 use crate::storage::db::{get_connection, DbPool, DownloadHistoryEntry};
 use anyhow::{Context, Result};
-use std::process::Command;
 use std::sync::Arc;
+use tokio::process::Command;
 
 /// Refresh missing metadata for download history entries
 pub async fn refresh_missing_metadata(
@@ -215,17 +216,18 @@ async fn extract_metadata(file_path: &str, format: &str) -> Result<Metadata> {
     let file_size = std::fs::metadata(file_path)?.len() as i64;
 
     // Use ffprobe to get duration and quality/bitrate
-    let output = Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration:stream=height,bit_rate,codec_name",
-            "-of",
-            "json",
-            file_path,
-        ])
-        .output()
+    let mut cmd = Command::new("ffprobe");
+    cmd.args([
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration:stream=height,bit_rate,codec_name",
+        "-of",
+        "json",
+        file_path,
+    ]);
+    let output = run_with_timeout(&mut cmd, FFPROBE_TIMEOUT)
+        .await
         .context("Failed to run ffprobe")?;
 
     if !output.status.success() {
