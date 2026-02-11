@@ -168,7 +168,7 @@ impl YtDlpSource {
                     add_no_cookies_args(args, proxy_option);
                     // Extractor + runtime
                     args.push("--extractor-args");
-                    args.push("youtube:player_client=android,web_music;formats=missing_pot");
+                    args.push("youtube:player_client=default;formats=missing_pot");
                     args.push("--js-runtimes");
                     args.push("deno");
                     args.extend_from_slice(&["--no-check-certificate", "--postprocessor-args"]);
@@ -187,7 +187,7 @@ impl YtDlpSource {
                     ]);
                     add_cookies_args_with_proxy(args, proxy_option);
                     args.push("--extractor-args");
-                    args.push("youtube:player_client=web,web_safari");
+                    args.push("youtube:player_client=default");
                     args.push("--js-runtimes");
                     args.push("deno");
                     args.push("--no-check-certificate");
@@ -207,7 +207,7 @@ impl YtDlpSource {
                     ]);
                     add_cookies_args_with_proxy(args, proxy_option);
                     args.push("--extractor-args");
-                    args.push("youtube:player_client=web,web_safari");
+                    args.push("youtube:player_client=default");
                     args.push("--js-runtimes");
                     args.push("deno");
                     args.push("--no-check-certificate");
@@ -271,7 +271,7 @@ impl YtDlpSource {
                     args.push("Merger:-movflags +faststart");
                     add_no_cookies_args(args, proxy_option);
                     args.push("--extractor-args");
-                    args.push("youtube:player_client=android,web_music;formats=missing_pot");
+                    args.push("youtube:player_client=default;formats=missing_pot");
                     args.push("--js-runtimes");
                     args.push("deno");
                     args.push("--no-check-certificate");
@@ -285,7 +285,7 @@ impl YtDlpSource {
                     args.push("Merger:-movflags +faststart");
                     add_cookies_args_with_proxy(args, proxy_option);
                     args.push("--extractor-args");
-                    args.push("youtube:player_client=web,web_safari");
+                    args.push("youtube:player_client=default");
                     args.push("--js-runtimes");
                     args.push("deno");
                     args.push("--no-check-certificate");
@@ -299,7 +299,7 @@ impl YtDlpSource {
                     args.push("mp4");
                     add_cookies_args_with_proxy(args, proxy_option);
                     args.push("--extractor-args");
-                    args.push("youtube:player_client=web,web_safari");
+                    args.push("youtube:player_client=default");
                     args.push("--js-runtimes");
                     args.push("deno");
                     args.push("--no-check-certificate");
