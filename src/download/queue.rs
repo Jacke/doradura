@@ -1,5 +1,8 @@
 use crate::core::metrics;
 use crate::storage::db::{save_task_to_queue, DbPool};
+
+/// Maximum number of tasks allowed in the queue to prevent unbounded memory growth.
+const MAX_QUEUE_SIZE: usize = 1000;
 use chrono::{DateTime, Utc};
 use log::info; // Использование логирования вместо println
 use std::collections::{HashSet, VecDeque};
@@ -259,6 +262,19 @@ impl DownloadQueue {
         // Добавляем в множество активных задач
         active_tasks.insert(task_key);
         drop(active_tasks); // Освобождаем lock раньше
+
+        // Check queue size limit to prevent unbounded memory growth
+        {
+            let queue = self.queue.lock().await;
+            if queue.len() >= MAX_QUEUE_SIZE {
+                log::warn!(
+                    "Queue is full ({} tasks), rejecting new task: {}",
+                    queue.len(),
+                    task.url
+                );
+                return;
+            }
+        }
 
         // Сохраняем задачу в БД для гарантированной обработки
         if let Some(ref pool) = db_pool {

@@ -937,7 +937,11 @@ pub async fn send_video_with_retry(
     // Download thumbnail if available, otherwise generate from video
     let thumbnail_bytes = if let Some(thumb_url) = thumbnail_url {
         log::info!("[THUMBNAIL] Starting thumbnail download from URL: {}", thumb_url);
-        match reqwest::get(thumb_url).await {
+        let thumb_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .unwrap_or_default();
+        match thumb_client.get(thumb_url).send().await {
             Ok(response) => {
                 log::info!("[THUMBNAIL] Thumbnail HTTP response status: {}", response.status());
 

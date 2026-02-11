@@ -180,7 +180,9 @@ async fn download_telegram_file(bot_token: &str, file_id: &str) -> Result<String
 
     // Get file path from Telegram
     let get_file_url = format!("https://api.telegram.org/bot{}/getFile?file_id={}", bot_token, file_id);
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()?;
     let response = client.get(&get_file_url).send().await?;
     let json: serde_json::Value = response.json().await?;
 

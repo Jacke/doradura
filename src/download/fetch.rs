@@ -34,7 +34,11 @@ use select::predicate::Name;
 /// # }
 /// ```
 pub async fn fetch_song_metadata(url: &str) -> Result<(String, String), AppError> {
-    let resp = reqwest::get(url).await?;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| AppError::Download(format!("HTTP client error: {}", e)))?;
+    let resp = client.get(url).send().await?;
 
     if !resp.status().is_success() {
         return Err(AppError::HttpStatus(resp.status()));

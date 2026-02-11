@@ -84,12 +84,17 @@ pub async fn to_pdf<P: AsRef<Path>>(input_path: P) -> ConversionResult<std::path
     tokio::fs::create_dir_all(&output_dir).await?;
 
     // Run LibreOffice headless conversion
-    let output = Command::new("libreoffice")
-        .args(["--headless", "--convert-to", "pdf", "--outdir"])
-        .arg(&output_dir)
-        .arg(input)
-        .output()
-        .await?;
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(120),
+        Command::new("libreoffice")
+            .args(["--headless", "--convert-to", "pdf", "--outdir"])
+            .arg(&output_dir)
+            .arg(input)
+            .output(),
+    )
+    .await
+    .map_err(|_| ConversionError::LibreOfficeError("LibreOffice timed out after 120s".to_string()))?
+    .map_err(|e| ConversionError::LibreOfficeError(format!("Failed to run LibreOffice: {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

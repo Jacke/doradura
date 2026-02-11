@@ -113,6 +113,7 @@ pub mod queue {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(MAX_CONCURRENT_DOWNLOADS)
+            .max(1) // prevent deadlock from 0 permits
     });
 
     /// Runtime-configurable inter-download delay

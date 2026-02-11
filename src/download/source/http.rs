@@ -39,7 +39,7 @@ impl HttpSource {
             .timeout(std::time::Duration::from_secs(600))
             .connect_timeout(std::time::Duration::from_secs(30))
             .build()
-            .unwrap_or_default();
+            .expect("HTTP client build failed: user_agent + timeout config should always succeed");
 
         Self { client }
     }

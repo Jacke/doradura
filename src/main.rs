@@ -1058,8 +1058,14 @@ async fn process_queue(
     db_pool: Arc<db::DbPool>,
     alert_manager: Option<Arc<alerts::AlertManager>>,
 ) {
-    // Semaphore to limit concurrent downloads
-    let semaphore = Arc::new(tokio::sync::Semaphore::new(config::queue::MAX_CONCURRENT_DOWNLOADS));
+    // Semaphore to limit concurrent downloads (reads QUEUE_MAX_CONCURRENT env var)
+    let max_concurrent = config::queue::max_concurrent_downloads();
+    log::info!(
+        "Download queue: max_concurrent={}, inter_delay={}ms",
+        max_concurrent,
+        config::queue::INTER_DOWNLOAD_DELAY_MS
+    );
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent));
     let mut interval = interval(config::queue::check_interval());
     // Track last download start to enforce global delay between downloads
     let last_download_start = Arc::new(tokio::sync::Mutex::new(std::time::Instant::now()));

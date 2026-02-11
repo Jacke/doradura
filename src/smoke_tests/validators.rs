@@ -3,8 +3,55 @@
 //! Validates downloaded audio and video files using ffprobe.
 
 use std::fs;
+use std::io::Read as _;
 use std::path::Path;
 use std::process::Command;
+use std::time::{Duration, Instant};
+
+/// Timeout for ffprobe operations on media files (30 seconds)
+const FFPROBE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Timeout for binary version checks (5 seconds)
+const VERSION_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Run a command with a timeout. Returns None if timeout exceeded or spawn failed.
+fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Option<std::process::Output> {
+    let mut child = cmd
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .ok()?;
+
+    let start = Instant::now();
+
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut stdout = Vec::new();
+                let mut stderr = Vec::new();
+                if let Some(mut out) = child.stdout.take() {
+                    let _ = out.read_to_end(&mut stdout);
+                }
+                if let Some(mut err) = child.stderr.take() {
+                    let _ = err.read_to_end(&mut stderr);
+                }
+                return Some(std::process::Output { status, stdout, stderr });
+            }
+            Ok(None) => {
+                if start.elapsed() > timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(_) => {
+                let _ = child.kill();
+                return None;
+            }
+        }
+    }
+}
 
 /// Result of audio file validation
 #[derive(Debug, Clone)]
@@ -42,8 +89,8 @@ pub struct VideoFileValidation {
 
 /// Probe duration of a media file using ffprobe
 fn probe_duration(path: &str) -> Option<u32> {
-    let output = Command::new("ffprobe")
-        .args([
+    let output = run_with_timeout(
+        Command::new("ffprobe").args([
             "-v",
             "error",
             "-show_entries",
@@ -51,9 +98,9 @@ fn probe_duration(path: &str) -> Option<u32> {
             "-of",
             "default=noprint_wrappers=1:nokey=1",
             path,
-        ])
-        .output()
-        .ok()?;
+        ]),
+        FFPROBE_TIMEOUT,
+    )?;
 
     if !output.status.success() {
         return None;
@@ -68,8 +115,8 @@ fn probe_duration(path: &str) -> Option<u32> {
 
 /// Probe video dimensions using ffprobe
 fn probe_dimensions(path: &str) -> Option<(u32, u32)> {
-    let width_output = Command::new("ffprobe")
-        .args([
+    let width_output = run_with_timeout(
+        Command::new("ffprobe").args([
             "-v",
             "error",
             "-select_streams",
@@ -79,12 +126,12 @@ fn probe_dimensions(path: &str) -> Option<(u32, u32)> {
             "-of",
             "default=noprint_wrappers=1:nokey=1",
             path,
-        ])
-        .output()
-        .ok()?;
+        ]),
+        FFPROBE_TIMEOUT,
+    )?;
 
-    let height_output = Command::new("ffprobe")
-        .args([
+    let height_output = run_with_timeout(
+        Command::new("ffprobe").args([
             "-v",
             "error",
             "-select_streams",
@@ -94,9 +141,9 @@ fn probe_dimensions(path: &str) -> Option<(u32, u32)> {
             "-of",
             "default=noprint_wrappers=1:nokey=1",
             path,
-        ])
-        .output()
-        .ok()?;
+        ]),
+        FFPROBE_TIMEOUT,
+    )?;
 
     if !width_output.status.success() || !height_output.status.success() {
         return None;
@@ -117,8 +164,8 @@ fn probe_dimensions(path: &str) -> Option<(u32, u32)> {
 
 /// Check if file has a video stream
 fn has_video_stream(path: &str) -> bool {
-    Command::new("ffprobe")
-        .args([
+    run_with_timeout(
+        Command::new("ffprobe").args([
             "-v",
             "error",
             "-select_streams",
@@ -126,16 +173,17 @@ fn has_video_stream(path: &str) -> bool {
             "-show_entries",
             "stream=codec_type",
             path,
-        ])
-        .output()
-        .map(|o| o.status.success() && !o.stdout.is_empty())
-        .unwrap_or(false)
+        ]),
+        FFPROBE_TIMEOUT,
+    )
+    .map(|o| o.status.success() && !o.stdout.is_empty())
+    .unwrap_or(false)
 }
 
 /// Check if file has an audio stream
 fn has_audio_stream(path: &str) -> bool {
-    Command::new("ffprobe")
-        .args([
+    run_with_timeout(
+        Command::new("ffprobe").args([
             "-v",
             "error",
             "-select_streams",
@@ -143,10 +191,11 @@ fn has_audio_stream(path: &str) -> bool {
             "-show_entries",
             "stream=codec_type",
             path,
-        ])
-        .output()
-        .map(|o| o.status.success() && !o.stdout.is_empty())
-        .unwrap_or(false)
+        ]),
+        FFPROBE_TIMEOUT,
+    )
+    .map(|o| o.status.success() && !o.stdout.is_empty())
+    .unwrap_or(false)
 }
 
 /// Validates an MP3 audio file
@@ -274,18 +323,14 @@ pub fn validate_video_file(path: &Path) -> VideoFileValidation {
 
 /// Checks if ffmpeg is available
 pub fn is_ffmpeg_available() -> bool {
-    Command::new("ffmpeg")
-        .arg("-version")
-        .output()
+    run_with_timeout(Command::new("ffmpeg").arg("-version"), VERSION_CHECK_TIMEOUT)
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
 
 /// Checks if ffprobe is available
 pub fn is_ffprobe_available() -> bool {
-    Command::new("ffprobe")
-        .arg("-version")
-        .output()
+    run_with_timeout(Command::new("ffprobe").arg("-version"), VERSION_CHECK_TIMEOUT)
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
@@ -293,14 +338,10 @@ pub fn is_ffprobe_available() -> bool {
 /// Checks if yt-dlp is available
 pub fn is_ytdlp_available() -> bool {
     // Try yt-dlp first, then youtube-dl
-    Command::new("yt-dlp")
-        .arg("--version")
-        .output()
+    run_with_timeout(Command::new("yt-dlp").arg("--version"), VERSION_CHECK_TIMEOUT)
         .map(|o| o.status.success())
-        .unwrap_or_else(|_| {
-            Command::new("youtube-dl")
-                .arg("--version")
-                .output()
+        .unwrap_or_else(|| {
+            run_with_timeout(Command::new("youtube-dl").arg("--version"), VERSION_CHECK_TIMEOUT)
                 .map(|o| o.status.success())
                 .unwrap_or(false)
         })
