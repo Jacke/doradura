@@ -210,11 +210,7 @@ pub(crate) async fn send_queue_position_message(
         i18n::t(&lang, "commands.task_added")
     };
 
-    if let Err(e) = bot
-        .send_message(chat_id, message)
-        .parse_mode(ParseMode::MarkdownV2)
-        .await
-    {
+    if let Err(e) = bot.send_message(chat_id, message).parse_mode(ParseMode::Html).await {
         log::warn!("Failed to send queue position message: {:?}", e);
     }
 }
