@@ -220,7 +220,7 @@ pub fn get_connection(pool: &DbPool) -> Result<DbConnection, r2d2::Error> {
 /// # Returns
 ///
 /// Returns a `DbConnection` on success or an `r2d2::Error` if all retries fail.
-pub fn get_connection_with_retry(pool: &DbPool, max_retries: u32) -> Result<DbConnection, r2d2::Error> {
+pub async fn get_connection_with_retry(pool: &DbPool, max_retries: u32) -> Result<DbConnection, r2d2::Error> {
     let mut last_error = None;
     let mut delay_ms = 10u64; // Start with 10ms
 
@@ -243,7 +243,7 @@ pub fn get_connection_with_retry(pool: &DbPool, max_retries: u32) -> Result<DbCo
                         pool.state().idle_connections,
                         pool.state().connections - pool.state().idle_connections
                     );
-                    std::thread::sleep(Duration::from_millis(delay_ms));
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                     delay_ms = delay_ms.saturating_mul(2).min(500); // Cap at 500ms
                 }
             }

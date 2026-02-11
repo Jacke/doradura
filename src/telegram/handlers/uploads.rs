@@ -216,7 +216,7 @@ pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::
                             .and_then(|f| f.rsplit('.').next().map(|s| s.to_lowercase()))
                     });
 
-                // Generate title from filename or default
+                // Generate title: filename > caption > fallback
                 let title = filename
                     .as_ref()
                     .map(|f| {
@@ -224,6 +224,17 @@ pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::
                         f.rsplit_once('.')
                             .map(|(name, _)| name.to_string())
                             .unwrap_or_else(|| f.clone())
+                    })
+                    .or_else(|| {
+                        // Use message caption as title if no filename
+                        msg.caption().map(|c| {
+                            let trimmed = c.trim();
+                            if trimmed.len() > 100 {
+                                trimmed.chars().take(100).collect()
+                            } else {
+                                trimmed.to_string()
+                            }
+                        }).filter(|s| !s.is_empty())
                     })
                     .unwrap_or_else(|| {
                         format!(

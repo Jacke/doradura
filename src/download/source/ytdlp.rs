@@ -49,7 +49,8 @@ fn wait_with_output_timeout(mut child: Child, timeout: Duration) -> Result<std::
                         timeout.as_secs()
                     )));
                 }
-                std::thread::sleep(Duration::from_millis(500));
+                // Poll interval inside spawn_blocking — std::thread::sleep is correct here
+                std::thread::sleep(Duration::from_millis(200));
             }
             Err(e) => {
                 return Err(AppError::Io(e));
@@ -793,7 +794,8 @@ fn run_ytdlp_with_progress(
                         format!("yt-dlp process timed out after {}s", ytdlp_timeout.as_secs()),
                     ));
                 }
-                std::thread::sleep(Duration::from_millis(500));
+                // Poll interval inside spawn_blocking — std::thread::sleep is correct here
+                std::thread::sleep(Duration::from_millis(200));
             }
             Err(e) => {
                 log::error!("Downloader process failed: {}", e);
