@@ -81,8 +81,14 @@ async fn download_nightly_ytdlp() -> Result<(String, String), AppError> {
         }
     }
 
-    // Устанавливаем права на выполнение
-    let _ = TokioCommand::new("chmod").args(["a+rx", ytdl_bin]).output().await;
+    // Set executable permissions using native API (avoids external command)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(e) = std::fs::set_permissions(ytdl_bin, std::fs::Permissions::from_mode(0o755)) {
+            log::warn!("Failed to set yt-dlp permissions: {}", e);
+        }
+    }
 
     let new_version = get_current_version();
     log::info!("yt-dlp updated: {} → {}", old_version, new_version);

@@ -250,8 +250,12 @@ pub fn get_connection_with_retry(pool: &DbPool, max_retries: u32) -> Result<DbCo
         }
     }
 
-    // All retries failed
-    let e = last_error.expect("last_error must be set after loop");
+    // All retries failed — last_error is always Some after the loop,
+    // but we avoid expect() to be defensive.
+    let e = match last_error {
+        Some(e) => e,
+        None => unreachable!("last_error must be set after loop"),
+    };
     log::error!(
         "DB pool exhaustion after {} retries: {} (pool: {} idle, {} in use)",
         max_retries,
@@ -291,7 +295,7 @@ pub fn get_connection_legacy() -> Result<Connection> {
 /// Возвращает ошибку если пользователь с таким ID уже существует или произошла ошибка БД.
 pub fn create_user(conn: &DbConnection, telegram_id: i64, username: Option<String>) -> Result<()> {
     // Use a transaction to ensure both inserts succeed or fail together
-    conn.execute_batch("BEGIN")?;
+    conn.execute_batch("BEGIN IMMEDIATE")?;
 
     let result = (|| {
         conn.execute(
@@ -314,7 +318,9 @@ pub fn create_user(conn: &DbConnection, telegram_id: i64, username: Option<Strin
             Ok(())
         }
         Err(e) => {
-            let _ = conn.execute_batch("ROLLBACK");
+            if let Err(rb_err) = conn.execute_batch("ROLLBACK") {
+                log::error!("ROLLBACK failed: {}", rb_err);
+            }
             Err(e)
         }
     }
@@ -343,7 +349,7 @@ pub fn create_user_with_language(
     language: &str,
 ) -> Result<()> {
     // Use a transaction to ensure both inserts succeed or fail together
-    conn.execute_batch("BEGIN")?;
+    conn.execute_batch("BEGIN IMMEDIATE")?;
 
     let result = (|| {
         conn.execute(
@@ -367,7 +373,9 @@ pub fn create_user_with_language(
             Ok(())
         }
         Err(e) => {
-            let _ = conn.execute_batch("ROLLBACK");
+            if let Err(rb_err) = conn.execute_batch("ROLLBACK") {
+                log::error!("ROLLBACK failed: {}", rb_err);
+            }
             Err(e)
         }
     }

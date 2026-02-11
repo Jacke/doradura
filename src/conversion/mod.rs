@@ -104,14 +104,15 @@ pub async fn get_file_size<P: AsRef<Path>>(path: P) -> ConversionResult<u64> {
     Ok(metadata.len())
 }
 
-/// Generate a temporary output path with given extension
+/// Generate a temporary output path with given extension.
+/// Uses `std::env::temp_dir()` for portability and `u64` random for higher entropy.
 pub fn temp_output_path(prefix: &str, extension: &str) -> std::path::PathBuf {
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis();
-    let rand: u32 = rand::random();
-    std::path::PathBuf::from(format!("/tmp/{}_{:x}_{:x}.{}", prefix, timestamp, rand, extension))
+    let rand: u64 = rand::random();
+    std::env::temp_dir().join(format!("{}_{:x}_{:016x}.{}", prefix, timestamp, rand, extension))
 }
 
 #[cfg(test)]
@@ -141,7 +142,11 @@ mod tests {
     #[test]
     fn test_temp_output_path_in_tmp_dir() {
         let path = temp_output_path("test", "flac");
-        assert!(path.starts_with("/tmp/"), "Path should be in /tmp/");
+        assert!(
+            path.starts_with(std::env::temp_dir()),
+            "Path should be in temp dir: {:?}",
+            path
+        );
     }
 
     #[tokio::test]

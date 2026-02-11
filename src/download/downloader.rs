@@ -569,20 +569,19 @@ pub async fn download_and_send_subtitles(
                 };
                 metrics::record_download_failure(format, error_type);
 
-                // Log error to database
-                let user_ctx = UserContext::new(chat_id.0, None);
+                // Log error to database (offload to blocking thread pool)
                 let err_type = if error_type == "timeout" {
                     ErrorType::Timeout
                 } else {
                     ErrorType::DownloadFailed
                 };
-                error_logger::log_error(
-                    err_type,
-                    &e.to_string(),
-                    &user_ctx,
-                    Some(url.as_str()),
-                    Some(&format!(r#"{{"format":"{}"}}"#, format)),
-                );
+                let err_msg = e.to_string();
+                let url_str = url.to_string();
+                let ctx_str = format!(r#"{{"format":"{}"}}"#, format);
+                let user_ctx = UserContext::new(chat_id.0, None);
+                tokio::task::spawn_blocking(move || {
+                    error_logger::log_error(err_type, &err_msg, &user_ctx, Some(&url_str), Some(&ctx_str));
+                });
             }
         }
 

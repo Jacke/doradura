@@ -1245,22 +1245,23 @@ async fn process_queue(
                             if let Err(db_err) = db::mark_task_failed(&conn, &task_id, &user_error_msg) {
                                 log::error!("Failed to mark task {} as failed in DB: {}", task_id, db_err);
                             } else {
-                                // Notify the administrator only if the task has not exceeded retry limits
-                                if let Ok(conn) = db::get_connection(&db_pool) {
-                                    if let Ok(Some(task_entry)) = db::get_task_by_id(&conn, &task_id) {
-                                        if task_entry.retry_count < config::admin::MAX_TASK_RETRIES {
-                                            notify_admin_task_failed(
-                                                bot.clone(),
-                                                Arc::clone(&db_pool),
-                                                &task_id,
-                                                task_chat_id.0,
-                                                &task_url,
-                                                &admin_error_msg,
-                                                None,
-                                            )
-                                            .await;
-                                        }
-                                    }
+                                // Check retry count before dropping the connection
+                                let should_notify = db::get_task_by_id(&conn, &task_id)
+                                    .ok()
+                                    .flatten()
+                                    .is_some_and(|t| t.retry_count < config::admin::MAX_TASK_RETRIES);
+                                drop(conn); // release connection before async work
+                                if should_notify {
+                                    notify_admin_task_failed(
+                                        bot.clone(),
+                                        Arc::clone(&db_pool),
+                                        &task_id,
+                                        task_chat_id.0,
+                                        &task_url,
+                                        &admin_error_msg,
+                                        None,
+                                    )
+                                    .await;
                                 }
                             }
                         }

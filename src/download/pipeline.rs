@@ -438,6 +438,14 @@ pub async fn execute(
         false
     };
 
+    // Verify downloaded file exists before attempting send
+    if !std::path::Path::new(&download_output.file_path).exists() {
+        return Err(PipelineError::Operational(AppError::Download(format!(
+            "Downloaded file not found: {}",
+            download_output.file_path
+        ))));
+    }
+
     let (sent_message, file_size) = match format {
         PipelineFormat::Audio { .. } => send_audio_with_retry(
             bot,
@@ -712,18 +720,17 @@ pub async fn handle_pipeline_error(
     };
     metrics::record_download_failure(format.label(), error_type);
 
-    // Log to error logger
-    let user_ctx = UserContext::new(chat_id.0, None);
+    // Log to error logger (offload to blocking thread pool)
     let err_type = match error_type {
         "file_too_large" => ErrorType::FileTooLarge,
         "timeout" => ErrorType::Timeout,
         _ => ErrorType::DownloadFailed,
     };
-    error_logger::log_error(
-        err_type,
-        &error_str,
-        &user_ctx,
-        Some(url.as_str()),
-        Some(&format!(r#"{{"format":"{}"}}"#, format.label())),
-    );
+    let err_msg = error_str.clone();
+    let url_str = url.to_string();
+    let ctx_str = format!(r#"{{"format":"{}"}}"#, format.label());
+    let user_ctx = UserContext::new(chat_id.0, None);
+    tokio::task::spawn_blocking(move || {
+        error_logger::log_error(err_type, &err_msg, &user_ctx, Some(&url_str), Some(&ctx_str));
+    });
 }

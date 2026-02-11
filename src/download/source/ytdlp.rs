@@ -531,11 +531,17 @@ where
                             ));
 
                             if matches!(cookies_error_type, YtDlpErrorType::InvalidCookies) {
-                                log::warn!("🍪 [COOKIE_INVALID] Attempting refresh...");
+                                log::warn!("🍪 [COOKIE_INVALID] Requesting async cookie refresh...");
                                 let url_for_report = url_str.to_string();
-                                let should_retry = runtime_handle.block_on(async {
-                                    report_and_wait_for_refresh("InvalidCookies", &url_for_report).await
+                                // Spawn async refresh on the tokio runtime and wait via channel.
+                                // This avoids Handle::block_on() which can risk deadlocks
+                                // when the spawn_blocking pool is saturated.
+                                let (tx, rx) = std::sync::mpsc::channel();
+                                runtime_handle.spawn(async move {
+                                    let result = report_and_wait_for_refresh("InvalidCookies", &url_for_report).await;
+                                    let _ = tx.send(result);
                                 });
+                                let should_retry = rx.recv_timeout(std::time::Duration::from_secs(20)).unwrap_or(false);
                                 if should_retry {
                                     log::info!("🔄 Cookie refresh successful, will retry");
                                     last_error = Some(AppError::Download(error_msg.clone()));

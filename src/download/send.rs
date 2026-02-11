@@ -36,6 +36,7 @@ const DEFAULT_BOT_API_LOG_PATH: &str = "bot-api-data/logs/telegram-bot-api.log";
 const DEFAULT_BOT_API_LOG_TAIL_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Reads the tail of a log file up to `max_bytes`.
+/// Uses `from_utf8_lossy` to handle SeekFrom::End landing mid-UTF-8 character.
 pub(crate) fn read_log_tail(path: &PathBuf, max_bytes: u64) -> Result<String, std::io::Error> {
     let mut file = std::fs::File::open(path)?;
     let len = file.metadata()?.len();
@@ -44,9 +45,9 @@ pub(crate) fn read_log_tail(path: &PathBuf, max_bytes: u64) -> Result<String, st
     } else {
         file.seek(SeekFrom::Start(0))?;
     }
-    let mut buf = String::new();
-    file.read_to_string(&mut buf)?;
-    Ok(buf)
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf)?;
+    Ok(String::from_utf8_lossy(&buf).into_owned())
 }
 
 /// Logs Bot API upload speed by parsing the local Bot API server logs.
@@ -796,7 +797,11 @@ where
         }
     }
 
-    unreachable!()
+    // All loop iterations return; this is only reachable if max_attempts == 0
+    Err(AppError::Download(format!(
+        "Failed to send {} file: no retry attempts configured",
+        file_type
+    )))
 }
 
 /// Send audio file with retry logic.
