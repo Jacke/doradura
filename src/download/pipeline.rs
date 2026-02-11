@@ -674,7 +674,10 @@ pub async fn handle_pipeline_error(
             Стэн уже знает и скоро обновит!\n\
             Попробуй позже или другое видео.",
         )
-    } else if error_str.to_lowercase().contains("bot detection") || error_str.contains("confirm you're not a bot") {
+    } else if error_str.to_lowercase().contains("bot detection")
+        || error_str.contains("confirm you're not a bot")
+        || error_str.contains("заблокировал")
+    {
         Some(
             "YouTube заблокировал бота\n\n\
             Нужно настроить cookies.\n\
@@ -702,7 +705,7 @@ pub async fn handle_pipeline_error(
 
     // Notify admin about every download error with details
     let admin_id = *config::admin::ADMIN_USER_ID;
-    if admin_id != 0 && chat_id.0 != admin_id {
+    if admin_id != 0 {
         let admin_msg = format!(
             "🚨 Ошибка скачивания\nUser: {}\nURL: {}\nFormat: {}\nError: {}",
             chat_id.0,

@@ -125,7 +125,8 @@ RUN addgroup -g 2000 shareddata && \
   adduser -D -u 1000 -G shareddata botuser && \
   addgroup telegram-bot-api shareddata && \
   addgroup botuser telegram-bot-api && \
-  mkdir -p /app /data && \
+  mkdir -p /app /data /home/botuser/.cache && \
+  chown 1000:2000 /home/botuser/.cache && \
   chown 1000:2000 /app && \
   chown telegram-bot-api:shareddata /data && \
   chmod 775 /data
@@ -307,6 +308,8 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/doradura-bot/type && \
     's6-env TEMP_FILES_DIR=/data' \
     's6-env BOT_API_DATA_DIR=/data' \
     's6-env BOT_API_URL=http://localhost:8081' \
+    's6-env HOME=/home/botuser' \
+    's6-env XDG_CACHE_HOME=/home/botuser/.cache' \
     's6-env LOG_FILE_PATH=/data/app.log' \
     's6-env METRICS_ENABLED=true' \
     's6-env METRICS_PORT=9090' \
