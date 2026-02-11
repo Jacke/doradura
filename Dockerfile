@@ -99,7 +99,10 @@ RUN apk add --no-cache deno --repository=https://dl-cdn.alpinelinux.org/alpine/e
   deno --version && echo "Deno available for yt-dlp --js-runtimes deno"
 
 # Install yt-dlp from nightly builds (latest fixes for YouTube compatibility)
-RUN wget --progress=dot:giga https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp -O /usr/local/bin/yt-dlp && \
+# Retry up to 3 times with 5s wait to handle transient GitHub 502 errors
+RUN wget --tries=3 --waitretry=5 --progress=dot:giga \
+  https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp \
+  -O /usr/local/bin/yt-dlp && \
   chmod a+rx /usr/local/bin/yt-dlp
 
 # Install all Python dependencies in one layer
