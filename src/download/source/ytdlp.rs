@@ -21,43 +21,11 @@ use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message, YtDl
 use async_trait::async_trait;
 use std::collections::VecDeque;
 use std::io::{BufRead, BufReader};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use url::Url;
-
-/// Wait for a child process with a timeout. Kills the child on timeout.
-fn wait_with_output_timeout(mut child: Child, timeout: Duration) -> Result<std::process::Output, AppError> {
-    let deadline = std::time::Instant::now() + timeout;
-
-    // Poll with try_wait until the process exits or we time out
-    loop {
-        match child.try_wait() {
-            Ok(Some(_status)) => {
-                // Process exited, collect output
-                return child.wait_with_output().map_err(AppError::Io);
-            }
-            Ok(None) => {
-                // Still running
-                if std::time::Instant::now() >= deadline {
-                    log::error!("yt-dlp process timed out after {}s, killing", timeout.as_secs());
-                    let _ = child.kill();
-                    let _ = child.wait(); // Reap the zombie
-                    return Err(AppError::Download(format!(
-                        "yt-dlp process timed out after {}s",
-                        timeout.as_secs()
-                    )));
-                }
-                // Poll interval inside spawn_blocking — std::thread::sleep is correct here
-                std::thread::sleep(Duration::from_millis(200));
-            }
-            Err(e) => {
-                return Err(AppError::Io(e));
-            }
-        }
-    }
-}
 
 /// Known domains handled by yt-dlp (non-exhaustive, used for `supports_url`).
 const YTDLP_DOMAINS: &[&str] = &[
@@ -135,8 +103,9 @@ impl DownloadSource for YtDlpSource {
         )
     }
 
-    async fn get_metadata(&self, url: &Url) -> Result<(String, String), AppError> {
-        get_metadata_from_ytdlp(None, None, url).await
+    async fn get_metadata(&self, url: &Url) -> Result<crate::download::source::MediaMetadata, AppError> {
+        let (title, artist) = get_metadata_from_ytdlp(None, None, url).await?;
+        Ok(crate::download::source::MediaMetadata { title, artist })
     }
 
     async fn estimate_size(&self, url: &Url) -> Option<u64> {
@@ -359,13 +328,198 @@ impl YtDlpSource {
     }
 }
 
+/// Result from Tier 2 (cookies) attempt, signaling whether the outer proxy loop should retry.
+enum Tier2Outcome {
+    /// Download succeeded
+    Success,
+    /// Cookies were refreshed; the outer loop should `continue` to retry from Tier 1
+    CookieRefreshed,
+    /// Tier 2 failed (non-recoverable at this proxy level)
+    Failed,
+}
+
+/// Try Tier 1 (no cookies) download with progress reporting.
+///
+/// Builds args via `tier1_args_fn`, runs yt-dlp with live progress, returns
+/// `Ok(())` on success or `Err((error_type, stderr))` on failure.
+fn try_tier1<F>(
+    ytdl_bin: &str,
+    download_path: &str,
+    url_str: &str,
+    media_type: &str,
+    extra_arg: &str,
+    section_spec: Option<&str>,
+    proxy_option: Option<&crate::download::metadata::ProxyConfig>,
+    progress_tx: &mpsc::UnboundedSender<SourceProgress>,
+    tier1_args_fn: &F,
+) -> Result<(), (YtDlpErrorType, String)>
+where
+    F: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
+{
+    let mut args: Vec<&str> = build_common_args(download_path);
+    tier1_args_fn(&mut args, proxy_option);
+
+    if media_type == "audio" {
+        args.push(extra_arg);
+    } else if let Some(pos) = args.iter().position(|a| *a == "--format") {
+        args.insert(pos + 1, extra_arg);
+    }
+    append_section_args(&mut args, section_spec);
+    args.push(url_str);
+
+    log::debug!(
+        "yt-dlp command for {} download: {} {}",
+        media_type,
+        ytdl_bin,
+        args.join(" ")
+    );
+    run_ytdlp_with_progress(ytdl_bin, &args, progress_tx)
+}
+
+/// Try Tier 2 (cookies + PO token) download with progress reporting.
+///
+/// Returns `Tier2Outcome` to signal the outer loop:
+/// - `Success` — download completed
+/// - `CookieRefreshed` — cookies were refreshed, caller should retry from Tier 1
+/// - `Failed` — Tier 2 failed, continue to next tier/proxy
+fn try_tier2<F>(
+    ytdl_bin: &str,
+    download_path: &str,
+    url_str: &str,
+    media_type: &str,
+    extra_arg: &str,
+    section_spec: Option<&str>,
+    proxy_option: Option<&crate::download::metadata::ProxyConfig>,
+    progress_tx: &mpsc::UnboundedSender<SourceProgress>,
+    tier2_args_fn: &F,
+    runtime_handle: &tokio::runtime::Handle,
+) -> Tier2Outcome
+where
+    F: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
+{
+    crate::download::cookies::log_cookie_file_diagnostics(&format!("{}_TIER2_BEFORE", media_type.to_uppercase()));
+
+    let _ = std::fs::remove_file(download_path);
+    cleanup_partial_download(download_path);
+
+    let mut cookies_args: Vec<&str> = build_common_args_minimal(download_path);
+    tier2_args_fn(&mut cookies_args, proxy_option);
+    if media_type == "audio" {
+        cookies_args.push(extra_arg);
+    } else if let Some(pos) = cookies_args.iter().position(|a| *a == "--format") {
+        cookies_args.insert(pos + 1, extra_arg);
+    }
+    append_section_args(&mut cookies_args, section_spec);
+    cookies_args.push(url_str);
+
+    log::info!(
+        "🔑 [WITH_COOKIES] Attempting {} download WITH cookies + PO Token...",
+        media_type
+    );
+
+    match run_ytdlp_with_progress(ytdl_bin, &cookies_args, progress_tx) {
+        Ok(()) => {
+            log::info!("✅ [WITH_COOKIES] {} download succeeded!", media_type);
+            return Tier2Outcome::Success;
+        }
+        Err((cookies_error_type, _cookies_stderr)) => {
+            log::error!(
+                "❌ [TIER2_FAILED] {} with-cookies failed: error={:?}",
+                media_type,
+                cookies_error_type
+            );
+
+            crate::download::cookies::log_cookie_file_diagnostics(&format!(
+                "{}_TIER2_AFTER_FAIL",
+                media_type.to_uppercase()
+            ));
+
+            if matches!(cookies_error_type, YtDlpErrorType::InvalidCookies) {
+                log::warn!("🍪 [COOKIE_INVALID] Requesting async cookie refresh...");
+                let url_for_report = url_str.to_string();
+                let (tx, rx) = std::sync::mpsc::channel();
+                runtime_handle.spawn(async move {
+                    let result = report_and_wait_for_refresh("InvalidCookies", &url_for_report).await;
+                    let _ = tx.send(result);
+                });
+                let should_retry = rx.recv_timeout(std::time::Duration::from_secs(20)).unwrap_or(false);
+                if should_retry {
+                    log::info!("🔄 Cookie refresh successful, will retry");
+                    std::thread::sleep(std::time::Duration::from_secs(3));
+                    return Tier2Outcome::CookieRefreshed;
+                }
+            } else if matches!(cookies_error_type, YtDlpErrorType::BotDetection) {
+                log::error!("🤖 [BOT_DETECTED] Tier 2 bot detection WITH cookies.");
+                crate::download::cookies::log_cookie_file_diagnostics("BOT_DETECTED_WITH_COOKIES");
+            }
+        }
+    }
+
+    log::error!(
+        "💀 [BOTH_TIERS_FAILED] Both Tier 1 and Tier 2 failed for {}",
+        media_type
+    );
+    Tier2Outcome::Failed
+}
+
+/// Try Tier 3 (--fixup never) download with progress reporting.
+///
+/// Returns `true` if the download succeeded.
+fn try_tier3<F>(
+    ytdl_bin: &str,
+    download_path: &str,
+    url_str: &str,
+    media_type: &str,
+    extra_arg: &str,
+    section_spec: Option<&str>,
+    proxy_option: Option<&crate::download::metadata::ProxyConfig>,
+    progress_tx: &mpsc::UnboundedSender<SourceProgress>,
+    tier3_args_fn: &F,
+) -> bool
+where
+    F: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
+{
+    log::warn!("🔧 Postprocessing error, retrying with --fixup never...");
+
+    let _ = std::fs::remove_file(download_path);
+    cleanup_partial_download(download_path);
+
+    let mut fixup_args: Vec<&str> = build_common_args_minimal(download_path);
+    tier3_args_fn(&mut fixup_args, proxy_option);
+    if media_type == "video" {
+        if let Some(pos) = fixup_args.iter().position(|a| *a == "--format") {
+            fixup_args.insert(pos + 1, extra_arg);
+        }
+    }
+    append_section_args(&mut fixup_args, section_spec);
+    fixup_args.push(url_str);
+
+    log::info!(
+        "🔧 [FIXUP_NEVER] Attempting {} download without postprocessing...",
+        media_type
+    );
+
+    match run_ytdlp_with_progress(ytdl_bin, &fixup_args, progress_tx) {
+        Ok(()) => {
+            log::info!("✅ [FIXUP_NEVER] {} download succeeded!", media_type);
+            true
+        }
+        Err((_error_type, stderr_text)) => {
+            log::warn!(
+                "❌ [FIXUP_NEVER] Failed: {}",
+                &stderr_text[..std::cmp::min(500, stderr_text.len())]
+            );
+            false
+        }
+    }
+}
+
 /// Core download logic with the v5.0 three-tier fallback chain and proxy failover.
 ///
-/// This function encapsulates the duplicated logic from audio.rs and video.rs:
-///   - Proxy chain: WARP → Direct
-///   - Tier 1: No cookies (yt-dlp 2026+ modern mode)
-///   - Tier 2: With cookies + PO token (full authentication)
-///   - Tier 3: --fixup never (skip postprocessing on ffmpeg errors)
+/// Orchestrates three tiers per proxy:
+///   - Tier 1: No cookies (yt-dlp 2026+ modern mode) — with progress
+///   - Tier 2: With cookies + PO token (full authentication) — with progress
+///   - Tier 3: --fixup never (skip postprocessing on ffmpeg errors) — with progress
 ///
 /// The `tier1_args_fn`, `tier2_args_fn`, and `tier3_args_fn` closures add
 /// format-specific arguments (audio vs video) for each tier.
@@ -375,9 +529,9 @@ fn download_with_fallback_chain<F1, F2, F3>(
     download_path: &str,
     progress_tx: &mpsc::UnboundedSender<SourceProgress>,
     media_type: &str,
-    _tier1_args_fn: F1,
-    _tier2_args_fn: F2,
-    _tier3_args_fn: F3,
+    tier1_args_fn: F1,
+    tier2_args_fn: F2,
+    tier3_args_fn: F3,
     extra_arg: &str,
     time_range: Option<&(String, String)>,
 ) -> Result<Option<u32>, AppError>
@@ -390,8 +544,6 @@ where
     let proxy_chain = get_proxy_chain();
     let total_proxies = proxy_chain.len();
     let mut last_error: Option<AppError> = None;
-
-    // Pre-build the section spec string so it lives long enough to be borrowed
     let section_spec = time_range.map(|(start, end)| format!("*{}-{}", start, end));
 
     for (attempt, proxy_option) in proxy_chain.into_iter().enumerate() {
@@ -408,34 +560,23 @@ where
             proxy_name
         );
 
-        // Clean up partial downloads from previous attempt
         if attempt > 0 {
             let _ = std::fs::remove_file(download_path);
             cleanup_partial_download(download_path);
         }
 
-        // ========== TIER 1: No cookies ==========
-        let mut args: Vec<&str> = build_common_args(download_path);
-        _tier1_args_fn(&mut args, proxy_option.as_ref());
-
-        // For audio: need postprocessor_args; for video: need format_arg
-        // Both are passed via extra_arg
-        if media_type == "audio" {
-            args.push(extra_arg); // postprocessor_args
-        } else {
-            // Video: insert format_arg after "--format"
-            // Find the "--format" entry and insert the value
-            if let Some(pos) = args.iter().position(|a| *a == "--format") {
-                args.insert(pos + 1, extra_arg);
-            }
-        }
-        append_section_args(&mut args, section_spec.as_deref());
-        args.push(url_str);
-
-        let command_str = format!("{} {}", ytdl_bin, args.join(" "));
-        log::debug!("yt-dlp command for {} download: {}", media_type, command_str);
-
-        match run_ytdlp_with_progress(ytdl_bin, &args, progress_tx) {
+        // ── Tier 1: No cookies ──
+        match try_tier1(
+            ytdl_bin,
+            download_path,
+            url_str,
+            media_type,
+            extra_arg,
+            section_spec.as_deref(),
+            proxy_option.as_ref(),
+            progress_tx,
+            &tier1_args_fn,
+        ) {
             Ok(()) => {
                 log::info!(
                     "✅ {} download succeeded using [{}] (attempt {}/{})",
@@ -455,10 +596,7 @@ where
                     &stderr_text[..std::cmp::min(500, stderr_text.len())]
                 );
 
-                // For pure network errors (timeout, connection refused, DNS), skip
-                // straight to the next proxy — Tier 2 won't help if the proxy is down.
-                // But for BotDetection, try Tier 2 (cookies) on the SAME proxy first,
-                // because authentication often resolves bot detection even on flagged IPs.
+                // Network-only errors: skip Tier 2/3, try next proxy
                 let is_network_only = matches!(error_type, YtDlpErrorType::NetworkError)
                     || (is_proxy_related_error(&stderr_text) && !matches!(error_type, YtDlpErrorType::BotDetection));
 
@@ -472,137 +610,53 @@ where
                     continue;
                 }
 
-                // ========== TIER 2: With cookies + PO Token ==========
-                if matches!(
+                // ── Tier 2: With cookies + PO Token ──
+                let should_try_tier2 = matches!(
                     error_type,
                     YtDlpErrorType::InvalidCookies | YtDlpErrorType::BotDetection | YtDlpErrorType::NetworkError
-                ) {
+                );
+                if should_try_tier2 {
                     log::warn!(
                         "🍪 [TIER1→TIER2] No-cookies mode failed (error={:?}), trying WITH cookies...",
                         error_type
                     );
-                    crate::download::cookies::log_cookie_file_diagnostics(&format!(
-                        "{}_TIER2_BEFORE",
-                        media_type.to_uppercase()
-                    ));
 
-                    let _ = std::fs::remove_file(download_path);
-                    cleanup_partial_download(download_path);
-
-                    let mut cookies_args: Vec<&str> = build_common_args_minimal(download_path);
-                    _tier2_args_fn(&mut cookies_args, proxy_option.as_ref());
-                    if media_type == "audio" {
-                        cookies_args.push(extra_arg);
-                    } else if let Some(pos) = cookies_args.iter().position(|a| *a == "--format") {
-                        cookies_args.insert(pos + 1, extra_arg);
-                    }
-                    append_section_args(&mut cookies_args, section_spec.as_deref());
-                    cookies_args.push(url_str);
-
-                    log::info!(
-                        "🔑 [WITH_COOKIES] Attempting {} download WITH cookies + PO Token...",
-                        media_type
-                    );
-
-                    let cookies_child = Command::new(ytdl_bin)
-                        .args(&cookies_args)
-                        .stdout(Stdio::piped())
-                        .stderr(Stdio::piped())
-                        .spawn();
-
-                    if let Ok(child) = cookies_child {
-                        if let Ok(output) = wait_with_output_timeout(child, config::download::ytdlp_timeout()) {
-                            if output.status.success() {
-                                log::info!("✅ [WITH_COOKIES] {} download succeeded!", media_type);
-                                return Ok(probe_duration_seconds(download_path));
-                            }
-
-                            let cookies_stderr = String::from_utf8_lossy(&output.stderr);
-                            let cookies_error_type = analyze_ytdlp_error(&cookies_stderr);
-
-                            log::error!(
-                                "❌ [TIER2_FAILED] {} with-cookies failed: error={:?}",
-                                media_type,
-                                cookies_error_type,
-                            );
-
-                            crate::download::cookies::log_cookie_file_diagnostics(&format!(
-                                "{}_TIER2_AFTER_FAIL",
-                                media_type.to_uppercase()
-                            ));
-
-                            if matches!(cookies_error_type, YtDlpErrorType::InvalidCookies) {
-                                log::warn!("🍪 [COOKIE_INVALID] Requesting async cookie refresh...");
-                                let url_for_report = url_str.to_string();
-                                // Spawn async refresh on the tokio runtime and wait via channel.
-                                // This avoids Handle::block_on() which can risk deadlocks
-                                // when the spawn_blocking pool is saturated.
-                                let (tx, rx) = std::sync::mpsc::channel();
-                                runtime_handle.spawn(async move {
-                                    let result = report_and_wait_for_refresh("InvalidCookies", &url_for_report).await;
-                                    let _ = tx.send(result);
-                                });
-                                let should_retry = rx.recv_timeout(std::time::Duration::from_secs(20)).unwrap_or(false);
-                                if should_retry {
-                                    log::info!("🔄 Cookie refresh successful, will retry");
-                                    last_error = Some(AppError::Download(error_msg.clone()));
-                                    std::thread::sleep(std::time::Duration::from_secs(3));
-                                    continue;
-                                }
-                            } else if matches!(cookies_error_type, YtDlpErrorType::BotDetection) {
-                                log::error!("🤖 [BOT_DETECTED] Tier 2 bot detection WITH cookies.");
-                                crate::download::cookies::log_cookie_file_diagnostics("BOT_DETECTED_WITH_COOKIES");
-                            }
+                    match try_tier2(
+                        ytdl_bin,
+                        download_path,
+                        url_str,
+                        media_type,
+                        extra_arg,
+                        section_spec.as_deref(),
+                        proxy_option.as_ref(),
+                        progress_tx,
+                        &tier2_args_fn,
+                        &runtime_handle,
+                    ) {
+                        Tier2Outcome::Success => return Ok(probe_duration_seconds(download_path)),
+                        Tier2Outcome::CookieRefreshed => {
+                            last_error = Some(AppError::Download(error_msg.clone()));
+                            continue;
                         }
+                        Tier2Outcome::Failed => {}
                     }
-
-                    log::error!(
-                        "💀 [BOTH_TIERS_FAILED] Both Tier 1 and Tier 2 failed for {}",
-                        media_type
-                    );
                 }
 
-                // ========== TIER 3: Fixup never (postprocessing errors) ==========
-                if error_type == YtDlpErrorType::PostprocessingError {
-                    log::warn!("🔧 Postprocessing error, retrying with --fixup never...");
-
-                    let _ = std::fs::remove_file(download_path);
-                    cleanup_partial_download(download_path);
-
-                    let mut fixup_args: Vec<&str> = build_common_args_minimal(download_path);
-                    _tier3_args_fn(&mut fixup_args, proxy_option.as_ref());
-                    if media_type == "video" {
-                        if let Some(pos) = fixup_args.iter().position(|a| *a == "--format") {
-                            fixup_args.insert(pos + 1, extra_arg);
-                        }
-                    }
-                    append_section_args(&mut fixup_args, section_spec.as_deref());
-                    fixup_args.push(url_str);
-
-                    log::info!(
-                        "🔧 [FIXUP_NEVER] Attempting {} download without postprocessing...",
-                        media_type
-                    );
-
-                    let fixup_child = Command::new(ytdl_bin)
-                        .args(&fixup_args)
-                        .stdout(Stdio::piped())
-                        .stderr(Stdio::piped())
-                        .spawn();
-
-                    if let Ok(child) = fixup_child {
-                        if let Ok(output) = wait_with_output_timeout(child, config::download::ytdlp_timeout()) {
-                            if output.status.success() {
-                                log::info!("✅ [FIXUP_NEVER] {} download succeeded!", media_type);
-                                return Ok(probe_duration_seconds(download_path));
-                            }
-                            let fixup_stderr = String::from_utf8_lossy(&output.stderr);
-                            log::warn!(
-                                "❌ [FIXUP_NEVER] Failed: {}",
-                                &fixup_stderr[..std::cmp::min(500, fixup_stderr.len())]
-                            );
-                        }
-                    }
+                // ── Tier 3: Fixup never (postprocessing errors) ──
+                if error_type == YtDlpErrorType::PostprocessingError
+                    && try_tier3(
+                        ytdl_bin,
+                        download_path,
+                        url_str,
+                        media_type,
+                        extra_arg,
+                        section_spec.as_deref(),
+                        proxy_option.as_ref(),
+                        progress_tx,
+                        &tier3_args_fn,
+                    )
+                {
+                    return Ok(probe_duration_seconds(download_path));
                 }
 
                 // Record metrics
@@ -616,10 +670,8 @@ where
                     YtDlpErrorType::DiskSpaceError => "disk_space_error",
                     YtDlpErrorType::Unknown => "ytdlp_unknown",
                 };
-                let operation = format!("{}_download:{}", media_type, error_category);
-                crate::core::metrics::record_error("download", &operation);
+                crate::core::metrics::record_error("download", &format!("{}_download:{}", media_type, error_category));
 
-                // If more proxies available, try the next one
                 if attempt + 1 < total_proxies {
                     log::warn!(
                         "🔄 All tiers failed with [{}], trying next proxy (attempt {}/{})",
@@ -636,7 +688,6 @@ where
         }
     }
 
-    // All proxies exhausted
     log::error!("❌ All {} proxies failed for {} download", total_proxies, media_type);
     Err(last_error.unwrap_or_else(|| AppError::Download("All proxies failed".to_string())))
 }
@@ -745,14 +796,8 @@ fn run_ytdlp_with_progress(
                             lines.pop_front();
                         }
                     }
-                    if let Some(progress_info) = parse_progress(&line_str) {
-                        let _ = tx_clone.send(SourceProgress {
-                            percent: progress_info.percent,
-                            speed_bytes_sec: progress_info.speed_mbs.map(|m| m * 1024.0 * 1024.0),
-                            eta_seconds: progress_info.eta_seconds,
-                            downloaded_bytes: progress_info.current_size,
-                            total_bytes: progress_info.total_size,
-                        });
+                    if let Some(sp) = parse_progress(&line_str) {
+                        let _ = tx_clone.send(sp);
                     }
                 }
             }
@@ -765,14 +810,8 @@ fn run_ytdlp_with_progress(
         for line in reader.lines() {
             if let Ok(line_str) = line {
                 log::debug!("yt-dlp stdout: {}", line_str);
-                if let Some(progress_info) = parse_progress(&line_str) {
-                    let _ = progress_tx.send(SourceProgress {
-                        percent: progress_info.percent,
-                        speed_bytes_sec: progress_info.speed_mbs.map(|m| m * 1024.0 * 1024.0),
-                        eta_seconds: progress_info.eta_seconds,
-                        downloaded_bytes: progress_info.current_size,
-                        total_bytes: progress_info.total_size,
-                    });
+                if let Some(sp) = parse_progress(&line_str) {
+                    let _ = progress_tx.send(sp);
                 }
             }
         }

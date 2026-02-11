@@ -21,7 +21,7 @@ use crate::download::progress::{DownloadStatus, ProgressMessage};
 use crate::download::send::{
     send_audio_with_retry, send_error_with_sticker, send_error_with_sticker_and_message, send_video_with_retry,
 };
-use crate::download::source::{DownloadOutput, DownloadSource, SourceProgress, SourceRegistry};
+use crate::download::source::{DownloadOutput, DownloadSource, MediaMetadata, SourceProgress, SourceRegistry};
 use crate::storage::db::{self as db, save_download_history, DbPool};
 use crate::telegram::Bot;
 use std::fs;
@@ -148,7 +148,7 @@ pub async fn download_phase(
     log::info!("Pipeline: resolved source '{}' for URL: {}", source.name(), url);
 
     // ── Step 2: Get metadata ──
-    let (title, artist) = match source.get_metadata(url).await {
+    let MediaMetadata { title, artist } = match source.get_metadata(url).await {
         Ok(meta) => meta,
         Err(e) => {
             log::error!("Pipeline: failed to get metadata: {:?}", e);
@@ -310,16 +310,15 @@ pub async fn download_phase(
                 let diff = safe_progress.saturating_sub(last_progress);
                 if diff >= 5 {
                     last_progress = safe_progress;
-                    let pi = sp.to_progress_info();
                     let _ = progress_msg.update(
                         &bot_for_progress,
                         DownloadStatus::Downloading {
                             title: title_for_progress.as_ref().to_string(),
                             progress: safe_progress,
-                            speed_mbs: pi.speed_mbs,
-                            eta_seconds: pi.eta_seconds,
-                            current_size: pi.current_size,
-                            total_size: pi.total_size,
+                            speed_mbs: sp.speed_bytes_sec.map(|b| b / (1024.0 * 1024.0)),
+                            eta_seconds: sp.eta_seconds,
+                            current_size: sp.downloaded_bytes,
+                            total_size: sp.total_bytes,
                             file_format: Some(file_format_for_progress.clone()),
                         },
                     ).await;

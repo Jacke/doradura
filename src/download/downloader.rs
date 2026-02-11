@@ -148,19 +148,12 @@ pub fn spawn_downloader_with_fallback(ytdl_bin: &str, args: &[&str]) -> Result<s
         })
 }
 
-/// Структура для хранения данных прогресса загрузки
-#[derive(Debug, Clone)]
-pub struct ProgressInfo {
-    pub percent: u8,
-    pub speed_mbs: Option<f64>,
-    pub eta_seconds: Option<u64>,
-    pub current_size: Option<u64>,
-    pub total_size: Option<u64>,
-}
-
-/// Parses progress from yt-dlp output line
+/// Parses progress from yt-dlp output line into a `SourceProgress`.
+///
 /// Example: "[download]  45.2% of 10.00MiB at 500.00KiB/s ETA 00:10"
-pub fn parse_progress(line: &str) -> Option<ProgressInfo> {
+pub fn parse_progress(line: &str) -> Option<crate::download::source::SourceProgress> {
+    use crate::download::source::SourceProgress;
+
     // Проверяем базовые требования
     if !line.contains("[download]") {
         return None;
@@ -174,10 +167,10 @@ pub fn parse_progress(line: &str) -> Option<ProgressInfo> {
     }
 
     let mut percent = None;
-    let mut speed_mbs = None;
+    let mut speed_bytes_sec = None;
     let mut eta_seconds = None;
-    let mut current_size = None;
-    let mut total_size = None;
+    let mut downloaded_bytes = None;
+    let mut total_bytes = None;
 
     // Парсим без аллокации Vec - используем peek iterator
     let mut parts = line.split_whitespace().peekable();
@@ -195,7 +188,7 @@ pub fn parse_progress(line: &str) -> Option<ProgressInfo> {
         if part == "of" {
             if let Some(&next) = parts.peek() {
                 if let Some(size_bytes) = parse_size(next) {
-                    total_size = Some(size_bytes);
+                    total_bytes = Some(size_bytes);
                 }
             }
         }
@@ -204,8 +197,8 @@ pub fn parse_progress(line: &str) -> Option<ProgressInfo> {
         if part == "at" {
             if let Some(&next) = parts.peek() {
                 if let Some(speed) = parse_size(next) {
-                    // Конвертируем в MB/s
-                    speed_mbs = Some(speed as f64 / (1024.0 * 1024.0));
+                    // Keep speed in bytes/sec (canonical unit)
+                    speed_bytes_sec = Some(speed as f64);
                 }
             }
         }
@@ -220,26 +213,26 @@ pub fn parse_progress(line: &str) -> Option<ProgressInfo> {
         }
     }
 
-    // Если есть процент, возвращаем ProgressInfo
+    // Если есть процент, возвращаем SourceProgress
     if let Some(p) = percent {
         // Вычисляем текущий размер на основе процента
-        if let Some(total) = total_size {
-            current_size = Some((total as f64 * (p as f64 / 100.0)) as u64);
+        if let Some(total) = total_bytes {
+            downloaded_bytes = Some((total as f64 * (p as f64 / 100.0)) as u64);
         }
 
         log::debug!(
-            "Progress parsed successfully: {}% (speed: {:?} MB/s, eta: {:?}s)",
+            "Progress parsed successfully: {}% (speed: {:?} B/s, eta: {:?}s)",
             p,
-            speed_mbs,
+            speed_bytes_sec,
             eta_seconds
         );
 
-        Some(ProgressInfo {
+        Some(SourceProgress {
             percent: p,
-            speed_mbs,
+            speed_bytes_sec,
             eta_seconds,
-            current_size,
-            total_size,
+            downloaded_bytes,
+            total_bytes,
         })
     } else {
         log::debug!("Could not parse percent from line: {}", line);

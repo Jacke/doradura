@@ -70,7 +70,7 @@ pub async fn download_and_send_audio(
             bitrate: audio_bitrate.clone(),
             time_range,
         };
-        let registry = SourceRegistry::default_registry();
+        let registry = SourceRegistry::global();
 
         // Global timeout for entire download operation
         let result: Result<(), AppError> = match timeout(config::download::global_timeout(), async {
@@ -82,7 +82,7 @@ pub async fn download_and_send_audio(
                 db_pool_clone.as_ref(),
                 message_id,
                 alert_manager.as_ref(),
-                &registry,
+                registry,
             )
             .await
             .map_err(|e| e.into_app_error())?;

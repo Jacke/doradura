@@ -17,8 +17,15 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use url::Url;
 
-/// Progress information emitted during download.
+/// Metadata for a media URL (title and artist).
 #[derive(Debug, Clone)]
+pub struct MediaMetadata {
+    pub title: String,
+    pub artist: String,
+}
+
+/// Progress information emitted during download.
+#[derive(Debug, Clone, Default)]
 pub struct SourceProgress {
     /// Download progress percentage (0-100)
     pub percent: u8,
@@ -30,19 +37,6 @@ pub struct SourceProgress {
     pub downloaded_bytes: Option<u64>,
     /// Total bytes expected
     pub total_bytes: Option<u64>,
-}
-
-impl SourceProgress {
-    /// Convert to the existing ProgressInfo type used by the progress UI.
-    pub fn to_progress_info(&self) -> crate::download::downloader::ProgressInfo {
-        crate::download::downloader::ProgressInfo {
-            percent: self.percent,
-            speed_mbs: self.speed_bytes_sec.map(|b| b / (1024.0 * 1024.0)),
-            eta_seconds: self.eta_seconds,
-            current_size: self.downloaded_bytes,
-            total_size: self.total_bytes,
-        }
-    }
 }
 
 /// Request parameters for a download operation.
@@ -91,7 +85,7 @@ pub trait DownloadSource: Send + Sync {
     fn supports_url(&self, url: &Url) -> bool;
 
     /// Fetch metadata (title, artist) for the URL.
-    async fn get_metadata(&self, url: &Url) -> Result<(String, String), AppError>;
+    async fn get_metadata(&self, url: &Url) -> Result<MediaMetadata, AppError>;
 
     /// Estimate the file size in bytes before downloading.
     /// Returns None if estimation is not possible.
@@ -148,25 +142,75 @@ impl Default for SourceRegistry {
     }
 }
 
+static DEFAULT_REGISTRY: std::sync::LazyLock<SourceRegistry> =
+    std::sync::LazyLock::new(SourceRegistry::default_registry);
+
+impl SourceRegistry {
+    /// Get a reference to the shared default registry singleton.
+    ///
+    /// Both `YtDlpSource` and `HttpSource` are stateless, so a single
+    /// shared instance avoids re-allocating on every download.
+    pub fn global() -> &'static SourceRegistry {
+        &DEFAULT_REGISTRY
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_source_progress_to_progress_info() {
-        let sp = SourceProgress {
-            percent: 50,
-            speed_bytes_sec: Some(1_048_576.0), // 1 MiB/s
-            eta_seconds: Some(30),
-            downloaded_bytes: Some(5_000_000),
-            total_bytes: Some(10_000_000),
-        };
-        let pi = sp.to_progress_info();
-        assert_eq!(pi.percent, 50);
-        assert!((pi.speed_mbs.unwrap() - 1.0).abs() < 0.01);
-        assert_eq!(pi.eta_seconds, Some(30));
-        assert_eq!(pi.current_size, Some(5_000_000));
-        assert_eq!(pi.total_size, Some(10_000_000));
+    /// A configurable mock download source for unit tests.
+    pub struct MockSource {
+        pub name: String,
+        pub urls: Vec<String>,
+        pub metadata: MediaMetadata,
+        pub fail_download: bool,
+    }
+
+    #[async_trait]
+    impl DownloadSource for MockSource {
+        fn name(&self) -> &str {
+            &self.name
+        }
+
+        fn supports_url(&self, url: &Url) -> bool {
+            self.urls.iter().any(|u| url.as_str().contains(u))
+        }
+
+        async fn get_metadata(&self, _url: &Url) -> Result<MediaMetadata, AppError> {
+            Ok(self.metadata.clone())
+        }
+
+        async fn estimate_size(&self, _url: &Url) -> Option<u64> {
+            None
+        }
+
+        async fn is_livestream(&self, _url: &Url) -> bool {
+            false
+        }
+
+        async fn download(
+            &self,
+            request: &DownloadRequest,
+            tx: mpsc::UnboundedSender<SourceProgress>,
+        ) -> Result<DownloadOutput, AppError> {
+            for p in [25, 50, 75, 100] {
+                let _ = tx.send(SourceProgress {
+                    percent: p,
+                    ..Default::default()
+                });
+            }
+            if self.fail_download {
+                return Err(AppError::Download("mock failure".into()));
+            }
+            std::fs::write(&request.output_path, b"mock audio data").map_err(|e| AppError::Download(e.to_string()))?;
+            Ok(DownloadOutput {
+                file_path: request.output_path.clone(),
+                duration_secs: Some(180),
+                file_size: 15,
+                mime_hint: None,
+            })
+        }
     }
 
     #[test]
@@ -184,5 +228,115 @@ mod tests {
         let source = registry.resolve(&http_url);
         assert!(source.is_some());
         assert_eq!(source.unwrap().name(), "http");
+    }
+
+    #[test]
+    fn test_registry_with_mock_source() {
+        let mut registry = SourceRegistry::new();
+        registry.register(Arc::new(MockSource {
+            name: "mock".to_string(),
+            urls: vec!["mock.example.com".to_string()],
+            metadata: MediaMetadata {
+                title: "Test".to_string(),
+                artist: "Artist".to_string(),
+            },
+            fail_download: false,
+        }));
+
+        let url = Url::parse("https://mock.example.com/track/1").unwrap();
+        let source = registry.resolve(&url);
+        assert!(source.is_some());
+        assert_eq!(source.unwrap().name(), "mock");
+
+        // Unregistered URL returns None
+        let unknown = Url::parse("https://unknown.example.com/track/1").unwrap();
+        assert!(registry.resolve(&unknown).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_mock_source_metadata() {
+        let source = MockSource {
+            name: "mock".to_string(),
+            urls: vec!["example.com".to_string()],
+            metadata: MediaMetadata {
+                title: "Song Title".to_string(),
+                artist: "Artist Name".to_string(),
+            },
+            fail_download: false,
+        };
+        let url = Url::parse("https://example.com/track").unwrap();
+        let meta = source.get_metadata(&url).await.unwrap();
+        assert_eq!(meta.title, "Song Title");
+        assert_eq!(meta.artist, "Artist Name");
+    }
+
+    #[tokio::test]
+    async fn test_mock_source_download_progress() {
+        let source = MockSource {
+            name: "mock".to_string(),
+            urls: vec!["example.com".to_string()],
+            metadata: MediaMetadata {
+                title: "T".to_string(),
+                artist: "A".to_string(),
+            },
+            fail_download: false,
+        };
+
+        let tmp = std::env::temp_dir().join(format!("mock_dl_{}", std::process::id()));
+        let request = DownloadRequest {
+            url: Url::parse("https://example.com/track").unwrap(),
+            output_path: tmp.to_string_lossy().to_string(),
+            format: "mp3".to_string(),
+            audio_bitrate: None,
+            video_quality: None,
+            max_file_size: None,
+            time_range: None,
+        };
+
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let result = source.download(&request, tx).await;
+        assert!(result.is_ok());
+
+        // Collect progress updates
+        let mut percents = Vec::new();
+        while let Ok(sp) = rx.try_recv() {
+            percents.push(sp.percent);
+        }
+        assert_eq!(percents, vec![25, 50, 75, 100]);
+
+        // Clean up
+        let _ = std::fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn test_registry_priority_ordering() {
+        // Mock that claims YouTube URLs should override the built-in yt-dlp source
+        let mut registry = SourceRegistry::new();
+        registry.register(Arc::new(MockSource {
+            name: "custom-yt".to_string(),
+            urls: vec!["youtube.com".to_string()],
+            metadata: MediaMetadata {
+                title: "T".to_string(),
+                artist: "A".to_string(),
+            },
+            fail_download: false,
+        }));
+        registry.register(Arc::new(ytdlp::YtDlpSource::new()));
+        registry.register(Arc::new(http::HttpSource::new()));
+
+        let yt_url = Url::parse("https://www.youtube.com/watch?v=abc").unwrap();
+        let source = registry.resolve(&yt_url).unwrap();
+        // First registered source (custom-yt) should win over yt-dlp
+        assert_eq!(source.name(), "custom-yt");
+    }
+
+    #[test]
+    fn test_source_progress_default() {
+        let sp = SourceProgress::default();
+        assert_eq!(sp.percent, 0);
+        assert!(sp.speed_bytes_sec.is_none());
+        assert!(sp.eta_seconds.is_none());
+        assert!(sp.downloaded_bytes.is_none());
+        assert!(sp.total_bytes.is_none());
     }
 }

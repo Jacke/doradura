@@ -110,7 +110,7 @@ impl DownloadSource for HttpSource {
             .any(|ext| path.ends_with(&format!(".{}", ext)))
     }
 
-    async fn get_metadata(&self, url: &Url) -> Result<(String, String), AppError> {
+    async fn get_metadata(&self, url: &Url) -> Result<crate::download::source::MediaMetadata, AppError> {
         // For direct HTTP files, title is the filename and artist is empty
         let filename = url
             .path_segments()
@@ -126,7 +126,10 @@ impl DownloadSource for HttpSource {
             filename
         };
 
-        Ok((title, String::new()))
+        Ok(crate::download::source::MediaMetadata {
+            title,
+            artist: String::new(),
+        })
     }
 
     async fn estimate_size(&self, url: &Url) -> Option<u64> {
