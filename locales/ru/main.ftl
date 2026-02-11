@@ -290,6 +290,22 @@ download =
     .progress_title = Скачивание
     .video_corrupted = Видео файл повреждён или не содержит все необходимые дорожки
 
+progress =
+    .starting = Начинаю скачивание...
+    .downloading = Скачиваю
+    .speed = Скорость
+    .eta = Осталось
+    .min = мин
+    .sec = сек
+    .size = Размер
+    .uploading = Отправка файла
+    .success = Скачано успешно за { $elapsed } { $elapsed ->
+        [one] секунду
+        [few] секунды
+       *[other] секунд
+    }!
+    .error = Ошибка
+
 errors =
     .invalid_callback = Ошибка: неверный формат запроса
     .unknown_action = Неизвестное действие

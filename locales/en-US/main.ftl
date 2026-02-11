@@ -290,6 +290,21 @@ download =
     .progress_title = Downloading
     .video_corrupted = Video file is corrupted or missing required tracks
 
+progress =
+    .starting = Starting download...
+    .downloading = Downloading
+    .speed = Speed
+    .eta = Remaining
+    .min = min
+    .sec = sec
+    .size = Size
+    .uploading = Uploading file
+    .success = Downloaded in { $elapsed } { $elapsed ->
+        [one] second
+       *[other] seconds
+    }!
+    .error = Error
+
 errors =
     .invalid_callback = Error: invalid request format
     .unknown_action = Unknown action

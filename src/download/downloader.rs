@@ -345,7 +345,11 @@ pub async fn download_and_send_subtitles(
     let db_pool_clone = db_pool.clone();
 
     tokio::spawn(async move {
-        let mut progress_msg = ProgressMessage::new(chat_id);
+        let lang = db_pool_clone
+            .as_ref()
+            .map(|pool| crate::i18n::user_lang_from_pool(pool, chat_id.0))
+            .unwrap_or_else(|| crate::i18n::lang_from_code("ru"));
+        let mut progress_msg = ProgressMessage::new(chat_id, lang);
         let start_time = std::time::Instant::now();
 
         // Get user plan for metrics
@@ -526,6 +530,7 @@ pub async fn download_and_send_subtitles(
             let mut msg_for_clear = ProgressMessage {
                 chat_id: progress_msg.chat_id,
                 message_id: progress_msg.message_id,
+                lang: progress_msg.lang.clone(),
             };
             let subtitle_format_clone = subtitle_format.clone();
             tokio::spawn(async move {

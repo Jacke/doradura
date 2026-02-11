@@ -157,3 +157,18 @@ extensions =
     .status_unavailable = ❌ Nicht verfügbar
     .footer = _Jede Erweiterung arbeitet unabhängig\. Sende einen Link oder eine Datei — Dora wählt die richtige\!_
     .detail_back = 🔙 Zurück zu Erweiterungen
+
+progress =
+    .starting = Download wird gestartet...
+    .downloading = Herunterladen
+    .speed = Geschwindigkeit
+    .eta = Verbleibend
+    .min = Min
+    .sec = Sek
+    .size = Größe
+    .uploading = Datei wird hochgeladen
+    .success = Heruntergeladen in { $elapsed } { $elapsed ->
+        [one] Sekunde
+       *[other] Sekunden
+    }!
+    .error = Fehler

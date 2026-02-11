@@ -1,8 +1,10 @@
-use crate::core::utils::pluralize_seconds;
 use crate::core::{escape_markdown_v2 as escape_markdown, extract_retry_after};
+use crate::i18n;
 use crate::telegram::Bot;
+use fluent_templates::fluent_bundle::FluentArgs;
 use teloxide::prelude::*;
 use teloxide::types::MessageId;
+use unic_langid::LanguageIdentifier;
 
 /// Состояние загрузки файла для отображения прогресса пользователю.
 ///
@@ -124,18 +126,21 @@ impl DownloadStatus {
     ///     total_size: None,
     ///     file_format: Some("mp3".to_string()),
     /// };
-    /// let message = status.to_message();
+    /// let lang: unic_langid::LanguageIdentifier = "ru".parse().unwrap();
+    /// let message = status.to_message(&lang);
     /// ```
-    pub fn to_message(&self) -> String {
+    pub fn to_message(&self, lang: &LanguageIdentifier) -> String {
         match self {
             DownloadStatus::Starting { title, file_format } => {
                 let escaped = escape_markdown(title);
                 let emoji = Self::get_emoji(file_format.as_ref());
-                let mut s = String::with_capacity(escaped.len() + 50);
+                let starting_text = escape_markdown(&i18n::t(lang, "progress.starting"));
+                let mut s = String::with_capacity(escaped.len() + starting_text.len() + 50);
                 s.push_str(emoji);
                 s.push_str(" *");
                 s.push_str(&escaped);
-                s.push_str("*\n\n⏳ Начинаю скачивание\\.\\.\\.");
+                s.push_str("*\n\n⏳ ");
+                s.push_str(&starting_text);
                 s
             }
             DownloadStatus::Downloading {
@@ -150,42 +155,60 @@ impl DownloadStatus {
                 let escaped = escape_markdown(title);
                 let emoji = Self::get_emoji(file_format.as_ref());
                 let bar = create_progress_bar(*progress);
+                let downloading_text = escape_markdown(&i18n::t(lang, "progress.downloading"));
                 let mut s = String::with_capacity(escaped.len() + bar.len() + 200);
                 s.push_str(emoji);
                 s.push_str(" *");
                 s.push_str(&escaped);
-                s.push_str("*\n\n📥 Скачиваю: ");
+                s.push_str("*\n\n📥 ");
+                s.push_str(&downloading_text);
+                s.push_str(": ");
                 s.push_str(&progress.to_string());
                 s.push_str("%\n");
                 s.push_str(&bar);
 
-                // Добавляем скорость, ETA и размер если доступны
                 if let Some(speed) = speed_mbs {
-                    s.push_str("\n\n⚡ Скорость: ");
-                    // Экранируем точку в числе с плавающей точкой
+                    let speed_label = escape_markdown(&i18n::t(lang, "progress.speed"));
+                    s.push_str("\n\n⚡ ");
+                    s.push_str(&speed_label);
+                    s.push_str(": ");
                     s.push_str(&format!("{:.1} MB/s", speed).replace('.', "\\."));
                 }
 
                 if let Some(eta) = eta_seconds {
                     let minutes = eta / 60;
                     let seconds = eta % 60;
-                    s.push_str("\n⏱️ Осталось: ");
+                    let eta_label = escape_markdown(&i18n::t(lang, "progress.eta"));
+                    let min_label = escape_markdown(&i18n::t(lang, "progress.min"));
+                    let sec_label = escape_markdown(&i18n::t(lang, "progress.sec"));
+                    s.push_str("\n⏱️ ");
+                    s.push_str(&eta_label);
+                    s.push_str(": ");
                     if minutes > 0 {
-                        // Экранируем числа и текст для MarkdownV2
                         let escaped_min = escape_markdown(&minutes.to_string());
                         let escaped_sec = escape_markdown(&seconds.to_string());
-                        s.push_str(&format!("{} мин {} сек", escaped_min, escaped_sec));
+                        s.push_str(&escaped_min);
+                        s.push(' ');
+                        s.push_str(&min_label);
+                        s.push(' ');
+                        s.push_str(&escaped_sec);
+                        s.push(' ');
+                        s.push_str(&sec_label);
                     } else {
                         let escaped_sec = escape_markdown(&seconds.to_string());
-                        s.push_str(&format!("{} сек", escaped_sec));
+                        s.push_str(&escaped_sec);
+                        s.push(' ');
+                        s.push_str(&sec_label);
                     }
                 }
 
                 if let (Some(current), Some(total)) = (current_size, total_size) {
                     let current_mb = *current as f64 / (1024.0 * 1024.0);
                     let total_mb = *total as f64 / (1024.0 * 1024.0);
-                    s.push_str("\n📦 Размер: ");
-                    // Экранируем точки в числах с плавающей точкой
+                    let size_label = escape_markdown(&i18n::t(lang, "progress.size"));
+                    s.push_str("\n📦 ");
+                    s.push_str(&size_label);
+                    s.push_str(": ");
                     s.push_str(&format!("{:.1} / {:.1} MB", current_mb, total_mb).replace('.', "\\."));
                 }
 
@@ -203,13 +226,14 @@ impl DownloadStatus {
             } => {
                 let escaped = escape_markdown(title);
                 let emoji = Self::get_emoji(file_format.as_ref());
+                let uploading_text = escape_markdown(&i18n::t(lang, "progress.uploading"));
                 let mut s = String::with_capacity(escaped.len() + 2000);
                 s.push_str(emoji);
                 s.push_str(" *");
                 s.push_str(&escaped);
-                s.push_str("*\n\n📤 Отправка файла");
+                s.push_str("*\n\n📤 ");
+                s.push_str(&uploading_text);
 
-                // Если есть прогресс - показываем прогресс-бар
                 if let Some(p) = *progress {
                     let bar = create_progress_bar(p);
                     s.push_str(": ");
@@ -217,7 +241,6 @@ impl DownloadStatus {
                     s.push_str("%\n");
                     s.push_str(&bar);
                 } else {
-                    // Иначе показываем анимацию точек
                     let dots_count = (*dots % 4) as usize;
                     let dots_str = if dots_count == 0 {
                         String::new()
@@ -228,30 +251,47 @@ impl DownloadStatus {
                 }
 
                 if let Some(speed) = speed_mbs {
-                    s.push_str("\n\n⚡ Скорость: ");
+                    let speed_label = escape_markdown(&i18n::t(lang, "progress.speed"));
+                    s.push_str("\n\n⚡ ");
+                    s.push_str(&speed_label);
+                    s.push_str(": ");
                     s.push_str(&format!("{:.1} MB/s", speed).replace('.', "\\."));
                 }
 
-                // Добавляем ETA если доступно
                 if let Some(eta) = eta_seconds {
                     let minutes = eta / 60;
                     let seconds = eta % 60;
-                    s.push_str("\n⏱️ Осталось: ");
+                    let eta_label = escape_markdown(&i18n::t(lang, "progress.eta"));
+                    let min_label = escape_markdown(&i18n::t(lang, "progress.min"));
+                    let sec_label = escape_markdown(&i18n::t(lang, "progress.sec"));
+                    s.push_str("\n⏱️ ");
+                    s.push_str(&eta_label);
+                    s.push_str(": ");
                     if minutes > 0 {
                         let escaped_min = escape_markdown(&minutes.to_string());
                         let escaped_sec = escape_markdown(&seconds.to_string());
-                        s.push_str(&format!("{} мин {} сек", escaped_min, escaped_sec));
+                        s.push_str(&escaped_min);
+                        s.push(' ');
+                        s.push_str(&min_label);
+                        s.push(' ');
+                        s.push_str(&escaped_sec);
+                        s.push(' ');
+                        s.push_str(&sec_label);
                     } else {
                         let escaped_sec = escape_markdown(&seconds.to_string());
-                        s.push_str(&format!("{} сек", escaped_sec));
+                        s.push_str(&escaped_sec);
+                        s.push(' ');
+                        s.push_str(&sec_label);
                     }
                 }
 
-                // Добавляем размер если доступно
                 if let (Some(current), Some(total)) = (current_size, total_size) {
                     let current_mb = *current as f64 / (1024.0 * 1024.0);
                     let total_mb = *total as f64 / (1024.0 * 1024.0);
-                    s.push_str("\n📦 Размер: ");
+                    let size_label = escape_markdown(&i18n::t(lang, "progress.size"));
+                    s.push_str("\n📦 ");
+                    s.push_str(&size_label);
+                    s.push_str(": ");
                     s.push_str(&format!("{:.1} / {:.1} MB", current_mb, total_mb).replace('.', "\\."));
                 }
 
@@ -264,17 +304,15 @@ impl DownloadStatus {
             } => {
                 let escaped = escape_markdown(title);
                 let emoji = Self::get_emoji(file_format.as_ref());
-                let elapsed_str = elapsed_secs.to_string();
-                let plural = pluralize_seconds(*elapsed_secs);
-                let mut s = String::with_capacity(escaped.len() + elapsed_str.len() + plural.len() + 50);
+                let mut args = FluentArgs::new();
+                args.set("elapsed", *elapsed_secs as i64);
+                let success_text = escape_markdown(&i18n::t_args(lang, "progress.success", &args));
+                let mut s = String::with_capacity(escaped.len() + success_text.len() + 20);
                 s.push_str(emoji);
                 s.push_str(" *");
                 s.push_str(&escaped);
-                s.push_str("*\n\n✅ Скачано успешно за ");
-                s.push_str(&elapsed_str);
-                s.push(' ');
-                s.push_str(plural);
-                s.push_str("\\!");
+                s.push_str("*\n\n✅ ");
+                s.push_str(&success_text);
                 s
             }
             DownloadStatus::Completed { title, file_format } => {
@@ -295,11 +333,14 @@ impl DownloadStatus {
                 let escaped_title = escape_markdown(title);
                 let escaped_error = escape_markdown(error);
                 let emoji = Self::get_emoji(file_format.as_ref());
-                let mut s = String::with_capacity(escaped_title.len() + escaped_error.len() + 30);
+                let error_label = escape_markdown(&i18n::t(lang, "progress.error"));
+                let mut s = String::with_capacity(escaped_title.len() + escaped_error.len() + error_label.len() + 30);
                 s.push_str(emoji);
                 s.push_str(" *");
                 s.push_str(&escaped_title);
-                s.push_str("*\n\n❌ Ошибка: ");
+                s.push_str("*\n\n❌ ");
+                s.push_str(&error_label);
+                s.push_str(": ");
                 s.push_str(&escaped_error);
                 s
             }
@@ -329,6 +370,8 @@ pub struct ProgressMessage {
     pub chat_id: ChatId,
     /// ID сообщения с прогрессом (None если еще не отправлено)
     pub message_id: Option<MessageId>,
+    /// Язык пользователя для локализации прогресс-сообщений
+    pub lang: LanguageIdentifier,
 }
 
 impl ProgressMessage {
@@ -347,13 +390,16 @@ impl ProgressMessage {
     /// ```no_run
     /// use teloxide::types::ChatId;
     /// use doradura::download::progress::ProgressMessage;
+    /// use unic_langid::LanguageIdentifier;
     ///
-    /// let mut progress = ProgressMessage::new(ChatId(123456789));
+    /// let lang: LanguageIdentifier = "ru".parse().unwrap();
+    /// let mut progress = ProgressMessage::new(ChatId(123456789), lang);
     /// ```
-    pub fn new(chat_id: ChatId) -> Self {
+    pub fn new(chat_id: ChatId, lang: LanguageIdentifier) -> Self {
         Self {
             chat_id,
             message_id: None,
+            lang,
         }
     }
 
@@ -379,7 +425,8 @@ impl ProgressMessage {
     /// use teloxide::types::ChatId;
     ///
     /// # async fn example(bot: Bot, chat_id: ChatId) -> teloxide::RequestError {
-    /// let mut progress = ProgressMessage::new(chat_id);
+    /// let lang: unic_langid::LanguageIdentifier = "ru".parse().unwrap();
+    /// let mut progress = ProgressMessage::new(chat_id, lang);
     /// progress.update(&bot, DownloadStatus::Starting {
     ///     title: "Test Song".to_string(),
     ///     file_format: Some("mp3".to_string())
@@ -388,7 +435,7 @@ impl ProgressMessage {
     /// # }
     /// ```
     pub async fn update(&mut self, bot: &Bot, status: DownloadStatus) -> ResponseResult<()> {
-        let text = status.to_message();
+        let text = status.to_message(&self.lang);
 
         if let Some(msg_id) = self.message_id {
             // Обновляем существующее сообщение
@@ -616,19 +663,25 @@ mod tests {
 
     // ==================== DownloadStatus::to_message Tests ====================
 
+    fn test_lang() -> LanguageIdentifier {
+        crate::i18n::lang_from_code("ru")
+    }
+
     #[test]
     fn test_status_starting_message() {
+        let lang = test_lang();
         let status = DownloadStatus::Starting {
             title: "Test Song".to_string(),
             file_format: Some("mp3".to_string()),
         };
-        let msg = status.to_message();
+        let msg = status.to_message(&lang);
         assert!(msg.contains("Test Song"));
         assert!(msg.contains("⏳"));
     }
 
     #[test]
     fn test_status_downloading_message() {
+        let lang = test_lang();
         let status = DownloadStatus::Downloading {
             title: "Test Song".to_string(),
             progress: 50,
@@ -638,7 +691,7 @@ mod tests {
             total_size: Some(100 * 1024 * 1024),
             file_format: Some("mp3".to_string()),
         };
-        let msg = status.to_message();
+        let msg = status.to_message(&lang);
         assert!(msg.contains("Test Song"));
         assert!(msg.contains("50%"));
         assert!(msg.contains("📥"));
@@ -646,6 +699,7 @@ mod tests {
 
     #[test]
     fn test_status_uploading_message() {
+        let lang = test_lang();
         let status = DownloadStatus::Uploading {
             title: "Test Song".to_string(),
             dots: 2,
@@ -656,13 +710,14 @@ mod tests {
             total_size: None,
             file_format: None,
         };
-        let msg = status.to_message();
+        let msg = status.to_message(&lang);
         assert!(msg.contains("Test Song"));
         assert!(msg.contains("📤"));
     }
 
     #[test]
     fn test_status_uploading_with_progress() {
+        let lang = test_lang();
         let status = DownloadStatus::Uploading {
             title: "Test Song".to_string(),
             dots: 0,
@@ -673,18 +728,19 @@ mod tests {
             total_size: None,
             file_format: Some("mp4".to_string()),
         };
-        let msg = status.to_message();
+        let msg = status.to_message(&lang);
         assert!(msg.contains("75%"));
     }
 
     #[test]
     fn test_status_success_message() {
+        let lang = test_lang();
         let status = DownloadStatus::Success {
             title: "Test Song".to_string(),
             elapsed_secs: 5,
             file_format: Some("mp3".to_string()),
         };
-        let msg = status.to_message();
+        let msg = status.to_message(&lang);
         assert!(msg.contains("Test Song"));
         assert!(msg.contains("✅"));
         assert!(msg.contains("5"));
@@ -692,33 +748,47 @@ mod tests {
 
     #[test]
     fn test_status_completed_message() {
+        let lang = test_lang();
         let status = DownloadStatus::Completed {
             title: "Test Song".to_string(),
             file_format: Some("mp3".to_string()),
         };
-        let msg = status.to_message();
+        let msg = status.to_message(&lang);
         assert!(msg.contains("Test Song"));
         assert!(msg.contains("🎵"));
     }
 
     #[test]
     fn test_status_error_message() {
+        let lang = test_lang();
         let status = DownloadStatus::Error {
             title: "Test Song".to_string(),
             error: "Network error".to_string(),
             file_format: Some("mp3".to_string()),
         };
-        let msg = status.to_message();
+        let msg = status.to_message(&lang);
         assert!(msg.contains("Test Song"));
         assert!(msg.contains("❌"));
         assert!(msg.contains("Network error"));
+    }
+
+    #[test]
+    fn test_status_message_english() {
+        let lang = crate::i18n::lang_from_code("en");
+        let status = DownloadStatus::Starting {
+            title: "Test Song".to_string(),
+            file_format: Some("mp3".to_string()),
+        };
+        let msg = status.to_message(&lang);
+        assert!(msg.contains("Starting download"));
     }
 
     // ==================== ProgressMessage Tests ====================
 
     #[test]
     fn test_progress_message_new() {
-        let pm = ProgressMessage::new(ChatId(12345));
+        let lang = test_lang();
+        let pm = ProgressMessage::new(ChatId(12345), lang);
         assert_eq!(pm.chat_id, ChatId(12345));
         assert!(pm.message_id.is_none());
     }

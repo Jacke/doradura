@@ -422,6 +422,7 @@ where
         let mut msg_clone = ProgressMessage {
             chat_id: progress_msg.chat_id,
             message_id: progress_msg.message_id,
+            lang: progress_msg.lang.clone(),
         };
 
         let file_size_clone = file_size;
