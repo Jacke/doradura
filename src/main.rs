@@ -1020,6 +1020,7 @@ async fn recover_failed_tasks(queue: &Arc<DownloadQueue>, db_pool: &Arc<db::DbPo
                                 .unwrap_or_else(|_| chrono::Utc::now()),
                             priority,
                             time_range: None,
+                            queue_message_id: None,
                         };
 
                         // Add the task back to the queue
@@ -1157,6 +1158,12 @@ async fn process_queue(
                         return;
                     }
                 };
+
+                // Delete the "Task added to queue" message now that processing starts
+                if let Some(qmsg_id) = task.queue_message_id {
+                    use teloxide::types::MessageId;
+                    let _ = bot.delete_message(task.chat_id, MessageId(qmsg_id)).await;
+                }
 
                 if let Some(msg_id) = task.message_id {
                     use teloxide::types::MessageId;

@@ -170,8 +170,10 @@ pub(crate) async fn start_download_from_preview(
         download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
     }
 
-    // Send queue position notification
-    send_queue_position_message(bot, chat_id, &plan, &download_queue, &db_pool).await;
+    // Send queue position notification and store message ID for later deletion
+    if let Some(msg_id) = send_queue_position_message(bot, chat_id, &plan, &download_queue, &db_pool).await {
+        download_queue.set_queue_message_id(chat_id, msg_id.0).await;
+    }
 
     Ok(())
 }
@@ -186,7 +188,7 @@ pub(crate) async fn send_queue_position_message(
     plan: &str,
     download_queue: &Arc<DownloadQueue>,
     db_pool: &Arc<DbPool>,
-) {
+) -> Option<MessageId> {
     let queue_size = download_queue.size().await;
     let position = download_queue.get_queue_position(chat_id).await;
     let lang = i18n::user_lang_from_pool(db_pool, chat_id.0);
@@ -210,8 +212,12 @@ pub(crate) async fn send_queue_position_message(
         i18n::t(&lang, "commands.task_added")
     };
 
-    if let Err(e) = bot.send_message(chat_id, message).parse_mode(ParseMode::Html).await {
-        log::warn!("Failed to send queue position message: {:?}", e);
+    match bot.send_message(chat_id, message).parse_mode(ParseMode::Html).await {
+        Ok(msg) => Some(msg.id),
+        Err(e) => {
+            log::warn!("Failed to send queue position message: {:?}", e);
+            None
+        }
     }
 }
 

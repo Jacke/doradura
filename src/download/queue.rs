@@ -60,6 +60,8 @@ pub struct DownloadTask {
     pub priority: TaskPriority,
     /// Временной диапазон для частичного скачивания (start, end), например ("00:01:00", "00:02:30")
     pub time_range: Option<(String, String)>,
+    /// ID сообщения "Task added to queue" (для удаления при начале обработки)
+    pub queue_message_id: Option<i32>,
 }
 
 impl DownloadTask {
@@ -142,6 +144,7 @@ impl DownloadTask {
             created_timestamp: Utc::now(),
             priority,
             time_range,
+            queue_message_id: None,
         }
     }
 
@@ -508,6 +511,17 @@ impl DownloadQueue {
             );
         }
     }
+
+    /// Устанавливает ID сообщения очереди для последней задачи данного чата.
+    ///
+    /// Вызывается после отправки сообщения "Task added to queue", чтобы
+    /// это сообщение можно было удалить при начале обработки задачи.
+    pub async fn set_queue_message_id(&self, chat_id: ChatId, msg_id: i32) {
+        let mut queue = self.queue.lock().await;
+        if let Some(task) = queue.iter_mut().rev().find(|t| t.chat_id == chat_id) {
+            task.queue_message_id = Some(msg_id);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -786,6 +800,7 @@ mod tests {
             created_timestamp: Utc::now() - Duration::days(2),
             priority: TaskPriority::Low,
             time_range: None,
+            queue_message_id: None,
         };
         let new_task = DownloadTask::new(
             "http://example.com/new".to_string(),

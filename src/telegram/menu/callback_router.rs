@@ -794,9 +794,13 @@ pub async fn handle_menu_callback(
                                             chat_id.0
                                         );
 
-                                        // Send queue position notification
-                                        send_queue_position_message(&bot, chat_id, &plan, &download_queue, &db_pool)
-                                            .await;
+                                        // Send queue position notification and store message ID for later deletion
+                                        if let Some(msg_id) =
+                                            send_queue_position_message(&bot, chat_id, &plan, &download_queue, &db_pool)
+                                                .await
+                                        {
+                                            download_queue.set_queue_message_id(chat_id, msg_id.0).await;
+                                        }
                                     } else {
                                         // Regular handling for a single format
                                         let video_quality = if format == "mp4" {
@@ -837,9 +841,13 @@ pub async fn handle_menu_callback(
                                         task.time_range = time_range.clone();
                                         download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
 
-                                        // Send queue position notification
-                                        send_queue_position_message(&bot, chat_id, &plan, &download_queue, &db_pool)
-                                            .await;
+                                        // Send queue position notification and store message ID for later deletion
+                                        if let Some(msg_id) =
+                                            send_queue_position_message(&bot, chat_id, &plan, &download_queue, &db_pool)
+                                                .await
+                                        {
+                                            download_queue.set_queue_message_id(chat_id, msg_id.0).await;
+                                        }
                                     }
                                 }
                                 Err(e) => {
