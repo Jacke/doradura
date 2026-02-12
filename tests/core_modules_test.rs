@@ -381,7 +381,7 @@ mod utils_tests {
 
         // Check copyright is appended
         let caption = format_media_caption("Test", "Artist");
-        assert!(caption.contains("Ваш,"));
+        assert!(caption.contains("Ваша,"));
     }
 }
 

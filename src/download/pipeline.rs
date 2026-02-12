@@ -703,17 +703,46 @@ pub async fn handle_pipeline_error(
 
     send_error_with_sticker_and_message(bot, chat_id, custom_message).await;
 
-    // Notify admin about every download error with details
+    // Notify admin about every download error with categorized details
     let admin_id = *config::admin::ADMIN_USER_ID;
     if admin_id != 0 {
+        use crate::download::ytdlp_errors;
+        let yt_error = ytdlp_errors::analyze_ytdlp_error(&error_str);
+        let (category_emoji, category_name) = match &yt_error {
+            ytdlp_errors::YtDlpErrorType::InvalidCookies => ("🍪", "COOKIES EXPIRED"),
+            ytdlp_errors::YtDlpErrorType::BotDetection => ("🤖", "BOT DETECTION / 403"),
+            ytdlp_errors::YtDlpErrorType::VideoUnavailable => ("🚫", "VIDEO UNAVAILABLE"),
+            ytdlp_errors::YtDlpErrorType::NetworkError => ("🌐", "NETWORK ERROR"),
+            ytdlp_errors::YtDlpErrorType::FragmentError => ("📦", "FRAGMENT ERROR"),
+            ytdlp_errors::YtDlpErrorType::PostprocessingError => ("🎬", "FFMPEG / POSTPROCESS"),
+            ytdlp_errors::YtDlpErrorType::DiskSpaceError => ("💾", "DISK FULL"),
+            ytdlp_errors::YtDlpErrorType::Unknown => ("❓", "UNKNOWN"),
+        };
+        let truncated_error = if error_str.len() > 300 {
+            format!("{}...", &error_str[..300])
+        } else {
+            error_str.clone()
+        };
+        let recommendation = ytdlp_errors::get_fix_recommendations(&yt_error);
         let admin_msg = format!(
-            "🚨 Ошибка скачивания\nUser: {}\nURL: {}\nFormat: {}\nError: {}",
+            "{} <b>{}</b>\n\n\
+             User: {}\n\
+             Format: {}\n\
+             URL: {}\n\n\
+             <pre>{}</pre>\n\n\
+             {}",
+            category_emoji,
+            category_name,
             chat_id.0,
-            url,
             format.label(),
-            error_str
+            url,
+            truncated_error,
+            recommendation
         );
-        let _ = bot.send_message(ChatId(admin_id), &admin_msg).await;
+        let _ = bot
+            .send_message(ChatId(admin_id), &admin_msg)
+            .parse_mode(teloxide::types::ParseMode::Html)
+            .await;
     }
 
     // Record metrics

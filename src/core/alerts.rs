@@ -165,7 +165,7 @@ impl DownloadContext {
             cookies_configured,
             po_token_available,
             proxy_used,
-            player_client: Some("web,web_safari".to_string()),
+            player_client: Some("default".to_string()),
             ..Default::default()
         }
     }

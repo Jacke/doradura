@@ -115,7 +115,7 @@ pub fn get_random_dora_message_en() -> &'static str {
 ///
 /// Returns a string like:
 /// "Мы сделали это! ¡Lo hicimos!
-/// Ваш, @SaveAsBot"
+/// Ваша, @SaveAsBot"
 pub fn format_copyright_signature() -> String {
     if !*COPYRIGHT_ENABLED {
         return String::new();
@@ -125,7 +125,7 @@ pub fn format_copyright_signature() -> String {
     let tag = get_bot_tag();
 
     format!(
-        "\n\n_{}_\nВаш, {}",
+        "\n\n_{}_\nВаша, {}",
         escape_markdown_v2(message),
         escape_markdown_v2(&tag)
     )
@@ -164,6 +164,6 @@ mod tests {
     fn test_format_copyright_signature() {
         let sig = format_copyright_signature();
         // Should contain "Ваш," and be non-empty (when enabled) or empty (when disabled)
-        assert!(sig.contains("Ваш,") || sig.is_empty());
+        assert!(sig.contains("Ваша,") || sig.is_empty());
     }
 }
