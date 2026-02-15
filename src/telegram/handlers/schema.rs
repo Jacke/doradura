@@ -37,6 +37,8 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
     let deps_callback = deps.clone();
     let deps_browser_login = deps.clone();
     let deps_browser_status = deps.clone();
+    let deps_send = deps.clone();
+    let deps_broadcast = deps.clone();
 
     dptree::entry()
         // Successful payment handler must be first
@@ -47,6 +49,8 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
         .branch(update_ytdlp_handler(deps_ytdlp))
         .branch(browser_login_handler(deps_browser_login))
         .branch(browser_status_handler(deps_browser_status))
+        .branch(send_handler(deps_send))
+        .branch(broadcast_handler(deps_broadcast))
         // Command handler
         .branch(command_handler(deps_commands))
         // Media upload handler for premium/vip users
@@ -212,6 +216,52 @@ fn browser_status_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                     let _ = bot
                         .send_message(msg.chat.id, format!("❌ /browser_status failed: {}", e))
                         .await;
+                }
+                Ok(())
+            }
+        })
+}
+
+/// Handler for /send admin command (hidden, not in Command enum)
+fn send_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
+    Update::filter_message()
+        .filter(|msg: Message| msg.text().map(|text| text.starts_with("/send ")).unwrap_or(false))
+        .endpoint(move |bot: Bot, msg: Message| {
+            let deps = deps.clone();
+            async move {
+                use crate::telegram::handle_send_command;
+
+                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+                let message_text = msg.text().unwrap_or_default();
+
+                if let Err(e) =
+                    handle_send_command(&bot, msg.chat.id, user_id, message_text, deps.db_pool.clone()).await
+                {
+                    log::error!("/send handler failed for user {}: {}", user_id, e);
+                    let _ = bot.send_message(msg.chat.id, format!("Error: {}", e)).await;
+                }
+                Ok(())
+            }
+        })
+}
+
+/// Handler for /broadcast admin command (hidden, not in Command enum)
+fn broadcast_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
+    Update::filter_message()
+        .filter(|msg: Message| msg.text().map(|text| text.starts_with("/broadcast")).unwrap_or(false))
+        .endpoint(move |bot: Bot, msg: Message| {
+            let deps = deps.clone();
+            async move {
+                use crate::telegram::handle_broadcast_command;
+
+                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+                let message_text = msg.text().unwrap_or_default();
+
+                if let Err(e) =
+                    handle_broadcast_command(&bot, msg.chat.id, user_id, message_text, deps.db_pool.clone()).await
+                {
+                    log::error!("/broadcast handler failed for user {}: {}", user_id, e);
+                    let _ = bot.send_message(msg.chat.id, format!("Error: {}", e)).await;
                 }
                 Ok(())
             }

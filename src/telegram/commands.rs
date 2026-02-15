@@ -876,8 +876,21 @@ fn parse_download_time_range(text: &str, url_text: &str) -> Option<(String, Stri
 }
 
 fn parse_time_range_secs(text: &str) -> Option<(i64, i64)> {
-    let normalized = text.trim().replace(['—', '–', '−'], "-").replace(' ', "");
-    let (start_str, end_str) = normalized.split_once('-')?;
+    let normalized = text.trim().replace(['—', '–', '−'], "-");
+    // Strip trailing speed modifier (e.g., "2:40:53-2:42:19 2x" → "2:40:53-2:42:19")
+    let timestamp_part = normalized
+        .rsplit_once(' ')
+        .and_then(|(before, after)| {
+            let lower = after.to_lowercase();
+            if lower.ends_with('x') || lower.starts_with('x') || lower.starts_with("speed") {
+                Some(before)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(&normalized);
+    let cleaned = timestamp_part.replace(' ', "");
+    let (start_str, end_str) = cleaned.split_once('-')?;
     let start = parse_timestamp_secs(start_str)?;
     let end = parse_timestamp_secs(end_str)?;
     if end <= start {

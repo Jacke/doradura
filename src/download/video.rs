@@ -319,16 +319,25 @@ pub async fn download_and_send_video(
                 });
             }
 
-            // Cleanup files after delay
-            tokio::time::sleep(config::download::cleanup_delay()).await;
-            if total_parts > 1 {
-                for part_path in &video_parts {
-                    let _ = fs::remove_file(part_path);
-                }
-            }
-            let _ = fs::remove_file(&actual_file_path);
-            if actual_file_path != download_output.file_path {
-                let _ = fs::remove_file(&download_output.file_path);
+            // Schedule cleanup in background (outside timeout scope)
+            {
+                let cleanup_paths: Vec<String> = {
+                    let mut paths = Vec::new();
+                    if total_parts > 1 {
+                        paths.extend(video_parts.iter().cloned());
+                    }
+                    paths.push(actual_file_path.clone());
+                    if actual_file_path != download_output.file_path {
+                        paths.push(download_output.file_path.clone());
+                    }
+                    paths
+                };
+                tokio::spawn(async move {
+                    tokio::time::sleep(config::download::cleanup_delay()).await;
+                    for path in &cleanup_paths {
+                        let _ = fs::remove_file(path);
+                    }
+                });
             }
 
             Ok(())
