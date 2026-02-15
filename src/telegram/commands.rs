@@ -1398,9 +1398,27 @@ pub async fn process_video_clip(
         return Ok(());
     }
 
-    let base_filter_av = build_cut_filter(&adjusted_segments, has_video, true);
+    // Fast seek: use -ss before -i to skip to near the first segment
+    // Subtract 5 seconds for keyframe safety margin
+    let seek_offset = adjusted_segments
+        .iter()
+        .map(|s| s.start_secs)
+        .min()
+        .unwrap_or(0)
+        .saturating_sub(5)
+        .max(0);
+
+    let seeked_segments: Vec<CutSegment> = adjusted_segments
+        .iter()
+        .map(|s| CutSegment {
+            start_secs: s.start_secs - seek_offset,
+            end_secs: s.end_secs - seek_offset,
+        })
+        .collect();
+
+    let base_filter_av = build_cut_filter(&seeked_segments, has_video, true);
     let base_filter_v = if has_video {
-        build_cut_filter(&adjusted_segments, true, false)
+        build_cut_filter(&seeked_segments, true, false)
     } else {
         String::new()
     };
@@ -1529,11 +1547,14 @@ pub async fn process_video_clip(
     log::info!("🎬 Input: {:?}, Output: {:?}", input_path, output_path);
 
     let mut cmd = Command::new("ffmpeg");
-    cmd.arg("-hide_banner")
-        .arg("-loglevel")
-        .arg("info")
-        .arg("-i")
-        .arg(&input_path);
+    cmd.arg("-hide_banner").arg("-loglevel").arg("info");
+
+    // Fast seek to near the first segment (before -i for input-level seek)
+    if seek_offset > 0 {
+        cmd.arg("-ss").arg(format!("{}", seek_offset));
+    }
+
+    cmd.arg("-i").arg(&input_path);
 
     if is_ringtone {
         // For ringtone we only care about audio
@@ -1576,10 +1597,12 @@ pub async fn process_video_clip(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-        let retry_output = Command::new("ffmpeg")
-            .arg("-hide_banner")
-            .arg("-loglevel")
-            .arg("error")
+        let mut retry_cmd = Command::new("ffmpeg");
+        retry_cmd.arg("-hide_banner").arg("-loglevel").arg("error");
+        if seek_offset > 0 {
+            retry_cmd.arg("-ss").arg(format!("{}", seek_offset));
+        }
+        let retry_output = retry_cmd
             .arg("-i")
             .arg(&input_path)
             .arg("-filter_complex")
@@ -1912,12 +1935,32 @@ async fn process_audio_cut(
     }
 
     let output_path = temp_dir.join(format!("cut_audio_{}_{}.mp3", chat_id.0, uuid::Uuid::new_v4()));
-    let filter = build_cut_filter(&segments, false, true);
 
-    let output = Command::new("ffmpeg")
-        .arg("-hide_banner")
-        .arg("-loglevel")
-        .arg("info")
+    // Fast seek for audio cuts
+    let audio_seek_offset = segments
+        .iter()
+        .map(|s| s.start_secs)
+        .min()
+        .unwrap_or(0)
+        .saturating_sub(5)
+        .max(0);
+
+    let seeked_audio_segments: Vec<CutSegment> = segments
+        .iter()
+        .map(|s| CutSegment {
+            start_secs: s.start_secs - audio_seek_offset,
+            end_secs: s.end_secs - audio_seek_offset,
+        })
+        .collect();
+
+    let filter = build_cut_filter(&seeked_audio_segments, false, true);
+
+    let mut audio_cmd = Command::new("ffmpeg");
+    audio_cmd.arg("-hide_banner").arg("-loglevel").arg("info");
+    if audio_seek_offset > 0 {
+        audio_cmd.arg("-ss").arg(format!("{}", audio_seek_offset));
+    }
+    let output = audio_cmd
         .arg("-i")
         .arg(&input_path)
         .arg("-filter_complex")
