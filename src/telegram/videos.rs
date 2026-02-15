@@ -665,7 +665,7 @@ pub async fn handle_videos_callback(
                         for dur in durations {
                             let button = InlineKeyboardButton::callback(
                                 format!("{}s", dur),
-                                format!("convert:circle:{}:{}", upload_id, dur),
+                                format!("videos:circle_speed:{}:{}", upload_id, dur),
                             );
                             current_row.push(button);
 
@@ -685,7 +685,7 @@ pub async fn handle_videos_callback(
                                 let full_video_label = format!("📼 Всё видео ({} кружков)", split_info.num_parts);
                                 rows.push(vec![InlineKeyboardButton::callback(
                                     full_video_label,
-                                    format!("convert:circle:{}:{}", upload_id, video_duration),
+                                    format!("videos:circle_speed:{}:{}", upload_id, video_duration),
                                 )]);
                             } else if is_too_long_for_split(video_duration) {
                                 // Video too long - show warning button (disabled)
@@ -741,6 +741,49 @@ pub async fn handle_videos_callback(
                 }
             }
         }
+        "circle_speed" => {
+            // videos:circle_speed:{upload_id}:{duration}
+            if parts.len() < 4 {
+                return Ok(());
+            }
+            let upload_id = parts[2];
+            let duration = parts[3];
+
+            let speeds = [
+                ("x1", "1"),
+                ("x1.2", "1.2"),
+                ("x1.5", "1.5"),
+                ("x1.8", "1.8"),
+                ("x2", "2"),
+            ];
+
+            let speed_row: Vec<InlineKeyboardButton> = speeds
+                .iter()
+                .map(|(label, val)| {
+                    InlineKeyboardButton::callback(
+                        label.to_string(),
+                        format!("convert:circle:{}:{}:{}", upload_id, duration, val),
+                    )
+                })
+                .collect();
+
+            let keyboard = InlineKeyboardMarkup::new(vec![
+                speed_row,
+                vec![InlineKeyboardButton::callback(
+                    "⬅️ Назад".to_string(),
+                    format!("videos:convert:circle:{}", upload_id),
+                )],
+            ]);
+
+            bot.edit_message_text(
+                chat_id,
+                message_id,
+                format!("⚡ *Выбери скорость кружка* \\({}s\\):", escape_markdown(duration)),
+            )
+            .parse_mode(ParseMode::MarkdownV2)
+            .reply_markup(keyboard)
+            .await?;
+        }
         "cancel" | "close" => {
             bot.delete_message(chat_id, message_id).await.ok();
         }
@@ -778,12 +821,13 @@ async fn handle_convert_callback(
 
     match convert_type {
         "circle" => {
-            // Format: convert:circle:upload_id:duration
+            // Format: convert:circle:upload_id:duration:speed
             if parts.len() < 4 {
                 return Ok(());
             }
             let upload_id = parts[2].parse::<i64>().unwrap_or(0);
             let duration = parts[3].parse::<u64>().unwrap_or(30);
+            let speed: Option<f64> = parts.get(4).and_then(|s| s.parse().ok()).filter(|&s: &f64| s != 1.0);
 
             if let Some(upload) = get_upload_by_id(&conn, chat_id.0, upload_id)
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
@@ -805,15 +849,18 @@ async fn handle_convert_callback(
                 let split_info = calculate_video_note_split(duration);
                 let num_circles = split_info.as_ref().map(|s| s.num_parts).unwrap_or(1);
 
+                let speed_label = speed.map(|s| format!(" x{}", s)).unwrap_or_default();
                 let status_text = if num_circles > 1 {
                     format!(
-                        "⏳ Создаю {} кружков из *{}*\\.\\.\\.\n\n_Это может занять несколько минут_",
+                        "⏳ Создаю {} кружков{} из *{}*\\.\\.\\.\n\n_Это может занять несколько минут_",
                         num_circles,
+                        escape_markdown(&speed_label),
                         escape_markdown(&upload.title)
                     )
                 } else {
                     format!(
-                        "⏳ Создаю кружок из *{}*\\.\\.\\.\n\n_Это может занять несколько минут_",
+                        "⏳ Создаю кружок{} из *{}*\\.\\.\\.\n\n_Это может занять несколько минут_",
+                        escape_markdown(&speed_label),
                         escape_markdown(&upload.title)
                     )
                 };
@@ -836,7 +883,7 @@ async fn handle_convert_callback(
                 // Check if we need to split into multiple circles
                 if duration > VIDEO_NOTE_MAX_DURATION {
                     // Create multiple video notes
-                    match to_video_notes_split(&temp_input, duration, None).await {
+                    match to_video_notes_split(&temp_input, duration, speed).await {
                         Ok(output_paths) => {
                             let total = output_paths.len();
                             for (i, output_path) in output_paths.iter().enumerate() {
@@ -898,7 +945,7 @@ async fn handle_convert_callback(
                     let options = VideoNoteOptions {
                         duration: Some(duration),
                         start_time: None,
-                        speed: None,
+                        speed,
                     };
 
                     match to_video_note(&temp_input, options).await {
