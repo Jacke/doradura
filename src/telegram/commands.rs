@@ -1115,12 +1115,19 @@ pub async fn process_video_clip(
     let is_video_note = session.output_kind == "video_note";
     let is_ringtone = session.output_kind == "iphone_ringtone";
 
-    // For video notes, determine if we need multi-circle split
+    // Effective duration accounting for speed (e.g., 86s at 2x = 43s)
+    let effective_len = if let Some(spd) = speed {
+        (total_len as f32 / spd).ceil() as i64
+    } else {
+        total_len
+    };
+
+    // For video notes, determine if we need multi-circle split (using effective duration)
     let video_note_needs_split =
-        is_video_note && total_len > VIDEO_NOTE_MAX_DURATION as i64 && !is_too_long_for_split(total_len as u64);
+        is_video_note && effective_len > VIDEO_NOTE_MAX_DURATION as i64 && !is_too_long_for_split(effective_len as u64);
 
     // Check if video note is too long for splitting (> 360s)
-    if is_video_note && is_too_long_for_split(total_len as u64) {
+    if is_video_note && is_too_long_for_split(effective_len as u64) {
         let mut args = FluentArgs::new();
         args.set("max_minutes", VIDEO_NOTE_MAX_PARTS as i64);
         bot.send_message(
@@ -1184,9 +1191,16 @@ pub async fn process_video_clip(
         .map(|s| (s.end_secs - s.start_secs).max(0))
         .sum();
 
+    // Effective length after speed for video note split calculations
+    let effective_total_len = if let Some(spd) = speed {
+        (actual_total_len as f32 / spd).ceil() as i64
+    } else {
+        actual_total_len
+    };
+
     // Notify user about multi-circle split
     if video_note_needs_split {
-        if let Some(split_info) = calculate_video_note_split(actual_total_len as u64) {
+        if let Some(split_info) = calculate_video_note_split(effective_total_len as u64) {
             let mut args = FluentArgs::new();
             args.set("count", split_info.num_parts as i64);
             bot.send_message(chat_id, i18n::t_args(&lang, "commands.video_note_will_split", &args))
@@ -1668,23 +1682,25 @@ pub async fn process_video_clip(
         .map(|m| m.len())
         .unwrap_or(0);
     log::info!(
-        "📤 Sending {} (size: {} bytes, duration: {}s)",
+        "📤 Sending {} (size: {} bytes, duration: {}s, effective: {}s)",
         if is_video_note { "video note" } else { "video" },
         output_size,
-        actual_total_len
+        actual_total_len,
+        effective_total_len
     );
 
     let sent = if is_video_note && video_note_needs_split {
         // Multi-circle: split the cut video into multiple circles and send each
-        match to_video_notes_split(&output_path, actual_total_len as u64, None).await {
+        // Use effective_total_len (speed-adjusted) since ffmpeg already applied speed
+        match to_video_notes_split(&output_path, effective_total_len as u64, None).await {
             Ok(circle_paths) => {
                 let total_circles = circle_paths.len();
                 log::info!("📤 Sending {} video notes (circles)", total_circles);
 
                 for (i, circle_path) in circle_paths.iter().enumerate() {
-                    // Calculate duration for this part
+                    // Calculate duration for this part (using effective/speed-adjusted length)
                     let part_duration = if i == total_circles - 1 {
-                        actual_total_len - (i as i64 * VIDEO_NOTE_MAX_DURATION as i64)
+                        effective_total_len - (i as i64 * VIDEO_NOTE_MAX_DURATION as i64)
                     } else {
                         VIDEO_NOTE_MAX_DURATION as i64
                     };
@@ -1767,7 +1783,7 @@ pub async fn process_video_clip(
         // Single circle
         match bot
             .send_video_note(chat_id, teloxide::types::InputFile::file(output_path.clone()))
-            .duration(actual_total_len.max(1) as u32)
+            .duration(effective_total_len.max(1) as u32)
             .length(640)
             .await
         {
