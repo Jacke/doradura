@@ -203,7 +203,8 @@ mod tests {
             if self.fail_download {
                 return Err(AppError::Download("mock failure".into()));
             }
-            std::fs::write(&request.output_path, b"mock audio data").map_err(|e| AppError::Download(e.to_string()))?;
+            std::fs::write(&request.output_path, b"mock audio data")
+                .map_err(|e| AppError::Download(crate::download::error::DownloadError::Other(e.to_string())))?;
             Ok(DownloadOutput {
                 file_path: request.output_path.clone(),
                 duration_secs: Some(180),

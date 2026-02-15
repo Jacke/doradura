@@ -8,6 +8,7 @@
 
 use crate::core::error::AppError;
 use crate::core::process::{run_with_timeout, FFMPEG_TIMEOUT};
+use crate::download::error::DownloadError;
 use std::fs;
 use tokio::process::Command;
 
@@ -90,7 +91,7 @@ pub(crate) async fn convert_webp_to_jpeg(webp_bytes: &[u8]) -> Result<Vec<u8>, A
 
     // Save WebP to temporary file
     fs::write(&temp_webp, webp_bytes)
-        .map_err(|e| AppError::Download(format!("Failed to write WebP temp file: {}", e)))?;
+        .map_err(|e| AppError::Download(DownloadError::Other(format!("Failed to write WebP temp file: {}", e))))?;
 
     // Convert WebP to JPEG using ffmpeg
     let mut cmd = Command::new("ffmpeg");
@@ -116,13 +117,19 @@ pub(crate) async fn convert_webp_to_jpeg(webp_bytes: &[u8]) -> Result<Vec<u8>, A
                     }
                     Err(e) => {
                         let _ = fs::remove_file(&temp_jpeg);
-                        Err(AppError::Download(format!("Failed to read converted JPEG: {}", e)))
+                        Err(AppError::Download(DownloadError::Ffmpeg(format!(
+                            "Failed to read converted JPEG: {}",
+                            e
+                        ))))
                     }
                 }
             } else {
                 let stderr = String::from_utf8_lossy(&result.stderr);
                 let _ = fs::remove_file(&temp_jpeg);
-                Err(AppError::Download(format!("ffmpeg conversion failed: {}", stderr)))
+                Err(AppError::Download(DownloadError::Ffmpeg(format!(
+                    "ffmpeg conversion failed: {}",
+                    stderr
+                ))))
             }
         }
         Err(e) => {

@@ -1,4 +1,5 @@
 use crate::core::metrics;
+use crate::core::types::Plan;
 use crate::storage::db::{self, DbPool};
 use crate::telegram::Bot;
 use std::sync::Arc;
@@ -30,9 +31,9 @@ pub struct PlanLimits {
 
 impl PlanLimits {
     /// Получает лимиты для указанного плана
-    pub fn for_plan(plan: &str) -> Self {
+    pub fn for_plan(plan: Plan) -> Self {
         match plan {
-            "premium" => PlanLimits {
+            Plan::Premium => PlanLimits {
                 rate_limit_seconds: 10,
                 daily_download_limit: None, // Неограниченно
                 max_file_size_mb: 100,
@@ -47,7 +48,7 @@ impl PlanLimits {
                 can_choose_audio_bitrate: true,
                 can_upload_media: true,
             },
-            "vip" => PlanLimits {
+            Plan::Vip => PlanLimits {
                 rate_limit_seconds: 5,
                 daily_download_limit: None, // Неограниченно
                 max_file_size_mb: 200,
@@ -62,7 +63,7 @@ impl PlanLimits {
                 can_choose_audio_bitrate: true,
                 can_upload_media: true,
             },
-            _ => PlanLimits {
+            Plan::Free => PlanLimits {
                 rate_limit_seconds: 30,
                 daily_download_limit: Some(5),
                 max_file_size_mb: 49,
@@ -110,7 +111,7 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
                     crate::storage::db::User {
                         telegram_id: chat_id.0,
                         username: None,
-                        plan: "free".to_string(),
+                        plan: Plan::Free,
                         download_format: "mp3".to_string(),
                         download_subtitles: 0,
                         video_quality: "best".to_string(),
@@ -135,10 +136,7 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
 
     let subscription = db::get_subscription(&conn, chat_id.0).ok().flatten();
     let is_subscription_active = db::is_subscription_active(&conn, chat_id.0).unwrap_or(false);
-    let subscription_plan = subscription
-        .as_ref()
-        .map(|s| s.plan.clone())
-        .unwrap_or_else(|| user.plan.clone());
+    let subscription_plan = subscription.as_ref().map(|s| s.plan).unwrap_or(user.plan);
     let subscription_expires_at = subscription
         .as_ref()
         .and_then(|s| s.expires_at.clone())
@@ -313,21 +311,13 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
 
     log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
-    let current_plan = &subscription_plan;
+    let current_plan = subscription_plan;
     let limits = PlanLimits::for_plan(current_plan);
 
     // Формируем текст сообщения
-    let plan_emoji = match current_plan.as_str() {
-        "premium" => "⭐",
-        "vip" => "👑",
-        _ => "🌟",
-    };
+    let plan_emoji = current_plan.emoji();
 
-    let plan_name = match current_plan.as_str() {
-        "premium" => "Premium",
-        "vip" => "VIP",
-        _ => "Free",
-    };
+    let plan_name = current_plan.display_name();
 
     let mut text = "💳 *Информация о подписке*\n\n".to_string();
     text.push_str(&format!("📊 *Твой текущий план:* {} {}\n", plan_emoji, plan_name));
@@ -902,7 +892,7 @@ pub async fn cancel_subscription(bot: &Bot, telegram_id: i64, db_pool: Arc<DbPoo
 
     // Track subscription cancellation
     metrics::SUBSCRIPTION_CANCELLATIONS_TOTAL
-        .with_label_values(&[&user.plan])
+        .with_label_values(&[user.plan.as_str()])
         .inc();
 
     // Обновляем флаг is_recurring в БД (пользователь сохраняет доступ до даты истечения)
@@ -963,7 +953,7 @@ mod tests {
 
     #[test]
     fn test_plan_limits_for_free() {
-        let limits = PlanLimits::for_plan("free");
+        let limits = PlanLimits::for_plan(Plan::Free);
         assert_eq!(limits.rate_limit_seconds, 30);
         assert_eq!(limits.daily_download_limit, Some(5));
         assert_eq!(limits.max_file_size_mb, 49);
@@ -978,7 +968,7 @@ mod tests {
 
     #[test]
     fn test_plan_limits_for_premium() {
-        let limits = PlanLimits::for_plan("premium");
+        let limits = PlanLimits::for_plan(Plan::Premium);
         assert_eq!(limits.rate_limit_seconds, 10);
         assert_eq!(limits.daily_download_limit, None);
         assert_eq!(limits.max_file_size_mb, 100);
@@ -991,7 +981,7 @@ mod tests {
 
     #[test]
     fn test_plan_limits_for_vip() {
-        let limits = PlanLimits::for_plan("vip");
+        let limits = PlanLimits::for_plan(Plan::Vip);
         assert_eq!(limits.rate_limit_seconds, 5);
         assert_eq!(limits.daily_download_limit, None);
         assert_eq!(limits.max_file_size_mb, 200);
@@ -1005,22 +995,16 @@ mod tests {
     }
 
     #[test]
-    fn test_plan_limits_for_unknown_defaults_to_free() {
-        let limits = PlanLimits::for_plan("unknown");
+    fn test_plan_limits_for_default_is_free() {
+        let limits = PlanLimits::for_plan(Plan::default());
         assert_eq!(limits.rate_limit_seconds, 30);
         assert_eq!(limits.daily_download_limit, Some(5));
         assert_eq!(limits.max_file_size_mb, 49);
-
-        let limits2 = PlanLimits::for_plan("");
-        assert_eq!(limits2.rate_limit_seconds, 30);
-
-        let limits3 = PlanLimits::for_plan("invalid_plan");
-        assert_eq!(limits3.daily_download_limit, Some(5));
     }
 
     #[test]
     fn test_plan_limits_clone() {
-        let limits = PlanLimits::for_plan("premium");
+        let limits = PlanLimits::for_plan(Plan::Premium);
         let cloned = limits.clone();
         assert_eq!(limits.rate_limit_seconds, cloned.rate_limit_seconds);
         assert_eq!(limits.max_file_size_mb, cloned.max_file_size_mb);
@@ -1028,7 +1012,7 @@ mod tests {
 
     #[test]
     fn test_plan_limits_debug() {
-        let limits = PlanLimits::for_plan("vip");
+        let limits = PlanLimits::for_plan(Plan::Vip);
         let debug_str = format!("{:?}", limits);
         assert!(debug_str.contains("PlanLimits"));
         assert!(debug_str.contains("rate_limit_seconds"));
@@ -1071,9 +1055,9 @@ mod tests {
 
     #[test]
     fn test_premium_vs_vip_rate_limits() {
-        let premium = PlanLimits::for_plan("premium");
-        let vip = PlanLimits::for_plan("vip");
-        let free = PlanLimits::for_plan("free");
+        let premium = PlanLimits::for_plan(Plan::Premium);
+        let vip = PlanLimits::for_plan(Plan::Vip);
+        let free = PlanLimits::for_plan(Plan::Free);
 
         // VIP has lower rate limit than premium
         assert!(vip.rate_limit_seconds < premium.rate_limit_seconds);
@@ -1083,9 +1067,9 @@ mod tests {
 
     #[test]
     fn test_premium_vs_vip_file_size() {
-        let premium = PlanLimits::for_plan("premium");
-        let vip = PlanLimits::for_plan("vip");
-        let free = PlanLimits::for_plan("free");
+        let premium = PlanLimits::for_plan(Plan::Premium);
+        let vip = PlanLimits::for_plan(Plan::Vip);
+        let free = PlanLimits::for_plan(Plan::Free);
 
         // VIP has higher max file size than premium
         assert!(vip.max_file_size_mb > premium.max_file_size_mb);
@@ -1095,9 +1079,9 @@ mod tests {
 
     #[test]
     fn test_premium_vs_vip_queue_priority() {
-        let premium = PlanLimits::for_plan("premium");
-        let vip = PlanLimits::for_plan("vip");
-        let free = PlanLimits::for_plan("free");
+        let premium = PlanLimits::for_plan(Plan::Premium);
+        let vip = PlanLimits::for_plan(Plan::Vip);
+        let free = PlanLimits::for_plan(Plan::Free);
 
         // VIP has highest priority
         assert_eq!(vip.queue_priority, 100);
@@ -1109,8 +1093,8 @@ mod tests {
 
     #[test]
     fn test_allowed_formats_subset() {
-        let premium = PlanLimits::for_plan("premium");
-        let free = PlanLimits::for_plan("free");
+        let premium = PlanLimits::for_plan(Plan::Premium);
+        let free = PlanLimits::for_plan(Plan::Free);
 
         // Free has fewer formats than premium
         assert!(free.allowed_formats.len() < premium.allowed_formats.len());

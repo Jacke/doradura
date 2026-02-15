@@ -7,6 +7,8 @@ use crate::core::config;
 use crate::core::error::AppError;
 use crate::core::metrics;
 use crate::core::rate_limiter::RateLimiter;
+use crate::core::types::Plan;
+use crate::download::error::DownloadError;
 use crate::download::pipeline::{self, PipelineFormat, PipelineResult};
 use crate::download::source::SourceRegistry;
 use crate::storage::db::{self as db, DbPool};
@@ -51,15 +53,15 @@ pub async fn download_and_send_audio(
                     .ok()
                     .flatten()
                     .map(|u| u.plan)
-                    .unwrap_or_else(|| "free".to_string())
+                    .unwrap_or_default()
             } else {
-                "free".to_string()
+                Plan::default()
             }
         } else {
-            "free".to_string()
+            Plan::default()
         };
 
-        metrics::record_format_request("mp3", &user_plan);
+        metrics::record_format_request("mp3", user_plan.as_str());
 
         let quality = audio_bitrate.as_deref().unwrap_or("default");
         let timer = metrics::DOWNLOAD_DURATION_SECONDS
@@ -103,10 +105,10 @@ pub async fn download_and_send_audio(
                     "🚨 Audio download timed out after {} seconds",
                     config::download::GLOBAL_TIMEOUT_SECS
                 );
-                Err(AppError::Download(format!(
+                Err(AppError::Download(DownloadError::Timeout(format!(
                     "Таймаут загрузки (превышено {} минут)",
                     config::download::GLOBAL_TIMEOUT_SECS / 60
-                )))
+                ))))
             }
         };
 

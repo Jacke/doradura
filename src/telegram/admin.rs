@@ -5,6 +5,7 @@
 //! - Database backup operations
 //! - Markdown escaping utilities
 
+use crate::core::types::Plan;
 use crate::core::{BOT_API_RESPONSE_REGEX, BOT_API_START_SIMPLE_REGEX};
 // Re-export escape_markdown for backward compatibility (other modules import from here)
 pub use crate::core::escape_markdown;
@@ -833,9 +834,9 @@ pub async fn handle_users_command(
     }
 
     // Calculate statistics
-    let free_count = users.iter().filter(|u| u.plan == "free").count();
-    let premium_count = users.iter().filter(|u| u.plan == "premium").count();
-    let vip_count = users.iter().filter(|u| u.plan == "vip").count();
+    let free_count = users.iter().filter(|u| u.plan == Plan::Free).count();
+    let premium_count = users.iter().filter(|u| u.plan == Plan::Premium).count();
+    let vip_count = users.iter().filter(|u| u.plan == Plan::Vip).count();
     let with_subscription = users.iter().filter(|u| u.telegram_charge_id.is_some()).count();
     let recurring_count = users.iter().filter(|u| u.is_recurring).count();
 
@@ -873,11 +874,7 @@ pub async fn handle_users_command(
                 format!("ID\\: {}", id_escaped)
             });
 
-        let plan_emoji = match user.plan.as_str() {
-            "premium" => "⭐",
-            "vip" => "👑",
-            _ => "🌟",
-        };
+        let plan_emoji = user.plan.emoji();
 
         // Показываем статус подписки
         let subscription_status = if user.telegram_charge_id.is_some() {
@@ -897,7 +894,7 @@ pub async fn handle_users_command(
             "".to_string()
         };
 
-        let plan_escaped = escape_markdown(&user.plan);
+        let plan_escaped = escape_markdown(user.plan.as_str());
         let idx_escaped = escape_markdown(&(idx + 1).to_string());
         let user_line = format!(
             "{}\\. {} {} {}{}\n",
@@ -1111,11 +1108,7 @@ pub async fn handle_admin_command(bot: &Bot, chat_id: ChatId, user_id: i64, db_p
             .map(|u| format!("@{}", u))
             .unwrap_or_else(|| format!("ID:{}", user.telegram_id));
 
-        let plan_emoji = match user.plan.as_str() {
-            "premium" => "⭐",
-            "vip" => "👑",
-            _ => "🌟",
-        };
+        let plan_emoji = user.plan.emoji();
 
         let button_text = format!("{} {}", plan_emoji, username_display);
         let callback_data = format!("admin:user:{}", user.telegram_id);
@@ -1290,7 +1283,7 @@ pub async fn handle_charges_command(
             text.push_str("💳 *Платежи*\n\n");
 
             for (idx, charge) in charges.iter().enumerate() {
-                let plan_emoji = if charge.plan == "premium" { "⭐" } else { "💎" };
+                let plan_emoji = if charge.plan == Plan::Premium { "⭐" } else { "💎" };
                 let recurring_mark = if charge.is_recurring { " 🔄" } else { "" };
                 let first_mark = if charge.is_first_recurring {
                     " (первый)"
@@ -1306,7 +1299,7 @@ pub async fn handle_charges_command(
                     • Дата: {}\n",
                     idx + 1,
                     plan_emoji,
-                    escape_markdown(&charge.plan.to_uppercase()),
+                    escape_markdown(&charge.plan.as_str().to_uppercase()),
                     recurring_mark,
                     first_mark,
                     charge.user_id,

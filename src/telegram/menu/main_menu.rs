@@ -1,5 +1,6 @@
 use crate::core::config::admin::ADMIN_USERNAME;
 use crate::core::escape_markdown;
+use crate::core::types::Plan;
 use crate::i18n;
 use crate::storage::db::{self, DbPool};
 use crate::telegram::Bot;
@@ -297,7 +298,7 @@ pub async fn show_enhanced_main_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<Db
             let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
             let plan = match db::get_user(&conn, chat_id.0) {
                 Ok(Some(user)) => user.plan,
-                _ => "free".to_string(),
+                _ => Plan::default(),
             };
             (format, video_quality, audio_bitrate, plan)
         }
@@ -307,7 +308,7 @@ pub async fn show_enhanced_main_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<Db
                 "mp3".to_string(),
                 "best".to_string(),
                 "320k".to_string(),
-                "free".to_string(),
+                Plan::default(),
             )
         }
     };
@@ -348,10 +349,10 @@ pub async fn show_enhanced_main_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<Db
     };
 
     // Plan display
-    let plan_display = match plan.as_str() {
-        "premium" => i18n::t(&lang, "menu.plan_premium"),
-        "vip" => i18n::t(&lang, "menu.plan_vip"),
-        _ => i18n::t(&lang, "menu.plan_free"),
+    let plan_display = match plan {
+        Plan::Premium => i18n::t(&lang, "menu.plan_premium"),
+        Plan::Vip => i18n::t(&lang, "menu.plan_vip"),
+        Plan::Free => i18n::t(&lang, "menu.plan_free"),
     };
 
     let (text, keyboard) = build_enhanced_menu(&lang, format_emoji, &quality_line, &plan_display);
@@ -379,7 +380,7 @@ pub(crate) async fn edit_enhanced_main_menu(
             let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
             let plan = match db::get_user(&conn, chat_id.0) {
                 Ok(Some(user)) => user.plan,
-                _ => "free".to_string(),
+                _ => Plan::default(),
             };
             (format, video_quality, audio_bitrate, plan)
         }
@@ -389,7 +390,7 @@ pub(crate) async fn edit_enhanced_main_menu(
                 "mp3".to_string(),
                 "best".to_string(),
                 "320k".to_string(),
-                "free".to_string(),
+                Plan::default(),
             )
         }
     };
@@ -427,10 +428,10 @@ pub(crate) async fn edit_enhanced_main_menu(
         i18n::t_args(&lang, "menu.bitrate_line", &args)
     };
 
-    let plan_display = match plan.as_str() {
-        "premium" => i18n::t(&lang, "menu.plan_premium"),
-        "vip" => i18n::t(&lang, "menu.plan_vip"),
-        _ => i18n::t(&lang, "menu.plan_free"),
+    let plan_display = match plan {
+        Plan::Premium => i18n::t(&lang, "menu.plan_premium"),
+        Plan::Vip => i18n::t(&lang, "menu.plan_vip"),
+        Plan::Free => i18n::t(&lang, "menu.plan_free"),
     };
 
     let (text, keyboard) = build_enhanced_menu(&lang, format_emoji, &quality_line, &plan_display);
@@ -458,7 +459,7 @@ pub(crate) async fn show_current_settings_detail(
 
     let plan = match db::get_user(&conn, chat_id.0) {
         Ok(Some(user)) => user.plan,
-        _ => "free".to_string(),
+        _ => Plan::default(),
     };
 
     let format_emoji = match format.as_str() {
@@ -508,10 +509,10 @@ pub(crate) async fn show_current_settings_detail(
         "🎵 *Отправка аудио:* Медиа"
     };
 
-    let plan_display = match plan.as_str() {
-        "premium" => "Premium ⭐",
-        "vip" => "VIP 💎",
-        _ => "Free",
+    let plan_display = match plan {
+        Plan::Premium => "Premium ⭐",
+        Plan::Vip => "VIP 💎",
+        Plan::Free => "Free",
     };
 
     let mut text = format!(

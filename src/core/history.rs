@@ -1,4 +1,5 @@
 use crate::core::escape_markdown;
+use crate::core::types::Plan;
 use crate::storage::db::{self, DbPool};
 use crate::telegram::Bot;
 use chrono::NaiveDateTime;
@@ -314,12 +315,12 @@ pub async fn handle_history_callback(
                                 RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                             })?;
                             let plan = match db::get_user(&conn, chat_id.0) {
-                                Ok(Some(ref user)) => user.plan.clone(),
-                                _ => "free".to_string(),
+                                Ok(Some(ref user)) => user.plan,
+                                _ => Plan::default(),
                             };
 
                             // Проверяем rate limit
-                            if rate_limiter.is_rate_limited(chat_id, &plan).await {
+                            if rate_limiter.is_rate_limited(chat_id, plan.as_str()).await {
                                 if let Some(remaining_time) = rate_limiter.get_remaining_time(chat_id).await {
                                     let remaining_seconds = remaining_time.as_secs();
                                     let mut args = fluent_templates::fluent_bundle::FluentArgs::new();
@@ -346,7 +347,7 @@ pub async fn handle_history_callback(
                                 Err(_) => "mp3".to_string(),
                             };
 
-                            rate_limiter.update_rate_limit(chat_id, &plan).await;
+                            rate_limiter.update_rate_limit(chat_id, plan.as_str()).await;
 
                             // Get user preferences for quality/bitrate
                             let video_quality = if format == "mp4" {
@@ -376,7 +377,7 @@ pub async fn handle_history_callback(
                                 format.clone(),
                                 video_quality,
                                 audio_bitrate,
-                                &plan,
+                                plan.as_str(),
                             );
                             download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
 

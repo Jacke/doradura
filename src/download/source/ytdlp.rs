@@ -12,6 +12,7 @@ use crate::core::config;
 use crate::core::error::AppError;
 use crate::download::cookies::report_and_wait_for_refresh;
 use crate::download::downloader::{cleanup_partial_download, parse_progress};
+use crate::download::error::DownloadError;
 use crate::download::metadata::{
     add_cookies_args_with_proxy, add_no_cookies_args, build_telegram_safe_format, find_actual_downloaded_file,
     get_estimated_filesize, get_metadata_from_ytdlp, get_proxy_chain, is_proxy_related_error, probe_duration_seconds,
@@ -219,7 +220,7 @@ impl YtDlpSource {
 
         let duration = handle
             .await
-            .map_err(|e| AppError::Download(format!("Task join error: {}", e)))??;
+            .map_err(|e| AppError::Download(DownloadError::YtDlp(format!("Task join error: {}", e))))??;
 
         let actual_path =
             find_actual_downloaded_file(&request.output_path).unwrap_or_else(|_| request.output_path.clone());
@@ -311,7 +312,7 @@ impl YtDlpSource {
 
         handle
             .await
-            .map_err(|e| AppError::Download(format!("Task join error: {}", e)))??;
+            .map_err(|e| AppError::Download(DownloadError::YtDlp(format!("Task join error: {}", e))))??;
 
         let actual_path = find_actual_downloaded_file(&request.output_path)?;
 
@@ -606,7 +607,7 @@ where
                         attempt + 2,
                         total_proxies
                     );
-                    last_error = Some(AppError::Download(error_msg));
+                    last_error = Some(AppError::Download(DownloadError::YtDlp(error_msg)));
                     continue;
                 }
 
@@ -635,7 +636,7 @@ where
                     ) {
                         Tier2Outcome::Success => return Ok(probe_duration_seconds(download_path)),
                         Tier2Outcome::CookieRefreshed => {
-                            last_error = Some(AppError::Download(error_msg.clone()));
+                            last_error = Some(AppError::Download(DownloadError::YtDlp(error_msg.clone())));
                             continue;
                         }
                         Tier2Outcome::Failed => {}
@@ -679,17 +680,17 @@ where
                         attempt + 2,
                         total_proxies
                     );
-                    last_error = Some(AppError::Download(error_msg));
+                    last_error = Some(AppError::Download(DownloadError::YtDlp(error_msg)));
                     continue;
                 }
 
-                return Err(AppError::Download(error_msg));
+                return Err(AppError::Download(DownloadError::YtDlp(error_msg)));
             }
         }
     }
 
     log::error!("❌ All {} proxies failed for {} download", total_proxies, media_type);
-    Err(last_error.unwrap_or_else(|| AppError::Download("All proxies failed".to_string())))
+    Err(last_error.unwrap_or_else(|| AppError::Download(DownloadError::YtDlp("All proxies failed".to_string()))))
 }
 
 /// Append `--download-sections` and `--force-keyframes-at-cuts` when a time range is set.

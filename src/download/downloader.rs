@@ -5,6 +5,7 @@ use crate::core::metrics;
 use crate::core::process::{run_with_timeout, FFMPEG_TIMEOUT};
 use crate::core::rate_limiter::RateLimiter;
 use crate::core::utils::{escape_filename, sanitize_filename};
+use crate::download::error::DownloadError;
 use crate::download::metadata::{add_cookies_args, get_metadata_from_ytdlp, probe_video_metadata};
 use crate::download::progress::{DownloadStatus, ProgressMessage};
 use crate::download::proxy::ProxyListManager;
@@ -134,16 +135,16 @@ pub fn spawn_downloader_with_fallback(ytdl_bin: &str, args: &[&str]) -> Result<s
                     .stderr(Stdio::inherit())
                     .spawn()
                     .map_err(|inner| {
-                        AppError::Download(format!(
+                        AppError::Download(DownloadError::Process(format!(
                             "Failed to start downloader. Tried '{}', then '{}': {} / {}",
                             ytdl_bin, fallback, e, inner
-                        ))
+                        )))
                     })
             } else {
-                Err(AppError::Download(format!(
+                Err(AppError::Download(DownloadError::Process(format!(
                     "Failed to start downloader '{}': {}",
                     ytdl_bin, e
-                )))
+                ))))
             }
         })
 }
@@ -352,17 +353,17 @@ pub async fn download_and_send_subtitles(
                     .ok()
                     .flatten()
                     .map(|u| u.plan)
-                    .unwrap_or_else(|| "free".to_string())
+                    .unwrap_or_default()
             } else {
-                "free".to_string()
+                crate::core::types::Plan::default()
             }
         } else {
-            "free".to_string()
+            crate::core::types::Plan::default()
         };
 
         // Record format request for metrics
         let format = subtitle_format.as_str();
-        metrics::record_format_request(format, &user_plan);
+        metrics::record_format_request(format, user_plan.as_str());
 
         // Start metrics timer for subtitles download
         let timer = metrics::DOWNLOAD_DURATION_SECONDS
@@ -429,27 +430,31 @@ pub async fn download_and_send_subtitles(
             let download_result = tokio::task::spawn_blocking(move || {
                 let args_refs: Vec<&str> = args_owned.iter().map(|s| s.as_str()).collect();
                 let mut child = spawn_downloader_with_fallback(&ytdl_bin_owned, &args_refs)?;
-                let status = child
-                    .wait()
-                    .map_err(|e| AppError::Download(format!("downloader process failed: {}", e)))?;
+                let status = child.wait().map_err(|e| {
+                    AppError::Download(DownloadError::Process(format!("downloader process failed: {}", e)))
+                })?;
                 Ok::<_, AppError>(status)
             })
             .await
-            .map_err(|e| AppError::Download(format!("spawn_blocking failed: {}", e)))??;
+            .map_err(|e| AppError::Download(DownloadError::Process(format!("spawn_blocking failed: {}", e))))??;
 
             if !download_result.success() {
-                return Err(AppError::Download(format!(
+                return Err(AppError::Download(DownloadError::Process(format!(
                     "downloader exited with status: {}",
                     download_result
-                )));
+                ))));
             }
 
             // Check if file exists
             if fs::metadata(&download_path).is_err() {
                 // Try to find the actual filename that was downloaded
                 let parent_dir = shellexpand::tilde("~/downloads/").into_owned();
-                let dir_entries = fs::read_dir(&parent_dir)
-                    .map_err(|e| AppError::Download(format!("Failed to read downloads dir: {}", e)))?;
+                let dir_entries = fs::read_dir(&parent_dir).map_err(|e| {
+                    AppError::Download(DownloadError::FileNotFound(format!(
+                        "Failed to read downloads dir: {}",
+                        e
+                    )))
+                })?;
                 let mut found_file: Option<String> = None;
 
                 for entry in dir_entries {
@@ -467,20 +472,26 @@ pub async fn download_and_send_subtitles(
                     let _sent_message = bot_clone
                         .send_document(chat_id, InputFile::file(&found))
                         .await
-                        .map_err(|e| AppError::Download(format!("Failed to send document: {}", e)))?;
+                        .map_err(|e| {
+                            AppError::Download(DownloadError::SendFailed(format!("Failed to send document: {}", e)))
+                        })?;
 
                     // NOTE: Subtitles are not saved to download_history as they won't appear in /downloads
                     // (We only save mp3/mp4 with file_id for the /downloads command)
                     // Subtitle tracking is intentionally disabled per requirements
                 } else {
-                    return Err(AppError::Download("Subtitle file not found".to_string()));
+                    return Err(AppError::Download(DownloadError::FileNotFound(
+                        "Subtitle file not found".to_string(),
+                    )));
                 }
             } else {
                 // Send the file
                 let _sent_message = bot_clone
                     .send_document(chat_id, InputFile::file(&download_path))
                     .await
-                    .map_err(|e| AppError::Download(format!("Failed to send document: {}", e)))?;
+                    .map_err(|e| {
+                        AppError::Download(DownloadError::SendFailed(format!("Failed to send document: {}", e)))
+                    })?;
 
                 // NOTE: Subtitles are not saved to download_history as they won't appear in /downloads
                 // (We only save mp3/mp4 with file_id for the /downloads command)
@@ -541,7 +552,10 @@ pub async fn download_and_send_subtitles(
             tokio::time::sleep(config::download::cleanup_delay()).await;
             if let Err(e) = fs::remove_file(&download_path) {
                 if e.kind() != std::io::ErrorKind::NotFound {
-                    return Err(AppError::Download(format!("Failed to delete file: {}", e)))?;
+                    return Err(AppError::Download(DownloadError::Other(format!(
+                        "Failed to delete file: {}",
+                        e
+                    ))))?;
                 }
                 // File doesn't exist - that's fine, it was probably deleted manually
             }
@@ -637,7 +651,7 @@ pub async fn download_and_send_subtitles(
 pub async fn split_video_into_parts(path: &str, target_part_size_bytes: u64) -> Result<Vec<String>, AppError> {
     log::info!("Checking if video needs splitting: {}", path);
     let file_size = fs::metadata(path)
-        .map_err(|e| AppError::Download(format!("Failed to get file size: {}", e)))?
+        .map_err(|e| AppError::Download(DownloadError::Other(format!("Failed to get file size: {}", e))))?
         .len();
 
     if file_size <= target_part_size_bytes {
@@ -649,8 +663,8 @@ pub async fn split_video_into_parts(path: &str, target_part_size_bytes: u64) -> 
         return Ok(vec![path.to_string()]);
     }
 
-    let metadata =
-        probe_video_metadata(path).ok_or_else(|| AppError::Download(format!("Failed to probe video: {}", path)))?;
+    let metadata = probe_video_metadata(path)
+        .ok_or_else(|| AppError::Download(DownloadError::Ffmpeg(format!("Failed to probe video: {}", path))))?;
     let duration = metadata.0 as f64;
 
     // Use slightly smaller parts to be safe (e.g. 5% buffer)
@@ -687,10 +701,10 @@ pub async fn split_video_into_parts(path: &str, target_part_size_bytes: u64) -> 
     let output = run_with_timeout(&mut cmd, FFMPEG_TIMEOUT).await?;
 
     if !output.status.success() {
-        return Err(AppError::Download(format!(
+        return Err(AppError::Download(DownloadError::Ffmpeg(format!(
             "ffmpeg split failed: {}",
             String::from_utf8_lossy(&output.stderr)
-        )));
+        ))));
     }
 
     // Find all created parts
@@ -701,8 +715,8 @@ pub async fn split_video_into_parts(path: &str, target_part_size_bytes: u64) -> 
         .map(|s| s.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    for entry in fs::read_dir(parent_dir).map_err(|e| AppError::Download(e.to_string()))? {
-        let entry = entry.map_err(|e| AppError::Download(e.to_string()))?;
+    for entry in fs::read_dir(parent_dir).map_err(|e| AppError::Download(DownloadError::Other(e.to_string())))? {
+        let entry = entry.map_err(|e| AppError::Download(DownloadError::Other(e.to_string())))?;
         let name = entry.file_name().to_string_lossy().to_string();
         if name.starts_with(&file_stem) && name.contains("_part_") && name.ends_with(".mp4") {
             parts.push(entry.path().to_string_lossy().to_string());
@@ -735,13 +749,16 @@ pub async fn burn_subtitles_into_video(
 
     // Проверяем наличие исходных файлов
     if !std::path::Path::new(video_path).exists() {
-        return Err(AppError::Download(format!("Video file not found: {}", video_path)));
+        return Err(AppError::Download(DownloadError::FileNotFound(format!(
+            "Video file not found: {}",
+            video_path
+        ))));
     }
     if !std::path::Path::new(subtitle_path).exists() {
-        return Err(AppError::Download(format!(
+        return Err(AppError::Download(DownloadError::FileNotFound(format!(
             "Subtitle file not found: {}",
             subtitle_path
-        )));
+        ))));
     }
 
     // Escape путь к субтитрам для ffmpeg filter
@@ -784,18 +801,18 @@ pub async fn burn_subtitles_into_video(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         log::error!("❌ ffmpeg failed to burn subtitles: {}", stderr);
-        return Err(AppError::Download(format!(
+        return Err(AppError::Download(DownloadError::Ffmpeg(format!(
             "ffmpeg failed to burn subtitles: {}",
             stderr
-        )));
+        ))));
     }
 
     // Проверяем что выходной файл был создан
     if !std::path::Path::new(output_path).exists() {
-        return Err(AppError::Download(format!(
+        return Err(AppError::Download(DownloadError::FileNotFound(format!(
             "Output video file was not created: {}",
             output_path
-        )));
+        ))));
     }
 
     log::info!("✅ Successfully burned subtitles into video: {}", output_path);

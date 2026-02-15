@@ -12,6 +12,7 @@
 use crate::core::config;
 use crate::core::error::AppError;
 use crate::core::metrics;
+use crate::download::error::DownloadError;
 use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message, should_notify_admin, YtDlpErrorType};
 use crate::storage::cache;
 use crate::telegram::notifications::notify_admin_text;
@@ -463,7 +464,7 @@ pub fn has_both_video_and_audio(path: &str) -> Result<bool, AppError> {
             path,
         ])
         .output()
-        .map_err(|e| AppError::Download(format!("Failed to check video stream: {}", e)))?;
+        .map_err(|e| AppError::Download(DownloadError::Other(format!("Failed to check video stream: {}", e))))?;
 
     let has_video = !String::from_utf8_lossy(&video_output.stdout).trim().is_empty();
 
@@ -481,7 +482,7 @@ pub fn has_both_video_and_audio(path: &str) -> Result<bool, AppError> {
             path,
         ])
         .output()
-        .map_err(|e| AppError::Download(format!("Failed to check audio stream: {}", e)))?;
+        .map_err(|e| AppError::Download(DownloadError::Other(format!("Failed to check audio stream: {}", e))))?;
 
     let has_audio = !String::from_utf8_lossy(&audio_output.stdout).trim().is_empty();
 
@@ -612,20 +613,29 @@ pub fn find_actual_downloaded_file(expected_path: &str) -> Result<String, AppErr
     log::warn!("File not found at expected path: {}", expected_path);
 
     // Get directory and base file name
-    let parent_dir = path
-        .parent()
-        .ok_or_else(|| AppError::Download(format!("Cannot get parent directory for: {}", expected_path)))?;
+    let parent_dir = path.parent().ok_or_else(|| {
+        AppError::Download(DownloadError::FileNotFound(format!(
+            "Cannot get parent directory for: {}",
+            expected_path
+        )))
+    })?;
 
-    let file_stem = path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| AppError::Download(format!("Cannot get file stem for: {}", expected_path)))?;
+    let file_stem = path.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {
+        AppError::Download(DownloadError::FileNotFound(format!(
+            "Cannot get file stem for: {}",
+            expected_path
+        )))
+    })?;
 
     let file_extension = path.extension().and_then(|s| s.to_str()).unwrap_or("mp4");
 
     // Search for files starting with the base name
-    let dir_entries =
-        fs::read_dir(parent_dir).map_err(|e| AppError::Download(format!("Failed to read downloads dir: {}", e)))?;
+    let dir_entries = fs::read_dir(parent_dir).map_err(|e| {
+        AppError::Download(DownloadError::FileNotFound(format!(
+            "Failed to read downloads dir: {}",
+            e
+        )))
+    })?;
 
     let mut found_files = Vec::new();
     for entry in dir_entries {
@@ -651,10 +661,10 @@ pub fn find_actual_downloaded_file(expected_path: &str) -> Result<String, AppErr
         .last()
         .ok_or_else(|| {
             log::error!("No matching files found in directory: {}", parent_dir.display());
-            AppError::Download(format!(
+            AppError::Download(DownloadError::FileNotFound(format!(
                 "Downloaded file not found at {} or in directory",
                 expected_path
-            ))
+            )))
         })?
         .clone();
     log::info!(
@@ -753,12 +763,12 @@ pub async fn get_metadata_from_ytdlp(
             config::download::YTDLP_TIMEOUT_SECS
         );
         metrics::record_error("download", "metadata_timeout");
-        AppError::Download("yt-dlp command timed out".to_string())
+        AppError::Download(DownloadError::YtDlp("yt-dlp command timed out".to_string()))
     })?
     .map_err(|e| {
         log::error!("Failed to execute {}: {}", ytdl_bin, e);
         metrics::record_error("download", "metadata_spawn");
-        AppError::Download(format!("Failed to get title: {}", e))
+        AppError::Download(DownloadError::YtDlp(format!("Failed to get title: {}", e)))
     })?;
 
     log::debug!(
@@ -809,7 +819,7 @@ pub async fn get_metadata_from_ytdlp(
         }
 
         // Return user-friendly error message
-        return Err(AppError::Download(get_error_message(&error_type)));
+        return Err(AppError::Download(DownloadError::YtDlp(get_error_message(&error_type))));
     }
 
     let title = String::from_utf8_lossy(&title_output.stdout).trim().to_string();
@@ -818,9 +828,9 @@ pub async fn get_metadata_from_ytdlp(
     if title.is_empty() {
         log::error!("yt-dlp returned empty title for URL: {}", url);
         metrics::record_error("download", "metadata_empty_title");
-        return Err(AppError::Download(
+        return Err(AppError::Download(DownloadError::YtDlp(
             "Failed to get video title. Video might be unavailable or private.".to_string(),
-        ));
+        )));
     }
 
     log::info!("Successfully got metadata from yt-dlp: title='{}'", title);

@@ -1,4 +1,5 @@
 use crate::core::rate_limiter::RateLimiter;
+use crate::core::types::Plan;
 use crate::download::queue::{DownloadQueue, DownloadTask};
 use crate::i18n;
 use crate::storage::cache;
@@ -84,8 +85,8 @@ pub(crate) async fn start_download_from_preview(
     let conn = db::get_connection(&db_pool)
         .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
     let plan = match db::get_user(&conn, chat_id.0) {
-        Ok(Some(ref user)) => user.plan.clone(),
-        _ => "free".to_string(),
+        Ok(Some(ref user)) => user.plan,
+        _ => Plan::default(),
     };
 
     // Rate limit disabled
@@ -121,7 +122,7 @@ pub(crate) async fn start_download_from_preview(
             "mp4".to_string(),
             video_quality,
             None,
-            &plan,
+            plan.as_str(),
         );
         task_mp4.time_range = time_range.clone();
         download_queue.add_task(task_mp4, Some(Arc::clone(&db_pool))).await;
@@ -135,7 +136,7 @@ pub(crate) async fn start_download_from_preview(
             "mp3".to_string(),
             None,
             audio_bitrate,
-            &plan,
+            plan.as_str(),
         );
         task_mp3.time_range = time_range.clone();
         download_queue.add_task(task_mp3, Some(Arc::clone(&db_pool))).await;
@@ -164,14 +165,14 @@ pub(crate) async fn start_download_from_preview(
             format.to_string(),
             video_quality,
             audio_bitrate,
-            &plan,
+            plan.as_str(),
         );
         task.time_range = time_range.clone();
         download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
     }
 
     // Send queue position notification and store message ID for later deletion
-    if let Some(msg_id) = send_queue_position_message(bot, chat_id, &plan, &download_queue, &db_pool).await {
+    if let Some(msg_id) = send_queue_position_message(bot, chat_id, plan.as_str(), &download_queue, &db_pool).await {
         download_queue.set_queue_message_id(chat_id, msg_id.0).await;
     }
 

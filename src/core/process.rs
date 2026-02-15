@@ -8,6 +8,7 @@ use std::time::Duration;
 use tokio::process::Command;
 
 use crate::core::error::AppError;
+use crate::download::error::DownloadError;
 
 /// Default timeout for ffmpeg operations (2 minutes)
 pub const FFMPEG_TIMEOUT: Duration = Duration::from_secs(120);
@@ -22,9 +23,9 @@ pub async fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<Ou
     match tokio::time::timeout(timeout, cmd.output()).await {
         Ok(Ok(output)) => Ok(output),
         Ok(Err(e)) => Err(AppError::Io(e)),
-        Err(_) => Err(AppError::Download(format!(
+        Err(_) => Err(AppError::Download(DownloadError::Timeout(format!(
             "Process timed out after {}s",
             timeout.as_secs()
-        ))),
+        )))),
     }
 }

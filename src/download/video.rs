@@ -9,7 +9,9 @@ use crate::core::error::AppError;
 use crate::core::metrics;
 use crate::core::process::{run_with_timeout, FFPROBE_TIMEOUT};
 use crate::core::rate_limiter::RateLimiter;
+use crate::core::types::Plan;
 use crate::download::downloader::{burn_subtitles_into_video, split_video_into_parts};
+use crate::download::error::DownloadError;
 use crate::download::metadata::{
     add_cookies_args, find_actual_downloaded_file, has_both_video_and_audio, probe_video_metadata,
 };
@@ -64,14 +66,14 @@ pub async fn download_and_send_video(
                     .ok()
                     .flatten()
                     .map(|u| u.plan)
-                    .unwrap_or_else(|| "free".to_string())
+                    .unwrap_or_default()
             } else {
-                "free".to_string()
+                Plan::default()
             }
         } else {
-            "free".to_string()
+            Plan::default()
         };
-        metrics::record_format_request("mp4", &user_plan);
+        metrics::record_format_request("mp4", user_plan.as_str());
 
         let quality = video_quality.as_deref().unwrap_or("default");
         let timer = metrics::DOWNLOAD_DURATION_SECONDS
@@ -131,9 +133,9 @@ pub async fn download_and_send_video(
                             },
                         )
                         .await;
-                    return Err(AppError::Download(
+                    return Err(AppError::Download(DownloadError::Other(
                         "Video file missing video or audio stream".to_string(),
-                    ));
+                    )));
                 }
                 Err(e) => {
                     log::warn!("Failed to verify video streams: {}. Continuing...", e);
@@ -339,10 +341,10 @@ pub async fn download_and_send_video(
                     "🚨 Video download timed out after {} seconds",
                     config::download::GLOBAL_TIMEOUT_SECS
                 );
-                Err(AppError::Download(format!(
+                Err(AppError::Download(DownloadError::Timeout(format!(
                     "Таймаут загрузки видео (превышено {} минут)",
                     config::download::GLOBAL_TIMEOUT_SECS / 60
-                )))
+                ))))
             }
         };
 

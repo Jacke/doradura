@@ -7,6 +7,7 @@
 /// - Health checking for proxies
 /// - Statistics and monitoring
 use crate::core::error::AppError;
+use crate::download::error::DownloadError;
 use rand::Rng;
 use std::collections::HashMap;
 use std::fmt;
@@ -110,10 +111,14 @@ impl Proxy {
         // Parse protocol
         let (protocol_str, rest) = s
             .split_once("://")
-            .ok_or_else(|| AppError::Download(format!("Invalid proxy format: {}", s)))?;
+            .ok_or_else(|| AppError::Download(DownloadError::Proxy(format!("Invalid proxy format: {}", s))))?;
 
-        let protocol = ProxyProtocol::parse_from_str(protocol_str)
-            .ok_or_else(|| AppError::Download(format!("Unknown proxy protocol: {}", protocol_str)))?;
+        let protocol = ProxyProtocol::parse_from_str(protocol_str).ok_or_else(|| {
+            AppError::Download(DownloadError::Proxy(format!(
+                "Unknown proxy protocol: {}",
+                protocol_str
+            )))
+        })?;
 
         // Parse auth and host:port
         let (auth, host_port) = if let Some(at_pos) = rest.rfind('@') {
@@ -125,13 +130,13 @@ impl Proxy {
         };
 
         // Parse host and port
-        let (host, port_str) = host_port
-            .rsplit_once(':')
-            .ok_or_else(|| AppError::Download(format!("Invalid proxy host:port: {}", host_port)))?;
+        let (host, port_str) = host_port.rsplit_once(':').ok_or_else(|| {
+            AppError::Download(DownloadError::Proxy(format!("Invalid proxy host:port: {}", host_port)))
+        })?;
 
         let port: u16 = port_str
             .parse()
-            .map_err(|_| AppError::Download(format!("Invalid proxy port: {}", port_str)))?;
+            .map_err(|_| AppError::Download(DownloadError::Proxy(format!("Invalid proxy port: {}", port_str))))?;
 
         Ok(Self {
             protocol,
@@ -252,7 +257,10 @@ impl ProxyList {
     /// Add proxy to list
     pub fn add_proxy(&mut self, proxy: Proxy) -> Result<(), AppError> {
         if self.proxies.iter().any(|p| p.to_url() == proxy.to_url()) {
-            return Err(AppError::Download(format!("Proxy already exists: {}", proxy.to_url())));
+            return Err(AppError::Download(DownloadError::Proxy(format!(
+                "Proxy already exists: {}",
+                proxy.to_url()
+            ))));
         }
 
         let url = proxy.to_url();
@@ -277,7 +285,9 @@ impl ProxyList {
         }
 
         if count == 0 {
-            return Err(AppError::Download("No valid proxies found in list".to_string()));
+            return Err(AppError::Download(DownloadError::Proxy(
+                "No valid proxies found in list".to_string(),
+            )));
         }
 
         Ok(count)

@@ -1,4 +1,5 @@
 use crate::core::metrics;
+use crate::download::error::DownloadError;
 use thiserror::Error;
 
 /// Centralized error types for the application
@@ -29,9 +30,9 @@ pub enum AppError {
     #[error("Telegram error: {0}")]
     Telegram(#[from] teloxide::RequestError),
 
-    /// Download/yt-dlp errors
+    /// Download/yt-dlp errors (structured)
     #[error("Download error: {0}")]
-    Download(String),
+    Download(#[from] DownloadError),
 
     /// HTTP/Fetch errors
     #[error("HTTP error: {0}")]
@@ -68,17 +69,17 @@ pub type AppResult<T> = Result<T, AppError>;
 /// Type alias for backward compatibility
 pub type BotError = AppError;
 
-/// Helper function to convert String to AppError::Download
+/// Helper function to convert String to AppError::Download(Other)
 impl From<String> for AppError {
     fn from(err: String) -> Self {
-        AppError::Download(err)
+        AppError::Download(DownloadError::Other(err))
     }
 }
 
-/// Helper function to convert &str to AppError::Download
+/// Helper function to convert &str to AppError::Download(Other)
 impl From<&str> for AppError {
     fn from(err: &str) -> Self {
-        AppError::Download(err.to_string())
+        AppError::Download(DownloadError::Other(err.to_string()))
     }
 }
 
@@ -109,10 +110,11 @@ impl AppError {
     ///
     /// ```no_run
     /// use doradura::core::error::AppError;
+    /// use doradura::download::error::DownloadError;
     ///
     /// fn process_download() -> Result<(), AppError> {
     ///     // ... download logic ...
-    ///     Err(AppError::Download("Failed to download".to_string()))
+    ///     Err(AppError::Download(DownloadError::Other("Failed to download".to_string())))
     /// }
     ///
     /// match process_download() {
@@ -170,12 +172,13 @@ impl AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::download::error::DownloadError;
 
     #[test]
     fn test_app_error_from_string() {
         let error: AppError = "Test error".to_string().into();
         match error {
-            AppError::Download(msg) => assert_eq!(msg, "Test error"),
+            AppError::Download(err) => assert_eq!(err.to_string(), "Test error"),
             _ => panic!("Expected Download variant"),
         }
     }
@@ -184,7 +187,7 @@ mod tests {
     fn test_app_error_from_str() {
         let error: AppError = "Test error".into();
         match error {
-            AppError::Download(msg) => assert_eq!(msg, "Test error"),
+            AppError::Download(err) => assert_eq!(err.to_string(), "Test error"),
             _ => panic!("Expected Download variant"),
         }
     }
@@ -197,7 +200,7 @@ mod tests {
 
     #[test]
     fn test_error_category_download() {
-        let error = AppError::Download("test".to_string());
+        let error = AppError::Download(DownloadError::Other("test".to_string()));
         assert_eq!(error.category(), "download");
     }
 
@@ -228,7 +231,7 @@ mod tests {
 
     #[test]
     fn test_error_display_download() {
-        let error = AppError::Download("Failed to download".to_string());
+        let error = AppError::Download(DownloadError::Other("Failed to download".to_string()));
         let display = format!("{}", error);
         assert!(display.contains("Download error"));
         assert!(display.contains("Failed to download"));
@@ -265,11 +268,11 @@ mod tests {
 
     #[test]
     fn test_track_and_return() {
-        let error = AppError::Download("test".to_string());
+        let error = AppError::Download(DownloadError::Other("test".to_string()));
         let returned = error.track_and_return();
         // Verify we get the same error back
         match returned {
-            AppError::Download(msg) => assert_eq!(msg, "test"),
+            AppError::Download(err) => assert_eq!(err.to_string(), "test"),
             _ => panic!("Expected Download variant"),
         }
     }
@@ -288,20 +291,20 @@ mod tests {
     #[test]
     fn test_track() {
         // This test just verifies track() doesn't panic
-        let error = AppError::Download("test".to_string());
+        let error = AppError::Download(DownloadError::Other("test".to_string()));
         error.track(); // Should not panic
     }
 
     #[test]
     fn test_track_with_operation() {
         // This test just verifies track_with_operation() doesn't panic
-        let error = AppError::Download("test".to_string());
+        let error = AppError::Download(DownloadError::Other("test".to_string()));
         error.track_with_operation("download"); // Should not panic
     }
 
     #[test]
     fn test_error_debug() {
-        let error = AppError::Download("test error".to_string());
+        let error = AppError::Download(DownloadError::Other("test error".to_string()));
         let debug = format!("{:?}", error);
         assert!(debug.contains("Download"));
         assert!(debug.contains("test error"));
@@ -314,7 +317,7 @@ mod tests {
         }
 
         fn returns_error() -> AppResult<i32> {
-            Err(AppError::Download("error".to_string()))
+            Err(AppError::Download(DownloadError::Other("error".to_string())))
         }
 
         assert_eq!(returns_result().unwrap(), 42);
@@ -324,7 +327,7 @@ mod tests {
     #[test]
     fn test_bot_error_type_alias() {
         // BotError should be the same as AppError
-        let error: BotError = AppError::Download("test".to_string());
+        let error: BotError = AppError::Download(DownloadError::Other("test".to_string()));
         assert_eq!(error.category(), "download");
     }
 
@@ -339,7 +342,7 @@ mod tests {
     fn test_database_pool_error_category() {
         // Create a pool error by trying to get a connection from an empty pool
         // This is tricky to create, so we'll test the category match pattern directly
-        let error = AppError::Download("test".to_string());
+        let error = AppError::Download(DownloadError::Other("test".to_string()));
         // Just verify the match pattern works
         let category = match &error {
             AppError::Database(_) | AppError::DatabasePool(_) => "database",
@@ -352,7 +355,7 @@ mod tests {
     fn test_all_categories_covered() {
         // Test that all error categories return valid strings
         let errors = vec![
-            AppError::Download("test".to_string()),
+            AppError::Download(DownloadError::Other("test".to_string())),
             AppError::Validation("test".to_string()),
             AppError::Io(std::io::Error::other("test")),
             AppError::Url(url::ParseError::EmptyHost),

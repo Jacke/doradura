@@ -60,6 +60,9 @@ pub enum MtProtoError {
 
 impl From<MtProtoError> for crate::core::error::AppError {
     fn from(err: MtProtoError) -> Self {
-        crate::core::error::AppError::Download(format!("MTProto error: {}", err))
+        crate::core::error::AppError::Download(crate::download::error::DownloadError::Other(format!(
+            "MTProto error: {}",
+            err
+        )))
     }
 }

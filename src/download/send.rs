@@ -10,6 +10,7 @@ use crate::core::config;
 use crate::core::error::AppError;
 use crate::core::metrics;
 use crate::core::{extract_retry_after, is_timeout_or_network_error, BOT_API_RESPONSE_REGEX, BOT_API_START_REGEX};
+use crate::download::error::DownloadError;
 use crate::download::metadata::probe_video_metadata;
 use crate::download::progress::{DownloadStatus, ProgressMessage};
 use crate::download::thumbnail::{
@@ -368,7 +369,12 @@ where
 
     // Validate file size before sending
     let file_size = fs::metadata(&download_path)
-        .map_err(|e| AppError::Download(format!("Failed to get file metadata: {}", e)))?
+        .map_err(|e| {
+            AppError::Download(DownloadError::FileNotFound(format!(
+                "Failed to get file metadata: {}",
+                e
+            )))
+        })?
         .len();
 
     let max_size = match file_type {
@@ -729,10 +735,10 @@ where
                             Err(send_err) => {
                                 log::error!("Failed to send processing notification: {}", send_err);
                                 // Even if notification failed, don't retry file upload
-                                return Err(AppError::Download(format!(
+                                return Err(AppError::Download(DownloadError::SendFailed(format!(
                                     "File uploaded but processing notification failed: {}",
                                     send_err
-                                )));
+                                ))));
                             }
                         }
                     }
@@ -753,7 +759,7 @@ where
                             ),
                             _ => format!("Failed to send {} file after timeout/network retry: {}", file_type, e),
                         };
-                        return Err(AppError::Download(error_msg));
+                        return Err(AppError::Download(DownloadError::SendFailed(error_msg)));
                     }
 
                     log::warn!(
@@ -793,16 +799,16 @@ where
                     "video" => format!("У меня не получилось отправить тебе видео, попробуй как-нибудь позже. Все {} попытки не удались: {}", max_attempts, e),
                     _ => format!("Failed to send {} file after {} attempts: {}", file_type, max_attempts, e),
                 };
-                return Err(AppError::Download(error_msg));
+                return Err(AppError::Download(DownloadError::SendFailed(error_msg)));
             }
         }
     }
 
     // All loop iterations return; this is only reachable if max_attempts == 0
-    Err(AppError::Download(format!(
+    Err(AppError::Download(DownloadError::SendFailed(format!(
         "Failed to send {} file: no retry attempts configured",
         file_type
-    )))
+    ))))
 }
 
 /// Send audio file with retry logic.
@@ -920,7 +926,12 @@ pub async fn send_video_with_retry(
 
     // Check file size
     let file_size = fs::metadata(download_path)
-        .map_err(|e| AppError::Download(format!("Failed to get file metadata: {}", e)))?
+        .map_err(|e| {
+            AppError::Download(DownloadError::FileNotFound(format!(
+                "Failed to get file metadata: {}",
+                e
+            )))
+        })?
         .len();
 
     let standard_limit = 50 * 1024 * 1024; // 50 MB - standard limit for send_video
@@ -1232,7 +1243,7 @@ pub async fn send_video_with_retry(
     // If sending as video failed and file > 50 MB, try as document
     if result.is_err() && use_document_fallback {
         if let Err(AppError::Download(ref msg)) = result {
-            if is_timeout_or_network_error(msg) {
+            if is_timeout_or_network_error(msg.message()) {
                 log::warn!(
                     "send_video failed with timeout/network error; skipping send_document fallback to avoid duplicates"
                 );

@@ -7,6 +7,7 @@ use crate::core::alerts::AlertManager;
 use crate::core::config;
 use crate::core::error::AppError;
 use crate::core::metrics;
+use crate::download::error::DownloadError;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -87,14 +88,14 @@ pub fn get_disk_space(path: &str) -> Result<DiskSpaceInfo, AppError> {
     let output = std::process::Command::new("df")
         .args(["-k", &check_path]) // -k for 1K blocks
         .output()
-        .map_err(|e| AppError::Download(format!("Failed to run df command: {}", e)))?;
+        .map_err(|e| AppError::Download(DownloadError::Process(format!("Failed to run df command: {}", e))))?;
 
     if !output.status.success() {
-        return Err(AppError::Download(format!(
+        return Err(AppError::Download(DownloadError::Process(format!(
             "df command failed for {}: {}",
             check_path,
             String::from_utf8_lossy(&output.stderr)
-        )));
+        ))));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -102,21 +103,25 @@ pub fn get_disk_space(path: &str) -> Result<DiskSpaceInfo, AppError> {
 
     // Skip header line, parse data line
     if lines.len() < 2 {
-        return Err(AppError::Download("Unexpected df output format".to_string()));
+        return Err(AppError::Download(DownloadError::Process(
+            "Unexpected df output format".to_string(),
+        )));
     }
 
     // df output: Filesystem 1K-blocks Used Available Use% Mounted
     let parts: Vec<&str> = lines[1].split_whitespace().collect();
     if parts.len() < 4 {
-        return Err(AppError::Download("Unexpected df output format".to_string()));
+        return Err(AppError::Download(DownloadError::Process(
+            "Unexpected df output format".to_string(),
+        )));
     }
 
     let total_kb: u64 = parts[1]
         .parse()
-        .map_err(|_| AppError::Download("Failed to parse total blocks".to_string()))?;
+        .map_err(|_| AppError::Download(DownloadError::Process("Failed to parse total blocks".to_string())))?;
     let available_kb: u64 = parts[3]
         .parse()
-        .map_err(|_| AppError::Download("Failed to parse available blocks".to_string()))?;
+        .map_err(|_| AppError::Download(DownloadError::Process("Failed to parse available blocks".to_string())))?;
 
     let total_bytes = total_kb * 1024;
     let available_bytes = available_kb * 1024;
@@ -151,10 +156,10 @@ pub fn check_disk_space_for_download() -> Result<DiskSpaceInfo, AppError> {
 
         metrics::record_error("download", "disk_space_insufficient");
 
-        return Err(AppError::Download(format!(
+        return Err(AppError::Download(DownloadError::DiskSpace(format!(
             "Недостаточно места на диске: {:.2} GB свободно",
             info.available_gb()
-        )));
+        ))));
     }
 
     if info.is_warning() {

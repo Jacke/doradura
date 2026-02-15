@@ -1,3 +1,4 @@
+use crate::core::types::Plan;
 use r2d2::{Pool, PooledConnection};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::{Connection, Result};
@@ -14,8 +15,8 @@ pub struct User {
     pub telegram_id: i64,
     /// Имя пользователя (username) в Telegram, если доступно
     pub username: Option<String>,
-    /// План пользователя (например, "free", "premium")
-    pub plan: String,
+    /// План пользователя
+    pub plan: Plan,
     /// Предпочитаемый формат загрузки: "mp3", "mp4", "srt", "txt"
     pub download_format: String,
     /// Флаг загрузки субтитров (0 - отключено, 1 - включено)
@@ -44,7 +45,7 @@ pub struct User {
 #[derive(Debug, Clone)]
 pub struct Subscription {
     pub user_id: i64,
-    pub plan: String,
+    pub plan: Plan,
     pub expires_at: Option<String>,
     pub telegram_charge_id: Option<String>,
     pub is_recurring: bool,
@@ -56,7 +57,7 @@ pub struct Subscription {
 pub struct Charge {
     pub id: i64,
     pub user_id: i64,
-    pub plan: String,
+    pub plan: Plan,
     pub telegram_charge_id: String,
     pub provider_charge_id: Option<String>,
     pub currency: String,
@@ -418,7 +419,7 @@ pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
     if let Some(row) = rows.next()? {
         let telegram_id: i64 = row.get(0)?;
         let username: Option<String> = row.get(1)?;
-        let plan: String = row.get(2)?;
+        let plan: Plan = row.get(2)?;
         let download_format: String = row.get(3)?;
         let download_subtitles: i32 = row.get(4)?;
         let video_quality: String = row.get(5).unwrap_or_else(|_| "best".to_string());
@@ -1784,7 +1785,7 @@ pub fn update_telegram_charge_id(conn: &DbConnection, telegram_id: i64, charge_i
 /// Check if user is Premium or VIP
 pub fn is_premium_or_vip(conn: &DbConnection, user_id: i64) -> Result<bool> {
     let user = get_user(conn, user_id)?;
-    Ok(user.map(|u| u.plan == "premium" || u.plan == "vip").unwrap_or(false))
+    Ok(user.map(|u| u.plan.is_paid()).unwrap_or(false))
 }
 
 fn ensure_audio_effects_bass_column(conn: &DbConnection) {
@@ -2530,7 +2531,7 @@ pub fn is_subscription_active(conn: &DbConnection, telegram_id: i64) -> Result<b
         return Ok(false);
     };
 
-    if subscription.plan == "free" {
+    if subscription.plan == Plan::Free {
         return Ok(false);
     }
 
@@ -2579,7 +2580,7 @@ pub fn cancel_subscription(conn: &DbConnection, telegram_id: i64) -> Result<()> 
 /// # Returns
 ///
 /// Возвращает кортеж: (plan, expires_at, is_recurring, is_active)
-pub type SubscriptionStatus = (String, Option<String>, bool, bool);
+pub type SubscriptionStatus = (Plan, Option<String>, bool, bool);
 
 pub fn get_subscription_status(conn: &DbConnection, telegram_id: i64) -> Result<Option<SubscriptionStatus>> {
     let subscription = get_subscription(conn, telegram_id)?;
@@ -3216,7 +3217,7 @@ mod tests {
         let user = user.unwrap();
         assert_eq!(user.telegram_id, 12345);
         assert_eq!(user.username, Some("testuser".to_string()));
-        assert_eq!(user.plan, "free");
+        assert_eq!(user.plan, Plan::Free);
         assert_eq!(user.download_format, "mp3");
         assert_eq!(user.language, "en");
     }
@@ -3259,7 +3260,7 @@ mod tests {
         let user = User {
             telegram_id: 123,
             username: Some("test".to_string()),
-            plan: "premium".to_string(),
+            plan: crate::core::types::Plan::Premium,
             download_format: "mp4".to_string(),
             download_subtitles: 1,
             video_quality: "1080p".to_string(),
@@ -3438,7 +3439,7 @@ mod tests {
         // Update to premium
         update_user_plan(&conn, 12360, "premium").unwrap();
         let user = get_user(&conn, 12360).unwrap().unwrap();
-        assert_eq!(user.plan, "premium");
+        assert_eq!(user.plan, Plan::Premium);
     }
 
     #[test]
@@ -3451,7 +3452,7 @@ mod tests {
         // Update with 30-day expiry
         update_user_plan_with_expiry(&conn, 12361, "vip", Some(30)).unwrap();
         let user = get_user(&conn, 12361).unwrap().unwrap();
-        assert_eq!(user.plan, "vip");
+        assert_eq!(user.plan, Plan::Vip);
         assert!(user.subscription_expires_at.is_some());
     }
 
@@ -3465,7 +3466,7 @@ mod tests {
         // Update without expiry (free plan)
         update_user_plan_with_expiry(&conn, 12362, "free", None).unwrap();
         let user = get_user(&conn, 12362).unwrap().unwrap();
-        assert_eq!(user.plan, "free");
+        assert_eq!(user.plan, Plan::Free);
     }
 
     #[test]
@@ -3971,13 +3972,13 @@ mod tests {
         let sub = get_subscription(&conn, 12400).unwrap();
         assert!(sub.is_some());
         let sub = sub.unwrap();
-        assert_eq!(sub.plan, "free");
+        assert_eq!(sub.plan, Plan::Free);
 
         // Update subscription
         update_subscription_data(&conn, 12400, "premium", "charge_123", "2099-12-31T23:59:59Z", true).unwrap();
 
         let sub = get_subscription(&conn, 12400).unwrap().unwrap();
-        assert_eq!(sub.plan, "premium");
+        assert_eq!(sub.plan, Plan::Premium);
         assert_eq!(sub.telegram_charge_id, Some("charge_123".to_string()));
         assert!(sub.is_recurring);
 
@@ -4019,7 +4020,7 @@ mod tests {
 
         // For new users (INSERT path), plan is set to 'free'
         let sub = get_subscription(&conn, 12411).unwrap().unwrap();
-        assert_eq!(sub.plan, "free");
+        assert_eq!(sub.plan, Plan::Free);
         assert!(!sub.is_recurring);
     }
 
@@ -4035,7 +4036,7 @@ mod tests {
         let status = get_subscription_status(&conn, 12402).unwrap();
         assert!(status.is_some());
         let (plan, expires, recurring, active) = status.unwrap();
-        assert_eq!(plan, "vip");
+        assert_eq!(plan, Plan::Vip);
         assert!(expires.is_some());
         assert!(!recurring);
         assert!(active);
@@ -4069,7 +4070,7 @@ mod tests {
 
         let charges = get_user_charges(&conn, 12410).unwrap();
         assert_eq!(charges.len(), 1);
-        assert_eq!(charges[0].plan, "premium");
+        assert_eq!(charges[0].plan, Plan::Premium);
         assert_eq!(charges[0].total_amount, 100);
         assert!(charges[0].is_recurring);
     }
@@ -4430,7 +4431,7 @@ mod tests {
         assert_eq!(count, 1);
 
         let user = get_user(&conn, 12510).unwrap().unwrap();
-        assert_eq!(user.plan, "free");
+        assert_eq!(user.plan, Plan::Free);
     }
 
     // ==================== Connection Pool Tests ====================

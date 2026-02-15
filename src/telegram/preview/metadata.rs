@@ -1,5 +1,6 @@
 use crate::core::config;
 use crate::core::error::AppError;
+use crate::download::error::DownloadError;
 use crate::download::metadata::{
     add_cookies_args_with_proxy, add_no_cookies_args, get_proxy_chain, is_proxy_related_error,
 };
@@ -68,14 +69,17 @@ pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<
             Ok(Ok(output)) => output,
             Ok(Err(e)) => {
                 log::warn!("🔄 Failed to execute yt-dlp with [{}]: {}", proxy_name, e);
-                last_error = Some(AppError::Download(format!("Failed to get metadata: {}", e)));
+                last_error = Some(AppError::Download(DownloadError::YtDlp(format!(
+                    "Failed to get metadata: {}",
+                    e
+                ))));
                 continue;
             }
             Err(_) => {
                 log::warn!("🔄 yt-dlp command timed out with [{}], trying next proxy", proxy_name);
-                last_error = Some(AppError::Download(
+                last_error = Some(AppError::Download(DownloadError::Timeout(
                     "yt-dlp command timed out getting metadata".to_string(),
-                ));
+                )));
                 continue;
             }
         };
@@ -89,7 +93,10 @@ pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<
                 }
                 Err(e) => {
                     log::warn!("🔄 Failed to parse JSON with [{}]: {}", proxy_name, e);
-                    last_error = Some(AppError::Download(format!("Failed to parse JSON metadata: {}", e)));
+                    last_error = Some(AppError::Download(DownloadError::YtDlp(format!(
+                        "Failed to parse JSON metadata: {}",
+                        e
+                    ))));
                     continue;
                 }
             }
@@ -169,16 +176,16 @@ pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<
                 attempt + 2,
                 total_proxies
             );
-            last_error = Some(AppError::Download(get_error_message(&error_type)));
+            last_error = Some(AppError::Download(DownloadError::YtDlp(get_error_message(&error_type))));
             continue;
         }
 
         // Non-recoverable error or last proxy
-        return Err(AppError::Download(get_error_message(&error_type)));
+        return Err(AppError::Download(DownloadError::YtDlp(get_error_message(&error_type))));
     }
 
     log::error!("❌ All {} proxies failed for preview metadata", total_proxies);
-    Err(last_error.unwrap_or_else(|| AppError::Download("All proxies failed".to_string())))
+    Err(last_error.unwrap_or_else(|| AppError::Download(DownloadError::YtDlp("All proxies failed".to_string()))))
 }
 
 /// Извлекает значение из JSON по ключу
@@ -300,15 +307,18 @@ async fn get_preview_metadata_inner(
     let title = if let Some(cached) = cached_title {
         cached
     } else {
-        get_json_value(&json_metadata, "title")
-            .ok_or_else(|| AppError::Download("Failed to get video title from metadata".to_string()))?
+        get_json_value(&json_metadata, "title").ok_or_else(|| {
+            AppError::Download(DownloadError::YtDlp(
+                "Failed to get video title from metadata".to_string(),
+            ))
+        })?
     };
 
     if title.trim().is_empty() {
         log::warn!("yt-dlp returned empty title for URL: {}", url);
-        return Err(AppError::Download(
+        return Err(AppError::Download(DownloadError::YtDlp(
             "Failed to get video title. Video might be unavailable or private.".to_string(),
-        ));
+        )));
     }
 
     // Извлекаем artist из JSON (используем кэш если доступен, но игнорируем "NA")
@@ -371,10 +381,10 @@ async fn get_preview_metadata_inner(
             if dur > MAX_DURATION_SECONDS {
                 let hours = dur / 3600;
                 let minutes = (dur % 3600) / 60;
-                return Err(AppError::Download(format!(
+                return Err(AppError::Download(DownloadError::Other(format!(
                     "Видео слишком длинное ({}ч {}мин). Максимальная длительность: 4 часа.",
                     hours, minutes
-                )));
+                ))));
             }
         }
     }

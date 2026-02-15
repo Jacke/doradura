@@ -76,7 +76,7 @@ pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::
                 };
 
                 // Check if user can upload media
-                let limits = PlanLimits::for_plan(&user.plan);
+                let limits = PlanLimits::for_plan(user.plan);
                 if !limits.can_upload_media {
                     // Notify user that they can't upload media
                     bot.send_message(

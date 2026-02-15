@@ -1,5 +1,6 @@
 use crate::core::config;
 use crate::core::error::AppError;
+use crate::download::error::DownloadError;
 use crate::download::metadata::{add_cookies_args_with_proxy, get_proxy_chain, is_proxy_related_error};
 use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message, YtDlpErrorType};
 use crate::telegram::types::VideoFormatInfo;
@@ -245,14 +246,17 @@ pub async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<Vid
                 Ok(Ok(output)) => output,
                 Ok(Err(e)) => {
                     log::warn!("🔄 Failed to execute yt-dlp with [{}]: {}", proxy_name, e);
-                    last_error = Some(AppError::Download(format!("Failed to get formats list: {}", e)));
+                    last_error = Some(AppError::Download(DownloadError::YtDlp(format!(
+                        "Failed to get formats list: {}",
+                        e
+                    ))));
                     continue;
                 }
                 Err(_) => {
                     log::warn!("🔄 yt-dlp command timed out with [{}], trying next proxy", proxy_name);
-                    last_error = Some(AppError::Download(
+                    last_error = Some(AppError::Download(DownloadError::Timeout(
                         "yt-dlp command timed out getting formats list".to_string(),
-                    ));
+                    )));
                     continue;
                 }
             };
@@ -282,17 +286,19 @@ pub async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<Vid
                     attempt + 2,
                     total_proxies
                 );
-                last_error = Some(AppError::Download(get_error_message(&error_type)));
+                last_error = Some(AppError::Download(DownloadError::YtDlp(get_error_message(&error_type))));
                 continue;
             }
 
             // Non-recoverable error or last proxy
-            return Err(AppError::Download(get_error_message(&error_type)));
+            return Err(AppError::Download(DownloadError::YtDlp(get_error_message(&error_type))));
         }
 
         // All proxies failed
         log::error!("❌ All {} proxies failed for formats list", total_proxies);
-        return Err(last_error.unwrap_or_else(|| AppError::Download("All proxies failed".to_string())));
+        return Err(
+            last_error.unwrap_or_else(|| AppError::Download(DownloadError::YtDlp("All proxies failed".to_string())))
+        );
     };
 
     let output_line_count = formats_output.lines().count();

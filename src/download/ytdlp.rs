@@ -1,5 +1,6 @@
 use crate::core::config;
 use crate::core::error::AppError;
+use crate::download::error::DownloadError;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::process::Command as TokioCommand;
@@ -58,26 +59,30 @@ async fn download_nightly_ytdlp() -> Result<(String, String), AppError> {
                     Ok(Ok(curl_output)) => {
                         if !curl_output.status.success() {
                             let stderr = String::from_utf8_lossy(&curl_output.stderr);
-                            return Err(AppError::Download(format!(
+                            return Err(AppError::Download(DownloadError::YtDlp(format!(
                                 "Failed to download yt-dlp nightly: {}",
                                 stderr
-                            )));
+                            ))));
                         }
                     }
                     Ok(Err(e)) => {
-                        return Err(AppError::Download(format!("curl failed: {}", e)));
+                        return Err(AppError::Download(DownloadError::YtDlp(format!("curl failed: {}", e))));
                     }
                     Err(_) => {
-                        return Err(AppError::Download("curl download timed out".to_string()));
+                        return Err(AppError::Download(DownloadError::YtDlp(
+                            "curl download timed out".to_string(),
+                        )));
                     }
                 }
             }
         }
         Ok(Err(e)) => {
-            return Err(AppError::Download(format!("wget failed: {}", e)));
+            return Err(AppError::Download(DownloadError::YtDlp(format!("wget failed: {}", e))));
         }
         Err(_) => {
-            return Err(AppError::Download("wget download timed out".to_string()));
+            return Err(AppError::Download(DownloadError::YtDlp(
+                "wget download timed out".to_string(),
+            )));
         }
     }
 
@@ -228,11 +233,22 @@ pub async fn get_supported_extractors() -> Result<Vec<String>, AppError> {
         TokioCommand::new(ytdl_bin).arg("--list-extractors").output(),
     )
     .await
-    .map_err(|_| AppError::Download("yt-dlp list-extractors command timed out".to_string()))?
-    .map_err(|e| AppError::Download(format!("Failed to execute yt-dlp --list-extractors: {}", e)))?;
+    .map_err(|_| {
+        AppError::Download(DownloadError::YtDlp(
+            "yt-dlp list-extractors command timed out".to_string(),
+        ))
+    })?
+    .map_err(|e| {
+        AppError::Download(DownloadError::YtDlp(format!(
+            "Failed to execute yt-dlp --list-extractors: {}",
+            e
+        )))
+    })?;
 
     if !output.status.success() {
-        return Err(AppError::Download("yt-dlp --list-extractors failed".to_string()));
+        return Err(AppError::Download(DownloadError::YtDlp(
+            "yt-dlp --list-extractors failed".to_string(),
+        )));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -285,14 +301,14 @@ pub async fn print_ytdlp_version() -> Result<(), AppError> {
     let version_output = Command::new(ytdl_bin)
         .arg("--version")
         .output()
-        .map_err(|e| AppError::Download(format!("Failed to get yt-dlp version: {}", e)))?;
+        .map_err(|e| AppError::Download(DownloadError::YtDlp(format!("Failed to get yt-dlp version: {}", e))))?;
 
     let version = String::from_utf8_lossy(&version_output.stdout).trim().to_string();
 
     if version.is_empty() {
-        return Err(AppError::Download(
+        return Err(AppError::Download(DownloadError::YtDlp(
             "yt-dlp is not installed or --version produced no output".to_string(),
-        ));
+        )));
     }
 
     println!("yt-dlp version: {}", version);

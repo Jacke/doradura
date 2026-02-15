@@ -17,6 +17,7 @@ use crate::core::metrics;
 use crate::core::utils::format_media_caption;
 use crate::download::builder::DownloadConfigBuilder;
 use crate::download::downloader::cleanup_partial_download;
+use crate::download::error::DownloadError;
 use crate::download::progress::{DownloadStatus, ProgressMessage};
 use crate::download::send::{
     send_audio_with_retry, send_error_with_sticker, send_error_with_sticker_and_message, send_video_with_retry,
@@ -141,9 +142,9 @@ pub async fn download_phase(
 
     // ── Step 1: Resolve source ──
     let source = registry.resolve(url).ok_or_else(|| {
-        PipelineError::Operational(AppError::Download(
+        PipelineError::Operational(AppError::Download(DownloadError::Other(
             "Unsupported URL — no download source found".to_string(),
-        ))
+        )))
     })?;
     log::info!("Pipeline: resolved source '{}' for URL: {}", source.name(), url);
 
@@ -341,7 +342,7 @@ pub async fn download_phase(
                     ).await;
                 }
                 let output = result
-                    .map_err(|e| PipelineError::Operational(AppError::Download(format!("Task join error: {}", e))))?
+                    .map_err(|e| PipelineError::Operational(AppError::Download(DownloadError::Other(format!("Task join error: {}", e)))))?
                     .map_err(PipelineError::Operational)?;
                 break output;
             }
@@ -442,10 +443,9 @@ pub async fn execute(
 
     // Verify downloaded file exists before attempting send
     if !std::path::Path::new(&download_output.file_path).exists() {
-        return Err(PipelineError::Operational(AppError::Download(format!(
-            "Downloaded file not found: {}",
-            download_output.file_path
-        ))));
+        return Err(PipelineError::Operational(AppError::Download(
+            DownloadError::FileNotFound(format!("Downloaded file not found: {}", download_output.file_path)),
+        )));
     }
 
     let (sent_message, file_size) = match format {
@@ -615,7 +615,7 @@ impl PipelineError {
     pub fn into_app_error(self) -> AppError {
         match self {
             PipelineError::Metadata(e) => e,
-            PipelineError::PreCheck(msg) => AppError::Download(msg),
+            PipelineError::PreCheck(msg) => AppError::Download(DownloadError::Other(msg)),
             PipelineError::Operational(e) => e,
         }
     }

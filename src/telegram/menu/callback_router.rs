@@ -1,6 +1,7 @@
 use crate::core::history::handle_history_callback;
 use crate::core::rate_limiter::RateLimiter;
 use crate::core::subscription::{create_subscription_invoice, show_subscription_info};
+use crate::core::types::Plan;
 use crate::download::queue::{DownloadQueue, DownloadTask};
 use crate::extension::ExtensionRegistry;
 use crate::i18n;
@@ -740,8 +741,8 @@ pub async fn handle_menu_callback(
                                         RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                                     })?;
                                     let plan = match db::get_user(&conn, chat_id.0) {
-                                        Ok(Some(ref user)) => user.plan.clone(),
-                                        _ => "free".to_string(),
+                                        Ok(Some(ref user)) => user.plan,
+                                        _ => Plan::default(),
                                     };
 
                                     // Rate limit disabled - users can download without waiting
@@ -766,7 +767,7 @@ pub async fn handle_menu_callback(
                                             "mp4".to_string(),
                                             video_quality,
                                             None, // audio_bitrate is not needed for video
-                                            &plan,
+                                            plan.as_str(),
                                         );
                                         task_mp4.time_range = time_range.clone();
                                         download_queue.add_task(task_mp4, Some(Arc::clone(&db_pool))).await;
@@ -784,7 +785,7 @@ pub async fn handle_menu_callback(
                                             "mp3".to_string(),
                                             None, // video_quality is not needed for audio
                                             audio_bitrate,
-                                            &plan,
+                                            plan.as_str(),
                                         );
                                         task_mp3.time_range = time_range.clone();
                                         download_queue.add_task(task_mp3, Some(Arc::clone(&db_pool))).await;
@@ -795,9 +796,14 @@ pub async fn handle_menu_callback(
                                         );
 
                                         // Send queue position notification and store message ID for later deletion
-                                        if let Some(msg_id) =
-                                            send_queue_position_message(&bot, chat_id, &plan, &download_queue, &db_pool)
-                                                .await
+                                        if let Some(msg_id) = send_queue_position_message(
+                                            &bot,
+                                            chat_id,
+                                            plan.as_str(),
+                                            &download_queue,
+                                            &db_pool,
+                                        )
+                                        .await
                                         {
                                             download_queue.set_queue_message_id(chat_id, msg_id.0).await;
                                         }
@@ -836,15 +842,20 @@ pub async fn handle_menu_callback(
                                             format.to_string(),
                                             video_quality,
                                             audio_bitrate,
-                                            &plan,
+                                            plan.as_str(),
                                         );
                                         task.time_range = time_range.clone();
                                         download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
 
                                         // Send queue position notification and store message ID for later deletion
-                                        if let Some(msg_id) =
-                                            send_queue_position_message(&bot, chat_id, &plan, &download_queue, &db_pool)
-                                                .await
+                                        if let Some(msg_id) = send_queue_position_message(
+                                            &bot,
+                                            chat_id,
+                                            plan.as_str(),
+                                            &download_queue,
+                                            &db_pool,
+                                        )
+                                        .await
                                         {
                                             download_queue.set_queue_message_id(chat_id, msg_id.0).await;
                                         }
@@ -1114,11 +1125,7 @@ pub async fn handle_menu_callback(
                                             .map(|u| format!("@{}", u))
                                             .unwrap_or_else(|| format!("ID: {}", user.telegram_id));
 
-                                        let plan_emoji = match user.plan.as_str() {
-                                            "premium" => "⭐",
-                                            "vip" => "👑",
-                                            _ => "🌟",
-                                        };
+                                        let plan_emoji = user.plan.emoji();
 
                                         let sub_status = if user.telegram_charge_id.is_some() {
                                             if user.is_recurring {
@@ -1271,11 +1278,7 @@ pub async fn handle_menu_callback(
                                         .map(|u| format!("@{}", u))
                                         .unwrap_or_else(|| format!("ID:{}", user.telegram_id));
 
-                                    let plan_emoji = match user.plan.as_str() {
-                                        "premium" => "⭐",
-                                        "vip" => "👑",
-                                        _ => "🌟",
-                                    };
+                                    let plan_emoji = user.plan.emoji();
 
                                     let button_text = format!("{} {}", plan_emoji, username_display);
                                     let callback_data = format!("admin:user:{}", user.telegram_id);

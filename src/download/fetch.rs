@@ -1,4 +1,5 @@
 use crate::core::error::AppError;
+use crate::download::error::DownloadError;
 use reqwest;
 use select::document::Document;
 use select::predicate::Name;
@@ -37,7 +38,7 @@ pub async fn fetch_song_metadata(url: &str) -> Result<(String, String), AppError
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
-        .map_err(|e| AppError::Download(format!("HTTP client error: {}", e)))?;
+        .map_err(|e| AppError::Download(DownloadError::Other(format!("HTTP client error: {}", e))))?;
     let resp = client.get(url).send().await?;
 
     if !resp.status().is_success() {

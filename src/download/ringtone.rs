@@ -1,5 +1,6 @@
 use crate::core::error::AppError;
 use crate::core::process::{run_with_timeout, FFMPEG_TIMEOUT};
+use crate::download::error::DownloadError;
 use std::path::Path;
 use tokio::process::Command;
 
@@ -64,10 +65,10 @@ pub async fn create_iphone_ringtone<P: AsRef<Path>>(
     .await?;
 
     if !output.status.success() {
-        return Err(AppError::Download(format!(
+        return Err(AppError::Download(DownloadError::Ffmpeg(format!(
             "FFmpeg failed with exit status: {:?}",
             output.status.code()
-        )));
+        ))));
     }
 
     log::info!("✅ Ringtone created successfully: {:?}", input_path.as_ref());

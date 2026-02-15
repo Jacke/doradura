@@ -9,6 +9,7 @@
 //! - Fallback source for any http/https URL not handled by YtDlpSource
 
 use crate::core::error::AppError;
+use crate::download::error::DownloadError;
 use crate::download::source::{DownloadOutput, DownloadRequest, DownloadSource, SourceProgress};
 use async_trait::async_trait;
 use reqwest::Client;
@@ -161,14 +162,14 @@ impl DownloadSource for HttpSource {
         let response = req
             .send()
             .await
-            .map_err(|e| AppError::Download(format!("HTTP request failed: {}", e)))?;
+            .map_err(|e| AppError::Download(DownloadError::Other(format!("HTTP request failed: {}", e))))?;
 
         if !response.status().is_success() && response.status().as_u16() != 206 {
-            return Err(AppError::Download(format!(
+            return Err(AppError::Download(DownloadError::Other(format!(
                 "HTTP {} for {}",
                 response.status(),
                 request.url
-            )));
+            ))));
         }
 
         let is_partial = response.status().as_u16() == 206;
@@ -197,10 +198,12 @@ impl DownloadSource for HttpSource {
             std::fs::OpenOptions::new()
                 .append(true)
                 .open(&request.output_path)
-                .map_err(|e| AppError::Download(format!("Failed to open file for resume: {}", e)))?
+                .map_err(|e| {
+                    AppError::Download(DownloadError::Other(format!("Failed to open file for resume: {}", e)))
+                })?
         } else {
             std::fs::File::create(&request.output_path)
-                .map_err(|e| AppError::Download(format!("Failed to create file: {}", e)))?
+                .map_err(|e| AppError::Download(DownloadError::Other(format!("Failed to create file: {}", e))))?
         };
 
         let mut downloaded: u64 = if is_partial { existing_size } else { 0 };
@@ -211,10 +214,11 @@ impl DownloadSource for HttpSource {
         use futures_util::StreamExt;
 
         while let Some(chunk_result) = stream.next().await {
-            let chunk = chunk_result.map_err(|e| AppError::Download(format!("Error reading chunk: {}", e)))?;
+            let chunk = chunk_result
+                .map_err(|e| AppError::Download(DownloadError::Other(format!("Error reading chunk: {}", e))))?;
 
             file.write_all(&chunk)
-                .map_err(|e| AppError::Download(format!("Error writing to file: {}", e)))?;
+                .map_err(|e| AppError::Download(DownloadError::Other(format!("Error writing to file: {}", e))))?;
 
             downloaded += chunk.len() as u64;
 
@@ -253,7 +257,7 @@ impl DownloadSource for HttpSource {
         }
 
         file.flush()
-            .map_err(|e| AppError::Download(format!("Failed to flush file: {}", e)))?;
+            .map_err(|e| AppError::Download(DownloadError::Other(format!("Failed to flush file: {}", e))))?;
 
         let file_size = std::fs::metadata(&request.output_path)
             .map(|m| m.len())

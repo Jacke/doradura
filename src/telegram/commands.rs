@@ -737,10 +737,11 @@ pub async fn handle_message(
 
                         // Check whether this is a duration-related error (not a real error, just a limit)
                         let is_duration_error = if let AppError::Download(ref err_msg) = e {
-                            err_msg.contains("слишком длинное")
-                                || err_msg.contains("too long")
-                                || err_msg.contains("zu lang")
-                                || err_msg.contains("trop long")
+                            let msg_str = err_msg.message();
+                            msg_str.contains("слишком длинное")
+                                || msg_str.contains("too long")
+                                || msg_str.contains("zu lang")
+                                || msg_str.contains("trop long")
                         } else {
                             false
                         };
@@ -768,7 +769,7 @@ pub async fn handle_message(
                         let error_message = if let AppError::Download(ref err_msg) = e {
                             // If it's already translated error (from preview), use it
                             if is_duration_error {
-                                err_msg.clone()
+                                err_msg.to_string()
                             } else {
                                 i18n::t(&lang, "commands.preview_info_failed")
                             }

@@ -5,6 +5,7 @@ pub mod audio_effects;
 pub mod builder;
 pub mod cookies;
 pub mod downloader;
+pub mod error;
 pub mod fetch;
 pub mod metadata;
 pub mod pipeline;
