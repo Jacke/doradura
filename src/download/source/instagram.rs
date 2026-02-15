@@ -104,14 +104,19 @@ impl InstagramSource {
 
     /// Extract the shortcode from an Instagram URL.
     ///
-    /// Supports: `/p/<code>/`, `/reel/<code>/`, `/reels/<code>/`, `/tv/<code>/`
+    /// Supports:
+    /// - `/p/<code>/`, `/reel/<code>/`, `/reels/<code>/`, `/tv/<code>/`
+    /// - `/<username>/p/<code>/`, `/<username>/reel/<code>/` (with username prefix)
     fn extract_shortcode(url: &Url) -> Option<String> {
         let segments: Vec<&str> = url.path_segments()?.filter(|s| !s.is_empty()).collect();
-        if segments.len() >= 2 {
-            match segments[0] {
-                "p" | "reel" | "reels" | "tv" => return Some(segments[1].to_string()),
-                _ => {}
-            }
+        const CONTENT_TYPES: &[&str] = &["p", "reel", "reels", "tv"];
+        // Format: /reel/<code>/ (2 segments)
+        if segments.len() >= 2 && CONTENT_TYPES.contains(&segments[0]) {
+            return Some(segments[1].to_string());
+        }
+        // Format: /<username>/reel/<code>/ (3 segments)
+        if segments.len() >= 3 && CONTENT_TYPES.contains(&segments[1]) {
+            return Some(segments[2].to_string());
         }
         None
     }
@@ -864,6 +869,22 @@ mod tests {
     fn test_supports_url_no_www() {
         let source = InstagramSource::new();
         let url = Url::parse("https://instagram.com/reel/ABC123/").unwrap();
+        assert!(source.supports_url(&url));
+    }
+
+    #[test]
+    fn test_extract_shortcode_with_username_prefix() {
+        let url = Url::parse("https://www.instagram.com/kologoidaa/reel/B58TfHTnY2u/").unwrap();
+        assert_eq!(
+            InstagramSource::extract_shortcode(&url),
+            Some("B58TfHTnY2u".to_string())
+        );
+    }
+
+    #[test]
+    fn test_supports_url_with_username_prefix() {
+        let source = InstagramSource::new();
+        let url = Url::parse("https://www.instagram.com/someuser/p/ABC123/").unwrap();
         assert!(source.supports_url(&url));
     }
 
