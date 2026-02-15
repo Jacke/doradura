@@ -365,3 +365,11 @@ extensions =
     .status_unavailable = ❌ Unavailable
     .footer = _Each extension works independently\. Send a link or file — Dora will pick the right one\!_
     .detail_back = 🔙 Back to extensions
+
+# Instagram
+instagram-private = 🔒 Account @{ $username } is private
+instagram-not-found = ❌ Post not found or unavailable
+instagram-rate-limited = ⏳ Too many Instagram requests, try again later
+instagram-profile-error = ❌ Failed to load profile @{ $username }
+instagram-profile-posts = 📸 { $posts } posts · 👥 { $followers } followers
+instagram-more = More >>>

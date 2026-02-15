@@ -9,6 +9,7 @@
 //! - `HttpSource` — direct file URLs (MP3, MP4, etc.) with chunked download + resume
 
 pub mod http;
+pub mod instagram;
 pub mod ytdlp;
 
 use crate::core::error::AppError;
@@ -59,6 +60,17 @@ pub struct DownloadRequest {
     pub time_range: Option<(String, String)>,
 }
 
+/// An additional media file from a multi-item post (e.g., Instagram carousel).
+#[derive(Debug, Clone)]
+pub struct AdditionalFile {
+    /// Local path to the downloaded file
+    pub file_path: String,
+    /// MIME type (e.g., "image/jpeg", "video/mp4")
+    pub mime_type: String,
+    /// Duration in seconds (for video items)
+    pub duration_secs: Option<u32>,
+}
+
 /// Output from a successful download operation.
 #[derive(Debug, Clone)]
 pub struct DownloadOutput {
@@ -70,6 +82,9 @@ pub struct DownloadOutput {
     pub file_size: u64,
     /// MIME type hint (e.g., "audio/mpeg", "video/mp4")
     pub mime_hint: Option<String>,
+    /// Additional files from multi-item posts (e.g., Instagram carousel).
+    /// None for single-item downloads.
+    pub additional_files: Option<Vec<AdditionalFile>>,
 }
 
 /// Trait for download source implementations.
@@ -130,6 +145,7 @@ impl SourceRegistry {
     /// Add new sources by implementing `DownloadSource` and calling `register()`.
     pub fn default_registry() -> Self {
         let mut registry = Self::new();
+        registry.register(Arc::new(instagram::InstagramSource::new()));
         registry.register(Arc::new(ytdlp::YtDlpSource::new()));
         registry.register(Arc::new(http::HttpSource::new()));
         registry
@@ -210,6 +226,7 @@ mod tests {
                 duration_secs: Some(180),
                 file_size: 15,
                 mime_hint: None,
+                additional_files: None,
             })
         }
     }

@@ -415,6 +415,13 @@ pub async fn handle_menu_callback(
 
                 // Refresh the menu
                 show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
+            } else if data.starts_with("ig:") {
+                if let Err(e) =
+                    crate::telegram::instagram::handle_instagram_callback(&bot, &callback_id, chat_id, &data).await
+                {
+                    log::error!("Instagram callback error: {}", e);
+                }
+                return Ok(());
             } else if data == "video:toggle_burn_subs" {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
                 let conn = db::get_connection(&db_pool)

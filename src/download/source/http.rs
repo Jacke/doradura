@@ -277,6 +277,7 @@ impl DownloadSource for HttpSource {
             duration_secs,
             file_size,
             mime_hint,
+            additional_files: None,
         })
     }
 }

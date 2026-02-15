@@ -22,6 +22,8 @@ pub enum DownloadError {
     SendFailed(String),
     /// Process execution failure (spawn, exit code)
     Process(String),
+    /// Instagram API specific failures (GraphQL errors, doc_id expiry, private accounts)
+    Instagram(String),
     /// Catch-all for uncategorized errors
     Other(String),
 }
@@ -37,6 +39,7 @@ impl fmt::Display for DownloadError {
             DownloadError::DiskSpace(msg) => write!(f, "{}", msg),
             DownloadError::SendFailed(msg) => write!(f, "{}", msg),
             DownloadError::Process(msg) => write!(f, "{}", msg),
+            DownloadError::Instagram(msg) => write!(f, "{}", msg),
             DownloadError::Other(msg) => write!(f, "{}", msg),
         }
     }
@@ -56,6 +59,7 @@ impl DownloadError {
             DownloadError::DiskSpace(_) => "disk_space",
             DownloadError::SendFailed(_) => "send_failed",
             DownloadError::Process(_) => "process",
+            DownloadError::Instagram(_) => "instagram",
             DownloadError::Other(_) => "other",
         }
     }
@@ -71,6 +75,7 @@ impl DownloadError {
             | DownloadError::DiskSpace(msg)
             | DownloadError::SendFailed(msg)
             | DownloadError::Process(msg)
+            | DownloadError::Instagram(msg)
             | DownloadError::Other(msg) => msg,
         }
     }

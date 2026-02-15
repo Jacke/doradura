@@ -92,8 +92,14 @@ pub async fn download_and_send_audio(
             // Audio-specific: add effects button
             add_audio_effects_button(&bot_clone, chat_id, &pipeline_result, db_pool_clone.as_ref()).await;
 
-            // Schedule file cleanup
-            pipeline::schedule_cleanup(pipeline_result.download_path.clone());
+            // Schedule file cleanup (including any carousel extras)
+            let extra_paths: Vec<String> = pipeline_result
+                .output
+                .additional_files
+                .as_ref()
+                .map(|files| files.iter().map(|f| f.file_path.clone()).collect())
+                .unwrap_or_default();
+            pipeline::schedule_cleanup_with_extras(pipeline_result.download_path.clone(), extra_paths);
 
             Ok(())
         })

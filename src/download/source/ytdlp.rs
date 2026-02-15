@@ -36,7 +36,6 @@ const YTDLP_DOMAINS: &[&str] = &[
     "soundcloud.com",
     "vimeo.com",
     "tiktok.com",
-    "instagram.com",
     "twitter.com",
     "x.com",
     "facebook.com",
@@ -232,6 +231,7 @@ impl YtDlpSource {
             duration_secs: duration,
             file_size,
             mime_hint: Some("audio/mpeg".to_string()),
+            additional_files: None,
         })
     }
 
@@ -325,6 +325,7 @@ impl YtDlpSource {
             duration_secs: duration,
             file_size,
             mime_hint: Some("video/mp4".to_string()),
+            additional_files: None,
         })
     }
 }

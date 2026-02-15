@@ -448,32 +448,101 @@ pub async fn execute(
         )));
     }
 
-    let (sent_message, file_size) = match format {
-        PipelineFormat::Audio { .. } => send_audio_with_retry(
-            bot,
-            chat_id,
-            &download_output.file_path,
-            duration,
-            &mut progress_msg,
-            caption.as_ref(),
-            send_as_document,
-        )
-        .await
-        .map_err(PipelineError::Operational)?,
-        PipelineFormat::Video { .. } => {
-            send_video_with_retry(
+    // Check if primary file is a photo (Instagram photos, etc.)
+    let is_photo = download_output
+        .mime_hint
+        .as_deref()
+        .map(|m| m.starts_with("image/"))
+        .unwrap_or(false);
+
+    let (sent_message, file_size) = if is_photo {
+        // Send photo via send_photo
+        use teloxide::types::InputFile;
+        let photo_file = InputFile::file(&download_output.file_path);
+        let msg = bot
+            .send_photo(chat_id, photo_file)
+            .caption(caption.as_ref())
+            .await
+            .map_err(|e| {
+                PipelineError::Operational(AppError::Download(DownloadError::SendFailed(format!(
+                    "Failed to send photo: {}",
+                    e
+                ))))
+            })?;
+        let size = download_output.file_size;
+        (msg, size)
+    } else {
+        match format {
+            PipelineFormat::Audio { .. } => send_audio_with_retry(
                 bot,
                 chat_id,
                 &download_output.file_path,
+                duration,
                 &mut progress_msg,
-                &display_title,
-                None, // thumbnail URL — video.rs handles this via download_phase()
+                caption.as_ref(),
                 send_as_document,
             )
             .await
-            .map_err(PipelineError::Operational)?
+            .map_err(PipelineError::Operational)?,
+            PipelineFormat::Video { .. } => {
+                send_video_with_retry(
+                    bot,
+                    chat_id,
+                    &download_output.file_path,
+                    &mut progress_msg,
+                    &display_title,
+                    None, // thumbnail URL — video.rs handles this via download_phase()
+                    send_as_document,
+                )
+                .await
+                .map_err(PipelineError::Operational)?
+            }
         }
     };
+
+    // Send additional carousel items (Instagram multi-item posts)
+    if let Some(ref extras) = download_output.additional_files {
+        if !extras.is_empty() {
+            use teloxide::types::{InputFile, InputMedia, InputMediaPhoto, InputMediaVideo};
+            let media_group: Vec<InputMedia> = extras
+                .iter()
+                .filter_map(|item| {
+                    if !std::path::Path::new(&item.file_path).exists() {
+                        return None;
+                    }
+                    let file = InputFile::file(&item.file_path);
+                    if item.mime_type.starts_with("video/") {
+                        Some(InputMedia::Video(InputMediaVideo::new(file)))
+                    } else {
+                        Some(InputMedia::Photo(InputMediaPhoto::new(file)))
+                    }
+                })
+                .collect();
+
+            if !media_group.is_empty() {
+                // Telegram send_media_group requires 2-10 items
+                // If only 1 extra, send individually; otherwise batch
+                if media_group.len() == 1 {
+                    let item = &extras[0];
+                    let file = InputFile::file(&item.file_path);
+                    if item.mime_type.starts_with("video/") {
+                        let _ = bot.send_video(chat_id, file).await;
+                    } else {
+                        let _ = bot.send_photo(chat_id, file).await;
+                    }
+                } else {
+                    match bot.send_media_group(chat_id, media_group).await {
+                        Ok(_) => {
+                            log::info!("Pipeline: sent {} additional carousel items", extras.len());
+                        }
+                        Err(e) => {
+                            log::warn!("Pipeline: failed to send carousel media group: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     // ── Step 9: Success message ──
     let elapsed_secs = start_time.elapsed().as_secs();
@@ -584,7 +653,14 @@ pub async fn execute(
 }
 
 /// Schedule file cleanup after a delay.
+///
+/// Also cleans up any additional files (e.g., from Instagram carousel downloads).
 pub fn schedule_cleanup(download_path: String) {
+    schedule_cleanup_with_extras(download_path, Vec::new());
+}
+
+/// Schedule file cleanup for the primary download path plus additional file paths.
+pub fn schedule_cleanup_with_extras(download_path: String, extra_paths: Vec<String>) {
     tokio::spawn(async move {
         tokio::time::sleep(config::download::cleanup_delay()).await;
         if let Err(e) = fs::remove_file(&download_path) {
@@ -593,6 +669,13 @@ pub fn schedule_cleanup(download_path: String) {
             }
         }
         cleanup_partial_download(&download_path);
+        for path in &extra_paths {
+            if let Err(e) = fs::remove_file(path) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    log::warn!("Failed to delete extra file: {}", e);
+                }
+            }
+        }
     });
 }
 

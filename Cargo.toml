@@ -24,7 +24,7 @@ url = "2.5.0"
 shellexpand = "3.1.0"
 uuid = "1.1"
 rand = "0.8"
-reqwest = { version = "0.12", features = ["json"] }  # For making HTTP requests
+reqwest = { version = "0.12", features = ["json", "socks"] }  # For making HTTP requests
 select = "0.6.1"  # For parsing HTML
 shell-escape = "0.1.5"
 wiremock = "0.5"

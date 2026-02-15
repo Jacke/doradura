@@ -244,6 +244,17 @@ pub mod network {
     }
 }
 
+/// Instagram GraphQL doc_id for media queries.
+/// Rotates every 2-4 weeks — configurable via env var (no redeploy needed).
+/// Default: current known working value.
+pub static INSTAGRAM_DOC_ID: Lazy<String> =
+    Lazy::new(|| env::var("INSTAGRAM_DOC_ID").unwrap_or_else(|_| "8845758582119845".to_string()));
+
+/// Instagram GraphQL doc_id for profile queries.
+/// Separate from media doc_id; also rotates periodically.
+pub static INSTAGRAM_PROFILE_DOC_ID: Lazy<String> =
+    Lazy::new(|| env::var("INSTAGRAM_PROFILE_DOC_ID").unwrap_or_else(|_| "9310670392322965".to_string()));
+
 /// Downsub gRPC configuration
 pub static DOWNSUB_GRPC_ENDPOINT: Lazy<Option<String>> = Lazy::new(|| {
     env::var("DOWNSUB_GRPC_ENDPOINT").ok().and_then(|value| {

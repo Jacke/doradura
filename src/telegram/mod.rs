@@ -10,6 +10,7 @@ pub mod cuts;
 pub mod downloads;
 pub mod feedback;
 pub mod handlers;
+pub mod instagram;
 pub mod markdown;
 pub mod menu;
 pub mod notifications;

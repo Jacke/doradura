@@ -635,6 +635,20 @@ pub async fn handle_message(
 
                 crate::telegram::cache::store_link_message_id(url.as_str(), msg.id.0).await;
 
+                // Check if this is an Instagram profile URL → show profile card
+                if let Some(username) =
+                    crate::download::source::instagram::InstagramSource::extract_profile_username(&url)
+                {
+                    let bot_clone = bot.clone();
+                    let chat_id = msg.chat.id;
+                    let lang_clone = lang.clone();
+                    tokio::spawn(async move {
+                        crate::telegram::instagram::show_instagram_profile(&bot_clone, chat_id, &username, &lang_clone)
+                            .await;
+                    });
+                    return Ok(user_info);
+                }
+
                 // Parse time range from text following the URL (e.g. "00:01:00-00:02:30")
                 let time_range = parse_download_time_range(text, url_text);
                 if let Some(ref tr) = time_range {
