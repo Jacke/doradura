@@ -121,6 +121,15 @@ impl InstagramSource {
         Self::extract_shortcode(url).is_some()
     }
 
+    /// Public shortcode extraction for use by the preview system.
+    pub fn extract_shortcode_public(url: &Url) -> Option<String> {
+        let host = url.host_str()?.to_lowercase();
+        if host != "instagram.com" && host != "www.instagram.com" {
+            return None;
+        }
+        Self::extract_shortcode(url)
+    }
+
     /// Fetch media data from Instagram's GraphQL API.
     ///
     /// Returns (video_url, display_url, caption, username, is_video).
@@ -198,6 +207,12 @@ impl InstagramSource {
         let is_video = media.get("is_video").and_then(|v| v.as_bool()).unwrap_or(false);
         let video_url = media.get("video_url").and_then(|v| v.as_str()).map(String::from);
         let display_url = media.get("display_url").and_then(|v| v.as_str()).map(String::from);
+        let duration_secs = media.get("video_duration").and_then(|v| v.as_f64());
+        let thumbnail_url = media
+            .get("thumbnail_src")
+            .or_else(|| media.get("display_url"))
+            .and_then(|v| v.as_str())
+            .map(String::from);
 
         let caption = media
             .pointer("/edge_media_to_caption/edges/0/node/text")
@@ -251,6 +266,8 @@ impl InstagramSource {
             items: media_items,
             caption,
             username,
+            thumbnail_url,
+            duration_secs,
         })
     }
 
@@ -479,6 +496,41 @@ impl InstagramSource {
             end_cursor,
         })
     }
+
+    /// Get preview metadata for an Instagram content URL (post/reel/tv).
+    ///
+    /// Used by the preview system to build format selection UI without yt-dlp.
+    pub async fn get_media_preview(&self, url: &Url) -> Result<InstagramPreviewInfo, AppError> {
+        let shortcode = Self::extract_shortcode(url).ok_or_else(|| {
+            AppError::Download(DownloadError::Instagram(
+                "Cannot extract shortcode from URL".to_string(),
+            ))
+        })?;
+
+        let media = self.fetch_graphql_media(&shortcode).await?;
+        let primary = &media.items[0];
+        let is_carousel = media.items.len() > 1;
+
+        let title = if media.caption.is_empty() {
+            format!("Instagram post by @{}", media.username)
+        } else {
+            let first_line = media.caption.lines().next().unwrap_or(&media.caption);
+            if first_line.len() > 100 {
+                format!("{}...", &first_line[..97])
+            } else {
+                first_line.to_string()
+            }
+        };
+
+        Ok(InstagramPreviewInfo {
+            title,
+            artist: format!("@{}", media.username),
+            thumbnail_url: media.thumbnail_url,
+            duration_secs: media.duration_secs.map(|d| d as u32),
+            is_video: primary.is_video,
+            is_carousel,
+        })
+    }
 }
 
 /// Instagram user profile data.
@@ -502,11 +554,23 @@ pub struct ProfilePost {
     pub thumbnail_url: String,
 }
 
+/// Preview info returned by `get_media_preview` for the Telegram preview UI.
+pub struct InstagramPreviewInfo {
+    pub title: String,
+    pub artist: String,
+    pub thumbnail_url: Option<String>,
+    pub duration_secs: Option<u32>,
+    pub is_video: bool,
+    pub is_carousel: bool,
+}
+
 /// Parsed media data from Instagram's GraphQL response.
 struct GraphQLMedia {
     items: Vec<MediaItem>,
     caption: String,
     username: String,
+    thumbnail_url: Option<String>,
+    duration_secs: Option<f64>,
 }
 
 /// A single media item (video or photo) within a post.

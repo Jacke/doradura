@@ -273,6 +273,11 @@ async fn get_preview_metadata_inner(
     let ytdl_bin = &*config::YTDL_BIN;
     log::debug!("Getting preview metadata for URL: {}", url);
 
+    // Instagram: use our GraphQL API directly instead of yt-dlp
+    if let Some(_shortcode) = crate::download::source::instagram::InstagramSource::extract_shortcode_public(url) {
+        return get_instagram_preview_metadata(url).await;
+    }
+
     // Проверяем кэш превью
     if let Some(mut metadata) = PREVIEW_CACHE.get(url.as_str()).await {
         log::debug!("Preview metadata found in cache for URL: {}", url);
@@ -500,6 +505,44 @@ async fn get_preview_metadata_inner(
     } else {
         log::warn!("Not caching metadata with invalid title: '{}'", title);
     }
+
+    Ok(metadata)
+}
+
+/// Build preview metadata for Instagram URLs using our GraphQL API (bypasses yt-dlp).
+async fn get_instagram_preview_metadata(url: &Url) -> Result<PreviewMetadata, AppError> {
+    log::info!("Using Instagram GraphQL for preview metadata: {}", url);
+    let source = crate::download::source::instagram::InstagramSource::new();
+
+    let info = source.get_media_preview(url).await.map_err(|e| {
+        log::warn!("Instagram GraphQL preview failed: {}, falling back to yt-dlp", e);
+        e
+    })?;
+
+    // For video content, provide a synthetic "best" format so the UI shows MP4 button
+    let video_formats = if info.is_video {
+        Some(vec![VideoFormatInfo {
+            quality: "best".to_string(),
+            size_bytes: None,
+            resolution: None,
+        }])
+    } else {
+        None
+    };
+
+    let metadata = PreviewMetadata {
+        title: info.title,
+        artist: info.artist,
+        thumbnail_url: info.thumbnail_url,
+        duration: info.duration_secs,
+        filesize: None,
+        description: None,
+        video_formats,
+        timestamps: Vec::new(),
+    };
+
+    // Cache it
+    PREVIEW_CACHE.set(url.as_str().to_string(), metadata.clone()).await;
 
     Ok(metadata)
 }
