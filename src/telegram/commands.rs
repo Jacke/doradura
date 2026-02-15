@@ -1657,12 +1657,37 @@ pub async fn process_video_clip(
         .map(|m| m.len() as i64)
         .unwrap_or(0);
 
-    let (output_kind, clip_title) = if is_video_note {
-        ("video_note", format!("{} [circle {}]", base_title, segments_text))
-    } else if is_ringtone {
-        ("ringtone", format!("{} [ringtone {}]", base_title, segments_text))
+    // Build a timestamped URL linking to the start of the first segment
+    let timestamped_url = if !original_url.is_empty() {
+        let start_secs = adjusted_segments.first().map(|s| s.start_secs).unwrap_or(0);
+        if start_secs > 0 {
+            let sep = if original_url.contains('?') { "&" } else { "?" };
+            format!("{}{sep}t={start_secs}", original_url)
+        } else {
+            original_url.clone()
+        }
     } else {
-        ("clip", format!("{} [cut {}]", base_title, segments_text))
+        String::new()
+    };
+
+    let url_suffix = if timestamped_url.is_empty() {
+        String::new()
+    } else {
+        format!("\n{}", timestamped_url)
+    };
+
+    let (output_kind, clip_title) = if is_video_note {
+        (
+            "video_note",
+            format!("{} [circle {}]{}", base_title, segments_text, url_suffix),
+        )
+    } else if is_ringtone {
+        (
+            "ringtone",
+            format!("{} [ringtone {}]{}", base_title, segments_text, url_suffix),
+        )
+    } else {
+        ("clip", format!("{} [cut {}]{}", base_title, segments_text, url_suffix))
     };
 
     // Check output file before sending
