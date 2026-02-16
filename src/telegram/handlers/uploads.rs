@@ -33,6 +33,13 @@ pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::
                     );
                     return false; // Don't handle - let it fall through to message_handler
                 }
+                if let Ok(Some(_)) = db::get_active_ig_cookies_upload_session(&conn, user_id) {
+                    log::info!(
+                        "📤 Filter: skipping media_upload_handler - user {} has active IG cookies session",
+                        user_id
+                    );
+                    return false; // Don't handle - let it fall through to message_handler
+                }
             }
             true // Handle this message
         })
