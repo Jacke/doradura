@@ -3040,6 +3040,60 @@ pub fn delete_cookies_upload_session_by_user(conn: &DbConnection, user_id: i64) 
     Ok(())
 }
 
+// ==================== Instagram Cookies Upload Sessions ====================
+
+pub fn upsert_ig_cookies_upload_session(conn: &DbConnection, session: &CookiesUploadSession) -> Result<()> {
+    conn.execute(
+        "DELETE FROM ig_cookies_upload_sessions WHERE user_id = ?1",
+        [session.user_id],
+    )?;
+    conn.execute(
+        "INSERT INTO ig_cookies_upload_sessions (id, user_id, created_at, expires_at)
+         VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![
+            session.id,
+            session.user_id,
+            session.created_at.to_rfc3339(),
+            session.expires_at.to_rfc3339(),
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn get_active_ig_cookies_upload_session(conn: &DbConnection, user_id: i64) -> Result<Option<CookiesUploadSession>> {
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut stmt = conn.prepare(
+        "SELECT id, user_id, created_at, expires_at
+         FROM ig_cookies_upload_sessions
+         WHERE user_id = ?1 AND expires_at > ?2
+         ORDER BY created_at DESC
+         LIMIT 1",
+    )?;
+    let mut rows = stmt.query(rusqlite::params![user_id, now])?;
+
+    if let Some(row) = rows.next()? {
+        let created_str: String = row.get(2)?;
+        let expires_str: String = row.get(3)?;
+        Ok(Some(CookiesUploadSession {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            created_at: chrono::DateTime::parse_from_rfc3339(&created_str)
+                .unwrap_or_default()
+                .with_timezone(&chrono::Utc),
+            expires_at: chrono::DateTime::parse_from_rfc3339(&expires_str)
+                .unwrap_or_default()
+                .with_timezone(&chrono::Utc),
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn delete_ig_cookies_upload_session_by_user(conn: &DbConnection, user_id: i64) -> Result<()> {
+    conn.execute("DELETE FROM ig_cookies_upload_sessions WHERE user_id = ?1", [user_id])?;
+    Ok(())
+}
+
 // ==================== Error Log ====================
 
 /// Error log entry

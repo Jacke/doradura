@@ -25,6 +25,11 @@ pub static YTDL_COOKIES_BROWSER: Lazy<String> =
 /// Example: youtube_cookies.txt
 pub static YTDL_COOKIES_FILE: Lazy<Option<String>> = Lazy::new(|| env::var("YTDL_COOKIES_FILE").ok());
 
+/// Path to cookies file for Instagram authentication
+/// Read from INSTAGRAM_COOKIES_FILE environment variable
+/// Example: instagram_cookies.txt
+pub static INSTAGRAM_COOKIES_FILE: Lazy<Option<String>> = Lazy::new(|| env::var("INSTAGRAM_COOKIES_FILE").ok());
+
 /// Download folder path
 /// Read from DOWNLOAD_FOLDER environment variable
 /// Defaults to ~/downloads/dora-files on macOS, ~/downloads on other platforms

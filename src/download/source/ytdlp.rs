@@ -14,8 +14,9 @@ use crate::download::cookies::report_and_wait_for_refresh;
 use crate::download::downloader::{cleanup_partial_download, parse_progress};
 use crate::download::error::DownloadError;
 use crate::download::metadata::{
-    add_cookies_args_with_proxy, add_no_cookies_args, build_telegram_safe_format, find_actual_downloaded_file,
-    get_estimated_filesize, get_metadata_from_ytdlp, get_proxy_chain, is_proxy_related_error, probe_duration_seconds,
+    add_cookies_args_with_proxy, add_instagram_cookies_args_with_proxy, add_no_cookies_args,
+    build_telegram_safe_format, find_actual_downloaded_file, get_estimated_filesize, get_metadata_from_ytdlp,
+    get_proxy_chain, is_proxy_related_error, probe_duration_seconds,
 };
 use crate::download::source::{DownloadOutput, DownloadRequest, DownloadSource, SourceProgress};
 use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message, YtDlpErrorType};
@@ -174,24 +175,31 @@ impl YtDlpSource {
                     args.extend_from_slice(&["--no-check-certificate", "--postprocessor-args"]);
                     // NOTE: postprocessor_args is borrowed from the outer closure
                 },
-                |args, proxy_option| {
-                    // Tier 2 (cookies): audio-specific args
-                    args.extend_from_slice(&[
-                        "--extract-audio",
-                        "--audio-format",
-                        "mp3",
-                        "--audio-quality",
-                        "0",
-                        "--add-metadata",
-                        "--embed-thumbnail",
-                    ]);
-                    add_cookies_args_with_proxy(args, proxy_option);
-                    args.push("--extractor-args");
-                    args.push("youtube:player_client=default");
-                    args.push("--js-runtimes");
-                    args.push("deno");
-                    args.push("--no-check-certificate");
-                    args.push("--postprocessor-args");
+                {
+                    let url_for_tier2 = url_str.clone();
+                    move |args: &mut Vec<&str>, proxy_option: Option<&crate::download::metadata::ProxyConfig>| {
+                        // Tier 2 (cookies): audio-specific args
+                        args.extend_from_slice(&[
+                            "--extract-audio",
+                            "--audio-format",
+                            "mp3",
+                            "--audio-quality",
+                            "0",
+                            "--add-metadata",
+                            "--embed-thumbnail",
+                        ]);
+                        if is_instagram_url(&url_for_tier2) {
+                            add_instagram_cookies_args_with_proxy(args, proxy_option);
+                        } else {
+                            add_cookies_args_with_proxy(args, proxy_option);
+                            args.push("--extractor-args");
+                            args.push("youtube:player_client=default");
+                        }
+                        args.push("--js-runtimes");
+                        args.push("deno");
+                        args.push("--no-check-certificate");
+                        args.push("--postprocessor-args");
+                    }
                 },
                 |args, proxy_option| {
                     // Tier 3 (fixup never): audio-specific args
@@ -277,19 +285,26 @@ impl YtDlpSource {
                     args.push("deno");
                     args.push("--no-check-certificate");
                 },
-                |args, proxy_option| {
-                    // Tier 2 (cookies): video-specific args
-                    args.push("--format");
-                    args.push("--merge-output-format");
-                    args.push("mp4");
-                    args.push("--postprocessor-args");
-                    args.push("Merger:-movflags +faststart");
-                    add_cookies_args_with_proxy(args, proxy_option);
-                    args.push("--extractor-args");
-                    args.push("youtube:player_client=default");
-                    args.push("--js-runtimes");
-                    args.push("deno");
-                    args.push("--no-check-certificate");
+                {
+                    let url_for_tier2 = url_str.clone();
+                    move |args: &mut Vec<&str>, proxy_option: Option<&crate::download::metadata::ProxyConfig>| {
+                        // Tier 2 (cookies): video-specific args
+                        args.push("--format");
+                        args.push("--merge-output-format");
+                        args.push("mp4");
+                        args.push("--postprocessor-args");
+                        args.push("Merger:-movflags +faststart");
+                        if is_instagram_url(&url_for_tier2) {
+                            add_instagram_cookies_args_with_proxy(args, proxy_option);
+                        } else {
+                            add_cookies_args_with_proxy(args, proxy_option);
+                            args.push("--extractor-args");
+                            args.push("youtube:player_client=default");
+                        }
+                        args.push("--js-runtimes");
+                        args.push("deno");
+                        args.push("--no-check-certificate");
+                    }
                 },
                 |args, proxy_option| {
                     // Tier 3 (fixup never): video-specific args
@@ -328,6 +343,11 @@ impl YtDlpSource {
             additional_files: None,
         })
     }
+}
+
+/// Check if a URL string belongs to Instagram.
+fn is_instagram_url(url_str: &str) -> bool {
+    url_str.contains("instagram.com")
 }
 
 /// Result from Tier 2 (cookies) attempt, signaling whether the outer proxy loop should retry.

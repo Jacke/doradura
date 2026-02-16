@@ -2,7 +2,8 @@ use crate::core::config;
 use crate::core::error::AppError;
 use crate::download::error::DownloadError;
 use crate::download::metadata::{
-    add_cookies_args_with_proxy, add_no_cookies_args, get_proxy_chain, is_proxy_related_error,
+    add_cookies_args_with_proxy, add_instagram_cookies_args_with_proxy, add_no_cookies_args, get_proxy_chain,
+    is_proxy_related_error,
 };
 use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message, YtDlpErrorType};
 use crate::storage::cache;
@@ -120,7 +121,13 @@ pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<
             error_type,
             YtDlpErrorType::InvalidCookies | YtDlpErrorType::BotDetection | YtDlpErrorType::NetworkError
         ) {
-            log::warn!("🍪 No-cookies mode failed, trying WITH cookies + PO Token...");
+            let is_instagram = url.host_str().map(|h| h.contains("instagram.com")).unwrap_or(false);
+
+            if is_instagram {
+                log::warn!("🍪 No-cookies mode failed for Instagram, trying WITH IG cookies...");
+            } else {
+                log::warn!("🍪 No-cookies mode failed, trying WITH cookies + PO Token...");
+            }
 
             let mut cookies_args: Vec<&str> = vec![
                 "--dump-json",
@@ -131,17 +138,25 @@ pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<
                 "2",
                 "--age-limit",
                 "99",
-                "--extractor-args",
-                "youtube:player_client=web,web_safari",
-                "--js-runtimes",
-                "deno",
             ];
 
-            // Add cookies + PO Token (full authentication)
-            add_cookies_args_with_proxy(&mut cookies_args, proxy_option.as_ref());
+            if is_instagram {
+                // Instagram: use IG cookies, no YouTube extractor-args
+                cookies_args.push("--js-runtimes");
+                cookies_args.push("deno");
+                add_instagram_cookies_args_with_proxy(&mut cookies_args, proxy_option.as_ref());
+            } else {
+                // YouTube/other: use YT cookies + PO Token
+                cookies_args.push("--extractor-args");
+                cookies_args.push("youtube:player_client=web,web_safari");
+                cookies_args.push("--js-runtimes");
+                cookies_args.push("deno");
+                add_cookies_args_with_proxy(&mut cookies_args, proxy_option.as_ref());
+            }
+
             cookies_args.push(url.as_str());
 
-            log::info!("🔑 [WITH_COOKIES] Attempting preview metadata WITH cookies + PO Token...");
+            log::info!("🔑 [WITH_COOKIES] Attempting preview metadata WITH cookies...");
 
             if let Ok(Ok(cookies_output)) = timeout(
                 config::download::ytdlp_timeout(),

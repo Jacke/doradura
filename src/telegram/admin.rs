@@ -2570,6 +2570,217 @@ pub async fn handle_cookies_file_upload(
     Ok(())
 }
 
+// ==================== Instagram Cookies Commands ====================
+
+/// Handles the /update_ig_cookies admin command
+///
+/// Creates a short-lived upload session for Instagram cookies file.
+pub async fn handle_update_ig_cookies_command(
+    db_pool: Arc<crate::storage::db::DbPool>,
+    bot: &Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    _message_text: &str,
+) -> Result<()> {
+    log::info!(
+        "🔐 /update_ig_cookies command received from user_id={}, chat_id={}",
+        user_id,
+        chat_id
+    );
+
+    if !is_admin(user_id) {
+        log::warn!("❌ Non-admin user {} attempted to use /update_ig_cookies", user_id);
+        bot.send_message(chat_id, "❌ Эта команда доступна только администраторам.")
+            .await?;
+        return Ok(());
+    }
+
+    let conn = crate::storage::db::get_connection(&db_pool)?;
+
+    let session = crate::storage::db::CookiesUploadSession {
+        id: uuid::Uuid::new_v4().to_string(),
+        user_id,
+        created_at: chrono::Utc::now(),
+        expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+    };
+
+    crate::storage::db::upsert_ig_cookies_upload_session(&conn, &session)?;
+
+    log::info!("✅ Created IG cookies upload session for admin {}", user_id);
+
+    bot.send_message(
+        chat_id,
+        "📤 *Отправь файл с Instagram cookies*\n\n\
+        Отправь txt файл с cookies в формате Netscape HTTP Cookie File\\.\n\n\
+        *Как получить cookies:*\n\
+        1\\. Установи расширение для экспорта cookies \\(Get cookies\\.txt LOCALLY\\)\n\
+        2\\. Залогинься в Instagram в браузере\n\
+        3\\. Экспортируй cookies для instagram\\.com\n\
+        4\\. Отправь файл сюда\n\n\
+        *Ключевые cookies:* `sessionid`, `csrftoken`, `ds_user_id`\n\n\
+        ⏱ Сессия истечет через 10 минут\\.",
+    )
+    .parse_mode(ParseMode::MarkdownV2)
+    .await?;
+
+    Ok(())
+}
+
+/// Handles Instagram cookies file upload after /update_ig_cookies command
+pub async fn handle_ig_cookies_file_upload(
+    db_pool: Arc<crate::storage::db::DbPool>,
+    bot: &Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    document: &teloxide::types::Document,
+) -> Result<()> {
+    log::info!(
+        "📤 IG Cookies file received from user_id={}, chat_id={}, file_id={}",
+        user_id,
+        chat_id,
+        document.file.id
+    );
+
+    let conn = crate::storage::db::get_connection(&db_pool)?;
+
+    let session = crate::storage::db::get_active_ig_cookies_upload_session(&conn, user_id)?;
+    if session.is_none() {
+        log::warn!("❌ No active IG cookies upload session for user {}", user_id);
+        return Ok(());
+    }
+
+    let processing_msg = bot
+        .send_message(chat_id, "⏳ Обрабатываю файл с Instagram cookies...")
+        .await?;
+
+    let _file = bot.get_file(document.file.id.clone()).await?;
+    let file_path = std::path::PathBuf::from(format!("/tmp/ig_cookies_upload_{}.txt", user_id));
+
+    match download_file_from_telegram(bot, &document.file.id.0, Some(file_path.clone())).await {
+        Ok(_) => match tokio::fs::read_to_string(&file_path).await {
+            Ok(content) => {
+                let diagnostic = cookies::diagnose_ig_cookies_content(&content);
+                log::info!(
+                    "🍪 IG Cookies diagnostic: {} total, {} instagram, valid={}",
+                    diagnostic.total_cookies,
+                    diagnostic.youtube_cookies,
+                    diagnostic.is_valid
+                );
+
+                match cookies::update_ig_cookies_from_content(&content).await {
+                    Ok(path) => {
+                        let _ = tokio::fs::remove_file(&file_path).await;
+                        crate::storage::db::delete_ig_cookies_upload_session_by_user(&conn, user_id)?;
+                        let _ = bot.delete_message(chat_id, processing_msg.id).await;
+
+                        let diagnostic_report = diagnostic.format_report();
+
+                        if diagnostic.is_valid {
+                            let test_msg = bot.send_message(chat_id, "⏳ Тестирую Instagram cookies...").await?;
+
+                            let validation_result = cookies::validate_ig_cookies().await;
+                            let _ = bot.delete_message(chat_id, test_msg.id).await;
+
+                            match validation_result {
+                                Ok(()) => {
+                                    let success_message = format!(
+                                            "✅ *Instagram cookies успешно обновлены\\!*\n\n\
+                                            📁 Путь: `{}`\n\n\
+                                            {}\n\n\
+                                            Бот теперь использует Instagram cookies для доступа к закрытому контенту\\.",
+                                            escape_markdown(&path.display().to_string()),
+                                            escape_markdown(&diagnostic_report)
+                                        );
+
+                                    bot.send_message(chat_id, success_message)
+                                        .parse_mode(ParseMode::MarkdownV2)
+                                        .await?;
+                                }
+                                Err(reason) => {
+                                    let warning_message = format!(
+                                        "⚠️ *Instagram cookies обновлены, но тест не прошёл*\n\n\
+                                            📁 Путь: `{}`\n\n\
+                                            {}\n\n\
+                                            *⚠️ Ошибка:* {}\n\n\
+                                            Cookies сохранены и будут использоваться для GraphQL запросов\\.",
+                                        escape_markdown(&path.display().to_string()),
+                                        escape_markdown(&diagnostic_report),
+                                        escape_markdown(&reason)
+                                    );
+
+                                    bot.send_message(chat_id, warning_message)
+                                        .parse_mode(ParseMode::MarkdownV2)
+                                        .await?;
+                                }
+                            }
+                        } else {
+                            let warning_message = format!(
+                                "⚠️ *Instagram cookies обновлены, но обнаружены проблемы*\n\n\
+                                    📁 Путь: `{}`\n\n\
+                                    {}\n\n\
+                                    *Как исправить:*\n\
+                                    1\\. Залогинься в Instagram в браузере\n\
+                                    2\\. Экспортируй cookies заново",
+                                escape_markdown(&path.display().to_string()),
+                                escape_markdown(&diagnostic_report)
+                            );
+
+                            bot.send_message(chat_id, warning_message)
+                                .parse_mode(ParseMode::MarkdownV2)
+                                .await?;
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("❌ Failed to update IG cookies file: {}", e);
+                        let _ = tokio::fs::remove_file(&file_path).await;
+                        let _ = bot.delete_message(chat_id, processing_msg.id).await;
+                        crate::storage::db::delete_ig_cookies_upload_session_by_user(&conn, user_id)?;
+
+                        let error_message = format!(
+                            "❌ *Ошибка при обновлении Instagram cookies:*\n\n{}\n\n\
+                                Возможные причины:\n\
+                                • Неверный формат cookies файла\n\
+                                • Отсутствует переменная INSTAGRAM\\_COOKIES\\_FILE",
+                            escape_markdown(&e.to_string())
+                        );
+
+                        bot.send_message(chat_id, error_message)
+                            .parse_mode(ParseMode::MarkdownV2)
+                            .await?;
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("❌ Failed to read IG cookies file: {}", e);
+                let _ = tokio::fs::remove_file(&file_path).await;
+                let _ = bot.delete_message(chat_id, processing_msg.id).await;
+                crate::storage::db::delete_ig_cookies_upload_session_by_user(&conn, user_id)?;
+
+                bot.send_message(
+                    chat_id,
+                    format!("❌ *Ошибка чтения файла:*\n\n{}", escape_markdown(&e.to_string())),
+                )
+                .parse_mode(ParseMode::MarkdownV2)
+                .await?;
+            }
+        },
+        Err(e) => {
+            log::error!("❌ Failed to download IG cookies file: {}", e);
+            let _ = bot.delete_message(chat_id, processing_msg.id).await;
+            crate::storage::db::delete_ig_cookies_upload_session_by_user(&conn, user_id)?;
+
+            bot.send_message(
+                chat_id,
+                format!("❌ *Ошибка скачивания файла:*\n\n{}", escape_markdown(&e.to_string())),
+            )
+            .parse_mode(ParseMode::MarkdownV2)
+            .await?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Shows proxy statistics and health status
 ///
 /// Admin command to view current proxy configuration and health metrics

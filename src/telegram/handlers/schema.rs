@@ -28,6 +28,7 @@ use crate::telegram::Bot;
 pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
     let deps_payment = deps.clone();
     let deps_cookies = deps.clone();
+    let deps_ig_cookies = deps.clone();
     let deps_diagnose_cookies = deps.clone();
     let deps_ytdlp = deps.clone();
     let deps_commands = deps.clone();
@@ -45,6 +46,7 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
         .branch(successful_payment_handler(deps_payment))
         // Hidden admin commands (not in Command enum)
         .branch(update_cookies_handler(deps_cookies))
+        .branch(update_ig_cookies_handler(deps_ig_cookies))
         .branch(diagnose_cookies_handler(deps_diagnose_cookies))
         .branch(update_ytdlp_handler(deps_ytdlp))
         .branch(browser_login_handler(deps_browser_login))
@@ -111,6 +113,37 @@ fn update_cookies_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                     log::error!("❌ /update_cookies handler failed for user {}: {}", user_id, e);
                     let _ = bot
                         .send_message(msg.chat.id, format!("❌ /update_cookies failed: {}", e))
+                        .await;
+                }
+                Ok(())
+            }
+        })
+}
+
+/// Handler for /update_ig_cookies admin command (hidden, not in Command enum)
+fn update_ig_cookies_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
+    Update::filter_message()
+        .filter(|msg: Message| {
+            msg.text()
+                .map(|text| text.starts_with("/update_ig_cookies"))
+                .unwrap_or(false)
+        })
+        .endpoint(move |bot: Bot, msg: Message| {
+            let deps = deps.clone();
+            async move {
+                use crate::telegram::handle_update_ig_cookies_command;
+
+                log::info!("🎯 /update_ig_cookies handler matched");
+                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+                let message_text = msg.text().unwrap_or_default();
+
+                if let Err(e) =
+                    handle_update_ig_cookies_command(deps.db_pool.clone(), &bot, msg.chat.id, user_id, message_text)
+                        .await
+                {
+                    log::error!("❌ /update_ig_cookies handler failed for user {}: {}", user_id, e);
+                    let _ = bot
+                        .send_message(msg.chat.id, format!("❌ /update_ig_cookies failed: {}", e))
                         .await;
                 }
                 Ok(())

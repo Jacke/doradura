@@ -121,7 +121,7 @@ pub async fn handle_message(
             // Check if user has active cookies upload session
             if let Ok(conn) = db::get_connection(&db_pool) {
                 if let Ok(Some(_session)) = db::get_active_cookies_upload_session(&conn, user_id) {
-                    // Handle cookies file upload
+                    // Handle YouTube cookies file upload
                     if let Err(e) = crate::telegram::handle_cookies_file_upload(
                         db_pool.clone(),
                         &bot,
@@ -132,6 +132,21 @@ pub async fn handle_message(
                     .await
                     {
                         log::error!("Failed to handle cookies file upload: {}", e);
+                    }
+                    return Ok(None);
+                }
+                // Check if user has active IG cookies upload session
+                if let Ok(Some(_session)) = db::get_active_ig_cookies_upload_session(&conn, user_id) {
+                    if let Err(e) = crate::telegram::handle_ig_cookies_file_upload(
+                        db_pool.clone(),
+                        &bot,
+                        msg.chat.id,
+                        user_id,
+                        document,
+                    )
+                    .await
+                    {
+                        log::error!("Failed to handle IG cookies file upload: {}", e);
                     }
                     return Ok(None);
                 }

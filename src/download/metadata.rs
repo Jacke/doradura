@@ -65,6 +65,39 @@ fn get_cached_cookies_path() -> Option<&'static str> {
     CACHED_COOKIES_PATH.as_ref().map(|s| s.as_str())
 }
 
+/// Cached resolved Instagram cookies file path (computed once at first use)
+static CACHED_INSTAGRAM_COOKIES_PATH: Lazy<Option<String>> = Lazy::new(|| {
+    if let Some(ref cookies_file) = *config::INSTAGRAM_COOKIES_FILE {
+        if cookies_file.is_empty() {
+            return None;
+        }
+
+        let cookies_path = if std::path::Path::new(cookies_file).is_absolute() {
+            cookies_file.clone()
+        } else {
+            shellexpand::tilde(cookies_file).to_string()
+        };
+
+        let cookies_path_buf = std::path::Path::new(&cookies_path);
+        if cookies_path_buf.exists() {
+            cookies_path_buf
+                .canonicalize()
+                .ok()
+                .map(|p| p.to_string_lossy().to_string())
+        } else {
+            log::warn!("Instagram cookies file not found at startup: {}", cookies_path);
+            None
+        }
+    } else {
+        None
+    }
+});
+
+/// Returns cached Instagram cookies path as &'static str (no allocation per call)
+fn get_cached_instagram_cookies_path() -> Option<&'static str> {
+    CACHED_INSTAGRAM_COOKIES_PATH.as_ref().map(|s| s.as_str())
+}
+
 /// Cached WARP proxy URL (from config, computed once)
 static CACHED_WARP_PROXY: Lazy<Option<String>> = Lazy::new(|| {
     config::proxy::WARP_PROXY
@@ -371,6 +404,67 @@ pub fn add_no_cookies_args(args: &mut Vec<&str>, proxy: Option<&ProxyConfig>) {
     // NO PO Token, NO cookies - let yt-dlp 2026+ use its default client selection
     // which automatically chooses android_vr + web_safari clients
     log::info!("[NO_COOKIES] Running WITHOUT cookies and WITHOUT PO Token (modern yt-dlp mode)");
+}
+
+/// Adds proxy and Instagram cookies arguments to yt-dlp command.
+///
+/// Similar to `add_cookies_args_with_proxy` but uses Instagram cookies file
+/// instead of YouTube cookies and does NOT add PO Token / YouTube extractor-args.
+///
+/// # Arguments
+///
+/// * `args` - Vector of arguments for yt-dlp to modify
+/// * `proxy` - Optional proxy configuration
+///
+/// # Returns
+///
+/// `true` if IG cookies were added, `false` if no IG cookies available
+pub fn add_instagram_cookies_args_with_proxy(args: &mut Vec<&str>, proxy: Option<&ProxyConfig>) -> bool {
+    // Add proxy if provided
+    if let Some(proxy_config) = proxy {
+        log::info!(
+            "[IG_COOKIES] Using proxy [{}]: {}",
+            proxy_config.name,
+            proxy_config.masked_url()
+        );
+        args.push("--proxy");
+        if let Some(cached_warp) = get_cached_warp_proxy() {
+            args.push(cached_warp);
+        } else {
+            log::warn!("[IG_COOKIES] Proxy requested but no cached proxy URL");
+        }
+    }
+
+    // Add Instagram cookies file
+    if let Some(cached_path) = get_cached_instagram_cookies_path() {
+        args.push("--cookies");
+        args.push(cached_path);
+        log::info!("[IG_COOKIES] Using Instagram cookies: {}", cached_path);
+        return true;
+    }
+
+    // Fallback: check if file exists but wasn't cached (created after startup)
+    if let Some(ref cookies_file) = *config::INSTAGRAM_COOKIES_FILE {
+        if !cookies_file.is_empty() {
+            let cookies_path = if std::path::Path::new(cookies_file).is_absolute() {
+                cookies_file.clone()
+            } else {
+                shellexpand::tilde(cookies_file).to_string()
+            };
+            if std::path::Path::new(&cookies_path).exists() {
+                log::warn!(
+                    "[IG_COOKIES] Instagram cookies file found but not cached (created after startup?): {}",
+                    cookies_path
+                );
+                log::warn!("Restart the bot to use the new Instagram cookies file");
+            } else {
+                log::debug!("[IG_COOKIES] Instagram cookies file not found: {}", cookies_path);
+            }
+        }
+    }
+
+    log::debug!("[IG_COOKIES] No Instagram cookies available");
+    false
 }
 
 /// Adds ONLY PO Token arguments WITHOUT cookies (v4.0 fallback mode).

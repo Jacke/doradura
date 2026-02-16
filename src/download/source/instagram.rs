@@ -147,12 +147,20 @@ impl InstagramSource {
         let doc_id = config::INSTAGRAM_DOC_ID.as_str();
         let variables = format!(r#"{{"shortcode":"{}"}}"#, shortcode);
 
-        let response = self
+        let mut request_builder = self
             .client
             .post(GRAPHQL_ENDPOINT)
             .header("X-IG-App-ID", IG_APP_ID)
             .header("X-Requested-With", "XMLHttpRequest")
-            .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Content-Type", "application/x-www-form-urlencoded");
+
+        // Add Instagram cookies if available (for restricted content)
+        if let Some(cookie_header) = crate::download::cookies::load_instagram_cookie_header() {
+            log::debug!("InstagramSource: adding cookie header to GraphQL request");
+            request_builder = request_builder.header("Cookie", cookie_header);
+        }
+
+        let response = request_builder
             .body(format!(
                 "doc_id={}&variables={}",
                 doc_id,
@@ -409,12 +417,18 @@ impl InstagramSource {
         let doc_id = config::INSTAGRAM_PROFILE_DOC_ID.as_str();
         let variables = format!(r#"{{"username":"{}"}}"#, username);
 
-        let response = self
+        let mut profile_request = self
             .client
             .post(GRAPHQL_ENDPOINT)
             .header("X-IG-App-ID", IG_APP_ID)
             .header("X-Requested-With", "XMLHttpRequest")
-            .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Content-Type", "application/x-www-form-urlencoded");
+
+        if let Some(cookie_header) = crate::download::cookies::load_instagram_cookie_header() {
+            profile_request = profile_request.header("Cookie", cookie_header);
+        }
+
+        let response = profile_request
             .body(format!(
                 "doc_id={}&variables={}",
                 doc_id,
