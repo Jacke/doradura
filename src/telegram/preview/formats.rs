@@ -221,7 +221,7 @@ pub async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<Vid
                 proxy_name
             );
 
-            let mut list_formats_args: Vec<&str> = vec!["--list-formats", "--no-playlist"];
+            let mut list_formats_args: Vec<&str> = vec!["--list-formats", "--no-playlist", "--age-limit", "99"];
 
             // Add proxy and cookies
             add_cookies_args_with_proxy(&mut list_formats_args, proxy_option.as_ref());
