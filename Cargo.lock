@@ -1318,7 +1318,6 @@ dependencies = [
  "axum 0.7.9",
  "base64 0.22.1",
  "bytes",
- "cc",
  "chrono",
  "clap",
  "criterion",
