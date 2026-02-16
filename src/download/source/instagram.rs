@@ -184,7 +184,19 @@ impl InstagramSource {
             ))));
         }
 
-        let body: serde_json::Value = response.json().await.map_err(|e| {
+        let response_text = response.text().await.map_err(|e| {
+            AppError::Download(DownloadError::Instagram(format!(
+                "Failed to read GraphQL response: {}",
+                e
+            )))
+        })?;
+
+        let body: serde_json::Value = serde_json::from_str(&response_text).map_err(|e| {
+            log::error!(
+                "InstagramSource: GraphQL returned non-JSON ({}): {}",
+                e,
+                &response_text[..response_text.len().min(500)]
+            );
             AppError::Download(DownloadError::Instagram(format!(
                 "Failed to parse GraphQL response: {}",
                 e

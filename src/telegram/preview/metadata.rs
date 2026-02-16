@@ -274,8 +274,14 @@ async fn get_preview_metadata_inner(
     log::debug!("Getting preview metadata for URL: {}", url);
 
     // Instagram: use our GraphQL API directly instead of yt-dlp
-    if let Some(_shortcode) = crate::download::source::instagram::InstagramSource::extract_shortcode_public(url) {
-        return get_instagram_preview_metadata(url).await;
+    if crate::download::source::instagram::InstagramSource::extract_shortcode_public(url).is_some() {
+        match get_instagram_preview_metadata(url).await {
+            Ok(metadata) => return Ok(metadata),
+            Err(e) => {
+                log::warn!("Instagram GraphQL preview failed ({}), falling back to yt-dlp", e);
+                // Fall through to yt-dlp flow below
+            }
+        }
     }
 
     // Проверяем кэш превью
@@ -426,6 +432,22 @@ async fn get_preview_metadata_inner(
                 json_formats.len()
             );
             video_formats = Some(json_formats);
+        }
+    }
+
+    // Instagram fallback: if yt-dlp got metadata but no video formats, and it's a reel/video,
+    // add a synthetic "best" format so the UI shows MP4 button
+    if video_formats.as_ref().is_none_or(|formats| formats.is_empty()) {
+        if let Some(host) = url.host_str() {
+            let host_lower = host.to_lowercase();
+            if (host_lower == "instagram.com" || host_lower == "www.instagram.com") && url.path().contains("/reel") {
+                log::info!("Instagram reel detected with no video formats, adding synthetic MP4 format");
+                video_formats = Some(vec![VideoFormatInfo {
+                    quality: "best".to_string(),
+                    size_bytes: None,
+                    resolution: None,
+                }]);
+            }
         }
     }
 
