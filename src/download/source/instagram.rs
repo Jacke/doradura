@@ -184,7 +184,10 @@ impl InstagramSource {
         if binary == "curl-impersonate" {
             cmd.arg("--impersonate").arg("chrome131");
         }
+        // --compressed: auto-decompress gzip/deflate/br (needed because curl-impersonate
+        // sends Accept-Encoding like Chrome, so server returns compressed content)
         cmd.arg("-s")
+            .arg("--compressed")
             .arg("-X")
             .arg("POST")
             .arg(GRAPHQL_ENDPOINT)
@@ -512,7 +515,10 @@ impl InstagramSource {
         if binary == "curl-impersonate" {
             cmd.arg("--impersonate").arg("chrome131");
         }
+        // --compressed: auto-decompress gzip/deflate/br (needed because curl-impersonate
+        // sends Accept-Encoding like Chrome, so server returns compressed content)
         cmd.arg("-s")
+            .arg("--compressed")
             .arg("-X")
             .arg("POST")
             .arg(GRAPHQL_ENDPOINT)
