@@ -186,13 +186,14 @@ impl InstagramSource {
         }
         // --compressed: auto-decompress gzip/deflate/br (needed because curl-impersonate
         // sends Accept-Encoding like Chrome, so server returns compressed content)
+        // Only set Instagram-specific headers; curl-impersonate already sets
+        // User-Agent, Accept, Accept-Language, Sec-Fetch-*, Sec-Ch-Ua to match Chrome.
+        // Overriding them can create fingerprint mismatches that Instagram detects.
         cmd.arg("-s")
             .arg("--compressed")
             .arg("-X")
             .arg("POST")
             .arg(GRAPHQL_ENDPOINT)
-            .arg("-H")
-            .arg("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
             .arg("-H")
             .arg(format!("X-IG-App-ID: {}", IG_APP_ID))
             .arg("-H")
@@ -207,16 +208,6 @@ impl InstagramSource {
             .arg("Referer: https://www.instagram.com/")
             .arg("-H")
             .arg("Origin: https://www.instagram.com")
-            .arg("-H")
-            .arg("Accept: */*")
-            .arg("-H")
-            .arg("Accept-Language: en-US,en;q=0.9")
-            .arg("-H")
-            .arg("Sec-Fetch-Site: same-origin")
-            .arg("-H")
-            .arg("Sec-Fetch-Mode: cors")
-            .arg("-H")
-            .arg("Sec-Fetch-Dest: empty")
             .arg("--max-time")
             .arg("30");
 
@@ -228,21 +219,9 @@ impl InstagramSource {
             }
         }
 
-        // Add cookies + CSRF token
-        if let Some(cookie_header) = crate::download::cookies::load_instagram_cookie_header() {
-            if let Some(csrf_token) = crate::download::cookies::load_ig_csrf_token() {
-                log::info!(
-                    "InstagramSource: curl GraphQL: cookies=yes, csrftoken=yes (len={})",
-                    csrf_token.len()
-                );
-                cmd.arg("-H").arg(format!("X-CSRFToken: {}", csrf_token));
-            } else {
-                log::warn!("InstagramSource: curl GraphQL: cookies=yes, csrftoken=NOT FOUND");
-            }
-            cmd.arg("-H").arg(format!("Cookie: {}", cookie_header));
-        } else {
-            log::info!("InstagramSource: curl GraphQL: no cookies (anonymous)");
-        }
+        // Skip cookies for GraphQL — expired/invalid cookies cause Instagram to
+        // return HTML login page instead of JSON. Public posts work without cookies.
+        log::info!("InstagramSource: curl GraphQL: anonymous (no cookies, public posts only)");
 
         cmd.arg("-d").arg(&body);
 
@@ -523,8 +502,6 @@ impl InstagramSource {
             .arg("POST")
             .arg(GRAPHQL_ENDPOINT)
             .arg("-H")
-            .arg("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-            .arg("-H")
             .arg(format!("X-IG-App-ID: {}", IG_APP_ID))
             .arg("-H")
             .arg(format!("X-FB-LSD: {}", FB_LSD_TOKEN))
@@ -538,16 +515,6 @@ impl InstagramSource {
             .arg("Referer: https://www.instagram.com/")
             .arg("-H")
             .arg("Origin: https://www.instagram.com")
-            .arg("-H")
-            .arg("Accept: */*")
-            .arg("-H")
-            .arg("Accept-Language: en-US,en;q=0.9")
-            .arg("-H")
-            .arg("Sec-Fetch-Site: same-origin")
-            .arg("-H")
-            .arg("Sec-Fetch-Mode: cors")
-            .arg("-H")
-            .arg("Sec-Fetch-Dest: empty")
             .arg("--max-time")
             .arg("30");
 
@@ -558,13 +525,8 @@ impl InstagramSource {
             }
         }
 
-        if let Some(cookie_header) = crate::download::cookies::load_instagram_cookie_header() {
-            if let Some(csrf_token) = crate::download::cookies::load_ig_csrf_token() {
-                log::info!("InstagramSource: curl profile GraphQL: cookies=yes, csrftoken=yes");
-                cmd.arg("-H").arg(format!("X-CSRFToken: {}", csrf_token));
-            }
-            cmd.arg("-H").arg(format!("Cookie: {}", cookie_header));
-        }
+        // Skip cookies — expired cookies cause login page redirect
+        log::info!("InstagramSource: curl profile GraphQL: anonymous (no cookies)");
 
         cmd.arg("-d").arg(&body);
 
