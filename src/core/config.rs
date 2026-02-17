@@ -258,7 +258,7 @@ pub static INSTAGRAM_DOC_ID: Lazy<String> =
 /// Instagram GraphQL doc_id for profile queries.
 /// Separate from media doc_id; also rotates periodically.
 pub static INSTAGRAM_PROFILE_DOC_ID: Lazy<String> =
-    Lazy::new(|| env::var("INSTAGRAM_PROFILE_DOC_ID").unwrap_or_else(|_| "9310670392322965".to_string()));
+    Lazy::new(|| env::var("INSTAGRAM_PROFILE_DOC_ID").unwrap_or_else(|_| "25980296051578533".to_string()));
 
 /// Downsub gRPC configuration
 pub static DOWNSUB_GRPC_ENDPOINT: Lazy<Option<String>> = Lazy::new(|| {

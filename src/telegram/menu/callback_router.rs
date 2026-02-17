@@ -415,6 +415,43 @@ pub async fn handle_menu_callback(
 
                 // Refresh the menu
                 show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
+            } else if data.starts_with("ct:") {
+                // Carousel toggle: ct:{index}:{url_id}:{mask} or ct:all:{url_id}:{mask}
+                let _ = bot.answer_callback_query(callback_id.clone()).await;
+                let parts: Vec<&str> = data.splitn(4, ':').collect();
+                if parts.len() == 4 {
+                    let url_id = parts[2];
+                    if let Ok(mask) = parts[3].parse::<u32>() {
+                        // Figure out carousel_count from the message keyboard
+                        // Count item toggle buttons (those starting with ct: and a digit)
+                        let carousel_count = q
+                            .message
+                            .as_ref()
+                            .and_then(|m| match m {
+                                teloxide::types::MaybeInaccessibleMessage::Regular(msg) => msg.reply_markup(),
+                                _ => None,
+                            })
+                            .map(|kb| {
+                                kb.inline_keyboard
+                                    .iter()
+                                    .flat_map(|row| row.iter())
+                                    .filter(|btn| {
+                                        matches!(&btn.kind, teloxide::types::InlineKeyboardButtonKind::CallbackData(d) if d.starts_with("ct:") && d.chars().nth(3).is_some_and(|c| c.is_ascii_digit()))
+                                    })
+                                    .count() as u8
+                            })
+                            .unwrap_or(0);
+
+                        if carousel_count > 0 {
+                            let new_keyboard =
+                                crate::telegram::preview::create_carousel_keyboard(carousel_count, mask, url_id);
+                            let _ = bot
+                                .edit_message_reply_markup(chat_id, message_id)
+                                .reply_markup(new_keyboard)
+                                .await;
+                        }
+                    }
+                }
             } else if data.starts_with("ig:") {
                 if let Err(e) =
                     crate::telegram::instagram::handle_instagram_callback(&bot, &callback_id, chat_id, &data).await
@@ -704,22 +741,31 @@ pub async fn handle_menu_callback(
                 }
 
                 // Format: dl:format:url_id (legacy format)
-                // Format: dl:format:quality:url_id (new format for video with quality selection)
+                // Format: dl:format:quality:url_id (video with quality selection)
+                // Format: dl:photo:url_id:mask (carousel photo with bitmask)
                 let parts: Vec<&str> = data.split(':').collect();
 
                 if parts.len() >= 3 {
                     let format = parts[1];
-                    let url_id = if parts.len() == 3 {
-                        // Legacy format: dl:format:url_id
-                        parts[2]
-                    } else if parts.len() == 4 {
-                        // New format: dl:format:quality:url_id
-                        parts[3]
+
+                    // For carousel photos: dl:photo:url_id:mask (mask is a decimal bitmask)
+                    let (url_id, carousel_mask) = if format == "photo" && parts.len() == 4 {
+                        // dl:photo:url_id:mask — mask is a u32 bitmask
+                        let mask = parts[3].parse::<u32>().ok();
+                        (parts[2], mask)
                     } else {
-                        log::warn!("Invalid dl callback format: {}", data);
-                        // Preview already deleted, send error as new message
-                        let _ = bot.send_message(chat_id, "Ошибка: неверный формат запроса").await;
-                        return Ok(());
+                        (
+                            if parts.len() == 3 {
+                                parts[2] // dl:format:url_id
+                            } else if parts.len() == 4 {
+                                parts[3] // dl:format:quality:url_id
+                            } else {
+                                log::warn!("Invalid dl callback format: {}", data);
+                                let _ = bot.send_message(chat_id, "Ошибка: неверный формат запроса").await;
+                                return Ok(());
+                            },
+                            None,
+                        )
                     };
 
                     // Extract quality if provided (new format)
@@ -852,6 +898,7 @@ pub async fn handle_menu_callback(
                                             plan.as_str(),
                                         );
                                         task.time_range = time_range.clone();
+                                        task.carousel_mask = carousel_mask;
                                         download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
 
                                         // Send queue position notification and store message ID for later deletion

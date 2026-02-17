@@ -1021,6 +1021,7 @@ async fn recover_failed_tasks(queue: &Arc<DownloadQueue>, db_pool: &Arc<db::DbPo
                             priority,
                             time_range: None,
                             queue_message_id: None,
+                            carousel_mask: None,
                         };
 
                         // Add the task back to the queue
@@ -1185,6 +1186,12 @@ async fn process_queue(
                 let task_url = task.url.clone();
                 let task_format = task.format.clone();
                 let task_chat_id = task.chat_id;
+
+                // Set carousel mask for Instagram carousel downloads (stateless bitmask approach)
+                if let Some(mask) = task.carousel_mask {
+                    doradura::download::source::instagram::set_carousel_mask(&task.url, mask);
+                }
+
                 let result = match task.format.as_str() {
                     "mp4" => {
                         download_and_send_video(

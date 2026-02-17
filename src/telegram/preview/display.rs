@@ -9,7 +9,9 @@ use unic_langid::LanguageIdentifier;
 use url::Url;
 
 use super::formats::filter_video_formats_by_size;
-use super::keyboard::{create_fallback_keyboard, create_video_format_keyboard, keyboard_stats};
+use super::keyboard::{
+    create_carousel_keyboard, create_fallback_keyboard, create_video_format_keyboard, keyboard_stats,
+};
 
 /// Отправляет превью с метаданными и кнопками подтверждения
 ///
@@ -128,9 +130,16 @@ pub async fn send_preview(
         }
     };
 
-    // Получаем message_id нового preview сообщения (будет установлен после отправки)
-    // Пока используем временное значение 0, потом обновим после отправки
-    let keyboard = if has_video_formats {
+    // Carousel photo selector: show toggle keyboard instead of standard photo/video buttons
+    let keyboard = if metadata.carousel_count > 1 {
+        let full_mask = (1u32 << metadata.carousel_count) - 1; // all selected
+        log::info!(
+            "Creating carousel keyboard ({} items, url_id={})",
+            metadata.carousel_count,
+            url_id
+        );
+        create_carousel_keyboard(metadata.carousel_count, full_mask, &url_id)
+    } else if has_video_formats {
         if let Some(formats) = &filtered_formats {
             if formats.is_empty() {
                 log::warn!(
@@ -342,7 +351,10 @@ pub async fn update_preview_message(
         }
     }
 
-    let keyboard = if has_video_formats {
+    let keyboard = if metadata.carousel_count > 1 {
+        let full_mask = (1u32 << metadata.carousel_count) - 1;
+        create_carousel_keyboard(metadata.carousel_count, full_mask, &url_id)
+    } else if has_video_formats {
         let formats = filtered_formats.as_deref().unwrap_or(&[]);
         if formats.is_empty() {
             create_fallback_keyboard(default_format, default_quality, &url_id, Some(audio_bitrate.as_str()))

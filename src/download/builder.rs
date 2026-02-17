@@ -28,6 +28,7 @@ pub struct DownloadConfigBuilder {
     max_file_size: Option<u64>,
     custom_output_path: Option<String>,
     time_range: Option<(String, String)>,
+    carousel_mask: Option<u32>,
 }
 
 impl DownloadConfigBuilder {
@@ -41,6 +42,7 @@ impl DownloadConfigBuilder {
             max_file_size: None,
             custom_output_path: None,
             time_range: None,
+            carousel_mask: None,
         }
     }
 
@@ -80,6 +82,12 @@ impl DownloadConfigBuilder {
         self
     }
 
+    /// Set carousel bitmask (for multi-item Instagram posts).
+    pub fn carousel_mask(mut self, mask: u32) -> Self {
+        self.carousel_mask = Some(mask);
+        self
+    }
+
     /// Build the `DownloadRequest`, generating the output path from title and artist.
     ///
     /// Adds a timestamp to the filename to prevent race conditions with concurrent downloads.
@@ -98,6 +106,7 @@ impl DownloadConfigBuilder {
             video_quality: self.video_quality,
             max_file_size: self.max_file_size,
             time_range: self.time_range,
+            carousel_mask: self.carousel_mask,
         }
     }
 

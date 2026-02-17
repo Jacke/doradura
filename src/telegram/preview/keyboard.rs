@@ -233,6 +233,72 @@ pub fn create_video_format_keyboard(
     InlineKeyboardMarkup::new(buttons)
 }
 
+/// Number emojis for carousel item buttons (1-indexed, index 0 = "1️⃣")
+const NUM_EMOJI: [&str; 10] = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"];
+
+/// Creates an inline keyboard for Instagram carousel item selection.
+///
+/// Each item gets a toggle button; selected items are marked with ✅, deselected with ⬜.
+/// Selection state is encoded as a bitmask in the callback data (stateless — no server state needed).
+///
+/// # Layout
+/// ```text
+/// [1️⃣ ✅] [2️⃣ ✅] [3️⃣ ⬜] [4️⃣ ✅] [5️⃣ ✅]
+/// [✅ Все] [❌ Сбросить]
+/// [📷 Скачать выбранные (4)]
+/// [⚙️ Настройки]
+/// [❌ Отмена]
+/// ```
+pub fn create_carousel_keyboard(carousel_count: u8, mask: u32, url_id: &str) -> InlineKeyboardMarkup {
+    let count = carousel_count as usize;
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+
+    // Item toggle buttons in rows of 5
+    let mut current_row: Vec<InlineKeyboardButton> = Vec::new();
+    for i in 0..count {
+        let selected = mask & (1 << i) != 0;
+        let emoji = NUM_EMOJI.get(i).unwrap_or(&"▪️");
+        let check = if selected { "✅" } else { "⬜" };
+        let label = format!("{} {}", emoji, check);
+        // Toggle: flip this bit in the mask
+        let new_mask = mask ^ (1 << i);
+        let callback = format!("ct:{}:{}:{}", i, url_id, new_mask);
+        current_row.push(InlineKeyboardButton::callback(label, callback));
+        if current_row.len() == 5 || i == count - 1 {
+            rows.push(std::mem::take(&mut current_row));
+        }
+    }
+
+    // Select all / Clear all
+    let full_mask = (1u32 << count) - 1;
+    rows.push(vec![
+        InlineKeyboardButton::callback("✅ Все".to_string(), format!("ct:all:{}:{}", url_id, full_mask)),
+        InlineKeyboardButton::callback("❌ Сбросить".to_string(), format!("ct:all:{}:0", url_id)),
+    ]);
+
+    // Download button with count of selected items
+    let selected_count = (0..count).filter(|i| mask & (1 << i) != 0).count();
+    let dl_label = format!("📷 Скачать выбранные ({})", selected_count);
+    rows.push(vec![InlineKeyboardButton::callback(
+        dl_label,
+        format!("dl:photo:{}:{}", url_id, mask),
+    )]);
+
+    // Settings button
+    rows.push(vec![InlineKeyboardButton::callback(
+        "⚙️ Настройки".to_string(),
+        format!("pv:set:{}", url_id),
+    )]);
+
+    // Cancel button
+    rows.push(vec![InlineKeyboardButton::callback(
+        "❌ Отмена".to_string(),
+        format!("pv:cancel:{}", url_id),
+    )]);
+
+    InlineKeyboardMarkup::new(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

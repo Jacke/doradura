@@ -18,6 +18,7 @@ pub struct PreviewMetadata {
     pub video_formats: Option<Vec<VideoFormatInfo>>, // доступные форматы видео (только для mp4)
     pub timestamps: Vec<crate::timestamps::VideoTimestamp>, // извлечённые таймкоды
     pub is_photo: bool,                              // true for Instagram photo posts (no audio/video to extract)
+    pub carousel_count: u8,                          // 0 = not carousel, 2-10 = carousel item count
 }
 
 impl PreviewMetadata {
@@ -98,6 +99,7 @@ mod tests {
             video_formats: None,
             timestamps: Vec::new(),
             is_photo: false,
+            carousel_count: 0,
         };
         assert_eq!(meta.format_duration(), "3:05");
     }
@@ -114,6 +116,7 @@ mod tests {
             video_formats: None,
             timestamps: Vec::new(),
             is_photo: false,
+            carousel_count: 0,
         };
         assert_eq!(meta.format_duration(), "0:00");
     }
@@ -130,6 +133,7 @@ mod tests {
             video_formats: None,
             timestamps: Vec::new(),
             is_photo: false,
+            carousel_count: 0,
         };
         assert_eq!(meta.format_duration(), "Неизвестно");
     }
@@ -146,6 +150,7 @@ mod tests {
             video_formats: None,
             timestamps: Vec::new(),
             is_photo: false,
+            carousel_count: 0,
         };
         assert_eq!(meta.format_duration(), "61:01");
     }
@@ -162,6 +167,7 @@ mod tests {
             video_formats: None,
             timestamps: Vec::new(),
             is_photo: false,
+            carousel_count: 0,
         };
         assert_eq!(meta.format_filesize(), "5.0 MB");
     }
@@ -178,6 +184,7 @@ mod tests {
             video_formats: None,
             timestamps: Vec::new(),
             is_photo: false,
+            carousel_count: 0,
         };
         assert_eq!(meta.format_filesize(), "512.0 KB");
     }
@@ -194,6 +201,7 @@ mod tests {
             video_formats: None,
             timestamps: Vec::new(),
             is_photo: false,
+            carousel_count: 0,
         };
         assert_eq!(meta.format_filesize(), "500 B");
     }
@@ -210,6 +218,7 @@ mod tests {
             video_formats: None,
             timestamps: Vec::new(),
             is_photo: false,
+            carousel_count: 0,
         };
         assert_eq!(meta.format_filesize(), "Неизвестно");
     }
@@ -226,6 +235,7 @@ mod tests {
             video_formats: None,
             timestamps: Vec::new(),
             is_photo: false,
+            carousel_count: 0,
         };
         assert_eq!(meta.display_title(), "Artist Name - Song Name");
     }
@@ -242,6 +252,7 @@ mod tests {
             video_formats: None,
             timestamps: Vec::new(),
             is_photo: false,
+            carousel_count: 0,
         };
         assert_eq!(meta.display_title(), "Song Name");
     }
@@ -258,6 +269,7 @@ mod tests {
             video_formats: None,
             timestamps: Vec::new(),
             is_photo: false,
+            carousel_count: 0,
         };
         assert_eq!(meta.display_title(), "Song Name");
     }
@@ -274,6 +286,7 @@ mod tests {
             video_formats: None,
             timestamps: Vec::new(),
             is_photo: false,
+            carousel_count: 0,
         };
         let debug = format!("{:?}", meta);
         assert!(debug.contains("PreviewMetadata"));
@@ -296,6 +309,7 @@ mod tests {
             }]),
             timestamps: Vec::new(),
             is_photo: false,
+            carousel_count: 0,
         };
         let cloned = meta.clone();
         assert_eq!(meta.title, cloned.title);
@@ -331,6 +345,7 @@ mod tests {
             ]),
             timestamps: Vec::new(),
             is_photo: false,
+            carousel_count: 0,
         };
 
         assert!(meta.video_formats.is_some());

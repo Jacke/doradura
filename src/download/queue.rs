@@ -62,6 +62,9 @@ pub struct DownloadTask {
     pub time_range: Option<(String, String)>,
     /// ID сообщения "Task added to queue" (для удаления при начале обработки)
     pub queue_message_id: Option<i32>,
+    /// Carousel bitmask: which items to download from a multi-item post (e.g., Instagram carousel).
+    /// Bit N = item N selected. None = download all items.
+    pub carousel_mask: Option<u32>,
 }
 
 impl DownloadTask {
@@ -145,6 +148,7 @@ impl DownloadTask {
             priority,
             time_range,
             queue_message_id: None,
+            carousel_mask: None,
         }
     }
 
@@ -801,6 +805,7 @@ mod tests {
             priority: TaskPriority::Low,
             time_range: None,
             queue_message_id: None,
+            carousel_mask: None,
         };
         let new_task = DownloadTask::new(
             "http://example.com/new".to_string(),

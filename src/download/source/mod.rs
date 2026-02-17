@@ -58,6 +58,9 @@ pub struct DownloadRequest {
     /// Time range to download (start, end) e.g. ("00:01:00", "00:02:30").
     /// Uses yt-dlp --download-sections under the hood.
     pub time_range: Option<(String, String)>,
+    /// Carousel bitmask: which items to download from a multi-item post.
+    /// Bit N = item N selected. None = download all items.
+    pub carousel_mask: Option<u32>,
 }
 
 /// An additional media file from a multi-item post (e.g., Instagram carousel).
@@ -309,6 +312,7 @@ mod tests {
             video_quality: None,
             max_file_size: None,
             time_range: None,
+            carousel_mask: None,
         };
 
         let (tx, mut rx) = mpsc::unbounded_channel();

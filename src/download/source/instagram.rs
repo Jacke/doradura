@@ -16,11 +16,31 @@ use crate::core::error::AppError;
 use crate::download::error::DownloadError;
 use crate::download::source::{DownloadOutput, DownloadRequest, DownloadSource, MediaMetadata, SourceProgress};
 use async_trait::async_trait;
+use std::collections::HashMap;
 use std::io::Write;
 use std::sync::Mutex;
 use std::time::Instant;
 use tokio::sync::mpsc;
 use url::Url;
+
+/// Thread-safe cache for carousel download masks.
+/// Set by the download dispatcher before starting a carousel download,
+/// read by `InstagramSource::download()` to filter items.
+static CAROUSEL_MASKS: std::sync::LazyLock<Mutex<HashMap<String, u32>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Store a carousel bitmask for a URL (called before dispatching the download).
+pub fn set_carousel_mask(url: &str, mask: u32) {
+    CAROUSEL_MASKS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(url.to_string(), mask);
+}
+
+/// Take (remove) the carousel bitmask for a URL (called during download).
+fn take_carousel_mask(url: &str) -> Option<u32> {
+    CAROUSEL_MASKS.lock().unwrap_or_else(|e| e.into_inner()).remove(url)
+}
 
 /// Instagram GraphQL API endpoint.
 const GRAPHQL_ENDPOINT: &str = "https://www.instagram.com/api/graphql";
@@ -569,9 +589,17 @@ impl InstagramSource {
             )))
         })?;
 
+        // Try multiple JSON paths — different doc_ids return different structures
         let user = body
             .pointer("/data/user")
-            .ok_or_else(|| AppError::Download(DownloadError::Instagram("Profile not found".to_string())))?;
+            .or_else(|| body.pointer("/data/xdt_api__v1__users__web_profile_info/data/user"))
+            .ok_or_else(|| {
+                log::error!(
+                    "InstagramSource: profile response has no /data/user: {}",
+                    &response_text[..response_text.len().min(500)]
+                );
+                AppError::Download(DownloadError::Instagram("Profile not found".to_string()))
+            })?;
 
         let full_name = user.get("full_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let biography = user.get("biography").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -582,16 +610,21 @@ impl InstagramSource {
             .unwrap_or("")
             .to_string();
         let is_private = user.get("is_private").and_then(|v| v.as_bool()).unwrap_or(false);
+        let user_id = user.get("id").and_then(|v| v.as_str()).map(String::from);
+
+        // Handle both legacy edge format and new direct field format
         let post_count = user
             .pointer("/edge_owner_to_timeline_media/count")
             .and_then(|v| v.as_u64())
+            .or_else(|| user.get("media_count").and_then(|v| v.as_u64()))
             .unwrap_or(0) as u32;
         let follower_count = user
             .pointer("/edge_followed_by/count")
             .and_then(|v| v.as_u64())
+            .or_else(|| user.get("follower_count").and_then(|v| v.as_u64()))
             .unwrap_or(0) as u32;
 
-        // Extract recent posts
+        // Extract recent posts — try edge format first, then items format
         let posts: Vec<ProfilePost> = user
             .pointer("/edge_owner_to_timeline_media/edges")
             .and_then(|v| v.as_array())
@@ -604,7 +637,8 @@ impl InstagramSource {
                         let shortcode = node.get("shortcode")?.as_str()?.to_string();
                         let is_video = node.get("is_video").and_then(|v| v.as_bool()).unwrap_or(false);
                         let typename = node.get("__typename").and_then(|v| v.as_str()).unwrap_or("");
-                        let is_carousel = typename == "GraphSidecar";
+                        let is_carousel = typename == "GraphSidecar"
+                            || node.get("carousel_media_count").and_then(|v| v.as_u64()).unwrap_or(0) > 0;
                         let thumbnail = node
                             .get("thumbnail_src")
                             .or_else(|| node.get("display_url"))
@@ -633,11 +667,245 @@ impl InstagramSource {
             biography,
             profile_pic_url,
             is_private,
+            user_id,
             post_count,
             follower_count,
             posts,
             end_cursor,
         })
+    }
+
+    /// Execute an authenticated Instagram REST API GET request via curl.
+    ///
+    /// Requires session cookies (`instagram_cookies.txt`). Used for private endpoints
+    /// like highlights tray, highlight media, and stories.
+    async fn curl_rest_api(endpoint: &str) -> Result<String, AppError> {
+        let cookie_header = crate::download::cookies::load_instagram_cookie_header().ok_or_else(|| {
+            AppError::Download(DownloadError::Instagram(
+                "Instagram cookies not available (needed for highlights/stories)".to_string(),
+            ))
+        })?;
+
+        let binary = Self::curl_binary();
+        let mut cmd = tokio::process::Command::new(binary);
+        if binary == "curl-impersonate" {
+            cmd.arg("--impersonate").arg("chrome131");
+        }
+
+        cmd.arg("-s")
+            .arg("--compressed")
+            .arg(endpoint)
+            .arg("-H")
+            .arg(format!("Cookie: {}", cookie_header))
+            .arg("-H")
+            .arg(format!("X-IG-App-ID: {}", IG_APP_ID))
+            .arg("-H")
+            .arg("X-Requested-With: XMLHttpRequest")
+            .arg("-H")
+            .arg("User-Agent: Instagram 275.0.0.27.98 Android")
+            .arg("--max-time")
+            .arg("30");
+
+        if let Some(ref proxy_url) = *config::proxy::WARP_PROXY {
+            let trimmed = proxy_url.trim();
+            if !trimmed.is_empty() && trimmed != "none" && trimmed != "disabled" {
+                cmd.arg("--proxy").arg(trimmed);
+            }
+        }
+
+        let output = cmd
+            .output()
+            .await
+            .map_err(|e| AppError::Download(DownloadError::Instagram(format!("curl REST API failed: {}", e))))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(AppError::Download(DownloadError::Instagram(format!(
+                "REST API curl error: {}",
+                stderr.chars().take(300).collect::<String>()
+            ))));
+        }
+
+        let text = String::from_utf8_lossy(&output.stdout).to_string();
+        if text.is_empty() {
+            return Err(AppError::Download(DownloadError::Instagram(
+                "REST API returned empty response".to_string(),
+            )));
+        }
+        Ok(text)
+    }
+
+    /// Fetch highlights tray (list of highlight reels) for a user.
+    ///
+    /// Requires authenticated session cookies.
+    pub async fn fetch_highlights(&self, user_id: &str) -> Result<Vec<HighlightReel>, AppError> {
+        if !self.rate_limiter.acquire() {
+            return Err(AppError::Download(DownloadError::Instagram("Rate limited".to_string())));
+        }
+
+        let endpoint = format!("https://i.instagram.com/api/v1/highlights/{}/highlights_tray/", user_id);
+        log::info!("InstagramSource: fetching highlights tray for user_id={}", user_id);
+
+        let text = Self::curl_rest_api(&endpoint).await?;
+        let body: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|e| AppError::Download(DownloadError::Instagram(format!("Highlights JSON parse error: {}", e))))?;
+
+        let tray = body.get("tray").and_then(|v| v.as_array()).ok_or_else(|| {
+            AppError::Download(DownloadError::Instagram("No highlights tray in response".to_string()))
+        })?;
+
+        let mut highlights = Vec::new();
+        for item in tray {
+            // id can be numeric — always stringify
+            let id_str = item
+                .get("id")
+                .map(|v| match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    _ => String::new(),
+                })
+                .unwrap_or_default();
+            if id_str.is_empty() {
+                continue;
+            }
+            let title = item
+                .get("title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Untitled")
+                .to_string();
+            let cover_url = item
+                .pointer("/cover_media/cropped_image_version/url")
+                .or_else(|| item.pointer("/cover_media/media_url"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let item_count = item.get("media_count").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+
+            highlights.push(HighlightReel {
+                id: id_str,
+                title,
+                cover_url,
+                item_count,
+            });
+        }
+
+        log::info!(
+            "InstagramSource: found {} highlights for user_id={}",
+            highlights.len(),
+            user_id
+        );
+        Ok(highlights)
+    }
+
+    /// Fetch story/highlight items by reel ID.
+    ///
+    /// For stories: reel_id = user_id (e.g., "12345678")
+    /// For highlights: reel_id = "highlight:12345678"
+    pub async fn fetch_reel_media(&self, reel_id: &str) -> Result<Vec<StoryItem>, AppError> {
+        if !self.rate_limiter.acquire() {
+            return Err(AppError::Download(DownloadError::Instagram("Rate limited".to_string())));
+        }
+
+        let endpoint = format!(
+            "https://i.instagram.com/api/v1/feed/reels_media/?reel_ids={}",
+            urlencoding::encode(reel_id)
+        );
+        log::info!("InstagramSource: fetching reel media for reel_id={}", reel_id);
+
+        let text = Self::curl_rest_api(&endpoint).await?;
+        let body: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|e| AppError::Download(DownloadError::Instagram(format!("Reel media JSON parse error: {}", e))))?;
+
+        // Response: { "reels_media": [ { "items": [...] } ] }
+        // or: { "reels": { "<reel_id>": { "items": [...] } } }
+        let items_array = body
+            .pointer("/reels_media/0/items")
+            .and_then(|v| v.as_array())
+            .or_else(|| {
+                body.get("reels")
+                    .and_then(|reels| reels.get(reel_id))
+                    .and_then(|reel| reel.get("items"))
+                    .and_then(|v| v.as_array())
+            });
+
+        let items = match items_array {
+            Some(arr) => arr,
+            None => {
+                log::warn!("InstagramSource: no items in reel response for {}", reel_id);
+                return Ok(Vec::new());
+            }
+        };
+
+        let mut story_items = Vec::new();
+        for item in items {
+            let id = item
+                .get("id")
+                .or_else(|| item.get("pk"))
+                .map(|v| match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    _ => String::new(),
+                })
+                .unwrap_or_default();
+            if id.is_empty() {
+                continue;
+            }
+
+            let media_type = item.get("media_type").and_then(|v| v.as_u64()).unwrap_or(1);
+            let is_video = media_type == 2;
+
+            let media_url = if is_video {
+                // Video: get best quality video version
+                item.get("video_versions")
+                    .and_then(|v| v.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|v| v.get("url"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            } else {
+                // Photo: get best quality image
+                item.get("image_versions2")
+                    .and_then(|v| v.get("candidates"))
+                    .and_then(|v| v.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|v| v.get("url"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            };
+
+            if media_url.is_empty() {
+                continue;
+            }
+
+            let thumbnail_url = if is_video {
+                item.get("image_versions2")
+                    .and_then(|v| v.get("candidates"))
+                    .and_then(|v| v.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|v| v.get("url"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            } else {
+                None
+            };
+
+            let duration_secs = item.get("video_duration").and_then(|v| v.as_f64());
+            let taken_at = item.get("taken_at").and_then(|v| v.as_i64());
+
+            story_items.push(StoryItem {
+                id,
+                is_video,
+                media_url,
+                thumbnail_url,
+                duration_secs,
+                taken_at,
+            });
+        }
+
+        log::info!("InstagramSource: found {} items in reel {}", story_items.len(), reel_id);
+        Ok(story_items)
     }
 
     /// Get preview metadata for an Instagram content URL (post/reel/tv).
@@ -665,6 +933,12 @@ impl InstagramSource {
             }
         };
 
+        let carousel_count = if is_carousel {
+            media.items.len().min(10) as u8
+        } else {
+            0
+        };
+
         Ok(InstagramPreviewInfo {
             title,
             artist: format!("@{}", media.username),
@@ -672,6 +946,7 @@ impl InstagramSource {
             duration_secs: media.duration_secs.map(|d| d as u32),
             is_video: primary.is_video,
             is_carousel,
+            carousel_count,
         })
     }
 }
@@ -683,6 +958,7 @@ pub struct InstagramProfile {
     pub biography: String,
     pub profile_pic_url: String,
     pub is_private: bool,
+    pub user_id: Option<String>,
     pub post_count: u32,
     pub follower_count: u32,
     pub posts: Vec<ProfilePost>,
@@ -705,6 +981,29 @@ pub struct InstagramPreviewInfo {
     pub duration_secs: Option<u32>,
     pub is_video: bool,
     pub is_carousel: bool,
+    pub carousel_count: u8,
+}
+
+/// An Instagram highlight reel summary (from highlights tray).
+pub struct HighlightReel {
+    pub id: String,
+    pub title: String,
+    pub cover_url: String,
+    pub item_count: u32,
+}
+
+/// A single story or highlight item (photo or video).
+pub struct StoryItem {
+    pub id: String,
+    pub is_video: bool,
+    /// Direct media URL (photo or video)
+    pub media_url: String,
+    /// Thumbnail URL for videos
+    pub thumbnail_url: Option<String>,
+    /// Duration in seconds (for videos)
+    pub duration_secs: Option<f64>,
+    /// Unix timestamp when this story was taken
+    pub taken_at: Option<i64>,
 }
 
 /// Parsed media data from Instagram's GraphQL response.
@@ -807,7 +1106,29 @@ impl DownloadSource for InstagramSource {
 
         match graphql_result {
             Ok(media) => {
-                let primary = &media.items[0];
+                // Apply carousel mask filter: only download selected items
+                let mask = request
+                    .carousel_mask
+                    .or_else(|| take_carousel_mask(request.url.as_str()));
+                let selected_items: Vec<(usize, &MediaItem)> = if let Some(m) = mask {
+                    media
+                        .items
+                        .iter()
+                        .enumerate()
+                        .filter(|(i, _)| m & (1u32 << i) != 0)
+                        .collect()
+                } else {
+                    // No mask = download all items
+                    media.items.iter().enumerate().collect()
+                };
+
+                if selected_items.is_empty() {
+                    return Err(AppError::Download(DownloadError::Instagram(
+                        "No carousel items selected".to_string(),
+                    )));
+                }
+
+                let primary = selected_items[0].1;
 
                 // Determine download URL and mime type for primary item
                 let (download_url, mime_hint) = if primary.is_video {
@@ -828,13 +1149,18 @@ impl DownloadSource for InstagramSource {
                     }
                 };
 
-                let is_carousel = media.items.len() > 1;
+                let total_items = media.items.len();
+                let selected_count = selected_items.len();
                 log::info!(
                     "InstagramSource: downloading {} ({}{}) by @{}",
                     if primary.is_video { "video" } else { "photo" },
                     mime_hint,
-                    if is_carousel {
-                        format!(", carousel with {} items", media.items.len())
+                    if total_items > 1 {
+                        if mask.is_some() {
+                            format!(", carousel {}/{} items selected", selected_count, total_items)
+                        } else {
+                            format!(", carousel with {} items", total_items)
+                        }
                     } else {
                         String::new()
                     },
@@ -852,10 +1178,10 @@ impl DownloadSource for InstagramSource {
                     None
                 };
 
-                // Download additional carousel items (if any)
-                let additional_files = if is_carousel {
+                // Download additional selected carousel items (if any)
+                let additional_files = if selected_items.len() > 1 {
                     let mut extras = Vec::new();
-                    for (i, item) in media.items.iter().skip(1).enumerate() {
+                    for (orig_idx, item) in selected_items.iter().skip(1) {
                         let (item_url, item_mime) = if item.is_video {
                             match &item.video_url {
                                 Some(u) => (u.as_str(), "video/mp4"),
@@ -874,7 +1200,7 @@ impl DownloadSource for InstagramSource {
                             request
                                 .output_path
                                 .trim_end_matches(|c: char| c == '.' || c.is_alphanumeric()),
-                            i + 2,
+                            orig_idx + 1, // 1-based item number from original carousel
                             ext
                         );
                         // Use a no-op progress sender for additional items
@@ -893,7 +1219,11 @@ impl DownloadSource for InstagramSource {
                                 });
                             }
                             Err(e) => {
-                                log::warn!("InstagramSource: failed to download carousel item {}: {}", i + 2, e);
+                                log::warn!(
+                                    "InstagramSource: failed to download carousel item {}: {}",
+                                    orig_idx + 1,
+                                    e
+                                );
                             }
                         }
                     }
