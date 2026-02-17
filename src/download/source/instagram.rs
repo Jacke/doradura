@@ -389,6 +389,12 @@ impl InstagramSource {
 
         let total_size = response.content_length();
 
+        // Ensure parent directory exists (DOWNLOAD_FOLDER may not exist yet)
+        if let Some(parent) = std::path::Path::new(output_path).parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                AppError::Download(DownloadError::Instagram(format!("Failed to create directory: {}", e)))
+            })?;
+        }
         let mut file = std::fs::File::create(output_path)
             .map_err(|e| AppError::Download(DownloadError::Instagram(format!("Failed to create file: {}", e))))?;
 

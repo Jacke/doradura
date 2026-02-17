@@ -50,6 +50,7 @@ pub fn create_fallback_keyboard(
             (format!("📥 Скачать ({})", quality_display), callback)
         }
         "mp3" => (format!("📥 Скачать ({})", mp3_label), format!("dl:mp3:{}", url_id)),
+        "photo" => ("📷 Скачать фото".to_string(), format!("dl:photo:{}", url_id)),
         "mp4+mp3" => ("📥 Скачать (MP4 + MP3)".to_string(), format!("dl:mp4+mp3:{}", url_id)),
         "srt" => ("📥 Скачать (SRT)".to_string(), format!("dl:srt:{}", url_id)),
         "txt" => ("📥 Скачать (TXT)".to_string(), format!("dl:txt:{}", url_id)),

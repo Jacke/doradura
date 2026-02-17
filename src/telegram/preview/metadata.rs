@@ -527,6 +527,7 @@ async fn get_preview_metadata_inner(
         description,
         video_formats,
         timestamps,
+        is_photo: false,
     };
 
     // Сохраняем расширенные метаданные в кэш только если title не пустой и не "Unknown Track"
@@ -580,6 +581,7 @@ async fn get_instagram_preview_metadata(url: &Url) -> Result<PreviewMetadata, Ap
         description: None,
         video_formats,
         timestamps: Vec::new(),
+        is_photo: !info.is_video,
     };
 
     // Cache it

@@ -38,6 +38,9 @@ pub async fn send_preview(
 ) -> ResponseResult<Message> {
     let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
 
+    // Override format for photo posts (Instagram photos shouldn't show MP3 button)
+    let default_format = if metadata.is_photo { "photo" } else { default_format };
+
     // Формируем текст превью с экранированием
     let escaped_title = escape_markdown(&metadata.display_title());
     let mut text = format!("🎵 *{}*\n\n", escaped_title);
@@ -251,6 +254,9 @@ pub async fn update_preview_message(
     time_range: Option<&(String, String)>,
 ) -> ResponseResult<()> {
     let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
+
+    // Override format for photo posts (Instagram photos shouldn't show MP3 button)
+    let default_format = if metadata.is_photo { "photo" } else { default_format };
 
     // Формируем текст превью с экранированием (копия логики из send_preview)
     let escaped_title = escape_markdown(&metadata.display_title());
