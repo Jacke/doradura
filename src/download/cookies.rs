@@ -1886,6 +1886,28 @@ pub fn load_instagram_cookie_header() -> Option<String> {
     parse_cookies_for_domain(&content, "instagram.com")
 }
 
+/// Extract a specific cookie value by name from Netscape format file content.
+pub fn extract_cookie_value_for_domain(content: &str, domain: &str, name: &str) -> Option<String> {
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let parts: Vec<&str> = line.split('\t').collect();
+        if parts.len() >= 7 && parts[0].contains(domain) && parts[5] == name {
+            return Some(parts[6].to_string());
+        }
+    }
+    None
+}
+
+/// Get Instagram csrftoken from cookies file.
+pub fn load_ig_csrf_token() -> Option<String> {
+    let cookies_path = get_ig_cookies_path()?;
+    let content = std::fs::read_to_string(&cookies_path).ok()?;
+    extract_cookie_value_for_domain(&content, "instagram.com", "csrftoken")
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -1952,5 +1974,30 @@ mod tests {
         let diag = super::diagnose_ig_cookies_content(content);
         assert!(!diag.is_valid);
         assert!(diag.auth_cookies_missing.contains(&"sessionid".to_string()));
+    }
+
+    #[test]
+    fn test_extract_cookie_value_for_domain() {
+        let content = "# Netscape HTTP Cookie File\n\
+            .instagram.com\tTRUE\t/\tTRUE\t0\tsessionid\tabc123\n\
+            .instagram.com\tTRUE\t/\tTRUE\t0\tcsrftoken\tmy_csrf_token\n\
+            .youtube.com\tTRUE\t/\tTRUE\t0\tSID\tyt_sid\n";
+
+        assert_eq!(
+            super::extract_cookie_value_for_domain(content, "instagram.com", "csrftoken"),
+            Some("my_csrf_token".to_string())
+        );
+        assert_eq!(
+            super::extract_cookie_value_for_domain(content, "instagram.com", "sessionid"),
+            Some("abc123".to_string())
+        );
+        assert_eq!(
+            super::extract_cookie_value_for_domain(content, "instagram.com", "nonexistent"),
+            None
+        );
+        assert_eq!(
+            super::extract_cookie_value_for_domain(content, "youtube.com", "csrftoken"),
+            None
+        );
     }
 }

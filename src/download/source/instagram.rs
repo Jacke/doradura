@@ -152,12 +152,19 @@ impl InstagramSource {
             .post(GRAPHQL_ENDPOINT)
             .header("X-IG-App-ID", IG_APP_ID)
             .header("X-Requested-With", "XMLHttpRequest")
-            .header("Content-Type", "application/x-www-form-urlencoded");
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Referer", "https://www.instagram.com/")
+            .header("Origin", "https://www.instagram.com")
+            .header("Accept", "*/*")
+            .header("Accept-Language", "en-US,en;q=0.9");
 
-        // Add Instagram cookies if available (for restricted content)
+        // Add Instagram cookies + CSRF token if available
         if let Some(cookie_header) = crate::download::cookies::load_instagram_cookie_header() {
-            log::debug!("InstagramSource: adding cookie header to GraphQL request");
+            log::info!("InstagramSource: adding cookie + CSRF headers to GraphQL request");
             request_builder = request_builder.header("Cookie", cookie_header);
+            if let Some(csrf_token) = crate::download::cookies::load_ig_csrf_token() {
+                request_builder = request_builder.header("X-CSRFToken", csrf_token);
+            }
         }
 
         let response = request_builder
@@ -422,10 +429,19 @@ impl InstagramSource {
             .post(GRAPHQL_ENDPOINT)
             .header("X-IG-App-ID", IG_APP_ID)
             .header("X-Requested-With", "XMLHttpRequest")
-            .header("Content-Type", "application/x-www-form-urlencoded");
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .header("Referer", "https://www.instagram.com/")
+            .header("Origin", "https://www.instagram.com")
+            .header("Accept", "*/*")
+            .header("Accept-Language", "en-US,en;q=0.9");
 
+        // Add Instagram cookies + CSRF token if available
         if let Some(cookie_header) = crate::download::cookies::load_instagram_cookie_header() {
+            log::info!("InstagramSource: adding cookie + CSRF headers to profile GraphQL request");
             profile_request = profile_request.header("Cookie", cookie_header);
+            if let Some(csrf_token) = crate::download::cookies::load_ig_csrf_token() {
+                profile_request = profile_request.header("X-CSRFToken", csrf_token);
+            }
         }
 
         let response = profile_request
