@@ -28,6 +28,12 @@ const GRAPHQL_ENDPOINT: &str = "https://www.instagram.com/api/graphql";
 /// Instagram internal app ID (public, embedded in the web app).
 const IG_APP_ID: &str = "936619743392459";
 
+/// Facebook LSD token (anti-CSRF, public static value used by web scrapers).
+const FB_LSD_TOKEN: &str = "AVqbxe3J_YA";
+
+/// Facebook ASBD ID (public, embedded in the web app).
+const FB_ASBD_ID: &str = "129477";
+
 /// Maximum requests per hour (conservative, under Instagram's ~200 limit).
 const RATE_LIMIT_PER_HOUR: usize = 180;
 
@@ -151,6 +157,8 @@ impl InstagramSource {
             .client
             .post(GRAPHQL_ENDPOINT)
             .header("X-IG-App-ID", IG_APP_ID)
+            .header("X-FB-LSD", FB_LSD_TOKEN)
+            .header("X-ASBD-ID", FB_ASBD_ID)
             .header("X-Requested-With", "XMLHttpRequest")
             .header("Content-Type", "application/x-www-form-urlencoded")
             .header("Referer", "https://www.instagram.com/")
@@ -179,9 +187,10 @@ impl InstagramSource {
 
         let response = request_builder
             .body(format!(
-                "doc_id={}&variables={}",
+                "doc_id={}&variables={}&lsd={}",
                 doc_id,
-                urlencoding::encode(&variables)
+                urlencoding::encode(&variables),
+                FB_LSD_TOKEN
             ))
             .send()
             .await
@@ -438,6 +447,8 @@ impl InstagramSource {
             .client
             .post(GRAPHQL_ENDPOINT)
             .header("X-IG-App-ID", IG_APP_ID)
+            .header("X-FB-LSD", FB_LSD_TOKEN)
+            .header("X-ASBD-ID", FB_ASBD_ID)
             .header("X-Requested-With", "XMLHttpRequest")
             .header("Content-Type", "application/x-www-form-urlencoded")
             .header("Referer", "https://www.instagram.com/")
@@ -466,9 +477,10 @@ impl InstagramSource {
 
         let response = profile_request
             .body(format!(
-                "doc_id={}&variables={}",
+                "doc_id={}&variables={}&lsd={}",
                 doc_id,
-                urlencoding::encode(&variables)
+                urlencoding::encode(&variables),
+                FB_LSD_TOKEN
             ))
             .send()
             .await
@@ -1008,5 +1020,63 @@ mod tests {
     fn test_extract_profile_rejects_non_instagram() {
         let url = Url::parse("https://www.youtube.com/cristiano").unwrap();
         assert_eq!(InstagramSource::extract_profile_username(&url), None);
+    }
+
+    /// Live integration test: calls Instagram GraphQL API for a known public photo post.
+    /// Run with: cargo test test_live_graphql_photo -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore] // requires network access
+    async fn test_live_graphql_photo() {
+        let _ = pretty_env_logger::try_init();
+        let source = InstagramSource::new();
+        // BXi1BxjFebG is a known public photo post by @instagram
+        let result = source.fetch_graphql_media("BXi1BxjFebG").await;
+        match &result {
+            Ok(media) => {
+                println!("SUCCESS: got {} items", media.items.len());
+                println!("  username: @{}", media.username);
+                println!("  is_video: {}", media.items[0].is_video);
+                println!(
+                    "  display_url: {:?}",
+                    media.items[0].display_url.as_deref().map(|u| &u[..u.len().min(80)])
+                );
+                assert!(!media.items[0].is_video, "BXi1BxjFebG should be a photo");
+                // GraphQL returned JSON (not HTML login page) — auth works!
+            }
+            Err(e) => {
+                panic!("GraphQL request failed: {}", e);
+            }
+        }
+    }
+
+    /// Live integration test: calls Instagram GraphQL for a known public reel.
+    /// Run with: cargo test test_live_graphql_reel -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore] // requires network access
+    async fn test_live_graphql_reel() {
+        let _ = pretty_env_logger::try_init();
+        let source = InstagramSource::new();
+        // A popular public reel
+        let result = source.fetch_graphql_media("C1234567890").await;
+        match &result {
+            Ok(media) => {
+                println!("SUCCESS: got {} items", media.items.len());
+                println!("  username: @{}", media.username);
+                println!("  is_video: {}", media.items[0].is_video);
+                println!(
+                    "  video_url: {:?}",
+                    media.items[0].video_url.as_deref().map(|u| &u[..u.len().min(80)])
+                );
+            }
+            Err(e) => {
+                // Reel may not exist, but if it returns JSON error (not HTML) — auth works
+                let err_str = e.to_string();
+                println!("GraphQL returned error (expected for test shortcode): {}", err_str);
+                assert!(
+                    !err_str.contains("Failed to parse GraphQL response"),
+                    "Should not get HTML login page — got JSON error instead"
+                );
+            }
+        }
     }
 }
