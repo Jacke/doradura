@@ -8,8 +8,6 @@ WORKDIR /app
 
 FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
-COPY build.rs ./
-COPY c_code ./c_code
 COPY src ./src
 COPY locales ./locales
 COPY migrations ./migrations
@@ -33,8 +31,6 @@ RUN cargo chef cook --release --recipe-path recipe.json
 
 # Build application
 COPY Cargo.toml Cargo.lock ./
-COPY build.rs ./
-COPY c_code ./c_code
 COPY src ./src
 COPY locales ./locales
 COPY migrations ./migrations
