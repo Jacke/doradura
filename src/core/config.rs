@@ -253,7 +253,7 @@ pub mod network {
 /// Rotates every 2-4 weeks — configurable via env var (no redeploy needed).
 /// Default: current known working value.
 pub static INSTAGRAM_DOC_ID: Lazy<String> =
-    Lazy::new(|| env::var("INSTAGRAM_DOC_ID").unwrap_or_else(|_| "8845758582119845".to_string()));
+    Lazy::new(|| env::var("INSTAGRAM_DOC_ID").unwrap_or_else(|_| "10015901848480474".to_string()));
 
 /// Instagram GraphQL doc_id for profile queries.
 /// Separate from media doc_id; also rotates periodically.
