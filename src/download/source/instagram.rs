@@ -141,89 +141,114 @@ impl InstagramSource {
         Self::extract_shortcode(url)
     }
 
+    /// Execute Instagram GraphQL request via curl (bypasses TLS fingerprinting).
+    ///
+    /// reqwest/rustls has a detectable TLS fingerprint that Instagram blocks on
+    /// datacenter IPs. curl uses OpenSSL with a standard fingerprint that passes.
+    async fn curl_graphql_request(shortcode: &str) -> Result<String, AppError> {
+        let doc_id = config::INSTAGRAM_DOC_ID.as_str();
+        let variables = format!(r#"{{"shortcode":"{}"}}"#, shortcode);
+        let body = format!(
+            "doc_id={}&variables={}&lsd={}",
+            doc_id,
+            urlencoding::encode(&variables),
+            FB_LSD_TOKEN
+        );
+
+        let mut cmd = tokio::process::Command::new("curl");
+        cmd.arg("-s")
+            .arg("-X")
+            .arg("POST")
+            .arg(GRAPHQL_ENDPOINT)
+            .arg("-H")
+            .arg("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+            .arg("-H")
+            .arg(format!("X-IG-App-ID: {}", IG_APP_ID))
+            .arg("-H")
+            .arg(format!("X-FB-LSD: {}", FB_LSD_TOKEN))
+            .arg("-H")
+            .arg(format!("X-ASBD-ID: {}", FB_ASBD_ID))
+            .arg("-H")
+            .arg("X-Requested-With: XMLHttpRequest")
+            .arg("-H")
+            .arg("Content-Type: application/x-www-form-urlencoded")
+            .arg("-H")
+            .arg("Referer: https://www.instagram.com/")
+            .arg("-H")
+            .arg("Origin: https://www.instagram.com")
+            .arg("-H")
+            .arg("Accept: */*")
+            .arg("-H")
+            .arg("Accept-Language: en-US,en;q=0.9")
+            .arg("-H")
+            .arg("Sec-Fetch-Site: same-origin")
+            .arg("-H")
+            .arg("Sec-Fetch-Mode: cors")
+            .arg("-H")
+            .arg("Sec-Fetch-Dest: empty")
+            .arg("--max-time")
+            .arg("30");
+
+        // Add proxy if configured
+        if let Some(ref proxy_url) = *config::proxy::WARP_PROXY {
+            let trimmed = proxy_url.trim();
+            if !trimmed.is_empty() && trimmed != "none" && trimmed != "disabled" {
+                cmd.arg("--proxy").arg(trimmed);
+            }
+        }
+
+        // Add cookies + CSRF token
+        if let Some(cookie_header) = crate::download::cookies::load_instagram_cookie_header() {
+            if let Some(csrf_token) = crate::download::cookies::load_ig_csrf_token() {
+                log::info!(
+                    "InstagramSource: curl GraphQL: cookies=yes, csrftoken=yes (len={})",
+                    csrf_token.len()
+                );
+                cmd.arg("-H").arg(format!("X-CSRFToken: {}", csrf_token));
+            } else {
+                log::warn!("InstagramSource: curl GraphQL: cookies=yes, csrftoken=NOT FOUND");
+            }
+            cmd.arg("-H").arg(format!("Cookie: {}", cookie_header));
+        } else {
+            log::info!("InstagramSource: curl GraphQL: no cookies (anonymous)");
+        }
+
+        cmd.arg("-d").arg(&body);
+
+        let output = cmd
+            .output()
+            .await
+            .map_err(|e| AppError::Download(DownloadError::Instagram(format!("Failed to run curl: {}", e))))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(AppError::Download(DownloadError::Instagram(format!(
+                "curl failed (exit {}): {}",
+                output.status.code().unwrap_or(-1),
+                stderr.chars().take(300).collect::<String>()
+            ))));
+        }
+
+        let response_text = String::from_utf8_lossy(&output.stdout).to_string();
+        if response_text.is_empty() {
+            return Err(AppError::Download(DownloadError::Instagram(
+                "curl returned empty response".to_string(),
+            )));
+        }
+
+        Ok(response_text)
+    }
+
     /// Fetch media data from Instagram's GraphQL API.
     ///
-    /// Returns (video_url, display_url, caption, username, is_video).
+    /// Uses curl to bypass TLS fingerprinting that blocks reqwest on datacenter IPs.
     async fn fetch_graphql_media(&self, shortcode: &str) -> Result<GraphQLMedia, AppError> {
         if !self.rate_limiter.acquire() {
             log::warn!("InstagramSource: rate limited, falling back to yt-dlp");
             return Err(AppError::Download(DownloadError::Instagram("Rate limited".to_string())));
         }
 
-        let doc_id = config::INSTAGRAM_DOC_ID.as_str();
-        let variables = format!(r#"{{"shortcode":"{}"}}"#, shortcode);
-
-        let mut request_builder = self
-            .client
-            .post(GRAPHQL_ENDPOINT)
-            .header("X-IG-App-ID", IG_APP_ID)
-            .header("X-FB-LSD", FB_LSD_TOKEN)
-            .header("X-ASBD-ID", FB_ASBD_ID)
-            .header("X-Requested-With", "XMLHttpRequest")
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .header("Referer", "https://www.instagram.com/")
-            .header("Origin", "https://www.instagram.com")
-            .header("Accept", "*/*")
-            .header("Accept-Language", "en-US,en;q=0.9")
-            .header("Sec-Fetch-Site", "same-origin")
-            .header("Sec-Fetch-Mode", "cors")
-            .header("Sec-Fetch-Dest", "empty");
-
-        // Add Instagram cookies + CSRF token if available
-        if let Some(cookie_header) = crate::download::cookies::load_instagram_cookie_header() {
-            if let Some(csrf_token) = crate::download::cookies::load_ig_csrf_token() {
-                log::info!(
-                    "InstagramSource: GraphQL auth: cookies=yes, csrftoken=yes (len={})",
-                    csrf_token.len()
-                );
-                request_builder = request_builder.header("X-CSRFToken", csrf_token);
-            } else {
-                log::warn!("InstagramSource: GraphQL auth: cookies=yes, csrftoken=NOT FOUND in cookies file");
-            }
-            request_builder = request_builder.header("Cookie", cookie_header);
-        } else {
-            log::info!("InstagramSource: GraphQL auth: no cookies available (anonymous request)");
-        }
-
-        let response = request_builder
-            .body(format!(
-                "doc_id={}&variables={}&lsd={}",
-                doc_id,
-                urlencoding::encode(&variables),
-                FB_LSD_TOKEN
-            ))
-            .send()
-            .await
-            .map_err(|e| AppError::Download(DownloadError::Instagram(format!("GraphQL request failed: {}", e))))?;
-
-        let status = response.status();
-        if !status.is_success() {
-            let body = response.text().await.unwrap_or_default();
-            // Detect doc_id expiry pattern
-            if status.as_u16() == 400 || body.contains("\"message\":\"useragent mismatch\"") || body.contains("doc_id")
-            {
-                log::error!(
-                    "InstagramSource: possible doc_id expiry (HTTP {}): {}",
-                    status,
-                    &body[..body.len().min(300)]
-                );
-                return Err(AppError::Download(DownloadError::Instagram(format!(
-                    "doc_id may be expired (HTTP {})",
-                    status
-                ))));
-            }
-            return Err(AppError::Download(DownloadError::Instagram(format!(
-                "GraphQL HTTP {}",
-                status
-            ))));
-        }
-
-        let response_text = response.text().await.map_err(|e| {
-            AppError::Download(DownloadError::Instagram(format!(
-                "Failed to read GraphQL response: {}",
-                e
-            )))
-        })?;
+        let response_text = Self::curl_graphql_request(shortcode).await?;
 
         let body: serde_json::Value = serde_json::from_str(&response_text).map_err(|e| {
             log::error!(
@@ -236,6 +261,17 @@ impl InstagramSource {
                 e
             )))
         })?;
+
+        // Detect doc_id expiry or error responses
+        if let Some(message) = body.get("message").and_then(|v| v.as_str()) {
+            if message.contains("useragent mismatch") || message.contains("doc_id") {
+                log::error!("InstagramSource: possible doc_id expiry: {}", message);
+                return Err(AppError::Download(DownloadError::Instagram(format!(
+                    "doc_id may be expired: {}",
+                    message
+                ))));
+            }
+        }
 
         // Navigate the GraphQL response structure
         let media = body
@@ -432,6 +468,84 @@ impl InstagramSource {
         Some(username.to_string())
     }
 
+    /// Execute Instagram profile GraphQL request via curl.
+    async fn curl_profile_request(username: &str) -> Result<String, AppError> {
+        let doc_id = config::INSTAGRAM_PROFILE_DOC_ID.as_str();
+        let variables = format!(r#"{{"username":"{}"}}"#, username);
+        let body = format!(
+            "doc_id={}&variables={}&lsd={}",
+            doc_id,
+            urlencoding::encode(&variables),
+            FB_LSD_TOKEN
+        );
+
+        let mut cmd = tokio::process::Command::new("curl");
+        cmd.arg("-s")
+            .arg("-X")
+            .arg("POST")
+            .arg(GRAPHQL_ENDPOINT)
+            .arg("-H")
+            .arg("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+            .arg("-H")
+            .arg(format!("X-IG-App-ID: {}", IG_APP_ID))
+            .arg("-H")
+            .arg(format!("X-FB-LSD: {}", FB_LSD_TOKEN))
+            .arg("-H")
+            .arg(format!("X-ASBD-ID: {}", FB_ASBD_ID))
+            .arg("-H")
+            .arg("X-Requested-With: XMLHttpRequest")
+            .arg("-H")
+            .arg("Content-Type: application/x-www-form-urlencoded")
+            .arg("-H")
+            .arg("Referer: https://www.instagram.com/")
+            .arg("-H")
+            .arg("Origin: https://www.instagram.com")
+            .arg("-H")
+            .arg("Accept: */*")
+            .arg("-H")
+            .arg("Accept-Language: en-US,en;q=0.9")
+            .arg("-H")
+            .arg("Sec-Fetch-Site: same-origin")
+            .arg("-H")
+            .arg("Sec-Fetch-Mode: cors")
+            .arg("-H")
+            .arg("Sec-Fetch-Dest: empty")
+            .arg("--max-time")
+            .arg("30");
+
+        if let Some(ref proxy_url) = *config::proxy::WARP_PROXY {
+            let trimmed = proxy_url.trim();
+            if !trimmed.is_empty() && trimmed != "none" && trimmed != "disabled" {
+                cmd.arg("--proxy").arg(trimmed);
+            }
+        }
+
+        if let Some(cookie_header) = crate::download::cookies::load_instagram_cookie_header() {
+            if let Some(csrf_token) = crate::download::cookies::load_ig_csrf_token() {
+                log::info!("InstagramSource: curl profile GraphQL: cookies=yes, csrftoken=yes");
+                cmd.arg("-H").arg(format!("X-CSRFToken: {}", csrf_token));
+            }
+            cmd.arg("-H").arg(format!("Cookie: {}", cookie_header));
+        }
+
+        cmd.arg("-d").arg(&body);
+
+        let output = cmd
+            .output()
+            .await
+            .map_err(|e| AppError::Download(DownloadError::Instagram(format!("Failed to run curl: {}", e))))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(AppError::Download(DownloadError::Instagram(format!(
+                "curl profile failed: {}",
+                stderr.chars().take(300).collect::<String>()
+            ))));
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
     /// Fetch profile data from Instagram's GraphQL API.
     ///
     /// Returns profile info and recent posts for the profile browsing UI.
@@ -440,65 +554,9 @@ impl InstagramSource {
             return Err(AppError::Download(DownloadError::Instagram("Rate limited".to_string())));
         }
 
-        let doc_id = config::INSTAGRAM_PROFILE_DOC_ID.as_str();
-        let variables = format!(r#"{{"username":"{}"}}"#, username);
+        let response_text = Self::curl_profile_request(username).await?;
 
-        let mut profile_request = self
-            .client
-            .post(GRAPHQL_ENDPOINT)
-            .header("X-IG-App-ID", IG_APP_ID)
-            .header("X-FB-LSD", FB_LSD_TOKEN)
-            .header("X-ASBD-ID", FB_ASBD_ID)
-            .header("X-Requested-With", "XMLHttpRequest")
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .header("Referer", "https://www.instagram.com/")
-            .header("Origin", "https://www.instagram.com")
-            .header("Accept", "*/*")
-            .header("Accept-Language", "en-US,en;q=0.9")
-            .header("Sec-Fetch-Site", "same-origin")
-            .header("Sec-Fetch-Mode", "cors")
-            .header("Sec-Fetch-Dest", "empty");
-
-        // Add Instagram cookies + CSRF token if available
-        if let Some(cookie_header) = crate::download::cookies::load_instagram_cookie_header() {
-            if let Some(csrf_token) = crate::download::cookies::load_ig_csrf_token() {
-                log::info!(
-                    "InstagramSource: profile GraphQL auth: cookies=yes, csrftoken=yes (len={})",
-                    csrf_token.len()
-                );
-                profile_request = profile_request.header("X-CSRFToken", csrf_token);
-            } else {
-                log::warn!("InstagramSource: profile GraphQL auth: cookies=yes, csrftoken=NOT FOUND");
-            }
-            profile_request = profile_request.header("Cookie", cookie_header);
-        } else {
-            log::info!("InstagramSource: profile GraphQL auth: no cookies available");
-        }
-
-        let response = profile_request
-            .body(format!(
-                "doc_id={}&variables={}&lsd={}",
-                doc_id,
-                urlencoding::encode(&variables),
-                FB_LSD_TOKEN
-            ))
-            .send()
-            .await
-            .map_err(|e| {
-                AppError::Download(DownloadError::Instagram(format!(
-                    "Profile GraphQL request failed: {}",
-                    e
-                )))
-            })?;
-
-        if !response.status().is_success() {
-            return Err(AppError::Download(DownloadError::Instagram(format!(
-                "Profile GraphQL HTTP {}",
-                response.status()
-            ))));
-        }
-
-        let body: serde_json::Value = response.json().await.map_err(|e| {
+        let body: serde_json::Value = serde_json::from_str(&response_text).map_err(|e| {
             AppError::Download(DownloadError::Instagram(format!(
                 "Failed to parse profile response: {}",
                 e
