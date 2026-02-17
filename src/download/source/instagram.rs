@@ -76,23 +76,24 @@ impl Default for InstagramSource {
 }
 
 impl InstagramSource {
-    /// Get the curl binary name — prefer curl-impersonate-chrome, fall back to curl.
+    /// Get the curl binary name — prefer curl-impersonate, fall back to curl.
     ///
     /// curl-impersonate mimics Chrome's TLS fingerprint (BoringSSL, cipher suites,
     /// extensions order), bypassing Instagram's JA3 fingerprinting on datacenter IPs.
+    /// The lexiforest fork uses a single binary with `--impersonate chrome131` flag.
     fn curl_binary() -> &'static str {
         use std::sync::OnceLock;
         static BINARY: OnceLock<&str> = OnceLock::new();
         BINARY.get_or_init(|| {
-            if std::process::Command::new("curl-impersonate-chrome")
+            if std::process::Command::new("curl-impersonate")
                 .arg("--version")
                 .output()
                 .is_ok()
             {
-                log::info!("InstagramSource: using curl-impersonate-chrome for TLS fingerprint spoofing");
-                "curl-impersonate-chrome"
+                log::info!("InstagramSource: using curl-impersonate for TLS fingerprint spoofing");
+                "curl-impersonate"
             } else {
-                log::warn!("InstagramSource: curl-impersonate-chrome not found, falling back to curl");
+                log::warn!("InstagramSource: curl-impersonate not found, falling back to curl");
                 "curl"
             }
         })
@@ -177,7 +178,12 @@ impl InstagramSource {
             FB_LSD_TOKEN
         );
 
-        let mut cmd = tokio::process::Command::new(Self::curl_binary());
+        let binary = Self::curl_binary();
+        let mut cmd = tokio::process::Command::new(binary);
+        // lexiforest/curl-impersonate uses --impersonate flag to select browser profile
+        if binary == "curl-impersonate" {
+            cmd.arg("--impersonate").arg("chrome131");
+        }
         cmd.arg("-s")
             .arg("-X")
             .arg("POST")
@@ -501,7 +507,11 @@ impl InstagramSource {
             FB_LSD_TOKEN
         );
 
-        let mut cmd = tokio::process::Command::new(Self::curl_binary());
+        let binary = Self::curl_binary();
+        let mut cmd = tokio::process::Command::new(binary);
+        if binary == "curl-impersonate" {
+            cmd.arg("--impersonate").arg("chrome131");
+        }
         cmd.arg("-s")
             .arg("-X")
             .arg("POST")
