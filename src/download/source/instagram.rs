@@ -72,7 +72,7 @@ impl Default for InstagramSource {
 impl InstagramSource {
     pub fn new() -> Self {
         let mut client_builder = reqwest::Client::builder()
-            .user_agent("Mozilla/5.0 (iPhone; CPU iPhone OS 17_5_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1")
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
             .timeout(std::time::Duration::from_secs(60))
             .connect_timeout(std::time::Duration::from_secs(15));
 
@@ -156,15 +156,25 @@ impl InstagramSource {
             .header("Referer", "https://www.instagram.com/")
             .header("Origin", "https://www.instagram.com")
             .header("Accept", "*/*")
-            .header("Accept-Language", "en-US,en;q=0.9");
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .header("Sec-Fetch-Site", "same-origin")
+            .header("Sec-Fetch-Mode", "cors")
+            .header("Sec-Fetch-Dest", "empty");
 
         // Add Instagram cookies + CSRF token if available
         if let Some(cookie_header) = crate::download::cookies::load_instagram_cookie_header() {
-            log::info!("InstagramSource: adding cookie + CSRF headers to GraphQL request");
-            request_builder = request_builder.header("Cookie", cookie_header);
             if let Some(csrf_token) = crate::download::cookies::load_ig_csrf_token() {
+                log::info!(
+                    "InstagramSource: GraphQL auth: cookies=yes, csrftoken=yes (len={})",
+                    csrf_token.len()
+                );
                 request_builder = request_builder.header("X-CSRFToken", csrf_token);
+            } else {
+                log::warn!("InstagramSource: GraphQL auth: cookies=yes, csrftoken=NOT FOUND in cookies file");
             }
+            request_builder = request_builder.header("Cookie", cookie_header);
+        } else {
+            log::info!("InstagramSource: GraphQL auth: no cookies available (anonymous request)");
         }
 
         let response = request_builder
@@ -433,15 +443,25 @@ impl InstagramSource {
             .header("Referer", "https://www.instagram.com/")
             .header("Origin", "https://www.instagram.com")
             .header("Accept", "*/*")
-            .header("Accept-Language", "en-US,en;q=0.9");
+            .header("Accept-Language", "en-US,en;q=0.9")
+            .header("Sec-Fetch-Site", "same-origin")
+            .header("Sec-Fetch-Mode", "cors")
+            .header("Sec-Fetch-Dest", "empty");
 
         // Add Instagram cookies + CSRF token if available
         if let Some(cookie_header) = crate::download::cookies::load_instagram_cookie_header() {
-            log::info!("InstagramSource: adding cookie + CSRF headers to profile GraphQL request");
-            profile_request = profile_request.header("Cookie", cookie_header);
             if let Some(csrf_token) = crate::download::cookies::load_ig_csrf_token() {
+                log::info!(
+                    "InstagramSource: profile GraphQL auth: cookies=yes, csrftoken=yes (len={})",
+                    csrf_token.len()
+                );
                 profile_request = profile_request.header("X-CSRFToken", csrf_token);
+            } else {
+                log::warn!("InstagramSource: profile GraphQL auth: cookies=yes, csrftoken=NOT FOUND");
             }
+            profile_request = profile_request.header("Cookie", cookie_header);
+        } else {
+            log::info!("InstagramSource: profile GraphQL auth: no cookies available");
         }
 
         let response = profile_request
