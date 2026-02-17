@@ -76,6 +76,28 @@ impl Default for InstagramSource {
 }
 
 impl InstagramSource {
+    /// Get the curl binary name — prefer curl-impersonate-chrome, fall back to curl.
+    ///
+    /// curl-impersonate mimics Chrome's TLS fingerprint (BoringSSL, cipher suites,
+    /// extensions order), bypassing Instagram's JA3 fingerprinting on datacenter IPs.
+    fn curl_binary() -> &'static str {
+        use std::sync::OnceLock;
+        static BINARY: OnceLock<&str> = OnceLock::new();
+        BINARY.get_or_init(|| {
+            if std::process::Command::new("curl-impersonate-chrome")
+                .arg("--version")
+                .output()
+                .is_ok()
+            {
+                log::info!("InstagramSource: using curl-impersonate-chrome for TLS fingerprint spoofing");
+                "curl-impersonate-chrome"
+            } else {
+                log::warn!("InstagramSource: curl-impersonate-chrome not found, falling back to curl");
+                "curl"
+            }
+        })
+    }
+
     pub fn new() -> Self {
         let mut client_builder = reqwest::Client::builder()
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
@@ -155,7 +177,7 @@ impl InstagramSource {
             FB_LSD_TOKEN
         );
 
-        let mut cmd = tokio::process::Command::new("curl");
+        let mut cmd = tokio::process::Command::new(Self::curl_binary());
         cmd.arg("-s")
             .arg("-X")
             .arg("POST")
@@ -479,7 +501,7 @@ impl InstagramSource {
             FB_LSD_TOKEN
         );
 
-        let mut cmd = tokio::process::Command::new("curl");
+        let mut cmd = tokio::process::Command::new(Self::curl_binary());
         cmd.arg("-s")
             .arg("-X")
             .arg("POST")

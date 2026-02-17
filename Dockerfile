@@ -89,6 +89,16 @@ RUN apk add --no-cache \
   pixman-dev && \
   node --version && echo "Node.js available for yt-dlp --js-runtimes node"
 
+# Install curl-impersonate for Instagram TLS fingerprint spoofing
+# Instagram blocks datacenter IPs via JA3 fingerprinting; curl-impersonate mimics Chrome's TLS
+RUN wget -q https://github.com/lexiforest/curl-impersonate/releases/download/v1.4.4/curl-impersonate-v1.4.4.x86_64-linux-musl.tar.gz \
+      -O /tmp/curl-impersonate.tar.gz && \
+    tar -xzf /tmp/curl-impersonate.tar.gz -C /usr/local/bin/ && \
+    rm /tmp/curl-impersonate.tar.gz && \
+    chmod +x /usr/local/bin/curl-impersonate* && \
+    ls -la /usr/local/bin/curl-impersonate* && \
+    echo "curl-impersonate installed"
+
 # Install Deno from Alpine edge/testing (musl-compatible build)
 # hadolint ignore=DL3018
 RUN apk add --no-cache deno --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing && \
