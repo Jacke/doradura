@@ -171,6 +171,7 @@ pub async fn handle_instagram_callback(
     callback_id: &teloxide::types::CallbackQueryId,
     chat_id: ChatId,
     data: &str,
+    db_pool: std::sync::Arc<crate::storage::db::DbPool>,
 ) -> Result<(), teloxide::RequestError> {
     let _ = bot.answer_callback_query(callback_id.clone()).await;
 
@@ -182,8 +183,63 @@ pub async fn handle_instagram_callback(
     match parts[1] {
         "dl" if parts.len() >= 3 => {
             let shortcode = parts[2];
-            let url = format!("https://www.instagram.com/p/{}/", shortcode);
-            let _ = bot.send_message(chat_id, &url).await;
+            let url_str = format!("https://www.instagram.com/p/{}/", shortcode);
+            let url = match url::Url::parse(&url_str) {
+                Ok(u) => u,
+                Err(_) => return Ok(()),
+            };
+
+            // Show "loading" message
+            let processing_msg = bot.send_message(chat_id, "⏳").await?;
+
+            // Get user format preference
+            let format = crate::storage::db::get_connection(&db_pool)
+                .ok()
+                .and_then(|conn| crate::storage::db::get_user_download_format(&conn, chat_id.0).ok())
+                .unwrap_or_else(|| "mp3".to_string());
+
+            let video_quality = if format == "mp4" {
+                crate::storage::db::get_connection(&db_pool)
+                    .ok()
+                    .and_then(|conn| crate::storage::db::get_user_video_quality(&conn, chat_id.0).ok())
+                    .or_else(|| Some("best".to_string()))
+            } else {
+                None
+            };
+
+            match crate::telegram::preview::get_preview_metadata(&url, Some(&format), video_quality.as_deref()).await {
+                Ok(metadata) => {
+                    let default_quality = if format == "mp4" {
+                        video_quality.as_deref()
+                    } else {
+                        None
+                    };
+                    if let Err(e) = crate::telegram::preview::send_preview(
+                        bot,
+                        chat_id,
+                        &url,
+                        &metadata,
+                        &format,
+                        default_quality,
+                        Some(processing_msg.id),
+                        std::sync::Arc::clone(&db_pool),
+                        None,
+                    )
+                    .await
+                    {
+                        log::error!("Failed to send Instagram preview: {:?}", e);
+                        let _ = bot
+                            .edit_message_text(chat_id, processing_msg.id, "Failed to load preview")
+                            .await;
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to get Instagram metadata for {}: {:?}", shortcode, e);
+                    let _ = bot
+                        .edit_message_text(chat_id, processing_msg.id, "Failed to load post info")
+                        .await;
+                }
+            }
         }
         "page" if parts.len() >= 3 => {
             let username = parts[2];

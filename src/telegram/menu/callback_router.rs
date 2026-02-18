@@ -453,8 +453,14 @@ pub async fn handle_menu_callback(
                     }
                 }
             } else if data.starts_with("ig:") {
-                if let Err(e) =
-                    crate::telegram::instagram::handle_instagram_callback(&bot, &callback_id, chat_id, &data).await
+                if let Err(e) = crate::telegram::instagram::handle_instagram_callback(
+                    &bot,
+                    &callback_id,
+                    chat_id,
+                    &data,
+                    Arc::clone(&db_pool),
+                )
+                .await
                 {
                     log::error!("Instagram callback error: {}", e);
                 }
