@@ -505,9 +505,15 @@ impl InstagramSource {
     }
 
     /// Execute Instagram profile GraphQL request via curl.
+    ///
+    /// Uses PolarisProfilePostsQuery (doc_id 34579740524958711) which accepts
+    /// username directly and returns both user info and recent posts.
     async fn curl_profile_request(username: &str) -> Result<String, AppError> {
         let doc_id = config::INSTAGRAM_PROFILE_DOC_ID.as_str();
-        let variables = format!(r#"{{"username":"{}"}}"#, username);
+        let variables = format!(
+            r#"{{"data":{{"count":12,"include_reel_media_seen_timestamp":false,"include_relationship_info":true,"latest_besties_reel_media":false,"latest_reel_media":false}},"username":"{}"}}"#,
+            username
+        );
         let body = format!(
             "doc_id={}&variables={}&lsd={}",
             doc_id,
@@ -590,76 +596,192 @@ impl InstagramSource {
         })?;
 
         // Try multiple JSON paths — different doc_ids return different structures
-        let user = body
-            .pointer("/data/user")
-            .or_else(|| body.pointer("/data/xdt_api__v1__users__web_profile_info/data/user"))
-            .ok_or_else(|| {
+        // Path 1: PolarisProfilePostsQuery (doc_id 34579740524958711)
+        //   /data/xdt_api__v1__feed__user_timeline_graphql_connection/edges/*/node
+        //   User info is inside each node's "user" field
+        // Path 2: Legacy profile queries
+        //   /data/user with edge_owner_to_timeline_media/edges
+        let timeline_connection = body.pointer("/data/xdt_api__v1__feed__user_timeline_graphql_connection");
+
+        // Extract user info and posts depending on response format
+        let (full_name, biography, profile_pic_url, is_private, user_id, post_count, follower_count, posts, end_cursor) =
+            if let Some(connection) = timeline_connection {
+                // PolarisProfilePostsQuery format — user info is inside each post node
+                let edges = connection.get("edges").and_then(|v| v.as_array());
+
+                // Get user info from the first post's user field
+                let first_user = edges
+                    .and_then(|e| e.first())
+                    .and_then(|edge| edge.get("node"))
+                    .and_then(|node| node.get("user"));
+
+                let full_name = first_user
+                    .and_then(|u| u.get("full_name"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let biography = first_user
+                    .and_then(|u| u.get("biography"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let profile_pic_url = first_user
+                    .and_then(|u| {
+                        u.get("hd_profile_pic_url_info")
+                            .and_then(|v| v.get("url"))
+                            .and_then(|v| v.as_str())
+                            .or_else(|| u.get("profile_pic_url").and_then(|v| v.as_str()))
+                    })
+                    .unwrap_or("")
+                    .to_string();
+                let is_private = first_user
+                    .and_then(|u| u.get("is_private"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                let user_id = first_user
+                    .and_then(|u| u.get("pk").or_else(|| u.get("id")))
+                    .map(|v| match v {
+                        serde_json::Value::String(s) => s.clone(),
+                        serde_json::Value::Number(n) => n.to_string(),
+                        _ => String::new(),
+                    })
+                    .filter(|s| !s.is_empty());
+                let follower_count = first_user
+                    .and_then(|u| u.get("follower_count"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
+                let post_count = first_user
+                    .and_then(|u| u.get("media_count"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
+
+                // Extract posts from edges
+                let posts: Vec<ProfilePost> = edges
+                    .map(|edges| {
+                        edges
+                            .iter()
+                            .take(12)
+                            .filter_map(|edge| {
+                                let node = edge.get("node")?;
+                                let code = node.get("code").and_then(|v| v.as_str());
+                                let shortcode = code.map(String::from)?;
+                                let media_type = node.get("media_type").and_then(|v| v.as_u64()).unwrap_or(1);
+                                let is_video = media_type == 2;
+                                let is_carousel = media_type == 8
+                                    || node.get("carousel_media_count").and_then(|v| v.as_u64()).unwrap_or(0) > 0;
+                                let thumbnail = node
+                                    .pointer("/image_versions2/candidates/0/url")
+                                    .or_else(|| node.get("thumbnail_url"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                Some(ProfilePost {
+                                    shortcode,
+                                    is_video,
+                                    is_carousel,
+                                    thumbnail_url: thumbnail,
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let end_cursor = connection
+                    .pointer("/page_info/end_cursor")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+
+                (
+                    full_name,
+                    biography,
+                    profile_pic_url,
+                    is_private,
+                    user_id,
+                    post_count,
+                    follower_count,
+                    posts,
+                    end_cursor,
+                )
+            } else if let Some(user) = body
+                .pointer("/data/user")
+                .or_else(|| body.pointer("/data/xdt_api__v1__users__web_profile_info/data/user"))
+            {
+                // Legacy format — user object with edge_owner_to_timeline_media
+                let full_name = user.get("full_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let biography = user.get("biography").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let profile_pic_url = user
+                    .get("profile_pic_url_hd")
+                    .or_else(|| user.get("profile_pic_url"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let is_private = user.get("is_private").and_then(|v| v.as_bool()).unwrap_or(false);
+                let user_id = user.get("id").and_then(|v| v.as_str()).map(String::from);
+                let post_count = user
+                    .pointer("/edge_owner_to_timeline_media/count")
+                    .and_then(|v| v.as_u64())
+                    .or_else(|| user.get("media_count").and_then(|v| v.as_u64()))
+                    .unwrap_or(0) as u32;
+                let follower_count = user
+                    .pointer("/edge_followed_by/count")
+                    .and_then(|v| v.as_u64())
+                    .or_else(|| user.get("follower_count").and_then(|v| v.as_u64()))
+                    .unwrap_or(0) as u32;
+                let posts: Vec<ProfilePost> = user
+                    .pointer("/edge_owner_to_timeline_media/edges")
+                    .and_then(|v| v.as_array())
+                    .map(|edges| {
+                        edges
+                            .iter()
+                            .take(12)
+                            .filter_map(|edge| {
+                                let node = edge.get("node")?;
+                                let shortcode = node.get("shortcode")?.as_str()?.to_string();
+                                let is_video = node.get("is_video").and_then(|v| v.as_bool()).unwrap_or(false);
+                                let typename = node.get("__typename").and_then(|v| v.as_str()).unwrap_or("");
+                                let is_carousel = typename == "GraphSidecar"
+                                    || node.get("carousel_media_count").and_then(|v| v.as_u64()).unwrap_or(0) > 0;
+                                let thumbnail = node
+                                    .get("thumbnail_src")
+                                    .or_else(|| node.get("display_url"))
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                Some(ProfilePost {
+                                    shortcode,
+                                    is_video,
+                                    is_carousel,
+                                    thumbnail_url: thumbnail,
+                                })
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let end_cursor = user
+                    .pointer("/edge_owner_to_timeline_media/page_info/end_cursor")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+
+                (
+                    full_name,
+                    biography,
+                    profile_pic_url,
+                    is_private,
+                    user_id,
+                    post_count,
+                    follower_count,
+                    posts,
+                    end_cursor,
+                )
+            } else {
                 log::error!(
-                    "InstagramSource: profile response has no /data/user: {}",
+                    "InstagramSource: profile response has no recognizable data: {}",
                     &response_text[..response_text.len().min(500)]
                 );
-                AppError::Download(DownloadError::Instagram("Profile not found".to_string()))
-            })?;
-
-        let full_name = user.get("full_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let biography = user.get("biography").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let profile_pic_url = user
-            .get("profile_pic_url_hd")
-            .or_else(|| user.get("profile_pic_url"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let is_private = user.get("is_private").and_then(|v| v.as_bool()).unwrap_or(false);
-        let user_id = user.get("id").and_then(|v| v.as_str()).map(String::from);
-
-        // Handle both legacy edge format and new direct field format
-        let post_count = user
-            .pointer("/edge_owner_to_timeline_media/count")
-            .and_then(|v| v.as_u64())
-            .or_else(|| user.get("media_count").and_then(|v| v.as_u64()))
-            .unwrap_or(0) as u32;
-        let follower_count = user
-            .pointer("/edge_followed_by/count")
-            .and_then(|v| v.as_u64())
-            .or_else(|| user.get("follower_count").and_then(|v| v.as_u64()))
-            .unwrap_or(0) as u32;
-
-        // Extract recent posts — try edge format first, then items format
-        let posts: Vec<ProfilePost> = user
-            .pointer("/edge_owner_to_timeline_media/edges")
-            .and_then(|v| v.as_array())
-            .map(|edges| {
-                edges
-                    .iter()
-                    .take(12) // Max 12 posts for the grid
-                    .filter_map(|edge| {
-                        let node = edge.get("node")?;
-                        let shortcode = node.get("shortcode")?.as_str()?.to_string();
-                        let is_video = node.get("is_video").and_then(|v| v.as_bool()).unwrap_or(false);
-                        let typename = node.get("__typename").and_then(|v| v.as_str()).unwrap_or("");
-                        let is_carousel = typename == "GraphSidecar"
-                            || node.get("carousel_media_count").and_then(|v| v.as_u64()).unwrap_or(0) > 0;
-                        let thumbnail = node
-                            .get("thumbnail_src")
-                            .or_else(|| node.get("display_url"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        Some(ProfilePost {
-                            shortcode,
-                            is_video,
-                            is_carousel,
-                            thumbnail_url: thumbnail,
-                        })
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let end_cursor = user
-            .pointer("/edge_owner_to_timeline_media/page_info/end_cursor")
-            .and_then(|v| v.as_str())
-            .map(String::from);
+                return Err(AppError::Download(DownloadError::Instagram(
+                    "Profile not found".to_string(),
+                )));
+            };
 
         Ok(InstagramProfile {
             username: username.to_string(),
