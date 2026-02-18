@@ -501,7 +501,7 @@ mod tests {
 
     #[test]
     fn test_escape_markdown_unicode() {
-        assert_eq!(escape_markdown("Привет мир"), "Привет мир");
+        assert_eq!(escape_markdown("Hello world"), "Hello world");
         assert_eq!(escape_markdown("🎵 Music"), "🎵 Music");
     }
 

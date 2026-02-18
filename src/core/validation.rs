@@ -322,7 +322,7 @@ mod tests {
             ("video.mp4", "video.mp4"),
             ("my-video_2024.mp4", "my-video_2024.mp4"),
             ("video (1).mp4", "video (1).mp4"),
-            ("Видео на русском.mp4", "Видео на русском.mp4"),
+            ("Café au lait.mp4", "Café au lait.mp4"),
         ];
 
         for (input, expected) in cases {

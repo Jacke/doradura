@@ -767,10 +767,7 @@ pub async fn handle_message(
                         // Check whether this is a duration-related error (not a real error, just a limit)
                         let is_duration_error = if let AppError::Download(ref err_msg) = e {
                             let msg_str = err_msg.message();
-                            msg_str.contains("слишком длинное")
-                                || msg_str.contains("too long")
-                                || msg_str.contains("zu lang")
-                                || msg_str.contains("trop long")
+                            msg_str.contains("too long") || msg_str.contains("zu lang") || msg_str.contains("trop long")
                         } else {
                             false
                         };
@@ -826,7 +823,7 @@ pub async fn handle_message(
 
 fn is_cancel_text(text: &str) -> bool {
     let lower = text.trim().to_lowercase();
-    matches!(lower.as_str(), "отмена" | "cancel" | "/cancel" | "❌" | "x")
+    matches!(lower.as_str(), "cancel" | "/cancel" | "❌" | "x")
 }
 
 fn parse_command_segment(text: &str, video_duration: Option<i64>) -> Option<(i64, i64, String)> {
@@ -2587,14 +2584,6 @@ mod tests {
     // ==================== is_cancel_text tests ====================
 
     #[test]
-    fn test_is_cancel_text_russian() {
-        assert!(is_cancel_text("отмена"));
-        assert!(is_cancel_text("Отмена"));
-        assert!(is_cancel_text("ОТМЕНА"));
-        assert!(is_cancel_text("  отмена  "));
-    }
-
-    #[test]
     fn test_is_cancel_text_english() {
         assert!(is_cancel_text("cancel"));
         assert!(is_cancel_text("Cancel"));
@@ -2614,6 +2603,7 @@ mod tests {
         assert!(!is_cancel_text("hello"));
         assert!(!is_cancel_text(""));
         assert!(!is_cancel_text("cancellation"));
+        assert!(!is_cancel_text("отмена"));
         assert!(!is_cancel_text("отменить"));
     }
 

@@ -284,9 +284,9 @@ mod tests {
     }
 
     #[test]
-    fn test_truncate_string_safe_cyrillic() {
-        // Test with Cyrillic characters (multi-byte UTF-8)
-        let result = truncate_string_safe("Привет мир", 8);
+    fn test_truncate_string_safe_multibyte() {
+        // Test with multi-byte UTF-8 characters (emoji are 4 bytes each)
+        let result = truncate_string_safe("Hello 🌍 world 🎵", 8);
         assert!(result.ends_with("..."));
         // Should not panic with multi-byte characters
     }
@@ -371,9 +371,9 @@ mod tests {
     }
 
     #[test]
-    fn test_escape_markdown_cyrillic() {
-        let text = "Привет мир!";
+    fn test_escape_markdown_exclamation() {
+        let text = "Hello world!";
         let result = escape_markdown(text);
-        assert_eq!(result, "Привет мир\\!");
+        assert_eq!(result, "Hello world\\!");
     }
 }

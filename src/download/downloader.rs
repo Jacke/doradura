@@ -967,7 +967,7 @@ mod download_tests {
     #[test]
     fn test_truncate_tail_utf8_respects_boundaries() {
         // UTF-8 string with multi-byte characters
-        let text = "Привет мир"; // Russian text (each Cyrillic char is 2 bytes)
+        let text = "Hello 🌍 world"; // emoji are 4 bytes each in UTF-8
         let result = truncate_tail_utf8(text, 6);
         // Should not break in the middle of a UTF-8 character
         assert!(result.is_char_boundary(0));

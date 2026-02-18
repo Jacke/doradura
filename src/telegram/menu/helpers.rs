@@ -337,11 +337,7 @@ mod tests {
     #[test]
     fn test_escape_markdown_empty() {
         assert_eq!(escape_markdown(""), "");
-    }
-
-    #[test]
-    fn test_escape_markdown_cyrillic() {
-        assert_eq!(escape_markdown("Привет мир!"), "Привет мир\\!");
+        assert_eq!(escape_markdown("Hello world!"), "Hello world\\!");
     }
 
     // ==================== Format Display Functions ====================

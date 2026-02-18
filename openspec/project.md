@@ -10,7 +10,7 @@ Doradura is a high-performance Telegram bot built in Rust for downloading music 
 - Queue-based download processing
 - Automatic retry logic for reliable file delivery
 
-The bot is designed for personal use with Russian language interface ("Я Дора" - "I'm Dora").
+The bot is designed for personal use with a Russian language interface ("Я Дора" means "I'm Dora").
 
 ## Tech Stack
 - **Rust** (edition 2021) - Core language
@@ -69,8 +69,8 @@ The bot is designed for personal use with Russian language interface ("Я Дор
 - Use feature branches for new functionality
 
 ## Domain Context
-- **Bot name**: "Дора" (Dora) - Russian-language Telegram bot
-- **User interface**: Primarily Russian language ("Я Дора, чай закончился...")
+- **Bot name**: "Дора" (Dora in Russian) - Telegram bot
+- **User interface**: Primarily Russian language ("Я Дора, чай закончился..." = "I'm Dora, the tea is gone...")
 - **Subscription plans**: `free`, `premium`, `vip` (stored in database)
 - **Download formats**: `mp3` (audio), `mp4` (video), `srt` (subtitles), `txt` (subtitles text)
 - **Video quality options**: `best`, `1080p`, `720p`, `480p`, `360p`

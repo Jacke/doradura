@@ -785,11 +785,7 @@ pub async fn handle_pipeline_error(
             Stan already knows and will update soon!\n\
             Try again later or try a different video.",
         )
-    } else if error_str.to_lowercase().contains("bot detection")
-        || error_str.contains("confirm you're not a bot")
-        || error_str.contains("заблокировал")
-    // Russian: "blocked"
-    {
+    } else if error_str.to_lowercase().contains("bot detection") || error_str.contains("confirm you're not a bot") {
         Some(
             "YouTube has blocked the bot\n\n\
             Cookies need to be configured.\n\
