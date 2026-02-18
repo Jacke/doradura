@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
 # Build stage for Rust application with cargo-chef for dependency caching
+# cache-bust: 2026-02-18
 FROM rust:1.93-alpine AS chef
 # hadolint ignore=DL3018
 RUN apk add --no-cache musl-dev && \
