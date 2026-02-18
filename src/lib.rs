@@ -26,6 +26,7 @@ pub mod metadata_refresh;
 pub mod storage;
 pub mod telegram;
 pub mod timestamps;
+pub mod watcher;
 
 // Testing utilities (only available in tests and test binaries)
 #[cfg(test)]

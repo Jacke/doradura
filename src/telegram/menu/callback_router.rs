@@ -452,6 +452,17 @@ pub async fn handle_menu_callback(
                         }
                     }
                 }
+            } else if data.starts_with("ig:sub:") {
+                // Subscribe to Instagram profile updates — route to subscriptions module
+                let username = data.strip_prefix("ig:sub:").unwrap_or("");
+                if !username.is_empty() {
+                    let registry = std::sync::Arc::new(crate::watcher::WatcherRegistry::default_registry());
+                    crate::telegram::subscriptions::show_subscribe_confirm(
+                        &bot, chat_id, username, &db_pool, &registry,
+                    )
+                    .await;
+                }
+                return Ok(());
             } else if data.starts_with("ig:") {
                 if let Err(e) = crate::telegram::instagram::handle_instagram_callback(
                     &bot,
@@ -464,6 +475,19 @@ pub async fn handle_menu_callback(
                 {
                     log::error!("Instagram callback error: {}", e);
                 }
+                return Ok(());
+            } else if data.starts_with("cw:") {
+                let registry = std::sync::Arc::new(crate::watcher::WatcherRegistry::default_registry());
+                crate::telegram::subscriptions::handle_subscription_callback(
+                    &bot,
+                    &callback_id,
+                    chat_id,
+                    message_id,
+                    &data,
+                    Arc::clone(&db_pool),
+                    &registry,
+                )
+                .await;
                 return Ok(());
             } else if data == "video:toggle_burn_subs" {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;

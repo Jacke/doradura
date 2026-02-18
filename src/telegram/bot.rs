@@ -77,6 +77,8 @@ pub enum Command {
     BotApiSpeed,
     #[command(description = "версия и обновление (только для администратора)")]
     Version,
+    #[command(description = "мои подписки на обновления")]
+    Subscriptions,
 }
 
 const BOT_COMMAND_DEFINITIONS: &[(&str, &str)] = &[
@@ -94,6 +96,7 @@ const BOT_COMMAND_DEFINITIONS: &[(&str, &str)] = &[
     //("export", "bot_commands.export"),
     //("backup", "bot_commands.backup"),
     ("plan", "bot_commands.plan"),
+    ("subscriptions", "bot_commands.subscriptions"),
     //("users", "bot_commands.users"),
     //("setplan", "bot_commands.setplan"),
     //("transactions", "bot_commands.transactions"),

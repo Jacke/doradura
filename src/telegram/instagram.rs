@@ -151,6 +151,12 @@ fn build_posts_keyboard(
         )]);
     }
 
+    // Subscribe button
+    rows.push(vec![crate::telegram::cb(
+        "🔔 Subscribe",
+        format!("ig:sub:{}", username),
+    )]);
+
     InlineKeyboardMarkup::new(rows)
 }
 

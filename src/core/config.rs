@@ -631,3 +631,69 @@ pub mod bot_api {
         !url.contains("api.telegram.org")
     }
 }
+
+/// Content watcher / subscription monitoring configuration
+pub mod watcher {
+    use once_cell::sync::Lazy;
+    use std::env;
+
+    /// Check interval in seconds (how often the scheduler runs)
+    /// Read from WATCHER_CHECK_INTERVAL_SECS environment variable
+    /// Default: 900 (15 minutes)
+    pub static CHECK_INTERVAL_SECS: Lazy<u64> = Lazy::new(|| {
+        env::var("WATCHER_CHECK_INTERVAL_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(900)
+    });
+
+    /// Max API requests per check cycle (budget)
+    /// Read from WATCHER_MAX_REQUESTS_PER_CYCLE environment variable
+    /// Default: 60
+    pub static MAX_REQUESTS_PER_CYCLE: Lazy<u32> = Lazy::new(|| {
+        env::var("WATCHER_MAX_REQUESTS_PER_CYCLE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(60)
+    });
+
+    /// Max consecutive errors before auto-disabling a subscription
+    /// Read from WATCHER_MAX_CONSECUTIVE_ERRORS environment variable
+    /// Default: 10
+    pub static MAX_CONSECUTIVE_ERRORS: Lazy<u32> = Lazy::new(|| {
+        env::var("WATCHER_MAX_CONSECUTIVE_ERRORS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(10)
+    });
+
+    /// Max subscriptions for free users
+    /// Read from WATCHER_MAX_SUBS_FREE environment variable
+    /// Default: 3
+    pub static MAX_SUBS_FREE: Lazy<u32> = Lazy::new(|| {
+        env::var("WATCHER_MAX_SUBS_FREE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3)
+    });
+
+    /// Max subscriptions for premium users
+    /// Read from WATCHER_MAX_SUBS_PREMIUM environment variable
+    /// Default: 15
+    pub static MAX_SUBS_PREMIUM: Lazy<u32> = Lazy::new(|| {
+        env::var("WATCHER_MAX_SUBS_PREMIUM")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(15)
+    });
+
+    /// Max subscriptions for VIP users
+    /// Read from WATCHER_MAX_SUBS_VIP environment variable
+    /// Default: 50
+    pub static MAX_SUBS_VIP: Lazy<u32> = Lazy::new(|| {
+        env::var("WATCHER_MAX_SUBS_VIP")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(50)
+    });
+}

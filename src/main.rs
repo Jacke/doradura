@@ -787,6 +787,20 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
         }
     });
 
+    // Start content watcher scheduler + notification dispatcher
+    {
+        use doradura::watcher::{scheduler, WatcherRegistry};
+
+        let watcher_registry = Arc::new(WatcherRegistry::default_registry());
+        let notification_rx = scheduler::start_scheduler(Arc::clone(&db_pool), Arc::clone(&watcher_registry));
+        doradura::telegram::subscriptions::start_notification_dispatcher(
+            bot.clone(),
+            Arc::clone(&db_pool),
+            notification_rx,
+        );
+        log::info!("Content watcher scheduler and notification dispatcher started");
+    }
+
     // Create extension registry
     let extension_registry = Arc::new(doradura::extension::ExtensionRegistry::default_registry());
 

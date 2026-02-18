@@ -442,6 +442,10 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                         let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
                         let _ = handle_version_command(&bot, msg.chat.id, user_id).await;
                     }
+                    Command::Subscriptions => {
+                        crate::telegram::subscriptions::handle_subscriptions_command(&bot, msg.chat.id, &deps.db_pool)
+                            .await;
+                    }
                 }
                 Ok(())
             }

@@ -61,6 +61,7 @@ pub mod notifications;
 pub mod operation;
 pub mod preview;
 pub mod reactions;
+pub mod subscriptions;
 pub mod types;
 pub mod videos;
 pub mod voice;

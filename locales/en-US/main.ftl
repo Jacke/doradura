@@ -146,6 +146,7 @@ bot_commands =
     .transactions = View Stars transactions (admin only)
     .panel = User management panel (admin only)
     .charges = View all payments (admin only)
+    .subscriptions = My content subscriptions
 
 admin =
     .no_permission = ❌ You don't have permission to run this command\.
