@@ -10,13 +10,13 @@ const MAX_PREVIEW_CACHE_SIZE: usize = 5_000;
 /// Number of entries to evict when cache is full
 const PREVIEW_EVICTION_BATCH: usize = 500;
 
-/// Структура для хранения кэшированных данных
+/// Structure for storing cached data
 struct CachedItem {
     data: PreviewMetadata,
     cached_at: Instant,
 }
 
-/// Кэш для PreviewMetadata with size limit
+/// Cache for PreviewMetadata with size limit
 pub struct PreviewCache {
     cache: Arc<Mutex<HashMap<String, CachedItem>>>,
     ttl: Duration,
@@ -95,7 +95,7 @@ impl PreviewCache {
         );
     }
 
-    /// Очистка устаревших записей
+    /// Remove expired entries
     pub async fn cleanup(&self) {
         let mut cache = self.cache.lock().await;
         let before = cache.len();
@@ -117,8 +117,8 @@ impl PreviewCache {
     }
 }
 
-/// Глобальный экземпляр кэша превью (singleton)
-/// TTL = 1 час (достаточно для сессии пользователя)
+/// Global preview cache instance (singleton)
+/// TTL = 1 hour (sufficient for a user session)
 pub static PREVIEW_CACHE: once_cell::sync::Lazy<PreviewCache> =
     once_cell::sync::Lazy::new(|| PreviewCache::new(Duration::from_secs(3600)));
 

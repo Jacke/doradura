@@ -393,6 +393,7 @@ pub async fn download_and_send_subtitles(
                     DownloadStatus::Starting {
                         title: display_title.as_ref().to_string(),
                         file_format: Some(subtitle_format.clone()),
+                        artist: None,
                     },
                 )
                 .await;
@@ -521,7 +522,7 @@ pub async fn download_and_send_subtitles(
                     &bot_clone,
                     chat_id,
                     MessageId(msg_id),
-                    crate::telegram::emoji::THUMBS_UP,
+                    crate::telegram::success_reaction_for_format(Some(&subtitle_format)),
                 )
                 .await;
             }
@@ -535,6 +536,8 @@ pub async fn download_and_send_subtitles(
                 chat_id: progress_msg.chat_id,
                 message_id: progress_msg.message_id,
                 lang: progress_msg.lang.clone(),
+                style: progress_msg.style,
+                source_badge: progress_msg.source_badge.clone(),
             };
             let subtitle_format_clone = subtitle_format.clone();
             tokio::spawn(async move {

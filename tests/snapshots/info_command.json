@@ -9,13 +9,13 @@
         "path": "/sendMessage",
         "body": {
           "chat_id": 123456789,
-          "text": "ℹ️ *Информация о форматах*\n\n📹 *Видео:*\n• 2160p \\(4K\\) \\- максимальное качество\n• 1440p \\(2K\\) \\- высокое качество\n• 1080p \\(Full HD\\) \\- отличное качество\n• 720p \\(HD\\) \\- хорошее качество\n• 480p \\- среднее качество\n• 360p \\- низкое качество\n\n🎵 *Аудио:*\n• 320 kbps \\- максимальное качество\n• 192 kbps \\- высокое качество\n• 128 kbps \\- среднее качество\n\n📱 *Поддерживаемые сервисы:*\n• YouTube\n• SoundCloud\n• Vimeo\n• И многие другие \\(через yt\\-dlp\\)\n\n💡 *Как использовать:*\n1\\. Отправь ссылку на видео или аудио\n2\\. Выбери формат и качество\n3\\. Получи файл\\!",
+          "text": "ℹ️ *Format Information*\n\n📹 *Video:*\n• 2160p \\(4K\\) \\- maximum quality\n• 1440p \\(2K\\) \\- high quality\n• 1080p \\(Full HD\\) \\- excellent quality\n• 720p \\(HD\\) \\- good quality\n• 480p \\- medium quality\n• 360p \\- low quality\n\n🎵 *Audio:*\n• 320 kbps \\- maximum quality\n• 192 kbps \\- high quality\n• 128 kbps \\- medium quality\n\n📱 *Supported services:*\n• YouTube\n• SoundCloud\n• Vimeo\n• And many others \\(via yt\\-dlp\\)\n\n💡 *How to use:*\n1\\. Send a link to a video or audio\n2\\. Choose format and quality\n3\\. Get your file\\!",
           "parse_mode": "MarkdownV2",
           "reply_markup": {
             "inline_keyboard": [
               [
                 {
-                  "text": "◀️ Назад",
+                  "text": "◀️ Back",
                   "callback_data": "menu:main"
                 }
               ]
@@ -43,7 +43,7 @@
               "type": "private"
             },
             "date": 1736001000,
-            "text": "ℹ️ Информация о форматах\n\n📹 Видео:\n• 2160p (4K) - максимальное качество\n• 1440p (2K) - высокое качество\n• 1080p (Full HD) - отличное качество\n• 720p (HD) - хорошее качество\n• 480p - среднее качество\n• 360p - низкое качество\n\n🎵 Аудио:\n• 320 kbps - максимальное качество\n• 192 kbps - высокое качество\n• 128 kbps - среднее качество\n\n📱 Поддерживаемые сервисы:\n• YouTube\n• SoundCloud\n• Vimeo\n• И многие другие (через yt-dlp)\n\n💡 Как использовать:\n1. Отправь ссылку на видео или аудио\n2. Выбери формат и качество\n3. Получи файл!",
+            "text": "ℹ️ Format Information\n\n📹 Video:\n• 2160p (4K) - maximum quality\n• 1440p (2K) - high quality\n• 1080p (Full HD) - excellent quality\n• 720p (HD) - good quality\n• 480p - medium quality\n• 360p - low quality\n\n🎵 Audio:\n• 320 kbps - maximum quality\n• 192 kbps - high quality\n• 128 kbps - medium quality\n\n📱 Supported services:\n• YouTube\n• SoundCloud\n• Vimeo\n• And many others (via yt-dlp)\n\n💡 How to use:\n1. Send a link to a video or audio\n2. Choose format and quality\n3. Get your file!",
             "entities": [
               {
                 "offset": 0,

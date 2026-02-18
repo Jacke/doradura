@@ -1,12 +1,12 @@
-# Исправление Callback Кнопок Аналитики
+# Fix: Analytics Inline Keyboard Callbacks
 
-## Проблема
+## Problem
 
-После интеграции команд `/analytics`, `/health`, `/metrics`, `/revenue` кнопки inline keyboard не работали - нажатие на них не вызывало никакой реакции.
+After integrating the `/analytics`, `/health`, `/metrics`, `/revenue` commands, the inline keyboard buttons were not working - clicking them produced no response.
 
-## Причина
+## Root Cause
 
-Все callback queries в боте обрабатываются через функцию `handle_menu_callback` в [src/telegram/menu.rs](src/telegram/menu.rs). Эта функция использует pattern matching по префиксу callback data:
+All callback queries in the bot are handled by the `handle_menu_callback` function in [src/telegram/menu.rs](src/telegram/menu.rs). This function uses prefix-based pattern matching on callback data:
 
 ```rust
 if data.starts_with("ae:") {
@@ -18,114 +18,114 @@ if data.starts_with("ae:") {
 }
 ```
 
-Кнопки аналитики использовали префиксы `"analytics:"` и `"metrics:"`, но обработчики для этих префиксов отсутствовали.
+The analytics buttons used the prefixes `"analytics:"` and `"metrics:"`, but handlers for these prefixes were missing.
 
-## Решение
+## Solution
 
-Добавлены два новых обработчика в `handle_menu_callback`:
+Added two new handlers in `handle_menu_callback`:
 
-### 1. Обработчик `analytics:*` (строки 1993-2046)
+### 1. `analytics:*` handler (lines 1993-2046)
 
-Обрабатывает кнопки основной панели аналитики:
+Handles buttons on the main analytics panel:
 
-- **`analytics:refresh`** - Обновляет dashboard с актуальными данными
-  - Вызывает `generate_analytics_dashboard`
-  - Обновляет сообщение с теми же кнопками
+- **`analytics:refresh`** - Refreshes the dashboard with up-to-date data
+  - Calls `generate_analytics_dashboard`
+  - Updates the message with the same buttons
 
-- **`analytics:details`** - Показывает меню выбора категории метрик
-  - Создает inline keyboard с категориями (Performance, Business, Engagement)
-  - Кнопки ведут на `metrics:*` callbacks
+- **`analytics:details`** - Shows the metric category selection menu
+  - Creates an inline keyboard with categories (Performance, Business, Engagement)
+  - Buttons lead to `metrics:*` callbacks
 
-- **`analytics:close`** - Удаляет сообщение
-  - Вызывает `bot.delete_message()`
+- **`analytics:close`** - Deletes the message
+  - Calls `bot.delete_message()`
 
-### 2. Обработчик `metrics:*` (строки 2047-2073)
+### 2. `metrics:*` handler (lines 2047-2073)
 
-Обрабатывает кнопки детальных метрик:
+Handles detailed metrics buttons:
 
-- **`metrics:performance`** - Показывает метрики производительности
-- **`metrics:business`** - Показывает бизнес-метрики
-- **`metrics:engagement`** - Показывает метрики вовлеченности
+- **`metrics:performance`** - Shows performance metrics
+- **`metrics:business`** - Shows business metrics
+- **`metrics:engagement`** - Shows engagement metrics
 
-Все варианты:
-- Вызывают `generate_metrics_report` с соответствующей категорией
-- Показывают кнопку "🔙 К общей панели" для возврата к основному dashboard
+All variants:
+- Call `generate_metrics_report` with the corresponding category
+- Show a "Back to overview" button to return to the main dashboard
 
-## Проверки Безопасности
+## Security Checks
 
-Оба обработчика проверяют права администратора перед выполнением:
+Both handlers verify admin rights before executing:
 
 ```rust
 let admin_username = ADMIN_USERNAME.as_str();
 let is_admin = !admin_username.is_empty() && q.from.username.as_deref() == Some(admin_username);
 
 if !is_admin {
-    bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
+    bot.send_message(chat_id, "You do not have permission to run this command.")
         .await?;
     return Ok(());
 }
 ```
 
-## Файлы Изменены
+## Modified Files
 
-- [src/telegram/menu.rs](src/telegram/menu.rs) (строки 1993-2073)
-  - Добавлен обработчик `analytics:*` callbacks
-  - Добавлен обработчик `metrics:*` callbacks
+- [src/telegram/menu.rs](src/telegram/menu.rs) (lines 1993-2073)
+  - Added `analytics:*` callback handler
+  - Added `metrics:*` callback handler
 
-## Тестирование
+## Testing
 
-Для проверки работы:
+To verify the fix:
 
-1. Запустите бота: `cargo run --release`
-2. Отправьте команду `/analytics` (от имени администратора)
-3. Проверьте кнопки:
-   - ✅ "🔄 Обновить" - должен обновить dashboard
-   - ✅ "📊 Детали" - должен показать меню категорий
-   - ✅ "🔙 Закрыть" - должен удалить сообщение
-4. В меню категорий проверьте:
-   - ✅ "⚡ Performance" - показывает метрики производительности
-   - ✅ "💰 Business" - показывает бизнес-метрики
-   - ✅ "👥 Engagement" - показывает метрики вовлеченности
-   - ✅ "🔙 Назад" - возврат к основному dashboard
+1. Start the bot: `cargo run --release`
+2. Send the `/analytics` command (as admin)
+3. Check the buttons:
+   - "Refresh" - should refresh the dashboard
+   - "Details" - should show the category menu
+   - "Close" - should delete the message
+4. In the category menu, check:
+   - "Performance" - shows performance metrics
+   - "Business" - shows business metrics
+   - "Engagement" - shows engagement metrics
+   - "Back" - returns to the main dashboard
 
-## Архитектура Callback Flow
+## Callback Flow Architecture
 
 ```
 /analytics command
-    ↓
+    |
 generate_analytics_dashboard()
-    ↓
+    |
 Message with inline keyboard:
-    [🔄 Обновить] [📊 Детали]
-    [🔙 Закрыть]
-    ↓
-User clicks button → CallbackQuery
-    ↓
+    [Refresh] [Details]
+    [Close]
+    |
+User clicks button -> CallbackQuery
+    |
 handle_menu_callback() receives query
-    ↓
-    ├─ "analytics:refresh" → Re-generate dashboard
-    ├─ "analytics:details" → Show category menu
-    │       ↓
-    │   [⚡ Performance] [💰 Business] [👥 Engagement] [🔙 Назад]
-    │       ↓
-    │   User clicks category → "metrics:performance"
-    │       ↓
-    │   generate_metrics_report(category)
-    │       ↓
-    │   Show detailed metrics + [🔙 К общей панели]
-    │
-    └─ "analytics:close" → Delete message
+    |
+    +-- "analytics:refresh" -> Re-generate dashboard
+    +-- "analytics:details" -> Show category menu
+    |       |
+    |   [Performance] [Business] [Engagement] [Back]
+    |       |
+    |   User clicks category -> "metrics:performance"
+    |       |
+    |   generate_metrics_report(category)
+    |       |
+    |   Show detailed metrics + [Back to overview]
+    |
+    +-- "analytics:close" -> Delete message
 ```
 
-## Примечания
+## Notes
 
-- Функции `generate_analytics_dashboard` и `generate_metrics_report` уже существовали в `src/telegram/analytics.rs` с видимостью `pub(crate)`
-- Не потребовалось изменять экспорты в `src/telegram/mod.rs`
-- Компиляция прошла успешно без ошибок
-- Все callback queries теперь корректно обрабатываются
+- The `generate_analytics_dashboard` and `generate_metrics_report` functions already existed in `src/telegram/analytics.rs` with `pub(crate)` visibility
+- No changes were needed to the exports in `src/telegram/mod.rs`
+- Compilation succeeded without errors
+- All callback queries are now correctly handled
 
-## Связанные Файлы
+## Related Files
 
-- [TELEGRAM_ANALYTICS_INTEGRATION.md](TELEGRAM_ANALYTICS_INTEGRATION.md) - Документация по интеграции команд
-- [HOW_TO_VIEW_METRICS.md](HOW_TO_VIEW_METRICS.md) - Руководство по просмотру метрик
-- [src/telegram/analytics.rs](src/telegram/analytics.rs) - Реализация команд аналитики
+- [TELEGRAM_ANALYTICS_INTEGRATION.md](TELEGRAM_ANALYTICS_INTEGRATION.md) - Command integration documentation
+- [HOW_TO_VIEW_METRICS.md](HOW_TO_VIEW_METRICS.md) - Metrics viewing guide
+- [src/telegram/analytics.rs](src/telegram/analytics.rs) - Analytics command implementation

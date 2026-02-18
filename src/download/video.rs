@@ -89,9 +89,17 @@ pub async fn download_and_send_video(
         // Global timeout for entire operation
         let result: Result<(), AppError> = match timeout(config::download::global_timeout(), async {
             // ── Phase 1: Download via pipeline ──
-            let phase = pipeline::download_phase(&bot_clone, chat_id, &url, &format, registry, &mut progress_msg)
-                .await
-                .map_err(|e| e.into_app_error())?;
+            let phase = pipeline::download_phase(
+                &bot_clone,
+                chat_id,
+                &url,
+                &format,
+                registry,
+                &mut progress_msg,
+                message_id,
+            )
+            .await
+            .map_err(|e| e.into_app_error())?;
 
             let DownloadPhaseResult {
                 output: download_output,
@@ -189,6 +197,8 @@ pub async fn download_and_send_video(
                     &current_caption,
                     thumbnail_url.as_deref(),
                     send_as_document,
+                    message_id,
+                    Some(artist.clone()),
                 )
                 .await?;
 
@@ -292,7 +302,7 @@ pub async fn download_and_send_video(
                     &bot_clone,
                     chat_id,
                     MessageId(msg_id),
-                    crate::telegram::emoji::THUMBS_UP,
+                    crate::telegram::success_reaction_for_format(Some("mp4")),
                 )
                 .await;
             }
@@ -305,6 +315,8 @@ pub async fn download_and_send_video(
                     chat_id: progress_msg.chat_id,
                     message_id: progress_msg.message_id,
                     lang: progress_msg.lang.clone(),
+                    style: progress_msg.style,
+                    source_badge: progress_msg.source_badge.clone(),
                 };
                 tokio::spawn(async move {
                     let _ = msg_for_clear
@@ -375,6 +387,7 @@ pub async fn download_and_send_video(
                     &pipeline_error,
                     &format,
                     alert_manager.as_ref(),
+                    message_id,
                 )
                 .await;
             }

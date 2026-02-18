@@ -31,7 +31,7 @@ pub(crate) async fn handle_audio_cut_callback(bot: Bot, q: CallbackQuery, db_poo
             .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
         {
             bot.answer_callback_query(callback_id)
-                .text("⭐ Эта функция доступна в Premium за ~$6/мес → /plan")
+                .text("⭐ This feature is available in Premium for ~$6/month → /plan")
                 .show_alert(true)
                 .await?;
             return Ok(());
@@ -43,7 +43,7 @@ pub(crate) async fn handle_audio_cut_callback(bot: Bot, q: CallbackQuery, db_poo
                     *session_id
                 } else {
                     bot.answer_callback_query(callback_id)
-                        .text("❌ Неверный запрос")
+                        .text("❌ Invalid request")
                         .await?;
                     return Ok(());
                 };
@@ -53,7 +53,7 @@ pub(crate) async fn handle_audio_cut_callback(bot: Bot, q: CallbackQuery, db_poo
                     Some(session) => session,
                     None => {
                         bot.answer_callback_query(callback_id)
-                            .text("❌ Сессия не найдена")
+                            .text("❌ Session not found")
                             .show_alert(true)
                             .await?;
                         return Ok(());
@@ -62,7 +62,7 @@ pub(crate) async fn handle_audio_cut_callback(bot: Bot, q: CallbackQuery, db_poo
 
                 if session.is_expired() {
                     bot.answer_callback_query(callback_id)
-                        .text("❌ Сессия истекла (24 часа). Скачайте трек заново.")
+                        .text("❌ Session expired (24 hours). Please download the track again.")
                         .show_alert(true)
                         .await?;
                     return Ok(());
@@ -86,14 +86,14 @@ pub(crate) async fn handle_audio_cut_callback(bot: Bot, q: CallbackQuery, db_poo
                 }
 
                 let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
-                    "❌ Отмена".to_string(),
+                    "❌ Cancel".to_string(),
                     "ac:cancel".to_string(),
                 )]]);
 
                 crate::telegram::send_message_markdown_v2(
                     &bot,
                     chat_id,
-                    "✂️ Отправь интервалы для вырезки аудио в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\n\nПример: `00:10-00:25, 01:00-01:10`\n\nИли напиши `отмена`\\.",
+                    "✂️ Send time intervals for audio trimming in `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss` format\\.\nMultiple intervals separated by commas\\.\n\nExample: `00:10-00:25, 01:00-01:10`\n\nOr type `cancel`\\.",
                     Some(keyboard),
                 )
                 .await?;
@@ -328,7 +328,7 @@ pub async fn handle_audio_effects_callback(
     let conn = db::get_connection(&db_pool)?;
     if !db::is_premium_or_vip(&conn, chat_id.0)? {
         bot.answer_callback_query(callback_id)
-            .text("⭐ Эта функция доступна в Premium за ~$6/мес → /plan")
+            .text("⭐ This feature is available in Premium for ~$6/month → /plan")
             .show_alert(true)
             .await?;
         return Ok(());
@@ -342,7 +342,7 @@ pub async fn handle_audio_effects_callback(
 
             if session.is_expired() {
                 bot.answer_callback_query(callback_id)
-                    .text("❌ Сессия истекла (24 часа). Скачайте трек заново.")
+                    .text("❌ Session expired (24 hours). Please download the track again.")
                     .show_alert(true)
                     .await?;
                 return Ok(());
@@ -368,7 +368,7 @@ pub async fn handle_audio_effects_callback(
 
             if session.processing {
                 bot.answer_callback_query(callback_id)
-                    .text("⏳ Подождите, идёт обработка...")
+                    .text("⏳ Please wait, processing...")
                     .await?;
                 return Ok(());
             }
@@ -398,7 +398,7 @@ pub async fn handle_audio_effects_callback(
 
             if session.processing {
                 bot.answer_callback_query(callback_id)
-                    .text("⏳ Подождите, идёт обработка...")
+                    .text("⏳ Please wait, processing...")
                     .await?;
                 return Ok(());
             }
@@ -428,7 +428,7 @@ pub async fn handle_audio_effects_callback(
 
             if session.processing {
                 bot.answer_callback_query(callback_id)
-                    .text("⏳ Подождите, идёт обработка...")
+                    .text("⏳ Please wait, processing...")
                     .await?;
                 return Ok(());
             }
@@ -456,7 +456,7 @@ pub async fn handle_audio_effects_callback(
 
             if session.processing {
                 bot.answer_callback_query(callback_id)
-                    .text("⏳ Подождите, идёт обработка...")
+                    .text("⏳ Please wait, processing...")
                     .await?;
                 return Ok(());
             }
@@ -502,7 +502,7 @@ pub async fn handle_audio_effects_callback(
 
             if session.processing {
                 bot.answer_callback_query(callback_id)
-                    .text("⏳ Подождите, идёт обработка...")
+                    .text("⏳ Please wait, processing...")
                     .await?;
                 return Ok(());
             }
@@ -518,7 +518,7 @@ pub async fn handle_audio_effects_callback(
                 chat_id,
                 message_id,
                 format!(
-                    "⏳ *Обрабатываю аудио\\.\\.\\.*\n\n\
+                    "⏳ *Processing audio\\.\\.\\.*\n\n\
                     Pitch: {}\n\
                     Tempo: {}x\n\
                     Bass: {}\n\
@@ -535,9 +535,9 @@ pub async fn handle_audio_effects_callback(
                         crate::download::audio_effects::MorphProfile::Wide => "Wide",
                     }),
                     if session.duration > 300 {
-                        "Это может занять до 30 секунд\\.\\.\\."
+                        "This may take up to 30 seconds\\.\\.\\."
                     } else {
-                        "Подождите несколько секунд\\.\\.\\."
+                        "Please wait a few seconds\\.\\.\\."
                     }
                 ),
                 None,
@@ -598,7 +598,7 @@ pub async fn handle_audio_effects_callback(
 
             if session.is_expired() {
                 bot.answer_callback_query(callback_id)
-                    .text("❌ Сессия истекла (24 часа). Скачайте трек заново.")
+                    .text("❌ Session expired (24 hours). Please download the track again.")
                     .show_alert(true)
                     .await?;
                 return Ok(());
@@ -658,7 +658,7 @@ pub async fn handle_audio_effects_callback(
                     .duration(session.duration)
                     .await?;
             } else {
-                bot.send_message(chat_id, "❌ Оригинальный файл не найден. Возможно, сессия истекла.")
+                bot.send_message(chat_id, "❌ Original file not found. The session may have expired.")
                     .await?;
             }
         }
@@ -775,7 +775,7 @@ pub(crate) async fn process_audio_effects(
                 error_msg = format!("{} …", trimmed);
             }
 
-            let error_text = format!("❌ *Ошибка обработки*\n\n{}", escape_markdown(&error_msg));
+            let error_text = format!("❌ *Processing error*\n\n{}", escape_markdown(&error_msg));
 
             edit_caption_or_text(&bot, chat_id, editor_message_id, error_text, None).await?;
         }

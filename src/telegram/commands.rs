@@ -233,7 +233,7 @@ pub async fn handle_message(
             }
         }
 
-        // Video clip sessions (from /downloads or /cuts -> ✂️ Вырезка)
+        // Video clip sessions (from /downloads or /cuts -> ✂️ Clip)
         if !text.trim().starts_with('/') {
             if let Ok(conn) = db::get_connection(&db_pool) {
                 if let Ok(Some(session)) = db::get_active_video_clip_session(&conn, msg.chat.id.0) {
@@ -284,14 +284,14 @@ pub async fn handle_message(
                         return Ok(None);
                     } else {
                         let extra_note = if session.output_kind == "video_note" {
-                            "\n\n💡 Если длительность превысит 60 секунд \\(лимит Telegram для кружков\\), видео будет автоматически обрезано\\."
+                            "\n\n💡 If duration exceeds 60 seconds \\(Telegram limit for video notes\\), video will be automatically trimmed\\."
                         } else {
                             ""
                         };
                         bot.send_message(
                             msg.chat.id,
                             format!(
-                                "❌ Не понял интервалы\\.\n\nОтправь в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\nПример: `00:10-00:25, 01:00-01:10`\n\nИли команды: `full`, `first30`, `last30`, `middle30`\\.\n\n💡 Можно добавить скорость: `first30 2x`, `full 1\\.5x`\\.\n\nИли напиши `отмена`\\.{extra_note}",
+                                "❌ Couldn't parse intervals\\.\n\nSend in format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nMultiple separated by commas\\.\nExample: `00:10-00:25, 01:00-01:10`\n\nOr commands: `full`, `first30`, `last30`, `middle30`\\.\n\n💡 You can add speed: `first30 2x`, `full 1\\.5x`\\.\n\nOr type `cancel`\\.{extra_note}",
                             ),
                         )
                         .parse_mode(ParseMode::MarkdownV2)
@@ -836,14 +836,14 @@ fn parse_command_segment(text: &str, video_duration: Option<i64>) -> Option<(i64
     // We'll just parse the segment here, speed will be handled separately
     let segment_part = normalized.split_whitespace().next().unwrap_or(&normalized);
 
-    // full - всё видео
+    // full - entire video
     if segment_part == "full" {
         let duration = video_duration?;
-        let end = duration.min(60); // Для кружков максимум 60 секунд
+        let end = duration.min(60); // Max 60 seconds for video notes
         return Some((0, end, format!("00:00-{}", format_timestamp(end))));
     }
 
-    // first<N> - первые N секунд (first30, first15, etc.)
+    // first<N> - first N seconds (first30, first15, etc.)
     if let Some(num_str) = segment_part.strip_prefix("first") {
         if let Ok(secs) = num_str.parse::<i64>() {
             if secs > 0 && secs <= 60 {
@@ -852,7 +852,7 @@ fn parse_command_segment(text: &str, video_duration: Option<i64>) -> Option<(i64
         }
     }
 
-    // last<N> - последние N секунд (last30, last15, etc.)
+    // last<N> - last N seconds (last30, last15, etc.)
     if let Some(num_str) = segment_part.strip_prefix("last") {
         if let Ok(secs) = num_str.parse::<i64>() {
             let duration = video_duration?;
@@ -867,7 +867,7 @@ fn parse_command_segment(text: &str, video_duration: Option<i64>) -> Option<(i64
         }
     }
 
-    // middle<N> - N секунд из середины (middle30, middle15, etc.)
+    // middle<N> - N seconds from the middle (middle30, middle15, etc.)
     if let Some(num_str) = segment_part.strip_prefix("middle") {
         if let Ok(secs) = num_str.parse::<i64>() {
             let duration = video_duration?;
@@ -1360,7 +1360,7 @@ pub async fn process_video_clip(
     let temp_dir = std::path::PathBuf::from(crate::core::config::TEMP_FILES_DIR.as_str()).join("doradura_clip");
     if let Err(e) = tokio::fs::create_dir_all(&temp_dir).await {
         log::error!("❌ Failed to create temp directory {:?}: {}", temp_dir, e);
-        bot.send_message(chat_id, "❌ Ошибка создания временной директории")
+        bot.send_message(chat_id, "❌ Failed to create temporary directory")
             .await
             .ok();
         return Err(AppError::Io(e));
@@ -2276,12 +2276,12 @@ pub async fn handle_info_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>) -
                 if let Some(duration) = metadata.duration {
                     let minutes = duration / 60;
                     let seconds = duration % 60;
-                    response.push_str(&format!("⏱ Длительность: {}:{:02}\n\n", minutes, seconds));
+                    response.push_str(&format!("⏱ Duration: {}:{:02}\n\n", minutes, seconds));
                 }
 
                 // Video formats section
                 if let Some(ref formats) = metadata.video_formats {
-                    response.push_str("📹 *Видео форматы \\(MP4\\):*\n");
+                    response.push_str("📹 *Video formats \\(MP4\\):*\n");
 
                     // Filter and sort formats by quality
                     let quality_order = ["1080p", "720p", "480p", "360p"];
@@ -2306,7 +2306,7 @@ pub async fn handle_info_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>) -
 
                     if available_formats.is_empty() {
                         log::warn!("⚠️  No formats matched quality_order filter");
-                        response.push_str("  • Нет доступных форматов\n");
+                        response.push_str("  • No available formats\n");
                     } else {
                         for format in available_formats {
                             let quality = escape_markdown(&format.quality);
@@ -2322,7 +2322,7 @@ pub async fn handle_info_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>) -
                                 }
                                 response.push('\n');
                             } else {
-                                response.push_str(&format!("  • {} \\- размер неизвестен", quality));
+                                response.push_str(&format!("  • {} \\- size unknown", quality));
 
                                 if let Some(ref resolution) = format.resolution {
                                     let res = escape_markdown(resolution);
@@ -2336,21 +2336,21 @@ pub async fn handle_info_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>) -
                 }
 
                 // Audio format section
-                response.push_str("🎧 *Аудио формат \\(MP3\\):*\n");
+                response.push_str("🎧 *Audio format \\(MP3\\):*\n");
                 if let Some(size) = metadata.filesize {
                     let size_mb = size as f64 / (1024.0 * 1024.0);
                     let size_str = escape_markdown(&format!("{:.1} MB", size_mb));
                     response.push_str(&format!("  • 320 kbps \\- {}\n", size_str));
                 } else {
-                    response.push_str("  • 320 kbps \\- размер неизвестен\n");
+                    response.push_str("  • 320 kbps \\- size unknown\n");
                 }
                 response.push('\n');
 
                 // Additional info
-                response.push_str("💡 *Как скачать:*\n");
-                response.push_str("1\\. Отправь мне ссылку\n");
-                response.push_str("2\\. Выбери формат и качество в меню\n");
-                response.push_str("3\\. Получи файл\\!");
+                response.push_str("💡 *How to download:*\n");
+                response.push_str("1\\. Send me a link\n");
+                response.push_str("2\\. Choose format and quality from the menu\n");
+                response.push_str("3\\. Get your file\\!");
 
                 log::info!("📝 Response formatted, length: {} chars", response.len());
                 log::debug!("Response preview: {}", &response[..response.len().min(200)]);
@@ -2389,7 +2389,7 @@ pub async fn handle_info_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>) -
                 }
 
                 let user_error = sanitize_user_error_message(&e.to_string());
-                let error_msg = format!("❌ Не удалось получить информацию о файле:\n{}", user_error);
+                let error_msg = format!("❌ Failed to get file information:\n{}", user_error);
                 log::info!("📤 Sending error message...");
                 match bot.send_message(msg.chat.id, error_msg).await {
                     Ok(_) => {

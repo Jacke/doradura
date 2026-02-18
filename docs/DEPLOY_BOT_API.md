@@ -1,84 +1,84 @@
-# Деплой Telegram Bot API на Railway
+# Deploying Telegram Bot API on Railway
 
-## Доступные варианты Dockerfile
+## Available Dockerfile options
 
-1. **Dockerfile.bot-api** - с захардкоженными credentials (быстрый старт)
-2. **Dockerfile.bot-api.secure** - с использованием ENV переменных (рекомендуется)
+1. **Dockerfile.bot-api** - with hardcoded credentials (quick start)
+2. **Dockerfile.bot-api.secure** - using ENV variables (recommended)
 
-## Рекомендуемый способ: Деплой через Railway Web Dashboard
+## Recommended method: Deploy via Railway Web Dashboard
 
-### Шаг 1: Создайте новый сервис
+### Step 1: Create a new service
 
-1. Откройте [Railway Dashboard](https://railway.app/dashboard)
-2. Выберите ваш проект или создайте новый
-3. Нажмите "New Service" → "GitHub Repo"
-4. Выберите репозиторий `doradura`
+1. Open [Railway Dashboard](https://railway.app/dashboard)
+2. Select your project or create a new one
+3. Click "New Service" → "GitHub Repo"
+4. Select the `doradura` repository
 
-### Шаг 2: Настройте сервис
+### Step 2: Configure the service
 
-1. В настройках сервиса найдите секцию "Settings"
-2. Измените следующие параметры:
+1. In the service settings, find the "Settings" section
+2. Change the following parameters:
    - **Service Name**: `telegram-bot-api`
    - **Dockerfile Path**: `Dockerfile.bot-api`
-   - **Custom Start Command**: (оставьте пустым, команда уже в Dockerfile)
+   - **Custom Start Command**: (leave empty, command is already in Dockerfile)
 
-### Шаг 3: Настройте порты
+### Step 3: Configure ports
 
-1. В секции "Settings" → "Networking"
-2. Добавьте публичный домен (если нужен внешний доступ)
-3. Убедитесь что порт 8081 прокинут
+1. In "Settings" → "Networking"
+2. Add a public domain (if external access is needed)
+3. Make sure port 8081 is exposed
 
-### Шаг 4: Deploy
+### Step 4: Deploy
 
-1. Railway автоматически начнет деплой после настройки
-2. Следите за логами в разделе "Deployments"
-3. После успешного деплоя сервис будет доступен
+1. Railway will automatically start deployment after configuration
+2. Monitor logs in the "Deployments" section
+3. After successful deployment the service will be available
 
-## Конфигурация
+## Configuration
 
-Сервис настроен со следующими параметрами:
-- **API ID**: YOUR_API_ID (получить на https://my.telegram.org)
+The service is configured with the following parameters:
+- **API ID**: YOUR_API_ID (obtain at https://my.telegram.org)
 - **API Hash**: YOUR_API_HASH
 - **HTTP Port**: 8081
 - **Mode**: --local
 
-## Проверка работы
+## Verifying the deployment
 
-После деплоя проверьте:
+After deployment, check:
 
 ```bash
 curl https://your-service-url.railway.app/
 ```
 
-Или в логах Railway должны быть сообщения об успешном запуске.
+Or check Railway logs for successful startup messages.
 
-## Альтернативный метод: Railway CLI (если заработает)
+## Alternative method: Railway CLI (if available)
 
 ```bash
-# Убедитесь что авторизованы
+# Make sure you are logged in
 railway login
 
-# Создайте новый проект или подключитесь к существующему
+# Create a new project or connect to existing
 railway link
 
-# Задеплойте с указанием на Dockerfile
+# Deploy with Dockerfile specified
 railway up --dockerfile Dockerfile.bot-api
 ```
 
-## Использование в основном боте
+## Using with the main bot
 
-После деплоя обновите переменную окружения в основном сервисе бота:
+After deployment, update the environment variable in the main bot service:
 
 ```bash
 BOT_API_URL=https://your-bot-api-service.railway.app
 ```
 
-## Важные замечания
+## Important notes
 
-⚠️ **Безопасность**: API ID и Hash захардкожены в Dockerfile. Для production рекомендуется:
+Security: API ID and Hash are hardcoded in the Dockerfile. For production it is recommended to:
 
-1. Использовать переменные окружения Railway
-2. Создать отдельный Dockerfile который принимает ENV переменные
-3. Настроить secrets в Railway Dashboard
+1. Use Railway environment variables
+2. Create a separate Dockerfile that accepts ENV variables
+3. Configure secrets in Railway Dashboard
 
-⚠️ **Персистентность**: Данные bot-api хранятся в контейнере. Для сохранения данных между деплоями нужно настроить Railway Volumes.
+Persistence: Bot API data is stored in the container. To persist data between deployments, configure Railway Volumes.

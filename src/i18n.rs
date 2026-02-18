@@ -20,7 +20,7 @@ static_loader! {
 /// Supported languages (code, human-readable name).
 pub static SUPPORTED_LANGS: &[(&str, &str)] = &[
     ("en", "English"),
-    ("ru", "Русский"),
+    ("ru", "Russian"),
     ("fr", "Français"),
     ("de", "Deutsch"),
 ];
@@ -225,7 +225,7 @@ mod tests {
     #[test]
     fn test_language_name() {
         assert_eq!(language_name("en"), "English");
-        assert_eq!(language_name("ru"), "Русский");
+        assert_eq!(language_name("ru"), "Russian");
         assert_eq!(language_name("fr"), "Français");
         assert_eq!(language_name("de"), "Deutsch");
         assert_eq!(language_name("EN"), "English"); // case insensitive

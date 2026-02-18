@@ -6,7 +6,9 @@ use teloxide::dispatching::{UpdateFilterExt, UpdateHandler};
 use teloxide::prelude::*;
 use teloxide::types::Message;
 
-use super::commands::{handle_cuts_command, handle_downloads_command, handle_start_command, handle_uploads_command};
+use super::commands::{
+    handle_cuts_command, handle_downloads_command, handle_start_command, handle_style_command, handle_uploads_command,
+};
 use super::types::{HandlerDeps, HandlerError};
 use super::uploads::media_upload_handler;
 use crate::i18n;
@@ -445,6 +447,9 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                     Command::Subscriptions => {
                         crate::telegram::subscriptions::handle_subscriptions_command(&bot, msg.chat.id, &deps.db_pool)
                             .await;
+                    }
+                    Command::Style => {
+                        handle_style_command(&bot, &msg, &deps).await?;
                     }
                 }
                 Ok(())

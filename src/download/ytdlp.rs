@@ -6,16 +6,16 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::process::Command as TokioCommand;
 use tokio::time::{timeout, Duration};
 
-/// Интервал автообновления yt-dlp (1 час)
+/// Auto-update interval for yt-dlp (1 hour)
 const AUTO_UPDATE_INTERVAL_HOURS: u64 = 1;
 
-/// URL для скачивания nightly билдов yt-dlp
+/// URL for downloading yt-dlp nightly builds
 const NIGHTLY_URL: &str = "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp";
 
-/// Флаг для остановки фонового обновления
+/// Flag to stop the background auto-update task
 static STOP_AUTO_UPDATE: AtomicBool = AtomicBool::new(false);
 
-/// Получает текущую версию yt-dlp
+/// Returns the current yt-dlp version.
 pub fn get_current_version() -> String {
     let ytdl_bin = &*config::YTDL_BIN;
     Command::new(ytdl_bin)
@@ -25,14 +25,14 @@ pub fn get_current_version() -> String {
         .unwrap_or_else(|_| "unknown".to_string())
 }
 
-/// Скачивает и устанавливает последнюю nightly версию yt-dlp
+/// Downloads and installs the latest yt-dlp nightly build.
 async fn download_nightly_ytdlp() -> Result<(String, String), AppError> {
     let ytdl_bin = &*config::YTDL_BIN;
     let old_version = get_current_version();
 
     log::info!("Downloading yt-dlp nightly build...");
 
-    // Скачиваем через wget
+    // Download via wget
     let download_result = timeout(
         Duration::from_secs(120),
         TokioCommand::new("wget")
@@ -44,7 +44,7 @@ async fn download_nightly_ytdlp() -> Result<(String, String), AppError> {
     match download_result {
         Ok(Ok(output)) => {
             if !output.status.success() {
-                // Пробуем curl как fallback
+                // Try curl as fallback
                 log::info!("wget failed, trying curl...");
 
                 let curl_result = timeout(
@@ -101,7 +101,7 @@ async fn download_nightly_ytdlp() -> Result<(String, String), AppError> {
     Ok((old_version, new_version))
 }
 
-/// Проверяет и обновляет yt-dlp до последней nightly версии при старте бота
+/// Checks and updates yt-dlp to the latest nightly version at bot startup.
 pub async fn check_and_update_ytdlp() -> Result<(), AppError> {
     let old_version = get_current_version();
     log::info!("Current yt-dlp version: {}", old_version);
@@ -123,9 +123,9 @@ pub async fn check_and_update_ytdlp() -> Result<(), AppError> {
     Ok(())
 }
 
-/// Запускает фоновую задачу автообновления yt-dlp
+/// Starts the background yt-dlp auto-update task.
 ///
-/// Обновляет yt-dlp каждые N часов для предотвращения 403 ошибок от YouTube.
+/// Updates yt-dlp every N hours to prevent 403 errors from YouTube.
 pub fn start_auto_update_task() {
     STOP_AUTO_UPDATE.store(false, Ordering::SeqCst);
 
@@ -138,10 +138,10 @@ pub fn start_auto_update_task() {
         );
 
         loop {
-            // Ждём интервал
+            // Wait for the interval
             tokio::time::sleep(interval).await;
 
-            // Проверяем флаг остановки
+            // Check the stop flag
             if STOP_AUTO_UPDATE.load(Ordering::SeqCst) {
                 log::info!("yt-dlp auto-update task stopped");
                 break;
@@ -165,31 +165,31 @@ pub fn start_auto_update_task() {
     });
 }
 
-/// Останавливает фоновую задачу автообновления
+/// Stops the background auto-update task.
 pub fn stop_auto_update_task() {
     STOP_AUTO_UPDATE.store(true, Ordering::SeqCst);
     log::info!("yt-dlp auto-update task stop requested");
 }
 
-/// Проверяет, поддерживается ли URL yt-dlp
+/// Checks whether a URL is supported by yt-dlp.
 ///
-/// Выполняет быструю проверку, может ли yt-dlp обработать данный URL.
-/// Использует команду `yt-dlp --dump-json` для проверки без скачивания.
+/// Performs a quick check to see whether yt-dlp can handle the given URL.
+/// Uses `yt-dlp --dump-json` to verify without downloading.
 ///
 /// # Arguments
 ///
-/// * `url` - URL для проверки
+/// * `url` - URL to check
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(true)` если URL поддерживается, `Ok(false)` если нет,
-/// или ошибку при выполнении команды.
+/// Returns `Ok(true)` if the URL is supported, `Ok(false)` if not,
+/// or an error if the command fails.
 pub async fn is_url_supported(url: &url::Url) -> Result<bool, AppError> {
     let ytdl_bin = &*config::YTDL_BIN;
 
-    // Быстрая проверка через --dump-json (не скачивает файл)
+    // Quick check via --dump-json (does not download the file)
     let check_result = timeout(
-        std::time::Duration::from_secs(10), // 10 секунд на проверку
+        std::time::Duration::from_secs(10), // 10 seconds for the check
         TokioCommand::new(ytdl_bin)
             .args(["--dump-json", "--no-playlist", url.as_str()])
             .output(),
@@ -199,7 +199,7 @@ pub async fn is_url_supported(url: &url::Url) -> Result<bool, AppError> {
     match check_result {
         Ok(Ok(output)) => {
             if output.status.success() {
-                // Проверяем, что в выводе есть хотя бы минимальная информация
+                // Verify that the output contains at least minimal information
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 Ok(stdout.contains("\"id\"") || stdout.contains("\"title\""))
             } else {
@@ -207,24 +207,24 @@ pub async fn is_url_supported(url: &url::Url) -> Result<bool, AppError> {
             }
         }
         Ok(Err(_)) => {
-            // Если команда не выполнилась, предполагаем что URL не поддерживается
+            // If the command failed to run, assume the URL is not supported
             Ok(false)
         }
         Err(_) => {
-            // Таймаут - считаем что URL может быть поддержан, но проверка заняла слишком долго
+            // Timeout — assume the URL may be supported but the check took too long
             log::warn!("URL support check timed out for: {}", url);
-            Ok(true) // Предполагаем поддержку при таймауте
+            Ok(true) // Assume support on timeout
         }
     }
 }
 
-/// Получает список поддерживаемых сервисов yt-dlp
+/// Returns the list of services supported by yt-dlp.
 ///
-/// Использует команду `yt-dlp --list-extractors` для получения списка всех поддерживаемых экстракторов.
+/// Uses `yt-dlp --list-extractors` to obtain the full list of supported extractors.
 ///
 /// # Returns
 ///
-/// Возвращает вектор строк с названиями поддерживаемых сервисов или ошибку.
+/// Returns a vector of extractor name strings or an error.
 pub async fn get_supported_extractors() -> Result<Vec<String>, AppError> {
     let ytdl_bin = &*config::YTDL_BIN;
 
@@ -261,15 +261,15 @@ pub async fn get_supported_extractors() -> Result<Vec<String>, AppError> {
     Ok(extractors)
 }
 
-/// Проверяет, поддерживается ли конкретный сервис (VK, TikTok, Instagram, Twitch, Spotify)
+/// Checks whether a specific service (VK, TikTok, Instagram, Twitch, Spotify) is supported.
 ///
 /// # Arguments
 ///
-/// * `service_name` - Название сервиса (например, "vk", "tiktok", "instagram", "twitch", "spotify")
+/// * `service_name` - Service name (e.g. "vk", "tiktok", "instagram", "twitch", "spotify")
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(true)` если сервис поддерживается, `Ok(false)` если нет.
+/// Returns `true` if the service is supported, `false` otherwise.
 pub async fn is_service_supported(service_name: &str) -> bool {
     match get_supported_extractors().await {
         Ok(extractors) => {
@@ -283,16 +283,16 @@ pub async fn is_service_supported(service_name: &str) -> bool {
                 "Failed to get supported extractors: {}. Assuming service is supported.",
                 e
             );
-            true // В случае ошибки предполагаем поддержку
+            true // Assume support on error
         }
     }
 }
 
-/// Выводит текущую версию yt-dlp
+/// Prints the current yt-dlp version.
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(())` при успехе или ошибку при неудаче.
+/// Returns `Ok(())` on success or an error on failure.
 pub async fn print_ytdlp_version() -> Result<(), AppError> {
     let ytdl_bin = &*config::YTDL_BIN;
 
@@ -317,13 +317,13 @@ pub async fn print_ytdlp_version() -> Result<(), AppError> {
     Ok(())
 }
 
-/// Принудительно обновляет yt-dlp до последней nightly версии
+/// Force-updates yt-dlp to the latest nightly version.
 ///
-/// Использует nightly builds для лучшей совместимости с YouTube.
+/// Uses nightly builds for best compatibility with YouTube.
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(())` при успехе или ошибку при неудаче.
+/// Returns `Ok(())` on success or an error on failure.
 pub async fn force_update_ytdlp() -> Result<(), AppError> {
     log::info!("Force updating yt-dlp from nightly builds...");
     println!("Force updating yt-dlp to the latest nightly version...");

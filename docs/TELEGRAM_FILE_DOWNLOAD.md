@@ -1,64 +1,64 @@
-# Скачивание файлов из Telegram
+# Downloading Files from Telegram
 
-## Обзор
+## Overview
 
-Бот теперь поддерживает скачивание файлов из Telegram по их `file_id`. Эта функциональность полезна для восстановления файлов, которые были отправлены ботом, но отсутствуют на локальном сервере.
+The bot supports downloading files from Telegram by their `file_id`. This functionality is useful for recovering files that were sent by the bot but are no longer present on the local server.
 
-## Возможности
+## Features
 
-- ✅ Скачивание любых файлов из Telegram по `file_id`
-- ✅ Автоматическое сохранение в директорию `./downloads/`
-- ✅ Сохранение оригинального имени файла из Telegram
-- ✅ Поддержка всех типов файлов (документы, фото, видео, аудио)
-- ✅ Только для администраторов
-- ✅ Логирование всех операций
+- Download any files from Telegram by `file_id`
+- Automatic saving to the `./downloads/` directory
+- Preserves the original filename from Telegram
+- Supports all file types (documents, photos, videos, audio)
+- Admin-only access
+- Logging of all operations
 
-## Административная команда
+## Admin Command
 
 ### `/download_tg <file_id>`
 
-Скачивает файл из Telegram и сохраняет его локально.
+Downloads a file from Telegram and saves it locally.
 
-**Доступ**: Только для администраторов
+**Access**: Admin only
 
-**Синтаксис**:
+**Syntax**:
 ```
 /download_tg <file_id>
 ```
 
-**Пример использования**:
+**Usage example**:
 ```
 /download_tg BQACAgIAAxkBAAIBCGXxxx...
 ```
 
-**Ответ бота при успехе**:
+**Bot response on success**:
 ```
-✅ Файл успешно скачан!
+File downloaded successfully!
 
-📁 Путь: ./downloads/document.pdf
-📄 Имя: document.pdf
-📊 Размер: 2.45 MB
-🆔 File ID: BQACAgIAAxkBAAIBCGXxxx...
-```
-
-**Ответ бота при ошибке**:
-```
-❌ Ошибка при скачивании файла:
-
-[Описание ошибки]
-
-Возможные причины:
-• Неверный file_id
-• Файл был удален из Telegram
-• Файл слишком старый (>1 часа для не-документов)
-• Нет прав доступа к файлу
+Path: ./downloads/document.pdf
+Name: document.pdf
+Size: 2.45 MB
+File ID: BQACAgIAAxkBAAIBCGXxxx...
 ```
 
-## Как получить file_id?
+**Bot response on error**:
+```
+Error downloading file:
 
-### Способ 1: Из базы данных бота
+[Error description]
 
-Если файл был отправлен ботом и сохранен в истории:
+Possible causes:
+- Invalid file_id
+- File was deleted from Telegram
+- File is too old (>1 hour for non-documents)
+- No access rights to the file
+```
+
+## How to get a file_id?
+
+### Method 1: From the bot's database
+
+If the file was sent by the bot and saved in history:
 
 ```sql
 SELECT file_id, title FROM download_history
@@ -66,29 +66,29 @@ WHERE user_id = 123456789
 ORDER BY downloaded_at DESC;
 ```
 
-### Способ 2: Через Telegram Bot API
+### Method 2: Via Telegram Bot API
 
-1. Отправьте файл боту (или переслать существующее сообщение с файлом)
-2. Используйте метод `getUpdates` или вебхук для получения `file_id`
-3. Для документов: `message.document.file_id`
-4. Для фото: `message.photo[last].file_id`
-5. Для видео: `message.video.file_id`
-6. Для аудио: `message.audio.file_id`
+1. Send a file to the bot (or forward an existing message with a file)
+2. Use the `getUpdates` method or webhook to get the `file_id`
+3. For documents: `message.document.file_id`
+4. For photos: `message.photo[last].file_id`
+5. For videos: `message.video.file_id`
+6. For audio: `message.audio.file_id`
 
-### Способ 3: Логи бота
+### Method 3: Bot logs
 
-При отправке файлов бот логирует `file_id`:
+When sending files, the bot logs the `file_id`:
 ```
 [INFO] Sent audio file: file_id = BQACAgIAAxkBAAIBCGXxxx...
 ```
 
-## Программное использование
+## Programmatic Usage
 
-### Функция `download_file_from_telegram`
+### Function `download_file_from_telegram`
 
-Основная функция для скачивания файлов из Telegram.
+The main function for downloading files from Telegram.
 
-**Сигнатура**:
+**Signature**:
 ```rust
 pub async fn download_file_from_telegram(
     bot: &Bot,
@@ -97,62 +97,62 @@ pub async fn download_file_from_telegram(
 ) -> Result<PathBuf>
 ```
 
-**Параметры**:
-- `bot` - Экземпляр Telegram бота
-- `file_id` - Telegram file_id файла для скачивания
-- `destination_path` - Опциональный путь для сохранения файла. Если `None`, файл сохраняется в `./downloads/`
+**Parameters**:
+- `bot` - Telegram bot instance
+- `file_id` - Telegram file_id of the file to download
+- `destination_path` - Optional path to save the file. If `None`, the file is saved to `./downloads/`
 
-**Возвращает**:
-- `Ok(PathBuf)` - Путь к скачанному файлу
-- `Err(anyhow::Error)` - Ошибка при скачивании
+**Returns**:
+- `Ok(PathBuf)` - Path to the downloaded file
+- `Err(anyhow::Error)` - Download error
 
-**Пример использования в коде**:
+**Code usage example**:
 ```rust
 use doradura::telegram::download_file_from_telegram;
 use std::path::PathBuf;
 
-// Скачать в директорию по умолчанию (./downloads/)
+// Download to default directory (./downloads/)
 let path = download_file_from_telegram(&bot, "BQACAgIAAxkBAAIBCGXxxx...", None).await?;
-println!("Файл сохранен: {:?}", path);
+println!("File saved: {:?}", path);
 
-// Скачать в конкретное место
+// Download to a specific location
 let custom_path = PathBuf::from("./backups/my_file.pdf");
 let path = download_file_from_telegram(&bot, "BQACAgIAAxkBAAIBCGXxxx...", Some(custom_path)).await?;
-println!("Файл сохранен: {:?}", path);
+println!("File saved: {:?}", path);
 ```
 
-## Ограничения Telegram API
+## Telegram API Limitations
 
-### Срок хранения файлов
+### File retention periods
 
-Telegram хранит файлы на своих серверах с разными сроками в зависимости от типа:
+Telegram stores files on its servers with different retention periods depending on the type:
 
-| Тип файла | Срок хранения |
-|-----------|---------------|
-| Документы | Бессрочно (пока не удалены пользователем) |
-| Фото | 1 час после загрузки |
-| Видео/Аудио | 1 час после загрузки |
-| Voice/Video messages | 1 час после загрузки |
+| File type | Retention period |
+|-----------|-----------------|
+| Documents | Indefinitely (until deleted by the user) |
+| Photos | 1 hour after upload |
+| Video/Audio | 1 hour after upload |
+| Voice/Video messages | 1 hour after upload |
 
-⚠️ **Важно**: Для надежного восстановления файлов используйте тип "document" при отправке через бота.
+**Important**: For reliable file recovery, use the "document" type when sending via the bot.
 
-### Размер файлов
+### File sizes
 
-- Telegram Bot API поддерживает скачивание файлов до **20 МБ**
-- При использовании локального Telegram Bot API Server лимит зависит от режима запуска. Если сервер запущен без `--local`, он обычно наследует ограничения официального Bot API.
+- The Telegram Bot API supports downloading files up to **20 MB**
+- When using a local Telegram Bot API Server, the limit depends on the startup mode. If the server is launched without `--local`, it generally inherits the official Bot API limits.
 
-Текущая конфигурация бота использует локальный Bot API Server (если установлен `BOT_API_URL`), поэтому поддерживаются большие файлы.
+The current bot configuration uses a local Bot API Server (if `BOT_API_URL` is set), so larger files are supported.
 
-## Директория загрузок
+## Download Directory
 
-По умолчанию все файлы сохраняются в директорию:
+By default all files are saved to:
 ```
 ./downloads/
 ```
 
-Директория создается автоматически при первом скачивании.
+The directory is created automatically on the first download.
 
-**Структура**:
+**Structure**:
 ```
 ./downloads/
 ├── document_123.pdf
@@ -161,52 +161,52 @@ Telegram хранит файлы на своих серверах с разны�
 └── file_ABC.bin
 ```
 
-Имя файла берется из пути Telegram (`file.path`). Если путь не содержит имени файла, генерируется имя на основе `file_id`.
+The filename is taken from the Telegram path (`file.path`). If the path contains no filename, a name is generated based on the `file_id`.
 
-## Логирование
+## Logging
 
-Все операции скачивания логируются:
+All download operations are logged:
 
 ```log
-[INFO] 📥 Starting download for file_id: BQACAgIAAxkBAAIBCGXxxx...
-[INFO] ✅ File info retrieved: path = documents/file_123.pdf, size = 2567890 bytes
-[INFO] 📂 Destination path: "./downloads/file_123.pdf"
-[INFO] ✅ File downloaded successfully to: "./downloads/file_123.pdf"
-[INFO] 📊 File size: 2567890 bytes (2.45 MB)
+[INFO] Starting download for file_id: BQACAgIAAxkBAAIBCGXxxx...
+[INFO] File info retrieved: path = documents/file_123.pdf, size = 2567890 bytes
+[INFO] Destination path: "./downloads/file_123.pdf"
+[INFO] File downloaded successfully to: "./downloads/file_123.pdf"
+[INFO] File size: 2567890 bytes (2.45 MB)
 ```
 
-## Безопасность
+## Security
 
-### Контроль доступа
+### Access Control
 
-- ✅ Команда `/download_tg` доступна **только администраторам**
-- ✅ Проверка выполняется через функцию `is_admin(username)`
-- ✅ Администратор определяется через переменную окружения `ADMIN_USERNAME`
+- The `/download_tg` command is available **to admins only**
+- The check is performed via the `is_admin(username)` function
+- The admin is determined by the `ADMIN_USERNAME` environment variable
 
-### Валидация
+### Validation
 
-- ✅ Проверка наличия `file_id` в команде
-- ✅ Обработка некорректных `file_id`
-- ✅ Graceful обработка ошибок сети и файловой системы
+- Checks that `file_id` is present in the command
+- Handles invalid `file_id` values
+- Graceful handling of network and filesystem errors
 
-## Примеры сценариев использования
+## Usage Scenario Examples
 
-### Сценарий 1: Восстановление потерянного файла
+### Scenario 1: Recovering a lost file
 
-1. Пользователь сообщает, что скачанный файл поврежден
-2. Администратор находит `file_id` в базе данных:
+1. A user reports that a downloaded file is corrupted
+2. The admin finds the `file_id` in the database:
    ```sql
-   SELECT file_id FROM download_history WHERE user_id = 123456789 AND title LIKE '%песня%';
+   SELECT file_id FROM download_history WHERE user_id = 123456789 AND title LIKE '%song%';
    ```
-3. Администратор скачивает оригинал:
+3. The admin downloads the original:
    ```
    /download_tg BQACAgIAAxkBAAIBCGXxxx...
    ```
-4. Проверяет файл и отправляет пользователю повторно
+4. Verifies the file and resends it to the user
 
-### Сценарий 2: Бэкап важных файлов
+### Scenario 2: Backing up important files
 
-Скрипт для бэкапа всех файлов из истории:
+Script for backing up all files from history:
 
 ```rust
 use doradura::telegram::download_file_from_telegram;
@@ -220,8 +220,8 @@ async fn backup_all_files(bot: &Bot, db_pool: &DbPool) -> Result<()> {
         if let Some(file_id) = record.file_id {
             let backup_path = PathBuf::from(format!("./backups/{}", record.id));
             match download_file_from_telegram(bot, &file_id, Some(backup_path)).await {
-                Ok(path) => println!("✅ Backed up: {:?}", path),
-                Err(e) => eprintln!("❌ Failed to backup {}: {}", file_id, e),
+                Ok(path) => println!("Backed up: {:?}", path),
+                Err(e) => eprintln!("Failed to backup {}: {}", file_id, e),
             }
         }
     }
@@ -230,93 +230,93 @@ async fn backup_all_files(bot: &Bot, db_pool: &DbPool) -> Result<()> {
 }
 ```
 
-### Сценарий 3: Миграция между серверами
+### Scenario 3: Migrating between servers
 
-1. На старом сервере экспортируем все `file_id`:
+1. On the old server, export all `file_id` values:
    ```sql
    SELECT file_id FROM download_history WHERE file_id IS NOT NULL;
    ```
-2. На новом сервере скачиваем файлы:
+2. On the new server, download the files:
    ```bash
    while read file_id; do
        echo "/download_tg $file_id" | send-to-bot
    done < file_ids.txt
    ```
 
-## Интеграция с существующим кодом
+## Integration with Existing Code
 
-### Сохранение file_id при отправке
+### Saving file_id on send
 
-Убедитесь, что при отправке файлов пользователю вы сохраняете `file_id` в базе данных:
+Make sure that when sending files to users, you save the `file_id` to the database:
 
 ```rust
-// После успешной отправки
+// After a successful send
 let sent_message = bot.send_document(chat_id, document).await?;
 let file_id = sent_message.document().map(|d| d.file.id.clone());
 
-// Сохранение в историю
+// Save to history
 save_download_history(
     &conn,
     user_id,
     url,
     title,
     format,
-    file_id.as_deref(), // Передаем file_id
+    file_id.as_deref(), // Pass file_id
 )?;
 ```
 
-## Устранение неполадок
+## Troubleshooting
 
-### Ошибка: "Failed to download file"
+### Error: "Failed to download file"
 
-**Причины**:
-1. Файл удален из Telegram (прошло >1 час для фото/видео)
-2. Неверный `file_id`
-3. Проблемы с сетью
+**Causes**:
+1. File deleted from Telegram (>1 hour has passed for photos/videos)
+2. Invalid `file_id`
+3. Network issues
 
-**Решение**:
-- Проверьте, что `file_id` корректный
-- Убедитесь, что файл еще доступен в Telegram
-- Проверьте логи бота для деталей ошибки
+**Solution**:
+- Verify that the `file_id` is correct
+- Make sure the file is still available in Telegram
+- Check the bot logs for error details
 
-### Ошибка: "Permission denied"
+### Error: "Permission denied"
 
-**Причины**:
-1. Нет прав на запись в директорию `./downloads/`
-2. Директория защищена от записи
+**Causes**:
+1. No write permissions on the `./downloads/` directory
+2. Directory is write-protected
 
-**Решение**:
+**Solution**:
 ```bash
 mkdir -p ./downloads
 chmod 755 ./downloads
 ```
 
-### Ошибка: "File too large"
+### Error: "File too large"
 
-**Причины**:
-1. Файл превышает лимит Bot API (20 МБ)
-2. Не настроен локальный Bot API Server
+**Causes**:
+1. File exceeds the Bot API limit (20 MB)
+2. Local Bot API Server is not configured
 
-**Решение**:
-- Настройте локальный Telegram Bot API Server
-- Установите `BOT_API_URL` в переменных окружения
+**Solution**:
+- Configure a local Telegram Bot API Server
+- Set `BOT_API_URL` in the environment variables
 
 ## FAQ
 
-**Q: Можно ли скачать файл, который был отправлен более года назад?**
-A: Да, если это документ (`document`). Telegram хранит документы бессрочно. Фото и видео хранятся только 1 час.
+**Q: Can I download a file that was sent more than a year ago?**
+A: Yes, if it is a document (`document`). Telegram stores documents indefinitely. Photos and videos are only kept for 1 hour.
 
-**Q: Будет ли работать скачивание после перезапуска бота?**
-A: Да, `file_id` остается валидным независимо от перезапуска бота.
+**Q: Will downloading work after a bot restart?**
+A: Yes, `file_id` remains valid regardless of bot restarts.
 
-**Q: Можно ли скачать файл из другого бота?**
-A: Нет, `file_id` привязан к конкретному боту. Файлы из других ботов недоступны.
+**Q: Can I download a file from another bot?**
+A: No, `file_id` is tied to a specific bot. Files from other bots are not accessible.
 
-**Q: Где хранится информация о скачанных файлах?**
-A: В базе данных SQLite в таблице `download_history` (колонка `file_id`).
+**Q: Where is information about downloaded files stored?**
+A: In the SQLite database in the `download_history` table (column `file_id`).
 
-## См. также
+## See Also
 
 - [Telegram Bot API - File](https://core.telegram.org/bots/api#file)
 - [Telegram Bot API - getFile](https://core.telegram.org/bots/api#getfile)
-- [Локальный Bot API Server](https://github.com/tdlib/telegram-bot-api)
+- [Local Bot API Server](https://github.com/tdlib/telegram-bot-api)

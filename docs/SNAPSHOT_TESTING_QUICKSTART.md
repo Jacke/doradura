@@ -1,28 +1,28 @@
-# Быстрый старт: Snapshot Testing
+# Quick Start: Snapshot Testing
 
-## 🎯 Что это?
+## What is this?
 
-Система для записи и воспроизведения реальных взаимодействий с Telegram API в тестах.
+A system for recording and replaying real Telegram API interactions in tests.
 
-## 🚀 За 5 минут
+## In 5 Minutes
 
-### 1. Запишите взаимодействие
+### 1. Record an interaction
 
 ```bash
-# Включите логирование
+# Enable logging
 RUST_LOG=debug cargo run
 
-# Отправьте команду боту (например /start)
-# Скопируйте JSON из логов
+# Send a command to the bot (e.g. /start)
+# Copy the JSON from the logs
 ```
 
-### 2. Создайте snapshot
+### 2. Create a snapshot
 
 ```bash
 ./tools/log_to_snapshot.py --interactive
 ```
 
-Или вручную создайте `tests/snapshots/my_test.json`:
+Or manually create `tests/snapshots/my_test.json`:
 
 ```json
 {
@@ -48,9 +48,9 @@ RUST_LOG=debug cargo run
 }
 ```
 
-### 3. Используйте в тесте
+### 3. Use in a test
 
-Добавьте в `tests/bot_test.rs`:
+Add to `tests/bot_test.rs`:
 
 ```rust
 mod common;
@@ -61,22 +61,22 @@ async fn test_my_feature() {
     let mock = TelegramMock::from_snapshot("my_test").await.unwrap();
     let bot = mock.create_bot().unwrap();
 
-    // Ваш код тестирования здесь
+    // Your testing code here
     // bot.send_message(...).await?;
 
-    // mock.verify().await.unwrap(); // Опционально
+    // mock.verify().await.unwrap(); // Optional
 }
 ```
 
-### 4. Запустите тест
+### 4. Run the test
 
 ```bash
 cargo test --test bot_test
 ```
 
-## 📝 Примеры
+## Examples
 
-### Тест команды /start
+### Test for /start command
 
 ```rust
 #[tokio::test]
@@ -84,15 +84,15 @@ async fn test_start_command() {
     let mock = TelegramMock::from_snapshot("start_command").await.unwrap();
     let bot = mock.create_bot().unwrap();
 
-    // Вызовите ваш обработчик
+    // Call your handler
     // handle_start_command(&bot, message).await?;
 
-    // Проверки
+    // Assertions
     assert_eq!(mock.snapshot().interactions.len(), 1);
 }
 ```
 
-### Тест загрузки видео
+### Test for video download
 
 ```rust
 #[tokio::test]
@@ -100,17 +100,17 @@ async fn test_youtube_download() {
     let mock = TelegramMock::from_snapshot("youtube_download").await.unwrap();
     let bot = mock.create_bot().unwrap();
 
-    // Полный flow: preview -> выбор качества -> скачивание
+    // Full flow: preview -> quality selection -> download
     // ...
 }
 ```
 
-## 🛠️ Структура проекта
+## Project Structure
 
 ```
 doradura/
 ├── src/
-│   └── testing/          # (только для unit tests)
+│   └── testing/          # (for unit tests only)
 ├── tests/
 │   ├── common/           # Shared testing utilities
 │   │   ├── snapshots.rs  # Snapshot loading/replay
@@ -125,16 +125,16 @@ doradura/
     └── SNAPSHOT_TESTING.md    # Full docs
 ```
 
-## ✨ Преимущества
+## Advantages
 
-✅ Быстрые тесты (нет реальных API вызовов)
-✅ Детерминированные (всегда одинаковый результат)
-✅ Работают оффлайн
-✅ Документируют API взаимодействия
-✅ Легко создавать новые тесты
+- Fast tests (no real API calls)
+- Deterministic (always the same result)
+- Work offline
+- Document API interactions
+- Easy to create new tests
 
-## 📚 Дальше
+## Further Reading
 
-- [Полная документация](SNAPSHOT_TESTING.md)
-- [Примеры тестов](../tests/bot_snapshots_test.rs)
-- [Существующие snapshots](../tests/snapshots/)
+- [Full documentation](SNAPSHOT_TESTING.md)
+- [Test examples](../tests/bot_snapshots_test.rs)
+- [Existing snapshots](../tests/snapshots/)

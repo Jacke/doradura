@@ -171,20 +171,20 @@ User runs: cargo run -- update-ytdlp
 ## Why This Matters
 
 ### Before These Changes
-- ❌ Manual, fragile fragment handling
-- ❌ No CLI command for updates
-- ❌ 403 errors treated as bot detection
-- ❌ No distinction between temporary and persistent errors
-- ❌ Admin notifications for temporary issues
+- Manual, fragile fragment handling
+- No CLI command for updates
+- 403 errors treated as bot detection
+- No distinction between temporary and persistent errors
+- Admin notifications for temporary issues
 
 ### After These Changes
-- ✅ Automatic fragment retry (up to 10 times)
-- ✅ Easy manual update commands
-- ✅ Fragment errors separated from bot detection
-- ✅ Intelligent error classification
-- ✅ No unnecessary admin notifications
-- ✅ Comprehensive documentation
-- ✅ Production-ready update scheduling
+- Automatic fragment retry (up to 10 times)
+- Easy manual update commands
+- Fragment errors separated from bot detection
+- Intelligent error classification
+- No unnecessary admin notifications
+- Comprehensive documentation
+- Production-ready update scheduling
 
 ## Impact on Downloads
 
@@ -292,17 +292,15 @@ Fragment retry settings (in `downloader.rs`):
 
 ### Fragment Error (Temporary)
 ```
-❌ Временная проблема при загрузке видео.
-Попробуй повторить попытку.
+Temporary problem downloading video.
+Try again.
 ```
-Translation: "Temporary problem downloading video. Try again."
 
 ### Bot Detection (Persistent)
 ```
-❌ YouTube заблокировал запрос.
-Попробуй другое видео или повтори попытку позже.
+YouTube blocked the request.
+Try another video or retry later.
 ```
-Translation: "YouTube blocked the request. Try another video or retry later."
 
 ## Next Steps (Optional Enhancements)
 

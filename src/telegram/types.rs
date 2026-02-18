@@ -1,39 +1,39 @@
-/// Информация о доступном формате видео
+/// Available video format information
 #[derive(Debug, Clone)]
 pub struct VideoFormatInfo {
     pub quality: String,            // "1080p", "720p", "480p", "360p", "best"
-    pub size_bytes: Option<u64>,    // размер в байтах
-    pub resolution: Option<String>, // например "1920x1080"
+    pub size_bytes: Option<u64>,    // size in bytes
+    pub resolution: Option<String>, // e.g. "1920x1080"
 }
 
-/// Структура метаданных для превью
+/// Preview metadata structure
 #[derive(Debug, Clone)]
 pub struct PreviewMetadata {
     pub title: String,
     pub artist: String,
     pub thumbnail_url: Option<String>,
-    pub duration: Option<u32>, // в секундах
-    pub filesize: Option<u64>, // в байтах (для default формата)
+    pub duration: Option<u32>, // in seconds
+    pub filesize: Option<u64>, // in bytes (for default format)
     pub description: Option<String>,
-    pub video_formats: Option<Vec<VideoFormatInfo>>, // доступные форматы видео (только для mp4)
-    pub timestamps: Vec<crate::timestamps::VideoTimestamp>, // извлечённые таймкоды
+    pub video_formats: Option<Vec<VideoFormatInfo>>, // available video formats (mp4 only)
+    pub timestamps: Vec<crate::timestamps::VideoTimestamp>, // extracted timestamps
     pub is_photo: bool,                              // true for Instagram photo posts (no audio/video to extract)
     pub carousel_count: u8,                          // 0 = not carousel, 2-10 = carousel item count
 }
 
 impl PreviewMetadata {
-    /// Форматирует длительность в читаемый формат (MM:SS)
+    /// Formats duration into human-readable format (MM:SS)
     pub fn format_duration(&self) -> String {
         if let Some(duration) = self.duration {
             let minutes = duration / 60;
             let seconds = duration % 60;
             format!("{}:{:02}", minutes, seconds)
         } else {
-            "Неизвестно".to_string()
+            "Unknown".to_string()
         }
     }
 
-    /// Форматирует размер файла в читаемый формат (MB или KB)
+    /// Formats file size into human-readable format (MB or KB)
     pub fn format_filesize(&self) -> String {
         if let Some(size) = self.filesize {
             if size > 1024 * 1024 {
@@ -44,11 +44,11 @@ impl PreviewMetadata {
                 format!("{} B", size)
             }
         } else {
-            "Неизвестно".to_string()
+            "Unknown".to_string()
         }
     }
 
-    /// Возвращает отображаемое название (title или "artist - title")
+    /// Returns display title (title or "artist - title")
     pub fn display_title(&self) -> String {
         if self.artist.trim().is_empty() {
             self.title.clone()
@@ -135,7 +135,7 @@ mod tests {
             is_photo: false,
             carousel_count: 0,
         };
-        assert_eq!(meta.format_duration(), "Неизвестно");
+        assert_eq!(meta.format_duration(), "Unknown");
     }
 
     #[test]
@@ -220,7 +220,7 @@ mod tests {
             is_photo: false,
             carousel_count: 0,
         };
-        assert_eq!(meta.format_filesize(), "Неизвестно");
+        assert_eq!(meta.format_filesize(), "Unknown");
     }
 
     #[test]

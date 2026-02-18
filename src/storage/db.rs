@@ -9,39 +9,41 @@ use crate::storage::migrations;
 /// Connection timeout for pool.get() calls - prevents indefinite blocking
 const CONNECTION_TIMEOUT_SECS: u64 = 1;
 
-/// Структура, представляющая пользователя в базе данных.
+/// Structure representing a user in the database.
 pub struct User {
-    /// Telegram ID пользователя
+    /// Telegram ID of the user
     pub telegram_id: i64,
-    /// Имя пользователя (username) в Telegram, если доступно
+    /// Telegram username, if available
     pub username: Option<String>,
-    /// План пользователя
+    /// User plan
     pub plan: Plan,
-    /// Предпочитаемый формат загрузки: "mp3", "mp4", "srt", "txt"
+    /// Preferred download format: "mp3", "mp4", "srt", "txt"
     pub download_format: String,
-    /// Флаг загрузки субтитров (0 - отключено, 1 - включено)
+    /// Subtitle download flag (0 = disabled, 1 = enabled)
     pub download_subtitles: i32,
-    /// Качество видео: "best", "1080p", "720p", "480p", "360p"
+    /// Video quality: "best", "1080p", "720p", "480p", "360p"
     pub video_quality: String,
-    /// Битрейт аудио: "128k", "192k", "256k", "320k"
+    /// Audio bitrate: "128k", "192k", "256k", "320k"
     pub audio_bitrate: String,
-    /// Тип отправки видео: 0 = Media (send_video), 1 = Document (send_document)
+    /// Video send type: 0 = Media (send_video), 1 = Document (send_document)
     pub send_as_document: i32,
-    /// Тип отправки аудио: 0 = Media (send_audio), 1 = Document (send_document)
+    /// Audio send type: 0 = Media (send_audio), 1 = Document (send_document)
     pub send_audio_as_document: i32,
-    /// Дата истечения подписки (из таблицы subscriptions)
+    /// Subscription expiry date (from subscriptions table)
     pub subscription_expires_at: Option<String>,
-    /// Telegram payment charge ID (из таблицы subscriptions)
+    /// Telegram payment charge ID (from subscriptions table)
     pub telegram_charge_id: Option<String>,
-    /// Предпочитаемый язык пользователя (IETF tag, например, "ru", "en-US")
+    /// Preferred user language (IETF tag, e.g. "ru", "en-US")
     pub language: String,
-    /// Флаг рекуррентной подписки (автопродление) из таблицы subscriptions
+    /// Recurring subscription flag (auto-renewal) from subscriptions table
     pub is_recurring: bool,
-    /// Флаг вшивания субтитров в видео (0 - отключено, 1 - включено)
+    /// Subtitle burn-in flag for video (0 = disabled, 1 = enabled)
     pub burn_subtitles: i32,
+    /// Progress bar style: "classic", "gradient", "emoji", "dots", "runner", "rpg", "fire", "moon"
+    pub progress_bar_style: String,
 }
 
-/// Структура с данными подписки пользователя.
+/// Structure containing user subscription data.
 #[derive(Debug, Clone)]
 pub struct Subscription {
     pub user_id: i64,
@@ -51,8 +53,8 @@ pub struct Subscription {
     pub is_recurring: bool,
 }
 
-/// Структура с данными платежа (charge) из Telegram Stars.
-/// Хранит полную информацию о платеже для бухгалтерии.
+/// Structure containing payment (charge) data from Telegram Stars.
+/// Stores complete payment information for accounting purposes.
 #[derive(Debug, Clone)]
 pub struct Charge {
     pub id: i64,
@@ -70,7 +72,7 @@ pub struct Charge {
     pub created_at: String,
 }
 
-/// Структура с данными отзыва пользователя.
+/// Structure containing user feedback data.
 #[derive(Debug, Clone)]
 pub struct FeedbackMessage {
     pub id: i64,
@@ -85,20 +87,20 @@ pub struct FeedbackMessage {
 }
 
 impl User {
-    /// Возвращает Telegram ID пользователя.
+    /// Returns the Telegram ID of the user.
     ///
     /// # Returns
     ///
-    /// Telegram ID пользователя.
+    /// Telegram ID of the user.
     pub fn telegram_id(&self) -> i64 {
         self.telegram_id
     }
 
-    /// Возвращает предпочитаемый формат загрузки пользователя.
+    /// Returns the preferred download format of the user.
     ///
     /// # Returns
     ///
-    /// Формат загрузки: "mp3", "mp4", "srt", "txt"
+    /// Download format: "mp3", "mp4", "srt", "txt"
     pub fn download_format(&self) -> &str {
         &self.download_format
     }
@@ -279,21 +281,21 @@ pub fn get_connection_legacy() -> Result<Connection> {
     Ok(conn)
 }
 
-/// Создает нового пользователя в базе данных.
+/// Creates a new user in the database.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
-/// * `username` - Имя пользователя (опционально)
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
+/// * `username` - Username (optional)
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+/// Returns `Ok(())` on success or a database error.
 ///
 /// # Errors
 ///
-/// Возвращает ошибку если пользователь с таким ID уже существует или произошла ошибка БД.
+/// Returns an error if a user with the given ID already exists or a DB error occurred.
 pub fn create_user(conn: &DbConnection, telegram_id: i64, username: Option<String>) -> Result<()> {
     // Use a transaction to ensure both inserts succeed or fail together
     conn.execute_batch("BEGIN IMMEDIATE")?;
@@ -327,22 +329,22 @@ pub fn create_user(conn: &DbConnection, telegram_id: i64, username: Option<Strin
     }
 }
 
-/// Создает нового пользователя в базе данных с указанным языком.
+/// Creates a new user in the database with the specified language.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
-/// * `username` - Имя пользователя (опционально)
-/// * `language` - Код языка (например, "ru", "en", "fr", "de")
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
+/// * `username` - Username (optional)
+/// * `language` - Language code (e.g. "ru", "en", "fr", "de")
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+/// Returns `Ok(())` on success or a database error.
 ///
 /// # Errors
 ///
-/// Возвращает ошибку если пользователь с таким ID уже существует или произошла ошибка БД.
+/// Returns an error if a user with the given ID already exists or a DB error occurred.
 pub fn create_user_with_language(
     conn: &DbConnection,
     telegram_id: i64,
@@ -382,17 +384,17 @@ pub fn create_user_with_language(
     }
 }
 
-/// Получает пользователя из базы данных по Telegram ID.
+/// Retrieves a user from the database by Telegram ID.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(Some(User))` если пользователь найден, `Ok(None)` если не найден,
-/// или ошибку базы данных.
+/// Returns `Ok(Some(User))` if the user is found, `Ok(None)` if not found,
+/// or a database error.
 pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
     let mut stmt = conn.prepare(
         "SELECT
@@ -409,7 +411,8 @@ pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
             s.expires_at as subscription_expires_at,
             s.telegram_charge_id as telegram_charge_id,
             COALESCE(s.is_recurring, 0) as is_recurring,
-            COALESCE(u.burn_subtitles, 0) as burn_subtitles
+            COALESCE(u.burn_subtitles, 0) as burn_subtitles,
+            COALESCE(u.progress_bar_style, 'classic') as progress_bar_style
         FROM users u
         LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
         WHERE u.telegram_id = ?",
@@ -431,6 +434,7 @@ pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
         let telegram_charge_id: Option<String> = row.get(11)?;
         let is_recurring: bool = row.get::<_, i32>(12).unwrap_or(0) != 0;
         let burn_subtitles: i32 = row.get(13).unwrap_or(0);
+        let progress_bar_style: String = row.get(14).unwrap_or_else(|_| "classic".to_string());
 
         Ok(Some(User {
             telegram_id,
@@ -447,23 +451,24 @@ pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
             telegram_charge_id,
             is_recurring,
             burn_subtitles,
+            progress_bar_style,
         }))
     } else {
         Ok(None)
     }
 }
 
-/// Обновляет план пользователя.
+/// Updates the user's plan.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
-/// * `plan` - Новый план пользователя (например, "free", "premium")
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
+/// * `plan` - New user plan (e.g. "free", "premium")
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+/// Returns `Ok(())` on success or a database error.
 pub fn update_user_plan(conn: &DbConnection, telegram_id: i64, plan: &str) -> Result<()> {
     conn.execute(
         "INSERT INTO subscriptions (user_id, plan)
@@ -480,18 +485,18 @@ pub fn update_user_plan(conn: &DbConnection, telegram_id: i64, plan: &str) -> Re
     Ok(())
 }
 
-/// Обновляет план пользователя и устанавливает дату окончания подписки.
+/// Updates the user's plan and sets the subscription expiry date.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
-/// * `plan` - Новый план пользователя (например, "free", "premium", "vip")
-/// * `days` - Количество дней действия подписки (None для бессрочной/free)
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
+/// * `plan` - New user plan (e.g. "free", "premium", "vip")
+/// * `days` - Number of days the subscription is valid (None for unlimited/free)
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+/// Returns `Ok(())` on success or a database error.
 pub fn update_user_plan_with_expiry(
     conn: &DbConnection,
     telegram_id: i64,
@@ -499,7 +504,7 @@ pub fn update_user_plan_with_expiry(
     days: Option<i32>,
 ) -> Result<()> {
     if let Some(days_count) = days {
-        // Устанавливаем дату окончания на N дней вперед от текущей даты
+        // Set expiry date N days from now
         conn.execute(
             "INSERT INTO subscriptions (user_id, plan, expires_at)
              VALUES (?1, ?2, datetime('now', '+' || ?3 || ' days'))
@@ -518,7 +523,7 @@ pub fn update_user_plan_with_expiry(
             [&plan as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
         )?;
     } else {
-        // Для free плана или бессрочных подписок, убираем дату окончания
+        // For free plan or unlimited subscriptions, clear expiry date
         conn.execute(
             "INSERT INTO subscriptions (user_id, plan, expires_at)
              VALUES (?1, ?2, NULL)
@@ -536,15 +541,15 @@ pub fn update_user_plan_with_expiry(
     Ok(())
 }
 
-/// Проверяет и обновляет истекшие подписки, понижая их до free.
+/// Checks and updates expired subscriptions by downgrading them to free.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
+/// * `conn` - Database connection
 ///
 /// # Returns
 ///
-/// Возвращает количество обновленных пользователей.
+/// Returns the number of updated users.
 pub fn expire_old_subscriptions(conn: &DbConnection) -> Result<usize> {
     let expired_user_ids = {
         let mut stmt = conn.prepare(
@@ -593,17 +598,17 @@ pub fn expire_old_subscriptions(conn: &DbConnection) -> Result<usize> {
     Ok(expired_user_ids.len())
 }
 
-/// Логирует запрос пользователя в историю запросов.
+/// Logs a user request into the request history.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `user_id` - Telegram ID пользователя
-/// * `request_text` - Текст запроса пользователя (обычно URL)
+/// * `conn` - Database connection
+/// * `user_id` - Telegram ID of the user
+/// * `request_text` - Request text (usually a URL)
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+/// Returns `Ok(())` on success or a database error.
 pub fn log_request(conn: &DbConnection, user_id: i64, request_text: &str) -> Result<()> {
     conn.execute(
         "INSERT INTO request_history (user_id, request_text) VALUES (?1, ?2)",
@@ -612,17 +617,17 @@ pub fn log_request(conn: &DbConnection, user_id: i64, request_text: &str) -> Res
     Ok(())
 }
 
-/// Получает предпочитаемый формат загрузки пользователя.
+/// Gets the preferred download format of the user.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
 ///
 /// # Returns
 ///
-/// Возвращает формат загрузки ("mp3", "mp4", "srt", "txt") или "mp3" по умолчанию,
-/// если пользователь не найден или произошла ошибка.
+/// Returns the download format ("mp3", "mp4", "srt", "txt") or "mp3" by default
+/// if the user is not found or an error occurred.
 pub fn get_user_download_format(conn: &DbConnection, telegram_id: i64) -> Result<String> {
     let mut stmt = conn.prepare("SELECT download_format FROM users WHERE telegram_id = ?")?;
     let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
@@ -634,17 +639,17 @@ pub fn get_user_download_format(conn: &DbConnection, telegram_id: i64) -> Result
     }
 }
 
-/// Устанавливает предпочитаемый формат загрузки пользователя.
+/// Sets the preferred download format of the user.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
-/// * `format` - Формат загрузки: "mp3", "mp4", "srt", "txt"
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
+/// * `format` - Download format: "mp3", "mp4", "srt", "txt"
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+/// Returns `Ok(())` on success or a database error.
 pub fn set_user_download_format(conn: &DbConnection, telegram_id: i64, format: &str) -> Result<()> {
     conn.execute(
         "UPDATE users SET download_format = ?1 WHERE telegram_id = ?2",
@@ -653,16 +658,16 @@ pub fn set_user_download_format(conn: &DbConnection, telegram_id: i64, format: &
     Ok(())
 }
 
-/// Получает настройку загрузки субтитров пользователя.
+/// Gets the subtitle download setting of the user.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
 ///
 /// # Returns
 ///
-/// Возвращает `true` если загрузка субтитров включена, `false` если отключена или пользователь не найден.
+/// Returns `true` if subtitle download is enabled, `false` if disabled or user not found.
 pub fn get_user_download_subtitles(conn: &DbConnection, telegram_id: i64) -> Result<bool> {
     let mut stmt = conn.prepare("SELECT download_subtitles FROM users WHERE telegram_id = ?")?;
     let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
@@ -675,17 +680,17 @@ pub fn get_user_download_subtitles(conn: &DbConnection, telegram_id: i64) -> Res
     }
 }
 
-/// Устанавливает настройку загрузки субтитров пользователя.
+/// Sets the subtitle download setting of the user.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
-/// * `enabled` - Включить (`true`) или отключить (`false`) загрузку субтитров
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
+/// * `enabled` - Enable (`true`) or disable (`false`) subtitle download
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+/// Returns `Ok(())` on success or a database error.
 pub fn set_user_download_subtitles(conn: &DbConnection, telegram_id: i64, enabled: bool) -> Result<()> {
     let value = if enabled { 1 } else { 0 };
     conn.execute(
@@ -695,17 +700,17 @@ pub fn set_user_download_subtitles(conn: &DbConnection, telegram_id: i64, enable
     Ok(())
 }
 
-/// Получает настройку вшивания субтитров в видео.
+/// Gets the subtitle burn-in setting for video.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(true)` если вшивание включено, `Ok(false)` если отключено,
-/// или ошибку базы данных.
+/// Returns `Ok(true)` if burn-in is enabled, `Ok(false)` if disabled,
+/// or a database error.
 pub fn get_user_burn_subtitles(conn: &DbConnection, telegram_id: i64) -> Result<bool> {
     let mut stmt = conn.prepare("SELECT COALESCE(burn_subtitles, 0) FROM users WHERE telegram_id = ?")?;
     let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
@@ -718,17 +723,17 @@ pub fn get_user_burn_subtitles(conn: &DbConnection, telegram_id: i64) -> Result<
     }
 }
 
-/// Устанавливает настройку вшивания субтитров в видео.
+/// Sets the subtitle burn-in setting for video.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
-/// * `enabled` - Включить (`true`) или отключить (`false`) вшивание субтитров
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
+/// * `enabled` - Enable (`true`) or disable (`false`) subtitle burn-in
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+/// Returns `Ok(())` on success or a database error.
 pub fn set_user_burn_subtitles(conn: &DbConnection, telegram_id: i64, enabled: bool) -> Result<()> {
     let value = if enabled { 1 } else { 0 };
     conn.execute(
@@ -738,16 +743,37 @@ pub fn set_user_burn_subtitles(conn: &DbConnection, telegram_id: i64, enabled: b
     Ok(())
 }
 
-/// Получает качество видео пользователя.
+/// Gets the progress bar style of the user.
+pub fn get_user_progress_bar_style(conn: &DbConnection, telegram_id: i64) -> Result<String> {
+    let mut stmt = conn.prepare("SELECT progress_bar_style FROM users WHERE telegram_id = ?")?;
+    let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
+
+    if let Some(row) = rows.next()? {
+        Ok(row.get(0).unwrap_or_else(|_| "classic".to_string()))
+    } else {
+        Ok("classic".to_string())
+    }
+}
+
+/// Sets the progress bar style of the user.
+pub fn set_user_progress_bar_style(conn: &DbConnection, telegram_id: i64, style: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE users SET progress_bar_style = ?1 WHERE telegram_id = ?2",
+        [&style as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
+    )?;
+    Ok(())
+}
+
+/// Gets the video quality setting of the user.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
 ///
 /// # Returns
 ///
-/// Возвращает качество видео ("best", "1080p", "720p", "480p", "360p") или "best" по умолчанию.
+/// Returns the video quality ("best", "1080p", "720p", "480p", "360p") or "best" by default.
 pub fn get_user_video_quality(conn: &DbConnection, telegram_id: i64) -> Result<String> {
     let mut stmt = conn.prepare("SELECT video_quality FROM users WHERE telegram_id = ?")?;
     let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
@@ -759,17 +785,17 @@ pub fn get_user_video_quality(conn: &DbConnection, telegram_id: i64) -> Result<S
     }
 }
 
-/// Устанавливает качество видео пользователя.
+/// Sets the video quality setting of the user.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
-/// * `quality` - Качество видео: "best", "1080p", "720p", "480p", "360p"
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
+/// * `quality` - Video quality: "best", "1080p", "720p", "480p", "360p"
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+/// Returns `Ok(())` on success or a database error.
 pub fn set_user_video_quality(conn: &DbConnection, telegram_id: i64, quality: &str) -> Result<()> {
     conn.execute(
         "UPDATE users SET video_quality = ?1 WHERE telegram_id = ?2",
@@ -778,17 +804,17 @@ pub fn set_user_video_quality(conn: &DbConnection, telegram_id: i64, quality: &s
     Ok(())
 }
 
-/// Получает тип отправки видео пользователя (0 = Media, 1 = Document).
+/// Gets the video send type for the user (0 = Media, 1 = Document).
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(0)` для Media (send_video) или `Ok(1)` для Document (send_document).
-/// По умолчанию возвращает 0 (Media).
+/// Returns `Ok(0)` for Media (send_video) or `Ok(1)` for Document (send_document).
+/// Defaults to 0 (Media).
 pub fn get_user_send_as_document(conn: &DbConnection, telegram_id: i64) -> Result<i32> {
     let mut stmt = conn.prepare("SELECT send_as_document FROM users WHERE telegram_id = ?")?;
     let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
@@ -800,17 +826,17 @@ pub fn get_user_send_as_document(conn: &DbConnection, telegram_id: i64) -> Resul
     }
 }
 
-/// Устанавливает тип отправки видео пользователя.
+/// Sets the video send type for the user.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
 /// * `send_as_document` - 0 = Media (send_video), 1 = Document (send_document)
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+/// Returns `Ok(())` on success or a database error.
 pub fn set_user_send_as_document(conn: &DbConnection, telegram_id: i64, send_as_document: i32) -> Result<()> {
     conn.execute(
         "UPDATE users SET send_as_document = ?1 WHERE telegram_id = ?2",
@@ -822,17 +848,17 @@ pub fn set_user_send_as_document(conn: &DbConnection, telegram_id: i64, send_as_
     Ok(())
 }
 
-/// Получает тип отправки аудио пользователя (0 = Media, 1 = Document).
+/// Gets the audio send type for the user (0 = Media, 1 = Document).
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(0)` для Media (send_audio) или `Ok(1)` для Document (send_document).
-/// По умолчанию возвращает 0 (Media).
+/// Returns `Ok(0)` for Media (send_audio) or `Ok(1)` for Document (send_document).
+/// Defaults to 0 (Media).
 pub fn get_user_send_audio_as_document(conn: &DbConnection, telegram_id: i64) -> Result<i32> {
     let mut stmt = conn.prepare("SELECT send_audio_as_document FROM users WHERE telegram_id = ?")?;
     let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
@@ -844,17 +870,17 @@ pub fn get_user_send_audio_as_document(conn: &DbConnection, telegram_id: i64) ->
     }
 }
 
-/// Устанавливает тип отправки аудио пользователя.
+/// Sets the audio send type for the user.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
 /// * `send_audio_as_document` - 0 = Media (send_audio), 1 = Document (send_document)
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+/// Returns `Ok(())` on success or a database error.
 pub fn set_user_send_audio_as_document(
     conn: &DbConnection,
     telegram_id: i64,
@@ -870,16 +896,16 @@ pub fn set_user_send_audio_as_document(
     Ok(())
 }
 
-/// Получает битрейт аудио пользователя.
+/// Gets the audio bitrate setting of the user.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
 ///
 /// # Returns
 ///
-/// Возвращает битрейт аудио ("128k", "192k", "256k", "320k") или "320k" по умолчанию.
+/// Returns the audio bitrate ("128k", "192k", "256k", "320k") or "320k" by default.
 pub fn get_user_audio_bitrate(conn: &DbConnection, telegram_id: i64) -> Result<String> {
     let mut stmt = conn.prepare("SELECT audio_bitrate FROM users WHERE telegram_id = ?")?;
     let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
@@ -891,17 +917,17 @@ pub fn get_user_audio_bitrate(conn: &DbConnection, telegram_id: i64) -> Result<S
     }
 }
 
-/// Устанавливает битрейт аудио пользователя.
+/// Sets the audio bitrate setting of the user.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
-/// * `bitrate` - Битрейт аудио: "128k", "192k", "256k", "320k"
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
+/// * `bitrate` - Audio bitrate: "128k", "192k", "256k", "320k"
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+/// Returns `Ok(())` on success or a database error.
 pub fn set_user_audio_bitrate(conn: &DbConnection, telegram_id: i64, bitrate: &str) -> Result<()> {
     conn.execute(
         "UPDATE users SET audio_bitrate = ?1 WHERE telegram_id = ?2",
@@ -910,7 +936,7 @@ pub fn set_user_audio_bitrate(conn: &DbConnection, telegram_id: i64, bitrate: &s
     Ok(())
 }
 
-/// Получает предпочтительный язык пользователя (IETF код, например, "en", "ru").
+/// Gets the preferred language of the user (IETF code, e.g. "en", "ru").
 pub fn get_user_language(conn: &DbConnection, telegram_id: i64) -> Result<String> {
     let mut stmt = conn.prepare("SELECT language FROM users WHERE telegram_id = ?")?;
     let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
@@ -922,7 +948,7 @@ pub fn get_user_language(conn: &DbConnection, telegram_id: i64) -> Result<String
     }
 }
 
-/// Устанавливает предпочтительный язык пользователя.
+/// Sets the preferred language of the user.
 pub fn set_user_language(conn: &DbConnection, telegram_id: i64, language: &str) -> Result<()> {
     conn.execute(
         "UPDATE users SET language = ?1 WHERE telegram_id = ?2",
@@ -931,38 +957,38 @@ pub fn set_user_language(conn: &DbConnection, telegram_id: i64, language: &str) 
     Ok(())
 }
 
-/// Структура, представляющая запись истории загрузок.
+/// Structure representing a download history entry.
 #[derive(Debug, Clone)]
 pub struct DownloadHistoryEntry {
-    /// ID записи
+    /// Record ID
     pub id: i64,
-    /// URL загруженного контента
+    /// URL of the downloaded content
     pub url: String,
-    /// Название трека/видео
+    /// Track/video title
     pub title: String,
-    /// Формат загрузки (mp3, mp4, srt, txt)
+    /// Download format (mp3, mp4, srt, txt)
     pub format: String,
-    /// Дата и время загрузки
+    /// Download date and time
     pub downloaded_at: String,
-    /// Telegram file_id (опционально)
+    /// Telegram file_id (optional)
     pub file_id: Option<String>,
-    /// Автор трека/видео (опционально)
+    /// Track/video author (optional)
     pub author: Option<String>,
-    /// Размер файла в байтах (опционально)
+    /// File size in bytes (optional)
     pub file_size: Option<i64>,
-    /// Длительность в секундах (опционально)
+    /// Duration in seconds (optional)
     pub duration: Option<i64>,
-    /// Качество видео (опционально, для mp4)
+    /// Video quality (optional, for mp4)
     pub video_quality: Option<String>,
-    /// Битрейт аудио (опционально, для mp3)
+    /// Audio bitrate (optional, for mp3)
     pub audio_bitrate: Option<String>,
     /// Bot API base URL used when saving this entry (optional, for debugging)
     pub bot_api_url: Option<String>,
     /// Whether a local Bot API server was used (0/1, optional for older rows)
     pub bot_api_is_local: Option<i64>,
-    /// ID исходного файла (для разбитых видео)
+    /// Source file ID (for split videos)
     pub source_id: Option<i64>,
-    /// Номер части (для разбитых видео)
+    /// Part number (for split videos)
     pub part_index: Option<i32>,
 }
 
@@ -972,27 +998,27 @@ fn current_bot_api_info() -> (Option<String>, i64) {
     (url, if is_local { 1 } else { 0 })
 }
 
-/// Сохраняет запись в историю загрузок.
+/// Saves an entry to the download history.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
-/// * `url` - URL загруженного контента
-/// * `title` - Название трека/видео
-/// * `format` - Формат загрузки (mp3, mp4, srt, txt)
-/// * `file_id` - Telegram file_id, если контент был отправлен в Telegram (опционально)
-/// * `author` - Автор трека/видео (опционально)
-/// * `file_size` - Размер файла в байтах (опционально)
-/// * `duration` - Длительность в секундах (опционально)
-/// * `video_quality` - Качество видео (опционально)
-/// * `audio_bitrate` - Битрейт аудио (опционально)
-/// * `source_id` - ID исходного файла (для разбитых видео)
-/// * `part_index` - Номер части (для разбитых видео)
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
+/// * `url` - URL of the downloaded content
+/// * `title` - Track/video title
+/// * `format` - Download format (mp3, mp4, srt, txt)
+/// * `file_id` - Telegram file_id, if content was sent to Telegram (optional)
+/// * `author` - Track/video author (optional)
+/// * `file_size` - File size in bytes (optional)
+/// * `duration` - Duration in seconds (optional)
+/// * `video_quality` - Video quality (optional)
+/// * `audio_bitrate` - Audio bitrate (optional)
+/// * `source_id` - Source file ID (for split videos)
+/// * `part_index` - Part number (for split videos)
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(id)` при успехе (ID вставленной записи) или ошибку базы данных.
+/// Returns `Ok(id)` on success (ID of the inserted record) or a database error.
 pub fn save_download_history(
     conn: &DbConnection,
     telegram_id: i64,
@@ -1035,17 +1061,17 @@ pub fn save_download_history(
     Ok(conn.last_insert_rowid())
 }
 
-/// Получает последние N записей истории загрузок пользователя.
+/// Gets the last N download history entries for a user.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
-/// * `limit` - Максимальное количество записей (по умолчанию 20)
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
+/// * `limit` - Maximum number of records (default 20)
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(Vec<DownloadHistoryEntry>)` с записями истории или ошибку базы данных.
+/// Returns `Ok(Vec<DownloadHistoryEntry>)` with history records or a database error.
 pub fn get_download_history(
     conn: &DbConnection,
     telegram_id: i64,
@@ -1085,22 +1111,22 @@ pub fn get_download_history(
     Ok(entries)
 }
 
-/// Структура, представляющая файл с file_id для администратора.
+/// Structure representing a file with file_id for the administrator.
 #[derive(Debug, Clone)]
 pub struct SentFile {
-    /// ID записи
+    /// Record ID
     pub id: i64,
-    /// Telegram ID пользователя
+    /// Telegram ID of the user
     pub user_id: i64,
-    /// Username пользователя (если доступен)
+    /// Username of the user (if available)
     pub username: Option<String>,
-    /// URL загруженного контента
+    /// URL of the downloaded content
     pub url: String,
-    /// Название файла
+    /// File title
     pub title: String,
-    /// Формат файла (mp3, mp4, srt, txt)
+    /// File format (mp3, mp4, srt, txt)
     pub format: String,
-    /// Дата и время загрузки
+    /// Download date and time
     pub downloaded_at: String,
     /// Telegram file_id
     pub file_id: String,
@@ -1110,17 +1136,17 @@ pub struct SentFile {
     pub chat_id: Option<i64>,
 }
 
-/// Получает список файлов с file_id для администратора.
+/// Gets the list of files with file_id for the administrator.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `limit` - Максимальное количество записей (по умолчанию 50)
+/// * `conn` - Database connection
+/// * `limit` - Maximum number of records (default 50)
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(Vec<SentFile>)` с записями файлов или ошибку базы данных.
-/// Возвращает только файлы, у которых есть file_id.
+/// Returns `Ok(Vec<SentFile>)` with file records or a database error.
+/// Returns only files that have a file_id.
 pub fn get_sent_files(conn: &DbConnection, limit: Option<i32>) -> Result<Vec<SentFile>> {
     let limit = limit.unwrap_or(50);
     let mut stmt = conn.prepare(
@@ -1154,18 +1180,18 @@ pub fn get_sent_files(conn: &DbConnection, limit: Option<i32>) -> Result<Vec<Sen
     Ok(entries)
 }
 
-/// Удаляет запись из истории загрузок.
+/// Deletes an entry from the download history.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
-/// * `entry_id` - ID записи для удаления
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
+/// * `entry_id` - ID of the record to delete
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(true)` если запись была удалена, `Ok(false)` если запись не найдена,
-/// или ошибку базы данных.
+/// Returns `Ok(true)` if the record was deleted, `Ok(false)` if not found,
+/// or a database error.
 pub fn delete_download_history_entry(conn: &DbConnection, telegram_id: i64, entry_id: i64) -> Result<bool> {
     let rows_affected = conn.execute(
         "DELETE FROM download_history WHERE id = ?1 AND user_id = ?2",
@@ -1174,18 +1200,18 @@ pub fn delete_download_history_entry(conn: &DbConnection, telegram_id: i64, entr
     Ok(rows_affected > 0)
 }
 
-/// Получает запись истории загрузок по ID.
+/// Gets a download history entry by ID.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
-/// * `entry_id` - ID записи
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
+/// * `entry_id` - Record ID
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(Some(DownloadHistoryEntry))` если запись найдена, `Ok(None)` если не найдена,
-/// или ошибку базы данных.
+/// Returns `Ok(Some(DownloadHistoryEntry))` if found, `Ok(None)` if not found,
+/// or a database error.
 pub fn get_download_history_entry(
     conn: &DbConnection,
     telegram_id: i64,
@@ -1224,27 +1250,27 @@ pub fn get_download_history_entry(
     }
 }
 
-/// Структура статистики пользователя
+/// User statistics structure
 #[derive(Debug, Clone)]
 pub struct UserStats {
     pub total_downloads: i64,
-    pub total_size: i64, // в байтах (приблизительно)
+    pub total_size: i64, // in bytes (approximate)
     pub active_days: i64,
     pub top_artists: Vec<(String, i64)>,     // (artist, count)
     pub top_formats: Vec<(String, i64)>,     // (format, count)
-    pub activity_by_day: Vec<(String, i64)>, // (date, count) для последних 7 дней
+    pub activity_by_day: Vec<(String, i64)>, // (date, count) for the last 7 days
 }
 
-/// Получает статистику пользователя
+/// Gets user statistics
 pub fn get_user_stats(conn: &DbConnection, telegram_id: i64) -> Result<UserStats> {
-    // Общее количество загрузок
+    // Total download count
     let total_downloads: i64 = conn.query_row(
         "SELECT COUNT(*) FROM download_history WHERE user_id = ?",
         [&telegram_id as &dyn rusqlite::ToSql],
         |row| row.get(0),
     )?;
 
-    // Приблизительный общий размер (очень грубая оценка: mp3 ~5MB, mp4 ~50MB)
+    // Approximate total size (rough estimate: mp3 ~5MB, mp4 ~50MB)
     let total_size: i64 = match conn.query_row(
         "SELECT
             SUM(CASE
@@ -1261,14 +1287,14 @@ pub fn get_user_stats(conn: &DbConnection, telegram_id: i64) -> Result<UserStats
         Err(e) => return Err(e),
     };
 
-    // Количество дней активности
+    // Number of active days
     let active_days: i64 = conn.query_row(
         "SELECT COUNT(DISTINCT DATE(downloaded_at)) FROM download_history WHERE user_id = ?",
         [&telegram_id as &dyn rusqlite::ToSql],
         |row| row.get(0),
     )?;
 
-    // Топ-5 исполнителей (парсим из title: "Artist - Song")
+    // Top-5 artists (parsed from title: "Artist - Song")
     let mut stmt =
         conn.prepare("SELECT title FROM download_history WHERE user_id = ? ORDER BY downloaded_at DESC LIMIT 100")?;
     let rows = stmt.query_map([&telegram_id as &dyn rusqlite::ToSql], |row| row.get::<_, String>(0))?;
@@ -1276,7 +1302,7 @@ pub fn get_user_stats(conn: &DbConnection, telegram_id: i64) -> Result<UserStats
     let mut artist_counts: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
     for row in rows {
         if let Ok(title) = row {
-            // Пытаемся извлечь исполнителя из формата "Artist - Song"
+            // Try to extract artist from "Artist - Song" format
             if let Some(pos) = title.find(" - ") {
                 let artist = title[..pos].trim().to_string();
                 if !artist.is_empty() {
@@ -1290,7 +1316,7 @@ pub fn get_user_stats(conn: &DbConnection, telegram_id: i64) -> Result<UserStats
     top_artists.sort_by(|a, b| b.1.cmp(&a.1));
     top_artists.truncate(5);
 
-    // Топ форматов
+    // Top formats
     let mut stmt = conn.prepare(
         "SELECT format, COUNT(*) as cnt FROM download_history
          WHERE user_id = ? GROUP BY format ORDER BY cnt DESC LIMIT 5",
@@ -1306,7 +1332,7 @@ pub fn get_user_stats(conn: &DbConnection, telegram_id: i64) -> Result<UserStats
         }
     }
 
-    // Активность по дням (последние 7 дней)
+    // Activity by day (last 7 days)
     let mut stmt = conn.prepare(
         "SELECT DATE(downloaded_at) as day, COUNT(*) as cnt
          FROM download_history
@@ -1335,7 +1361,7 @@ pub fn get_user_stats(conn: &DbConnection, telegram_id: i64) -> Result<UserStats
     })
 }
 
-/// Структура глобальной статистики
+/// Global statistics structure
 #[derive(Debug, Clone)]
 pub struct GlobalStats {
     pub total_users: i64,
@@ -1344,17 +1370,17 @@ pub struct GlobalStats {
     pub top_formats: Vec<(String, i64)>, // (format, count)
 }
 
-/// Получает глобальную статистику бота
+/// Gets global bot statistics
 pub fn get_global_stats(conn: &DbConnection) -> Result<GlobalStats> {
-    // Общее количество пользователей
+    // Total number of users
     let total_users: i64 = conn.query_row("SELECT COUNT(DISTINCT user_id) FROM download_history", [], |row| {
         row.get(0)
     })?;
 
-    // Общее количество загрузок
+    // Total number of downloads
     let total_downloads: i64 = conn.query_row("SELECT COUNT(*) FROM download_history", [], |row| row.get(0))?;
 
-    // Топ-10 треков (по title)
+    // Top-10 tracks (by title)
     let mut stmt = conn.prepare(
         "SELECT title, COUNT(*) as cnt FROM download_history
          GROUP BY title ORDER BY cnt DESC LIMIT 10",
@@ -1368,7 +1394,7 @@ pub fn get_global_stats(conn: &DbConnection) -> Result<GlobalStats> {
         }
     }
 
-    // Топ форматов
+    // Top formats
     let mut stmt = conn.prepare(
         "SELECT format, COUNT(*) as cnt FROM download_history
          GROUP BY format ORDER BY cnt DESC",
@@ -1390,7 +1416,7 @@ pub fn get_global_stats(conn: &DbConnection) -> Result<GlobalStats> {
     })
 }
 
-/// Получает всю историю загрузок пользователя для экспорта
+/// Gets all download history for a user for export
 pub fn get_all_download_history(conn: &DbConnection, telegram_id: i64) -> Result<Vec<DownloadHistoryEntry>> {
     let mut stmt = conn.prepare(
         "SELECT id, url, title, format, downloaded_at, file_id, author, file_size, duration, video_quality, audio_bitrate,
@@ -1425,10 +1451,10 @@ pub fn get_all_download_history(conn: &DbConnection, telegram_id: i64) -> Result
     Ok(entries)
 }
 
-/// Получает отфильтрованную историю загрузок для команды /downloads
+/// Gets filtered download history for the /downloads command
 ///
-/// Возвращает только файлы с file_id (успешно отправленные) и только mp3/mp4 (исключая субтитры).
-/// Поддерживает фильтрацию по типу файла и поиск по названию/автору.
+/// Returns only files with file_id (successfully sent) and only mp3/mp4 (excluding subtitles).
+/// Supports filtering by file type and searching by title/author.
 pub fn get_download_history_filtered(
     conn: &DbConnection,
     user_id: i64,
@@ -1491,7 +1517,7 @@ pub fn get_download_history_filtered(
     Ok(downloads)
 }
 
-/// Получает отфильтрованную историю отрезов для команды /downloads
+/// Gets filtered cuts history for the /downloads command
 pub fn get_cuts_history_filtered(
     conn: &DbConnection,
     user_id: i64,
@@ -1543,15 +1569,15 @@ pub fn get_cuts_history_filtered(
     Ok(cuts)
 }
 
-/// Получает список всех пользователей из базы данных.
+/// Gets the list of all users from the database.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
+/// * `conn` - Database connection
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(Vec<User>)` со всеми пользователями или ошибку базы данных.
+/// Returns `Ok(Vec<User>)` with all users or a database error.
 pub fn get_all_users(conn: &DbConnection) -> Result<Vec<User>> {
     let mut stmt = conn.prepare(
         "SELECT
@@ -1568,7 +1594,8 @@ pub fn get_all_users(conn: &DbConnection) -> Result<Vec<User>> {
             s.expires_at as subscription_expires_at,
             s.telegram_charge_id as telegram_charge_id,
             COALESCE(s.is_recurring, 0) as is_recurring,
-            COALESCE(u.burn_subtitles, 0) as burn_subtitles
+            COALESCE(u.burn_subtitles, 0) as burn_subtitles,
+            COALESCE(u.progress_bar_style, 'classic') as progress_bar_style
         FROM users u
         LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
         ORDER BY u.telegram_id",
@@ -1589,6 +1616,7 @@ pub fn get_all_users(conn: &DbConnection) -> Result<Vec<User>> {
             telegram_charge_id: row.get(11)?,
             is_recurring: row.get::<_, i32>(12).unwrap_or(0) != 0,
             burn_subtitles: row.get(13).unwrap_or(0),
+            progress_bar_style: row.get(14).unwrap_or_else(|_| "classic".to_string()),
         })
     })?;
 
@@ -1599,7 +1627,7 @@ pub fn get_all_users(conn: &DbConnection) -> Result<Vec<User>> {
     Ok(users)
 }
 
-/// Структура задачи в очереди БД
+/// Structure for a task entry in the DB queue
 #[derive(Debug, Clone)]
 pub struct TaskQueueEntry {
     pub id: String,
@@ -1617,7 +1645,7 @@ pub struct TaskQueueEntry {
     pub updated_at: String,
 }
 
-/// Сохраняет задачу в очередь БД
+/// Saves a task to the DB queue
 #[allow(clippy::too_many_arguments)]
 pub fn save_task_to_queue(
     conn: &DbConnection,
@@ -1652,7 +1680,7 @@ pub fn save_task_to_queue(
     Ok(())
 }
 
-/// Обновляет статус задачи
+/// Updates the status of a task
 pub fn update_task_status(conn: &DbConnection, task_id: &str, status: &str, error_message: Option<&str>) -> Result<()> {
     conn.execute(
         "UPDATE task_queue SET status = ?1, error_message = ?2, updated_at = CURRENT_TIMESTAMP WHERE id = ?3",
@@ -1665,7 +1693,7 @@ pub fn update_task_status(conn: &DbConnection, task_id: &str, status: &str, erro
     Ok(())
 }
 
-/// Увеличивает счетчик попыток и обновляет статус на failed
+/// Increments the retry counter and updates the status to failed
 pub fn mark_task_failed(conn: &DbConnection, task_id: &str, error_message: &str) -> Result<()> {
     conn.execute(
         "UPDATE task_queue
@@ -1679,7 +1707,7 @@ pub fn mark_task_failed(conn: &DbConnection, task_id: &str, error_message: &str)
     Ok(())
 }
 
-/// Получает все failed задачи для повторной обработки
+/// Gets all failed tasks for reprocessing
 pub fn get_failed_tasks(conn: &DbConnection, max_retries: i32) -> Result<Vec<TaskQueueEntry>> {
     let mut stmt = conn.prepare(
         "SELECT id, user_id, url, format, is_video, video_quality, audio_bitrate, priority, status, error_message, retry_count, created_at, updated_at
@@ -1712,7 +1740,7 @@ pub fn get_failed_tasks(conn: &DbConnection, max_retries: i32) -> Result<Vec<Tas
     Ok(tasks)
 }
 
-/// Получает задачу по ID
+/// Gets a task by ID
 pub fn get_task_by_id(conn: &DbConnection, task_id: &str) -> Result<Option<TaskQueueEntry>> {
     let mut stmt = conn.prepare(
         "SELECT id, user_id, url, format, is_video, video_quality, audio_bitrate, priority, status, error_message, retry_count, created_at, updated_at
@@ -1743,7 +1771,7 @@ pub fn get_task_by_id(conn: &DbConnection, task_id: &str) -> Result<Option<TaskQ
     }
 }
 
-/// Помечает задачу как completed
+/// Marks a task as completed
 pub fn mark_task_completed(conn: &DbConnection, task_id: &str) -> Result<()> {
     conn.execute(
         "UPDATE task_queue SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
@@ -1752,7 +1780,7 @@ pub fn mark_task_completed(conn: &DbConnection, task_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Помечает задачу как processing
+/// Marks a task as processing
 pub fn mark_task_processing(conn: &DbConnection, task_id: &str) -> Result<()> {
     conn.execute(
         "UPDATE task_queue SET status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
@@ -1761,17 +1789,17 @@ pub fn mark_task_processing(conn: &DbConnection, task_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Обновляет telegram_charge_id пользователя (используется для управления подписками)
+/// Updates the telegram_charge_id of a user (used for subscription management)
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
-/// * `charge_id` - Telegram payment charge ID из успешного платежа
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
+/// * `charge_id` - Telegram payment charge ID from a successful payment
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+/// Returns `Ok(())` on success or a database error.
 pub fn update_telegram_charge_id(conn: &DbConnection, telegram_id: i64, charge_id: Option<&str>) -> Result<()> {
     conn.execute(
         "UPDATE users SET telegram_charge_id = ?1 WHERE telegram_id = ?2",
@@ -2446,7 +2474,7 @@ pub fn get_cut_entry(conn: &DbConnection, user_id: i64, cut_id: i64) -> Result<O
 
 // ==================== Subscription Management ====================
 
-/// Получает запись подписки пользователя из таблицы subscriptions.
+/// Gets the subscription record for a user from the subscriptions table.
 pub fn get_subscription(conn: &DbConnection, telegram_id: i64) -> Result<Option<Subscription>> {
     let mut stmt = conn.prepare(
         "SELECT user_id, plan, expires_at, telegram_charge_id, is_recurring
@@ -2468,20 +2496,20 @@ pub fn get_subscription(conn: &DbConnection, telegram_id: i64) -> Result<Option<
     }
 }
 
-/// Обновляет данные подписки пользователя при успешном платеже.
+/// Updates the subscription data for a user after a successful payment.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
-/// * `plan` - Новый план пользователя (например, "premium", "vip")
-/// * `charge_id` - Telegram payment charge ID из успешного платежа
-/// * `subscription_expires_at` - Дата истечения подписки (Unix timestamp или ISO 8601 строка)
-/// * `is_recurring` - Флаг рекуррентной подписки (автопродление)
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
+/// * `plan` - New user plan (e.g. "premium", "vip")
+/// * `charge_id` - Telegram payment charge ID from a successful payment
+/// * `subscription_expires_at` - Subscription expiry date (Unix timestamp or ISO 8601 string)
+/// * `is_recurring` - Recurring subscription flag (auto-renewal)
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+/// Returns `Ok(())` on success or a database error.
 pub fn update_subscription_data(
     conn: &DbConnection,
     telegram_id: i64,
@@ -2514,16 +2542,16 @@ pub fn update_subscription_data(
     Ok(())
 }
 
-/// Проверяет, активна ли подписка пользователя.
+/// Checks whether the subscription for a user is active.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(true)` если подписка активна, `Ok(false)` если нет или истекла.
+/// Returns `Ok(true)` if the subscription is active, `Ok(false)` if not or expired.
 pub fn is_subscription_active(conn: &DbConnection, telegram_id: i64) -> Result<bool> {
     let subscription = get_subscription(conn, telegram_id)?;
 
@@ -2544,21 +2572,21 @@ pub fn is_subscription_active(conn: &DbConnection, telegram_id: i64) -> Result<b
     }
 }
 
-/// Отменяет подписку пользователя (сбрасывает флаг is_recurring).
+/// Cancels a user's subscription (clears the is_recurring flag).
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `telegram_id` - Telegram ID пользователя
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
 ///
 /// # Returns
 ///
-/// Возвращает `Ok(())` при успехе или ошибку базы данных.
+/// Returns `Ok(())` on success or a database error.
 ///
 /// # Note
 ///
-/// Эта функция только убирает флаг автопродления. Пользователь сохраняет
-/// доступ до даты истечения подписки (subscription_expires_at).
+/// This function only removes the auto-renewal flag. The user retains
+/// access until the subscription expiry date (subscription_expires_at).
 pub fn cancel_subscription(conn: &DbConnection, telegram_id: i64) -> Result<()> {
     conn.execute(
         "INSERT INTO subscriptions (user_id, plan, is_recurring)
@@ -2575,11 +2603,11 @@ pub fn cancel_subscription(conn: &DbConnection, telegram_id: i64) -> Result<()> 
     Ok(())
 }
 
-/// Получает информацию о статусе подписки пользователя.
+/// Gets the subscription status information for a user.
 ///
 /// # Returns
 ///
-/// Возвращает кортеж: (plan, expires_at, is_recurring, is_active)
+/// Returns a tuple: (plan, expires_at, is_recurring, is_active)
 pub type SubscriptionStatus = (Plan, Option<String>, bool, bool);
 
 pub fn get_subscription_status(conn: &DbConnection, telegram_id: i64) -> Result<Option<SubscriptionStatus>> {
@@ -2598,25 +2626,25 @@ pub fn get_subscription_status(conn: &DbConnection, telegram_id: i64) -> Result<
     }
 }
 
-/// Сохраняет информацию о платеже (charge) в базу данных.
+/// Saves payment (charge) information to the database.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `user_id` - Telegram ID пользователя
-/// * `plan` - План подписки ("premium" или "vip")
-/// * `telegram_charge_id` - ID платежа из Telegram
-/// * `provider_charge_id` - ID платежа от провайдера (опционально)
-/// * `currency` - Валюта платежа (например, "XTR" для Stars)
-/// * `total_amount` - Общая сумма платежа
-/// * `invoice_payload` - Payload инвойса
-/// * `is_recurring` - Флаг рекуррентной подписки
-/// * `is_first_recurring` - Флаг первого платежа рекуррентной подписки
-/// * `subscription_expiration_date` - Дата истечения подписки
+/// * `conn` - Database connection
+/// * `user_id` - Telegram ID of the user
+/// * `plan` - Subscription plan ("premium" or "vip")
+/// * `telegram_charge_id` - Payment ID from Telegram
+/// * `provider_charge_id` - Payment ID from provider (optional)
+/// * `currency` - Payment currency (e.g. "XTR" for Stars)
+/// * `total_amount` - Total payment amount
+/// * `invoice_payload` - Invoice payload
+/// * `is_recurring` - Recurring subscription flag
+/// * `is_first_recurring` - Flag for first recurring payment
+/// * `subscription_expiration_date` - Subscription expiry date
 ///
 /// # Returns
 ///
-/// Возвращает `Result<i64>` с ID созданной записи или ошибку.
+/// Returns `Result<i64>` with the ID of the created record or an error.
 pub fn save_charge(
     conn: &DbConnection,
     user_id: i64,
@@ -2653,16 +2681,16 @@ pub fn save_charge(
     Ok(conn.last_insert_rowid())
 }
 
-/// Получает все charges для конкретного пользователя.
+/// Gets all charges for a specific user.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `user_id` - Telegram ID пользователя
+/// * `conn` - Database connection
+/// * `user_id` - Telegram ID of the user
 ///
 /// # Returns
 ///
-/// Возвращает `Result<Vec<Charge>>` со списком всех платежей пользователя.
+/// Returns `Result<Vec<Charge>>` with a list of all user payments.
 pub fn get_user_charges(conn: &DbConnection, user_id: i64) -> Result<Vec<Charge>> {
     let mut stmt = conn.prepare(
         "SELECT id, user_id, plan, telegram_charge_id, provider_charge_id, currency,
@@ -2694,18 +2722,18 @@ pub fn get_user_charges(conn: &DbConnection, user_id: i64) -> Result<Vec<Charge>
     charges.collect()
 }
 
-/// Получает все charges из базы данных с возможностью фильтрации и пагинации.
+/// Gets all charges from the database with optional filtering and pagination.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `plan_filter` - Фильтр по плану (None = все планы)
-/// * `limit` - Максимальное количество записей (None = все)
-/// * `offset` - Смещение для пагинации
+/// * `conn` - Database connection
+/// * `plan_filter` - Filter by plan (None = all plans)
+/// * `limit` - Maximum number of records (None = all)
+/// * `offset` - Offset for pagination
 ///
 /// # Returns
 ///
-/// Возвращает `Result<Vec<Charge>>` со списком всех платежей.
+/// Returns `Result<Vec<Charge>>` with a list of all payments.
 pub fn get_all_charges(
     conn: &DbConnection,
     plan_filter: Option<&str>,
@@ -2761,15 +2789,15 @@ pub fn get_all_charges(
     charges.collect()
 }
 
-/// Получает статистику по платежам.
+/// Gets payment statistics.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
+/// * `conn` - Database connection
 ///
 /// # Returns
 ///
-/// Возвращает кортеж (total_charges, total_amount, premium_count, vip_count, recurring_count).
+/// Returns a tuple (total_charges, total_amount, premium_count, vip_count, recurring_count).
 pub fn get_charges_stats(conn: &DbConnection) -> Result<(i64, i64, i64, i64, i64)> {
     let mut stmt = conn.prepare(
         "SELECT
@@ -2792,19 +2820,19 @@ pub fn get_charges_stats(conn: &DbConnection) -> Result<(i64, i64, i64, i64, i64
     })
 }
 
-/// Сохраняет отзыв пользователя в базу данных.
+/// Saves user feedback to the database.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `user_id` - Telegram ID пользователя
-/// * `username` - Username пользователя (опционально)
-/// * `first_name` - Имя пользователя
-/// * `message` - Текст отзыва
+/// * `conn` - Database connection
+/// * `user_id` - Telegram ID of the user
+/// * `username` - Username of the user (optional)
+/// * `first_name` - First name of the user
+/// * `message` - Feedback text
 ///
 /// # Returns
 ///
-/// Возвращает `Result<i64>` с ID созданной записи или ошибку.
+/// Returns `Result<i64>` with the ID of the created record or an error.
 pub fn save_feedback(
     conn: &DbConnection,
     user_id: i64,
@@ -2821,18 +2849,18 @@ pub fn save_feedback(
     Ok(conn.last_insert_rowid())
 }
 
-/// Получает все отзывы с возможностью фильтрации по статусу.
+/// Gets all feedback messages with optional status filtering.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `status_filter` - Фильтр по статусу ("new", "read", "replied", None = все)
-/// * `limit` - Максимальное количество записей (None = все)
-/// * `offset` - Смещение для пагинации
+/// * `conn` - Database connection
+/// * `status_filter` - Filter by status ("new", "read", "replied", None = all)
+/// * `limit` - Maximum number of records (None = all)
+/// * `offset` - Offset for pagination
 ///
 /// # Returns
 ///
-/// Возвращает `Result<Vec<FeedbackMessage>>` со списком отзывов.
+/// Returns `Result<Vec<FeedbackMessage>>` with a list of feedback messages.
 pub fn get_feedback_messages(
     conn: &DbConnection,
     status_filter: Option<&str>,
@@ -2882,16 +2910,16 @@ pub fn get_feedback_messages(
     messages.collect()
 }
 
-/// Получает отзывы конкретного пользователя.
+/// Gets feedback messages for a specific user.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `user_id` - Telegram ID пользователя
+/// * `conn` - Database connection
+/// * `user_id` - Telegram ID of the user
 ///
 /// # Returns
 ///
-/// Возвращает `Result<Vec<FeedbackMessage>>` со списком отзывов пользователя.
+/// Returns `Result<Vec<FeedbackMessage>>` with a list of user feedback messages.
 pub fn get_user_feedback(conn: &DbConnection, user_id: i64) -> Result<Vec<FeedbackMessage>> {
     let mut stmt = conn.prepare(
         "SELECT id, user_id, username, first_name, message, status,
@@ -2918,17 +2946,17 @@ pub fn get_user_feedback(conn: &DbConnection, user_id: i64) -> Result<Vec<Feedba
     messages.collect()
 }
 
-/// Обновляет статус отзыва.
+/// Updates the status of a feedback message.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `feedback_id` - ID отзыва
-/// * `status` - Новый статус ("new", "read", "replied")
+/// * `conn` - Database connection
+/// * `feedback_id` - Feedback message ID
+/// * `status` - New status ("new", "read", "replied")
 ///
 /// # Returns
 ///
-/// Возвращает `Result<()>` или ошибку.
+/// Returns `Result<()>` or an error.
 pub fn update_feedback_status(conn: &DbConnection, feedback_id: i64, status: &str) -> Result<()> {
     conn.execute(
         "UPDATE feedback_messages SET status = ?1 WHERE id = ?2",
@@ -2937,17 +2965,17 @@ pub fn update_feedback_status(conn: &DbConnection, feedback_id: i64, status: &st
     Ok(())
 }
 
-/// Добавляет ответ администратора на отзыв.
+/// Adds an admin reply to a feedback message.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
-/// * `feedback_id` - ID отзыва
-/// * `reply` - Текст ответа
+/// * `conn` - Database connection
+/// * `feedback_id` - Feedback message ID
+/// * `reply` - Reply text
 ///
 /// # Returns
 ///
-/// Возвращает `Result<()>` или ошибку.
+/// Returns `Result<()>` or an error.
 pub fn add_feedback_reply(conn: &DbConnection, feedback_id: i64, reply: &str) -> Result<()> {
     conn.execute(
         "UPDATE feedback_messages
@@ -2958,15 +2986,15 @@ pub fn add_feedback_reply(conn: &DbConnection, feedback_id: i64, reply: &str) ->
     Ok(())
 }
 
-/// Получает статистику по отзывам.
+/// Gets feedback statistics.
 ///
 /// # Arguments
 ///
-/// * `conn` - Соединение с базой данных
+/// * `conn` - Database connection
 ///
 /// # Returns
 ///
-/// Возвращает кортеж (total_feedback, new_count, read_count, replied_count).
+/// Returns a tuple (total_feedback, new_count, read_count, replied_count).
 pub fn get_feedback_stats(conn: &DbConnection) -> Result<(i64, i64, i64, i64)> {
     let mut stmt = conn.prepare(
         "SELECT
@@ -3326,6 +3354,7 @@ mod tests {
             language: "en".to_string(),
             is_recurring: false,
             burn_subtitles: 0,
+            progress_bar_style: "classic".to_string(),
         };
 
         assert_eq!(user.telegram_id(), 123);

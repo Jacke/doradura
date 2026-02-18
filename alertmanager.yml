@@ -3,7 +3,7 @@
 global:
   resolve_timeout: 5m
 
-# Настройка маршрутизации алертов
+# Alert routing configuration
 route:
   group_by: ['alertname', 'cluster', 'service']
   group_wait: 10s
@@ -12,26 +12,26 @@ route:
   receiver: 'telegram'
 
   routes:
-    # Критические алерты - отправляются немедленно
+    # Critical alerts - sent immediately
     - match:
         severity: critical
       receiver: 'telegram-critical'
       group_wait: 0s
       repeat_interval: 4h
 
-    # Warning алерты - группируются
+    # Warning alerts - grouped
     - match:
         severity: warning
       receiver: 'telegram-warnings'
       group_wait: 30s
       repeat_interval: 24h
 
-# Настройка получателей
+# Receiver configuration
 receivers:
-  # Telegram notifications (требует telegram-bot для AlertManager)
+  # Telegram notifications (requires telegram-bot for AlertManager)
   - name: 'telegram'
     webhook_configs:
-      - url: 'http://localhost:8080/alerts'  # Ваш бот может принимать webhooks
+      - url: 'http://localhost:8080/alerts'  # Your bot can accept webhooks
         send_resolved: true
 
   - name: 'telegram-critical'
@@ -44,7 +44,7 @@ receivers:
       - url: 'http://localhost:8080/alerts/warnings'
         send_resolved: true
 
-# Подавление дублирующих алертов
+# Suppress duplicate alerts
 inhibit_rules:
   - source_match:
       severity: 'critical'

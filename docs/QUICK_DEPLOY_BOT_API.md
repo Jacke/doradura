@@ -1,19 +1,19 @@
-# Быстрый деплой Telegram Bot API на Railway
+# Quick Deploy Telegram Bot API on Railway
 
-## Шаг 1: Откройте Railway Dashboard
+## Step 1: Open Railway Dashboard
 
-Перейдите на [railway.app/dashboard](https://railway.app/dashboard)
+Go to [railway.app/dashboard](https://railway.app/dashboard)
 
-## Шаг 2: Создайте новый сервис
+## Step 2: Create a new service
 
-1. Откройте ваш проект (или создайте новый)
-2. Нажмите **"+ New"** → **"GitHub Repo"**
-3. Выберите репозиторий `doradura`
-4. Railway автоматически обнаружит Dockerfile
+1. Open your project (or create a new one)
+2. Click **"+ New"** → **"GitHub Repo"**
+3. Select the `doradura` repository
+4. Railway will automatically detect the Dockerfile
 
-## Шаг 3: Настройте сервис
+## Step 3: Configure the service
 
-В настройках сервиса (Settings):
+In the service settings (Settings):
 
 ### General
 - **Service Name**: `telegram-bot-api`
@@ -22,15 +22,15 @@
 - **Dockerfile Path**: `Dockerfile.bot-api`
 
 ### Networking
-- Добавьте **Public Domain** если нужен внешний доступ
-- Порт: `8081` (автоматически)
+- Add a **Public Domain** if external access is needed
+- Port: `8081` (automatically)
 
-## Шаг 4: (Опционально) Безопасная конфигурация
+## Step 4: (Optional) Secure configuration
 
-Если используете `Dockerfile.bot-api.secure`:
+If using `Dockerfile.bot-api.secure`:
 
 ### Environment Variables
-Добавьте в Settings → Variables:
+Add in Settings → Variables:
 
 ```
 TELEGRAM_API_ID=YOUR_API_ID
@@ -38,32 +38,32 @@ TELEGRAM_API_HASH=YOUR_API_HASH
 TELEGRAM_HTTP_PORT=8081
 ```
 
-> **Получить API_ID и API_HASH:** https://my.telegram.org/apps
+> **Get API_ID and API_HASH:** https://my.telegram.org/apps
 
-## Шаг 5: Deploy
+## Step 5: Deploy
 
-Railway автоматически начнет деплой. Следите за прогрессом в разделе **Deployments**.
+Railway will automatically start deployment. Monitor progress in the **Deployments** section.
 
-## Готово!
+## Done!
 
-После успешного деплоя ваш Bot API будет доступен по адресу:
+After successful deployment your Bot API will be available at:
 ```
 https://your-service-name.up.railway.app
 ```
 
-## Что дальше?
+## What's next?
 
-Используйте этот URL в вашем боте:
+Use this URL in your bot:
 
 ```bash
-# В переменных окружения основного бота
+# In the main bot environment variables
 BOT_API_URL=https://your-bot-api-service.up.railway.app
 ```
 
-## Проверка
+## Verification
 
 ```bash
 curl https://your-bot-api-service.up.railway.app/
 ```
 
-Должен вернуть ответ от Telegram Bot API.
+Should return a response from Telegram Bot API.

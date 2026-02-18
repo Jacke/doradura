@@ -1,44 +1,44 @@
-# 🌐 Docker Networking: Доступ между Контейнерами и Хостом
+# Docker Networking: Access Between Containers and the Host
 
-## Проблема
+## Problem
 
-Как из Docker контейнера получить доступ к сервисам на хост-машине?
+How do you access services on the host machine from inside a Docker container?
 
 ```
-❌ localhost:9094      # Не работает из контейнера (указывает на сам контейнер)
-❌ 127.0.0.1:9094      # Тоже не работает
+localhost:9094      # Does not work from a container (refers to the container itself)
+127.0.0.1:9094      # Also does not work
 ```
 
-## ✅ Решения
+## Solutions
 
-### macOS и Windows (Docker Desktop)
+### macOS and Windows (Docker Desktop)
 
-Используйте специальный DNS-имя:
+Use the special DNS name:
 
 ```yaml
-✅ host.docker.internal:9094
+host.docker.internal:9094
 ```
 
-**Это автоматически разрешается в IP хост-машины.**
+**This automatically resolves to the IP address of the host machine.**
 
-#### Проверка из контейнера
+#### Verify from inside a container
 
 ```bash
-# Запустить временный контейнер
+# Start a temporary container
 docker run --rm -it alpine sh
 
-# Внутри контейнера:
+# Inside the container:
 ping host.docker.internal
 curl http://host.docker.internal:9094/health
 ```
 
 ### Linux
 
-На Linux есть 3 варианта:
+On Linux there are 3 options:
 
-#### Вариант 1: `host.docker.internal` через extra_hosts (✅ Используется)
+#### Option 1: `host.docker.internal` via extra_hosts (Used)
 
-Добавьте в `docker-compose.yml`:
+Add to `docker-compose.yml`:
 
 ```yaml
 services:
@@ -47,80 +47,80 @@ services:
       - "host.docker.internal:host-gateway"
 ```
 
-**Уже настроено!** Теперь `host.docker.internal` работает и на Linux.
+**Already configured!** `host.docker.internal` now works on Linux too.
 
-#### Вариант 2: IP адрес Docker bridge
+#### Option 2: Docker bridge IP address
 
 ```bash
-# Найти IP docker0
+# Find docker0 IP
 ip addr show docker0
 
-# Обычно это:
+# Usually:
 172.17.0.1
 ```
 
-В `prometheus.yml`:
+In `prometheus.yml`:
 ```yaml
 - targets: ['172.17.0.1:9094']
 ```
 
-#### Вариант 3: Network mode host
+#### Option 3: Host network mode
 
 ```yaml
 services:
   prometheus:
-    network_mode: host  # Использовать сеть хоста напрямую
+    network_mode: host  # Use the host network directly
 ```
 
-⚠️ **Внимание**: В этом режиме порт 9091 будет недоступен (конфликт с портом 9090 на хосте).
+**Note**: In this mode, port 9091 may conflict with port 9090 on the host.
 
 ---
 
-## 🗺️ Карта Сетевого Доступа
+## Network Access Map
 
-### Из Хоста → Контейнеры
+### From Host to Containers
 
 ```
-localhost:9091  → Prometheus (порт проброшен)
-localhost:3000  → Grafana (порт проброшен)
-localhost:9093  → AlertManager (порт проброшен)
+localhost:9091  -> Prometheus (port forwarded)
+localhost:3000  -> Grafana (port forwarded)
+localhost:9093  -> AlertManager (port forwarded)
 ```
 
-Работает благодаря `ports` в docker-compose:
+Works via `ports` in docker-compose:
 ```yaml
 ports:
   - "9091:9090"  # host:container
 ```
 
-### Из Контейнера → Хост
+### From Container to Host
 
 ```
 # macOS/Windows:
-host.docker.internal:9094  → Bot metrics server
+host.docker.internal:9094  -> Bot metrics server
 
-# Linux (с extra_hosts):
-host.docker.internal:9094  → Bot metrics server
+# Linux (with extra_hosts):
+host.docker.internal:9094  -> Bot metrics server
 
-# Linux (без extra_hosts):
-172.17.0.1:9094  → Bot metrics server
+# Linux (without extra_hosts):
+172.17.0.1:9094  -> Bot metrics server
 ```
 
-### Между Контейнерами
+### Between Containers
 
-Используйте имена сервисов:
+Use service names:
 
 ```yaml
-# Prometheus → Grafana
+# Prometheus -> Grafana
 prometheus:9090
 
-# Grafana → Prometheus
+# Grafana -> Prometheus
 prometheus:9090
 
-# Любой → AlertManager
+# Any -> AlertManager
 alertmanager:9093
 ```
 
-Работает благодаря Docker DNS внутри сети `monitoring`:
+Works via Docker DNS inside the `monitoring` network:
 ```yaml
 networks:
   monitoring:
@@ -129,91 +129,91 @@ networks:
 
 ---
 
-## 📊 Ваша Текущая Архитектура
+## Your Current Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      HOST MACHINE                            │
-│                                                               │
-│  Bot (Rust) :9094                                            │
-│      ↑                                                        │
-│      │ host.docker.internal:9094                            │
-│      │                                                        │
-│  ┌───┴──────────────────────────────────────────────────┐   │
-│  │              Docker Network: monitoring               │   │
-│  │                                                        │   │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌────────────┐ │   │
-│  │  │ Prometheus   │  │   Grafana    │  │AlertManager│ │   │
-│  │  │   :9090      │  │    :3000     │  │   :9093    │ │   │
-│  │  │ (внутри)     │  │  (внутри)    │  │ (внутри)   │ │   │
-│  │  └──────┬───────┘  └──────────────┘  └────────────┘ │   │
-│  │         │                                             │   │
-│  │         │ Scrapes: host.docker.internal:9094         │   │
-│  │         └─────────────────────────────────────────┐  │   │
-│  │                                                     ↓  │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                                                               │
-│  Port Mappings (доступны извне):                            │
-│    :9091 → Prometheus:9090                                  │
-│    :3000 → Grafana:3000                                     │
-│    :9093 → AlertManager:9093                                │
-└─────────────────────────────────────────────────────────────┘
++-------------------------------------------------------------+
+|                      HOST MACHINE                            |
+|                                                               |
+|  Bot (Rust) :9094                                            |
+|      ^                                                        |
+|      | host.docker.internal:9094                             |
+|      |                                                        |
+|  +---+------------------------------------------------------+ |
+|  |              Docker Network: monitoring                   | |
+|  |                                                           | |
+|  |  +--------------+  +--------------+  +------------+      | |
+|  |  | Prometheus   |  |   Grafana    |  |AlertManager|      | |
+|  |  |   :9090      |  |    :3000     |  |   :9093    |      | |
+|  |  | (internal)   |  |  (internal)  |  | (internal) |      | |
+|  |  +------+-------+  +--------------+  +------------+      | |
+|  |         |                                                  | |
+|  |         | Scrapes: host.docker.internal:9094              | |
+|  |         +-----------------------------------------------+ | |
+|  |                                                           | |
+|  +-----------------------------------------------------------+ |
+|                                                               |
+|  Port Mappings (accessible from outside):                    |
+|    :9091 -> Prometheus:9090                                  |
+|    :3000 -> Grafana:3000                                     |
+|    :9093 -> AlertManager:9093                                |
++-------------------------------------------------------------+
 
 Browser:
-  http://localhost:9091 → Prometheus UI
-  http://localhost:3000 → Grafana UI
-  http://localhost:9093 → AlertManager UI
+  http://localhost:9091 -> Prometheus UI
+  http://localhost:3000 -> Grafana UI
+  http://localhost:9093 -> AlertManager UI
 ```
 
 ---
 
-## 🔍 Диагностика
+## Diagnostics
 
-### Проверить что бот слушает на правильном интерфейсе
+### Check that the bot is listening on the correct interface
 
 ```bash
-# Бот должен слушать на 0.0.0.0, а не на 127.0.0.1
+# The bot should listen on 0.0.0.0, not 127.0.0.1
 lsof -i :9094
 
-# Должно быть:
-# *:9094 (LISTEN)  ← хорошо, слушает на всех интерфейсах
+# Should show:
+# *:9094 (LISTEN)  <- good, listening on all interfaces
 #
-# Не должно быть:
-# 127.0.0.1:9094 (LISTEN)  ← плохо, только localhost
+# Should NOT show:
+# 127.0.0.1:9094 (LISTEN)  <- bad, localhost only
 ```
 
-Проверьте в коде metrics_server:
+Check in the metrics_server code:
 ```rust
-// ✅ Правильно
+// Correct
 let addr = SocketAddr::from(([0, 0, 0, 0], port));
 
-// ❌ Неправильно
+// Incorrect
 let addr = SocketAddr::from(([127, 0, 0, 1], port));
 ```
 
-### Проверить доступность из контейнера
+### Check accessibility from inside a container
 
 ```bash
-# Запустить shell в контейнере Prometheus
+# Start a shell in the Prometheus container
 docker exec -it doradura-prometheus sh
 
-# Внутри контейнера:
-# Проверить что host.docker.internal резолвится
+# Inside the container:
+# Check that host.docker.internal resolves
 getent hosts host.docker.internal
 
-# Проверить доступность метрик
+# Check metrics accessibility
 wget -O- http://host.docker.internal:9094/metrics
-# или
+# or
 curl http://host.docker.internal:9094/metrics
 ```
 
-### Проверить targets в Prometheus
+### Check targets in Prometheus
 
 ```bash
-# Из хоста
+# From the host
 curl http://localhost:9091/api/v1/targets | jq '.data.activeTargets[] | select(.labels.job=="doradura-bot")'
 
-# Должно показать:
+# Should show:
 {
   "health": "up",
   "labels": {
@@ -225,45 +225,45 @@ curl http://localhost:9091/api/v1/targets | jq '.data.activeTargets[] | select(.
 }
 ```
 
-### Проверить логи Prometheus
+### Check Prometheus logs
 
 ```bash
 docker logs doradura-prometheus
 
-# Если есть ошибки подключения:
-# "context deadline exceeded" → бот недоступен
-# "connection refused" → порт закрыт или неправильный
-# "no such host" → DNS не резолвится
+# If there are connection errors:
+# "context deadline exceeded" -> bot is unreachable
+# "connection refused" -> port is closed or wrong
+# "no such host" -> DNS is not resolving
 ```
 
 ---
 
-## 🐛 Типичные Проблемы
+## Common Issues
 
-### 1. "Connection refused" из контейнера
+### 1. "Connection refused" from a container
 
-**Причина**: Бот слушает только на 127.0.0.1
+**Cause**: Bot is listening only on 127.0.0.1
 
-**Решение**: Убедитесь что бот слушает на `0.0.0.0:9094`
+**Solution**: Make sure the bot listens on `0.0.0.0:9094`
 
 ```rust
 // src/core/metrics_server.rs
 let addr = SocketAddr::from(([0, 0, 0, 0], port));
 ```
 
-### 2. "No such host: host.docker.internal" на Linux
+### 2. "No such host: host.docker.internal" on Linux
 
-**Причина**: На Linux это имя не работает из коробки
+**Cause**: On Linux this name does not work out of the box
 
-**Решение**: Используйте `extra_hosts` (уже добавлено в docker-compose.yml):
+**Solution**: Use `extra_hosts` (already added to docker-compose.yml):
 ```yaml
 extra_hosts:
   - "host.docker.internal:host-gateway"
 ```
 
-### 3. Firewall блокирует
+### 3. Firewall blocking
 
-**macOS/Linux**: Проверьте firewall rules
+**macOS/Linux**: Check firewall rules
 
 ```bash
 # macOS
@@ -273,80 +273,80 @@ sudo /usr/libexec/ApplicationFirewall/socketfilterfw --listapps
 sudo ufw status
 ```
 
-**Решение**: Разрешите входящие подключения на порт 9094
+**Solution**: Allow incoming connections on port 9094
 
-### 4. Неправильная конфигурация prometheus.yml
+### 4. Incorrect prometheus.yml configuration
 
 ```yaml
-# ❌ Неправильно
+# Incorrect
 - targets: ['localhost:9094']
 
-# ✅ Правильно
+# Correct
 - targets: ['host.docker.internal:9094']
 ```
 
 ---
 
-## 🚀 Production: Railway
+## Production: Railway
 
-На Railway сервисы общаются через internal network:
+On Railway, services communicate over the internal network:
 
 ### Internal Domains
 
 ```yaml
-# prometheus.yml для Railway
+# prometheus.yml for Railway
 scrape_configs:
   - job_name: 'doradura-bot'
     static_configs:
       - targets: ['doradura-bot.railway.internal:9094']
-      # Или если в том же проекте:
+      # Or if in the same project:
       - targets: ['doradura-bot:9094']
 ```
 
-Railway автоматически создает DNS записи для сервисов.
+Railway automatically creates DNS records for services.
 
-### Проверка в Railway
+### Verification on Railway
 
 ```bash
-# В терминале сервиса
+# In the service terminal
 railway run bash
 
-# Внутри:
+# Inside:
 curl http://doradura-bot.railway.internal:9094/metrics
 ```
 
 ---
 
-## 📝 Checklist
+## Checklist
 
 ### Development (Local)
 
-- [x] `extra_hosts` добавлен в docker-compose.yml
-- [x] `prometheus.yml` использует `host.docker.internal:9094`
-- [ ] Бот слушает на `0.0.0.0:9094` (не на `127.0.0.1`)
-- [ ] Порт 9094 не заблокирован firewall
-- [ ] `curl http://localhost:9094/metrics` работает с хоста
-- [ ] Targets в Prometheus показывают "up"
+- [x] `extra_hosts` added to docker-compose.yml
+- [x] `prometheus.yml` uses `host.docker.internal:9094`
+- [ ] Bot listens on `0.0.0.0:9094` (not `127.0.0.1`)
+- [ ] Port 9094 is not blocked by firewall
+- [ ] `curl http://localhost:9094/metrics` works from the host
+- [ ] Targets in Prometheus show "up"
 
 ### Production (Railway)
 
-- [ ] Используйте internal domain: `doradura-bot.railway.internal`
-- [ ] Или имя сервиса: `doradura-bot`
-- [ ] Не используйте `host.docker.internal` в production
+- [ ] Use internal domain: `doradura-bot.railway.internal`
+- [ ] Or service name: `doradura-bot`
+- [ ] Do not use `host.docker.internal` in production
 
 ---
 
-## 💡 Best Practices
+## Best Practices
 
-1. **Development**: Используйте `host.docker.internal` с `extra_hosts`
-2. **Production**: Используйте internal service names
-3. **Metrics Server**: Всегда слушайте на `0.0.0.0`, не на `127.0.0.1`
-4. **Docker Networks**: Используйте bridge network для изоляции
-5. **Port Mapping**: Пробрасывайте только нужные порты
+1. **Development**: Use `host.docker.internal` with `extra_hosts`
+2. **Production**: Use internal service names
+3. **Metrics Server**: Always listen on `0.0.0.0`, not on `127.0.0.1`
+4. **Docker Networks**: Use bridge network for isolation
+5. **Port Mapping**: Forward only necessary ports
 
 ---
 
-## 🔗 Полезные Ссылки
+## Useful Links
 
 - [Docker Networking Docs](https://docs.docker.com/network/)
 - [Docker Desktop Networking](https://docs.docker.com/desktop/networking/)
@@ -354,14 +354,14 @@ curl http://doradura-bot.railway.internal:9094/metrics
 
 ---
 
-## ✅ Итог
+## Summary
 
-**Текущая конфигурация работает на:**
-- ✅ macOS (Docker Desktop)
-- ✅ Windows (Docker Desktop)
-- ✅ Linux (благодаря `extra_hosts`)
+**The current configuration works on:**
+- macOS (Docker Desktop)
+- Windows (Docker Desktop)
+- Linux (via `extra_hosts`)
 
-**Настройка:**
+**Setup:**
 - Prometheus scrapes: `host.docker.internal:9094`
-- Работает кроссплатформенно
-- Нет ручной настройки IP адресов
+- Works cross-platform
+- No manual IP address configuration required

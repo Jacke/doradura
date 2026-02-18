@@ -3,13 +3,13 @@ use chrono::{DateTime, Utc};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// Максимальное количество хранимых бэкапов
+/// Maximum number of stored backups
 const MAX_BACKUPS: usize = 30;
 
-/// Базовая директория для бэкапов
+/// Base directory for backups
 const BACKUP_DIR: &str = "backups";
 
-/// Создает директорию для бэкапов если её нет
+/// Creates the backup directory if it does not exist
 fn ensure_backup_dir() -> Result<PathBuf> {
     let backup_dir = PathBuf::from(BACKUP_DIR);
     if !backup_dir.exists() {
@@ -19,19 +19,19 @@ fn ensure_backup_dir() -> Result<PathBuf> {
     Ok(backup_dir)
 }
 
-/// Создает бэкап базы данных
+/// Creates a database backup
 ///
 /// # Arguments
 ///
-/// * `db_path` - Путь к файлу базы данных
+/// * `db_path` - Path to the database file
 ///
 /// # Returns
 ///
-/// Возвращает путь к созданному бэкапу или ошибку
+/// Returns the path to the created backup or an error
 pub fn create_backup(db_path: &str) -> Result<PathBuf> {
     let backup_dir = ensure_backup_dir()?;
 
-    // Генерируем имя файла с timestamp
+    // Generate filename with timestamp
     let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
     let db_name = Path::new(db_path)
         .file_name()
@@ -40,29 +40,29 @@ pub fn create_backup(db_path: &str) -> Result<PathBuf> {
     let backup_filename = format!("{}_{}", timestamp, db_name);
     let backup_path = backup_dir.join(backup_filename);
 
-    // Копируем файл базы данных
+    // Copy the database file
     fs::copy(db_path, &backup_path)?;
     log::info!("Created backup: {}", backup_path.display());
 
-    // Очищаем старые бэкапы
+    // Clean up old backups
     cleanup_old_backups(&backup_dir)?;
 
     Ok(backup_path)
 }
 
-/// Удаляет старые бэкапы, оставляя только последние MAX_BACKUPS
+/// Deletes old backups, keeping only the latest MAX_BACKUPS
 fn cleanup_old_backups(backup_dir: &Path) -> Result<()> {
     let mut backups: Vec<(PathBuf, DateTime<Utc>)> = Vec::new();
 
-    // Собираем все бэкапы с их временными метками
+    // Collect all backups with their timestamps
     if backup_dir.is_dir() {
         for entry in fs::read_dir(backup_dir)? {
             let entry = entry?;
             let path = entry.path();
             if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("sqlite") {
-                // Пытаемся извлечь timestamp из имени файла
+                // Try to extract timestamp from the filename
                 if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                    // Формат: YYYYMMDD_HHMMSS_database.sqlite
+                    // Format: YYYYMMDD_HHMMSS_database.sqlite
                     if let Some(timestamp_part) = file_name.split('_').take(2).collect::<Vec<_>>().join("_").get(0..15)
                     {
                         if let Ok(dt) = DateTime::parse_from_str(timestamp_part, "%Y%m%d_%H%M%S") {
@@ -74,10 +74,10 @@ fn cleanup_old_backups(backup_dir: &Path) -> Result<()> {
         }
     }
 
-    // Сортируем по времени (новые первыми)
+    // Sort by time (newest first)
     backups.sort_by(|a, b| b.1.cmp(&a.1));
 
-    // Удаляем старые бэкапы
+    // Delete old backups
     if backups.len() > MAX_BACKUPS {
         for (path, _) in backups.iter().skip(MAX_BACKUPS) {
             if let Err(e) = fs::remove_file(path) {
@@ -91,7 +91,7 @@ fn cleanup_old_backups(backup_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Получает список всех бэкапов
+/// Gets the list of all backups
 pub fn list_backups() -> Result<Vec<(PathBuf, DateTime<Utc>)>> {
     let backup_dir = ensure_backup_dir()?;
     let mut backups: Vec<(PathBuf, DateTime<Utc>)> = Vec::new();
@@ -113,28 +113,28 @@ pub fn list_backups() -> Result<Vec<(PathBuf, DateTime<Utc>)>> {
         }
     }
 
-    // Сортируем по времени (новые первыми)
+    // Sort by time (newest first)
     backups.sort_by(|a, b| b.1.cmp(&a.1));
 
     Ok(backups)
 }
 
-/// Восстанавливает базу данных из бэкапа
+/// Restores a database from a backup
 ///
 /// # Arguments
 ///
-/// * `backup_path` - Путь к файлу бэкапа
-/// * `db_path` - Путь к файлу базы данных для восстановления
+/// * `backup_path` - Path to the backup file
+/// * `db_path` - Path to the database file to restore
 ///
 /// # Returns
 ///
-/// Возвращает Ok(()) при успехе или ошибку
+/// Returns Ok(()) on success or an error
 pub fn restore_backup(backup_path: &Path, db_path: &str) -> Result<()> {
     if !backup_path.exists() {
         return Err(anyhow::anyhow!("Backup file does not exist: {}", backup_path.display()));
     }
 
-    // Копируем бэкап на место базы данных
+    // Copy the backup over the database file
     fs::copy(backup_path, db_path)?;
     log::info!("Restored database from backup: {}", backup_path.display());
 

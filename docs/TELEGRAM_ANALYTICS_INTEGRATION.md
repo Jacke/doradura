@@ -1,28 +1,28 @@
-# ✅ Интеграция Telegram Analytics Команд - Завершена
+# Telegram Analytics Commands Integration - Complete
 
-## 📊 Что Было Сделано
+## What Was Done
 
-### 1. Добавлены Команды в Command Enum
+### 1. Commands Added to the Command Enum
 
-**Файл:** [src/telegram/bot.rs](src/telegram/bot.rs:51-58)
+**File:** [src/telegram/bot.rs](src/telegram/bot.rs:51-58)
 
 ```rust
-#[command(description = "аналитика и метрики (только для администратора)")]
+#[command(description = "analytics and metrics (admin only)")]
 Analytics,
 
-#[command(description = "состояние системы (только для администратора)")]
+#[command(description = "system health status (admin only)")]
 Health,
 
-#[command(description = "детальные метрики (только для администратора)")]
+#[command(description = "detailed metrics (admin only)")]
 Metrics,
 
-#[command(description = "финансовая аналитика (только для администратора)")]
+#[command(description = "financial analytics (admin only)")]
 Revenue,
 ```
 
-### 2. Импортированы Функции
+### 2. Functions Imported
 
-**Файл:** [src/main.rs](src/main.rs:32-37)
+**File:** [src/main.rs](src/main.rs:32-37)
 
 ```rust
 use doradura::telegram::{
@@ -36,9 +36,9 @@ use doradura::telegram::{
 };
 ```
 
-### 3. Добавлены Обработчики в Dispatcher
+### 3. Handlers Added to Dispatcher
 
-**Файл:** [src/main.rs](src/main.rs:483-495)
+**File:** [src/main.rs](src/main.rs:483-495)
 
 ```rust
 Command::Analytics => {
@@ -57,155 +57,155 @@ Command::Revenue => {
 
 ---
 
-## 🎯 Доступные Команды
+## Available Commands
 
-### `/analytics` - Общий Дашборд
+### `/analytics` - Overview Dashboard
 
-Показывает обзор всех метрик:
-
-```
-📊 Analytics Dashboard
-
-⚡ Performance (last 24h)
-• Downloads: 1,234
-• Success rate: 98.5%
-• Avg duration: 8.3s
-
-💰 Business
-• Revenue: 150⭐
-• Active subs: 42
-• New today: 5
-
-🏥 Health
-• Queue: 3 tasks
-• Error rate: 1.5%
-• yt-dlp: ✅ OK
-
-👥 Engagement
-• DAU: 85
-• Commands: 523
-• Top format: MP3
-```
-
-**Функция:** `handle_analytics_command` ([src/telegram/analytics.rs:20](src/telegram/analytics.rs:20))
-
-### `/health` - Состояние Системы
-
-Показывает health check системы:
+Shows an overview of all metrics:
 
 ```
-🏥 System Health Report
+Analytics Dashboard
 
-⏰ Uptime: 2d 5h 23m
+Performance (last 24h)
+- Downloads: 1,234
+- Success rate: 98.5%
+- Avg duration: 8.3s
 
-📊 Queue Status
-• Total: 3 tasks
-• High priority: 0
-• Medium: 2
-• Low: 1
+Business
+- Revenue: 150 Stars
+- Active subs: 42
+- New today: 5
 
-❌ Errors (last 24h)
-• ytdlp: 5
-• network: 2
-• rate_limit: 0
+Health
+- Queue: 3 tasks
+- Error rate: 1.5%
+- yt-dlp: OK
 
-✅ System Status
+Engagement
+- DAU: 85
+- Commands: 523
+- Top format: MP3
+```
+
+**Function:** `handle_analytics_command` ([src/telegram/analytics.rs:20](src/telegram/analytics.rs:20))
+
+### `/health` - System Health
+
+Shows the system health report:
+
+```
+System Health Report
+
+Uptime: 2d 5h 23m
+
+Queue Status
+- Total: 3 tasks
+- High priority: 0
+- Medium: 2
+- Low: 1
+
+Errors (last 24h)
+- ytdlp: 5
+- network: 2
+- rate_limit: 0
+
+System Status
 Bot: Running
 Database: OK
 yt-dlp: OK
 ```
 
-**Функция:** `handle_health_command` ([src/telegram/analytics.rs:61](src/telegram/analytics.rs:61))
+**Function:** `handle_health_command` ([src/telegram/analytics.rs:61](src/telegram/analytics.rs:61))
 
-### `/metrics` - Детальные Метрики
+### `/metrics` - Detailed Metrics
 
-Показывает детальные метрики (по умолчанию все категории):
-
-```
-⚡ Performance Metrics
-
-📥 Downloads (last 24h)
-• Total: 1,234
-• Success: 1,215 (98.5%)
-• Failed: 19 (1.5%)
-
-⏱️ Duration
-• Average: 8.3s
-• p95: 15.2s
-• p99: 25.8s
-
-📊 Queue
-• Current depth: 3
-• Avg wait time: 2.1s
-```
-
-**Функция:** `handle_metrics_command` ([src/telegram/analytics.rs:90](src/telegram/analytics.rs:90))
-
-### `/revenue` - Финансовая Аналитика
-
-Показывает финансовые метрики и конверсии:
+Shows detailed metrics (all categories by default):
 
 ```
-💰 Revenue Analytics
+Performance Metrics
 
-📊 All-time
-• Total: 1,250⭐
-• Premium: 850⭐
-• VIP: 400⭐
+Downloads (last 24h)
+- Total: 1,234
+- Success: 1,215 (98.5%)
+- Failed: 19 (1.5%)
 
-📅 This Month
-• Revenue: 150⭐
-• New subs: 25
+Duration
+- Average: 8.3s
+- p95: 15.2s
+- p99: 25.8s
 
-🎯 Conversion Funnel
-• Visitors: 1,000
-• Checkout: 50 (5%)
-• Paid: 25 (50%)
+Queue
+- Current depth: 3
+- Avg wait time: 2.1s
 ```
 
-**Функция:** `handle_revenue_command` ([src/telegram/analytics.rs:131](src/telegram/analytics.rs:131))
+**Function:** `handle_metrics_command` ([src/telegram/analytics.rs:90](src/telegram/analytics.rs:90))
+
+### `/revenue` - Financial Analytics
+
+Shows financial metrics and conversions:
+
+```
+Revenue Analytics
+
+All-time
+- Total: 1,250 Stars
+- Premium: 850 Stars
+- VIP: 400 Stars
+
+This Month
+- Revenue: 150 Stars
+- New subs: 25
+
+Conversion Funnel
+- Visitors: 1,000
+- Checkout: 50 (5%)
+- Paid: 25 (50%)
+```
+
+**Function:** `handle_revenue_command` ([src/telegram/analytics.rs:131](src/telegram/analytics.rs:131))
 
 ---
 
-## 🔒 Безопасность
+## Security
 
-Все команды **доступны только администраторам**.
+All commands are **available to admins only**.
 
-Проверка выполняется в каждой функции:
+The check is performed in each function:
 
 ```rust
 let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
 if !admin::is_admin(username) {
-    bot.send_message(chat_id, "❌ Эта команда доступна только администраторам.")
+    bot.send_message(chat_id, "This command is available to admins only.")
         .await?;
     return Ok(());
 }
 ```
 
-**Настройка админа:** В [src/telegram/admin.rs](src/telegram/admin.rs) через `ADMIN_USERNAME`
+**Admin setup:** In [src/telegram/admin.rs](src/telegram/admin.rs) via `ADMIN_USERNAME`
 
 ---
 
-## 🚀 Как Использовать
+## How to Use
 
-### 1. Перезапустите Бота
+### 1. Restart the Bot
 
 ```bash
-# Остановите текущий процесс (Ctrl+C)
+# Stop the current process (Ctrl+C)
 cargo run --release
 ```
 
-### 2. Проверьте Команды в Telegram
+### 2. Check Commands in Telegram
 
-Откройте чат с ботом и введите:
+Open the bot chat and type:
 
 ```
 /analytics
 ```
 
-Если вы админ - увидите дашборд с метриками.
+If you are an admin, you will see the dashboard with metrics.
 
-### 3. Попробуйте Другие Команды
+### 3. Try Other Commands
 
 ```
 /health
@@ -215,33 +215,33 @@ cargo run --release
 
 ---
 
-## 📊 Источники Данных
+## Data Sources
 
-Метрики берутся из нескольких источников:
+Metrics are pulled from several sources:
 
-1. **Prometheus Registry** - runtime метрики
+1. **Prometheus Registry** - runtime metrics
    - `doradura_download_success_total`
    - `doradura_download_failure_total`
    - `doradura_queue_depth`
    - `doradura_revenue_total_stars`
-   - И другие...
+   - And others...
 
-2. **База Данных** - исторические данные
-   - Таблица `user_activity` (для DAU/MAU)
-   - Таблица `charges` (для revenue analytics)
-   - Таблица `users` (для subscriptions)
+2. **Database** - historical data
+   - `user_activity` table (for DAU/MAU)
+   - `charges` table (for revenue analytics)
+   - `users` table (for subscriptions)
 
-3. **Кэш** - агрегированные данные
-   - Обновляется каждые 5 минут
-   - Хранится в памяти
+3. **Cache** - aggregated data
+   - Updated every 5 minutes
+   - Stored in memory
 
 ---
 
-## 🔧 Настройка
+## Configuration
 
 ### Environment Variables
 
-В `.env` уже настроено:
+Already configured in `.env`:
 
 ```bash
 # Metrics & Monitoring
@@ -255,110 +255,110 @@ ALERT_QUEUE_DEPTH_THRESHOLD=50
 ALERT_RETRY_RATE_THRESHOLD=30.0
 ```
 
-### Кастомизация
+### Customization
 
-Если хотите изменить формат сообщений, отредактируйте функции в:
+To change message formats, edit the functions in:
 - [src/telegram/analytics.rs](src/telegram/analytics.rs)
 
 ---
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
-### Команда не работает
+### Command does not work
 
-**Проблема:** Отправляю `/analytics`, но ничего не происходит
+**Problem:** Sending `/analytics` but nothing happens
 
-**Решение:**
-1. Убедитесь что вы админ (проверьте `ADMIN_USERNAME` в config)
-2. Проверьте логи бота на ошибки
-3. Убедитесь что бот перезапущен после изменений
+**Solution:**
+1. Make sure you are an admin (check `ADMIN_USERNAME` in config)
+2. Check bot logs for errors
+3. Make sure the bot was restarted after changes
 
-### "Эта команда доступна только администраторам"
+### "This command is available to admins only"
 
-**Проблема:** Вижу сообщение о том что команда только для админов
+**Problem:** Seeing the admin-only message
 
-**Решение:**
-- Настройте ваш Telegram username в конфигурации админа
-- См. [src/telegram/admin.rs](src/telegram/admin.rs)
+**Solution:**
+- Set your Telegram username in the admin configuration
+- See [src/telegram/admin.rs](src/telegram/admin.rs)
 
-### Пустые данные в метриках
+### Empty data in metrics
 
-**Проблема:** Команды работают, но показывают нули
+**Problem:** Commands work but show zeros
 
-**Решение:**
-- Это нормально если бот только запустился
-- Подождите активности пользователей
-- Или сделайте тестовые загрузки
+**Solution:**
+- This is normal if the bot just started
+- Wait for user activity
+- Or make test downloads
 
-### Метрики не обновляются
+### Metrics not updating
 
-**Проблема:** Данные не меняются при повторном вызове команды
+**Problem:** Data does not change on repeated command calls
 
-**Решение:**
-- Проверьте что Prometheus собирает метрики: `curl http://localhost:9094/metrics`
-- Проверьте что бот пишет в БД
-- Перезапустите бота
+**Solution:**
+- Check that Prometheus is collecting metrics: `curl http://localhost:9094/metrics`
+- Verify the bot is writing to the DB
+- Restart the bot
 
 ---
 
-## 📈 Расширение Функциональности
+## Extending Functionality
 
-### Добавить Новую Метрику
+### Adding a New Metric
 
-1. Добавьте метрику в [src/core/metrics.rs](src/core/metrics.rs)
-2. Используйте её в коде (например, при загрузке файлов)
-3. Отобразите в [src/telegram/analytics.rs](src/telegram/analytics.rs)
+1. Add the metric to [src/core/metrics.rs](src/core/metrics.rs)
+2. Use it in code (e.g., on file download)
+3. Display it in [src/telegram/analytics.rs](src/telegram/analytics.rs)
 
-### Добавить Категорию в /metrics
+### Adding a Category to /metrics
 
-Измените `handle_metrics_command` чтобы принимать параметр:
+Modify `handle_metrics_command` to accept a parameter:
 
 ```rust
 Command::Metrics { category: String }
 ```
 
-И обрабатывайте различные категории: `performance`, `business`, `engagement`.
+And handle different categories: `performance`, `business`, `engagement`.
 
-### Добавить Callback Buttons
+### Adding Callback Buttons
 
-В функциях analytics уже есть inline кнопки (см. `handle_analytics_command`).
+The analytics functions already have inline buttons (see `handle_analytics_command`).
 
-Добавьте обработчики для callback queries в main.rs.
-
----
-
-## ✅ Checklist
-
-- [x] Команды добавлены в `Command` enum
-- [x] Импорты добавлены в `main.rs`
-- [x] Обработчики добавлены в dispatcher
-- [x] Проект компилируется без ошибок
-- [ ] Бот перезапущен
-- [ ] Команды протестированы в Telegram
+Add callback query handlers in main.rs.
 
 ---
 
-## 🎯 Следующие Шаги
+## Checklist
 
-1. **Перезапустите бота** - чтобы команды заработали
-2. **Протестируйте команды** - отправьте `/analytics` в Telegram
-3. **Настройте AlertManager** - для автоматических оповещений (опционально)
-4. **Добавьте BOT_COMMAND_DEFINITIONS** - чтобы команды отображались в меню (опционально)
-
----
-
-## 📚 Связанная Документация
-
-- [ANALYTICS_SYSTEM.md](ANALYTICS_SYSTEM.md) - Описание всей системы аналитики
-- [HOW_TO_VIEW_METRICS.md](HOW_TO_VIEW_METRICS.md) - Как смотреть метрики (Grafana/Prometheus/Telegram)
-- [MONITORING_SETUP.md](MONITORING_SETUP.md) - Настройка Prometheus + Grafana
-- [src/telegram/analytics.rs](src/telegram/analytics.rs) - Исходный код команд
-- [src/core/metrics.rs](src/core/metrics.rs) - Определения метрик
+- [x] Commands added to `Command` enum
+- [x] Imports added to `main.rs`
+- [x] Handlers added to dispatcher
+- [x] Project compiles without errors
+- [ ] Bot restarted
+- [ ] Commands tested in Telegram
 
 ---
 
-**Статус:** ✅ Интеграция завершена и готова к использованию!
+## Next Steps
 
-**Протестировано:** Компиляция прошла успешно
+1. **Restart the bot** - so commands take effect
+2. **Test commands** - send `/analytics` in Telegram
+3. **Configure AlertManager** - for automatic notifications (optional)
+4. **Add BOT_COMMAND_DEFINITIONS** - so commands appear in the menu (optional)
 
-**Следующий шаг:** Перезапустите бота и попробуйте `/analytics` 🚀
+---
+
+## Related Documentation
+
+- [ANALYTICS_SYSTEM.md](ANALYTICS_SYSTEM.md) - Full analytics system description
+- [HOW_TO_VIEW_METRICS.md](HOW_TO_VIEW_METRICS.md) - How to view metrics (Grafana/Prometheus/Telegram)
+- [MONITORING_SETUP.md](MONITORING_SETUP.md) - Prometheus + Grafana setup
+- [src/telegram/analytics.rs](src/telegram/analytics.rs) - Command source code
+- [src/core/metrics.rs](src/core/metrics.rs) - Metric definitions
+
+---
+
+**Status:** Integration complete and ready to use.
+
+**Tested:** Compilation succeeded.
+
+**Next step:** Restart the bot and try `/analytics`.

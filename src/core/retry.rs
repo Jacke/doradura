@@ -363,10 +363,7 @@ where
                 // If we had to retry, send success message
                 if attempts > 1 && config.notify_user {
                     let _ = bot
-                        .send_message(
-                            chat_id,
-                            format!("✅ {} succeeded after {} attempt(s)", operation_name, attempts),
-                        )
+                        .send_message(chat_id, format!("✅ Done! ({} attempt(s))", attempts))
                         .await;
                 }
 
@@ -402,10 +399,10 @@ where
                         .send_message(
                             chat_id,
                             format!(
-                                "⚠️ {} failed, retrying... (attempt {}/{})",
-                                operation_name,
+                                "🔄 Retry {}/{}\n⏳ {}...",
                                 attempts + 1,
-                                config.max_retries + 1
+                                config.max_retries + 1,
+                                operation_name
                             ),
                         )
                         .await;
@@ -417,13 +414,7 @@ where
                 // Notify user about final failure
                 if config.notify_user {
                     let _ = bot
-                        .send_message(
-                            chat_id,
-                            format!(
-                                "❌ {} failed after {} attempt(s). Please try again later.",
-                                operation_name, attempts
-                            ),
-                        )
+                        .send_message(chat_id, format!("❌ Failed after {} attempts", attempts))
                         .await;
                 }
 

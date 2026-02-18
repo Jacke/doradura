@@ -115,24 +115,24 @@ impl CookieInvalidReason {
         Self::Unknown(stderr.lines().next().unwrap_or("unknown").to_string())
     }
 
-    /// Get human-readable description in Russian
+    /// Get human-readable description in English
     pub fn description(&self) -> String {
         match self {
-            Self::FileNotFound => "Файл cookies не найден".to_string(),
-            Self::FileEmpty => "Файл cookies пуст".to_string(),
-            Self::FileCorrupted => "Файл cookies повреждён или имеет неверный формат".to_string(),
+            Self::FileNotFound => "Cookies file not found".to_string(),
+            Self::FileEmpty => "Cookies file is empty".to_string(),
+            Self::FileCorrupted => "Cookies file is corrupted or has an invalid format".to_string(),
             Self::RotatedByYouTube => {
-                "🔄 YouTube ротировал cookies (защита от бота). Нужно переэкспортировать из браузера.".to_string()
+                "🔄 YouTube rotated cookies (bot protection). Please re-export them from your browser.".to_string()
             }
-            Self::SessionExpired => "⏰ Сессия истекла — YouTube требует повторный вход".to_string(),
+            Self::SessionExpired => "⏰ Session expired — YouTube requires you to log in again".to_string(),
             Self::BotDetected => {
-                "🤖 YouTube обнаружил бота. Нужны свежие cookies после ручного просмотра видео.".to_string()
+                "🤖 YouTube detected a bot. Fresh cookies are needed after manually watching a video.".to_string()
             }
-            Self::IpBlocked => "🚫 IP адрес заблокирован YouTube".to_string(),
-            Self::VerificationRequired => "🔐 Аккаунт требует верификацию (капча/SMS/2FA)".to_string(),
-            Self::RateLimited => "⏳ Превышен лимит запросов — подожди немного".to_string(),
-            Self::Unknown(msg) => format!("❓ Неизвестная ошибка: {}", msg),
-            Self::AllProxiesFailed(msg) => format!("🌐 Все прокси не сработали: {}", msg),
+            Self::IpBlocked => "🚫 IP address is blocked by YouTube".to_string(),
+            Self::VerificationRequired => "🔐 Account requires verification (captcha/SMS/2FA)".to_string(),
+            Self::RateLimited => "⏳ Request rate limit exceeded — please wait a moment".to_string(),
+            Self::Unknown(msg) => format!("❓ Unknown error: {}", msg),
+            Self::AllProxiesFailed(msg) => format!("🌐 All proxies failed: {}", msg),
         }
     }
 
@@ -223,7 +223,7 @@ impl ParsedCookie {
     /// Get human-readable expiration info
     pub fn expiration_info(&self) -> String {
         match self.expires {
-            Some(0) => "сессионный".to_string(),
+            Some(0) => "session".to_string(),
             Some(ts) => {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -235,22 +235,22 @@ impl ParsedCookie {
                     let days = diff / 86400;
                     if days == 0 {
                         let hours = diff / 3600;
-                        format!("истёк {} ч. назад", hours)
+                        format!("expired {}h ago", hours)
                     } else {
-                        format!("истёк {} дн. назад", days)
+                        format!("expired {}d ago", days)
                     }
                 } else {
                     let diff = ts - now;
                     let days = diff / 86400;
                     if days > 365 {
-                        format!("{} г.", days / 365)
+                        format!("{}y", days / 365)
                     } else if days > 30 {
-                        format!("{} мес.", days / 30)
+                        format!("{}mo", days / 30)
                     } else if days > 0 {
-                        format!("{} дн.", days)
+                        format!("{}d", days)
                     } else {
                         let hours = diff / 3600;
-                        format!("{} ч.", hours)
+                        format!("{}h", hours)
                     }
                 }
             }
@@ -297,7 +297,7 @@ impl ParsedCookie {
 pub struct CookieDetail {
     pub name: String,
     pub masked_value: String,
-    pub expiration: String,      // Human readable (e.g., "5 дн.")
+    pub expiration: String,      // Human readable (e.g., "5d")
     pub expiration_date: String, // Date (e.g., "2025-02-10")
     pub days_until_expiry: Option<i64>,
     pub is_expired: bool,
@@ -332,17 +332,17 @@ impl CookiesDiagnostic {
 
         // File status
         if !self.file_exists {
-            return "❌ Файл cookies не найден".to_string();
+            return "❌ Cookies file not found".to_string();
         }
 
-        report.push_str(&format!("📄 Размер файла: {} байт\n", self.file_size));
+        report.push_str(&format!("📄 File size: {} bytes\n", self.file_size));
         report.push_str(&format!(
-            "🍪 Всего cookies: {} (YouTube: {})\n\n",
+            "🍪 Total cookies: {} (YouTube: {})\n\n",
             self.total_cookies, self.youtube_cookies
         ));
 
         // Auth cookies status with details
-        report.push_str("*Обязательные auth cookies:*\n");
+        report.push_str("*Required auth cookies:*\n");
 
         for detail in self.cookie_details.iter().filter(|d| d.is_critical) {
             let status = if detail.is_expired { "⚠️" } else { "✅" };
@@ -353,12 +353,12 @@ impl CookiesDiagnostic {
         }
 
         for name in &self.auth_cookies_missing {
-            report.push_str(&format!("  ❌ {} — отсутствует\n", name));
+            report.push_str(&format!("  ❌ {} — missing\n", name));
         }
 
         // Secondary cookies with details
         if !self.secondary_cookies_found.is_empty() {
-            report.push_str("\n*Дополнительные cookies:*\n");
+            report.push_str("\n*Additional cookies:*\n");
             for detail in self.cookie_details.iter().filter(|d| !d.is_critical) {
                 let status = if detail.is_expired { "⚠️" } else { "✅" };
                 report.push_str(&format!("  {} {} | {}\n", status, detail.name, detail.expiration));
@@ -369,17 +369,17 @@ impl CookiesDiagnostic {
         if let (Some(days), Some(name)) = (self.soonest_expiry_days, &self.soonest_expiry_name) {
             report.push('\n');
             if days < 0 {
-                report.push_str(&format!("🚨 *{} истёк {} дн. назад!*\n", name, -days));
+                report.push_str(&format!("🚨 *{} expired {} days ago!*\n", name, -days));
             } else if days < 3 {
-                report.push_str(&format!("⚠️ *{} истекает через {} дн.!*\n", name, days));
+                report.push_str(&format!("⚠️ *{} expires in {} days!*\n", name, days));
             } else if days < 7 {
-                report.push_str(&format!("⏰ {} истекает через {} дн.\n", name, days));
+                report.push_str(&format!("⏰ {} expires in {} days\n", name, days));
             }
         }
 
         // Issues summary
         if !self.issues.is_empty() {
-            report.push_str("\n*⚠️ Проблемы:*\n");
+            report.push_str("\n*⚠️ Issues:*\n");
             for issue in &self.issues {
                 report.push_str(&format!("  • {}\n", issue));
             }
@@ -388,9 +388,9 @@ impl CookiesDiagnostic {
         // Overall status
         report.push('\n');
         if self.is_valid {
-            report.push_str("✅ *Cookies выглядят корректно*");
+            report.push_str("✅ *Cookies look valid*");
         } else {
-            report.push_str("❌ *Cookies невалидны — требуется переэкспорт*");
+            report.push_str("❌ *Cookies are invalid — re-export required*");
         }
 
         report
@@ -420,7 +420,7 @@ pub fn diagnose_cookies_content(content: &str) -> CookiesDiagnostic {
     if !has_header {
         diagnostic
             .issues
-            .push("Отсутствует заголовок Netscape HTTP Cookie File".to_string());
+            .push("Missing Netscape HTTP Cookie File header".to_string());
     }
 
     let mut parsed_cookies: Vec<ParsedCookie> = Vec::new();
@@ -518,21 +518,19 @@ pub fn diagnose_cookies_content(content: &str) -> CookiesDiagnostic {
 
     // Analyze issues
     if diagnostic.youtube_cookies == 0 {
-        diagnostic
-            .issues
-            .push("Не найдено ни одного YouTube cookie".to_string());
+        diagnostic.issues.push("No YouTube cookies found".to_string());
     }
 
     if !diagnostic.auth_cookies_missing.is_empty() {
         diagnostic.issues.push(format!(
-            "Отсутствуют обязательные cookies: {}",
+            "Missing required cookies: {}",
             diagnostic.auth_cookies_missing.join(", ")
         ));
     }
 
     if !diagnostic.auth_cookies_expired.is_empty() {
         diagnostic.issues.push(format!(
-            "Истекли cookies: {}",
+            "Expired cookies: {}",
             diagnostic.auth_cookies_expired.join(", ")
         ));
     }
@@ -542,7 +540,7 @@ pub fn diagnose_cookies_content(content: &str) -> CookiesDiagnostic {
     if !has_secure_psid {
         diagnostic
             .issues
-            .push("Отсутствуют __Secure-*PSID cookies (требуются для аутентификации)".to_string());
+            .push("Missing __Secure-*PSID cookies (required for authentication)".to_string());
     }
 
     // Determine overall validity
@@ -568,7 +566,7 @@ pub async fn diagnose_cookies_file() -> CookiesDiagnostic {
                 auth_cookies_missing: REQUIRED_AUTH_COOKIES.iter().map(|s| s.to_string()).collect(),
                 auth_cookies_expired: Vec::new(),
                 secondary_cookies_found: Vec::new(),
-                issues: vec!["YTDL_COOKIES_FILE не настроен".to_string()],
+                issues: vec!["YTDL_COOKIES_FILE is not configured".to_string()],
                 is_valid: false,
                 cookie_details: Vec::new(),
                 soonest_expiry_days: None,
@@ -587,7 +585,7 @@ pub async fn diagnose_cookies_file() -> CookiesDiagnostic {
             auth_cookies_missing: REQUIRED_AUTH_COOKIES.iter().map(|s| s.to_string()).collect(),
             auth_cookies_expired: Vec::new(),
             secondary_cookies_found: Vec::new(),
-            issues: vec![format!("Файл не найден: {}", cookies_path.display())],
+            issues: vec![format!("File not found: {}", cookies_path.display())],
             is_valid: false,
             cookie_details: Vec::new(),
             soonest_expiry_days: None,
@@ -606,7 +604,7 @@ pub async fn diagnose_cookies_file() -> CookiesDiagnostic {
             auth_cookies_missing: REQUIRED_AUTH_COOKIES.iter().map(|s| s.to_string()).collect(),
             auth_cookies_expired: Vec::new(),
             secondary_cookies_found: Vec::new(),
-            issues: vec![format!("Ошибка чтения файла: {}", e)],
+            issues: vec![format!("Error reading file: {}", e)],
             is_valid: false,
             cookie_details: Vec::new(),
             soonest_expiry_days: None,
@@ -626,22 +624,22 @@ pub async fn validate_cookies() -> Result<(), String> {
         Some(path) => path,
         None => {
             log::warn!("No cookies file configured (YTDL_COOKIES_FILE not set)");
-            return Err("YTDL_COOKIES_FILE не задан — путь к cookies не настроен".to_string());
+            return Err("YTDL_COOKIES_FILE is not set — cookies path is not configured".to_string());
         }
     };
 
     if !cookies_path.exists() {
         log::warn!("Cookies file does not exist: {:?}", cookies_path);
-        return Err(format!("Файл cookies не найден: {}", cookies_path.display()));
+        return Err(format!("Cookies file not found: {}", cookies_path.display()));
     }
 
     // Check file is not empty
     match std::fs::metadata(&cookies_path) {
         Ok(meta) if meta.len() == 0 => {
-            return Err("Файл cookies пуст (0 байт)".to_string());
+            return Err("Cookies file is empty (0 bytes)".to_string());
         }
         Err(e) => {
-            return Err(format!("Не удалось прочитать файл cookies: {}", e));
+            return Err(format!("Failed to read cookies file: {}", e));
         }
         _ => {}
     }
@@ -739,7 +737,7 @@ pub async fn validate_cookies() -> Result<(), String> {
             }
             Err(e) => {
                 log::error!("Failed to execute yt-dlp with [{}]: {}", proxy_name, e);
-                last_error = Some(format!("Не удалось запустить yt-dlp: {}", e));
+                last_error = Some(format!("Failed to run yt-dlp: {}", e));
                 continue;
             }
         }
@@ -1096,7 +1094,7 @@ pub async fn watchdog_check() -> WatchdogStatus {
             },
             expiring_soon,
             needs_attention: true,
-            message: format!("Структурные проблемы: {}", issues),
+            message: format!("Structural issues: {}", issues),
         };
     }
 
@@ -1105,9 +1103,9 @@ pub async fn watchdog_check() -> WatchdogStatus {
 
     if validation.is_valid {
         let message = if let Some((ref name, days)) = expiring_soon {
-            format!("✅ Cookies работают. ⚠️ {} истекает через {} дн.", name, days)
+            format!("✅ Cookies are working. ⚠️ {} expires in {} days.", name, days)
         } else {
-            "✅ Cookies работают".to_string()
+            "✅ Cookies are working".to_string()
         };
 
         let needs_attention = expiring_soon.as_ref().map(|(_, d)| *d < 3).unwrap_or(false);
@@ -1145,30 +1143,30 @@ pub fn format_watchdog_alert(status: &WatchdogStatus) -> String {
         msg.push_str(&status.message);
 
         if let Some(ref reason) = status.invalid_reason {
-            msg.push_str("\n\n*Рекомендация:*\n");
+            msg.push_str("\n\n*Recommendation:*\n");
             match reason {
                 CookieInvalidReason::RotatedByYouTube | CookieInvalidReason::BotDetected => {
-                    msg.push_str("1. Открой YouTube в браузере\n");
-                    msg.push_str("2. Посмотри видео до конца (не пропускай)\n");
-                    msg.push_str("3. Экспортируй cookies через расширение\n");
-                    msg.push_str("4. Отправь файл через /update\\_cookies");
+                    msg.push_str("1. Open YouTube in your browser\n");
+                    msg.push_str("2. Watch a video to the end (do not skip)\n");
+                    msg.push_str("3. Export cookies via the browser extension\n");
+                    msg.push_str("4. Send the file via /update\\_cookies");
                 }
                 CookieInvalidReason::SessionExpired => {
-                    msg.push_str("1. Залогинься в YouTube заново\n");
-                    msg.push_str("2. Экспортируй cookies\n");
-                    msg.push_str("3. Отправь через /update\\_cookies");
+                    msg.push_str("1. Log in to YouTube again\n");
+                    msg.push_str("2. Export cookies\n");
+                    msg.push_str("3. Send via /update\\_cookies");
                 }
                 CookieInvalidReason::IpBlocked => {
-                    msg.push_str("Смени прокси или подожди несколько часов");
+                    msg.push_str("Change the proxy or wait a few hours");
                 }
                 CookieInvalidReason::RateLimited => {
-                    msg.push_str("Подожди 15-30 минут");
+                    msg.push_str("Wait 15-30 minutes");
                 }
                 CookieInvalidReason::VerificationRequired => {
-                    msg.push_str("Пройди верификацию в браузере, затем переэкспортируй cookies");
+                    msg.push_str("Complete verification in your browser, then re-export cookies");
                 }
                 _ => {
-                    msg.push_str("Попробуй /update\\_cookies с новыми cookies");
+                    msg.push_str("Try /update\\_cookies with new cookies");
                 }
             }
         }
@@ -1177,9 +1175,9 @@ pub fn format_watchdog_alert(status: &WatchdogStatus) -> String {
     // Add expiry warning if relevant
     if let Some((ref name, days)) = status.expiring_soon {
         if days < 0 {
-            msg.push_str(&format!("\n\n🚨 {} истёк {} дн. назад!", name, -days));
+            msg.push_str(&format!("\n\n🚨 {} expired {} days ago!", name, -days));
         } else if days < 3 {
-            msg.push_str(&format!("\n\n⚠️ {} истекает через {} дн.!", name, days));
+            msg.push_str(&format!("\n\n⚠️ {} expires in {} days!", name, days));
         }
     }
 
@@ -1628,7 +1626,7 @@ pub fn diagnose_ig_cookies_content(content: &str) -> CookiesDiagnostic {
     if !has_header {
         diagnostic
             .issues
-            .push("Отсутствует заголовок Netscape HTTP Cookie File".to_string());
+            .push("Missing Netscape HTTP Cookie File header".to_string());
     }
 
     for line in content.lines() {
@@ -1713,21 +1711,19 @@ pub fn diagnose_ig_cookies_content(content: &str) -> CookiesDiagnostic {
     }
 
     if diagnostic.youtube_cookies == 0 {
-        diagnostic
-            .issues
-            .push("Не найдено ни одного Instagram cookie".to_string());
+        diagnostic.issues.push("No Instagram cookies found".to_string());
     }
 
     if !diagnostic.auth_cookies_missing.is_empty() {
         diagnostic.issues.push(format!(
-            "Отсутствуют обязательные cookies: {}",
+            "Missing required cookies: {}",
             diagnostic.auth_cookies_missing.join(", ")
         ));
     }
 
     if !diagnostic.auth_cookies_expired.is_empty() {
         diagnostic.issues.push(format!(
-            "Истекли cookies: {}",
+            "Expired cookies: {}",
             diagnostic.auth_cookies_expired.join(", ")
         ));
     }
@@ -1774,20 +1770,20 @@ pub async fn validate_ig_cookies() -> Result<(), String> {
     let cookies_path = match get_ig_cookies_path() {
         Some(path) => path,
         None => {
-            return Err("INSTAGRAM_COOKIES_FILE не задан".to_string());
+            return Err("INSTAGRAM_COOKIES_FILE is not set".to_string());
         }
     };
 
     if !cookies_path.exists() {
-        return Err(format!("Файл cookies не найден: {}", cookies_path.display()));
+        return Err(format!("Cookies file not found: {}", cookies_path.display()));
     }
 
     match std::fs::metadata(&cookies_path) {
         Ok(meta) if meta.len() == 0 => {
-            return Err("Файл cookies пуст (0 байт)".to_string());
+            return Err("Cookies file is empty (0 bytes)".to_string());
         }
         Err(e) => {
-            return Err(format!("Не удалось прочитать файл cookies: {}", e));
+            return Err(format!("Failed to read cookies file: {}", e));
         }
         _ => {}
     }
@@ -1857,7 +1853,7 @@ pub async fn validate_ig_cookies() -> Result<(), String> {
                 }
 
                 if stderr.contains("login") || stderr.contains("Login") || stderr.contains("authentication") {
-                    return Err("Instagram требует авторизацию — cookies невалидны".to_string());
+                    return Err("Instagram requires authentication — cookies are invalid".to_string());
                 }
 
                 if is_proxy_related_error(&stderr) {
@@ -1868,7 +1864,7 @@ pub async fn validate_ig_cookies() -> Result<(), String> {
                 last_error = Some(stderr.lines().next().unwrap_or("unknown error").to_string());
             }
             Err(e) => {
-                last_error = Some(format!("Не удалось запустить yt-dlp: {}", e));
+                last_error = Some(format!("Failed to run yt-dlp: {}", e));
                 continue;
             }
         }

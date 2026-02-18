@@ -1,18 +1,18 @@
-# Исправление Queue Depth в Grafana Dashboard
+# Fix: Queue Depth in Grafana Dashboard
 
-## Проблема
+## Problem
 
-Панель "Queue Depth" в Grafana dashboard не показывала данные, хотя метрика экспортировалась корректно.
+The "Queue Depth" panel in the Grafana dashboard was not showing data, even though the metric was being exported correctly.
 
-## Диагностика
+## Diagnosis
 
-### 1. Проверка метрик в боте
+### 1. Check bot metrics
 
 ```bash
 curl -s http://localhost:9094/metrics | grep "doradura_queue_depth"
 ```
 
-**Результат:**
+**Result:**
 ```
 # HELP doradura_queue_depth Current number of tasks in queue by priority
 # TYPE doradura_queue_depth gauge
@@ -24,30 +24,30 @@ doradura_queue_depth{priority="medium"} 0
 doradura_queue_depth_total 0
 ```
 
-✅ Обе метрики экспортируются!
+Both metrics are exported!
 
-### 2. Проверка query в Prometheus
+### 2. Check query in Prometheus
 
 ```bash
 curl -s 'http://localhost:9091/api/v1/query?query=doradura_queue_depth' | jq '.data.result | length'
 ```
 
-**Результат:** `3` - Возвращает 3 временных ряда (по одному на каждый priority)
+**Result:** `3` - Returns 3 time series (one per priority)
 
-**Проблема:** Query `doradura_queue_depth` возвращает **множественные** временные ряды:
+**Problem:** The query `doradura_queue_depth` returns **multiple** time series:
 - `doradura_queue_depth{priority="high"} 0`
 - `doradura_queue_depth{priority="low"} 0`
 - `doradura_queue_depth{priority="medium"} 0`
 
-Grafana панель типа "Stat" (одно число) не знает как отобразить 3 значения одновременно!
+A Grafana "Stat" panel (single number) does not know how to display 3 values simultaneously!
 
-### 3. Проверка правильной метрики
+### 3. Check the correct metric
 
 ```bash
 curl -s 'http://localhost:9091/api/v1/query?query=doradura_queue_depth_total' | jq '.data.result'
 ```
 
-**Результат:**
+**Result:**
 ```json
 [
   {
@@ -61,13 +61,13 @@ curl -s 'http://localhost:9091/api/v1/query?query=doradura_queue_depth_total' | 
 ]
 ```
 
-✅ Возвращает **одно** значение - именно то что нужно для панели!
+Returns **one** value - exactly what the panel needs!
 
-## Причина
+## Root Cause
 
-В dashboard использовался неправильный query:
+The dashboard was using the wrong query:
 
-**Было:**
+**Before:**
 ```json
 {
   "expr": "doradura_queue_depth",
@@ -75,13 +75,13 @@ curl -s 'http://localhost:9091/api/v1/query?query=doradura_queue_depth_total' | 
 }
 ```
 
-Этот query возвращает метрику **с labels** (по приоритетам), что приводит к множественным временным рядам.
+This query returns the metric **with labels** (by priority), resulting in multiple time series.
 
-## Решение
+## Solution
 
-Изменили query на использование `doradura_queue_depth_total` - метрику **без labels**, которая показывает общую глубину очереди:
+Changed the query to use `doradura_queue_depth_total` - the metric **without labels** that shows total queue depth:
 
-**Стало:**
+**After:**
 ```json
 {
   "expr": "doradura_queue_depth_total",
@@ -89,64 +89,64 @@ curl -s 'http://localhost:9091/api/v1/query?query=doradura_queue_depth_total' | 
 }
 ```
 
-### Файл изменен
+### File changed
 
 [grafana/dashboards/doradura_overview.json:201](grafana/dashboards/doradura_overview.json#L201)
 
-## Альтернативные Решения
+## Alternative Solutions
 
-Если бы мы хотели использовать метрику с labels, были бы следующие варианты:
+If you wanted to use the labeled metric, the following options were available:
 
-### Вариант 1: Сумма всех приоритетов
+### Option 1: Sum all priorities
 
 ```promql
 sum(doradura_queue_depth)
 ```
 
-Сложит все приоритеты: high + medium + low
+Sums all priorities: high + medium + low
 
-### Вариант 2: Показать все приоритеты отдельно
+### Option 2: Show all priorities separately
 
-Изменить тип панели с "Stat" на "Time series" и показать 3 линии:
+Change the panel type from "Stat" to "Time series" and show 3 lines:
 ```promql
 doradura_queue_depth
 ```
 
-Тогда legendFormat можно установить как `{{ priority }}` чтобы видеть high/medium/low отдельно.
+Set `legendFormat` to `{{ priority }}` to see high/medium/low separately.
 
-### Вариант 3: Только высокий приоритет
+### Option 3: High priority only
 
 ```promql
 doradura_queue_depth{priority="high"}
 ```
 
-## Разница Между Метриками
+## Difference Between Metrics
 
-| Метрика | Тип | Labels | Когда Использовать |
-|---------|-----|--------|-------------------|
-| `doradura_queue_depth` | GaugeVec | `priority` (high/medium/low) | Когда нужна детализация по приоритетам |
-| `doradura_queue_depth_total` | Gauge | Нет | Когда нужно общее число задач в очереди |
+| Metric | Type | Labels | When to Use |
+|--------|------|--------|-------------|
+| `doradura_queue_depth` | GaugeVec | `priority` (high/medium/low) | When priority breakdown is needed |
+| `doradura_queue_depth_total` | Gauge | None | When total task count in queue is needed |
 
-## Как Обновляются Метрики
+## How Metrics Are Updated
 
-### В Коде
+### In Code
 
-[src/download/queue.rs](src/download/queue.rs) или где обрабатывается очередь:
+[src/download/queue.rs](src/download/queue.rs) or wherever the queue is processed:
 
 ```rust
 use crate::core::metrics;
 
-// Обновить по приоритетам
+// Update by priority
 metrics::update_queue_depth("high", high_priority_count);
 metrics::update_queue_depth("medium", medium_priority_count);
 metrics::update_queue_depth("low", low_priority_count);
 
-// Обновить общую глубину
+// Update total depth
 let total = high_priority_count + medium_priority_count + low_priority_count;
 metrics::update_queue_depth_total(total);
 ```
 
-### В metrics.rs
+### In metrics.rs
 
 [src/core/metrics.rs:382-389](src/core/metrics.rs#L382-L389)
 
@@ -162,117 +162,117 @@ pub fn update_queue_depth_total(depth: usize) {
 }
 ```
 
-## Проверка Исправления
+## Verifying the Fix
 
-### 1. Проверить метрику
+### 1. Check the metric
 
 ```bash
 curl -s http://localhost:9094/metrics | grep "doradura_queue_depth_total"
 ```
 
-**Ожидаемый результат:**
+**Expected result:**
 ```
 doradura_queue_depth_total 0
 ```
 
-### 2. Проверить в Prometheus
+### 2. Check in Prometheus
 
 ```bash
 curl -s 'http://localhost:9091/api/v1/query?query=doradura_queue_depth_total' | jq '.data.result[0].value[1]'
 ```
 
-**Ожидаемый результат:** `"0"` (или текущее значение очереди)
+**Expected result:** `"0"` (or the current queue value)
 
-### 3. Проверить в Grafana
+### 3. Check in Grafana
 
-1. Откройте dashboard: http://localhost:3000/d/doradura-overview
-2. Найдите панель "Queue Depth" (обычно в верхнем ряду справа)
-3. Должно показываться число: **0** (или текущее значение)
-4. Цвет зависит от thresholds:
-   - 🟢 Зеленый: 0-49 задач
-   - 🟡 Желтый: 50-99 задач
-   - 🔴 Красный: 100+ задач
+1. Open the dashboard: http://localhost:3000/d/doradura-overview
+2. Find the "Queue Depth" panel (usually in the top row on the right)
+3. It should show a number: **0** (or the current value)
+4. Color depends on thresholds:
+   - Green: 0-49 tasks
+   - Yellow: 50-99 tasks
+   - Red: 100+ tasks
 
-## Применение Исправления
+## Applying the Fix
 
-Dashboard обновляется автоматически через Grafana provisioning. Если изменения не появились:
+The dashboard is updated automatically through Grafana provisioning. If the changes did not appear:
 
 ```bash
-# Перезапустить Grafana
+# Restart Grafana
 docker-compose -f docker-compose.monitoring.yml restart grafana
 
-# Проверить что Grafana запустилась
+# Verify Grafana started
 curl http://localhost:3000/api/health
 ```
 
-## Связанные Панели
+## Related Panels
 
-Другие панели в dashboard уже используют правильные queries:
+Other panels in the dashboard already use correct queries:
 
-✅ **Download Rate** - `sum(rate(doradura_download_success_total[5m]))`
-- Сумма всех форматов и качеств
+- **Download Rate** - `sum(rate(doradura_download_success_total[5m]))`
+  - Sum of all formats and qualities
 
-✅ **Active Subscriptions** - `sum(doradura_active_subscriptions)`
-- Сумма всех планов (free/premium/vip)
+- **Active Subscriptions** - `sum(doradura_active_subscriptions)`
+  - Sum of all plans (free/premium/vip)
 
-✅ **Downloads by Format** - `sum by (format) (rate(doradura_format_requests_total[5m]))`
-- Группировка по формату (показывает mp3, mp4, srt отдельно)
+- **Downloads by Format** - `sum by (format) (rate(doradura_format_requests_total[5m]))`
+  - Grouped by format (shows mp3, mp4, srt separately)
 
-✅ **Errors by Category** - `sum by (category) (rate(doradura_errors_total[5m]))`
-- Группировка по категории ошибок
+- **Errors by Category** - `sum by (category) (rate(doradura_errors_total[5m]))`
+  - Grouped by error category
 
 ## Best Practices
 
-### Когда Использовать sum()
+### When to Use sum()
 
 ```promql
-# Если метрика с labels, но нужно одно число
+# If the metric has labels but you need a single number
 sum(metric_with_labels)
 
-# Пример
-sum(doradura_active_subscriptions)  # Сумма free + premium + vip
+# Example
+sum(doradura_active_subscriptions)  # Sum of free + premium + vip
 ```
 
-### Когда Использовать sum by (label)
+### When to Use sum by (label)
 
 ```promql
-# Если нужно видеть разбивку по каждому значению label
+# If you need a breakdown by each label value
 sum by (label_name) (metric)
 
-# Пример
+# Example
 sum by (format) (rate(doradura_format_requests_total[5m]))
-# Покажет отдельно: mp3, mp4, srt
+# Shows separately: mp3, mp4, srt
 ```
 
-### Когда Использовать Метрику Напрямую
+### When to Use the Metric Directly
 
 ```promql
-# Если метрика БЕЗ labels
+# If the metric has NO labels
 metric_without_labels
 
-# Пример
+# Examples
 doradura_queue_depth_total
 doradura_revenue_total_stars
 doradura_daily_active_users
 ```
 
-## Итоговое Состояние
+## Final State
 
-После исправления все панели в dashboard работают корректно:
+After the fix all dashboard panels work correctly:
 
-- ✅ Download Rate
-- ✅ Success Rate
-- ✅ **Queue Depth** ← ИСПРАВЛЕНО
-- ✅ Download Duration (p50/p95/p99)
-- ✅ Downloads by Format
-- ✅ Daily Active Users
-- ✅ Total Revenue
-- ✅ Active Subscriptions
-- ✅ Errors by Category
+- Download Rate
+- Success Rate
+- **Queue Depth** - FIXED
+- Download Duration (p50/p95/p99)
+- Downloads by Format
+- Daily Active Users
+- Total Revenue
+- Active Subscriptions
+- Errors by Category
 
-## Связанные Файлы
+## Related Files
 
-- [grafana/dashboards/doradura_overview.json](grafana/dashboards/doradura_overview.json) - Dashboard конфигурация
-- [src/core/metrics.rs](src/core/metrics.rs) - Определение метрик
-- [METRICS_DASHBOARD_FIX.md](METRICS_DASHBOARD_FIX.md) - Основное исправление метрик
-- [HOW_TO_VIEW_METRICS.md](HOW_TO_VIEW_METRICS.md) - Руководство по просмотру метрик
+- [grafana/dashboards/doradura_overview.json](grafana/dashboards/doradura_overview.json) - Dashboard configuration
+- [src/core/metrics.rs](src/core/metrics.rs) - Metric definitions
+- [METRICS_DASHBOARD_FIX.md](METRICS_DASHBOARD_FIX.md) - Main metrics fix
+- [HOW_TO_VIEW_METRICS.md](HOW_TO_VIEW_METRICS.md) - Metrics viewing guide

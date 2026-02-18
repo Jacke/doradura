@@ -9,12 +9,12 @@
         "path": "/sendMessage",
         "body": {
           "chat_id": 123456789,
-          "text": "🌐 Выбери язык / Choose language:",
+          "text": "🌐 Select language / Choose language:",
           "reply_markup": {
             "inline_keyboard": [
               [
                 {
-                  "text": "🇷🇺 Русский",
+                  "text": "🇷🇺 Russian",
                   "callback_data": "lang:ru"
                 },
                 {
@@ -24,7 +24,7 @@
               ],
               [
                 {
-                  "text": "◀️ Назад / Back",
+                  "text": "◀️ Back",
                   "callback_data": "menu:settings"
                 }
               ]
@@ -52,12 +52,12 @@
               "type": "private"
             },
             "date": 1736002200,
-            "text": "🌐 Выбери язык / Choose language:",
+            "text": "🌐 Select language / Choose language:",
             "reply_markup": {
               "inline_keyboard": [
                 [
                   {
-                    "text": "🇷🇺 Русский",
+                    "text": "🇷🇺 Russian",
                     "callback_data": "lang:ru"
                   },
                   {
@@ -67,7 +67,7 @@
                 ],
                 [
                   {
-                    "text": "◀️ Назад / Back",
+                    "text": "◀️ Back",
                     "callback_data": "menu:settings"
                   }
                 ]
@@ -86,7 +86,7 @@
         "path": "/answerCallbackQuery",
         "body": {
           "callback_query_id": "1234567890ABCDEF",
-          "text": "✅ Язык изменён на Русский"
+          "text": "✅ Language changed to Russian"
         },
         "timestamp": 1736002205
       },
@@ -108,37 +108,37 @@
         "body": {
           "chat_id": 123456789,
           "message_id": 48,
-          "text": "⚙️ *Настройки загрузки*\n\n📹 *Качество видео:* 1080p\n🎵 *Битрейт аудио:* 192 kbps\n📱 *Формат по умолчанию:* Аудио\n🌐 *Язык:* 🇷🇺 Русский\n\nВыбери параметр для изменения:",
+          "text": "⚙️ *Download Settings*\n\n📹 *Video quality:* 1080p\n🎵 *Audio bitrate:* 192 kbps\n📱 *Default format:* Audio\n🌐 *Language:* 🇷🇺 Russian\n\nSelect a parameter to change:",
           "parse_mode": "MarkdownV2",
           "reply_markup": {
             "inline_keyboard": [
               [
                 {
-                  "text": "📹 Качество видео",
+                  "text": "📹 Video quality",
                   "callback_data": "settings:video_quality"
                 }
               ],
               [
                 {
-                  "text": "🎵 Битрейт аудио",
+                  "text": "🎵 Audio bitrate",
                   "callback_data": "settings:audio_bitrate"
                 }
               ],
               [
                 {
-                  "text": "📱 Формат по умолчанию",
+                  "text": "📱 Default format",
                   "callback_data": "settings:default_format"
                 }
               ],
               [
                 {
-                  "text": "🌐 Язык / Language",
+                  "text": "🌐 Language",
                   "callback_data": "settings:language"
                 }
               ],
               [
                 {
-                  "text": "◀️ Назад",
+                  "text": "◀️ Back",
                   "callback_data": "menu:main"
                 }
               ]
@@ -167,36 +167,36 @@
             },
             "date": 1736002200,
             "edit_date": 1736002206,
-            "text": "⚙️ Настройки загрузки\n\n📹 Качество видео: 1080p\n🎵 Битрейт аудио: 192 kbps\n📱 Формат по умолчанию: Аудио\n🌐 Язык: 🇷🇺 Русский\n\nВыбери параметр для изменения:",
+            "text": "⚙️ Settings\n\n📹 Video quality: 1080p\n🎵 Audio bitrate: 192 kbps\n📱 Default format: Audio\n🌐 Language: 🇷🇺 Russian\n\nSelect a parameter to change:",
             "reply_markup": {
               "inline_keyboard": [
                 [
                   {
-                    "text": "📹 Качество видео",
+                    "text": "📹 Video quality",
                     "callback_data": "settings:video_quality"
                   }
                 ],
                 [
                   {
-                    "text": "🎵 Битрейт аудио",
+                    "text": "🎵 Audio bitrate",
                     "callback_data": "settings:audio_bitrate"
                   }
                 ],
                 [
                   {
-                    "text": "📱 Формат по умолчанию",
+                    "text": "📱 Default format",
                     "callback_data": "settings:default_format"
                   }
                 ],
                 [
                   {
-                    "text": "🌐 Язык / Language",
+                    "text": "🌐 Language",
                     "callback_data": "settings:language"
                   }
                 ],
                 [
                   {
-                    "text": "◀️ Назад",
+                    "text": "◀️ Back",
                     "callback_data": "menu:main"
                   }
                 ]

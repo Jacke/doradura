@@ -143,7 +143,7 @@ fn format_size(bytes: i64) -> String {
 
 /// Formats the period stats as a Telegram message
 fn format_stats_message(stats: &PeriodStats, hours: i64) -> String {
-    let mut text = format!("📊 *Статистика за {} ч\\.*\n\n", hours);
+    let mut text = format!("📊 *Stats for the last {} h\\.*\n\n", hours);
 
     // Downloads summary
     let success_rate = if stats.total_downloads + stats.failed_downloads > 0 {
@@ -153,24 +153,24 @@ fn format_stats_message(stats: &PeriodStats, hours: i64) -> String {
     };
 
     text.push_str(&format!(
-        "📥 Загрузок: {} \\(✅ {}, ❌ {}\\)\n",
+        "📥 Downloads: {} \\(✅ {}, ❌ {}\\)\n",
         stats.total_downloads + stats.failed_downloads,
         stats.successful_downloads,
         stats.failed_downloads
     ));
 
-    text.push_str(&format!("📈 Успешность: {:.1}%\n", success_rate).replace('.', "\\."));
+    text.push_str(&format!("📈 Success rate: {:.1}%\n", success_rate).replace('.', "\\."));
 
-    text.push_str(&format!("👥 Уникальных пользователей: {}\n", stats.unique_users));
+    text.push_str(&format!("👥 Unique users: {}\n", stats.unique_users));
 
     text.push_str(&format!(
-        "💾 Объём: {}\n\n",
+        "💾 Volume: {}\n\n",
         admin::escape_markdown(&format_size(stats.total_size))
     ));
 
     // By format
     if !stats.by_format.is_empty() {
-        text.push_str("*По типам:*\n");
+        text.push_str("*By type:*\n");
         for (format, count) in &stats.by_format {
             let emoji = match format.as_str() {
                 "mp3" => "🎵",
@@ -181,7 +181,7 @@ fn format_stats_message(stats: &PeriodStats, hours: i64) -> String {
                 _ => "📦",
             };
             let display_format = if format == "video_note" {
-                "Кружок"
+                "Video note"
             } else {
                 &format.to_uppercase()
             };
@@ -196,7 +196,7 @@ fn format_stats_message(stats: &PeriodStats, hours: i64) -> String {
 
     // Errors section
     if !stats.errors_by_type.is_empty() {
-        text.push_str("\n*Ошибки:*\n");
+        text.push_str("\n*Errors:*\n");
         for (error_type, count) in &stats.errors_by_type {
             let emoji = match error_type.as_str() {
                 "download_failed" => "📥",
@@ -219,7 +219,7 @@ fn format_stats_message(stats: &PeriodStats, hours: i64) -> String {
 
     // Recent errors with user info
     if !stats.recent_errors.is_empty() {
-        text.push_str("\n*Последние ошибки:*\n");
+        text.push_str("\n*Recent errors:*\n");
         for error in &stats.recent_errors {
             let user_display = if let Some(ref username) = error.username {
                 format!("@{}", username)
@@ -371,8 +371,8 @@ mod tests {
         };
 
         let message = format_stats_message(&stats, 3);
-        assert!(message.contains("Статистика за 3"));
-        assert!(message.contains("Загрузок"));
+        assert!(message.contains("Stats for the last 3"));
+        assert!(message.contains("Downloads"));
         assert!(message.contains("mp3") || message.contains("MP3"));
     }
 }

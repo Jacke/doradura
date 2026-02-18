@@ -479,7 +479,7 @@ pub(crate) async fn show_current_settings_detail(
             "360p" => "360p",
             _ => "Best",
         };
-        format!("🎬 *Качество видео:* {}", quality_display)
+        format!("🎬 *Video quality:* {}", quality_display)
     } else {
         "".to_string()
     };
@@ -492,21 +492,21 @@ pub(crate) async fn show_current_settings_detail(
             "320k" => "320 kbps",
             _ => "320 kbps",
         };
-        format!("🎵 *Битрейт аудио:* {}", bitrate_display)
+        format!("🎵 *Audio bitrate:* {}", bitrate_display)
     } else {
         "".to_string()
     };
 
     let video_send_type = if send_as_document == 1 {
-        "📎 *Отправка видео:* Документ"
+        "📎 *Video send type:* Document"
     } else {
-        "📹 *Отправка видео:* Медиа"
+        "📹 *Video send type:* Media"
     };
 
     let audio_send_type = if send_audio_as_document == 1 {
-        "📎 *Отправка аудио:* Документ"
+        "📎 *Audio send type:* Document"
     } else {
-        "🎵 *Отправка аудио:* Медиа"
+        "🎵 *Audio send type:* Media"
     };
 
     let plan_display = match plan {
@@ -516,8 +516,8 @@ pub(crate) async fn show_current_settings_detail(
     };
 
     let mut text = format!(
-        "🎬 *Твои настройки загрузки*\n\n\
-        📥 *Формат:* {}\n",
+        "🎬 *Your download settings*\n\n\
+        📥 *Format:* {}\n",
         format_emoji
     );
 
@@ -531,13 +531,13 @@ pub(crate) async fn show_current_settings_detail(
     text.push_str(&format!(
         "{}\n\
         {}\n\n\
-        💎 *Подписка:* {}\n\n\
-        Чтобы изменить настройки, нажми \"⚙️ Настройки загрузки\" в главном меню\\.",
+        💎 *Subscription:* {}\n\n\
+        To change settings, press \"⚙️ Download Settings\" in the main menu\\.",
         video_send_type, audio_send_type, plan_display
     ));
 
     let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
-        "🔙 Назад в меню".to_string(),
+        "🔙 Back to menu".to_string(),
         "back:enhanced_main",
     )]]);
 
@@ -549,34 +549,34 @@ pub(crate) async fn show_current_settings_detail(
 /// Displays common questions and answers about using the bot.
 pub(crate) async fn show_help_menu(bot: &Bot, chat_id: ChatId, message_id: MessageId) -> ResponseResult<()> {
     let admin_line = if ADMIN_USERNAME.is_empty() {
-        "*Нужна помощь?*\nНапиши администратору.".to_string()
+        "*Need help?*\nContact the administrator.".to_string()
     } else {
         format!(
-            "*Нужна помощь?*\nНапиши @{} \\(администратор\\)",
+            "*Need help?*\nWrite to @{} \\(administrator\\)",
             escape_markdown(ADMIN_USERNAME.as_str())
         )
     };
 
     let text = format!(
-        "❓ *Помощь и FAQ*\n\n\
-        *Как пользоваться ботом?*\n\
-        Просто отправь мне ссылку на видео или трек с YouTube, SoundCloud, VK, TikTok, Instagram или других сервисов\\.\n\n\
-        *Какие форматы поддерживаются?*\n\
-        🎵 MP3 \\- только аудио\n\
-        🎬 MP4 \\- видео\n\
-        🎬🎵 MP4 \\+ MP3 \\- и видео, и аудио\n\
-        📝 SRT \\- субтитры\n\
-        📄 TXT \\- текстовые субтитры\n\n\
-        *Как изменить качество?*\n\
-        Используй кнопку \"⚙️ Настройки загрузки\" в главном меню\\.\n\n\
-        *Какие сервисы поддерживаются?*\n\
-        YouTube, SoundCloud, VK, TikTok, Instagram, Twitch, Spotify и многие другие\\! Полный список в разделе \"🌐 Доступные сервисы\"\\.\n\n\
+        "❓ *Help and FAQ*\n\n\
+        *How to use the bot?*\n\
+        Simply send me a link to a video or track from YouTube, SoundCloud, VK, TikTok, Instagram or other services\\.\n\n\
+        *What formats are supported?*\n\
+        🎵 MP3 \\- audio only\n\
+        🎬 MP4 \\- video\n\
+        🎬🎵 MP4 \\+ MP3 \\- both video and audio\n\
+        📝 SRT \\- subtitles\n\
+        📄 TXT \\- text subtitles\n\n\
+        *How to change quality?*\n\
+        Use the \"⚙️ Download Settings\" button in the main menu\\.\n\n\
+        *What services are supported?*\n\
+        YouTube, SoundCloud, VK, TikTok, Instagram, Twitch, Spotify and many others\\! Full list in the \"🌐 Available Services\" section\\.\n\n\
         {}",
         admin_line
     );
 
     let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
-        "🔙 Назад в меню".to_string(),
+        "🔙 Back to menu".to_string(),
         "back:enhanced_main",
     )]]);
 

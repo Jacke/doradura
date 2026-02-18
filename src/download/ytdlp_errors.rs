@@ -1,40 +1,40 @@
-/// Модуль для анализа ошибок yt-dlp
+/// Module for analyzing yt-dlp errors
 ///
-/// Предоставляет функции для определения типа ошибки yt-dlp
-/// и генерации информативных сообщений для пользователя и администратора.
-/// Типы ошибок yt-dlp
+/// Provides functions for determining the yt-dlp error type
+/// and generating informative messages for the user and administrator.
+/// yt-dlp error types
 #[derive(Debug, Clone, PartialEq)]
 pub enum YtDlpErrorType {
-    /// Cookies недействительны или устарели
+    /// Cookies are invalid or outdated
     InvalidCookies,
-    /// YouTube обнаружил бота
+    /// YouTube detected a bot
     BotDetection,
-    /// Видео недоступно (приватное, удалено, региональные ограничения)
+    /// Video is unavailable (private, deleted, regional restrictions)
     VideoUnavailable,
-    /// Проблемы с сетью (таймауты, соединение)
+    /// Network issues (timeouts, connection)
     NetworkError,
-    /// Ошибки при загрузке фрагментов видео (обычно временные)
+    /// Errors while downloading video fragments (usually temporary)
     FragmentError,
-    /// Ошибка постобработки (ffmpeg FixupM3u8, конвертация и т.д.)
+    /// Post-processing error (ffmpeg FixupM3u8, conversion, etc.)
     PostprocessingError,
-    /// Недостаточно места на диске
+    /// Insufficient disk space
     DiskSpaceError,
-    /// Неизвестная ошибка
+    /// Unknown error
     Unknown,
 }
 
-/// Анализирует stderr yt-dlp и определяет тип ошибки
+/// Analyzes yt-dlp stderr and determines the error type
 ///
-/// # Параметры
-/// - `stderr`: содержимое stderr от yt-dlp
+/// # Parameters
+/// - `stderr`: stderr output from yt-dlp
 ///
-/// # Возвращает
-/// - `YtDlpErrorType`: тип определенной ошибки
+/// # Returns
+/// - `YtDlpErrorType`: the determined error type
 pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
     let stderr_lower = stderr.to_lowercase();
 
-    // Bot detection: YouTube требует подтверждения что ты не бот
-    // Это НЕ проблема cookies — это блокировка IP/fingerprint
+    // Bot detection: YouTube requires confirmation that you are not a bot
+    // This is NOT a cookies problem — it is an IP/fingerprint block
     if stderr_lower.contains("sign in to confirm you're not a bot")
         || stderr_lower.contains("sign in to confirm you\u{2019}re not a bot")
         || stderr_lower.contains("confirm you're not a bot")
@@ -43,7 +43,7 @@ pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
         return YtDlpErrorType::BotDetection;
     }
 
-    // Проверяем ошибки связанные с cookies (реально невалидные cookies)
+    // Check for cookie-related errors (genuinely invalid cookies)
     if stderr_lower.contains("cookies are no longer valid")
         || stderr_lower.contains("cookies have likely been rotated")
         || stderr_lower.contains("please sign in")
@@ -54,7 +54,7 @@ pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
         return YtDlpErrorType::InvalidCookies;
     }
 
-    // Проверяем ошибки при загрузке фрагментов (обычно временные блокировки)
+    // Check for fragment download errors (usually temporary blocks)
     if stderr_lower.contains("fragment")
         && (stderr_lower.contains("http error 403")
             || stderr_lower.contains("retrying fragment")
@@ -64,7 +64,7 @@ pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
         return YtDlpErrorType::FragmentError;
     }
 
-    // Проверяем bot detection (если это не фрагменты)
+    // Check for bot detection (if not fragment-related)
     if stderr_lower.contains("bot detection")
         || stderr_lower.contains("http error 403")
         || stderr_lower.contains("unable to extract")
@@ -73,7 +73,7 @@ pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
         return YtDlpErrorType::BotDetection;
     }
 
-    // Проверяем недоступное видео
+    // Check for unavailable video
     if stderr_lower.contains("private video")
         || stderr_lower.contains("video unavailable")
         || stderr_lower.contains("this video is not available")
@@ -85,7 +85,7 @@ pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
         return YtDlpErrorType::VideoUnavailable;
     }
 
-    // Проверяем сетевые ошибки
+    // Check for network errors
     if stderr_lower.contains("timeout")
         || stderr_lower.contains("connection")
         || stderr_lower.contains("network")
@@ -96,7 +96,7 @@ pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
         return YtDlpErrorType::NetworkError;
     }
 
-    // Проверяем ошибки постобработки (ffmpeg, FixupM3u8 и т.д.)
+    // Check for post-processing errors (ffmpeg, FixupM3u8, etc.)
     if stderr_lower.contains("postprocessing")
         || stderr_lower.contains("conversion failed")
         || stderr_lower.contains("fixupm3u8")
@@ -107,7 +107,7 @@ pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
         return YtDlpErrorType::PostprocessingError;
     }
 
-    // Проверяем ошибки нехватки места на диске
+    // Check for disk space errors
     if stderr_lower.contains("no space left")
         || stderr_lower.contains("disk quota")
         || stderr_lower.contains("not enough space")
@@ -119,56 +119,54 @@ pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
         return YtDlpErrorType::DiskSpaceError;
     }
 
-    // Неизвестная ошибка
+    // Unknown error
     YtDlpErrorType::Unknown
 }
 
-/// Возвращает пользовательское сообщение об ошибке
+/// Returns the user-facing error message
 ///
-/// # Параметры
-/// - `error_type`: тип ошибки
+/// # Parameters
+/// - `error_type`: the error type
 ///
-/// # Возвращает
-/// - `String`: сообщение для пользователя
+/// # Returns
+/// - `String`: message for the user
 pub fn get_error_message(error_type: &YtDlpErrorType) -> String {
     match error_type {
         YtDlpErrorType::InvalidCookies => {
-            "❌ Временная проблема с YouTube.\n\nПопробуй другое видео или повтори попытку позже.".to_string()
+            "❌ Temporary issue with YouTube.\n\nTry a different video or retry later.".to_string()
         }
         YtDlpErrorType::BotDetection => {
-            "❌ YouTube заблокировал запрос.\n\nПопробуй другое видео или повтори попытку позже.".to_string()
+            "❌ YouTube blocked the request.\n\nTry a different video or retry later.".to_string()
         }
         YtDlpErrorType::VideoUnavailable => {
-            "❌ Видео недоступно.\n\nВозможно оно приватное, удалено или заблокировано в твоём регионе.".to_string()
+            "❌ Video unavailable.\n\nIt may be private, deleted, or blocked in your region.".to_string()
         }
-        YtDlpErrorType::NetworkError => "❌ Проблема с сетью.\n\nПопробуй ещё раз через минуту.".to_string(),
-        YtDlpErrorType::FragmentError => {
-            "❌ Временная проблема при загрузке видео.\n\nПопробуй повторить попытку.".to_string()
-        }
-        YtDlpErrorType::PostprocessingError => "❌ Ошибка обработки видео.\n\nПопробуй повторить попытку.".to_string(),
+        YtDlpErrorType::NetworkError => "❌ Network problem.\n\nTry again in a minute.".to_string(),
+        YtDlpErrorType::FragmentError => "❌ Temporary issue while downloading video.\n\nPlease retry.".to_string(),
+        YtDlpErrorType::PostprocessingError => "❌ Video processing error.\n\nPlease retry.".to_string(),
         YtDlpErrorType::DiskSpaceError => {
-            "❌ Сервер перегружен.\n\nПопробуй позже — мы уже работаем над этим.".to_string()
+            "❌ Server is overloaded.\n\nTry again later — we are already working on it.".to_string()
         }
-        YtDlpErrorType::Unknown => "❌ Не удалось скачать видео.\n\nПроверь, что ссылка корректна.".to_string(),
+        YtDlpErrorType::Unknown => "❌ Failed to download video.\n\nCheck that the link is correct.".to_string(),
     }
 }
 
-/// Определяет, нужно ли уведомлять администратора об ошибке
+/// Determines whether the administrator should be notified about the error
 ///
-/// # Параметры
-/// - `error_type`: тип ошибки
+/// # Parameters
+/// - `error_type`: the error type
 ///
-/// # Возвращает
-/// - `true` если нужно уведомить администратора
+/// # Returns
+/// - `true` if the administrator should be notified
 pub fn should_notify_admin(error_type: &YtDlpErrorType) -> bool {
     match error_type {
         YtDlpErrorType::InvalidCookies => true,
         YtDlpErrorType::BotDetection => true,
         YtDlpErrorType::VideoUnavailable => false,
         YtDlpErrorType::NetworkError => false,
-        YtDlpErrorType::FragmentError => false, // Временные ошибки фрагментов - не требуют внимания
-        YtDlpErrorType::PostprocessingError => false, // Пробуем retry с --fixup never
-        YtDlpErrorType::DiskSpaceError => true, // КРИТИЧНО: нужно срочно освободить место!
+        YtDlpErrorType::FragmentError => false, // Temporary fragment errors - no action needed
+        YtDlpErrorType::PostprocessingError => false, // Retried with --fixup never
+        YtDlpErrorType::DiskSpaceError => true, // CRITICAL: disk space must be freed immediately!
         YtDlpErrorType::Unknown => true,
     }
 }
@@ -180,7 +178,7 @@ pub fn should_notify_admin(error_type: &YtDlpErrorType) -> bool {
 pub fn sanitize_user_error_message(raw: &str) -> String {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
-        return "❌ Не удалось скачать видео.\n\nПопробуй ещё раз позже.".to_string();
+        return "❌ Failed to download video.\n\nPlease try again later.".to_string();
     }
 
     let lower = trimmed.to_lowercase();
@@ -211,75 +209,75 @@ pub fn sanitize_user_error_message(raw: &str) -> String {
     trimmed.to_string()
 }
 
-/// Возвращает рекомендации по исправлению ошибки для логов
+/// Returns fix recommendations for the logs
 ///
-/// # Параметры
-/// - `error_type`: тип ошибки
+/// # Parameters
+/// - `error_type`: the error type
 ///
-/// # Возвращает
-/// - `String`: рекомендации для администратора
+/// # Returns
+/// - `String`: recommendations for the administrator
 pub fn get_fix_recommendations(error_type: &YtDlpErrorType) -> String {
     match error_type {
-        YtDlpErrorType::InvalidCookies => "🔧 РЕКОМЕНДАЦИИ ПО ИСПРАВЛЕНИЮ:\n\
-            • Cookies устарели или были обновлены в браузере\n\
+        YtDlpErrorType::InvalidCookies => "🔧 FIX RECOMMENDATIONS:\n\
+            • Cookies are outdated or were refreshed in the browser\n\
             \n\
-            📋 Вариант 1: Автоматическое извлечение из браузера (рекомендуется для Linux/Windows):\n\
-              1. Убедись что залогинен в браузере на youtube.com\n\
-              2. Установи зависимости: pip3 install keyring pycryptodomex\n\
-              3. Установи переменную: export YTDL_COOKIES_BROWSER=chrome\n\
-                 (поддерживаются: chrome, firefox, safari, brave, chromium, edge, opera, vivaldi)\n\
-              4. Перезапусти бота\n\
+            📋 Option 1: Automatic extraction from browser (recommended for Linux/Windows):\n\
+              1. Make sure you are logged in to youtube.com in the browser\n\
+              2. Install dependencies: pip3 install keyring pycryptodomex\n\
+              3. Set the variable: export YTDL_COOKIES_BROWSER=chrome\n\
+                 (supported: chrome, firefox, safari, brave, chromium, edge, opera, vivaldi)\n\
+              4. Restart the bot\n\
             \n\
-            📋 Вариант 2: Экспорт cookies в файл (рекомендуется для macOS):\n\
-              1. Открой браузер и залогинься на youtube.com\n\
-              2. Экспортируй cookies в файл youtube_cookies.txt\n\
-              3. Убедись что файл в формате Netscape HTTP Cookie File\n\
-              4. Установи переменную: export YTDL_COOKIES_FILE=youtube_cookies.txt\n\
-              5. Перезапусти бота"
+            📋 Option 2: Export cookies to a file (recommended for macOS):\n\
+              1. Open the browser and log in to youtube.com\n\
+              2. Export cookies to a file youtube_cookies.txt\n\
+              3. Ensure the file is in Netscape HTTP Cookie File format\n\
+              4. Set the variable: export YTDL_COOKIES_FILE=youtube_cookies.txt\n\
+              5. Restart the bot"
             .to_string(),
-        YtDlpErrorType::BotDetection => "🔧 РЕКОМЕНДАЦИИ ПО ИСПРАВЛЕНИЮ:\n\
-            • YouTube обнаружил автоматизированные запросы\n\
-            • Обнови cookies из браузера\n\
-            • Убедись что используешь актуальную версию yt-dlp\n\
-            • Попробуй использовать другой player_client (android, web)"
+        YtDlpErrorType::BotDetection => "🔧 FIX RECOMMENDATIONS:\n\
+            • YouTube detected automated requests\n\
+            • Update cookies from the browser\n\
+            • Ensure you are using an up-to-date version of yt-dlp\n\
+            • Try using a different player_client (android, web)"
             .to_string(),
         YtDlpErrorType::VideoUnavailable => {
-            "ℹ️  Видео недоступно - это нормальная ситуация, не требует действий".to_string()
+            "ℹ️  Video unavailable - this is a normal situation, no action required".to_string()
         }
-        YtDlpErrorType::NetworkError => "🔧 РЕКОМЕНДАЦИИ ПО ИСПРАВЛЕНИЮ:\n\
-            • Проверь интернет-соединение\n\
-            • Проверь доступность youtube.com\n\
-            • Увеличь таймауты если проблема повторяется"
+        YtDlpErrorType::NetworkError => "🔧 FIX RECOMMENDATIONS:\n\
+            • Check your internet connection\n\
+            • Check accessibility of youtube.com\n\
+            • Increase timeouts if the problem persists"
             .to_string(),
-        YtDlpErrorType::FragmentError => "🔧 РЕКОМЕНДАЦИИ ПО ИСПРАВЛЕНИЮ:\n\
-            • Это временная ошибка при загрузке видео - yt-dlp автоматически переделывает фрагменты\n\
-            • Если проблема повторяется часто:\n\
-              1. Проверь интернет-соединение\n\
-              2. Попробуй загрузить позже (YouTube может ограничивать частые запросы)\n\
-              3. Убедись что используешь актуальную версию yt-dlp"
+        YtDlpErrorType::FragmentError => "🔧 FIX RECOMMENDATIONS:\n\
+            • This is a temporary error while downloading video - yt-dlp retries fragments automatically\n\
+            • If the problem occurs frequently:\n\
+              1. Check internet connection\n\
+              2. Try downloading later (YouTube may be rate-limiting frequent requests)\n\
+              3. Ensure you are using an up-to-date version of yt-dlp"
             .to_string(),
-        YtDlpErrorType::PostprocessingError => "🔧 РЕКОМЕНДАЦИИ ПО ИСПРАВЛЕНИЮ:\n\
-            • Ошибка постобработки видео (ffmpeg/FixupM3u8)\n\
-            • Бот автоматически попробует повторить без постобработки\n\
-            • Если проблема повторяется:\n\
-              1. Проверь версию ffmpeg\n\
-              2. Проверь место на диске\n\
-              3. Проверь права записи в /tmp"
+        YtDlpErrorType::PostprocessingError => "🔧 FIX RECOMMENDATIONS:\n\
+            • Video post-processing error (ffmpeg/FixupM3u8)\n\
+            • The bot will automatically retry without post-processing\n\
+            • If the problem persists:\n\
+              1. Check the ffmpeg version\n\
+              2. Check available disk space\n\
+              3. Check write permissions for /tmp"
             .to_string(),
-        YtDlpErrorType::DiskSpaceError => "🚨 КРИТИЧНО - НЕХВАТКА МЕСТА НА ДИСКЕ:\n\
-            • Загрузки будут падать пока не освободить место!\n\
+        YtDlpErrorType::DiskSpaceError => "🚨 CRITICAL - DISK SPACE SHORTAGE:\n\
+            • Downloads will fail until space is freed!\n\
             \n\
-            📋 СРОЧНЫЕ ДЕЙСТВИЯ:\n\
-              1. Проверь место: df -h\n\
-              2. Очисти downloads/: rm -rf /app/downloads/*\n\
-              3. Очисти /tmp: rm -rf /tmp/*\n\
-              4. Проверь логи: du -sh /app/logs/*\n\
-              5. Если Railway — увеличь размер диска в настройках"
+            📋 URGENT ACTIONS:\n\
+              1. Check disk: df -h\n\
+              2. Clear downloads/: rm -rf /app/downloads/*\n\
+              3. Clear /tmp: rm -rf /tmp/*\n\
+              4. Check logs: du -sh /app/logs/*\n\
+              5. If Railway — increase disk size in the settings"
             .to_string(),
-        YtDlpErrorType::Unknown => "🔧 РЕКОМЕНДАЦИИ ПО ИСПРАВЛЕНИЮ:\n\
-            • Проверь логи yt-dlp для деталей\n\
-            • Убедись что видео доступно\n\
-            • Проверь что yt-dlp обновлен до последней версии"
+        YtDlpErrorType::Unknown => "🔧 FIX RECOMMENDATIONS:\n\
+            • Check yt-dlp logs for details\n\
+            • Ensure the video is accessible\n\
+            • Check that yt-dlp is updated to the latest version"
             .to_string(),
     }
 }
@@ -415,28 +413,28 @@ mod tests {
         let msg = get_error_message(&YtDlpErrorType::BotDetection);
         assert!(msg.contains("❌"));
         assert!(msg.contains("YouTube"));
-        assert!(msg.contains("заблокировал"));
+        assert!(msg.contains("blocked"));
     }
 
     #[test]
     fn test_get_error_message_video_unavailable() {
         let msg = get_error_message(&YtDlpErrorType::VideoUnavailable);
         assert!(msg.contains("❌"));
-        assert!(msg.contains("недоступно"));
+        assert!(msg.contains("unavailable"));
     }
 
     #[test]
     fn test_get_error_message_network() {
         let msg = get_error_message(&YtDlpErrorType::NetworkError);
         assert!(msg.contains("❌"));
-        assert!(msg.contains("сет"));
+        assert!(msg.contains("Network"));
     }
 
     #[test]
     fn test_get_error_message_unknown() {
         let msg = get_error_message(&YtDlpErrorType::Unknown);
         assert!(msg.contains("❌"));
-        assert!(msg.contains("скачать"));
+        assert!(msg.contains("download"));
     }
 
     // ==================== should_notify_admin Tests ====================
@@ -459,36 +457,36 @@ mod tests {
     #[test]
     fn test_get_fix_recommendations_invalid_cookies() {
         let recs = get_fix_recommendations(&YtDlpErrorType::InvalidCookies);
-        assert!(recs.contains("РЕКОМЕНДАЦИИ"));
+        assert!(recs.contains("RECOMMENDATIONS"));
         assert!(recs.contains("cookies"));
-        assert!(recs.contains("браузер"));
+        assert!(recs.contains("browser"));
     }
 
     #[test]
     fn test_get_fix_recommendations_bot_detection() {
         let recs = get_fix_recommendations(&YtDlpErrorType::BotDetection);
-        assert!(recs.contains("РЕКОМЕНДАЦИИ"));
+        assert!(recs.contains("RECOMMENDATIONS"));
         assert!(recs.contains("yt-dlp"));
     }
 
     #[test]
     fn test_get_fix_recommendations_video_unavailable() {
         let recs = get_fix_recommendations(&YtDlpErrorType::VideoUnavailable);
-        assert!(recs.contains("недоступно"));
-        assert!(recs.contains("не требует"));
+        assert!(recs.contains("unavailable"));
+        assert!(recs.contains("no action"));
     }
 
     #[test]
     fn test_get_fix_recommendations_network() {
         let recs = get_fix_recommendations(&YtDlpErrorType::NetworkError);
-        assert!(recs.contains("интернет"));
+        assert!(recs.contains("internet"));
         assert!(recs.contains("youtube.com"));
     }
 
     #[test]
     fn test_get_fix_recommendations_unknown() {
         let recs = get_fix_recommendations(&YtDlpErrorType::Unknown);
-        assert!(recs.contains("логи"));
+        assert!(recs.contains("logs"));
         assert!(recs.contains("yt-dlp"));
     }
 
@@ -504,7 +502,7 @@ mod tests {
 
     #[test]
     fn test_sanitize_user_error_message_passthrough() {
-        let raw = "❌ Видео недоступно.\n\nПопробуй другое видео.";
+        let raw = "❌ Video unavailable.\n\nTry a different video.";
         let sanitized = sanitize_user_error_message(raw);
         assert_eq!(sanitized, raw);
     }

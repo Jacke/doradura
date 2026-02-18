@@ -112,7 +112,7 @@ pub async fn download_and_send_audio(
                     config::download::GLOBAL_TIMEOUT_SECS
                 );
                 Err(AppError::Download(DownloadError::Timeout(format!(
-                    "Таймаут загрузки (превышено {} минут)",
+                    "Download timed out (exceeded {} minutes)",
                     config::download::GLOBAL_TIMEOUT_SECS / 60
                 ))))
             }
@@ -142,6 +142,7 @@ pub async fn download_and_send_audio(
                     &pipeline_error,
                     &format,
                     alert_manager.as_ref(),
+                    message_id,
                 )
                 .await;
             }

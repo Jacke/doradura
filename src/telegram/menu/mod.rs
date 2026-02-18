@@ -11,5 +11,5 @@ pub use main_menu::{send_main_menu_as_new, show_enhanced_main_menu, show_main_me
 pub use services::show_services_menu;
 pub use settings::{
     send_download_type_menu_as_new, show_audio_bitrate_menu, show_download_type_menu, show_language_menu,
-    show_language_selection_menu, show_video_quality_menu,
+    show_language_selection_menu, show_progress_bar_style_menu, show_video_quality_menu,
 };

@@ -1,19 +1,19 @@
 # Telegram Bot Snapshots
 
-Эта директория содержит записанные взаимодействия с Telegram API для тестирования.
+This directory contains recorded Telegram API interactions for testing.
 
-## Что такое snapshot?
+## What is a snapshot?
 
-Snapshot - это JSON файл, содержащий:
-- Запросы к Telegram API (метод, путь, body)
-- Ответы от Telegram API (status, body, headers)
-- Метаданные (описание сценария, дата записи)
+A snapshot is a JSON file containing:
+- Requests to the Telegram API (method, path, body)
+- Responses from the Telegram API (status, body, headers)
+- Metadata (scenario description, recording date)
 
-## Структура snapshot файла
+## Snapshot file structure
 
 ```json
 {
-  "name": "имя_сценария",
+  "name": "scenario_name",
   "version": "1.0",
   "recorded_at": "2026-01-04T12:00:00Z",
   "interactions": [
@@ -32,114 +32,114 @@ Snapshot - это JSON файл, содержащий:
     ]
   ],
   "metadata": {
-    "description": "Описание сценария",
+    "description": "Scenario description",
     "command": "/start"
   }
 }
 ```
 
-## Существующие snapshots
+## Existing snapshots
 
 ### start_command.json
-- **Описание**: Пользователь отправляет /start и получает приветственное сообщение с главным меню
-- **Команда**: `/start`
-- **Взаимодействий**: 1
-- **Использование**:
+- **Description**: User sends /start and receives welcome message with main menu
+- **Command**: `/start`
+- **Interactions**: 1
+- **Usage**:
   ```rust
   let mock = TelegramMock::from_snapshot("start_command").await?;
   ```
 
 ### info_command.json
-- **Описание**: Пользователь запрашивает информацию о поддерживаемых форматах
-- **Команда**: `/info`
-- **Взаимодействий**: 1
-- **Включает**: Список форматов видео/аудио, поддерживаемые сервисы
+- **Description**: User requests information about supported formats
+- **Command**: `/info`
+- **Interactions**: 1
+- **Includes**: List of video/audio formats, supported services
 
 ### settings_menu.json
-- **Описание**: Отображение главного меню настроек с текущими предпочтениями
-- **Команда**: `/settings`
-- **Взаимодействий**: 1
-- **Включает**: Качество видео, битрейт аудио, формат по умолчанию, язык
+- **Description**: Display of main settings menu with current preferences
+- **Command**: `/settings`
+- **Interactions**: 1
+- **Includes**: Video quality, audio bitrate, default format, language
 
 ### language_selection.json
-- **Описание**: Полный flow выбора языка интерфейса
-- **Flow**: Показ меню языков → выбор → callback → обновление настроек
-- **Взаимодействий**: 3
-- **Включает**: answerCallbackQuery, editMessageText
+- **Description**: Complete language selection flow
+- **Flow**: Show language menu → select → callback → update settings
+- **Interactions**: 3
+- **Includes**: answerCallbackQuery, editMessageText
 
 ### youtube_processing.json
-- **Описание**: Обработка YouTube ссылки и показ preview с опциями качества
-- **Flow**: Сообщение "Обрабатываю" → Preview с thumbnail → Удаление временного сообщения
-- **Взаимодействий**: 3
-- **Включает**: sendMessage, sendPhoto, deleteMessage
+- **Description**: Processing YouTube link and showing preview with quality options
+- **Flow**: "Processing..." message → Preview with thumbnail → Delete temporary message
+- **Interactions**: 3
+- **Includes**: sendMessage, sendPhoto, deleteMessage
 - **URL**: `https://www.youtube.com/watch?v=dQw4w9WgXcQ`
 
 ### audio_download_complete.json
-- **Описание**: Полный цикл скачивания аудио с прогрессом
-- **Flow**: 0% → 45% → 100% → отправка файла → очистка
-- **Взаимодействий**: 5
-- **Включает**: editMessageCaption (прогресс), sendAudio, deleteMessage
-- **Детали**: Rick Astley - Never Gonna Give You Up, 192kbps, 5MB
+- **Description**: Complete audio download cycle with progress tracking
+- **Flow**: 0% → 45% → 100% → send file → cleanup
+- **Interactions**: 5
+- **Includes**: editMessageCaption (progress), sendAudio, deleteMessage
+- **Details**: Rick Astley - Never Gonna Give You Up, 192kbps, 5MB
 
 ### rate_limit_error.json
-- **Описание**: Пользователь превышает лимит запросов
-- **Взаимодействий**: 1
-- **Включает**: Сообщение об ошибке с оставшимся временем (45 сек)
+- **Description**: User exceeds the rate limit
+- **Interactions**: 1
+- **Includes**: Error message with remaining time (45 sec)
 - **Error type**: rate_limit
 
-## Как создать новый snapshot
+## How to create a new snapshot
 
-### Способ 1: Вручную (рекомендуется)
+### Method 1: Manually (recommended)
 
-1. Запустите бота с логированием:
+1. Run the bot with logging:
    ```bash
    RUST_LOG=debug cargo run
    ```
 
-2. Выполните нужное действие в Telegram
+2. Perform the required action in Telegram
 
-3. Скопируйте запрос/ответ из логов
+3. Copy the request/response from the logs
 
-4. Создайте JSON файл в `tests/snapshots/`
+4. Create a JSON file in `tests/snapshots/`
 
-5. Используйте в тестах
+5. Use it in tests
 
-### Способ 2: Python утилита
+### Method 2: Python utility
 
 ```bash
-# Из логов
+# From logs
 ./tools/log_to_snapshot.py --input bot.log --name my_test --output tests/snapshots/my_test.json
 
-# Из stdin
+# From stdin
 cargo run 2>&1 | ./tools/log_to_snapshot.py --stdin --name my_test
 
-# Интерактивно
+# Interactively
 ./tools/log_to_snapshot.py --interactive
 ```
 
-### Способ 3: Через mitmproxy
+### Method 3: Via mitmproxy
 
 ```bash
-# Настроить прокси
+# Configure proxy
 mitmproxy --port 8080 --mode reverse:http://localhost:8081
 
-# В .env
+# In .env
 BOT_API_URL=http://localhost:8080
 
-# Использовать бота
+# Use the bot
 cargo run
 
-# Сохранить flows из mitmproxy
+# Save flows from mitmproxy
 ```
 
-## Соглашения об именовании
+## Naming conventions
 
-- `{command}_command.json` - для команд бота (`start_command.json`)
-- `{action}_callback.json` - для callback кнопок (`settings_callback.json`)
-- `{feature}_flow.json` - для сложных сценариев (`youtube_download_flow.json`)
-- `{error}_error.json` - для ошибок (`invalid_url_error.json`)
+- `{command}_command.json` - for bot commands (`start_command.json`)
+- `{action}_callback.json` - for callback buttons (`settings_callback.json`)
+- `{feature}_flow.json` - for complex scenarios (`youtube_download_flow.json`)
+- `{error}_error.json` - for errors (`invalid_url_error.json`)
 
-## Тестирование с snapshots
+## Testing with snapshots
 
 ```rust
 use common::TelegramMock;
@@ -149,13 +149,13 @@ async fn test_my_feature() {
     let mock = TelegramMock::from_snapshot("my_snapshot").await?;
     let bot = mock.create_bot()?;
 
-    // Ваш код тестирования
-    // Бот будет использовать mock server вместо реального API
+    // Your test code
+    // The bot will use the mock server instead of the real API
 
-    mock.verify().await?; // Проверить что все ожидаемые вызовы были сделаны
+    mock.verify().await?; // Verify that all expected calls were made
 }
 ```
 
-## Подробная документация
+## Detailed documentation
 
-См. [docs/SNAPSHOT_TESTING.md](../../docs/SNAPSHOT_TESTING.md)
+See [docs/SNAPSHOT_TESTING.md](../../docs/SNAPSHOT_TESTING.md)

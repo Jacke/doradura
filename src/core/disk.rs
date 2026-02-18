@@ -157,7 +157,7 @@ pub fn check_disk_space_for_download() -> Result<DiskSpaceInfo, AppError> {
         metrics::record_error("download", "disk_space_insufficient");
 
         return Err(AppError::Download(DownloadError::DiskSpace(format!(
-            "Недостаточно места на диске: {:.2} GB свободно",
+            "Insufficient disk space: {:.2} GB available",
             info.available_gb()
         ))));
     }

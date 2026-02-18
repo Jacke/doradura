@@ -8,34 +8,34 @@ use teloxide::types::{InlineKeyboardMarkup, Seconds};
 use teloxide::RequestError;
 use url::Url;
 
-/// Структура с лимитами плана подписки
+/// Subscription plan limits structure
 #[derive(Debug, Clone)]
 pub struct PlanLimits {
-    /// Интервал между запросами в секундах
+    /// Interval between requests in seconds
     pub rate_limit_seconds: u64,
-    /// Лимит загрузок в день (None = неограниченно)
+    /// Daily download limit (None = unlimited)
     pub daily_download_limit: Option<u32>,
-    /// Максимальный размер файла в MB
+    /// Maximum file size in MB
     pub max_file_size_mb: u32,
-    /// Доступные форматы
+    /// Available formats
     pub allowed_formats: Vec<String>,
-    /// Приоритет в очереди (0-100, где 100 - максимальный)
+    /// Queue priority (0-100, where 100 is maximum)
     pub queue_priority: u8,
-    /// Можно ли выбирать качество видео
+    /// Whether video quality selection is available
     pub can_choose_video_quality: bool,
-    /// Можно ли выбирать битрейт аудио
+    /// Whether audio bitrate selection is available
     pub can_choose_audio_bitrate: bool,
-    /// Можно ли загружать медиафайлы для конвертации
+    /// Whether media file upload for conversion is available
     pub can_upload_media: bool,
 }
 
 impl PlanLimits {
-    /// Получает лимиты для указанного плана
+    /// Returns the limits for the given plan
     pub fn for_plan(plan: Plan) -> Self {
         match plan {
             Plan::Premium => PlanLimits {
                 rate_limit_seconds: 10,
-                daily_download_limit: None, // Неограниченно
+                daily_download_limit: None, // Unlimited
                 max_file_size_mb: 100,
                 allowed_formats: vec![
                     "mp3".to_string(),
@@ -50,7 +50,7 @@ impl PlanLimits {
             },
             Plan::Vip => PlanLimits {
                 rate_limit_seconds: 5,
-                daily_download_limit: None, // Неограниченно
+                daily_download_limit: None, // Unlimited
                 max_file_size_mb: 200,
                 allowed_formats: vec![
                     "mp3".to_string(),
@@ -77,7 +77,7 @@ impl PlanLimits {
     }
 }
 
-/// Форматирует период подписки в человеко-читаемый вид для логов
+/// Formats a subscription period into a human-readable string for logs
 fn format_subscription_period_for_log(period: &Seconds) -> String {
     let seconds = period.seconds();
     let days = seconds as f64 / 86_400.0;
@@ -86,7 +86,7 @@ fn format_subscription_period_for_log(period: &Seconds) -> String {
     format!("{seconds} seconds (~{days:.2} days, ~{months:.2} months)")
 }
 
-/// Показывает информацию о текущем плане пользователя и доступных подписках
+/// Shows information about the user's current plan and available subscriptions
 pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
     log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     log::info!("📊 SHOW SUBSCRIPTION INFO REQUEST");
@@ -99,15 +99,15 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
     let user = match db::get_user(&conn, chat_id.0) {
         Ok(Some(u)) => u,
         Ok(None) => {
-            // Создаем пользователя если его нет
+            // Create user if not found
             if let Err(e) = db::create_user(&conn, chat_id.0, None) {
                 log::error!("Failed to create user: {}", e);
             }
-            // Пробуем получить снова
+            // Try to fetch again
             db::get_user(&conn, chat_id.0)
                 .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
                 .unwrap_or_else(|| {
-                    // Fallback к free плану
+                    // Fallback to free plan
                     crate::storage::db::User {
                         telegram_id: chat_id.0,
                         username: None,
@@ -123,6 +123,7 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
                         telegram_charge_id: None,
                         is_recurring: false,
                         burn_subtitles: 0,
+                        progress_bar_style: "classic".to_string(),
                     }
                 })
         }
@@ -157,18 +158,18 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
     log::info!("  • Charge ID: {:?}", subscription_charge_id);
     log::info!("  • Active: {}", is_subscription_active);
 
-    // Если есть charge_id, пытаемся получить информацию о подписке из Telegram API
+    // If charge_id is present, try to fetch subscription info from the Telegram API
     if let Some(ref charge_id) = subscription_charge_id {
         log::info!("🔍 Fetching subscription info from Telegram API...");
         log::info!("  • Charge ID: {}", charge_id);
 
-        // Получаем транзакции бота (без параметров - получаем все доступные)
+        // Fetch bot transactions (without parameters - get all available)
         match bot.get_star_transactions().await {
             Ok(star_transactions) => {
                 log::info!("✅ Successfully fetched star transactions");
                 log::info!("  • Total transactions count: {}", star_transactions.transactions.len());
 
-                // Ищем транзакцию с нашим charge_id (сравниваем id транзакции)
+                // Find the transaction matching our charge_id (compare transaction id)
                 let matching_transaction = star_transactions.transactions.iter().find(|t| t.id.0 == *charge_id);
 
                 if let Some(transaction) = matching_transaction {
@@ -183,7 +184,7 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
                     log::info!("📅 Date: {}", transaction.date.format("%Y-%m-%d %H:%M:%S UTC"));
                     log::info!("");
 
-                    // Парсим Source (откуда пришли деньги)
+                    // Parse Source (where the payment came from)
                     log::info!("📥 Source (payment from):");
                     if let Some(source) = &transaction.source {
                         use teloxide::types::TransactionPartner;
@@ -204,7 +205,7 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
                                 log::info!("  • Is premium: {}", user_partner.user.is_premium);
                                 log::info!("  • Is bot: {}", user_partner.user.is_bot);
 
-                                // Парсим тип платежа
+                                // Parse payment type
                                 log::info!("");
                                 log::info!("  📋 Payment details:");
                                 use teloxide::types::TransactionPartnerUserKind;
@@ -275,7 +276,7 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
 
                     log::info!("");
 
-                    // Парсим Receiver (кому идут деньги)
+                    // Parse Receiver (where the payment goes)
                     log::info!("📤 Receiver (payment to):");
                     if let Some(receiver) = &transaction.receiver {
                         log::info!("  • Receiver data: {:?}", receiver);
@@ -314,17 +315,17 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
     let current_plan = subscription_plan;
     let limits = PlanLimits::for_plan(current_plan);
 
-    // Формируем текст сообщения
+    // Build the message text
     let plan_emoji = current_plan.emoji();
 
     let plan_name = current_plan.display_name();
 
-    let mut text = "💳 *Информация о подписке*\n\n".to_string();
-    text.push_str(&format!("📊 *Твой текущий план:* {} {}\n", plan_emoji, plan_name));
+    let mut text = "💳 *Subscription Info*\n\n".to_string();
+    text.push_str(&format!("📊 *Your current plan:* {} {}\n", plan_emoji, plan_name));
 
-    // Показываем дату окончания подписки
+    // Show subscription expiry date
     if let Some(expires_at) = &subscription_expires_at {
-        // Форматируем дату для отображения (из формата "2025-12-03 01:29:24" в "03.12.2025")
+        // Format the date for display (from "2025-12-03 01:29:24" to "03.12.2025")
         let formatted_date = if let Some(date_part) = expires_at.split(' ').next() {
             let parts: Vec<&str> = date_part.split('-').collect();
             if parts.len() == 3 {
@@ -335,92 +336,89 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
         } else {
             expires_at.replace("-", "\\-").replace(":", "\\:")
         };
-        text.push_str(&format!("📅 *Действует до:* {}\n\n", formatted_date));
+        text.push_str(&format!("📅 *Valid until:* {}\n\n", formatted_date));
     } else {
-        text.push_str("📅 *Действует до:* бессрочно\n\n");
+        text.push_str("📅 *Valid until:* unlimited\n\n");
     }
 
     text.push_str("━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n");
-    text.push_str("*Твои лимиты:*\n");
+    text.push_str("*Your limits:*\n");
     text.push_str(&format!(
-        "⏱️ Интервал между запросами: {} сек\n",
+        "⏱️ Interval between requests: {} sec\n",
         limits.rate_limit_seconds
     ));
 
     if let Some(limit) = limits.daily_download_limit {
-        text.push_str(&format!("📥 Лимит загрузок в день: {}\n", limit));
+        text.push_str(&format!("📥 Daily download limit: {}\n", limit));
     } else {
-        text.push_str("📥 Лимит загрузок в день: неограниченно\n");
+        text.push_str("📥 Daily download limit: unlimited\n");
     }
 
-    text.push_str(&format!(
-        "📦 Максимальный размер файла: {} MB\n",
-        limits.max_file_size_mb
-    ));
+    text.push_str(&format!("📦 Maximum file size: {} MB\n", limits.max_file_size_mb));
 
     if limits.can_choose_video_quality {
-        text.push_str("🎬 Выбор качества видео: ✅\n");
+        text.push_str("🎬 Video quality selection: ✅\n");
     } else {
-        text.push_str("🎬 Выбор качества видео: ❌\n");
+        text.push_str("🎬 Video quality selection: ❌\n");
     }
 
     if limits.can_choose_audio_bitrate {
-        text.push_str("🎵 Выбор битрейта аудио: ✅\n");
+        text.push_str("🎵 Audio bitrate selection: ✅\n");
     } else {
-        text.push_str("🎵 Выбор битрейта аудио: ❌\n");
+        text.push_str("🎵 Audio bitrate selection: ❌\n");
     }
 
     text.push_str("\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n");
 
-    // Проверяем, есть ли активная подписка
+    // Check whether an active subscription exists
     let has_subscription = is_subscription_active;
 
     if !has_subscription {
-        text.push_str("*Доступные планы:*\n\n");
+        text.push_str("*Available plans:*\n\n");
 
-        // Premium план
-        text.push_str("⭐ *Premium* \\- 350 Stars \\(~$6\\) каждые 30 дней\n");
-        text.push_str("• 10 секунд между запросами\n");
-        text.push_str("• Неограниченные загрузки\n");
-        text.push_str("• Файлы до 100 MB\n");
-        text.push_str("• Все форматы \\+ выбор качества\n");
-        text.push_str("• Приоритетная очередь\n\n");
+        // Premium plan
+        text.push_str("⭐ *Premium* \\- 350 Stars \\(~$6\\) every 30 days\n");
+        text.push_str("• 10 seconds between requests\n");
+        text.push_str("• Unlimited downloads\n");
+        text.push_str("• Files up to 100 MB\n");
+        text.push_str("• All formats \\+ quality selection\n");
+        text.push_str("• Priority queue\n\n");
 
-        // VIP план
-        text.push_str("👑 *VIP* \\- 850 Stars \\(~$15\\) каждые 30 дней\n");
-        text.push_str("• 5 секунд между запросами\n");
-        text.push_str("• Неограниченные загрузки\n");
-        text.push_str("• Файлы до 200 MB\n");
-        text.push_str("• Все форматы \\+ выбор качества\n");
-        text.push_str("• Максимальный приоритет\n");
-        text.push_str("• Плейлисты до 100 треков\n");
-        text.push_str("• Голосовые команды\n\n");
+        // VIP plan
+        text.push_str("👑 *VIP* \\- 850 Stars \\(~$15\\) every 30 days\n");
+        text.push_str("• 5 seconds between requests\n");
+        text.push_str("• Unlimited downloads\n");
+        text.push_str("• Files up to 200 MB\n");
+        text.push_str("• All formats \\+ quality selection\n");
+        text.push_str("• Maximum priority\n");
+        text.push_str("• Playlists up to 100 tracks\n");
+        text.push_str("• Voice commands\n\n");
 
-        text.push_str("💫 *Подписка с автопродлением*\n");
-        text.push_str("Списание происходит автоматически каждые 30 дней\\.\n");
-        text.push_str("Можно отменить в любой момент\\!\n");
+        text.push_str("💫 *Subscription with auto-renewal*\n");
+        text.push_str("Charged automatically every 30 days\\.\n");
+        text.push_str("Can be cancelled at any time\\!\n");
     } else {
-        text.push_str("✅ *У тебя активна подписка\\!*\n\n");
-        text.push_str("Подписка продлевается автоматически каждые 30 дней\\.\n");
-        text.push_str("Можно отменить в любой момент без потери текущего периода\\.\n");
+        text.push_str("✅ *You have an active subscription\\!*\n\n");
+        text.push_str("Subscription renews automatically every 30 days\\.\n");
+        text.push_str("Can be cancelled at any time without losing the current period\\.\n");
     }
 
-    // Создаем клавиатуру в зависимости от наличия подписки
+    // Build keyboard depending on subscription status
     let mut keyboard_rows = Vec::new();
 
     if !has_subscription {
-        // Показываем кнопки подписки только если нет активной подписки
+        // Show subscription buttons only if there is no active subscription
         keyboard_rows.push(vec![crate::telegram::cb("⭐ Premium".to_string(), "subscribe:premium")]);
         keyboard_rows.push(vec![crate::telegram::cb("👑 VIP".to_string(), "subscribe:vip")]);
     } else if subscription_is_recurring && subscription_charge_id.is_some() {
-        // Показываем кнопку отмены автопродления только для рекуррентных подписок
+        // Show cancel auto-renewal button only for recurring subscriptions
         keyboard_rows.push(vec![crate::telegram::cb(
-            "❌ Отменить автопродление".to_string(),
+            "❌ Cancel auto-renewal".to_string(),
             "subscription:cancel",
         )]);
     }
 
-    keyboard_rows.push(vec![crate::telegram::cb("🔙 Назад".to_string(), "back:main")]);
+    keyboard_rows.push(vec![crate::telegram::cb("🔙 Back".to_string(), "back:main")]);
 
     let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
 
@@ -430,10 +428,10 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
         .await
 }
 
-/// Создает инвойс для оплаты подписки через Telegram Stars
+/// Creates a subscription payment invoice via Telegram Stars
 ///
-/// Создает рекуррентный invoice с автоматическим ежемесячным списанием Stars.
-/// Telegram будет автоматически списывать указанную сумму каждые 30 дней.
+/// Creates a recurring invoice with automatic monthly Star charges.
+/// Telegram will automatically charge the specified amount every 30 days.
 pub async fn create_subscription_invoice(bot: &Bot, chat_id: ChatId, plan: &str) -> ResponseResult<Message> {
     log::info!(
         "🎯 create_subscription_invoice called for chat_id: {}, plan: {}",
@@ -445,9 +443,9 @@ pub async fn create_subscription_invoice(bot: &Bot, chat_id: ChatId, plan: &str)
         "premium" => {
             let price = *crate::core::config::subscription::PREMIUM_PRICE_STARS;
             (
-                "⭐ Premium план",
+                "⭐ Premium plan",
                 format!(
-                    "Premium подписка с автопродлением каждые 30 дней\n\n• 10 секунд между запросами\n• Неограниченные загрузки\n• Файлы до 100 MB\n• Все форматы + выбор качества\n• Приоритетная очередь\n\n💫 Автоматическое списание {} Star{} каждые 30 дней",
+                    "Premium subscription with auto-renewal every 30 days\n\n• 10 seconds between requests\n• Unlimited downloads\n• Files up to 100 MB\n• All formats + quality selection\n• Priority queue\n\n💫 Automatic charge of {} Star{} every 30 days",
                     price,
                     if price == 1 { "" } else { "s" }
                 ),
@@ -457,9 +455,9 @@ pub async fn create_subscription_invoice(bot: &Bot, chat_id: ChatId, plan: &str)
         "vip" => {
             let price = *crate::core::config::subscription::VIP_PRICE_STARS;
             (
-                "👑 VIP план",
+                "👑 VIP plan",
                 format!(
-                    "VIP подписка с автопродлением каждые 30 дней\n\n• 5 секунд между запросами\n• Неограниченные загрузки\n• Файлы до 200 MB\n• Все форматы + выбор качества\n• Максимальный приоритет\n• Плейлисты до 100 треков\n\n💫 Автоматическое списание {} Stars каждые 30 дней",
+                    "VIP subscription with auto-renewal every 30 days\n\n• 5 seconds between requests\n• Unlimited downloads\n• Files up to 200 MB\n• All formats + quality selection\n• Maximum priority\n• Playlists up to 100 tracks\n\n💫 Automatic charge of {} Stars every 30 days",
                     price
                 ),
                 price,
@@ -474,11 +472,11 @@ pub async fn create_subscription_invoice(bot: &Bot, chat_id: ChatId, plan: &str)
         }
     };
 
-    // Создаем payload для идентификации платежа
+    // Create payload to identify the payment
     let payload = format!("subscription:{}:{}", plan, chat_id.0);
     log::info!("📦 Invoice payload: {}", payload);
 
-    // Создаем инвойс с поддержкой подписок
+    // Create invoice with subscription support
     use teloxide::types::LabeledPrice;
 
     log::info!(
@@ -492,22 +490,22 @@ pub async fn create_subscription_invoice(bot: &Bot, chat_id: ChatId, plan: &str)
         price_stars
     );
 
-    // Создаём invoice link с subscription_period
+    // Create invoice link with subscription_period
     let invoice_link_result = bot
         .create_invoice_link(
             title,
             description.clone(),
             payload,
-            "XTR".to_string(), // Только XTR (Telegram Stars) для подписок
+            "XTR".to_string(), // Only XTR (Telegram Stars) for subscriptions
             vec![LabeledPrice::new(
                 format!(
-                    "{} подписка",
+                    "{} subscription",
                     if plan == "premium" { "Premium" } else { "VIP" }
                 ),
-                price_stars, // Цена в Stars
+                price_stars, // Price in Stars
             )],
         )
-        .subscription_period(Seconds::from_seconds(crate::core::config::subscription::SUBSCRIPTION_PERIOD_SECONDS)) // 30 дней в секундах - АВТОПРОДЛЕНИЕ КАЖДЫЕ 30 ДНЕЙ
+        .subscription_period(Seconds::from_seconds(crate::core::config::subscription::SUBSCRIPTION_PERIOD_SECONDS)) // 30 days in seconds - AUTO-RENEWAL EVERY 30 DAYS
         .await;
 
     match invoice_link_result {
@@ -517,7 +515,7 @@ pub async fn create_subscription_invoice(bot: &Bot, chat_id: ChatId, plan: &str)
             // Track invoice creation for conversion funnel
             metrics::PAYMENT_CHECKOUT_STARTED.with_label_values(&[plan]).inc();
 
-            // Отправляем ссылку пользователю с инлайн-кнопкой
+            // Send the link to the user with an inline button
             use teloxide::types::InlineKeyboardButton;
             use teloxide::types::InlineKeyboardMarkup;
 
@@ -530,14 +528,14 @@ pub async fn create_subscription_invoice(bot: &Bot, chat_id: ChatId, plan: &str)
 
             let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::url(
                 format!(
-                    "💳 Оплатить {} ({}⭐)",
+                    "💳 Pay {} ({}⭐)",
                     if plan == "premium" { "Premium" } else { "VIP" },
                     price_stars
                 ),
                 invoice_url,
             )]]);
 
-            // Экранируем все спецсимволы MarkdownV2
+            // Escape all MarkdownV2 special characters
             let escaped_description = description
                 .replace("\\", "\\\\")
                 .replace(".", "\\.")
@@ -550,7 +548,7 @@ pub async fn create_subscription_invoice(bot: &Bot, chat_id: ChatId, plan: &str)
             bot.send_message(
                 chat_id,
                 format!(
-                    "💫 *Подписка {}*\n\n{}\n\n✨ Нажми на кнопку ниже для оплаты:",
+                    "💫 *{} Subscription*\n\n{}\n\n✨ Tap the button below to pay:",
                     if plan == "premium" { "Premium" } else { "VIP" },
                     escaped_description
                 ),
@@ -567,7 +565,7 @@ pub async fn create_subscription_invoice(bot: &Bot, chat_id: ChatId, plan: &str)
     }
 }
 
-/// Активирует подписку для пользователя
+/// Activates a subscription for a user
 pub async fn activate_subscription(
     db_pool: Arc<DbPool>,
     telegram_id: i64,
@@ -576,7 +574,7 @@ pub async fn activate_subscription(
 ) -> Result<(), String> {
     let conn = db::get_connection(&db_pool).map_err(|e| format!("Failed to get connection: {}", e))?;
 
-    // Обновляем план пользователя с датой окончания
+    // Update the user's plan with an expiry date
     db::update_user_plan_with_expiry(&conn, telegram_id, plan, Some(days))
         .map_err(|e| format!("Failed to update plan: {}", e))?;
 
@@ -589,17 +587,17 @@ pub async fn activate_subscription(
     Ok(())
 }
 
-/// Обрабатывает успешный платеж и активирует/продлевает подписку
+/// Handles a successful payment and activates/renews a subscription
 ///
 /// # Arguments
 ///
-/// * `bot` - Экземпляр Telegram бота
-/// * `msg` - Сообщение с информацией о платеже
-/// * `db_pool` - Пул соединений с базой данных
+/// * `bot` - Telegram bot instance
+/// * `msg` - Message containing payment information
+/// * `db_pool` - Database connection pool
 ///
 /// # Returns
 ///
-/// Возвращает `ResponseResult<()>` или ошибку при обработке платежа.
+/// Returns `ResponseResult<()>` or an error if processing fails.
 pub async fn handle_successful_payment(
     bot: &Bot,
     msg: &teloxide::types::Message,
@@ -633,7 +631,7 @@ pub async fn handle_successful_payment(
         );
         log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
-        // Парсим payload: "subscription:premium:12345678"
+        // Parse payload: "subscription:premium:12345678"
         let parts: Vec<&str> = payment.invoice_payload.split(':').collect();
         if parts.len() == 3 && parts[0] == "subscription" {
             let plan = parts[1];
@@ -646,30 +644,30 @@ pub async fn handle_successful_payment(
 
             let chat_id = msg.chat.id;
 
-            // Обрабатываем платеж подписки
+            // Process the subscription payment
             log::info!(
                 "Processing subscription payment for user {}, plan: {}",
                 telegram_id,
                 plan
             );
 
-            // Получаем соединение с БД
+            // Get database connection
             let conn = db::get_connection(&db_pool)
                 .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
-            // Сохраняем charge_id из платежа (конвертируем в строку)
+            // Save charge_id from payment (convert to string)
             let charge_id_str = payment.telegram_payment_charge_id.0.clone();
 
-            // Определяем параметры подписки
+            // Determine subscription parameters
             let is_recurring = payment.is_recurring;
             let is_first_recurring = payment.is_first_recurring;
 
-            // Получаем дату истечения подписки из payment или вычисляем её
+            // Get subscription expiry date from payment or compute it
             let subscription_expires_at = if let Some(expiration_date) = payment.subscription_expiration_date {
-                // Telegram уже отправляет DateTime<Utc>, просто форматируем
+                // Telegram sends DateTime<Utc> directly, just format it
                 expiration_date.format("%Y-%m-%d %H:%M:%S").to_string()
             } else {
-                // Если нет expiration_date, используем 30 дней от текущего момента
+                // If no expiration_date, use 30 days from now
                 let dt = chrono::Utc::now() + chrono::Duration::days(30);
                 dt.format("%Y-%m-%d %H:%M:%S").to_string()
             };
@@ -683,7 +681,7 @@ pub async fn handle_successful_payment(
             log::info!("  • Is recurring: {}", is_recurring);
             log::info!("  • Is first recurring: {}", is_first_recurring);
 
-            // Сохраняем информацию о платеже (charge) в БД для бухгалтерии
+            // Save payment (charge) information to DB for accounting
             log::info!("💾 Saving charge data for accounting...");
             if let Err(e) = db::save_charge(
                 &conn,
@@ -699,7 +697,7 @@ pub async fn handle_successful_payment(
                 Some(&subscription_expires_at),
             ) {
                 log::error!("❌ Failed to save charge data: {}", e);
-                // Продолжаем выполнение, так как это не критическая ошибка
+                // Continue execution as this is not a critical error
             } else {
                 log::info!("✅ Charge data saved successfully");
             }
@@ -716,7 +714,7 @@ pub async fn handle_successful_payment(
                     .inc();
             }
 
-            // Обновляем данные подписки в БД
+            // Update subscription data in the DB
             log::info!("💾 Updating subscription data in database...");
             if let Err(e) = db::update_subscription_data(
                 &conn,
@@ -742,25 +740,25 @@ pub async fn handle_successful_payment(
 
                 bot.send_message(
                     chat_id,
-                    "❌ Произошла ошибка при активации подписки. Обратись к администратору.",
+                    "❌ An error occurred while activating the subscription. Please contact the administrator.",
                 )
                 .await?;
                 return Ok(());
             }
             log::info!("✅ Subscription data updated successfully");
 
-            // Определяем тип подписки для сообщения
+            // Determine subscription type for the message
             let subscription_type_msg = if is_recurring {
                 if is_first_recurring {
                     log::info!("🔄 Subscription type: NEW recurring subscription (first payment)");
-                    "подписка с автопродлением каждые 30 дней"
+                    "subscription with auto-renewal every 30 days"
                 } else {
                     log::info!("🔄 Subscription type: RENEWAL of recurring subscription");
-                    "продление подписки"
+                    "subscription renewal"
                 }
             } else {
                 log::info!("💳 Subscription type: ONE-TIME payment (no auto-renewal)");
-                "разовая подписка на 30 дней"
+                "one-time subscription for 30 days"
             };
 
             let plan_emoji = if plan == "premium" { "⭐" } else { "👑" };
@@ -768,12 +766,12 @@ pub async fn handle_successful_payment(
 
             let renewal_info = if is_recurring {
                 format!(
-                    "🔄 Автопродление включено\\.\nСледующее списание: {}",
+                    "🔄 Auto-renewal enabled\\.\nNext charge: {}",
                     subscription_expires_at.replace("-", "\\-").replace(":", "\\:")
                 )
             } else {
                 format!(
-                    "📅 Действует до: {}",
+                    "📅 Valid until: {}",
                     subscription_expires_at.replace("-", "\\-").replace(":", "\\:")
                 )
             };
@@ -782,14 +780,14 @@ pub async fn handle_successful_payment(
             bot.send_message(
                 chat_id,
                 format!(
-                    "✅ План {} {} успешно активирован\\!\n\n\
-                    Тип: {}\n\
+                    "✅ {} {} plan successfully activated\\!\n\n\
+                    Type: {}\n\
                     {}\n\n\
-                    Твои новые возможности:\n\
-                    • Rate limit: {} сек\n\
-                    • Макс\\. размер: {} MB\n\
-                    • {} выбор качества\n\n\
-                    Приятного использования\\! 🎉",
+                    Your new capabilities:\n\
+                    • Rate limit: {} sec\n\
+                    • Max\\. size: {} MB\n\
+                    • {} quality selection\n\n\
+                    Enjoy\\! 🎉",
                     plan_emoji,
                     plan_name,
                     subscription_type_msg.replace("-", "\\-"),
@@ -812,17 +810,17 @@ pub async fn handle_successful_payment(
     Ok(())
 }
 
-/// Отменяет подписку пользователя (со стороны бота)
+/// Cancels a user's subscription (bot-side)
 ///
 /// # Arguments
 ///
-/// * `bot` - Экземпляр Telegram бота
-/// * `telegram_id` - Telegram ID пользователя
-/// * `db_pool` - Пул соединений с базой данных
+/// * `bot` - Telegram bot instance
+/// * `telegram_id` - User's Telegram ID
+/// * `db_pool` - Database connection pool
 ///
 /// # Returns
 ///
-/// Возвращает `Result<(), String>` или ошибку при отмене подписки.
+/// Returns `Result<(), String>` or an error if cancellation fails.
 pub async fn cancel_subscription(bot: &Bot, telegram_id: i64, db_pool: Arc<DbPool>) -> Result<(), String> {
     log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     log::info!("🚫 SUBSCRIPTION CANCELLATION REQUEST");
@@ -834,7 +832,7 @@ pub async fn cancel_subscription(bot: &Bot, telegram_id: i64, db_pool: Arc<DbPoo
         format!("Failed to get connection: {}", e)
     })?;
 
-    // Получаем charge_id пользователя
+    // Get the user's charge_id
     log::info!("📋 Fetching user data...");
     let user = db::get_user(&conn, telegram_id)
         .map_err(|e| {
@@ -865,7 +863,7 @@ pub async fn cancel_subscription(bot: &Bot, telegram_id: i64, db_pool: Arc<DbPoo
 
     log::info!("  • Charge ID: {}", charge_id);
 
-    // Отменяем подписку через Bot API
+    // Cancel subscription via Bot API
     log::info!("🔄 Calling Telegram Bot API to cancel subscription...");
     use teloxide::types::TelegramTransactionId;
     bot.edit_user_star_subscription(
@@ -886,7 +884,7 @@ pub async fn cancel_subscription(bot: &Bot, telegram_id: i64, db_pool: Arc<DbPoo
         .with_label_values(&[user.plan.as_str()])
         .inc();
 
-    // Обновляем флаг is_recurring в БД (пользователь сохраняет доступ до даты истечения)
+    // Update the is_recurring flag in the DB (user retains access until expiry date)
     log::info!("💾 Updating database (removing recurring flag)...");
     db::cancel_subscription(&conn, telegram_id).map_err(|e| {
         log::error!("❌ Failed to update subscription status in DB: {}", e);
@@ -900,21 +898,21 @@ pub async fn cancel_subscription(bot: &Bot, telegram_id: i64, db_pool: Arc<DbPoo
     Ok(())
 }
 
-/// Возобновляет подписку пользователя
+/// Restores a user's subscription
 ///
 /// # Arguments
 ///
-/// * `bot` - Экземпляр Telegram бота
-/// * `telegram_id` - Telegram ID пользователя
-/// * `db_pool` - Пул соединений с базой данных
+/// * `bot` - Telegram bot instance
+/// * `telegram_id` - User's Telegram ID
+/// * `db_pool` - Database connection pool
 ///
 /// # Returns
 ///
-/// Возвращает `Result<(), String>` или ошибку при возобновлении подписки.
+/// Returns `Result<(), String>` or an error if restoration fails.
 pub async fn restore_subscription(bot: &Bot, telegram_id: i64, db_pool: Arc<DbPool>) -> Result<(), String> {
     let conn = db::get_connection(&db_pool).map_err(|e| format!("Failed to get connection: {}", e))?;
 
-    // Получаем charge_id пользователя
+    // Get the user's charge_id
     let user = db::get_user(&conn, telegram_id)
         .map_err(|e| format!("Failed to get user: {}", e))?
         .ok_or_else(|| "User not found".to_string())?;
@@ -923,7 +921,7 @@ pub async fn restore_subscription(bot: &Bot, telegram_id: i64, db_pool: Arc<DbPo
         .telegram_charge_id
         .ok_or_else(|| "No subscription found".to_string())?;
 
-    // Возобновляем подписку через Bot API
+    // Restore subscription via Bot API
     use teloxide::types::TelegramTransactionId;
     bot.edit_user_star_subscription(
         teloxide::types::UserId(telegram_id as u64),

@@ -351,17 +351,17 @@ mod utils_tests {
 
     #[test]
     fn test_pluralize_seconds() {
-        // Singular
+        // Singular form (Russian: секунду)
         assert_eq!(pluralize_seconds(1), "секунду");
         assert_eq!(pluralize_seconds(21), "секунду");
         assert_eq!(pluralize_seconds(101), "секунду");
 
-        // 2-4 form
+        // 2-4 form (Russian: секунды)
         assert_eq!(pluralize_seconds(2), "секунды");
         assert_eq!(pluralize_seconds(3), "секунды");
         assert_eq!(pluralize_seconds(22), "секунды");
 
-        // 5+ form
+        // 5+ form (Russian: секунд)
         assert_eq!(pluralize_seconds(5), "секунд");
         assert_eq!(pluralize_seconds(11), "секунд");
         assert_eq!(pluralize_seconds(20), "секунд");
@@ -381,7 +381,7 @@ mod utils_tests {
 
         // Check copyright is appended
         let caption = format_media_caption("Test", "Artist");
-        assert!(caption.contains("Ваша,"));
+        assert!(caption.contains("Yours,"));
     }
 }
 

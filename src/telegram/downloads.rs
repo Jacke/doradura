@@ -133,7 +133,7 @@ fn build_timestamp_ui(
     }
 
     let text = if !text_lines.is_empty() {
-        format!("\n\n📍 *Сохранённые таймкоды:*\n{}", text_lines.join("\n"))
+        format!("\n\n📍 *Saved timestamps:*\n{}", text_lines.join("\n"))
     } else {
         String::new()
     };
@@ -164,9 +164,9 @@ pub async fn show_downloads_page(
 
     if all_downloads.is_empty() {
         let empty_msg = if file_type_filter.is_some() || search_text.is_some() {
-            "📭 Ничего не найдено.\n\nПопробуй изменить фильтры."
+            "📭 Nothing found.\n\nTry changing the filters."
         } else {
-            "📭 У тебя пока нет скачанных файлов.\n\nСкачай что-нибудь, и оно появится здесь!"
+            "📭 You have no downloaded files yet.\n\nDownload something and it will appear here!"
         };
         return bot.send_message(chat_id, empty_msg).await;
     }
@@ -180,7 +180,7 @@ pub async fn show_downloads_page(
     let page_downloads = &all_downloads[start_idx..end_idx];
 
     // Build message text
-    let mut text = String::from("📥 *Твои загрузки*\n\n");
+    let mut text = String::from("📥 *Your downloads*\n\n");
 
     // Show active filters
     if let Some(ref ft) = file_type_filter {
@@ -191,14 +191,14 @@ pub async fn show_downloads_page(
             _ => "📄",
         };
         let filter_name = if ft == "edit" {
-            "Отрезки".to_string()
+            "Clips".to_string()
         } else {
             ft.to_uppercase()
         };
-        text.push_str(&format!("Фильтр: {} {}\n\n", icon, filter_name));
+        text.push_str(&format!("Filter: {} {}\n\n", icon, filter_name));
     }
     if let Some(ref search) = search_text {
-        text.push_str(&format!("🔍 Поиск: \"{}\"\n\n", search));
+        text.push_str(&format!("🔍 Search: \"{}\"\n\n", search));
     }
 
     // List downloads
@@ -256,7 +256,7 @@ pub async fn show_downloads_page(
 
     // Page counter
     if total_pages > 1 {
-        text.push_str(&format!("\n_Страница {}/{}_", current_page + 1, total_pages));
+        text.push_str(&format!("\n_Page {}/{}_", current_page + 1, total_pages));
     }
 
     // Build keyboard
@@ -345,14 +345,14 @@ pub async fn show_downloads_page(
 
     if file_type_filter.as_deref() != Some("edit") {
         filter_row.push(crate::telegram::cb(
-            "✂️ Отрезки".to_string(),
+            "✂️ Clips".to_string(),
             format!("downloads:filter:edit:{}", search_text.as_deref().unwrap_or("")),
         ));
     }
 
     if file_type_filter.is_some() {
         filter_row.push(crate::telegram::cb(
-            "🔄 Все".to_string(),
+            "🔄 All".to_string(),
             format!("downloads:filter:all:{}", search_text.as_deref().unwrap_or("")),
         ));
     }
@@ -363,7 +363,7 @@ pub async fn show_downloads_page(
 
     // Close button
     keyboard_rows.push(vec![crate::telegram::cb(
-        "❌ Закрыть".to_string(),
+        "❌ Close".to_string(),
         "downloads:close".to_string(),
     )]);
 
@@ -461,65 +461,62 @@ pub async fn handle_downloads_callback(
                     if download.format == "mp3" {
                         options.push(vec![
                             crate::telegram::cb(
-                                "🎵 Как аудио".to_string(),
+                                "🎵 As audio".to_string(),
                                 format!("downloads:send:audio:{}", download_id),
                             ),
                             crate::telegram::cb(
-                                "📎 Как документ".to_string(),
+                                "📎 As document".to_string(),
                                 format!("downloads:send:document:{}", download_id),
                             ),
                         ]);
                         options.push(vec![
-                            crate::telegram::cb("✂️ Вырезка".to_string(), format!("downloads:clip:{}", download_id)),
-                            crate::telegram::cb("⭕️ Кружок".to_string(), format!("downloads:circle:{}", download_id)),
+                            crate::telegram::cb("✂️ Clip".to_string(), format!("downloads:clip:{}", download_id)),
+                            crate::telegram::cb("⭕️ Circle".to_string(), format!("downloads:circle:{}", download_id)),
                             crate::telegram::cb(
-                                "🔔 Сделать рингтон".to_string(),
+                                "🔔 Make ringtone".to_string(),
                                 format!("downloads:iphone_ringtone:{}", download_id),
                             ),
                         ]);
                         options.push(vec![crate::telegram::cb(
-                            "⚙️ Изменить скорость".to_string(),
+                            "⚙️ Change speed".to_string(),
                             format!("downloads:speed:{}", download_id),
                         )]);
                     } else {
                         options.push(vec![
                             crate::telegram::cb(
-                                "🎬 Как видео".to_string(),
+                                "🎬 As video".to_string(),
                                 format!("downloads:send:video:{}", download_id),
                             ),
                             crate::telegram::cb(
-                                "📎 Как документ".to_string(),
+                                "📎 As document".to_string(),
                                 format!("downloads:send:document:{}", download_id),
                             ),
                         ]);
                         options.push(vec![
-                            crate::telegram::cb("✂️ Вырезка".to_string(), format!("downloads:clip:{}", download_id)),
-                            crate::telegram::cb("⭕️ Кружок".to_string(), format!("downloads:circle:{}", download_id)),
+                            crate::telegram::cb("✂️ Clip".to_string(), format!("downloads:clip:{}", download_id)),
+                            crate::telegram::cb("⭕️ Circle".to_string(), format!("downloads:circle:{}", download_id)),
                             crate::telegram::cb(
-                                "🔔 Сделать рингтон".to_string(),
+                                "🔔 Make ringtone".to_string(),
                                 format!("downloads:iphone_ringtone:{}", download_id),
                             ),
                         ]);
                         options.push(vec![crate::telegram::cb(
-                            "⚙️ Изменить скорость".to_string(),
+                            "⚙️ Change speed".to_string(),
                             format!("downloads:speed:{}", download_id),
                         )]);
                     }
 
                     options.push(vec![crate::telegram::cb(
-                        "❌ Отмена".to_string(),
+                        "❌ Cancel".to_string(),
                         "downloads:cancel".to_string(),
                     )]);
 
                     let keyboard = InlineKeyboardMarkup::new(options);
 
-                    bot.send_message(
-                        chat_id,
-                        format!("Как отправить *{}*?", escape_markdown(&download.title)),
-                    )
-                    .parse_mode(ParseMode::MarkdownV2)
-                    .reply_markup(keyboard)
-                    .await?;
+                    bot.send_message(chat_id, format!("How to send *{}*?", escape_markdown(&download.title)))
+                        .parse_mode(ParseMode::MarkdownV2)
+                        .reply_markup(keyboard)
+                        .await?;
                     bot.send_message(chat_id, download.url.clone()).await.ok();
                 }
             }
@@ -549,43 +546,40 @@ pub async fn handle_downloads_callback(
                     // Cuts are usually MP4
                     options.push(vec![
                         crate::telegram::cb(
-                            "🎬 Как видео".to_string(),
+                            "🎬 As video".to_string(),
                             format!("downloads:send_cut:video:{}", cut_id),
                         ),
                         crate::telegram::cb(
-                            "📎 Как документ".to_string(),
+                            "📎 As document".to_string(),
                             format!("downloads:send_cut:document:{}", cut_id),
                         ),
                     ]);
 
                     options.push(vec![
-                        crate::telegram::cb("✂️ Вырезка".to_string(), format!("downloads:clip_cut:{}", cut_id)),
-                        crate::telegram::cb("⭕️ Кружок".to_string(), format!("downloads:circle_cut:{}", cut_id)),
+                        crate::telegram::cb("✂️ Clip".to_string(), format!("downloads:clip_cut:{}", cut_id)),
+                        crate::telegram::cb("⭕️ Circle".to_string(), format!("downloads:circle_cut:{}", cut_id)),
                         crate::telegram::cb(
-                            "🔔 Сделать рингтон".to_string(),
+                            "🔔 Make ringtone".to_string(),
                             format!("downloads:iphone_ringtone_cut:{}", cut_id),
                         ),
                     ]);
 
                     options.push(vec![crate::telegram::cb(
-                        "⚙️ Изменить скорость".to_string(),
+                        "⚙️ Change speed".to_string(),
                         format!("downloads:speed_cut:{}", cut_id),
                     )]);
 
                     options.push(vec![crate::telegram::cb(
-                        "❌ Отмена".to_string(),
+                        "❌ Cancel".to_string(),
                         "downloads:cancel".to_string(),
                     )]);
 
                     let keyboard = InlineKeyboardMarkup::new(options);
 
-                    bot.send_message(
-                        chat_id,
-                        format!("Как отправить отрезок *{}*?", escape_markdown(&cut.title)),
-                    )
-                    .parse_mode(ParseMode::MarkdownV2)
-                    .reply_markup(keyboard)
-                    .await?;
+                    bot.send_message(chat_id, format!("How to send clip *{}*?", escape_markdown(&cut.title)))
+                        .parse_mode(ParseMode::MarkdownV2)
+                        .reply_markup(keyboard)
+                        .await?;
                     bot.send_message(chat_id, cut.original_url.clone()).await.ok();
                 }
             }
@@ -605,10 +599,10 @@ pub async fn handle_downloads_callback(
             {
                 if let Some(fid) = download.file_id {
                     let status_text = match send_type {
-                        "audio" => "⏳ Готовлю отправку как аудио…",
-                        "video" => "⏳ Готовлю отправку как видео…",
-                        "document" => "⏳ Готовлю отправку как документ…",
-                        _ => "⏳ Готовлю отправку…",
+                        "audio" => "⏳ Preparing to send as audio…",
+                        "video" => "⏳ Preparing to send as video…",
+                        "document" => "⏳ Preparing to send as document…",
+                        _ => "⏳ Preparing to send…",
                     };
                     let status_msg = bot.send_message(chat_id, status_text).await?;
 
@@ -685,7 +679,7 @@ pub async fn handle_downloads_callback(
                         }
                         Err(e) => {
                             bot.delete_message(chat_id, status_msg.id).await.ok();
-                            bot.send_message(chat_id, format!("❌ Не удалось отправить файл: {e}"))
+                            bot.send_message(chat_id, format!("❌ Failed to send file: {e}"))
                                 .await
                                 .ok();
                         }
@@ -708,9 +702,9 @@ pub async fn handle_downloads_callback(
             {
                 if let Some(fid) = cut.file_id {
                     let status_text = match send_type {
-                        "video" => "⏳ Готовлю отправку как видео…",
-                        "document" => "⏳ Готовлю отправку как документ…",
-                        _ => "⏳ Готовлю отправку…",
+                        "video" => "⏳ Preparing to send as video…",
+                        "document" => "⏳ Preparing to send as document…",
+                        _ => "⏳ Preparing to send…",
                     };
                     let status_msg = bot.send_message(chat_id, status_text).await?;
 
@@ -733,7 +727,7 @@ pub async fn handle_downloads_callback(
                         }
                         _ => {
                             bot.delete_message(chat_id, status_msg.id).await.ok();
-                            bot.send_message(chat_id, "❌ Неизвестный режим отправки.").await.ok();
+                            bot.send_message(chat_id, "❌ Unknown send mode.").await.ok();
                             return Ok(());
                         }
                     };
@@ -745,7 +739,7 @@ pub async fn handle_downloads_callback(
                         }
                         Err(e) => {
                             bot.delete_message(chat_id, status_msg.id).await.ok();
-                            bot.send_message(chat_id, format!("❌ Не удалось отправить файл: {e}"))
+                            bot.send_message(chat_id, format!("❌ Failed to send file: {e}"))
                                 .await
                                 .ok();
                         }
@@ -764,14 +758,14 @@ pub async fn handle_downloads_callback(
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 if download.format != "mp4" {
-                    bot.send_message(chat_id, "✂️ Вырезка доступна только для MP4\\.")
+                    bot.send_message(chat_id, "✂️ Clipping is only available for MP4\\.")
                         .parse_mode(ParseMode::MarkdownV2)
                         .await
                         .ok();
                     return Ok(());
                 }
                 if download.file_id.is_none() {
-                    bot.send_message(chat_id, "❌ Не удалось найти file\\_id для этого файла\\.")
+                    bot.send_message(chat_id, "❌ Could not find file\\_id for this file\\.")
                         .parse_mode(ParseMode::MarkdownV2)
                         .await
                         .ok();
@@ -799,12 +793,12 @@ pub async fn handle_downloads_callback(
                 // Build keyboard with timestamp buttons and cancel button
                 let mut keyboard_rows = ts_buttons;
                 keyboard_rows.push(vec![crate::telegram::cb(
-                    "❌ Отмена".to_string(),
+                    "❌ Cancel".to_string(),
                     "downloads:clip_cancel".to_string(),
                 )]);
                 let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
 
-                let base_message = "✂️ Отправь интервалы для вырезки в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\n\nПример: `00:10-00:25, 01:00-01:10`";
+                let base_message = "✂️ Send the intervals to clip in the format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nMultiple ranges separated by commas\\.\n\nExample: `00:10-00:25, 01:00-01:10`";
                 let message = format!("{}{}", base_message, ts_text);
                 bot.send_message(chat_id, message)
                     .parse_mode(ParseMode::MarkdownV2)
@@ -825,7 +819,7 @@ pub async fn handle_downloads_callback(
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 if cut.file_id.is_none() {
-                    bot.send_message(chat_id, "❌ Не удалось найти file\\_id для этого файла\\.")
+                    bot.send_message(chat_id, "❌ Could not find file\\_id for this file\\.")
                         .parse_mode(ParseMode::MarkdownV2)
                         .await
                         .ok();
@@ -846,10 +840,10 @@ pub async fn handle_downloads_callback(
                     teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
                 let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
-                    "❌ Отмена".to_string(),
+                    "❌ Cancel".to_string(),
                     "downloads:clip_cancel".to_string(),
                 )]]);
-                bot.send_message(chat_id, "✂️ Отправь интервалы для вырезки в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\n\nПример: `00:10-00:25, 01:00-01:10`").parse_mode(ParseMode::MarkdownV2).reply_markup(keyboard).await?;
+                bot.send_message(chat_id, "✂️ Send the intervals to clip in the format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nMultiple ranges separated by commas\\.\n\nExample: `00:10-00:25, 01:00-01:10`").parse_mode(ParseMode::MarkdownV2).reply_markup(keyboard).await?;
                 bot.send_message(chat_id, cut.original_url.clone()).await.ok();
                 bot.delete_message(chat_id, message_id).await.ok();
             }
@@ -865,14 +859,14 @@ pub async fn handle_downloads_callback(
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 if download.format != "mp4" {
-                    bot.send_message(chat_id, "⭕️ Кружок доступен только для MP4\\.")
+                    bot.send_message(chat_id, "⭕️ Circle is only available for MP4\\.")
                         .parse_mode(ParseMode::MarkdownV2)
                         .await
                         .ok();
                     return Ok(());
                 }
                 if download.file_id.is_none() {
-                    bot.send_message(chat_id, "❌ Не удалось найти file\\_id для этого файла\\.")
+                    bot.send_message(chat_id, "❌ Could not find file\\_id for this file\\.")
                         .parse_mode(ParseMode::MarkdownV2)
                         .await
                         .ok();
@@ -930,7 +924,7 @@ pub async fn handle_downloads_callback(
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 if cut.file_id.is_none() {
-                    bot.send_message(chat_id, "❌ Не удалось найти file\\_id для этого файла\\.")
+                    bot.send_message(chat_id, "❌ Could not find file\\_id for this file\\.")
                         .parse_mode(ParseMode::MarkdownV2)
                         .await
                         .ok();
@@ -951,10 +945,10 @@ pub async fn handle_downloads_callback(
                     teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
                 let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
-                    "❌ Отмена".to_string(),
+                    "❌ Cancel".to_string(),
                     "downloads:clip_cancel".to_string(),
                 )]]);
-                bot.send_message(chat_id, "⭕️ Отправь интервалы для кружка в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\n\nПример: `00:10-00:25` или `first30 2x`").parse_mode(ParseMode::MarkdownV2).reply_markup(keyboard).await?;
+                bot.send_message(chat_id, "⭕️ Send the intervals for the circle in the format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nMultiple ranges separated by commas\\.\n\nExample: `00:10-00:25` or `first30 2x`").parse_mode(ParseMode::MarkdownV2).reply_markup(keyboard).await?;
                 bot.send_message(chat_id, cut.original_url.clone()).await.ok();
                 bot.delete_message(chat_id, message_id).await.ok();
             }
@@ -970,7 +964,7 @@ pub async fn handle_downloads_callback(
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 if cut.file_id.is_none() {
-                    bot.send_message(chat_id, "❌ Не удалось найти file\\_id для этого файла\\.")
+                    bot.send_message(chat_id, "❌ Could not find file\\_id for this file\\.")
                         .parse_mode(ParseMode::MarkdownV2)
                         .await
                         .ok();
@@ -991,10 +985,10 @@ pub async fn handle_downloads_callback(
                     teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
                 let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
-                    "❌ Отмена".to_string(),
+                    "❌ Cancel".to_string(),
                     "downloads:clip_cancel".to_string(),
                 )]]);
-                bot.send_message(chat_id, "🔔 Отправь интервалы для рингтона в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\n\n💡 Если длительность превысит 40 секунд \\(лимит iOS\\), аудио будет автоматически обрезано\\.\n\nПример: `00:10-00:25`").parse_mode(ParseMode::MarkdownV2).reply_markup(keyboard).await?;
+                bot.send_message(chat_id, "🔔 Send the intervals for the ringtone in the format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nMultiple ranges separated by commas\\.\n\n💡 If the duration exceeds 40 seconds \\(iOS limit\\), the audio will be trimmed automatically\\.\n\nExample: `00:10-00:25`").parse_mode(ParseMode::MarkdownV2).reply_markup(keyboard).await?;
                 bot.send_message(chat_id, cut.original_url.clone()).await.ok();
                 bot.delete_message(chat_id, message_id).await.ok();
             }
@@ -1199,14 +1193,14 @@ pub async fn handle_downloads_callback(
                         crate::telegram::cb("2.0x".to_string(), format!("downloads:apply_speed:2.0:{}", download_id)),
                     ],
                     vec![crate::telegram::cb(
-                        "❌ Отмена".to_string(),
+                        "❌ Cancel".to_string(),
                         "downloads:cancel".to_string(),
                     )],
                 ];
                 let keyboard = InlineKeyboardMarkup::new(speed_options);
                 bot.send_message(
                     chat_id,
-                    format!("⚙️ Выбери скорость для *{}*", escape_markdown(&download.title)),
+                    format!("⚙️ Choose speed for *{}*", escape_markdown(&download.title)),
                 )
                 .parse_mode(ParseMode::MarkdownV2)
                 .reply_markup(keyboard)
@@ -1243,14 +1237,14 @@ pub async fn handle_downloads_callback(
                         crate::telegram::cb("2.0x".to_string(), format!("downloads:apply_speed_cut:2.0:{}", cut_id)),
                     ],
                     vec![crate::telegram::cb(
-                        "❌ Отмена".to_string(),
+                        "❌ Cancel".to_string(),
                         "downloads:cancel".to_string(),
                     )],
                 ];
                 let keyboard = InlineKeyboardMarkup::new(speed_options);
                 bot.send_message(
                     chat_id,
-                    format!("⚙️ Выбери скорость для отрезка *{}*", escape_markdown(&cut.title)),
+                    format!("⚙️ Choose speed for clip *{}*", escape_markdown(&cut.title)),
                 )
                 .parse_mode(ParseMode::MarkdownV2)
                 .reply_markup(keyboard)
@@ -1277,7 +1271,7 @@ pub async fn handle_downloads_callback(
                         .send_message(
                             chat_id,
                             format!(
-                                "⚙️ Обрабатываю видео со скоростью {}x\\.\\.\\.  \nЭто может занять несколько минут\\.",
+                                "⚙️ Processing video at speed {}x\\.\\.\\.  \nThis may take a few minutes\\.",
                                 speed_str.replace(".", "\\.")
                             ),
                         )
@@ -1319,7 +1313,7 @@ pub async fn handle_downloads_callback(
                             bot.delete_message(chat_id, processing_msg.id).await.ok();
                             bot.send_message(
                                 chat_id,
-                                "❌ Не удалось обработать видео. Администратор получил уведомление о проблеме.",
+                                "❌ Failed to process video. The administrator has been notified.",
                             )
                             .await
                             .ok();
@@ -1351,8 +1345,16 @@ pub async fn handle_downloads_callback(
             {
                 if let Some(file_id) = cut.file_id {
                     bot.delete_message(chat_id, message_id).await.ok();
-                    let processing_msg = bot.send_message(chat_id, format!("⚙️ Обрабатываю отрезок со скоростью {}x\\.\\.\\.  \nЭто может занять несколько минут\\.", speed_str.replace(".", "\\.")))
-                        .parse_mode(ParseMode::MarkdownV2).await?;
+                    let processing_msg = bot
+                        .send_message(
+                            chat_id,
+                            format!(
+                                "⚙️ Processing clip at speed {}x\\.\\.\\.  \nThis may take a few minutes\\.",
+                                speed_str.replace(".", "\\.")
+                            ),
+                        )
+                        .parse_mode(ParseMode::MarkdownV2)
+                        .await?;
                     match change_video_speed(bot, chat_id, &file_id, speed, &cut.title).await {
                         Ok((sent_message, file_size)) => {
                             bot.delete_message(chat_id, processing_msg.id).await.ok();
@@ -1393,7 +1395,7 @@ pub async fn handle_downloads_callback(
                             bot.delete_message(chat_id, processing_msg.id).await.ok();
                             bot.send_message(
                                 chat_id,
-                                "❌ Не удалось обработать видео. Администратор получил уведомление о проблеме.",
+                                "❌ Failed to process video. The administrator has been notified.",
                             )
                             .await
                             .ok();
@@ -1425,14 +1427,14 @@ pub async fn handle_downloads_callback(
                 if let Some(file_id) = download.file_id {
                     let lang = crate::i18n::user_lang(&conn, chat_id.0);
                     bot.delete_message(chat_id, message_id).await.ok();
-                    let processing_msg = bot.send_message(chat_id, "⏳ Готовлю рингтон...").await?;
+                    let processing_msg = bot.send_message(chat_id, "⏳ Preparing ringtone...").await?;
                     match handle_iphone_ringtone(bot, chat_id, &file_id, &download.title, &lang).await {
                         Ok(_) => {
                             bot.delete_message(chat_id, processing_msg.id).await.ok();
                         }
                         Err(e) => {
                             bot.delete_message(chat_id, processing_msg.id).await.ok();
-                            bot.send_message(chat_id, format!("❌ Ошибка при создании рингтона: {}", e))
+                            bot.send_message(chat_id, format!("❌ Error creating ringtone: {}", e))
                                 .await
                                 .ok();
                         }
@@ -1554,7 +1556,7 @@ fn forced_document_unavailable_notice(download_error_text: &str) -> Option<Strin
     let lower = download_error_text.to_lowercase();
     if lower.contains("not available on local bot api server") {
         return Some(format!(
-            "⚠️ Не могу принудительно отправить как документ: локальный Bot API не видит этот файл по /file (нет в local cache/dir).\nОставил как видео.\n\n{}",
+            "⚠️ Cannot force-send as document: the local Bot API cannot see this file via /file (not in local cache/dir).\nLeft as video.\n\n{}",
             bot_api_source_hint()
         ));
     }
@@ -1562,7 +1564,7 @@ fn forced_document_unavailable_notice(download_error_text: &str) -> Option<Strin
         || lower.contains("local bot api file check failed")
     {
         return Some(format!(
-            "⚠️ Не могу принудительно отправить как документ: ошибка при проверке файла на локальном Bot API.\nОставил как видео.\n\nПричина: {}\n{}",
+            "⚠️ Cannot force-send as document: error checking file on local Bot API.\nLeft as video.\n\nReason: {}\n{}",
             short_error_text(download_error_text, 180),
             bot_api_source_hint()
         ));
@@ -1570,20 +1572,20 @@ fn forced_document_unavailable_notice(download_error_text: &str) -> Option<Strin
     if lower.contains("file is too big") {
         if config::bot_api::is_local() {
             return Some(format!(
-                "⚠️ Не могу принудительно отправить как документ: локальный Bot API вернул `file is too big` ещё на `getFile`.\nОбычно это значит, что сервер запущен НЕ в `--local` режиме (и наследует лимит официального Bot API ~20 MB), либо реально применён лимит на стороне сервера.\nОставил как видео.\n\nПричина: {}\n{}",
+                "⚠️ Cannot force-send as document: local Bot API returned `file is too big` at `getFile`.\nThis usually means the server is NOT running in `--local` mode (and inherits the official Bot API limit of ~20 MB), or a server-side limit is in effect.\nLeft as video.\n\nReason: {}\n{}",
                 short_error_text(download_error_text, 180),
                 bot_api_source_hint()
             ));
         }
         return Some(format!(
-            "⚠️ Не могу принудительно отправить как документ: чтобы «сделать документ», боту нужно скачать файл и пере-залить его.\nНа официальном Bot API скачивание ограничено ~20 MB; на локальном Bot API это работает только если файл доступен через /file.\nОставил как видео.\n\nПричина: {}\n{}",
+            "⚠️ Cannot force-send as document: to \"make a document\", the bot needs to download the file and re-upload it.\nOn the official Bot API, downloads are limited to ~20 MB; on the local Bot API this only works if the file is accessible via /file.\nLeft as video.\n\nReason: {}\n{}",
             short_error_text(download_error_text, 180),
             bot_api_source_hint()
         ));
     }
     if lower.contains("telegram file download failed") {
         return Some(format!(
-            "⚠️ Не могу принудительно отправить как документ: не получилось скачать файл с file-endpoint Bot API.\nОставил как видео.\n\nПричина: {}\n{}",
+            "⚠️ Cannot force-send as document: failed to download file from Bot API file endpoint.\nLeft as video.\n\nReason: {}\n{}",
             short_error_text(download_error_text, 180),
             bot_api_source_hint()
         ));
@@ -1652,7 +1654,7 @@ async fn send_document_forced(
             if is_file_too_big_error(&e) {
                 bot.send_message(
                     chat_id,
-                    "⚠️ Не смог принудительно отправить как документ: Telegram отклонил файл по размеру. Оставил как видео.",
+                    "⚠️ Could not force-send as document: Telegram rejected the file due to size. Left as video.",
                 )
                 .await
                 .ok();
@@ -1735,7 +1737,7 @@ async fn change_video_speed(
     let file_size = fs::metadata(&output_path).await.map(|m| m.len() as i64).unwrap_or(0);
     let sent = bot
         .send_video(chat_id, teloxide::types::InputFile::file(output_path.clone()))
-        .caption(format!("{} (скорость {}x)", title, speed))
+        .caption(format!("{} (speed {}x)", title, speed))
         .await?;
 
     // Cleanup temp files
@@ -1937,7 +1939,7 @@ mod tests {
         let error = "Not available on local bot api server";
         let notice = forced_document_unavailable_notice(error);
         assert!(notice.is_some());
-        assert!(notice.unwrap().contains("локальный Bot API"));
+        assert!(notice.unwrap().contains("local Bot API"));
     }
 
     #[test]
@@ -1945,7 +1947,7 @@ mod tests {
         let error = "file is too big";
         let notice = forced_document_unavailable_notice(error);
         assert!(notice.is_some());
-        assert!(notice.unwrap().contains("Не могу принудительно отправить"));
+        assert!(notice.unwrap().contains("Cannot force-send as document"));
     }
 
     #[test]
@@ -1953,7 +1955,7 @@ mod tests {
         let error = "telegram file download failed";
         let notice = forced_document_unavailable_notice(error);
         assert!(notice.is_some());
-        assert!(notice.unwrap().contains("не получилось скачать"));
+        assert!(notice.unwrap().contains("Cannot force-send as document"));
     }
 
     #[test]

@@ -174,17 +174,17 @@ impl DownloadContext {
     pub fn format_for_alert(&self) -> String {
         let mut lines = Vec::new();
 
-        lines.push("📊 *Контекст скачивания:*".to_string());
+        lines.push("📊 *Download context:*".to_string());
 
         // Proxy info
         if let Some(ref proxy) = self.proxy_used {
             let attempt_info = match (self.attempt_number, self.total_proxies) {
-                (Some(n), Some(t)) => format!(" (попытка {}/{})", n, t),
+                (Some(n), Some(t)) => format!(" (attempt {}/{})", n, t),
                 _ => String::new(),
             };
-            lines.push(format!("├ Прокси: {}{}", proxy, attempt_info));
+            lines.push(format!("├ Proxy: {}{}", proxy, attempt_info));
         } else {
-            lines.push("├ Прокси: не задан".to_string());
+            lines.push("├ Proxy: not configured".to_string());
         }
 
         // Cookies status
@@ -202,7 +202,7 @@ impl DownloadContext {
 
         // Error type
         if let Some(ref err_type) = self.error_type {
-            lines.push(format!("└ Тип ошибки: {}", err_type));
+            lines.push(format!("└ Error type: {}", err_type));
         } else {
             // Replace last ├ with └
             if let Some(last) = lines.last_mut() {
@@ -756,7 +756,7 @@ impl AlertManager {
         // Build details with context if available
         let details = if let Some(ctx) = context {
             format!(
-                "{}\n\n🔴 *Ошибка:*\n```\n{}\n```",
+                "{}\n\n🔴 *Error:*\n```\n{}\n```",
                 ctx.format_for_alert(),
                 truncated_error
             )

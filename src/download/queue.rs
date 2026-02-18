@@ -4,63 +4,63 @@ use crate::storage::db::{save_task_to_queue, DbPool};
 /// Maximum number of tasks allowed in the queue to prevent unbounded memory growth.
 const MAX_QUEUE_SIZE: usize = 1000;
 use chrono::{DateTime, Utc};
-use log::info; // Использование логирования вместо println
+use log::info; // Using logging instead of println
 use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use teloxide::types::ChatId;
 use tokio::sync::Mutex;
 
-/// Приоритет задачи в очереди
+/// Task priority in the queue
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TaskPriority {
-    /// Низкий приоритет (free пользователи)
+    /// Low priority (free users)
     Low = 0,
-    /// Средний приоритет (premium пользователи)
+    /// Medium priority (premium users)
     Medium = 1,
-    /// Высокий приоритет (vip пользователи)
+    /// High priority (vip users)
     High = 2,
 }
 
 impl TaskPriority {
-    /// Получает приоритет на основе плана пользователя
+    /// Returns the priority based on the user's plan
     pub fn from_plan(plan: &str) -> Self {
         match plan {
             "vip" => TaskPriority::High,
             "premium" => TaskPriority::Medium,
-            _ => TaskPriority::Low, // По умолчанию free
+            _ => TaskPriority::Low, // Default: free
         }
     }
 }
 
-/// Структура, представляющая задачу загрузки.
+/// Structure representing a download task.
 ///
-/// Содержит всю необходимую информацию для загрузки медиафайла:
-/// URL источника, идентификатор пользователя, формат загрузки и время создания.
+/// Contains all the necessary information for downloading a media file:
+/// source URL, user identifier, download format, and creation timestamp.
 #[derive(Debug, Clone)]
 pub struct DownloadTask {
-    /// Уникальный идентификатор задачи (UUID)
+    /// Unique task identifier (UUID)
     pub id: String,
-    /// URL источника для загрузки
+    /// Source URL for the download
     pub url: String,
-    /// ID чата пользователя в Telegram
+    /// User's Telegram chat ID
     pub chat_id: ChatId,
-    /// ID сообщения пользователя (для реакций)
+    /// User's message ID (for reactions)
     pub message_id: Option<i32>,
-    /// Флаг, указывающий является ли задача загрузкой видео
+    /// Flag indicating whether this is a video download
     pub is_video: bool,
-    /// Формат загрузки: "mp3", "mp4", "srt", "txt"
+    /// Download format: "mp3", "mp4", "srt", "txt"
     pub format: String,
-    /// Качество видео: "best", "1080p", "720p", "480p", "360p" (только для видео)
+    /// Video quality: "best", "1080p", "720p", "480p", "360p" (video only)
     pub video_quality: Option<String>,
-    /// Битрейт аудио: "128k", "192k", "256k", "320k" (только для аудио)
+    /// Audio bitrate: "128k", "192k", "256k", "320k" (audio only)
     pub audio_bitrate: Option<String>,
-    /// Временная метка создания задачи
+    /// Task creation timestamp
     pub created_timestamp: DateTime<Utc>,
-    /// Приоритет задачи (для приоритетной очереди)
+    /// Task priority (for the priority queue)
     pub priority: TaskPriority,
-    /// Временной диапазон для частичного скачивания (start, end), например ("00:01:00", "00:02:30")
+    /// Time range for partial download (start, end), e.g. ("00:01:00", "00:02:30")
     pub time_range: Option<(String, String)>,
-    /// ID сообщения "Task added to queue" (для удаления при начале обработки)
+    /// "Task added to queue" message ID (to delete when processing starts)
     pub queue_message_id: Option<i32>,
     /// Carousel bitmask: which items to download from a multi-item post (e.g., Instagram carousel).
     /// Bit N = item N selected. None = download all items.
@@ -68,21 +68,21 @@ pub struct DownloadTask {
 }
 
 impl DownloadTask {
-    /// Создает новую задачу загрузки с уникальным ID
+    /// Creates a new download task with a unique ID.
     ///
     /// # Arguments
     ///
-    /// * `url` - URL для загрузки
-    /// * `chat_id` - ID чата пользователя в Telegram
-    /// * `message_id` - ID сообщения пользователя (опционально, для реакций)
-    /// * `is_video` - Флаг, указывающий является ли это видео (true) или аудио (false)
-    /// * `format` - Формат загрузки: "mp3", "mp4", "srt", "txt"
-    /// * `video_quality` - Качество видео (опционально, только для видео)
-    /// * `audio_bitrate` - Битрейт аудио (опционально, только для аудио)
+    /// * `url` - URL to download
+    /// * `chat_id` - User's Telegram chat ID
+    /// * `message_id` - User's message ID (optional, for reactions)
+    /// * `is_video` - Flag indicating whether this is a video (true) or audio (false)
+    /// * `format` - Download format: "mp3", "mp4", "srt", "txt"
+    /// * `video_quality` - Video quality (optional, video only)
+    /// * `audio_bitrate` - Audio bitrate (optional, audio only)
     ///
     /// # Returns
     ///
-    /// Возвращает новый экземпляр `DownloadTask` с автоматически сгенерированным UUID и текущим временем.
+    /// Returns a new `DownloadTask` instance with an auto-generated UUID and the current timestamp.
     ///
     /// # Example
     ///
@@ -122,7 +122,7 @@ impl DownloadTask {
         )
     }
 
-    /// Создает новую задачу с указанным приоритетом
+    /// Creates a new task with the specified priority.
     pub fn with_priority(
         url: String,
         chat_id: ChatId,
@@ -152,7 +152,7 @@ impl DownloadTask {
         }
     }
 
-    /// Создает новую задачу на основе плана пользователя
+    /// Creates a new task based on the user's plan.
     pub fn from_plan(
         url: String,
         chat_id: ChatId,
@@ -178,17 +178,17 @@ impl DownloadTask {
     }
 }
 
-/// Очередь для задач загрузки с потокобезопасной реализацией.
+/// Thread-safe queue for download tasks.
 ///
-/// Использует `Mutex` для синхронизации доступа к внутренней очереди.
-/// Задачи обрабатываются с учетом приоритета: сначала высокий, затем средний, затем низкий.
-/// Внутри каждого приоритета задачи обрабатываются в порядке FIFO (First In, First Out).
+/// Uses a `Mutex` to synchronize access to the internal queue.
+/// Tasks are processed in priority order: High first, then Medium, then Low.
+/// Within each priority level, tasks are processed in FIFO (First In, First Out) order.
 pub struct DownloadQueue {
-    /// Внутренняя очередь задач, защищенная мьютексом
-    /// Задачи хранятся в порядке приоритета: High -> Medium -> Low
+    /// Internal task queue protected by a mutex.
+    /// Tasks are stored in priority order: High -> Medium -> Low.
     pub queue: Mutex<VecDeque<DownloadTask>>,
-    /// Множество активных задач (в очереди + обрабатываются)
-    /// Хранит (URL, chat_id, format) для предотвращения дублирования
+    /// Set of active tasks (queued + being processed).
+    /// Stores (URL, chat_id, format) tuples to prevent duplicates.
     active_tasks: Mutex<HashSet<(String, i64, String)>>,
 }
 
@@ -199,11 +199,11 @@ impl Default for DownloadQueue {
 }
 
 impl DownloadQueue {
-    /// Создает новую пустую очередь.
+    /// Creates a new empty queue.
     ///
     /// # Returns
     ///
-    /// Возвращает новый экземпляр `DownloadQueue` с пустой внутренней очередью.
+    /// Returns a new `DownloadQueue` instance with an empty internal queue.
     ///
     /// # Example
     ///
@@ -219,15 +219,14 @@ impl DownloadQueue {
         }
     }
 
-    /// Добавляет задачу в очередь с учетом приоритета.
+    /// Adds a task to the queue respecting priority order.
     ///
-    /// Задачи с высоким приоритетом добавляются в начало соответствующей секции,
-    /// задачи с низким приоритетом - в конец.
+    /// Higher-priority tasks are inserted before lower-priority tasks in the queue.
     ///
     /// # Arguments
     ///
-    /// * `task` - Задача для добавления в очередь
-    /// * `db_pool` - Опциональный пул соединений с БД для сохранения задачи
+    /// * `task` - Task to add to the queue
+    /// * `db_pool` - Optional database connection pool for persisting the task
     ///
     /// # Example
     ///
@@ -250,9 +249,9 @@ impl DownloadQueue {
     /// # }
     /// ```
     pub async fn add_task(&self, task: DownloadTask, db_pool: Option<Arc<DbPool>>) {
-        info!("Добавляем задачу с приоритетом {:?}: {:?}", task.priority, task);
+        info!("Adding task with priority {:?}: {:?}", task.priority, task);
 
-        // Проверяем дубликаты: если задача с таким URL, chat_id и форматом уже существует - не добавляем
+        // Check for duplicates: skip if a task with the same URL, chat_id, and format already exists
         let task_key = (task.url.clone(), task.chat_id.0, task.format.clone());
         let mut active_tasks = self.active_tasks.lock().await;
 
@@ -266,9 +265,9 @@ impl DownloadQueue {
             return;
         }
 
-        // Добавляем в множество активных задач
+        // Add to the active tasks set
         active_tasks.insert(task_key);
-        drop(active_tasks); // Освобождаем lock раньше
+        drop(active_tasks); // Release the lock early
 
         // Check queue size limit to prevent unbounded memory growth
         {
@@ -283,7 +282,7 @@ impl DownloadQueue {
             }
         }
 
-        // Сохраняем задачу в БД для гарантированной обработки
+        // Persist the task to the database to guarantee processing
         if let Some(ref pool) = db_pool {
             if let Ok(conn) = crate::storage::db::get_connection(pool) {
                 let priority_value = task.priority as i32;
@@ -307,13 +306,13 @@ impl DownloadQueue {
 
         let mut queue = self.queue.lock().await;
 
-        // Находим позицию для вставки с учетом приоритета
+        // Find the insertion position respecting priority order
         let insert_pos = queue
             .iter()
             .position(|t| t.priority < task.priority)
             .unwrap_or(queue.len());
 
-        // Вставляем задачу напрямую - O(n) вместо O(n) с копированием всех элементов
+        // Insert the task directly — O(n) without copying all elements
         queue.insert(insert_pos, task);
 
         // Update queue depth metrics by priority
@@ -327,13 +326,13 @@ impl DownloadQueue {
         metrics::update_queue_depth_total(queue.len());
     }
 
-    /// Извлекает и возвращает первую задачу из очереди (с учетом приоритета).
+    /// Pops and returns the first task from the queue (respecting priority).
     ///
-    /// Задачи с высоким приоритетом обрабатываются первыми.
+    /// Tasks with higher priority are processed first.
     ///
     /// # Returns
     ///
-    /// Возвращает `Some(DownloadTask)` если очередь не пуста, иначе `None`.
+    /// Returns `Some(DownloadTask)` if the queue is non-empty, otherwise `None`.
     ///
     /// # Example
     ///
@@ -342,9 +341,9 @@ impl DownloadQueue {
     ///
     /// # async fn example() {
     /// let queue = DownloadQueue::new();
-    /// // ... добавить задачи ...
+    /// // ... add tasks ...
     /// if let Some(task) = queue.get_task().await {
-    ///     // Обработать задачу
+    ///     // Process the task
     /// }
     /// # }
     /// ```
@@ -352,7 +351,7 @@ impl DownloadQueue {
         let mut queue = self.queue.lock().await;
         if !queue.is_empty() {
             info!(
-                "Получаем задачу из очереди, размер: {}, приоритет: {:?}",
+                "Retrieving task from queue, size: {}, priority: {:?}",
                 queue.len(),
                 queue.front().map(|t| t.priority)
             );
@@ -374,25 +373,25 @@ impl DownloadQueue {
         task
     }
 
-    /// Получает позицию задачи пользователя в очереди
+    /// Returns the user's task position in the queue.
     ///
     /// # Arguments
     ///
-    /// * `chat_id` - ID чата пользователя
+    /// * `chat_id` - The user's chat ID
     ///
     /// # Returns
     ///
-    /// Возвращает позицию в очереди (1-based) или None если задача не найдена
+    /// Returns the 1-based position in the queue, or `None` if no task was found.
     pub async fn get_queue_position(&self, chat_id: ChatId) -> Option<usize> {
         let queue = self.queue.lock().await;
         queue.iter().position(|task| task.chat_id == chat_id).map(|pos| pos + 1)
     }
 
-    /// Возвращает текущее количество задач в очереди.
+    /// Returns the current number of tasks in the queue.
     ///
     /// # Returns
     ///
-    /// Количество задач в очереди.
+    /// The number of tasks in the queue.
     ///
     /// # Example
     ///
@@ -401,9 +400,9 @@ impl DownloadQueue {
     ///
     /// # async fn example() {
     /// let queue = DownloadQueue::new();
-    /// // ... добавить задачи ...
+    /// // ... add tasks ...
     /// let count = queue.size().await;
-    /// println!("Задач в очереди: {}", count);
+    /// println!("Tasks in queue: {}", count);
     /// # }
     /// ```
     pub async fn size(&self) -> usize {
@@ -411,19 +410,19 @@ impl DownloadQueue {
         queue.len()
     }
 
-    /// Фильтрует задачи по chat_id и возвращает список задач для указанного пользователя.
+    /// Filters tasks by chat ID and returns a list of tasks belonging to the specified user.
     ///
     /// # Arguments
     ///
-    /// * `chat_id` - ID чата пользователя для фильтрации
+    /// * `chat_id` - User chat ID to filter by
     ///
     /// # Returns
     ///
-    /// Вектор всех задач, принадлежащих указанному пользователю.
+    /// A vector of all tasks belonging to the specified user.
     ///
     /// # Note
     ///
-    /// Задачи не удаляются из очереди, возвращаются только их копии.
+    /// Tasks are not removed from the queue; only clones are returned.
     ///
     /// # Example
     ///
@@ -441,15 +440,15 @@ impl DownloadQueue {
         queue.iter().filter(|task| task.chat_id == chat_id).cloned().collect()
     }
 
-    /// Удаляет задачи, которые старше заданного временного порога.
+    /// Removes tasks that are older than the given age threshold.
     ///
     /// # Arguments
     ///
-    /// * `max_age` - Максимальный возраст задачи (задачи старше этого возраста будут удалены)
+    /// * `max_age` - Maximum task age; tasks older than this will be removed
     ///
     /// # Returns
     ///
-    /// Количество удаленных задач.
+    /// The number of tasks removed.
     ///
     /// # Example
     ///
@@ -459,9 +458,9 @@ impl DownloadQueue {
     ///
     /// # async fn example() {
     /// let queue = DownloadQueue::new();
-    /// // Удалить задачи старше 1 дня
+    /// // Remove tasks older than 1 day
     /// let removed = queue.remove_old_tasks(Duration::days(1)).await;
-    /// println!("Удалено старых задач: {}", removed);
+    /// println!("Old tasks removed: {}", removed);
     /// # }
     /// ```
     pub async fn remove_old_tasks(&self, max_age: chrono::Duration) -> usize {
@@ -469,20 +468,20 @@ impl DownloadQueue {
         let before = queue.len();
         queue.retain(|task| Utc::now() - task.created_timestamp < max_age);
         let removed_count = before - queue.len();
-        info!("Удалено старых задач: {}", removed_count);
+        info!("Old tasks removed: {}", removed_count);
         removed_count
     }
 
-    /// Удаляет задачу из множества активных задач после завершения обработки.
+    /// Removes a task from the active tasks set after processing completes.
     ///
-    /// Должна вызываться ПОСЛЕ завершения обработки задачи (успешной или с ошибкой)
-    /// для освобождения места в очереди для повторных попыток.
+    /// Must be called AFTER the task finishes processing (successfully or with an error)
+    /// to free the slot in the queue for retry attempts.
     ///
     /// # Arguments
     ///
-    /// * `url` - URL видео/аудио
-    /// * `chat_id` - ID чата пользователя
-    /// * `format` - Формат задачи (mp3, mp4, srt, txt)
+    /// * `url` - Video/audio URL
+    /// * `chat_id` - User's chat ID
+    /// * `format` - Task format (mp3, mp4, srt, txt)
     ///
     /// # Example
     ///
@@ -492,7 +491,7 @@ impl DownloadQueue {
     ///
     /// # async fn example() {
     /// let queue = DownloadQueue::new();
-    /// // После завершения обработки задачи
+    /// // After the task has finished processing
     /// queue.remove_active_task("https://youtube.com/watch?v=...", ChatId(123), "mp4").await;
     /// # }
     /// ```
@@ -516,10 +515,10 @@ impl DownloadQueue {
         }
     }
 
-    /// Устанавливает ID сообщения очереди для последней задачи данного чата.
+    /// Sets the queue message ID for the last task belonging to the given chat.
     ///
-    /// Вызывается после отправки сообщения "Task added to queue", чтобы
-    /// это сообщение можно было удалить при начале обработки задачи.
+    /// Called after sending the "Task added to queue" message so that the
+    /// message can be deleted when the task starts being processed.
     pub async fn set_queue_message_id(&self, chat_id: ChatId, msg_id: i32) {
         let mut queue = self.queue.lock().await;
         if let Some(task) = queue.iter_mut().rev().find(|t| t.chat_id == chat_id) {

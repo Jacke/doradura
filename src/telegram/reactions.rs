@@ -26,6 +26,15 @@ pub mod emoji {
     pub const DEVELOPER: &str = "👨‍💻";
 }
 
+/// Returns the appropriate success reaction emoji based on file format.
+pub fn success_reaction_for_format(file_format: Option<&str>) -> &'static str {
+    match file_format {
+        Some("mp3") => "🎵",
+        Some("mp4" | "mp4+mp3") => "🎬",
+        _ => emoji::THUMBS_UP,
+    }
+}
+
 /// Try to set a reaction, skipping invalid/unavailable reactions for the chat.
 pub async fn try_set_reaction(bot: &Bot, chat_id: ChatId, message_id: MessageId, emoji: &str) {
     let mut chosen = emoji.to_string();

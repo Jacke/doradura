@@ -1,34 +1,34 @@
-# Исправление Grafana Dashboard - Связь Метрик с Кодом
+# Fix: Grafana Dashboard - Connecting Metrics to Code
 
-## Проблема
+## Problem
 
-Dashboard в Grafana ([http://localhost:3000/d/doradura-overview](http://localhost:3000/d/doradura-overview)) не показывал данные. Все панели были пустыми, хотя бот работал и Prometheus собирал некоторые метрики.
+The Grafana dashboard ([http://localhost:3000/d/doradura-overview](http://localhost:3000/d/doradura-overview)) was not showing data. All panels were empty even though the bot was running and Prometheus was collecting some metrics.
 
-## Диагностика
+## Diagnosis
 
-### Шаг 1: Проверка метрик бота
+### Step 1: Check bot metrics
 
 ```bash
 curl -s http://localhost:9094/metrics | grep -E "^doradura_"
 ```
 
-**Результат:** Экспортировались только базовые метрики без labels:
+**Result:** Only basic metrics without labels were exported:
 - `doradura_bot_uptime_seconds`
 - `doradura_daily_active_users`
 - `doradura_total_users`
 - `doradura_revenue_total_stars`
 - `doradura_queue_depth_total`
 
-**Отсутствовали:**
+**Missing:**
 - `doradura_download_success_total`
 - `doradura_download_failure_total`
 - `doradura_format_requests_total`
 - `doradura_errors_total`
 - `doradura_active_subscriptions`
 
-### Шаг 2: Проверка дашборда
+### Step 2: Check the dashboard
 
-Dashboard использует следующие метрики:
+The dashboard uses the following metrics:
 
 ```promql
 # Download Rate
@@ -57,9 +57,9 @@ sum(doradura_active_subscriptions)
 # And others...
 ```
 
-### Шаг 3: Проверка кода
+### Step 3: Check the code
 
-В [src/core/metrics.rs](src/core/metrics.rs) метрики были **объявлены** (строки 50-64):
+In [src/core/metrics.rs](src/core/metrics.rs) the metrics were **declared** (lines 50-64):
 
 ```rust
 pub static ref DOWNLOAD_SUCCESS_TOTAL: CounterVec = register_counter_vec!(
@@ -75,7 +75,7 @@ pub static ref DOWNLOAD_FAILURE_TOTAL: CounterVec = register_counter_vec!(
 ).unwrap();
 ```
 
-И даже **использовались** в [src/download/downloader.rs](src/download/downloader.rs):
+And even **used** in [src/download/downloader.rs](src/download/downloader.rs):
 
 ```rust
 // Line 1932
@@ -85,45 +85,45 @@ metrics::record_download_success("mp3", quality);
 metrics::record_download_failure("mp3", error_type);
 ```
 
-**НО:** Prometheus CounterVec/GaugeVec с labels **не экспортируют метрики**, пока не будет создана хотя бы одна временная серия (time series) для какой-либо комбинации labels.
+**BUT:** Prometheus CounterVec/GaugeVec with labels **do not export metrics** until at least one time series has been created for some label combination.
 
-## Причина
+## Root Cause
 
-Prometheus метрики с labels (`CounterVec`, `GaugeVec`, `HistogramVec`) регистрируются через `lazy_static`, но:
+Prometheus metrics with labels (`CounterVec`, `GaugeVec`, `HistogramVec`) are registered via `lazy_static`, but:
 
-1. **Ленивая инициализация**: Метрика регистрируется в Prometheus Registry при первом обращении к `lazy_static`
-2. **Временные ряды создаются по требованию**: Конкретная комбинация labels (например, `{format="mp3", quality="320k"}`) создается только при первом вызове `.with_label_values()`
-3. **Prometheus не экспортирует пустые серии**: Если комбинация labels никогда не использовалась, она не появится в `/metrics` endpoint
+1. **Lazy initialization**: The metric is registered in the Prometheus Registry on first access to `lazy_static`
+2. **Time series are created on demand**: A specific label combination (e.g., `{format="mp3", quality="320k"}`) is created only on the first call to `.with_label_values()`
+3. **Prometheus does not export empty series**: If a label combination has never been used, it will not appear in the `/metrics` endpoint
 
-### Проблема с нашим кодом
+### The problem with our code
 
-В функции `init_metrics()` (строка 310 в [src/core/metrics.rs](src/core/metrics.rs)) метрики **регистрировались**, но не **инициализировались**:
+In the `init_metrics()` function (line 310 in [src/core/metrics.rs](src/core/metrics.rs)) metrics were **registered** but not **initialized**:
 
 ```rust
-// ДО исправления:
+// BEFORE fix:
 pub fn init_metrics() {
     log::info!("Initializing metrics registry...");
 
-    // Только ссылка - регистрирует метрику, но НЕ создает временные ряды
+    // Just a reference - registers the metric, but does NOT create time series
     let _ = &*DOWNLOAD_SUCCESS_TOTAL;
     let _ = &*DOWNLOAD_FAILURE_TOTAL;
     // ...
 }
 ```
 
-Это означало:
-- Метрика зарегистрирована в Registry ✅
-- Но нет ни одной временной серии (time series) ❌
-- `/metrics` endpoint не показывает метрику ❌
-- Grafana не видит данных ❌
+This meant:
+- Metric registered in Registry
+- But no time series exist
+- `/metrics` endpoint does not show the metric
+- Grafana sees no data
 
-## Решение
+## Solution
 
-Добавили явную инициализацию временных рядов для всех важных комбинаций labels в функции `init_metrics()`.
+Added explicit initialization of time series for all important label combinations in the `init_metrics()` function.
 
-### Изменения в [src/core/metrics.rs](src/core/metrics.rs)
+### Changes in [src/core/metrics.rs](src/core/metrics.rs)
 
-#### 1. Download Metrics (строки 321-342)
+#### 1. Download Metrics (lines 321-342)
 
 ```rust
 // Initialize download counters with common format combinations
@@ -150,7 +150,7 @@ DOWNLOAD_FAILURE_TOTAL.with_label_values(&["srt", "other"]);
 DOWNLOAD_FAILURE_TOTAL.with_label_values(&["txt", "other"]);
 ```
 
-#### 2. Business Metrics - Subscriptions (строки 353-372)
+#### 2. Business Metrics - Subscriptions (lines 353-372)
 
 ```rust
 // Initialize subscription metrics by plan
@@ -175,7 +175,7 @@ PAYMENT_SUCCESS_TOTAL.with_label_values(&["vip", "true"]);
 PAYMENT_SUCCESS_TOTAL.with_label_values(&["vip", "false"]);
 ```
 
-#### 3. Error Metrics (строки 364-371)
+#### 3. Error Metrics (lines 364-371)
 
 ```rust
 // Initialize error counters with common error types
@@ -188,7 +188,7 @@ ERRORS_TOTAL.with_label_values(&["timeout", "download"]);
 ERRORS_TOTAL.with_label_values(&["file_too_large", "download"]);
 ```
 
-#### 4. Queue Depth (строки 373-376)
+#### 4. Queue Depth (lines 373-376)
 
 ```rust
 // Initialize queue depth gauges
@@ -197,7 +197,7 @@ QUEUE_DEPTH.with_label_values(&["medium"]);
 QUEUE_DEPTH.with_label_values(&["high"]);
 ```
 
-#### 5. Format Requests (строки 387-395)
+#### 5. Format Requests (lines 387-395)
 
 ```rust
 // Initialize format request counters
@@ -211,7 +211,7 @@ FORMAT_REQUESTS_TOTAL.with_label_values(&["srt", "free"]);
 FORMAT_REQUESTS_TOTAL.with_label_values(&["txt", "free"]);
 ```
 
-#### 6. Command Usage (строки 397-402)
+#### 6. Command Usage (lines 397-402)
 
 ```rust
 // Initialize command usage counters
@@ -222,7 +222,7 @@ COMMAND_USAGE_TOTAL.with_label_values(&["history"]);
 COMMAND_USAGE_TOTAL.with_label_values(&["info"]);
 ```
 
-#### 7. Users by Plan (строки 404-407)
+#### 7. Users by Plan (lines 404-407)
 
 ```rust
 // Initialize users by plan gauges
@@ -231,15 +231,15 @@ USERS_BY_PLAN.with_label_values(&["premium"]);
 USERS_BY_PLAN.with_label_values(&["vip"]);
 ```
 
-## Проверка Исправления
+## Verifying the Fix
 
-### 1. Проверка метрик бота
+### 1. Check bot metrics
 
 ```bash
 curl -s http://localhost:9094/metrics | grep "doradura_download_success_total{"
 ```
 
-**Результат:**
+**Result:**
 ```
 doradura_download_success_total{format="mp3",quality="320k"} 0
 doradura_download_success_total{format="mp3",quality="default"} 0
@@ -250,63 +250,63 @@ doradura_download_success_total{format="srt",quality="default"} 0
 doradura_download_success_total{format="txt",quality="default"} 0
 ```
 
-✅ Все комбинации labels экспортируются с нулевыми значениями!
+All label combinations are exported with zero values!
 
-### 2. Проверка Prometheus
+### 2. Check Prometheus
 
 ```bash
 curl -s 'http://localhost:9091/api/v1/query?query=doradura_download_success_total' | jq '.data.result | length'
 ```
 
-**Результат:** `7` временных рядов
+**Result:** `7` time series
 
-✅ Prometheus собирает все метрики!
+Prometheus is collecting all metrics!
 
-### 3. Проверка Grafana
+### 3. Check Grafana
 
-Откройте [http://localhost:3000/d/doradura-overview](http://localhost:3000/d/doradura-overview)
+Open [http://localhost:3000/d/doradura-overview](http://localhost:3000/d/doradura-overview)
 
-**Ожидаемый результат:**
-- ✅ **Download Rate** панель показывает 0 req/sec (но график есть)
-- ✅ **Success Rate** панель показывает 0% или "No data" (нормально для нулевых значений)
-- ✅ **Queue Depth** панель показывает 0
-- ✅ **Download Duration** панель показывает графики (может быть No data, это нормально)
-- ✅ **Daily Active Users** панель показывает текущее значение
-- ✅ **Total Revenue** панель показывает 0⭐
-- ✅ **Active Subscriptions** панель показывает 0
-- ✅ **Downloads by Format** панель показывает 0 для всех форматов
-- ✅ **Errors by Category** панель показывает 0 ошибок
+**Expected result:**
+- **Download Rate** panel shows 0 req/sec (but chart is present)
+- **Success Rate** panel shows 0% or "No data" (normal for zero values)
+- **Queue Depth** panel shows 0
+- **Download Duration** panel shows charts (may show No data - this is normal)
+- **Daily Active Users** panel shows current value
+- **Total Revenue** panel shows 0
+- **Active Subscriptions** panel shows 0
+- **Downloads by Format** panel shows 0 for all formats
+- **Errors by Category** panel shows 0 errors
 
-**Важно:** Графики могут показывать "No data" для вычисляемых метрик (rate, histogram_quantile), когда все счетчики = 0. Это нормально! Как только произойдут загрузки, данные появятся.
+**Note:** Charts may show "No data" for computed metrics (rate, histogram_quantile) when all counters are 0. This is normal! Once downloads occur, data will appear.
 
-## Как Это Работает Теперь
+## How It Works Now
 
-### Жизненный Цикл Метрик
+### Metrics Lifecycle
 
-1. **Старт бота** → Вызывается `init_metrics()` в [src/main.rs:75](src/main.rs#L75)
+1. **Bot starts** -> `init_metrics()` is called in [src/main.rs:75](src/main.rs#L75)
 
-2. **Инициализация** → Создаются временные ряды для всех важных комбинаций labels:
+2. **Initialization** -> Time series are created for all important label combinations:
    ```rust
    DOWNLOAD_SUCCESS_TOTAL.with_label_values(&["mp3", "320k"]);
-   // Создается time series: doradura_download_success_total{format="mp3",quality="320k"} 0
+   // Creates time series: doradura_download_success_total{format="mp3",quality="320k"} 0
    ```
 
-3. **Экспорт в Prometheus** → Метрики доступны в `/metrics` endpoint с нулевыми значениями
+3. **Export to Prometheus** -> Metrics are available at the `/metrics` endpoint with zero values
 
-4. **Prometheus Scraping** → Prometheus каждые 10 секунд собирает метрики с бота
+4. **Prometheus Scraping** -> Prometheus collects metrics from the bot every 10 seconds
 
-5. **Grafana Query** → Grafana выполняет PromQL запросы и получает данные
+5. **Grafana Query** -> Grafana executes PromQL queries and receives data
 
-6. **Использование в коде** → Когда происходит загрузка:
+6. **Code usage** -> When a download occurs:
    ```rust
    // src/download/downloader.rs:1932
    metrics::record_download_success("mp3", quality);
-   // Инкрементирует: doradura_download_success_total{format="mp3",quality="320k"} = 1
+   // Increments: doradura_download_success_total{format="mp3",quality="320k"} = 1
    ```
 
-7. **Обновление dashboard** → Grafana автоматически обновляется (каждые 30 секунд по умолчанию)
+7. **Dashboard update** -> Grafana refreshes automatically (every 30 seconds by default)
 
-## Связь Dashboard Панелей с Кодом
+## Dashboard Panel to Code Mapping
 
 | Dashboard Panel | PromQL Query | Metric Source | Code Location |
 |----------------|--------------|---------------|---------------|
@@ -317,41 +317,41 @@ curl -s 'http://localhost:9091/api/v1/query?query=doradura_download_success_tota
 | **Downloads by Format** | `sum by (format) (rate(doradura_format_requests_total[5m]))` | `FORMAT_REQUESTS_TOTAL` | Used in commands handler |
 | **Daily Active Users** | `doradura_daily_active_users` | `DAILY_ACTIVE_USERS` | Updated periodically |
 | **Total Revenue** | `doradura_revenue_total_stars` | `REVENUE_TOTAL_STARS` | Updated on payments |
-| **Active Subscriptions** | `sum(doradura_active_subscriptions)` | `ACTIVE_SUBSCRIPTIONS` | Updated on sub changes |
+| **Active Subscriptions** | `sum(doradura_active_subscriptions)` | `ACTIVE_SUBSCRIPTIONS` | Updated on subscription changes |
 | **Errors by Category** | `sum by (category) (rate(doradura_errors_total[5m]))` | `ERRORS_TOTAL` | [downloader.rs](src/download/downloader.rs) via `metrics::record_error()` |
 
 ## Best Practices Learned
 
-### 1. Всегда Инициализируйте Метрики с Labels
+### 1. Always Initialize Metrics with Labels
 
-❌ **Плохо:**
+Incorrect:
 ```rust
-// Только регистрация
+// Only registration
 let _ = &*MY_METRIC;
 ```
 
-✅ **Хорошо:**
+Correct:
 ```rust
-// Регистрация + создание временных рядов
+// Registration + create time series
 let _ = &*MY_METRIC;
 MY_METRIC.with_label_values(&["common", "value1"]);
 MY_METRIC.with_label_values(&["common", "value2"]);
 ```
 
-### 2. Инициализируйте Все Важные Комбинации
+### 2. Initialize All Important Combinations
 
-Если dashboard использует метрику с labels, инициализируйте все возможные комбинации:
+If the dashboard uses a metric with labels, initialize all possible combinations:
 
 ```rust
-// Если dashboard группирует по plan: sum by (plan) (...)
+// If dashboard groups by plan: sum by (plan) (...)
 METRIC.with_label_values(&["free"]);
 METRIC.with_label_values(&["premium"]);
 METRIC.with_label_values(&["vip"]);
 ```
 
-### 3. Документируйте Labels
+### 3. Document Labels
 
-Добавьте комментарии о том, какие labels ожидаются:
+Add comments about what labels are expected:
 
 ```rust
 /// Active subscriptions count by plan
@@ -359,19 +359,19 @@ METRIC.with_label_values(&["vip"]);
 pub static ref ACTIVE_SUBSCRIPTIONS: GaugeVec = ...
 ```
 
-### 4. Проверяйте Metrics Endpoint
+### 4. Check the Metrics Endpoint
 
-После любого изменения метрик:
+After any metric change:
 
 ```bash
 curl http://localhost:9094/metrics | grep "YOUR_METRIC"
 ```
 
-Убедитесь, что метрика присутствует **до** проверки Grafana.
+Make sure the metric is present **before** checking Grafana.
 
-## Дополнительные Метрики
+## Additional Metrics
 
-Все следующие метрики теперь экспортируются и готовы к использованию в дашбордах:
+All the following metrics are now exported and ready for use in dashboards:
 
 ### Performance Metrics
 - `doradura_download_duration_seconds` (histogram)
@@ -403,37 +403,37 @@ curl http://localhost:9094/metrics | grep "YOUR_METRIC"
 - `doradura_total_users` (gauge)
 - `doradura_users_by_plan` (gauge with plan label)
 
-## Следующие Шаги
+## Next Steps
 
-1. **Сделайте тестовую загрузку** → Метрики начнут обновляться
-2. **Проверьте dashboard через час** → Увидите реальные данные
-3. **Создайте дополнительные дашборды** при необходимости
-4. **Настройте alerts** в Prometheus для критичных метрик
+1. **Make a test download** -> Metrics will start updating
+2. **Check the dashboard in an hour** -> You will see real data
+3. **Create additional dashboards** if needed
+4. **Configure alerts** in Prometheus for critical metrics
 
-## Полезные Команды
+## Useful Commands
 
 ```bash
-# Проверка всех метрик бота
+# Check all bot metrics
 curl -s http://localhost:9094/metrics | grep "^doradura_"
 
-# Проверка конкретной метрики
+# Check a specific metric
 curl -s http://localhost:9094/metrics | grep "doradura_download_success_total"
 
-# Проверка в Prometheus
+# Check in Prometheus
 curl -s 'http://localhost:9091/api/v1/query?query=doradura_download_success_total' | jq
 
-# Перезапуск мониторинга (если нужно)
+# Restart monitoring (if needed)
 docker-compose -f docker-compose.monitoring.yml restart
 
-# Просмотр логов Prometheus
+# View Prometheus logs
 docker-compose -f docker-compose.monitoring.yml logs -f prometheus
 ```
 
-## Связанные Файлы
+## Related Files
 
-- [src/core/metrics.rs](src/core/metrics.rs) - Определение и инициализация метрик
-- [src/download/downloader.rs](src/download/downloader.rs) - Использование download метрик
+- [src/core/metrics.rs](src/core/metrics.rs) - Metric definitions and initialization
+- [src/download/downloader.rs](src/download/downloader.rs) - Download metric usage
 - [grafana/dashboards/doradura_overview.json](grafana/dashboards/doradura_overview.json) - Grafana dashboard
-- [prometheus.yml](prometheus.yml) - Конфигурация Prometheus
-- [HOW_TO_VIEW_METRICS.md](HOW_TO_VIEW_METRICS.md) - Руководство по просмотру метрик
-- [MONITORING_CHEATSHEET.md](MONITORING_CHEATSHEET.md) - Шпаргалка по мониторингу
+- [prometheus.yml](prometheus.yml) - Prometheus configuration
+- [HOW_TO_VIEW_METRICS.md](HOW_TO_VIEW_METRICS.md) - Metrics viewing guide
+- [MONITORING_CHEATSHEET.md](MONITORING_CHEATSHEET.md) - Monitoring cheat sheet

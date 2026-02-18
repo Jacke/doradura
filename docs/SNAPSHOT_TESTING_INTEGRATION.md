@@ -1,12 +1,12 @@
-# Интеграция Snapshot Testing с Реальной Логикой Бота
+# Integrating Snapshot Testing with Real Bot Logic
 
-## ❓ Вопрос: Запускается ли реальная логика в тестах?
+## Question: Does real logic run in the tests?
 
-**Короткий ответ:** Нет, **по умолчанию НЕТ**. Но вы можете легко добавить!
+**Short answer:** No, **by default it does NOT**. But you can easily add it!
 
-## 🔍 Текущее состояние
+## Current State
 
-### Что делают существующие тесты
+### What the existing tests do
 
 ```rust
 #[tokio::test]
@@ -14,34 +14,34 @@ async fn test_start_command_from_snapshot() {
     let mock = TelegramMock::from_snapshot("start_command").await?;
     let bot = mock.create_bot()?;
 
-    // ❌ Ваш код НЕ вызывается!
-    // Проверяется только структура snapshot
+    // Your code is NOT called!
+    // Only the snapshot structure is verified
     assert_eq!(mock.snapshot().name, "start_command");
 }
 ```
 
-**Что происходит:**
-- ✅ Загружается JSON с записанными API вызовами
-- ✅ Создаётся mock Telegram сервер (wiremock)
-- ✅ Проверяется структура данных
-- ❌ **НО:** ваш `handle_start_command` НЕ вызывается
-- ❌ **НЕ проверяется** что ваш код делает правильные вызовы
+**What happens:**
+- JSON with recorded API calls is loaded
+- Mock Telegram server is created (wiremock)
+- Data structure is verified
+- **BUT:** your `handle_start_command` is NOT called
+- **NOT verified:** that your code makes the correct calls
 
-### Это полезно для:
+### This is useful for:
 
-✅ **Валидации snapshots** - проверить что JSON корректный
-✅ **Документации API** - увидеть какие вызовы делает бот
-✅ **Регрессионных тестов структуры** - убедиться что формат не изменился
+- **Snapshot validation** - check that JSON is correct
+- **API documentation** - see what calls the bot makes
+- **Structure regression tests** - ensure format has not changed
 
-### Но НЕ проверяет:
+### But does NOT verify:
 
-❌ Что ваш `handle_start_command` работает правильно
-❌ Что при `/info` отправляется нужное сообщение
-❌ Что обработка URL делает правильные API вызовы
+- That your `handle_start_command` works correctly
+- That `/info` sends the correct message
+- That URL processing makes the correct API calls
 
-## ✅ Как добавить тесты С реальной логикой
+## How to Add Tests WITH Real Logic
 
-### Вариант 1: Полная интеграция (рекомендуется)
+### Option 1: Full integration (recommended)
 
 ```rust
 use doradura::telegram::menu::show_main_menu;
@@ -49,32 +49,32 @@ use common::{TelegramMock, create_test_message};
 
 #[tokio::test]
 async fn test_start_command_calls_real_handler() {
-    // 1. Загрузить snapshot с ОЖИДАЕМЫМИ вызовами
+    // 1. Load snapshot with EXPECTED calls
     let mock = TelegramMock::from_snapshot("start_command").await?;
     let bot = mock.create_bot()?;
 
-    // 2. Подготовить данные
+    // 2. Prepare data
     let chat_id = ChatId(123456789);
     let db_pool = create_test_db_pool()?;
 
-    // 3. ВЫЗВАТЬ ВАШУ РЕАЛЬНУЮ ФУНКЦИЮ! 🎯
+    // 3. CALL YOUR REAL FUNCTION!
     let result = show_main_menu(&bot, chat_id, &db_pool).await;
 
-    // 4. Проверить что функция успешна
-    assert!(result.is_ok(), "show_main_menu должна отработать успешно");
+    // 4. Verify that function succeeded
+    assert!(result.is_ok(), "show_main_menu should complete successfully");
 
-    // 5. ВАЖНО: Проверить что были сделаны ПРАВИЛЬНЫЕ API вызовы
-    mock.verify().await.expect("Функция должна была вызвать sendMessage");
+    // 5. IMPORTANT: Verify that the CORRECT API calls were made
+    mock.verify().await.expect("Function should have called sendMessage");
 }
 ```
 
-**Что проверяется:**
-- ✅ Ваша функция работает без ошибок
-- ✅ Она делает правильные вызовы к Telegram API
-- ✅ Структура вызовов совпадает со snapshot
-- ✅ Параметры (text, chat_id, buttons) правильные
+**What is verified:**
+- Your function works without errors
+- It makes the correct calls to the Telegram API
+- Call structure matches the snapshot
+- Parameters (text, chat_id, buttons) are correct
 
-### Вариант 2: Тест обработчика команды
+### Option 2: Command handler test
 
 ```rust
 use doradura::telegram::commands::handle_info_command;
@@ -84,27 +84,27 @@ async fn test_info_command_handler() {
     let mock = TelegramMock::from_snapshot("info_command").await?;
     let bot = mock.create_bot()?;
 
-    // Создать фейковое сообщение "/info"
+    // Create a fake "/info" message
     let message = create_test_message("/info", 123456789, 111222333);
     let db_pool = create_test_db_pool()?;
 
-    // Вызвать обработчик
+    // Call the handler
     let result = handle_info_command(&bot, message, &db_pool).await;
     assert!(result.is_ok());
 
-    // Проверить что отправлено сообщение с информацией
-    mock.verify().await.expect("Должно быть отправлено сообщение с info");
+    // Verify that the info message was sent
+    mock.verify().await.expect("Info message should be sent");
 }
 ```
 
-### Вариант 3: Тест сложного flow
+### Option 3: Complex flow test
 
 ```rust
 use doradura::telegram::commands::handle_message;
 
 #[tokio::test]
 async fn test_youtube_url_complete_flow() {
-    // Snapshot содержит 3 взаимодействия
+    // Snapshot contains 3 interactions
     let mock = TelegramMock::from_snapshot("youtube_processing").await?;
     let bot = mock.create_bot()?;
 
@@ -114,7 +114,7 @@ async fn test_youtube_url_complete_flow() {
         111222333
     );
 
-    // Вызвать обработчик URL
+    // Call URL handler
     let result = handle_message(
         bot.clone(),
         message,
@@ -125,47 +125,47 @@ async fn test_youtube_url_complete_flow() {
 
     assert!(result.is_ok());
 
-    // Проверить последовательность вызовов:
-    // 1. sendMessage("Обрабатываю...")
-    // 2. sendPhoto(preview с кнопками)
-    // 3. deleteMessage(временное сообщение)
-    mock.verify().await.expect("Flow должен сделать 3 вызова");
+    // Verify call sequence:
+    // 1. sendMessage("Processing...")
+    // 2. sendPhoto(preview with buttons)
+    // 3. deleteMessage(temporary message)
+    mock.verify().await.expect("Flow should make 3 calls");
 }
 ```
 
-## 🏗️ Структура тестов
+## Test Structure
 
-### Уровень 1: Валидация snapshots (есть сейчас)
+### Level 1: Snapshot validation (exists now)
 
 ```
 tests/bot_snapshots_test.rs
 tests/bot_commands_test.rs
 ```
 
-**Цель:** Проверить что snapshots валидны и содержат ожидаемые данные
+**Goal:** Verify that snapshots are valid and contain expected data
 
-### Уровень 2: Интеграционные тесты (нужно добавить)
-
-```
-tests/bot_integration_test.rs     ⬅️ НОВЫЙ!
-tests/commands_integration_test.rs ⬅️ НОВЫЙ!
-```
-
-**Цель:** Вызывать реальные обработчики и проверять API вызовы
-
-### Уровень 3: End-to-end тесты (опционально)
+### Level 2: Integration tests (need to add)
 
 ```
-tests/e2e/                         ⬅️ БУДУЩЕЕ
+tests/bot_integration_test.rs     ← NEW!
+tests/commands_integration_test.rs ← NEW!
+```
+
+**Goal:** Call real handlers and verify API calls
+
+### Level 3: End-to-end tests (optional)
+
+```
+tests/e2e/                         ← FUTURE
 ├── test_download_flow.rs
 └── test_settings_flow.rs
 ```
 
-**Цель:** Полный цикл от команды до результата
+**Goal:** Full cycle from command to result
 
-## 📝 Пример: Добавление интеграционного теста
+## Example: Adding an Integration Test
 
-### Шаг 1: Создать snapshot (уже есть)
+### Step 1: Create snapshot (already exists)
 
 ```json
 // tests/snapshots/info_command.json
@@ -180,7 +180,7 @@ tests/e2e/                         ⬅️ БУДУЩЕЕ
 }
 ```
 
-### Шаг 2: Написать тест
+### Step 2: Write the test
 
 ```rust
 // tests/commands_integration_test.rs
@@ -209,13 +209,13 @@ async fn test_info_command_sends_correct_message() {
 }
 ```
 
-### Шаг 3: Запустить
+### Step 3: Run
 
 ```bash
 cargo test test_info_command_sends_correct_message
 ```
 
-## 🎯 Что нужно для интеграционных тестов
+## What is Needed for Integration Tests
 
 ### 1. Test DB Setup
 
@@ -223,10 +223,10 @@ cargo test test_info_command_sends_correct_message
 fn create_test_db_pool() -> anyhow::Result<Arc<DbPool>> {
     let pool = create_pool(":memory:")?;
 
-    // Выполнить миграции
+    // Run migrations
     run_migrations(&pool)?;
 
-    // Добавить тестовые данные
+    // Add test data
     insert_test_user(&pool, 123456789)?;
 
     Ok(Arc::new(pool))
@@ -253,43 +253,43 @@ fn assert_sent_message_with_text(mock: &TelegramMock, expected: &str) {
 }
 ```
 
-## 🔧 Готовый шаблон
+## Ready Template
 
-Создан файл [tests/bot_integration_test.rs](../tests/bot_integration_test.rs) с примерами!
+A file [tests/bot_integration_test.rs](../tests/bot_integration_test.rs) with examples has been created!
 
 ```bash
-# Посмотрите шаблоны
+# View the templates
 cat tests/bot_integration_test.rs
 
-# Раскомментируйте код и запустите
+# Uncomment code and run
 cargo test --test bot_integration_test
 ```
 
-## ⚙️ Настройка проекта для интеграционных тестов
+## Project Setup for Integration Tests
 
-### 1. Экспортировать нужные функции
+### 1. Export needed functions
 
-В `src/telegram/mod.rs`:
+In `src/telegram/mod.rs`:
 
 ```rust
-// Добавить pub use для тестов
+// Add pub use for tests
 pub use commands::{handle_info_command, handle_message};
 pub use menu::show_main_menu;
 ```
 
-### 2. Добавить feature для тестов (опционально)
+### 2. Add feature for tests (optional)
 
-В `Cargo.toml`:
+In `Cargo.toml`:
 
 ```toml
 [features]
 testing = []
 
 [dev-dependencies]
-# Уже есть
+# Already present
 ```
 
-### 3. Создать test utilities
+### 3. Create test utilities
 
 ```rust
 // tests/common/test_db.rs
@@ -297,43 +297,43 @@ pub fn create_test_db() -> DbPool { ... }
 pub fn insert_test_user(pool: &DbPool, id: i64) { ... }
 ```
 
-## 📊 Сравнение подходов
+## Approach Comparison
 
-| Подход | Что проверяет | Скорость | Сложность |
+| Approach | What it verifies | Speed | Complexity |
 |--------|---------------|----------|-----------|
-| **Валидация snapshot** | Структура данных | ⚡ Очень быстро | ✅ Просто |
-| **Интеграция с mock** | Реальная логика + API вызовы | ⚡ Быстро | ⚠️ Средне |
-| **E2E с реальным API** | Всё вместе | 🐌 Медленно | ❌ Сложно |
+| **Snapshot validation** | Data structure | Very fast | Simple |
+| **Integration with mock** | Real logic + API calls | Fast | Medium |
+| **E2E with real API** | Everything together | Slow | Complex |
 
-## 🎓 Рекомендации
+## Recommendations
 
-### Используйте оба подхода:
+### Use both approaches:
 
-1. **Валидация snapshots** (есть) - быстрая проверка структуры
-2. **Интеграционные тесты** (добавьте) - проверка логики
+1. **Snapshot validation** (exists) - fast structure check
+2. **Integration tests** (add) - logic check
 
-### Примерное соотношение:
+### Approximate ratio:
 
-- 📸 70% тестов - валидация snapshots (быстрые)
-- 🔧 30% тестов - интеграция с реальной логикой (важные flows)
+- 70% of tests - snapshot validation (fast)
+- 30% of tests - integration with real logic (important flows)
 
-### Приоритеты для интеграции:
+### Integration priorities:
 
-1. ✅ Критичные команды (`/start`, `/info`)
-2. ✅ Сложные flows (download, settings)
-3. ✅ Обработка ошибок (rate limit, invalid URL)
-4. ⚠️ Редкие кейсы (по мере необходимости)
+1. Critical commands (`/start`, `/info`)
+2. Complex flows (download, settings)
+3. Error handling (rate limit, invalid URL)
+4. Edge cases (as needed)
 
-## 🚀 Следующие шаги
+## Next Steps
 
-1. **Изучите** [tests/bot_integration_test.rs](../tests/bot_integration_test.rs)
-2. **Раскомментируйте** один из примеров
-3. **Добавьте** недостающие зависимости (DB setup)
-4. **Запустите** тест
-5. **Расширяйте** покрытие
+1. **Study** [tests/bot_integration_test.rs](../tests/bot_integration_test.rs)
+2. **Uncomment** one of the examples
+3. **Add** missing dependencies (DB setup)
+4. **Run** the test
+5. **Expand** coverage
 
-## 📚 См. также
+## See Also
 
-- [SNAPSHOT_TESTING.md](SNAPSHOT_TESTING.md) - общая документация
-- [tests/bot_integration_test.rs](../tests/bot_integration_test.rs) - примеры кода
+- [SNAPSHOT_TESTING.md](SNAPSHOT_TESTING.md) - general documentation
+- [tests/bot_integration_test.rs](../tests/bot_integration_test.rs) - code examples
 - [tests/common/helpers.rs](../tests/common/helpers.rs) - test utilities

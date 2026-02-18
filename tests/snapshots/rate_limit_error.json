@@ -9,7 +9,7 @@
         "path": "/sendMessage",
         "body": {
           "chat_id": 123456789,
-          "text": "⏳ Подожди 45 секунд...\n\n💡 Premium = без ожидания, ~$6/мес → /plan",
+          "text": "⏳ Wait 45 seconds...\n\n💡 Premium = no waiting, ~$6/mo → /plan",
           "reply_to_message_id": 101
         },
         "timestamp": 1736001900
@@ -33,7 +33,7 @@
               "type": "private"
             },
             "date": 1736001900,
-            "text": "⏳ Подожди 45 секунд...\n\n💡 Premium = без ожидания, ~$6/мес → /plan",
+            "text": "⏳ Wait 45 seconds...\n\n💡 Premium = no waiting, ~$6/mo → /plan",
             "reply_to_message": {
               "message_id": 101,
               "from": {

@@ -10,7 +10,7 @@
         "body": {
           "chat_id": 123456789,
           "message_id": 46,
-          "caption": "⏳ *Скачиваю аудио\\.\\.\\.* 0%",
+          "caption": "⏳ *Downloading audio\\.\\.\\.* 0%",
           "parse_mode": "MarkdownV2"
         },
         "timestamp": 1736002800
@@ -40,7 +40,7 @@
                 "height": 720
               }
             ],
-            "caption": "⏳ Скачиваю аудио... 0%"
+            "caption": "⏳ Downloading audio... 0%"
           }
         },
         "headers": {
@@ -55,7 +55,7 @@
         "body": {
           "chat_id": 123456789,
           "message_id": 46,
-          "caption": "⏳ *Скачиваю аудио\\.\\.\\.* 45%",
+          "caption": "⏳ *Downloading audio\\.\\.\\.* 45%",
           "parse_mode": "MarkdownV2"
         },
         "timestamp": 1736002805
@@ -67,7 +67,7 @@
           "result": {
             "message_id": 46,
             "edit_date": 1736002805,
-            "caption": "⏳ Скачиваю аудио... 45%"
+            "caption": "⏳ Downloading audio... 45%"
           }
         },
         "headers": {
@@ -82,7 +82,7 @@
         "body": {
           "chat_id": 123456789,
           "message_id": 46,
-          "caption": "⏳ *Скачиваю аудио\\.\\.\\.* 100%",
+          "caption": "⏳ *Downloading audio\\.\\.\\.* 100%",
           "parse_mode": "MarkdownV2"
         },
         "timestamp": 1736002812
@@ -94,7 +94,7 @@
           "result": {
             "message_id": 46,
             "edit_date": 1736002812,
-            "caption": "⏳ Скачиваю аудио... 100%"
+            "caption": "⏳ Downloading audio... 100%"
           }
         },
         "headers": {
@@ -111,7 +111,7 @@
           "audio": {
             "file": "attach://audio.mp3"
           },
-          "caption": "🎵 Rick Astley - Never Gonna Give You Up\n\n✅ Готово! Качество: 192 kbps",
+          "caption": "🎵 Rick Astley - Never Gonna Give You Up\n\n✅ Done! Quality: 192 kbps",
           "performer": "Rick Astley",
           "title": "Never Gonna Give You Up",
           "duration": 213,
@@ -157,7 +157,7 @@
                 "file_size": 12345
               }
             },
-            "caption": "🎵 Rick Astley - Never Gonna Give You Up\n\n✅ Готово! Качество: 192 kbps"
+            "caption": "🎵 Rick Astley - Never Gonna Give You Up\n\n✅ Done! Quality: 192 kbps"
           }
         },
         "headers": {

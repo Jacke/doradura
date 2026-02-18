@@ -88,7 +88,7 @@ pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::
                     // Notify user that they can't upload media
                     bot.send_message(
                         chat_id,
-                        "❌ Твой тарифный план не позволяет загружать файлы.\n\nИспользуй /plan, чтобы узнать подробнее о тарифах."
+                        "❌ Your plan does not allow file uploads.\n\nUse /plan to learn more about available plans.",
                     )
                     .await?;
                     return Ok(());
@@ -187,7 +187,7 @@ pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::
                         bot.send_message(
                             chat_id,
                             format!(
-                                "❌ Файл слишком большой ({} MB). Максимальный размер для твоего плана: {} MB.",
+                                "❌ File too large ({} MB). Maximum size for your plan: {} MB.",
                                 size / 1024 / 1024,
                                 limits.max_file_size_mb
                             ),
@@ -203,7 +203,7 @@ pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::
                         bot.send_message(
                             chat_id,
                             format!(
-                                "ℹ️ Этот файл уже загружен: *{}*\n\nИспользуй /videos чтобы найти его.",
+                                "ℹ️ This file has already been uploaded: *{}*\n\nUse /videos to find it.",
                                 crate::core::escape_markdown(&existing.title)
                             ),
                         )
@@ -234,23 +234,25 @@ pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::
                     })
                     .or_else(|| {
                         // Use message caption as title if no filename
-                        msg.caption().map(|c| {
-                            let trimmed = c.trim();
-                            if trimmed.len() > 100 {
-                                trimmed.chars().take(100).collect()
-                            } else {
-                                trimmed.to_string()
-                            }
-                        }).filter(|s| !s.is_empty())
+                        msg.caption()
+                            .map(|c| {
+                                let trimmed = c.trim();
+                                if trimmed.len() > 100 {
+                                    trimmed.chars().take(100).collect()
+                                } else {
+                                    trimmed.to_string()
+                                }
+                            })
+                            .filter(|s| !s.is_empty())
                     })
                     .unwrap_or_else(|| {
                         format!(
                             "{} {}",
                             match media_type {
-                                "photo" => "Фото",
-                                "video" => "Видео",
-                                "audio" => "Аудио",
-                                _ => "Документ",
+                                "photo" => "Photo",
+                                "video" => "Video",
+                                "audio" => "Audio",
+                                _ => "Document",
                             },
                             chrono::Utc::now().format("%d.%m.%Y %H:%M")
                         )
@@ -326,13 +328,13 @@ pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::
                         let upload_text = build_upload_text(media_type, media_icon, &escaped_title, &escaped_info);
 
                         bot.send_message(chat_id, upload_text)
-                        .parse_mode(ParseMode::MarkdownV2)
-                        .reply_markup(keyboard)
-                        .await?;
+                            .parse_mode(ParseMode::MarkdownV2)
+                            .reply_markup(keyboard)
+                            .await?;
                     }
                     Err(e) => {
                         log::error!("Failed to save upload: {}", e);
-                        bot.send_message(chat_id, "❌ Не удалось сохранить файл. Попробуй ещё раз.")
+                        bot.send_message(chat_id, "❌ Failed to save file. Please try again.")
                             .await?;
                     }
                 }
@@ -352,22 +354,22 @@ pub(super) fn build_upload_keyboard(media_type: &str, upload_id: i64) -> teloxid
     match media_type {
         "video" => {
             rows.push(vec![
-                cb("📤 Отправить", format!("videos:submenu:send:{}", upload_id)),
-                cb("🔄 Конвертировать", format!("videos:submenu:convert:{}", upload_id)),
+                cb("📤 Send", format!("videos:submenu:send:{}", upload_id)),
+                cb("🔄 Convert", format!("videos:submenu:convert:{}", upload_id)),
             ]);
         }
         "photo" | "audio" => {
-            rows.push(vec![cb("📤 Отправить", format!("videos:submenu:send:{}", upload_id))]);
+            rows.push(vec![cb("📤 Send", format!("videos:submenu:send:{}", upload_id))]);
         }
         _ => {
             // Document: send directly
-            rows.push(vec![cb("📤 Отправить", format!("videos:send:document:{}", upload_id))]);
+            rows.push(vec![cb("📤 Send", format!("videos:send:document:{}", upload_id))]);
         }
     }
 
     rows.push(vec![
-        cb("🗑️ Удалить", format!("videos:delete:{}", upload_id)),
-        cb("📂 Все загрузки", "videos:page:0:all:".to_string()),
+        cb("🗑️ Delete", format!("videos:delete:{}", upload_id)),
+        cb("📂 All uploads", "videos:page:0:all:".to_string()),
     ]);
 
     InlineKeyboardMarkup::new(rows)
@@ -376,7 +378,7 @@ pub(super) fn build_upload_keyboard(media_type: &str, upload_id: i64) -> teloxid
 /// Build upload response text based on media type.
 pub(super) fn build_upload_text(media_type: &str, media_icon: &str, escaped_title: &str, escaped_info: &str) -> String {
     let _ = media_type; // all types use same format now
-    format!("{} *Файл загружен:* {}\n└ {}", media_icon, escaped_title, escaped_info)
+    format!("{} *File uploaded:* {}\n└ {}", media_icon, escaped_title, escaped_info)
 }
 
 #[cfg(test)]
@@ -426,8 +428,8 @@ mod tests {
         let kb = build_upload_keyboard("video", 1);
         let labels = button_labels(&kb);
 
-        assert_eq!(labels[0], vec!["📤 Отправить", "🔄 Конвертировать"]);
-        assert_eq!(labels[1], vec!["🗑️ Удалить", "📂 Все загрузки"]);
+        assert_eq!(labels[0], vec!["📤 Send", "🔄 Convert"]);
+        assert_eq!(labels[1], vec!["🗑️ Delete", "📂 All uploads"]);
     }
 
     #[test]
@@ -487,7 +489,7 @@ mod tests {
                 "{} upload text should not contain /videos hint",
                 media_type
             );
-            assert!(text.contains("Файл загружен"));
+            assert!(text.contains("File uploaded"));
         }
     }
 

@@ -9,23 +9,23 @@
         "path": "/sendMessage",
         "body": {
           "chat_id": 123456789,
-          "text": "🎵 Привет! Я помогу тебе скачать музыку и видео с YouTube и других платформ.\n\n📝 Просто отправь мне ссылку на видео или трек!",
+          "text": "🎵 Hello! I can help you download music and video from YouTube and other platforms.\n\n📝 Just send me a link to a video or track!",
           "parse_mode": "Markdown",
           "reply_markup": {
             "inline_keyboard": [
               [
                 {
-                  "text": "ℹ️ Информация",
+                  "text": "ℹ️ Information",
                   "callback_data": "menu:info"
                 },
                 {
-                  "text": "⚙️ Настройки",
+                  "text": "⚙️ Settings",
                   "callback_data": "menu:settings"
                 }
               ],
               [
                 {
-                  "text": "📥 Мои загрузки",
+                  "text": "📥 My downloads",
                   "callback_data": "menu:downloads"
                 }
               ]
@@ -53,22 +53,22 @@
               "type": "private"
             },
             "date": 1735992000,
-            "text": "🎵 Привет! Я помогу тебе скачать музыку и видео с YouTube и других платформ.\n\n📝 Просто отправь мне ссылку на видео или трек!",
+            "text": "🎵 Hello! I can help you download music and video from YouTube and other platforms.\n\n📝 Just send me a link to a video or track!",
             "reply_markup": {
               "inline_keyboard": [
                 [
                   {
-                    "text": "ℹ️ Информация",
+                    "text": "ℹ️ Information",
                     "callback_data": "menu:info"
                   },
                   {
-                    "text": "⚙️ Настройки",
+                    "text": "⚙️ Settings",
                     "callback_data": "menu:settings"
                   }
                 ],
                 [
                   {
-                    "text": "📥 Мои загрузки",
+                    "text": "📥 My downloads",
                     "callback_data": "menu:downloads"
                   }
                 ]

@@ -358,6 +358,8 @@ pub async fn send_file_with_retry<F, Fut>(
     title: &str,
     file_type: &str,
     send_fn: F,
+    message_id: Option<i32>,
+    artist: Option<String>,
 ) -> Result<(Message, u64), AppError>
 where
     F: Fn(Bot, ChatId, String, UploadProgress) -> Fut,
@@ -429,6 +431,8 @@ where
             chat_id: progress_msg.chat_id,
             message_id: progress_msg.message_id,
             lang: progress_msg.lang.clone(),
+            style: progress_msg.style,
+            source_badge: progress_msg.source_badge.clone(),
         };
 
         let file_size_clone = file_size;
@@ -437,6 +441,14 @@ where
         let bot_for_action = bot.clone();
         let upload_progress = UploadProgress::new();
         let upload_progress_clone = upload_progress.clone();
+        let artist_for_upload = artist.clone();
+
+        // Set 🔥 reaction when upload begins
+        if let Some(msg_id) = message_id {
+            use teloxide::types::MessageId;
+            crate::telegram::try_set_reaction(bot, chat_id, MessageId(msg_id), crate::telegram::emoji::FIRE).await;
+        }
+
         let progress_handle = tokio::spawn(async move {
             let mut update_count = 0u32;
             let mut last_progress = 0u8;
@@ -566,6 +578,8 @@ where
                                 current_size,
                                 total_size: Some(file_size_clone),
                                 file_format,
+                                update_count,
+                                artist: artist_for_upload.clone(),
                             },
                         )
                         .await;
@@ -835,6 +849,8 @@ pub async fn send_audio_with_retry(
     progress_msg: &mut ProgressMessage,
     caption: &str,
     send_as_document: bool,
+    message_id: Option<i32>,
+    artist: Option<String>,
 ) -> Result<(Message, u64), AppError> {
     if send_as_document {
         log::info!("User preference: sending audio as document");
@@ -856,6 +872,8 @@ pub async fn send_audio_with_retry(
                         .await
                 }
             },
+            message_id,
+            artist,
         )
         .await
     } else {
@@ -879,6 +897,8 @@ pub async fn send_audio_with_retry(
                         .await
                 }
             },
+            message_id,
+            artist,
         )
         .await
     }
@@ -914,6 +934,8 @@ pub async fn send_video_with_retry(
     title: &str,
     thumbnail_url: Option<&str>,
     send_as_document: bool,
+    message_id: Option<i32>,
+    artist: Option<String>,
 ) -> Result<(Message, u64), AppError> {
     // Get video metadata for correct Telegram sending
     let video_metadata = probe_video_metadata(download_path);
@@ -1134,6 +1156,8 @@ pub async fn send_video_with_retry(
                         .await
                 }
             },
+            message_id,
+            artist,
         )
         .await;
     }
@@ -1145,6 +1169,7 @@ pub async fn send_video_with_retry(
     let title_clone = title.to_string();
 
     // Try to send as video
+    let artist_for_fallback = artist.clone();
     let result = send_file_with_retry(
         bot,
         chat_id,
@@ -1218,6 +1243,8 @@ pub async fn send_video_with_retry(
                 video_msg.await
             }
         },
+        message_id,
+        artist,
     )
     .await;
 
@@ -1270,6 +1297,8 @@ pub async fn send_video_with_retry(
                         .await
                 }
             },
+            message_id,
+            artist_for_fallback,
         )
         .await;
     }

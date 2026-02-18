@@ -193,14 +193,14 @@ pub fn extract_video_formats_from_json(json: &Value) -> Vec<VideoFormatInfo> {
     ordered
 }
 
-/// Получает список доступных форматов видео с размерами
+/// Fetches the list of available video formats with file sizes
 ///
-/// Парсит вывод yt-dlp --list-formats и извлекает информацию о форматах:
+/// Parses the output of yt-dlp --list-formats and extracts format information:
 /// - 1080p, 720p, 480p, 360p
-/// - Размеры файлов
-/// - Разрешения
+/// - File sizes
+/// - Resolutions
 ///
-/// При ошибке связанной с прокси автоматически пробует следующий прокси из цепочки.
+/// On proxy-related errors, automatically tries the next proxy in the chain.
 pub async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<VideoFormatInfo>, AppError> {
     let proxy_chain = get_proxy_chain();
     let total_proxies = proxy_chain.len();
@@ -309,13 +309,13 @@ pub async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<Vid
     );
     let mut formats: Vec<VideoFormatInfo> = Vec::new();
 
-    // Ищем форматы для разных разрешений
-    // Включаем как горизонтальные (обычные видео), так и вертикальные (YouTube Shorts)
+    // Search for formats at different resolutions
+    // Includes both landscape (standard video) and portrait (YouTube Shorts)
     let quality_resolutions = vec![
-        ("1080p", vec!["1920x1080", "1080x1920"]), // Горизонтальное и вертикальное (Shorts)
-        ("720p", vec!["1280x720", "720x1280"]),    // Горизонтальное и вертикальное (Shorts)
-        ("480p", vec!["854x480", "640x480", "480x854", "480x640"]), // Горизонтальное и вертикальное
-        ("360p", vec!["640x360", "360x640"]),      // Горизонтальное и вертикальное
+        ("1080p", vec!["1920x1080", "1080x1920"]), // Landscape and portrait (Shorts)
+        ("720p", vec!["1280x720", "720x1280"]),    // Landscape and portrait (Shorts)
+        ("480p", vec!["854x480", "640x480", "480x854", "480x640"]), // Landscape and portrait
+        ("360p", vec!["640x360", "360x640"]),      // Landscape and portrait
     ];
 
     for (quality, resolutions) in quality_resolutions {
@@ -323,11 +323,11 @@ pub async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<Vid
         let mut found_resolution: Option<String> = None;
 
         for line in formats_output.lines() {
-            // Проверяем, содержит ли строка нужное разрешение
+            // Check whether the line contains the desired resolution
             let matches_resolution = resolutions.iter().any(|&res| line.contains(res));
 
             if matches_resolution {
-                // Пропускаем только "audio only" - нам нужны видео форматы (как комбинированные, так и video-only)
+                // Skip only "audio only" — we need video formats (both combined and video-only)
                 let is_audio_only = line.contains("audio only");
 
                 if !is_audio_only {
@@ -340,7 +340,7 @@ pub async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<Vid
                         }
                     }
 
-                    // Извлекаем размер
+                    // Extract size
                     if let Some(mib_pos) = line.find("MiB") {
                         let before_mib = &line[..mib_pos];
                         let mut num_chars = Vec::new();
@@ -364,7 +364,7 @@ pub async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<Vid
                                 if size_mb > 0.0 && size_mb < 10000.0 {
                                     let size_bytes = (size_mb * 1024.0 * 1024.0) as u64;
 
-                                    // Берем максимальный размер (лучший формат)
+                                    // Take the maximum size (best format)
                                     if max_size.is_none_or(|current| size_bytes > current) {
                                         max_size = Some(size_bytes);
                                     }
@@ -372,7 +372,7 @@ pub async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<Vid
                             }
                         }
                     } else if let Some(gib_pos) = line.find("GiB") {
-                        // Поддерживаем размеры в гигабайтах (yt-dlp помечает как GiB)
+                        // Support sizes in gigabytes (yt-dlp reports them as GiB)
                         let before_gib = &line[..gib_pos];
                         let mut num_chars = Vec::new();
                         let mut found_digit = false;
@@ -392,7 +392,7 @@ pub async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<Vid
                             let size_str = size_str.trim();
 
                             if let Ok(size_gb) = size_str.parse::<f64>() {
-                                // Ставим разумный предел, чтобы отфильтровать мусорные значения
+                                // Apply a reasonable upper bound to filter out garbage values
                                 if size_gb > 0.0 && size_gb < 10000.0 {
                                     let size_bytes = (size_gb * 1024.0 * 1024.0 * 1024.0) as u64;
 
@@ -403,7 +403,7 @@ pub async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<Vid
                             }
                         }
                     } else if let Some(kib_pos) = line.find("KiB") {
-                        // Также проверяем KiB
+                        // Also check for KiB
                         let before_kib = &line[..kib_pos];
                         let mut num_chars = Vec::new();
                         let mut found_digit = false;
@@ -446,11 +446,11 @@ pub async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<Vid
         }
     }
 
-    // Находим размер лучшего аудио формата чтобы добавить к размеру video-only форматов
+    // Find the best audio format size to add to video-only format sizes
     let mut best_audio_size: Option<u64> = None;
     for line in formats_output.lines() {
         if line.contains("audio only") {
-            // Ищем m4a или webm аудио с наибольшим битрейтом
+            // Look for m4a or webm audio with the highest bitrate
             if line.contains("m4a") || line.contains("webm") {
                 if let Some(mib_pos) = line.find("MiB") {
                     let before_mib = &line[..mib_pos];
@@ -483,7 +483,7 @@ pub async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<Vid
         }
     }
 
-    // Добавляем размер аудио к размеру каждого видео формата
+    // Add the audio size to each video format's size
     if let Some(audio_size) = best_audio_size {
         log::info!(
             "Found best audio size: {:.2} MB, adding to video formats",
@@ -498,7 +498,7 @@ pub async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<Vid
         log::warn!("No audio format size found, video format sizes might be underestimated");
     }
 
-    // Сортируем форматы по качеству (от лучшего к худшему)
+    // Sort formats by quality (best to worst)
     formats.sort_by(|a, b| {
         let order = |q: &str| match q {
             "1080p" => 4,

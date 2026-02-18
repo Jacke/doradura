@@ -5,8 +5,8 @@ use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::RequestError;
 
-/// Форматирует размер в читаемый формат
-/// Экранирует точки для MarkdownV2
+/// Formats a byte size into a human-readable string
+/// Escapes dots for MarkdownV2
 fn format_size(bytes: i64) -> String {
     let size_str = if bytes >= 1024 * 1024 * 1024 {
         format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
@@ -18,16 +18,16 @@ fn format_size(bytes: i64) -> String {
         format!("{} B", bytes)
     };
 
-    // Экранируем точку для MarkdownV2
+    // Escape the dot for MarkdownV2
     size_str.replace('.', "\\.")
 }
 
 // truncate_string_safe is now imported from crate::core
 
-/// Создает ASCII график активности
+/// Creates an ASCII activity chart
 fn create_activity_chart(activity_by_day: &[(String, i64)]) -> String {
     if activity_by_day.is_empty() {
-        return "Нет данных".to_string();
+        return "No data".to_string();
     }
 
     let max_count = activity_by_day.iter().map(|(_, count)| *count).max().unwrap_or(1);
@@ -42,7 +42,7 @@ fn create_activity_chart(activity_by_day: &[(String, i64)]) -> String {
         };
         let bar_string = "█".repeat(bars) + &"░".repeat(max_bars - bars);
 
-        // Форматируем дату (из "YYYY-MM-DD" в короткий формат)
+        // Format date from "YYYY-MM-DD" to short format
         let day_short = if day.len() >= 10 {
             let parts: Vec<&str> = day.split('-').collect();
             if parts.len() >= 3 {
@@ -59,7 +59,7 @@ fn create_activity_chart(activity_by_day: &[(String, i64)]) -> String {
     chart
 }
 
-/// Показывает статистику пользователя
+/// Shows the user's download statistics
 pub async fn show_user_stats(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
     log::info!("show_user_stats called for chat_id: {}", chat_id.0);
 
@@ -83,10 +83,7 @@ pub async fn show_user_stats(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -
         Err(e) => {
             log::error!("Failed to get user stats from DB: {}", e);
             return bot
-                .send_message(
-                    chat_id,
-                    "У меня не получилось загрузить статистику 😢 Попробуй позже\\.",
-                )
+                .send_message(chat_id, "Failed to load statistics 😢 Please try again later\\.")
                 .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                 .await;
         }
@@ -94,17 +91,17 @@ pub async fn show_user_stats(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -
 
     log::debug!("Building stats text message");
 
-    let mut text = "📊 *Твоя статистика*\n\n".to_string();
+    let mut text = "📊 *Your Statistics*\n\n".to_string();
 
-    text.push_str(&format!("🎵 Всего загрузок: {}\n", stats.total_downloads));
-    text.push_str(&format!("📅 Дней активности: {}\n", stats.active_days));
-    text.push_str(&format!("💾 Общий размер: {}\n\n", format_size(stats.total_size)));
+    text.push_str(&format!("🎵 Total downloads: {}\n", stats.total_downloads));
+    text.push_str(&format!("📅 Active days: {}\n", stats.active_days));
+    text.push_str(&format!("💾 Total size: {}\n\n", format_size(stats.total_size)));
 
     if !stats.top_artists.is_empty() {
-        text.push_str("🏆 *Топ исполнителей:*\n");
+        text.push_str("🏆 *Top artists:*\n");
         for (idx, (artist, count)) in stats.top_artists.iter().enumerate() {
             text.push_str(&format!(
-                "{}\\. {} \\- {} треков\n",
+                "{}\\. {} \\- {} tracks\n",
                 idx + 1,
                 escape_markdown(artist),
                 count
@@ -114,7 +111,7 @@ pub async fn show_user_stats(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -
     }
 
     if !stats.top_formats.is_empty() {
-        text.push_str("📦 *Форматы:*\n");
+        text.push_str("📦 *Formats:*\n");
         for (format, count) in stats.top_formats.iter() {
             let format_emoji = match format.as_str() {
                 "mp3" => "🎵",
@@ -129,15 +126,14 @@ pub async fn show_user_stats(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -
     }
 
     if !stats.activity_by_day.is_empty() {
-        text.push_str("📈 *Активность \\(последние 7 дней\\):*\n");
+        text.push_str("📈 *Activity \\(last 7 days\\):*\n");
         text.push_str("```\n");
         text.push_str(&create_activity_chart(&stats.activity_by_day));
         text.push_str("```\n");
     }
 
     if stats.total_downloads == 0 {
-        text =
-            "📊 *Твоя статистика*\n\nУ тебя пока нет загрузок\\. Отправь мне ссылку на трек или видео\\!".to_string();
+        text = "📊 *Your Statistics*\n\nYou have no downloads yet\\. Send me a link to a track or video\\!".to_string();
     }
 
     log::debug!("Sending stats message, length: {}", text.len());
@@ -147,7 +143,7 @@ pub async fn show_user_stats(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -
         .await
 }
 
-/// Показывает глобальную статистику бота
+/// Shows global bot statistics
 pub async fn show_global_stats(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
     let conn = db::get_connection(&db_pool)
         .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
@@ -157,40 +153,33 @@ pub async fn show_global_stats(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>)
         Err(e) => {
             log::error!("Failed to get global stats: {}", e);
             return bot
-                .send_message(
-                    chat_id,
-                    "У меня не получилось загрузить статистику 😢 Попробуй позже\\.",
-                )
+                .send_message(chat_id, "Failed to load statistics 😢 Please try again later\\.")
                 .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                 .await;
         }
     };
 
-    let mut text = "🌍 *Глобальная статистика*\n\n".to_string();
+    let mut text = "🌍 *Global Statistics*\n\n".to_string();
 
-    text.push_str(&format!("👥 Всего пользователей: {}\n", stats.total_users));
-    text.push_str(&format!("📥 Всего загрузок: {}\n\n", stats.total_downloads));
+    text.push_str(&format!("👥 Total users: {}\n", stats.total_users));
+    text.push_str(&format!("📥 Total downloads: {}\n\n", stats.total_downloads));
 
     if !stats.top_tracks.is_empty() {
-        text.push_str("🔥 *Топ\\-10 треков:*\n");
+        text.push_str("🔥 *Top\\-10 tracks:*\n");
         for (idx, (title, count)) in stats.top_tracks.iter().enumerate() {
-            // Защита от пустых или некорректных названий
-            let safe_title = if title.is_empty() {
-                "(Без названия)"
-            } else {
-                title
-            };
+            // Guard against empty or invalid titles
+            let safe_title = if title.is_empty() { "(Untitled)" } else { title };
 
             let escaped_title = escape_markdown(safe_title);
-            // Безопасно обрезаем длинные названия до 50 символов
+            // Safely truncate long titles to 50 characters
             let display_title = truncate_string_safe(&escaped_title, 50);
-            text.push_str(&format!("{}\\. {} \\- {} раз\n", idx + 1, display_title, count));
+            text.push_str(&format!("{}\\. {} \\- {} times\n", idx + 1, display_title, count));
         }
         text.push('\n');
     }
 
     if !stats.top_formats.is_empty() {
-        text.push_str("📦 *Статистика по форматам:*\n");
+        text.push_str("📦 *Format breakdown:*\n");
         for (format, count) in stats.top_formats.iter() {
             let format_emoji = match format.as_str() {
                 "mp3" => "🎵",
@@ -314,7 +303,7 @@ mod tests {
     #[test]
     fn test_create_activity_chart_empty() {
         let result = create_activity_chart(&[]);
-        assert_eq!(result, "Нет данных");
+        assert_eq!(result, "No data");
     }
 
     #[test]

@@ -25,8 +25,8 @@ async fn test_info_command_snapshot() {
     let text = result["text"].as_str().unwrap();
 
     // Check that info message contains key information
-    assert!(text.contains("Видео"));
-    assert!(text.contains("Аудио"));
+    assert!(text.contains("Video") || text.contains("Видео"));
+    assert!(text.contains("Audio") || text.contains("Аудио"));
     assert!(text.contains("YouTube"));
     assert!(text.contains("320 kbps"));
     assert!(text.contains("1080p"));
@@ -55,7 +55,7 @@ async fn test_settings_menu_snapshot() {
 
     // Verify text contains current settings
     let text = result["text"].as_str().unwrap();
-    assert!(text.contains("Настройки"));
+    assert!(text.contains("Settings") || text.contains("Настройки"));
     assert!(text.contains("1080p"));
     assert!(text.contains("192 kbps"));
 }
@@ -75,7 +75,7 @@ async fn test_rate_limit_error_snapshot() {
     let (_call, response) = &snapshot.interactions[0];
     let text = response.body["result"]["text"].as_str().unwrap();
 
-    assert!(text.contains("Подожди"));
+    assert!(text.contains("Wait") || text.contains("Подожди"));
     assert!(text.contains("45"));
     assert!(text.contains("/plan"));
     assert!(text.contains("Premium"));
@@ -91,7 +91,7 @@ async fn test_language_selection_flow() {
     // 1. Show language menu
     let (_call1, response1) = &snapshot.interactions[0];
     let text1 = response1.body["result"]["text"].as_str().unwrap();
-    assert!(text1.contains("Выбери язык"));
+    assert!(text1.contains("Select language") || text1.contains("Выбери язык"));
     assert!(text1.contains("Choose language"));
 
     // 2. Answer callback query
@@ -101,7 +101,7 @@ async fn test_language_selection_flow() {
     // 3. Update settings with new language
     let (_call3, response3) = &snapshot.interactions[2];
     let text3 = response3.body["result"]["text"].as_str().unwrap();
-    assert!(text3.contains("🇷🇺 Русский"));
+    assert!(text3.contains("🇷🇺 Russian") || text3.contains("🇷🇺 Русский"));
 }
 
 #[tokio::test]
@@ -115,10 +115,16 @@ async fn test_youtube_processing_flow() {
     // 1. Processing message
     let (call1, response1) = &snapshot.interactions[0];
     assert_eq!(call1.path, "/sendMessage");
-    assert!(response1.body["result"]["text"]
-        .as_str()
-        .unwrap()
-        .contains("Обрабатываю"));
+    assert!(
+        response1.body["result"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Processing")
+            || response1.body["result"]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Обрабатываю")
+    );
 
     // 2. Preview with quality options
     let (call2, response2) = &snapshot.interactions[1];
@@ -126,7 +132,7 @@ async fn test_youtube_processing_flow() {
 
     let caption = response2.body["result"]["caption"].as_str().unwrap();
     assert!(caption.contains("Rick Astley"));
-    assert!(caption.contains("Выбери качество"));
+    assert!(caption.contains("Select quality") || caption.contains("Выбери качество"));
 
     // Verify inline keyboard has download options
     let keyboard = response2.body["result"]["reply_markup"]["inline_keyboard"]

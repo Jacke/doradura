@@ -24,7 +24,10 @@ use super::main_menu::{
     show_enhanced_main_menu, show_help_menu,
 };
 use super::services::{show_extension_detail, show_services_menu};
-use super::settings::{show_audio_bitrate_menu, show_download_type_menu, show_language_menu, show_video_quality_menu};
+use super::settings::{
+    show_audio_bitrate_menu, show_download_type_menu, show_language_menu, show_progress_bar_style_menu,
+    show_video_quality_menu,
+};
 
 /// Handles callback queries from the menu inline keyboards.
 ///
@@ -212,14 +215,14 @@ pub async fn handle_menu_callback(
                                 log::error!("❌ Error type: {}", e);
                                 let _ = bot.send_message(
                                     chat_id,
-                                    "❌ Произошла ошибка при создании инвойса. Попробуй позже или обратись к администратору."
+                                    "❌ An error occurred while creating the invoice. Please try again later or contact the administrator."
                                 ).await;
                             }
                         }
                     }
                     _ => {
                         log::warn!("⚠️ Unknown plan requested: {}", plan);
-                        bot.answer_callback_query(callback_id).text("Неизвестный план").await?;
+                        bot.answer_callback_query(callback_id).text("Unknown plan").await?;
                     }
                 }
             } else if let Some(action) = data.strip_prefix("subscription:") {
@@ -236,7 +239,7 @@ pub async fn handle_menu_callback(
                                 let _ = bot
                                     .send_message(
                                         chat_id,
-                                        "✅ Подписка успешно отменена\\. Она будет действовать до конца оплаченного периода\\.",
+                                        "✅ Subscription successfully cancelled. It will remain active until the end of the paid period.",
                                     )
                                     .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                                     .await;
@@ -250,9 +253,9 @@ pub async fn handle_menu_callback(
 
                                 // Check if subscription is already non-recurring
                                 let message = if e.contains("already non-recurring") {
-                                    "ℹ️ У тебя разовая подписка без автопродления\\. Она будет действовать до конца оплаченного периода\\."
+                                    "ℹ️ You have a one-time subscription without auto-renewal. It will remain active until the end of the paid period."
                                 } else {
-                                    "❌ Не удалось отменить подписку\\. Попробуй позже или обратись к администратору\\."
+                                    "❌ Failed to cancel subscription. Please try again later or contact the administrator."
                                 };
 
                                 let _ = bot
@@ -263,9 +266,7 @@ pub async fn handle_menu_callback(
                         }
                     }
                     _ => {
-                        bot.answer_callback_query(callback_id)
-                            .text("Неизвестное действие")
-                            .await?;
+                        bot.answer_callback_query(callback_id).text("Unknown action").await?;
                     }
                 }
             } else if let Some(lang_code) = data.strip_prefix("language:select_new:") {
@@ -298,7 +299,7 @@ pub async fn handle_menu_callback(
                                     username.as_deref(),
                                     Some(&first_name),
                                     Some(&lang),
-                                    Some("/start → язык"),
+                                    Some("/start → language"),
                                 )
                                 .await;
                             });
@@ -363,7 +364,7 @@ pub async fn handle_menu_callback(
                                         username.as_deref(),
                                         Some(&first_name),
                                         Some(&lang),
-                                        Some("смена языка"),
+                                        Some("language change"),
                                     )
                                     .await;
                                 });
@@ -534,6 +535,17 @@ pub async fn handle_menu_callback(
 
                 // Refresh the menu
                 show_audio_bitrate_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
+            } else if let Some(style_name) = data.strip_prefix("pbar_style:") {
+                let _ = bot.answer_callback_query(callback_id.clone()).await;
+                let conn = db::get_connection(&db_pool)
+                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+                db::set_user_progress_bar_style(&conn, chat_id.0, style_name)
+                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+
+                log::info!("User {} set progress bar style to {}", chat_id.0, style_name);
+
+                // Refresh the menu
+                show_progress_bar_style_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
             } else if data.starts_with("video_send_type:toggle:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
 
@@ -577,9 +589,9 @@ pub async fn handle_menu_callback(
                                         if cb_data.starts_with("video_send_type:toggle:") {
                                             // Update the button text
                                             button.text = if new_value == 0 {
-                                                "📹 Отправка: Media ✓".to_string()
+                                                "📹 Send as: Media ✓".to_string()
                                             } else {
-                                                "📄 Отправка: Document ✓".to_string()
+                                                "📄 Send as: Document ✓".to_string()
                                             };
                                             log::debug!("Updated toggle button text to: {}", button.text);
                                         }
@@ -657,7 +669,12 @@ pub async fn handle_menu_callback(
                                                 Ok(_) => {}
                                                 Err(e) => {
                                                     log::error!("Failed to update preview message: {:?}", e);
-                                                    let _ = bot.send_message(chat_id, "Не удалось обновить превью. Попробуй отправить ссылку снова.").await;
+                                                    let _ = bot
+                                                        .send_message(
+                                                            chat_id,
+                                                            "Failed to update preview. Please send the link again.",
+                                                        )
+                                                        .await;
                                                 }
                                             }
                                         }
@@ -666,7 +683,7 @@ pub async fn handle_menu_callback(
                                             let _ = bot
                                                 .send_message(
                                                     chat_id,
-                                                    "Не удалось обновить превью. Попробуй отправить ссылку снова.",
+                                                    "Failed to update preview. Please send the link again.",
                                                 )
                                                 .await;
                                         }
@@ -675,7 +692,7 @@ pub async fn handle_menu_callback(
                                 Err(e) => {
                                     log::error!("Failed to parse URL from cache: {}", e);
                                     bot.answer_callback_query(callback_id)
-                                        .text("Ошибка: неверная ссылка")
+                                        .text("Error: invalid link")
                                         .await?;
                                 }
                             }
@@ -683,7 +700,7 @@ pub async fn handle_menu_callback(
                         None => {
                             log::warn!("URL not found in cache for ID: {} (expired or invalid)", url_id);
                             bot.answer_callback_query(callback_id)
-                                .text("Ссылка устарела, отправь её снова")
+                                .text("Link expired, please send it again")
                                 .await?;
                         }
                     }
@@ -714,9 +731,13 @@ pub async fn handle_menu_callback(
                             edit_enhanced_main_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
                         }
                         "back:start" => {
-                            bot.edit_message_text(chat_id, message_id, "Хэй\\! Я Дора, дай мне ссылку и я скачаю ❤️‍🔥")
-                                .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-                                .await?;
+                            bot.edit_message_text(
+                                chat_id,
+                                message_id,
+                                "Hey\\! I'm Dora, send me a link and I'll download it ❤️‍🔥",
+                            )
+                            .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                            .await?;
                         }
                         _ => {}
                     }
@@ -791,7 +812,7 @@ pub async fn handle_menu_callback(
                                 parts[3] // dl:format:quality:url_id
                             } else {
                                 log::warn!("Invalid dl callback format: {}", data);
-                                let _ = bot.send_message(chat_id, "Ошибка: неверный формат запроса").await;
+                                let _ = bot.send_message(chat_id, "Error: invalid request format").await;
                                 return Ok(());
                             },
                             None,
@@ -948,14 +969,14 @@ pub async fn handle_menu_callback(
                                 Err(e) => {
                                     log::error!("Failed to parse URL from cache: {}", e);
                                     // Preview already deleted, send error as new message
-                                    let _ = bot.send_message(chat_id, "❌ Ошибка: неверная ссылка").await;
+                                    let _ = bot.send_message(chat_id, "❌ Error: invalid link").await;
                                 }
                             }
                         }
                         None => {
                             log::warn!("URL not found in cache for ID: {} (expired or invalid)", url_id);
                             // Preview already deleted, send error as new message
-                            let _ = bot.send_message(chat_id, "⏰ Ссылка устарела, отправь её снова").await;
+                            let _ = bot.send_message(chat_id, "⏰ Link expired, please send it again").await;
                         }
                     }
                 }
@@ -1018,7 +1039,7 @@ pub async fn handle_menu_callback(
                         }
                         _ => {
                             bot.answer_callback_query(callback_id.clone())
-                                .text("Неизвестное действие")
+                                .text("Unknown action")
                                 .await?;
                         }
                     }
@@ -1049,7 +1070,7 @@ pub async fn handle_menu_callback(
                 let is_admin = i64::try_from(q.from.id.0).ok().map(admin::is_admin).unwrap_or(false);
 
                 if !is_admin {
-                    bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
+                    bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
                         .await?;
                     return Ok(());
                 }
@@ -1062,10 +1083,10 @@ pub async fn handle_menu_callback(
 
                         let keyboard = InlineKeyboardMarkup::new(vec![
                             vec![
-                                crate::telegram::cb("🔄 Обновить", "analytics:refresh"),
-                                crate::telegram::cb("📊 Детали", "analytics:details"),
+                                crate::telegram::cb("🔄 Refresh", "analytics:refresh"),
+                                crate::telegram::cb("📊 Details", "analytics:details"),
                             ],
-                            vec![crate::telegram::cb("🔙 Закрыть", "analytics:close")],
+                            vec![crate::telegram::cb("🔙 Close", "analytics:close")],
                         ]);
 
                         bot.edit_message_text(chat_id, message_id, dashboard)
@@ -1075,12 +1096,12 @@ pub async fn handle_menu_callback(
                     }
                     "analytics:details" => {
                         // Show detailed metrics menu
-                        let details_text = "📊 *Детальные Метрики*\n\nВыберите категорию:";
+                        let details_text = "📊 *Detailed Metrics*\n\nSelect a category:";
                         let keyboard = InlineKeyboardMarkup::new(vec![
                             vec![crate::telegram::cb("⚡ Performance", "metrics:performance")],
                             vec![crate::telegram::cb("💰 Business", "metrics:business")],
                             vec![crate::telegram::cb("👥 Engagement", "metrics:engagement")],
-                            vec![crate::telegram::cb("🔙 Назад", "analytics:refresh")],
+                            vec![crate::telegram::cb("🔙 Back", "analytics:refresh")],
                         ]);
 
                         bot.edit_message_text(chat_id, message_id, details_text)
@@ -1102,7 +1123,7 @@ pub async fn handle_menu_callback(
                 let is_admin = i64::try_from(q.from.id.0).ok().map(admin::is_admin).unwrap_or(false);
 
                 if !is_admin {
-                    bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
+                    bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
                         .await?;
                     return Ok(());
                 }
@@ -1113,7 +1134,7 @@ pub async fn handle_menu_callback(
                 let metrics_text = generate_metrics_report(&db_pool, Some(category.to_string())).await;
 
                 let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
-                    "🔙 К общей панели",
+                    "🔙 To main dashboard",
                     "analytics:refresh",
                 )]]);
 
@@ -1158,7 +1179,7 @@ pub async fn handle_menu_callback(
                 let is_admin = i64::try_from(q.from.id.0).ok().map(admin::is_admin).unwrap_or(false);
 
                 if !is_admin {
-                    bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
+                    bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
                         .await?;
                     return Ok(());
                 }
@@ -1213,20 +1234,20 @@ pub async fn handle_menu_callback(
 
                                         let sub_status = if user.telegram_charge_id.is_some() {
                                             if user.is_recurring {
-                                                "💫🔄 Активная подписка \\(автопродление\\)"
+                                                "💫🔄 Active subscription \\(auto-renewal\\)"
                                             } else {
-                                                "💫 Активная подписка \\(разовая\\)"
+                                                "💫 Active subscription \\(one-time\\)"
                                             }
                                         } else {
-                                            "🔒 Нет подписки"
+                                            "🔒 No subscription"
                                         };
 
                                         let expires_info = if let Some(expires) = &user.subscription_expires_at {
                                             let escaped_expires = expires.replace("-", "\\-").replace(":", "\\:");
                                             if user.is_recurring {
-                                                format!("\n📅 Следующее списание: {}", escaped_expires)
+                                                format!("\n📅 Next charge: {}", escaped_expires)
                                             } else {
-                                                format!("\n📅 Истекает: {}", escaped_expires)
+                                                format!("\n📅 Expires: {}", escaped_expires)
                                             }
                                         } else {
                                             String::new()
@@ -1246,7 +1267,7 @@ pub async fn handle_menu_callback(
                                                 "👑 Set VIP",
                                                 format!("admin:setplan:{}:vip", user_id),
                                             )],
-                                            vec![crate::telegram::cb("🔙 Назад к списку", "admin:back")],
+                                            vec![crate::telegram::cb("🔙 Back to list", "admin:back")],
                                         ]);
 
                                         let _ = bot
@@ -1254,12 +1275,12 @@ pub async fn handle_menu_callback(
                                                 chat_id,
                                                 message_id,
                                                 format!(
-                                                    "👤 *Управление пользователем*\n\n\
-                                    Пользователь: {}\n\
+                                                    "👤 *User Management*\n\n\
+                                    User: {}\n\
                                     ID: `{}`\n\
-                                    Текущий план: {} {}\n\
-                                    Статус: {}{}\n\n\
-                                    Выбери действие:",
+                                    Current plan: {} {}\n\
+                                    Status: {}{}\n\n\
+                                    Choose action:",
                                                     username_display,
                                                     user.telegram_id,
                                                     plan_emoji,
@@ -1311,10 +1332,10 @@ pub async fn handle_menu_callback(
                                                 .send_message(
                                                     user_chat_id,
                                                     format!(
-                                                        "💳 *Изменение плана подписки*\n\n\
-                                                    Твой план был изменен администратором.\n\n\
-                                                    *Новый план:* {} {}\n\n\
-                                                    Изменения вступят в силу немедленно! 🎉",
+                                                        "💳 *Subscription Plan Change*\n\n\
+                                                    Your plan has been changed by the administrator.\n\n\
+                                                    *New plan:* {} {}\n\n\
+                                                    Changes take effect immediately! 🎉",
                                                         plan_emoji, plan_name
                                                     ),
                                                 )
@@ -1326,7 +1347,7 @@ pub async fn handle_menu_callback(
                                                     chat_id,
                                                     message_id,
                                                     format!(
-                                                        "✅ План пользователя {} изменен на {} {}",
+                                                        "✅ User {} plan changed to {} {}",
                                                         user_id, plan_emoji, new_plan
                                                     ),
                                                 )
@@ -1382,10 +1403,10 @@ pub async fn handle_menu_callback(
                                         chat_id,
                                         message_id,
                                         format!(
-                                            "🔧 *Панель управления пользователями*\n\n\
-                            Выбери пользователя для управления:\n\n\
-                            Показано: {} из {}\n\n\
-                            💡 Для управления конкретным пользователем используй:\n\
+                                            "🔧 *User Management Panel*\n\n\
+                            Select a user to manage:\n\n\
+                            Shown: {} of {}\n\n\
+                            💡 To manage a specific user use:\n\
                             `/setplan <user_id> <plan>`",
                                             users.len().min(20),
                                             users.len()

@@ -75,7 +75,7 @@ pub async fn notify_admin_video_error(bot: &Bot, user_id: i64, username: Option<
 
     let username_str = username.unwrap_or("unknown");
     let message = format!(
-        "⚠️ *Ошибка обработки видео*\n\n\
+        "⚠️ *Video processing error*\n\n\
         👤 User: @{} (ID: {})\n\
         📝 Context: {}\n\n\
         ❌ Error:\n```\n{}\n```",
@@ -118,12 +118,12 @@ pub async fn notify_admin_task_failed(
         let escaped_url = crate::telegram::admin::escape_markdown(url);
 
         let message = format!(
-            "⚠️ *Ошибка задачи*\n\n\
+            "⚠️ *Task error*\n\n\
             Task ID: `{}`\n\
             User ID: `{}`\n\
             URL: {}\n\
-            Ошибка: {}\n\n\
-            Задача будет повторена автоматически\\.",
+            Error: {}\n\n\
+            The task will be retried automatically\\.",
             task_id, user_id, escaped_url, escaped_error
         );
 
@@ -249,11 +249,11 @@ pub async fn notify_admin_new_user(
     let language_display = language.unwrap_or("—");
 
     let mut message = format!(
-        "🆕 *Новый пользователь*\n\n\
+        "🆕 *New user*\n\n\
         👤 {}\n\
-        📛 Имя: {}\n\
+        📛 Name: {}\n\
         🆔 ID: `{}`\n\
-        🌐 Язык: {}",
+        🌐 Language: {}",
         username_display, first_name_display, user_id, language_display
     );
 
@@ -264,7 +264,7 @@ pub async fn notify_admin_new_user(
         } else {
             msg.to_string()
         };
-        message.push_str(&format!("\n\n💬 Первое сообщение:\n{}", truncated));
+        message.push_str(&format!("\n\n💬 First message:\n{}", truncated));
     }
 
     for chat_id in admin_chat_ids {

@@ -296,9 +296,9 @@ pub async fn show_video_quality_menu(
         ],
         vec![crate::telegram::cb(
             if current_quality == "best" {
-                "🎬 Best (Авто) ✓"
+                "🎬 Best (Auto) ✓"
             } else {
-                "🎬 Best (Авто)"
+                "🎬 Best (Auto)"
             }
             .to_string(),
             "quality:best",
@@ -313,7 +313,7 @@ pub async fn show_video_quality_menu(
         )],
     ];
 
-    // Добавляем кнопку для burn_subtitles только если download_subtitles включен
+    // Add burn_subtitles button only if download_subtitles is enabled
     if download_subs {
         let mut burn_args = FluentArgs::new();
         let status = if burn_subs {
@@ -538,4 +538,50 @@ pub async fn show_language_selection_menu(bot: &Bot, chat_id: ChatId) -> Respons
         .reply_markup(keyboard)
         .parse_mode(teloxide::types::ParseMode::MarkdownV2)
         .await
+}
+
+/// Shows the progress bar style selection menu.
+///
+/// Displays 8 progress bar styles with previews and marks the current selection.
+pub async fn show_progress_bar_style_menu(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    db_pool: Arc<DbPool>,
+) -> ResponseResult<()> {
+    use crate::download::progress::ProgressBarStyle;
+
+    let conn = db::get_connection(&db_pool)
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+    let current_style = db::get_user_progress_bar_style(&conn, chat_id.0).unwrap_or_else(|_| "classic".to_string());
+    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+
+    let mut buttons = Vec::new();
+    for style in ProgressBarStyle::all() {
+        let is_selected = style.as_str() == current_style;
+        let label = if is_selected {
+            format!("{} {} \u{2713}", style.display_name(), style.preview())
+        } else {
+            format!("{} {}", style.display_name(), style.preview())
+        };
+        buttons.push(vec![crate::telegram::cb(
+            label,
+            format!("pbar_style:{}", style.as_str()),
+        )]);
+    }
+    buttons.push(vec![crate::telegram::cb(
+        i18n::t(&lang, "common.back"),
+        "back:main".to_string(),
+    )]);
+
+    let keyboard = InlineKeyboardMarkup::new(buttons);
+    edit_caption_or_text(
+        bot,
+        chat_id,
+        message_id,
+        "\u{1f3a8} Choose progress bar style:".to_string(),
+        Some(keyboard),
+    )
+    .await?;
+    Ok(())
 }

@@ -9,7 +9,7 @@
         "path": "/sendMessage",
         "body": {
           "chat_id": 123456789,
-          "text": "⏳ Обрабатываю ссылку...",
+          "text": "⏳ Processing link...",
           "reply_to_message_id": 100
         },
         "timestamp": 1736001600
@@ -33,7 +33,7 @@
               "type": "private"
             },
             "date": 1736001600,
-            "text": "⏳ Обрабатываю ссылку...",
+            "text": "⏳ Processing link...",
             "reply_to_message": {
               "message_id": 100,
               "from": {
@@ -63,39 +63,39 @@
         "body": {
           "chat_id": 123456789,
           "photo": "https://i.ytimg.com/vi/dQw4w9WgXcQ/maxresdefault.jpg",
-          "caption": "🎵 *Rick Astley \\- Never Gonna Give You Up*\n\n⏱ Длительность: 3:33\n👁 Просмотры: 1\\.4B\n📅 Опубликовано: 2009\\-10\\-25\n\n📥 Выбери качество для скачивания:",
+          "caption": "🎵 *Rick Astley \\- Never Gonna Give You Up*\n\n⏱ Duration: 3:33\n👁 Views: 1\\.4B\n📅 Published: 2009\\-10\\-25\n\n📥 Select quality for download:",
           "parse_mode": "MarkdownV2",
           "reply_markup": {
             "inline_keyboard": [
               [
                 {
-                  "text": "🎵 Аудио 320kbps",
+                  "text": "🎵 Audio 320kbps",
                   "callback_data": "download:audio:320"
                 },
                 {
-                  "text": "🎵 Аудио 192kbps",
+                  "text": "🎵 Audio 192kbps",
                   "callback_data": "download:audio:192"
                 }
               ],
               [
                 {
-                  "text": "📹 Видео 1080p",
+                  "text": "📹 Video 1080p",
                   "callback_data": "download:video:1080"
                 },
                 {
-                  "text": "📹 Видео 720p",
+                  "text": "📹 Video 720p",
                   "callback_data": "download:video:720"
                 }
               ],
               [
                 {
-                  "text": "📹 Видео 480p",
+                  "text": "📹 Video 480p",
                   "callback_data": "download:video:480"
                 }
               ],
               [
                 {
-                  "text": "❌ Отмена",
+                  "text": "❌ Cancel",
                   "callback_data": "download:cancel"
                 }
               ]
@@ -132,38 +132,38 @@
                 "file_size": 89532
               }
             ],
-            "caption": "🎵 Rick Astley - Never Gonna Give You Up\n\n⏱ Длительность: 3:33\n👁 Просмотры: 1.4B\n📅 Опубликовано: 2009-10-25\n\n📥 Выбери качество для скачивания:",
+            "caption": "🎵 Rick Astley - Never Gonna Give You Up\n\n⏱ Duration: 3:33\n👁 Views: 1.4B\n📅 Published: 2009-10-25\n\n📥 Select quality for download:",
             "reply_markup": {
               "inline_keyboard": [
                 [
                   {
-                    "text": "🎵 Аудио 320kbps",
+                    "text": "🎵 Audio 320kbps",
                     "callback_data": "download:audio:320"
                   },
                   {
-                    "text": "🎵 Аудио 192kbps",
+                    "text": "🎵 Audio 192kbps",
                     "callback_data": "download:audio:192"
                   }
                 ],
                 [
                   {
-                    "text": "📹 Видео 1080p",
+                    "text": "📹 Video 1080p",
                     "callback_data": "download:video:1080"
                   },
                   {
-                    "text": "📹 Видео 720p",
+                    "text": "📹 Video 720p",
                     "callback_data": "download:video:720"
                   }
                 ],
                 [
                   {
-                    "text": "📹 Видео 480p",
+                    "text": "📹 Video 480p",
                     "callback_data": "download:video:480"
                   }
                 ],
                 [
                   {
-                    "text": "❌ Отмена",
+                    "text": "❌ Cancel",
                     "callback_data": "download:cancel"
                   }
                 ]

@@ -1,123 +1,123 @@
-# 📊 Итоги: Система Мониторинга Prometheus + Grafana
+# Summary: Prometheus + Grafana Monitoring System
 
-## ✅ Что Создано
+## What Was Created
 
-### 📁 Конфигурационные Файлы
+### Configuration Files
 
 1. **[docker-compose.monitoring.yml](docker-compose.monitoring.yml)**
-   - Полный стек: Prometheus + Grafana + AlertManager
-   - Готов к запуску одной командой
-   - Persistent volumes для данных
+   - Full stack: Prometheus + Grafana + AlertManager
+   - Ready to launch with a single command
+   - Persistent volumes for data
 
 2. **[prometheus.yml](prometheus.yml)**
-   - Scrape конфигурация для бота
-   - Интеграция с AlertManager
-   - Оптимизированные интервалы
+   - Scrape configuration for the bot
+   - AlertManager integration
+   - Optimized intervals
 
 3. **[alertmanager.yml](alertmanager.yml)**
-   - Routing правила
-   - Telegram webhook интеграция
-   - Throttling для предотвращения спама
+   - Routing rules
+   - Telegram webhook integration
+   - Throttling to prevent spam
 
 4. **[prometheus/rules/doradura_alerts.yml](prometheus/rules/doradura_alerts.yml)**
    - 10+ alert rules (Critical + Warning)
-   - Recording rules для производительности
-   - Покрывают все аспекты: performance, business, health
+   - Recording rules for performance
+   - Cover all aspects: performance, business, health
 
-### 📊 Grafana
+### Grafana
 
 5. **[grafana/provisioning/datasources/prometheus.yml](grafana/provisioning/datasources/prometheus.yml)**
-   - Автоматическая настройка Prometheus datasource
-   - Нет ручной конфигурации
+   - Automatic Prometheus datasource setup
+   - No manual configuration required
 
 6. **[grafana/provisioning/dashboards/default.yml](grafana/provisioning/dashboards/default.yml)**
-   - Автоматический import дашбордов
+   - Automatic dashboard import
 
 7. **[grafana/dashboards/doradura_overview.json](grafana/dashboards/doradura_overview.json)**
-   - Полнофункциональный дашборд с 9 панелями
-   - Performance, Business, Health метрики
-   - Красивая визуализация
+   - Fully functional dashboard with 9 panels
+   - Performance, Business, Health metrics
+   - Visual charts
 
-### 🛠️ Скрипты
+### Scripts
 
 8. **[scripts/start-monitoring.sh](scripts/start-monitoring.sh)**
-   - Запуск всего стека одной командой
-   - Проверки здоровья
-   - Автоматическое открытие браузера
+   - Launch the full stack with a single command
+   - Health checks
+   - Automatic browser opening
 
 9. **[scripts/stop-monitoring.sh](scripts/stop-monitoring.sh)**
-   - Остановка стека
-   - Опция для удаления данных
+   - Stop the stack
+   - Option to delete data
 
 10. **[scripts/check-metrics.sh](scripts/check-metrics.sh)**
-    - Health check всех компонентов
-    - Показывает sample metrics
-    - Проверяет connectivity
+    - Health check for all components
+    - Shows sample metrics
+    - Checks connectivity
 
-### 📚 Документация
+### Documentation
 
 11. **[QUICKSTART_MONITORING.md](QUICKSTART_MONITORING.md)**
-    - Запуск за 3 команды
-    - Основные URL
-    - Альтернативы
+    - Launch in 3 commands
+    - Main URLs
+    - Alternatives
 
 12. **[MONITORING_SETUP.md](MONITORING_SETUP.md)**
-    - Полное руководство (500+ строк)
+    - Complete guide (500+ lines)
     - Development & Production
     - Troubleshooting
     - Best practices
 
 13. **[MONITORING_ARCHITECTURE.md](MONITORING_ARCHITECTURE.md)**
-    - Mermaid диаграммы
-    - Поток данных
-    - Примеры PromQL
-    - Оптимизация
+    - Mermaid diagrams
+    - Data flow
+    - PromQL examples
+    - Optimization
 
 14. **[monitoring/README.md](monitoring/README.md)**
-    - Обзор структуры
-    - Быстрые ссылки
+    - Structure overview
+    - Quick links
 
-15. **[.gitignore](.gitignore)** (обновлен)
-    - Исключены данные мониторинга
+15. **[.gitignore](.gitignore)** (updated)
+    - Monitoring data excluded
     - Prometheus/Grafana volumes
 
 ---
 
-## 🚀 Как Использовать
+## How to Use
 
-### Локальная Разработка
+### Local Development
 
 ```bash
-# 1. Запустить бота
+# 1. Start the bot
 cargo run --release
 
-# 2. Запустить мониторинг
+# 2. Start monitoring
 ./scripts/start-monitoring.sh
 
-# 3. Открыть Grafana
+# 3. Open Grafana
 open http://localhost:3000
-# Логин: admin / Пароль: admin
+# Login: admin / Password: admin
 ```
 
 ### Production
 
-**Вариант 1: Только Telegram (рекомендуется для Railway)**
+**Option 1: Telegram only (recommended for Railway)**
 ```bash
-# Используйте встроенные команды
+# Use built-in commands
 /analytics
 /health
 /metrics performance
 /revenue
 ```
 
-**Вариант 2: Полный стек**
-- См. раздел "Production Deployment" в [MONITORING_SETUP.md](MONITORING_SETUP.md)
+**Option 2: Full stack**
+- See "Production Deployment" section in [MONITORING_SETUP.md](MONITORING_SETUP.md)
 
 ---
 
-## 📈 Метрики
+## Metrics
 
-### Performance (30+ метрик)
+### Performance (30+ metrics)
 
 ```promql
 doradura_download_duration_seconds    # Histogram
@@ -154,17 +154,17 @@ doradura_format_requests_total        # Counter by format
 
 ---
 
-## 🔔 Alerts
+## Alerts
 
-### Critical (🔴)
+### Critical
 
-- **HighErrorRate**: Error rate > 10% за 5 минут
-- **QueueBackup**: Очередь > 100 задач
-- **BotDown**: Бот недоступен > 2 минуты
+- **HighErrorRate**: Error rate > 10% over 5 minutes
+- **QueueBackup**: Queue > 100 tasks
+- **BotDown**: Bot unreachable > 2 minutes
 - **YtdlpFailures**: yt-dlp errors > 0.5/sec
-- **PaymentFailures**: Любые ошибки платежей
+- **PaymentFailures**: Any payment errors
 
-### Warning (🟡)
+### Warning
 
 - **SlowDownloads**: p95 duration > 60s
 - **LowSuccessRate**: Success rate < 90%
@@ -175,13 +175,13 @@ doradura_format_requests_total        # Counter by format
 
 ---
 
-## 📊 Grafana Dashboard
+## Grafana Dashboard
 
-### Панели
+### Panels
 
 1. **Download Rate** - Success vs Failure (timeseries)
-2. **Success Rate** - Процент успешных загрузок (gauge)
-3. **Queue Depth** - Текущая очередь (stat)
+2. **Success Rate** - Percentage of successful downloads (gauge)
+3. **Queue Depth** - Current queue depth (stat)
 4. **Download Duration** - p50, p95, p99 (timeseries)
 5. **Downloads by Format** - MP3 vs MP4 (bars)
 6. **Daily Active Users** - DAU (stat)
@@ -189,15 +189,15 @@ doradura_format_requests_total        # Counter by format
 8. **Active Subscriptions** - Count (stat)
 9. **Errors by Category** - Breakdown (timeseries)
 
-Все автоматически обновляются каждые 30 секунд.
+All panels refresh automatically every 30 seconds.
 
 ---
 
-## 🔧 Конфигурация
+## Configuration
 
 ### Environment Variables
 
-Добавьте в `.env`:
+Add to `.env`:
 
 ```bash
 # Metrics
@@ -213,9 +213,9 @@ ALERT_RETRY_RATE_THRESHOLD=30.0
 
 ### Prometheus
 
-- **Scrape Interval**: 15s (настраивается)
-- **Retention**: 30 дней (настраивается)
-- **Storage**: TSDB в Docker volume
+- **Scrape Interval**: 15s (configurable)
+- **Retention**: 30 days (configurable)
+- **Storage**: TSDB in Docker volume
 
 ### Grafana
 
@@ -225,133 +225,133 @@ ALERT_RETRY_RATE_THRESHOLD=30.0
 
 ---
 
-## 🎯 Преимущества
+## Advantages
 
-### 1. Полная Observability
+### 1. Full Observability
 
-✅ Видите ВСЁ что происходит в боте
-✅ Performance, Business, Health metrics
-✅ Real-time monitoring
-✅ Исторические данные
+- See EVERYTHING happening in the bot
+- Performance, Business, Health metrics
+- Real-time monitoring
+- Historical data
 
 ### 2. Proactive Alerting
 
-✅ Узнаете о проблемах до пользователей
-✅ Автоматические уведомления в Telegram
-✅ Умный throttling (нет спама)
-✅ Resolution tracking
+- Learn about problems before users do
+- Automatic Telegram notifications
+- Smart throttling (no spam)
+- Resolution tracking
 
 ### 3. Production-Ready
 
-✅ Industry standard (Prometheus + Grafana)
-✅ Проверено тысячами компаний
-✅ Горизонтально масштабируемо
-✅ Minimal overhead (<0.1% CPU)
+- Industry standard (Prometheus + Grafana)
+- Proven by thousands of companies
+- Horizontally scalable
+- Minimal overhead (<0.1% CPU)
 
-### 4. Удобство
+### 4. Convenience
 
-✅ Запуск одной командой
-✅ Автоматическая настройка
-✅ Красивые дашборды
-✅ Альтернатива: Telegram команды
+- Single-command launch
+- Automatic setup
+- Beautiful dashboards
+- Alternative: Telegram commands
 
 ### 5. Data-Driven Decisions
 
-✅ Видите что пользователи используют
-✅ Оптимизируете на основе данных
-✅ Отслеживаете business metrics
-✅ A/B testing готовность
+- See what users are using
+- Optimize based on data
+- Track business metrics
+- A/B testing ready
 
 ---
 
-## 🏗️ Архитектура
+## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│         Doradura Bot                         │
-│  ┌──────────────────────────────────────┐   │
-│  │   Instrumented Code                  │   │
-│  │   (timers, counters, gauges)         │   │
-│  └──────────────┬───────────────────────┘   │
-│                 │                            │
-│  ┌──────────────▼───────────────────────┐   │
-│  │   Prometheus Metrics Registry        │   │
-│  │   (in-memory, thread-safe)           │   │
-│  └──────────────┬───────────────────────┘   │
-│                 │                            │
-│  ┌──────────────▼───────────────────────┐   │
-│  │   HTTP Metrics Server :9090          │   │
-│  │   GET /metrics  (Prometheus format)  │   │
-│  │   GET /health   (JSON)               │   │
-│  └──────────────┬───────────────────────┘   │
-└─────────────────┼───────────────────────────┘
-                  │ scrapes every 15s
-    ┌─────────────▼──────────────┐
-    │   Prometheus :9091          │
-    │   - TSDB storage            │
-    │   - Alert evaluation        │
-    │   - Recording rules         │
-    └─────────┬────────┬──────────┘
-              │        │
-      ┌───────▼──┐  ┌─▼────────────┐
-      │ Grafana  │  │ AlertManager │
-      │ :3000    │  │ :9093        │
-      └────┬─────┘  └──────┬───────┘
-           │               │
-     ┌─────▼─────┐    ┌────▼─────────┐
-     │  Browser  │    │  Telegram    │
-     │  Users    │    │  Admin       │
-     └───────────┘    └──────────────┘
++---------------------------------------------+
+|         Doradura Bot                         |
+|  +--------------------------------------+   |
+|  |   Instrumented Code                  |   |
+|  |   (timers, counters, gauges)         |   |
+|  +------------------+-------------------+   |
+|                     |                       |
+|  +------------------v-------------------+   |
+|  |   Prometheus Metrics Registry        |   |
+|  |   (in-memory, thread-safe)           |   |
+|  +------------------+-------------------+   |
+|                     |                       |
+|  +------------------v-------------------+   |
+|  |   HTTP Metrics Server :9090          |   |
+|  |   GET /metrics  (Prometheus format)  |   |
+|  |   GET /health   (JSON)               |   |
+|  +------------------+-------------------+   |
++---------------------|------------------------+
+                      | scrapes every 15s
+    +-----------------v------------------+
+    |   Prometheus :9091                  |
+    |   - TSDB storage                    |
+    |   - Alert evaluation                |
+    |   - Recording rules                 |
+    +-----------+--------+----------------+
+                |        |
+        +-------v--+  +--v-------------+
+        | Grafana  |  | AlertManager   |
+        | :3000    |  | :9093          |
+        +----+-----+  +-------+--------+
+             |                |
+       +-----v-----+    +-----v---------+
+       |  Browser  |    |  Telegram     |
+       |  Users    |    |  Admin        |
+       +-----------+    +---------------+
 ```
 
 ---
 
-## 📖 Примеры Использования
+## Usage Examples
 
-### PromQL Запросы
+### PromQL Queries
 
 ```promql
-# Сколько загрузок в час?
+# How many downloads per hour?
 increase(doradura_download_success_total[1h])
 
-# Средняя длительность загрузки?
+# Average download duration?
 histogram_quantile(0.5, rate(doradura_download_duration_seconds_bucket[5m]))
 
 # Success rate?
 sum(rate(doradura_download_success_total[5m])) /
 (sum(rate(doradura_download_success_total[5m])) + sum(rate(doradura_download_failure_total[5m]))) * 100
 
-# Выручка за сегодня?
+# Revenue today?
 increase(doradura_revenue_total_stars[1d])
 
-# Конверсия в подписку?
+# Subscription conversion?
 rate(doradura_new_subscriptions_total[1h]) / rate(doradura_command_usage_total{command="start"}[1h]) * 100
 ```
 
 ### Grafana Queries
 
-См. [doradura_overview.json](grafana/dashboards/doradura_overview.json) для готовых запросов.
+See [doradura_overview.json](grafana/dashboards/doradura_overview.json) for ready-made queries.
 
-### Telegram Команды
+### Telegram Commands
 
 ```
-/analytics              → Общий дашборд
-/health                 → Состояние системы
-/metrics performance    → Performance метрики
-/metrics business       → Business метрики
-/metrics engagement     → Engagement метрики
-/revenue                → Финансовая аналитика
+/analytics              -> Overview dashboard
+/health                 -> System health
+/metrics performance    -> Performance metrics
+/metrics business       -> Business metrics
+/metrics engagement     -> Engagement metrics
+/revenue                -> Financial analytics
 ```
 
 ---
 
-## 🔍 Проверка
+## Verification
 
 ```bash
-# Запустить health check
+# Run health check
 ./scripts/check-metrics.sh
 
-# Проверить что все работает
+# Check that everything is working
 curl http://localhost:9090/health    # Bot
 curl http://localhost:9091/-/healthy # Prometheus
 curl http://localhost:3000/api/health # Grafana
@@ -359,23 +359,23 @@ curl http://localhost:3000/api/health # Grafana
 
 ---
 
-## 🎓 Обучение
+## Learning Resources
 
-### Для начинающих
+### For Beginners
 
-1. Начните с [QUICKSTART_MONITORING.md](QUICKSTART_MONITORING.md)
-2. Запустите систему: `./scripts/start-monitoring.sh`
-3. Откройте Grafana и изучите дашборд
-4. Попробуйте простые PromQL запросы в Prometheus
+1. Start with [QUICKSTART_MONITORING.md](QUICKSTART_MONITORING.md)
+2. Launch the system: `./scripts/start-monitoring.sh`
+3. Open Grafana and explore the dashboard
+4. Try simple PromQL queries in Prometheus
 
-### Для продвинутых
+### For Advanced Users
 
-1. Изучите [MONITORING_ARCHITECTURE.md](MONITORING_ARCHITECTURE.md)
-2. Создайте свои дашборды в Grafana
-3. Настройте кастомные alerts
-4. Оптимизируйте для production
+1. Study [MONITORING_ARCHITECTURE.md](MONITORING_ARCHITECTURE.md)
+2. Create custom dashboards in Grafana
+3. Configure custom alerts
+4. Optimize for production
 
-### Полезные ресурсы
+### Useful Resources
 
 - [Prometheus Documentation](https://prometheus.io/docs/)
 - [PromQL Tutorial](https://prometheus.io/docs/prometheus/latest/querying/basics/)
@@ -384,12 +384,12 @@ curl http://localhost:3000/api/health # Grafana
 
 ---
 
-## 📝 TODO (Опционально)
+## TODO (Optional)
 
-Дополнительные улучшения на будущее:
+Additional improvements for the future:
 
-- [ ] Экспорт метрик в CSV
-- [ ] Custom alerts через Web UI
+- [ ] Export metrics to CSV
+- [ ] Custom alerts via Web UI
 - [ ] A/B testing framework
 - [ ] User cohort analysis
 - [ ] Predictive analytics (ML)
@@ -399,47 +399,46 @@ curl http://localhost:3000/api/health # Grafana
 
 ---
 
-## ✅ Checklist Развертывания
+## Deployment Checklist
 
 ### Development
 
-- [x] Конфигурационные файлы созданы
-- [x] Скрипты написаны и executable
-- [x] Дашборд создан
-- [x] Alert rules настроены
-- [ ] Запустить `./scripts/start-monitoring.sh`
-- [ ] Проверить `./scripts/check-metrics.sh`
-- [ ] Открыть Grafana и проверить дашборд
+- [x] Configuration files created
+- [x] Scripts written and made executable
+- [x] Dashboard created
+- [x] Alert rules configured
+- [ ] Run `./scripts/start-monitoring.sh`
+- [ ] Run `./scripts/check-metrics.sh`
+- [ ] Open Grafana and verify dashboard
 
 ### Production
 
-- [ ] Обновить `.env` с production настройками
-- [ ] Настроить Prometheus для production
-- [ ] Изменить Grafana пароль
-- [ ] Настроить backup метрик
-- [ ] Настроить alert webhooks
-- [ ] Протестировать alerts
-- [ ] Задокументировать runbooks
+- [ ] Update `.env` with production settings
+- [ ] Configure Prometheus for production
+- [ ] Change Grafana password
+- [ ] Set up metrics backup
+- [ ] Configure alert webhooks
+- [ ] Test alerts
+- [ ] Document runbooks
 
 ---
 
-## 🎉 Итог
+## Summary
 
-Вы получили **полнофункциональную систему мониторинга** enterprise-уровня:
+You now have an **enterprise-grade monitoring system**:
 
-✅ **30+ метрик** по всем аспектам бота
-✅ **Красивые дашборды** в Grafana
-✅ **Умные алерты** в Telegram
-✅ **Запуск одной командой**
-✅ **Production-ready**
-✅ **Полная документация**
+- **30+ metrics** covering all aspects of the bot
+- **Beautiful dashboards** in Grafana
+- **Smart alerts** in Telegram
+- **Single-command launch**
+- **Production-ready**
+- **Complete documentation**
 
-**Время на запуск:** ~5 минут
-**Время на изучение:** ~30 минут
-**Ценность:** Бесценно! 💎
+**Time to launch:** ~5 minutes
+**Time to learn:** ~30 minutes
 
 ---
 
-**Вопросы?** См. [MONITORING_SETUP.md](MONITORING_SETUP.md) раздел **Troubleshooting**
+**Questions?** See [MONITORING_SETUP.md](MONITORING_SETUP.md), **Troubleshooting** section
 
-**Готовы начать?** → [QUICKSTART_MONITORING.md](QUICKSTART_MONITORING.md)
+**Ready to start?** -> [QUICKSTART_MONITORING.md](QUICKSTART_MONITORING.md)

@@ -117,53 +117,54 @@ pub fn truncate_for_telegram(text: &str) -> String {
 // Filename utilities
 // =============================================================================
 
-/// Санитизирует имя файла для безопасного использования с ffmpeg и yt-dlp.
+/// Sanitizes a filename for safe use with ffmpeg and yt-dlp.
 ///
-/// СТРОГАЯ ASCII-ONLY санитизация для предотвращения проблем с постобработкой.
-/// Non-ASCII символы и специальные символы могут вызывать сбои FixupM3u8 и других постпроцессоров.
+/// STRICT ASCII-ONLY sanitization to prevent postprocessing issues.
+/// Non-ASCII characters and special characters can cause FixupM3u8 and other
+/// postprocessors to fail.
 ///
-/// Поведение:
-/// - ASCII буквы, цифры, `_`, `-`, `.` - сохраняются
-/// - Пробелы -> `_`
-/// - Латинские акцентированные символы (á, é, ñ и т.д.) -> ASCII эквивалент
-/// - Кириллица -> транслитерация
-/// - Все остальные символы (запятые, скобки, кавычки и т.д.) -> `_`
-/// - Множественные `_` -> один `_`
-/// - Ограничение длины: 200 символов
+/// Behavior:
+/// - ASCII letters, digits, `_`, `-`, `.` are preserved
+/// - Spaces -> `_`
+/// - Latin accented characters (á, é, ñ, etc.) -> ASCII equivalent
+/// - Cyrillic -> transliteration
+/// - All other characters (commas, brackets, quotes, etc.) -> `_`
+/// - Multiple consecutive `_` -> single `_`
+/// - Length limit: 200 characters
 ///
 /// # Arguments
 ///
-/// * `filename` - Исходное имя файла
+/// * `filename` - The original filename
 ///
 /// # Returns
 ///
-/// Безопасное ASCII-only имя файла.
+/// A safe ASCII-only filename.
 ///
 /// # Example
 ///
 /// ```
 /// use doradura::core::utils::escape_filename;
 ///
-/// // Специальные символы -> underscore
+/// // Special characters -> underscore
 /// assert_eq!(escape_filename("song/name*.mp3"), "song_name.mp3");
-/// // Акценты -> ASCII
+/// // Accents -> ASCII
 /// assert_eq!(escape_filename("Nacho Barón.mp4"), "Nacho_Baron.mp4");
-/// // Кириллица -> транслит
+/// // Cyrillic -> transliteration
 /// assert_eq!(escape_filename("Привет.mp3"), "Privet.mp3");
-/// // Запятые -> underscore (collapsed)
+/// // Commas -> underscore (collapsed)
 /// assert_eq!(escape_filename("A, B, C.mp4"), "A_B_C.mp4");
 /// ```
-/// Заменяет пробелы на подчеркивания в имени файла.
+/// Replaces spaces with underscores in a filename.
 ///
-/// Универсальный метод для нормализации имен файлов, заменяющий все пробелы на подчеркивания.
+/// A universal method for normalizing filenames by replacing all spaces with underscores.
 ///
 /// # Arguments
 ///
-/// * `filename` - Исходное имя файла
+/// * `filename` - The original filename
 ///
 /// # Returns
 ///
-/// Имя файла с пробелами, замененными на подчеркивания.
+/// The filename with spaces replaced by underscores.
 ///
 /// # Example
 ///
@@ -314,20 +315,20 @@ pub fn escape_filename(filename: &str) -> String {
     }
 }
 
-/// Экранирует специальные символы для MarkdownV2 формата Telegram.
+/// Escapes special characters for Telegram MarkdownV2 format.
 ///
-/// В Telegram MarkdownV2 требуется экранировать следующие символы:
+/// Telegram MarkdownV2 requires escaping the following characters:
 /// `_`, `*`, `[`, `]`, `(`, `)`, `~`, `` ` ``, `>`, `#`, `+`, `-`, `=`, `|`, `{`, `}`, `.`, `!`
 ///
-/// Важно: обратный слеш должен экранироваться первым, чтобы избежать повторного экранирования.
+/// Important: the backslash must be escaped first to avoid double-escaping.
 ///
 /// # Arguments
 ///
-/// * `text` - Исходный текст
+/// * `text` - The source text
 ///
 /// # Returns
 ///
-/// Текст с экранированными специальными символами для MarkdownV2.
+/// Text with special characters escaped for MarkdownV2.
 ///
 /// # Example
 ///
@@ -368,21 +369,21 @@ pub fn escape_markdown_v2(text: &str) -> String {
     result
 }
 
-/// Форматирует caption для видео/аудио с использованием MarkdownV2.
+/// Formats a caption for video/audio using MarkdownV2.
 ///
-/// Создаёт красиво отформатированный caption с жирным автором и курсивным названием.
-/// Формат:
-/// - Если есть автор: **Автор** — _Название_
-/// - Если автора нет: _Название_
+/// Creates a nicely formatted caption with bold artist and italic title.
+/// Format:
+/// - If artist is present: **Artist** — _Title_
+/// - If no artist: _Title_
 ///
 /// # Arguments
 ///
-/// * `title` - Название композиции/видео
-/// * `artist` - Автор (опционально)
+/// * `title` - The track/video title
+/// * `artist` - The artist (optional)
 ///
 /// # Returns
 ///
-/// Отформатированный caption с экранированными символами для MarkdownV2.
+/// A formatted caption with special characters escaped for MarkdownV2.
 ///
 /// # Example
 ///
@@ -390,14 +391,14 @@ pub fn escape_markdown_v2(text: &str) -> String {
 /// use doradura::core::utils::format_media_caption;
 ///
 /// let caption = format_media_caption("Song Name", "Artist");
-/// // Результат: *Artist* — _Song Name_
+/// // Result: *Artist* — _Song Name_
 /// ```
 pub fn format_media_caption(title: &str, artist: &str) -> String {
     let base_caption = if artist.trim().is_empty() {
-        // Только название (курсив)
+        // Title only (italic)
         format!("_{}_", escape_markdown_v2(title))
     } else {
-        // Автор (жирный) — Название (курсив)
+        // Artist (bold) — Title (italic)
         format!("*{}* — _{}_", escape_markdown_v2(artist), escape_markdown_v2(title))
     };
 
@@ -405,20 +406,20 @@ pub fn format_media_caption(title: &str, artist: &str) -> String {
     crate::core::copyright::format_caption_with_copyright(&base_caption)
 }
 
-/// Возвращает правильную форму слова "секунд" для русского языка.
+/// Returns the correct Russian plural form of the word "second".
 ///
-/// Правила склонения:
-/// - 1, 21, 31, ... -> "секунду" (винительный падеж единственного числа)
-/// - 2-4, 22-24, 32-34, ... -> "секунды" (именительный падеж множественного числа)
-/// - 5-20, 25-30, 35-40, ... -> "секунд" (родительный падеж множественного числа)
+/// Declension rules:
+/// - 1, 21, 31, ... -> "секунду" (accusative singular)
+/// - 2-4, 22-24, 32-34, ... -> "секунды" (nominative plural)
+/// - 5-20, 25-30, 35-40, ... -> "секунд" (genitive plural)
 ///
 /// # Arguments
 ///
-/// * `n` - Число секунд
+/// * `n` - The number of seconds
 ///
 /// # Returns
 ///
-/// Правильную форму слова "секунд" в зависимости от числа.
+/// The correct Russian plural form of "second" for the given number.
 ///
 /// # Example
 ///
@@ -433,12 +434,12 @@ pub fn pluralize_seconds(n: u64) -> &'static str {
     let n_mod_100 = n % 100;
     let n_mod_10 = n % 10;
 
-    // Исключения: 11, 12, 13, 14 - всегда "секунд"
+    // Exceptions: 11, 12, 13, 14 - always "секунд"
     if (11..=14).contains(&n_mod_100) {
         return "секунд";
     }
 
-    // Остальные случаи зависят от последней цифры
+    // All other cases depend on the last digit
     match n_mod_10 {
         1 => "секунду",
         2..=4 => "секунды",
@@ -590,35 +591,35 @@ mod tests {
 
     #[test]
     fn test_escape_filename() {
-        // Базовые тесты на замену разделителей путей
+        // Basic tests for path separator replacement
         assert_eq!(escape_filename("song/name.mp3"), "song_name.mp3");
         assert_eq!(escape_filename("path\\to\\file.mp4"), "path_to_file.mp4");
 
-        // Зарезервированные символы Windows - все становятся _ и схлопываются
+        // Windows reserved characters - all become _ and collapse
         assert_eq!(escape_filename("file:name*.mp3"), "file_name.mp3");
         assert_eq!(escape_filename("title?<>|.mp4"), "title.mp4"); // Multiple _ collapsed
 
-        // Кавычки и скобки -> underscore (collapsed)
+        // Quotes and brackets -> underscore (collapsed)
         assert_eq!(escape_filename("song \"live\".mp3"), "song_live.mp3");
         assert_eq!(escape_filename("Song (live) [2024].mp3"), "Song_live_2024.mp3");
 
-        // Начальные и конечные пробелы и точки
+        // Leading and trailing spaces and dots
         assert_eq!(escape_filename("  file.mp3  "), "file.mp3");
         assert_eq!(escape_filename("...file..."), "file");
 
-        // Пустое имя
+        // Empty name
         assert_eq!(escape_filename(""), "unnamed");
         assert_eq!(escape_filename("..."), "unnamed");
         assert_eq!(escape_filename("   "), "unnamed");
 
-        // Кириллица -> транслитерация (NEW BEHAVIOR!)
+        // Cyrillic -> transliteration (NEW BEHAVIOR!)
         assert_eq!(escape_filename("Дорадура - трек.mp3"), "Doradura_-_trek.mp3");
 
-        // Акценты -> ASCII
+        // Accents -> ASCII
         assert_eq!(escape_filename("Nacho Barón.mp4"), "Nacho_Baron.mp4");
         assert_eq!(escape_filename("Café.mp3"), "Cafe.mp3");
 
-        // Запятые -> underscore (collapsed)
+        // Commas -> underscore (collapsed)
         assert_eq!(escape_filename("A, B, C.mp4"), "A_B_C.mp4");
         assert_eq!(
             escape_filename("JLLY, Flyy Armani - LUNA.mp4"),
@@ -628,18 +629,18 @@ mod tests {
 
     #[test]
     fn test_escape_markdown_v2() {
-        // Тест на точки и восклицательные знаки
+        // Test for dots and exclamation marks
         assert_eq!(escape_markdown_v2("Hello. World!"), "Hello\\. World\\!");
         assert_eq!(escape_markdown_v2("file.mp3"), "file\\.mp3");
 
-        // Тест на скобки и дефисы
+        // Test for brackets and hyphens
         assert_eq!(escape_markdown_v2("Song (live).mp3"), "Song \\(live\\)\\.mp3");
         assert_eq!(escape_markdown_v2("track-name"), "track\\-name");
 
-        // Тест на обратный слеш
+        // Test for backslash
         assert_eq!(escape_markdown_v2("path\\file"), "path\\\\file");
 
-        // Тест на сложные строки
+        // Test for complex strings
         assert_eq!(
             escape_markdown_v2("NA - дора — Дорадура (акустическая версия).mp3"),
             "NA \\- дора — Дорадура \\(акустическая версия\\)\\.mp3"
@@ -648,13 +649,13 @@ mod tests {
 
     #[test]
     fn test_pluralize_seconds() {
-        // Единственное число
+        // Singular form
         assert_eq!(pluralize_seconds(1), "секунду");
         assert_eq!(pluralize_seconds(21), "секунду");
         assert_eq!(pluralize_seconds(31), "секунду");
         assert_eq!(pluralize_seconds(101), "секунду");
 
-        // Множественное число (2-4)
+        // Plural form (2-4)
         assert_eq!(pluralize_seconds(2), "секунды");
         assert_eq!(pluralize_seconds(3), "секунды");
         assert_eq!(pluralize_seconds(4), "секунды");
@@ -663,7 +664,7 @@ mod tests {
         assert_eq!(pluralize_seconds(24), "секунды");
         assert_eq!(pluralize_seconds(32), "секунды");
 
-        // Множественное число (5-20, 25-30, ...)
+        // Plural form (5-20, 25-30, ...)
         assert_eq!(pluralize_seconds(5), "секунд");
         assert_eq!(pluralize_seconds(10), "секунд");
         assert_eq!(pluralize_seconds(15), "секунд");
@@ -671,7 +672,7 @@ mod tests {
         assert_eq!(pluralize_seconds(25), "секунд");
         assert_eq!(pluralize_seconds(30), "секунд");
 
-        // Исключения (11-14)
+        // Exceptions (11-14)
         assert_eq!(pluralize_seconds(11), "секунд");
         assert_eq!(pluralize_seconds(12), "секунд");
         assert_eq!(pluralize_seconds(13), "секунд");
@@ -679,25 +680,25 @@ mod tests {
         assert_eq!(pluralize_seconds(111), "секунд");
         assert_eq!(pluralize_seconds(112), "секунд");
 
-        // Пример из запроса пользователя
+        // Example from user request
         assert_eq!(pluralize_seconds(71), "секунду");
     }
 
     #[test]
     fn test_sanitize_filename() {
-        // Базовые тесты на замену пробелов
+        // Basic tests for space replacement
         assert_eq!(sanitize_filename("song name.mp3"), "song_name.mp3");
         assert_eq!(sanitize_filename("Artist - Title.mp4"), "Artist_-_Title.mp4");
         assert_eq!(sanitize_filename("multiple   spaces.mp3"), "multiple___spaces.mp3");
 
-        // Тесты с кириллицей
+        // Tests with Cyrillic characters
         assert_eq!(sanitize_filename("Дорадура - трек.mp3"), "Дорадура_-_трек.mp3");
 
-        // Тесты с уже существующими подчеркиваниями
+        // Tests with already-existing underscores
         assert_eq!(sanitize_filename("song_name.mp3"), "song_name.mp3");
         assert_eq!(sanitize_filename("song _ name.mp3"), "song___name.mp3");
 
-        // Тесты с пустыми строками
+        // Tests with empty strings
         assert_eq!(sanitize_filename(""), "");
         assert_eq!(sanitize_filename("   "), "___");
     }
@@ -707,28 +708,28 @@ mod tests {
         // Note: format_media_caption now appends copyright signature
         // Tests check that caption starts with expected base part
 
-        // С автором
+        // With artist
         assert!(format_media_caption("Song Name", "Artist").starts_with("*Artist* — _Song Name_"));
 
-        // Без автора (пустая строка)
+        // Without artist (empty string)
         assert!(format_media_caption("Song Name", "").starts_with("_Song Name_"));
 
-        // Без автора (только пробелы)
+        // Without artist (only spaces)
         assert!(format_media_caption("Song Name", "   ").starts_with("_Song Name_"));
 
-        // С кириллицей
+        // With Cyrillic characters
         assert!(format_media_caption("Дорадура", "NA").starts_with("*NA* — _Дорадура_"));
 
-        // Со специальными символами, требующими экранирования
+        // With special characters requiring escaping
         assert!(format_media_caption("Song (live).mp3", "Artist-Name")
             .starts_with("*Artist\\-Name* — _Song \\(live\\)\\.mp3_"));
 
-        // Сложный пример
+        // Complex example
         assert!(format_media_caption("Дорадура (акустическая версия).mp3", "NA - дора")
             .starts_with("*NA \\- дора* — _Дорадура \\(акустическая версия\\)\\.mp3_"));
 
         // Check copyright is appended
         let caption = format_media_caption("Test", "Artist");
-        assert!(caption.contains("Ваша,"));
+        assert!(caption.contains("Yours,"));
     }
 }

@@ -9,28 +9,28 @@ use teloxide::types::{CallbackQueryId, ChatId, InlineKeyboardMarkup, MessageId};
 use teloxide::RequestError;
 use url::Url;
 
-/// Форматирует дату для отображения
+/// Formats a date for display
 fn format_date(date_str: &str) -> String {
-    // Парсим дату из SQLite формата (YYYY-MM-DD HH:MM:SS)
+    // Parse date from SQLite format (YYYY-MM-DD HH:MM:SS)
     if let Ok(dt) = NaiveDateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S") {
         use chrono::Datelike;
         use chrono::Timelike;
-        // Форматируем в русский формат
+        // Format using short month abbreviations
         format!(
             "{} {}, {:02}:{:02}",
             match dt.month() {
-                1 => "янв",
-                2 => "фев",
-                3 => "мар",
-                4 => "апр",
-                5 => "май",
-                6 => "июн",
-                7 => "июл",
-                8 => "авг",
-                9 => "сен",
-                10 => "окт",
-                11 => "ноя",
-                12 => "дек",
+                1 => "Jan",
+                2 => "Feb",
+                3 => "Mar",
+                4 => "Apr",
+                5 => "May",
+                6 => "Jun",
+                7 => "Jul",
+                8 => "Aug",
+                9 => "Sep",
+                10 => "Oct",
+                11 => "Nov",
+                12 => "Dec",
                 _ => "???",
             },
             dt.day(),
@@ -42,15 +42,15 @@ fn format_date(date_str: &str) -> String {
     }
 }
 
-/// Количество записей на одной странице истории
+/// Number of entries per history page
 const ITEMS_PER_PAGE: usize = 5;
 
-/// Показывает историю загрузок пользователя с пагинацией
+/// Shows the user's download history with pagination
 pub async fn show_history(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
     show_history_page(bot, chat_id, db_pool, 0).await
 }
 
-/// Показывает конкретную страницу истории загрузок
+/// Shows a specific page of the download history
 pub async fn show_history_page(
     bot: &Bot,
     chat_id: ChatId,
@@ -62,7 +62,7 @@ pub async fn show_history_page(
     let conn = db::get_connection(&db_pool)
         .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
-    // Получаем все записи истории для подсчета страниц
+    // Fetch all history entries to count pages
     let all_entries = match db::get_download_history(&conn, chat_id.0, None) {
         Ok(entries) => entries,
         Err(e) => {
@@ -78,7 +78,7 @@ pub async fn show_history_page(
         return bot
             .send_message(
                 chat_id,
-                "📚 *История загрузок*\n\nУ тебя пока нет загрузок\\. Отправь мне ссылку на трек или видео\\!",
+                "📚 *Download History*\n\nYou have no downloads yet\\. Send me a link to a track or video\\!",
             )
             .parse_mode(teloxide::types::ParseMode::MarkdownV2)
             .await;
@@ -93,7 +93,7 @@ pub async fn show_history_page(
     let entries = &all_entries[start_idx..end_idx];
 
     let mut text = format!(
-        "📚 *История загрузок*\n_Страница {} из {}_\n\n",
+        "📚 *Download History*\n_Page {} of {}_\n\n",
         current_page + 1,
         total_pages
     );
@@ -120,25 +120,25 @@ pub async fn show_history_page(
             escaped_date
         ));
 
-        // Сохраняем URL в кэше и получаем короткий ID
+        // Store URL in cache and get a short ID
         let url_id = crate::storage::cache::store_url(&db_pool, &entry.url).await;
         let callback_data = format!("history:repeat:{}:{}", entry.id, url_id);
         let delete_callback = format!("history:delete:{}", entry.id);
 
-        // Укороченное название для трека (первые 20 символов)
+        // Shortened track title (first 20 characters)
         let short_title = if entry.title.len() > 20 {
             format!("{}...", &entry.title.chars().take(20).collect::<String>())
         } else {
             entry.title.clone()
         };
 
-        // Одна строка с двумя кнопками: повтор и удаление
+        // One row with two buttons: repeat and delete
         keyboard_rows.push(vec![
             crate::telegram::cb(format!("🔄 {}", short_title), callback_data),
             crate::telegram::cb("🗑️".to_string(), delete_callback),
         ]);
 
-        // Добавляем визуальный разделитель в текст между записями (кроме последней)
+        // Add a visual separator between entries (except after the last one)
         if idx < entries.len() - 1 {
             text.push_str("───────────────\n");
         } else {
@@ -146,7 +146,7 @@ pub async fn show_history_page(
         }
     }
 
-    // Кнопки навигации
+    // Navigation buttons
     let mut nav_buttons = Vec::new();
 
     if current_page > 0 {
@@ -156,11 +156,11 @@ pub async fn show_history_page(
         ));
     }
 
-    // Показываем номер страницы как неактивную кнопку (callback не будет обрабатываться)
+    // Show page number as an inactive button (callback will not be handled)
     if total_pages > 1 {
         nav_buttons.push(crate::telegram::cb(
             format!("{}/{}", current_page + 1, total_pages),
-            format!("history:page:{}", current_page), // Клик на текущую страницу не делает ничего
+            format!("history:page:{}", current_page), // Clicking current page does nothing
         ));
     }
 
@@ -175,7 +175,7 @@ pub async fn show_history_page(
         keyboard_rows.push(nav_buttons);
     }
 
-    keyboard_rows.push(vec![crate::telegram::cb("🔙 В главное меню".to_string(), "back:start")]);
+    keyboard_rows.push(vec![crate::telegram::cb("🔙 Main menu".to_string(), "back:start")]);
 
     let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
 
@@ -185,7 +185,7 @@ pub async fn show_history_page(
         .await
 }
 
-/// Обрабатывает callback для истории загрузок
+/// Handles callbacks for the download history
 pub async fn handle_history_callback(
     bot: &Bot,
     callback_id: CallbackQueryId,
@@ -210,21 +210,21 @@ pub async fn handle_history_callback(
 
     match action {
         "page" => {
-            // Формат: history:page:page_number
+            // Format: history:page:page_number
             let page_str = parts[2];
 
             match page_str.parse::<usize>() {
                 Ok(page) => {
-                    // Получаем текущую страницу из сообщения для проверки
-                    // Если это та же страница, просто отвечаем на callback
+                    // Get current page from message to check
+                    // If same page, just acknowledge the callback
                     bot.answer_callback_query(callback_id.clone()).await?;
 
-                    // Удаляем текущее сообщение
+                    // Delete the current message
                     if let Err(e) = bot.delete_message(chat_id, message_id).await {
                         log::warn!("Failed to delete history message: {:?}", e);
                     }
 
-                    // Показываем новую страницу
+                    // Show the new page
                     show_history_page(bot, chat_id, db_pool, page).await?;
                 }
                 Err(e) => {
@@ -236,11 +236,11 @@ pub async fn handle_history_callback(
             }
         }
         "repeat" => {
-            // Формат: history:repeat:entry_id:url_id
+            // Format: history:repeat:entry_id:url_id
             let entry_id_str = parts[2].split(':').next().unwrap_or("");
             let url_id = parts[2].split_once(':').map(|x| x.1).unwrap_or("");
 
-            // Сначала пробуем отправить по file_id, если он есть
+            // First try to resend by file_id if available
             let mut file_sent = false;
             if let Ok(entry_id) = entry_id_str.parse::<i64>() {
                 if let Ok(conn) = db::get_connection(&db_pool) {
@@ -280,7 +280,7 @@ pub async fn handle_history_callback(
                                         .await?;
                                     file_sent = true;
 
-                                    // Удаляем сообщение истории
+                                    // Delete the history message
                                     if let Err(e) = bot.delete_message(chat_id, message_id).await {
                                         log::warn!("Failed to delete history message: {:?}", e);
                                     }
@@ -301,13 +301,13 @@ pub async fn handle_history_callback(
                 return Ok(());
             }
 
-            // Получаем URL из кэша (fallback)
+            // Get URL from cache (fallback)
             match crate::storage::cache::get_url(&db_pool, url_id).await {
                 Some(url_str) => {
-                    // URL найден в кэше
+                    // URL found in cache
                     match Url::parse(&url_str) {
                         Ok(url) => {
-                            // Получаем план пользователя для rate limiting
+                            // Get user plan for rate limiting
                             let conn = db::get_connection(&db_pool).map_err(|e| {
                                 RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                             })?;
@@ -316,7 +316,7 @@ pub async fn handle_history_callback(
                                 _ => Plan::default(),
                             };
 
-                            // Проверяем rate limit
+                            // Check rate limit
                             if rate_limiter.is_rate_limited(chat_id, plan.as_str()).await {
                                 if let Some(remaining_time) = rate_limiter.get_remaining_time(chat_id).await {
                                     let remaining_seconds = remaining_time.as_secs();
@@ -335,7 +335,7 @@ pub async fn handle_history_callback(
 
                             bot.answer_callback_query(callback_id.clone()).await?;
 
-                            // Получаем формат из истории
+                            // Get format from history entry
                             let format = match entry_id_str.parse::<i64>() {
                                 Ok(id) => match db::get_download_history_entry(&conn, chat_id.0, id) {
                                     Ok(Some(entry)) => entry.format,
@@ -364,7 +364,7 @@ pub async fn handle_history_callback(
                                 None
                             };
 
-                            // Добавляем задачу в очередь
+                            // Add task to the download queue
                             let is_video = format == "mp4";
                             let task = crate::download::queue::DownloadTask::from_plan(
                                 url.as_str().to_string(),
@@ -378,7 +378,7 @@ pub async fn handle_history_callback(
                             );
                             download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
 
-                            // Удаляем сообщение истории
+                            // Delete the history message
                             if let Err(e) = bot.delete_message(chat_id, message_id).await {
                                 log::warn!("Failed to delete history message: {:?}", e);
                             }
@@ -400,7 +400,7 @@ pub async fn handle_history_callback(
             }
         }
         "delete" => {
-            // Формат: history:delete:entry_id
+            // Format: history:delete:entry_id
             let entry_id_str = parts[2];
 
             match entry_id_str.parse::<i64>() {
@@ -412,10 +412,10 @@ pub async fn handle_history_callback(
                         Ok(true) => {
                             bot.answer_callback_query(callback_id.clone()).await?;
 
-                            // Обновляем сообщение истории
+                            // Refresh the history message
                             show_history(bot, chat_id, db_pool).await?;
 
-                            // Удаляем старое сообщение
+                            // Delete the old message
                             if let Err(e) = bot.delete_message(chat_id, message_id).await {
                                 log::warn!("Failed to delete old history message: {:?}", e);
                             }
@@ -507,25 +507,25 @@ mod tests {
 
     #[test]
     fn test_format_date_valid() {
-        assert_eq!(format_date("2024-01-15 10:30:00"), "янв 15, 10:30");
-        assert_eq!(format_date("2024-06-01 00:00:00"), "июн 1, 00:00");
-        assert_eq!(format_date("2024-12-31 23:59:00"), "дек 31, 23:59");
+        assert_eq!(format_date("2024-01-15 10:30:00"), "Jan 15, 10:30");
+        assert_eq!(format_date("2024-06-01 00:00:00"), "Jun 1, 00:00");
+        assert_eq!(format_date("2024-12-31 23:59:00"), "Dec 31, 23:59");
     }
 
     #[test]
     fn test_format_date_all_months() {
-        assert!(format_date("2024-01-01 12:00:00").starts_with("янв"));
-        assert!(format_date("2024-02-01 12:00:00").starts_with("фев"));
-        assert!(format_date("2024-03-01 12:00:00").starts_with("мар"));
-        assert!(format_date("2024-04-01 12:00:00").starts_with("апр"));
-        assert!(format_date("2024-05-01 12:00:00").starts_with("май"));
-        assert!(format_date("2024-06-01 12:00:00").starts_with("июн"));
-        assert!(format_date("2024-07-01 12:00:00").starts_with("июл"));
-        assert!(format_date("2024-08-01 12:00:00").starts_with("авг"));
-        assert!(format_date("2024-09-01 12:00:00").starts_with("сен"));
-        assert!(format_date("2024-10-01 12:00:00").starts_with("окт"));
-        assert!(format_date("2024-11-01 12:00:00").starts_with("ноя"));
-        assert!(format_date("2024-12-01 12:00:00").starts_with("дек"));
+        assert!(format_date("2024-01-01 12:00:00").starts_with("Jan"));
+        assert!(format_date("2024-02-01 12:00:00").starts_with("Feb"));
+        assert!(format_date("2024-03-01 12:00:00").starts_with("Mar"));
+        assert!(format_date("2024-04-01 12:00:00").starts_with("Apr"));
+        assert!(format_date("2024-05-01 12:00:00").starts_with("May"));
+        assert!(format_date("2024-06-01 12:00:00").starts_with("Jun"));
+        assert!(format_date("2024-07-01 12:00:00").starts_with("Jul"));
+        assert!(format_date("2024-08-01 12:00:00").starts_with("Aug"));
+        assert!(format_date("2024-09-01 12:00:00").starts_with("Sep"));
+        assert!(format_date("2024-10-01 12:00:00").starts_with("Oct"));
+        assert!(format_date("2024-11-01 12:00:00").starts_with("Nov"));
+        assert!(format_date("2024-12-01 12:00:00").starts_with("Dec"));
     }
 
     #[test]
@@ -537,12 +537,12 @@ mod tests {
 
     #[test]
     fn test_format_date_midnight() {
-        assert_eq!(format_date("2024-01-01 00:00:00"), "янв 1, 00:00");
+        assert_eq!(format_date("2024-01-01 00:00:00"), "Jan 1, 00:00");
     }
 
     #[test]
     fn test_format_date_end_of_day() {
-        assert_eq!(format_date("2024-01-01 23:59:00"), "янв 1, 23:59");
+        assert_eq!(format_date("2024-01-01 23:59:00"), "Jan 1, 23:59");
     }
 
     #[test]

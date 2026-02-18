@@ -137,6 +137,7 @@ pub async fn download_phase(
     format: &PipelineFormat,
     registry: &SourceRegistry,
     progress_msg: &mut ProgressMessage,
+    message_id: Option<i32>,
 ) -> Result<DownloadPhaseResult, PipelineError> {
     let file_format_str = format.label().to_string();
 
@@ -174,21 +175,28 @@ pub async fn download_phase(
             DownloadStatus::Starting {
                 title: display_title.as_ref().to_string(),
                 file_format: Some(file_format_str.clone()),
+                artist: Some(artist.clone()),
             },
         )
         .await;
+
+    // Set ⚡ reaction when download begins
+    if let Some(msg_id) = message_id {
+        use teloxide::types::MessageId;
+        crate::telegram::try_set_reaction(bot, chat_id, MessageId(msg_id), crate::telegram::emoji::ZAP).await;
+    }
 
     // ── Step 4: Pre-checks ──
     // Disk space
     if let Err(e) = disk::check_disk_space_for_download() {
         log::error!("Pipeline: disk space check failed: {}", e);
-        send_error_with_sticker_and_message(bot, chat_id, Some("❌ Сервер перегружен. Попробуй позже.")).await;
+        send_error_with_sticker_and_message(bot, chat_id, Some("❌ Server overloaded. Try again later.")).await;
         let _ = progress_msg
             .update(
                 bot,
                 DownloadStatus::Error {
                     title: display_title.as_ref().to_string(),
-                    error: "Недостаточно места на сервере".to_string(),
+                    error: "Not enough disk space on server".to_string(),
                     file_format: Some(file_format_str.clone()),
                 },
             )
@@ -199,13 +207,13 @@ pub async fn download_phase(
     // Livestream check
     if source.is_livestream(url).await {
         log::warn!("Pipeline: rejected livestream URL: {}", url);
-        send_error_with_sticker_and_message(bot, chat_id, Some("❌ Прямые трансляции не поддерживаются")).await;
+        send_error_with_sticker_and_message(bot, chat_id, Some("❌ Live streams are not supported")).await;
         let _ = progress_msg
             .update(
                 bot,
                 DownloadStatus::Error {
                     title: display_title.as_ref().to_string(),
-                    error: "Прямые трансляции не поддерживаются".to_string(),
+                    error: "Live streams are not supported".to_string(),
                     file_format: Some(file_format_str.clone()),
                 },
             )
@@ -228,10 +236,10 @@ pub async fn download_phase(
                 );
                 let msg = match format {
                     PipelineFormat::Audio { .. } => {
-                        format!("❌ Файл слишком большой: ~{:.0} МБ (макс. {:.0} МБ)", size_mb, max_mb)
+                        format!("❌ File too large: ~{:.0} MB (max {:.0} MB)", size_mb, max_mb)
                     }
                     PipelineFormat::Video { .. } => {
-                        format!("❌ Видео слишком большое: ~{:.0} МБ (макс. {:.0} МБ)", size_mb, max_mb)
+                        format!("❌ Video too large: ~{:.0} MB (max {:.0} MB)", size_mb, max_mb)
                     }
                 };
                 send_error_with_sticker_and_message(bot, chat_id, Some(&msg)).await;
@@ -286,6 +294,8 @@ pub async fn download_phase(
                 current_size: None,
                 total_size: None,
                 file_format: Some(file_format_str.clone()),
+                update_count: 0,
+                artist: Some(artist.clone()),
             },
         )
         .await;
@@ -299,7 +309,9 @@ pub async fn download_phase(
     let bot_for_progress = bot.clone();
     let title_for_progress = Arc::clone(&display_title);
     let file_format_for_progress = file_format_str.clone();
+    let artist_for_progress = Some(artist.clone());
     let mut last_progress = 0u8;
+    let mut download_update_count = 0u32;
 
     let download_output = loop {
         tokio::select! {
@@ -311,6 +323,7 @@ pub async fn download_phase(
                 let diff = safe_progress.saturating_sub(last_progress);
                 if diff >= 5 {
                     last_progress = safe_progress;
+                    download_update_count += 1;
                     let _ = progress_msg.update(
                         &bot_for_progress,
                         DownloadStatus::Downloading {
@@ -321,6 +334,8 @@ pub async fn download_phase(
                             current_size: sp.downloaded_bytes,
                             total_size: sp.total_bytes,
                             file_format: Some(file_format_for_progress.clone()),
+                            update_count: download_update_count,
+                            artist: artist_for_progress.clone(),
                         },
                     ).await;
                 }
@@ -338,6 +353,8 @@ pub async fn download_phase(
                             current_size: None,
                             total_size: None,
                             file_format: Some(file_format_for_progress.clone()),
+                            update_count: download_update_count,
+                            artist: artist_for_progress.clone(),
                         },
                     ).await;
                 }
@@ -386,7 +403,7 @@ pub async fn execute(
     let mut progress_msg = ProgressMessage::new(chat_id, lang);
     let file_format_str = format.label().to_string();
 
-    let phase = download_phase(bot, chat_id, url, format, registry, &mut progress_msg).await?;
+    let phase = download_phase(bot, chat_id, url, format, registry, &mut progress_msg, message_id).await?;
     let DownloadPhaseResult {
         output: download_output,
         title,
@@ -412,10 +429,7 @@ pub async fn execute(
                 bot,
                 DownloadStatus::Error {
                     title: display_title.as_ref().to_string(),
-                    error: format!(
-                        "Файл слишком большой ({:.2} MB). Максимальный размер: {:.2} MB",
-                        size_mb, max_mb
-                    ),
+                    error: format!("File too large ({:.2} MB). Maximum size: {:.2} MB", size_mb, max_mb),
                     file_format: Some(file_format_str.clone()),
                 },
             )
@@ -481,6 +495,8 @@ pub async fn execute(
                 &mut progress_msg,
                 caption.as_ref(),
                 send_as_document,
+                message_id,
+                Some(artist.clone()),
             )
             .await
             .map_err(PipelineError::Operational)?,
@@ -493,6 +509,8 @@ pub async fn execute(
                     &display_title,
                     None, // thumbnail URL — video.rs handles this via download_phase()
                     send_as_document,
+                    message_id,
+                    Some(artist.clone()),
                 )
                 .await
                 .map_err(PipelineError::Operational)?
@@ -613,7 +631,8 @@ pub async fn execute(
     // ── Step 11: Mark original message as completed ──
     if let Some(msg_id) = message_id {
         use teloxide::types::MessageId;
-        crate::telegram::try_set_reaction(bot, chat_id, MessageId(msg_id), crate::telegram::emoji::THUMBS_UP).await;
+        let reaction = crate::telegram::success_reaction_for_format(Some(&file_format_str));
+        crate::telegram::try_set_reaction(bot, chat_id, MessageId(msg_id), reaction).await;
     }
 
     log::info!("Pipeline: {} sent successfully to chat {}", format.label(), chat_id);
@@ -627,6 +646,8 @@ pub async fn execute(
             chat_id: progress_msg.chat_id,
             message_id: progress_msg.message_id,
             lang: progress_msg.lang.clone(),
+            style: progress_msg.style,
+            source_badge: progress_msg.source_badge.clone(),
         };
         tokio::spawn(async move {
             let _ = msg_for_clear
@@ -737,35 +758,43 @@ pub async fn handle_pipeline_error(
     error: &PipelineError,
     format: &PipelineFormat,
     alert_manager: Option<&Arc<crate::core::alerts::AlertManager>>,
+    message_id: Option<i32>,
 ) {
+    // Set 😢 reaction on error
+    if let Some(msg_id) = message_id {
+        use teloxide::types::MessageId;
+        crate::telegram::try_set_reaction(bot, chat_id, MessageId(msg_id), crate::telegram::emoji::SAD).await;
+    }
+
     let error_str = error.to_string();
 
     // Determine custom error message
     let custom_message = if error_str.contains("Only images are available") {
         Some(
-            "Это видео недоступно для скачивания\n\n\
-            Возможные причины:\n\
-            - Видео удалено или приватное\n\
-            - Возрастные ограничения\n\
-            - Региональные ограничения\n\
-            - Стрим или премьера (еще не доступны)\n\n\
-            Попробуй другое видео!",
+            "This video is not available for download\n\n\
+            Possible reasons:\n\
+            - Video deleted or private\n\
+            - Age restrictions\n\
+            - Regional restrictions\n\
+            - Stream or premiere (not yet available)\n\n\
+            Try a different video!",
         )
     } else if error_str.contains("Signature extraction failed") {
         Some(
-            "У меня устарела версия загрузчика\n\n\
-            Стэн уже знает и скоро обновит!\n\
-            Попробуй позже или другое видео.",
+            "My downloader version is outdated\n\n\
+            Stan already knows and will update soon!\n\
+            Try again later or try a different video.",
         )
     } else if error_str.to_lowercase().contains("bot detection")
         || error_str.contains("confirm you're not a bot")
         || error_str.contains("заблокировал")
+    // Russian: "blocked"
     {
         Some(
-            "YouTube заблокировал бота\n\n\
-            Нужно настроить cookies.\n\
-            Стэн уже знает и разбирается!\n\n\
-            Попробуй позже.",
+            "YouTube has blocked the bot\n\n\
+            Cookies need to be configured.\n\
+            Stan already knows and is working on it!\n\n\
+            Try again later.",
         )
     } else {
         None

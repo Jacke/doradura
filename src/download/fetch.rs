@@ -4,24 +4,24 @@ use reqwest;
 use select::document::Document;
 use select::predicate::Name;
 
-/// Получает метаданные песни из URL.
+/// Fetches song metadata from a URL.
 ///
-/// Загружает HTML-страницу и извлекает заголовок и исполнителя из мета-тегов.
+/// Downloads the HTML page and extracts the title and artist from meta tags.
 ///
 /// # Arguments
 ///
-/// * `url` - URL для получения метаданных
+/// * `url` - URL to fetch metadata from
 ///
 /// # Returns
 ///
-/// Возвращает кортеж `(title, artist)` или ошибку `AppError`.
+/// Returns a tuple `(title, artist)` or an `AppError`.
 ///
 /// # Errors
 ///
-/// Возвращает ошибку если:
-/// - Не удалось выполнить HTTP-запрос
-/// - HTTP-статус ответа не успешный
-/// - Не удалось прочитать тело ответа
+/// Returns an error if:
+/// - The HTTP request fails
+/// - The HTTP response status is not successful
+/// - The response body cannot be read
 ///
 /// # Example
 ///

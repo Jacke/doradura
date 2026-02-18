@@ -1,5 +1,5 @@
 -- Video timestamps extracted from URLs, chapters, and descriptions
--- Used to suggest clip segments when user creates video notes (кружки)
+-- Used to suggest clip segments when user creates video notes (circles)
 
 CREATE TABLE IF NOT EXISTS video_timestamps (
     id INTEGER PRIMARY KEY,

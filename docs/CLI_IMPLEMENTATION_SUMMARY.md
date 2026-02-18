@@ -1,14 +1,14 @@
 # CLI Implementation Summary
 
-## Что Было Сделано
+## What Was Done
 
-Реализована полноценная система CLI (Command Line Interface) для бота с поддержкой нескольких режимов работы и утилитных команд.
+A full CLI (Command Line Interface) system was implemented for the bot with support for multiple run modes and utility commands.
 
-## Новые Файлы
+## New Files
 
 ### 1. `src/cli.rs` - CLI Structure
 
-Определяет структуру CLI с использованием библиотеки `clap`:
+Defines the CLI structure using the `clap` library:
 
 ```rust
 pub enum Commands {
@@ -19,48 +19,48 @@ pub enum Commands {
 }
 ```
 
-**Возможности:**
-- Автоматическая генерация справки (`--help`)
-- Типобезопасные аргументы
-- Подкоманды с опциями
-- Версия (`--version`)
+**Features:**
+- Automatic help generation (`--help`)
+- Type-safe arguments
+- Subcommands with options
+- Version flag (`--version`)
 
 ### 2. `src/metadata_refresh.rs` - Metadata Refresh Utility
 
-Утилита для обновления отсутствующих метаданных в таблице `download_history`.
+Utility for updating missing metadata in the `download_history` table.
 
-**Функционал:**
-- Находит записи с `file_id` но без метаданных
-- Скачивает файл из Telegram
-- Извлекает метаданные с помощью `ffprobe`:
-  - `file_size` - размер файла
-  - `duration` - длительность
-  - `video_quality` - разрешение видео (для mp4)
-  - `audio_bitrate` - битрейт аудио (для mp3)
-- Обновляет базу данных
-- Поддерживает `--dry-run` для безопасного тестирования
-- Поддерживает `--limit` для ограничения количества обработанных записей
-- Поддерживает `--verbose` для подробного вывода
+**Functionality:**
+- Finds records with `file_id` but no metadata
+- Downloads the file from Telegram
+- Extracts metadata using `ffprobe`:
+  - `file_size` - file size
+  - `duration` - duration
+  - `video_quality` - video resolution (for mp4)
+  - `audio_bitrate` - audio bitrate (for mp3)
+- Updates the database
+- Supports `--dry-run` for safe testing
+- Supports `--limit` to cap the number of processed records
+- Supports `--verbose` for detailed output
 
-**Основные функции:**
-- `refresh_missing_metadata()` - главная функция
-- `download_telegram_file()` - скачивание файла по file_id
-- `extract_metadata()` - извлечение метаданных с ffprobe
-- `update_metadata()` - обновление записи в БД
+**Main functions:**
+- `refresh_missing_metadata()` - main entry point
+- `download_telegram_file()` - downloads a file by file_id
+- `extract_metadata()` - extracts metadata via ffprobe
+- `update_metadata()` - updates the database record
 
 ### 3. `CLI_USAGE.md` - Documentation
 
-Полная документация по использованию CLI:
-- Описание всех команд
-- Примеры использования
+Complete documentation on CLI usage:
+- Description of all commands
+- Usage examples
 - Troubleshooting
-- Миграция со скриптов
+- Migration from shell scripts
 
-## Изменённые Файлы
+## Modified Files
 
 ### 1. `Cargo.toml`
 
-Добавлена зависимость `clap`:
+Added `clap` dependency:
 
 ```toml
 clap = { version = "4.5", features = ["derive", "cargo"] }
@@ -68,7 +68,7 @@ clap = { version = "4.5", features = ["derive", "cargo"] }
 
 ### 2. `src/lib.rs`
 
-Добавлены новые модули:
+Added new modules:
 
 ```rust
 pub mod cli;
@@ -77,13 +77,13 @@ pub mod metadata_refresh;
 
 ### 3. `src/main.rs`
 
-Полностью рефакторен для поддержки CLI:
+Fully refactored to support CLI:
 
-**Изменения:**
-- Добавлен парсинг аргументов командной строки
-- Создана функция `run_bot(use_webhook: bool)` - весь код запуска бота вынесен сюда
-- Создана функция `run_metadata_refresh()` - запуск утилиты обновления метаданных
-- `main()` теперь диспетчер команд:
+**Changes:**
+- Added command-line argument parsing
+- Created `run_bot(use_webhook: bool)` function - all bot startup code moved here
+- Created `run_metadata_refresh()` function - launches the metadata refresh utility
+- `main()` is now a command dispatcher:
   ```rust
   match cli.command {
       Some(Commands::Run { webhook }) => run_bot(webhook).await,
@@ -94,26 +94,26 @@ pub mod metadata_refresh;
   }
   ```
 
-**Поддержка webhook:**
-- Добавлен параметр `use_webhook` в `run_bot()`
-- Webhook включается только если параметр `true` И установлена `WEBHOOK_URL`
+**Webhook support:**
+- Added `use_webhook` parameter to `run_bot()`
+- Webhook is enabled only if the parameter is `true` AND `WEBHOOK_URL` is set
 
 ### 4. `README.md`
 
-Добавлена ссылка на CLI документацию:
+Added link to CLI documentation:
 
 ```markdown
-> **💡 Note:** The bot now supports CLI commands. See [CLI_USAGE.md](CLI_USAGE.md)
+> **Note:** The bot now supports CLI commands. See [CLI_USAGE.md](CLI_USAGE.md)
 > for all available commands including `run-staging`, `run-with-cookies`, and `refresh-metadata`.
 ```
 
-## Доступные Команды
+## Available Commands
 
 ### 1. `doradura run [--webhook]`
 
-Запускает бота в обычном режиме (использует `.env`).
+Runs the bot in normal mode (uses `.env`).
 
-**Примеры:**
+**Examples:**
 ```bash
 ./doradura run
 ./doradura run --webhook
@@ -121,9 +121,9 @@ pub mod metadata_refresh;
 
 ### 2. `doradura run-staging [--webhook]`
 
-Запускает бота в staging режиме (использует `.env.staging`).
+Runs the bot in staging mode (uses `.env.staging`).
 
-**Примеры:**
+**Examples:**
 ```bash
 ./doradura run-staging
 ./doradura run-staging --webhook
@@ -131,9 +131,9 @@ pub mod metadata_refresh;
 
 ### 3. `doradura run-with-cookies [--cookies PATH] [--webhook]`
 
-Запускает бота с указанием пути к cookies файлу.
+Runs the bot with a specified cookies file path.
 
-**Примеры:**
+**Examples:**
 ```bash
 ./doradura run-with-cookies
 ./doradura run-with-cookies --cookies /path/to/cookies.txt
@@ -142,62 +142,62 @@ pub mod metadata_refresh;
 
 ### 4. `doradura refresh-metadata [OPTIONS]`
 
-Обновляет отсутствующие метаданные в download_history.
+Updates missing metadata in download_history.
 
-**Опции:**
-- `-l, --limit <N>` - Обработать только первые N записей
-- `--dry-run` - Показать что будет обновлено, но не обновлять
-- `-v, --verbose` - Подробный вывод
+**Options:**
+- `-l, --limit <N>` - Process only the first N records
+- `--dry-run` - Show what would be updated without applying changes
+- `-v, --verbose` - Verbose output
 
-**Примеры:**
+**Examples:**
 ```bash
 # Dry run
 ./doradura refresh-metadata --dry-run --verbose
 
-# Обновить первые 10
+# Update first 10
 ./doradura refresh-metadata --limit 10
 
-# Обновить все с подробным выводом
+# Update all with verbose output
 ./doradura refresh-metadata --verbose
 
-# Обновить все (тихо)
+# Update all (silent)
 ./doradura refresh-metadata
 ```
 
-## Преимущества
+## Advantages
 
-### 1. Единая Точка Входа
+### 1. Single Entry Point
 
-**Было:**
+**Before:**
 - `run_staging.sh`
 - `run_with_cookies.sh`
-- Разные скрипты для разных задач
+- Different scripts for different tasks
 
-**Стало:**
+**After:**
 ```bash
 ./doradura <command>
 ```
 
-### 2. Встроенная Документация
+### 2. Built-in Documentation
 
 ```bash
 ./doradura --help
 ./doradura refresh-metadata --help
 ```
 
-### 3. Типобезопасность
+### 3. Type Safety
 
-Clap валидирует аргументы на этапе парсинга:
-- `--limit` должен быть числом
-- `--cookies` принимает строку
-- Флаги (`--webhook`, `--dry-run`, `--verbose`) - булевы
+Clap validates arguments at parse time:
+- `--limit` must be a number
+- `--cookies` accepts a string
+- Flags (`--webhook`, `--dry-run`, `--verbose`) are booleans
 
-### 4. Расширяемость
+### 4. Extensibility
 
-Легко добавить новые команды:
+Easy to add new commands:
 
 ```rust
-// В src/cli.rs
+// In src/cli.rs
 pub enum Commands {
     // ...
     Backup { output: Option<String> },
@@ -205,7 +205,7 @@ pub enum Commands {
     Clean,
 }
 
-// В src/main.rs
+// In src/main.rs
 match cli.command {
     // ...
     Some(Commands::Backup { output }) => run_backup(output).await,
@@ -219,23 +219,23 @@ match cli.command {
 ### Development
 
 ```bash
-# Запуск в dev режиме
+# Run in dev mode
 cargo run -- run
 
-# Staging с другой базой данных
+# Staging with a different database
 cargo run -- run-staging
 
-# Тестирование метаданных
+# Test metadata refresh
 cargo run -- refresh-metadata --dry-run --limit 5
 ```
 
 ### Production
 
 ```bash
-# Сборка
+# Build
 cargo build --release
 
-# Запуск
+# Run
 ./target/release/doradura run
 
 # Systemd service
@@ -246,16 +246,16 @@ ExecStart=/opt/doradura/doradura run
 ### Maintenance
 
 ```bash
-# Обновление метаданных после миграции
+# Refresh metadata after migration
 ./doradura refresh-metadata
 
-# Запуск с новыми cookies
+# Run with new cookies
 ./doradura run-with-cookies --cookies fresh_cookies.txt
 ```
 
-## Миграция
+## Migration
 
-### До (Скрипты)
+### Before (Shell Scripts)
 
 **run_staging.sh:**
 ```bash
@@ -271,63 +271,63 @@ export YOUTUBE_COOKIES_PATH=/path/to/cookies.txt
 cargo run
 ```
 
-### После (CLI)
+### After (CLI)
 
 ```bash
-# Просто команды
+# Just commands
 ./doradura run-staging
 ./doradura run-with-cookies --cookies /path/to/cookies.txt
 ```
 
-## Тестирование
+## Testing
 
-### Сборка
+### Build
 
 ```bash
 cargo build
-# ✅ Successful compilation
+# Successful compilation
 ```
 
-### Запуск помощи
+### Run help
 
 ```bash
 ./target/debug/doradura --help
-# ✅ Shows all commands
+# Shows all commands
 
 ./target/debug/doradura refresh-metadata --help
-# ✅ Shows refresh-metadata options
+# Shows refresh-metadata options
 ```
 
-### Тестирование команд
+### Testing commands
 
 ```bash
-# Run (по умолчанию)
+# Run (default)
 ./doradura
-# ✅ Starts bot in default mode
+# Starts bot in default mode
 
 # Refresh metadata (dry run)
 ./doradura refresh-metadata --dry-run
-# ✅ Would show entries to refresh without making changes
+# Shows entries to refresh without making changes
 ```
 
-## Зависимости
+## Dependencies
 
-### Новые
+### New
 
 - `clap = "4.5"` - CLI argument parsing
 
-### Используемые в metadata_refresh
+### Used in metadata_refresh
 
-- `reqwest` - HTTP requests для скачивания файлов из Telegram (уже есть)
-- `serde_json` - Парсинг JSON ответов от Telegram API (уже есть)
-- `uuid` - Генерация уникальных имён временных файлов (уже есть)
-- `ffprobe` - Системная утилита для извлечения метаданных (требует установки)
+- `reqwest` - HTTP requests for downloading files from Telegram (already present)
+- `serde_json` - JSON response parsing from Telegram API (already present)
+- `uuid` - Unique temporary filename generation (already present)
+- `ffprobe` - System utility for metadata extraction (requires installation)
 
-## Требования
+## Requirements
 
 ### Runtime
 
-- `ffprobe` должен быть установлен для `refresh-metadata`:
+- `ffprobe` must be installed for `refresh-metadata`:
   ```bash
   # macOS
   brew install ffmpeg
@@ -338,34 +338,34 @@ cargo build
 
 ### Environment Variables
 
-Все команды требуют `.env` файл с:
-- `BOT_TOKEN` - для всех команд
-- `WEBHOOK_URL` - только для `--webhook` режима
-- Другие переменные из `config.rs`
+All commands require a `.env` file with:
+- `BOT_TOKEN` - for all commands
+- `WEBHOOK_URL` - only for `--webhook` mode
+- Other variables from `config.rs`
 
 ## Roadmap
 
-Планируемые команды:
+Planned commands:
 
-1. `doradura backup [--output PATH]` - Создание резервной копии БД
-2. `doradura stats` - Статистика использования
-3. `doradura migrate` - Запуск миграций
-4. `doradura clean` - Очистка временных файлов
-5. `doradura export [--format csv|json]` - Экспорт данных
-6. `doradura validate` - Проверка конфигурации
+1. `doradura backup [--output PATH]` - Create a database backup
+2. `doradura stats` - Usage statistics
+3. `doradura migrate` - Run migrations
+4. `doradura clean` - Clean up temporary files
+5. `doradura export [--format csv|json]` - Export data
+6. `doradura validate` - Validate configuration
 
 ## Breaking Changes
 
-### Для Railway/Docker
+### For Railway/Docker
 
-Нужно обновить команду запуска:
+The startup command needs to be updated:
 
 **Docker:**
 ```dockerfile
-# Было
+# Before
 CMD ["./doradura"]
 
-# Стало
+# After
 CMD ["./doradura", "run"]
 ```
 
@@ -374,79 +374,77 @@ CMD ["./doradura", "run"]
 Start Command: ./doradura run
 ```
 
-### Для Systemd
+### For Systemd
 
 ```ini
 [Service]
-# Было
+# Before
 ExecStart=/opt/doradura/doradura
 
-# Стало
+# After
 ExecStart=/opt/doradura/doradura run
 ```
 
-**Обратная совместимость:**
-Запуск без аргументов (`./doradura`) всё ещё работает - запускает бота в режиме `run` по умолчанию.
+**Backward compatibility:**
+Running without arguments (`./doradura`) still works - starts the bot in default `run` mode.
 
-## Файлы
+## Files
 
-### Созданы
+### Created
 
-1. `src/cli.rs` - CLI structure (59 строк)
-2. `src/metadata_refresh.rs` - Metadata refresh utility (282 строки)
-3. `CLI_USAGE.md` - Документация (400+ строк)
-4. `CLI_IMPLEMENTATION_SUMMARY.md` - Этот файл
+1. `src/cli.rs` - CLI structure (59 lines)
+2. `src/metadata_refresh.rs` - Metadata refresh utility (282 lines)
+3. `CLI_USAGE.md` - Documentation (400+ lines)
+4. `CLI_IMPLEMENTATION_SUMMARY.md` - This file
 
-### Изменены
+### Modified
 
-1. `Cargo.toml` - Добавлен clap
-2. `src/lib.rs` - Экспорт новых модулей
-3. `src/main.rs` - Рефакторинг для CLI (~100 строк изменений)
-4. `README.md` - Ссылка на CLI документацию
+1. `Cargo.toml` - Added clap
+2. `src/lib.rs` - Export new modules
+3. `src/main.rs` - CLI refactoring (~100 lines changed)
+4. `README.md` - Link to CLI documentation
 
-## Итого
+## Summary
 
-✅ **Реализовано:**
-- CLI система с 4 командами
-- Утилита обновления метаданных
-- Поддержка staging окружения
-- Поддержка cookies через аргументы
-- Webhook toggle через флаг
-- Полная документация
+Implemented:
+- CLI system with 4 commands
+- Metadata refresh utility
+- Staging environment support
+- Cookies support via arguments
+- Webhook toggle via flag
+- Complete documentation
 
-✅ **Качество:**
-- Типобезопасные аргументы
-- Встроенная справка
-- Dry-run mode для безопасности
-- Verbose mode для отладки
-- Обратная совместимость
+Quality:
+- Type-safe arguments
+- Built-in help text
+- Dry-run mode for safety
+- Verbose mode for debugging
+- Backward compatible
 
-✅ **Готово к использованию:**
-- Компилируется без ошибок
-- Протестировано `--help`
-- Документация готова
-- Примеры использования
+Ready to use:
+- Compiles without errors
+- Tested `--help`
+- Documentation complete
+- Usage examples provided
 
-## Как Использовать
+## How to Use
 
-1. **Сборка:**
+1. **Build:**
    ```bash
    cargo build --release
    ```
 
-2. **Запуск бота:**
+2. **Run the bot:**
    ```bash
    ./target/release/doradura run
    ```
 
-3. **Обновление метаданных:**
+3. **Refresh metadata:**
    ```bash
    ./target/release/doradura refresh-metadata --dry-run --verbose
    ```
 
-4. **Справка:**
+4. **Help:**
    ```bash
    ./target/release/doradura --help
    ```
-
-Готово! 🎉

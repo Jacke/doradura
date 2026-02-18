@@ -12,7 +12,7 @@ const MAX_CACHE_SIZE: usize = 10_000;
 /// Number of entries to evict when cache is full (10% of max)
 const EVICTION_BATCH_SIZE: usize = 1_000;
 
-/// Структура для хранения метаданных в кэше
+/// Structure for storing metadata in the cache
 #[derive(Debug, Clone)]
 struct CachedMetadata {
     title: String,
@@ -26,7 +26,7 @@ struct CachedMetadata {
     cached_at: Instant,
 }
 
-/// Кэш метаданных с TTL
+/// Metadata cache with TTL
 /// Uses RwLock for concurrent reads (most operations are reads)
 /// Uses AtomicU64 for hit/miss counters (lock-free)
 pub struct MetadataCache {
@@ -37,7 +37,7 @@ pub struct MetadataCache {
 }
 
 impl MetadataCache {
-    /// Создает новый кэш с указанным TTL
+    /// Creates a new cache with the specified TTL
     pub fn new(ttl: Duration) -> Self {
         Self {
             cache: Arc::new(RwLock::new(HashMap::new())),
@@ -47,7 +47,7 @@ impl MetadataCache {
         }
     }
 
-    /// Получает метаданные из кэша или возвращает None если их нет или они устарели
+    /// Gets metadata from the cache or returns None if absent or expired
     /// Uses read lock for better concurrency - multiple readers allowed
     pub async fn get(&self, url: &Url) -> Option<(String, String)> {
         let url_str = url.as_str();
@@ -125,15 +125,15 @@ impl MetadataCache {
         );
     }
 
-    /// Сохраняет метаданные в кэш
+    /// Stores metadata in the cache
     pub async fn set(&self, url: &Url, title: String, artist: String) {
-        // Не кэшируем "Unknown Track", пустые значения или "NA" в artist
+        // Do not cache "Unknown Track", empty values or "NA" artist
         if title.trim().is_empty() || title.trim() == "Unknown Track" {
             log::warn!("Not caching invalid metadata: title='{}'", title);
             return;
         }
 
-        // Если artist "NA" или пустой - не кэшируем, чтобы не сохранять плохие данные
+        // If artist is "NA" or empty - do not cache to avoid saving bad data
         if artist.trim() == "NA" || artist.trim().is_empty() {
             log::debug!("Not caching metadata with NA/empty artist for URL: {}", url);
             return;
@@ -158,7 +158,7 @@ impl MetadataCache {
         );
     }
 
-    /// Сохраняет расширенные метаданные в кэш
+    /// Stores extended metadata in the cache
     pub async fn set_extended(
         &self,
         url: &Url,
@@ -168,7 +168,7 @@ impl MetadataCache {
         duration: Option<u32>,
         filesize: Option<u64>,
     ) {
-        // Не кэшируем "Unknown Track" или пустые значения
+        // Do not cache "Unknown Track" or empty values
         if title.trim().is_empty() || title.trim() == "Unknown Track" {
             log::warn!("Not caching invalid extended metadata: title='{}'", title);
             return;
@@ -193,7 +193,7 @@ impl MetadataCache {
         );
     }
 
-    /// Очищает устаревшие записи из кэша
+    /// Clears expired entries from the cache
     pub async fn cleanup(&self) -> usize {
         let mut cache = self.cache.write().await;
         let before = cache.len();
@@ -203,7 +203,7 @@ impl MetadataCache {
         removed
     }
 
-    /// Получает статистику кэша (uses read lock for cache, atomic for counters)
+    /// Gets cache statistics (uses read lock for cache, atomic for counters)
     pub async fn stats(&self) -> CacheStats {
         let cache = self.cache.read().await;
         let hits = self.hit_count.load(Ordering::Relaxed);
@@ -223,7 +223,7 @@ impl MetadataCache {
         }
     }
 
-    /// Очищает весь кэш
+    /// Clears the entire cache
     pub async fn clear(&self) {
         let mut cache = self.cache.write().await;
         cache.clear();
@@ -233,7 +233,7 @@ impl MetadataCache {
     }
 }
 
-/// Статистика кэша
+/// Cache statistics
 #[derive(Debug, Clone)]
 pub struct CacheStats {
     pub size: usize,
@@ -242,22 +242,22 @@ pub struct CacheStats {
     pub hit_rate: f64,
 }
 
-/// Глобальный экземпляр кэша (singleton)
+/// Global cache instance (singleton)
 static METADATA_CACHE: once_cell::sync::Lazy<MetadataCache> = once_cell::sync::Lazy::new(|| {
-    MetadataCache::new(Duration::from_secs(24 * 60 * 60)) // 24 часа
+    MetadataCache::new(Duration::from_secs(24 * 60 * 60)) // 24 hours
 });
 
-/// Получает метаданные из кэша или None
+/// Gets metadata from the cache or None
 pub async fn get_cached_metadata(url: &Url) -> Option<(String, String)> {
     METADATA_CACHE.get(url).await
 }
 
-/// Сохраняет метаданные в кэш
+/// Saves metadata to the cache
 pub async fn cache_metadata(url: &Url, title: String, artist: String) {
     METADATA_CACHE.set(url, title, artist).await;
 }
 
-/// Сохраняет расширенные метаданные в кэш
+/// Saves extended metadata to the cache
 pub async fn cache_extended_metadata(
     url: &Url,
     title: String,
@@ -271,19 +271,19 @@ pub async fn cache_extended_metadata(
         .await;
 }
 
-/// Получает статистику кэша
+/// Gets cache statistics
 pub async fn get_cache_stats() -> CacheStats {
     METADATA_CACHE.stats().await
 }
 
-/// Очищает устаревшие записи из кэша
+/// Clears expired entries from the cache
 pub async fn cleanup_cache() -> usize {
     METADATA_CACHE.cleanup().await
 }
 
 use crate::storage::db::{get_connection, DbPool};
 
-/// Генерирует короткий ID из URL (первые 12 символов хеша)
+/// Generates a short ID from a URL (first 12 characters of hash)
 fn generate_url_id(url: &str) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -294,19 +294,19 @@ fn generate_url_id(url: &str) -> String {
     format!("{:x}", hash)[..12].to_string()
 }
 
-/// Сохраняет URL в БД и возвращает короткий ID для использования в callback_data
+/// Stores a URL in the DB and returns a short ID for use in callback_data
 ///
-/// URL сохраняется в таблице url_cache с TTL 7 дней.
-/// Это позволяет кнопкам работать даже после рестарта бота.
+/// The URL is stored in the url_cache table with a 7-day TTL.
+/// This allows buttons to work even after a bot restart.
 pub async fn store_url(db_pool: &DbPool, url: &str) -> String {
     let id = generate_url_id(url);
-    let ttl_seconds = 7 * 24 * 60 * 60; // 7 дней - достаточно долго для работы кнопок после рестарта
+    let ttl_seconds = 7 * 24 * 60 * 60; // 7 days - long enough for buttons to work after restart
 
-    // Вычисляем expires_at
+    // Calculate expires_at
     let expires_at = chrono::Utc::now() + chrono::Duration::seconds(ttl_seconds);
     let expires_at_str = expires_at.format("%Y-%m-%d %H:%M:%S").to_string();
 
-    // Сохраняем в БД (INSERT OR REPLACE для обновления существующих записей)
+    // Save to DB (INSERT OR REPLACE to update existing records)
     match get_connection(db_pool) {
         Ok(conn) => {
             if let Err(e) = conn.execute(
@@ -326,9 +326,9 @@ pub async fn store_url(db_pool: &DbPool, url: &str) -> String {
     id
 }
 
-/// Получает URL по короткому ID из БД
+/// Gets a URL by its short ID from the DB
 ///
-/// Возвращает None если ID не найден или запись устарела.
+/// Returns None if the ID is not found or the record has expired.
 pub async fn get_url(db_pool: &DbPool, id: &str) -> Option<String> {
     match get_connection(db_pool) {
         Ok(conn) => {
@@ -360,7 +360,7 @@ pub async fn get_url(db_pool: &DbPool, id: &str) -> Option<String> {
     }
 }
 
-/// Очищает устаревшие записи из URL кеша в БД
+/// Clears expired entries from the URL cache in the DB
 pub async fn cleanup_url_cache(db_pool: &DbPool) -> usize {
     match get_connection(db_pool) {
         Ok(conn) => {

@@ -1027,7 +1027,7 @@ async fn test_show_services_menu_renders_extension_cards() {
         text.contains("Extensions") || text.contains("Расширения") || text.contains("🧩"),
         "Should contain extensions header, got: {}",
         &text[..text.len().min(200)]
-    );
+    ); // "Расширения" is Russian for "Extensions"
 
     // Verify keyboard has extension buttons
     let keyboard = &body["reply_markup"]["inline_keyboard"];
@@ -1123,7 +1123,7 @@ async fn test_show_services_menu_russian_locale() {
     let body: serde_json::Value = serde_json::from_slice(&edit_msg.body).unwrap();
     let text = body["text"].as_str().or_else(|| body["caption"].as_str()).unwrap_or("");
 
-    // Russian locale should have Russian text
+    // Russian locale should have Russian text ("Расширения" = "Extensions" in Russian)
     assert!(
         text.contains("Расширения") || text.contains("🧩"),
         "Russian locale should contain Russian header"
@@ -1490,6 +1490,7 @@ async fn test_callback_ext_back() {
     let text = body["text"].as_str().or_else(|| body["caption"].as_str()).unwrap_or("");
 
     // Should show extensions list (not detail)
+    // "Расширения" is Russian for "Extensions"
     assert!(
         text.contains("🧩") || text.contains("Extensions") || text.contains("Расширения"),
         "ext:back should return to extensions list"
@@ -1677,6 +1678,7 @@ async fn test_videos_convert_audio_callback_routing() {
     // Verify at least one message contains audio extraction text
     let has_audio_status = send_msgs.iter().any(|r| {
         let body = String::from_utf8_lossy(&r.body);
+        // "аудио" = "audio", "Извлекаю" = "Extracting" in Russian
         body.contains("аудио") || body.contains("audio") || body.contains("Извлекаю")
     });
     assert!(has_audio_status, "Should send audio extraction status message");
@@ -1764,7 +1766,7 @@ async fn test_videos_convert_compress_callback_routing() {
 
     let has_compress_status = send_msgs.iter().any(|r| {
         let body = String::from_utf8_lossy(&r.body);
-        body.contains("Сжимаю") || body.contains("compress")
+        body.contains("Compressing") || body.contains("compress")
     });
     assert!(has_compress_status, "Should send compression status message");
 
@@ -2171,7 +2173,7 @@ async fn test_ext_detail_all_locales() {
 
     let locales_and_expected: &[(&str, &str)] = &[
         ("en", "Media Downloader"),
-        ("ru", "Медиа загрузчик"),
+        ("ru", "Медиа загрузчик"), // Russian: "Media Downloader"
         ("fr", "médias"),
         ("de", "Medien"),
     ];
@@ -2613,7 +2615,7 @@ async fn test_videos_submenu_deleted_upload() {
     let body: serde_json::Value = serde_json::from_slice(&edit_msgs.last().unwrap().body).unwrap();
     let text = body["text"].as_str().unwrap_or("");
     assert!(
-        text.contains("не найден"),
+        text.contains("не найден") || text.contains("not found"), // "не найден" = "not found" in Russian
         "Should show file-not-found error, got: {}",
         text
     );

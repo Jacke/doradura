@@ -1,141 +1,141 @@
-# 🔧 Решение: Конфликт Порта 9090
+# Fix: Port 9090 Conflict
 
-## Проблема
+## Problem
 
 ```
 http://0.0.0.0:9090/metrics
 Forbidden
 ```
 
-**Причина:** Порт 9090 уже занят другим приложением (например, Electron app).
+**Cause:** Port 9090 is already in use by another application (e.g., an Electron app).
 
-Лог бота показывает:
+Bot log shows:
 ```
 [ERROR] Metrics server error: Address already in use (os error 48)
 ```
 
-## ✅ Решение (Применено)
+## Solution (Applied)
 
-### 1. Изменен порт metrics сервера на **9094**
+### 1. Changed metrics server port to **9094**
 
-Обновлен файл `.env`:
+Updated `.env`:
 ```bash
 METRICS_ENABLED=true
-METRICS_PORT=9094  # Вместо 9090
+METRICS_PORT=9094  # Instead of 9090
 ```
 
-### 2. Обновлена конфигурация Prometheus
+### 2. Updated Prometheus configuration
 
-Файл `prometheus.yml`:
+File `prometheus.yml`:
 ```yaml
 - job_name: 'doradura-bot'
   static_configs:
-    - targets: ['host.docker.internal:9094']  # Вместо 9090
+    - targets: ['host.docker.internal:9094']  # Instead of 9090
 ```
 
-### 3. Обновлена документация
+### 3. Updated documentation
 
-- `QUICKSTART_MONITORING.md` - новый URL
-- `.env.example` - новый default порт
+- `QUICKSTART_MONITORING.md` - new URL
+- `.env.example` - new default port
 
-## 🚀 Как Применить
+## How to Apply
 
-### Шаг 1: Перезапустить бота
+### Step 1: Restart the bot
 
 ```bash
-# Остановите текущий процесс (Ctrl+C)
+# Stop the current process (Ctrl+C)
 cargo run --release
 ```
 
-Проверьте логи - должно быть:
+Check logs - should show:
 ```
 [INFO] Starting metrics server on port 9094
 [INFO] Metrics available at http://0.0.0.0:9094/metrics
 ```
 
-### Шаг 2: Проверить metrics endpoint
+### Step 2: Check the metrics endpoint
 
 ```bash
 curl http://localhost:9094/metrics
 curl http://localhost:9094/health
 ```
 
-Должны увидеть метрики в Prometheus формате.
+You should see metrics in Prometheus format.
 
-### Шаг 3: Запустить мониторинг
+### Step 3: Start monitoring
 
 ```bash
 ./scripts/start-monitoring.sh
 ```
 
-Prometheus автоматически подключится к боту на порту 9094.
+Prometheus will automatically connect to the bot on port 9094.
 
-## 📊 Новые URL
+## New URLs
 
-| Сервис | Старый URL | Новый URL |
-|--------|-----------|-----------|
+| Service | Old URL | New URL |
+|---------|---------|---------|
 | Bot Metrics | ~~http://localhost:9090/metrics~~ | **http://localhost:9094/metrics** |
 | Prometheus | http://localhost:9091 | http://localhost:9091 |
 | Grafana | http://localhost:3000 | http://localhost:3000 |
 
-## 🔍 Проверка
+## Verification
 
-После перезапуска бота и мониторинга:
+After restarting the bot and monitoring:
 
 ```bash
-# Проверить health
+# Check health
 ./scripts/check-metrics.sh
 
-# Проверить что порт 9094 слушается
+# Check that port 9094 is being listened on
 lsof -i :9094
 
-# Проверить targets в Prometheus
+# Check targets in Prometheus
 curl http://localhost:9091/api/v1/targets | jq '.data.activeTargets[] | select(.labels.job=="doradura-bot")'
 ```
 
-Должно показать `"health": "up"`.
+Should show `"health": "up"`.
 
-## 💡 Альтернативные Решения
+## Alternative Solutions
 
-### Вариант 1: Освободить порт 9090
+### Option 1: Free up port 9090
 
-Найти процесс на порту 9090:
+Find the process on port 9090:
 ```bash
 lsof -i :9090
 ```
 
-Остановить его (если не нужен):
+Stop it (if not needed):
 ```bash
 kill -9 <PID>
 ```
 
-### Вариант 2: Использовать любой другой свободный порт
+### Option 2: Use any other available port
 
 ```bash
-# Проверить свободные порты
+# Check available ports
 netstat -an | grep LISTEN | grep 909
 
-# Выбрать свободный (например, 9095)
+# Pick an available one (e.g., 9095)
 METRICS_PORT=9095
 ```
 
-Не забудьте обновить `prometheus.yml`.
+Do not forget to update `prometheus.yml`.
 
-## ✅ Checklist
+## Checklist
 
-После применения решения:
+After applying the fix:
 
-- [x] `.env` обновлен с `METRICS_PORT=9094`
-- [x] `prometheus.yml` обновлен на порт 9094
-- [x] `.env.example` обновлен для документации
-- [x] `QUICKSTART_MONITORING.md` обновлен
-- [ ] Бот перезапущен
-- [ ] Metrics endpoint доступен на :9094
-- [ ] Мониторинг запущен
-- [ ] Prometheus собирает метрики
+- [x] `.env` updated with `METRICS_PORT=9094`
+- [x] `prometheus.yml` updated to port 9094
+- [x] `.env.example` updated for documentation
+- [x] `QUICKSTART_MONITORING.md` updated
+- [ ] Bot restarted
+- [ ] Metrics endpoint accessible at :9094
+- [ ] Monitoring started
+- [ ] Prometheus collecting metrics
 
-## 🎯 Итог
+## Summary
 
-**Порт изменен: 9090 → 9094**
+**Port changed: 9090 -> 9094**
 
-Всё настроено и готово к работе после перезапуска бота! 🚀
+Everything is configured and ready to use after restarting the bot.

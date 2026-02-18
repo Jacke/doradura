@@ -13,10 +13,10 @@ use super::keyboard::{
     create_carousel_keyboard, create_fallback_keyboard, create_video_format_keyboard, keyboard_stats,
 };
 
-/// Отправляет превью с метаданными и кнопками подтверждения
+/// Sends a preview with metadata and confirmation buttons
 ///
-/// Для видео показывает список форматов с кнопками выбора
-/// Для других форматов - стандартные кнопки
+/// For video, shows a list of formats with selection buttons
+/// For other formats — standard buttons
 ///
 /// # Arguments
 /// * `bot` - Telegram bot instance
@@ -25,7 +25,7 @@ use super::keyboard::{
 /// * `metadata` - Preview metadata with formats
 /// * `default_format` - Default format (mp3, mp4, etc.)
 /// * `default_quality` - Default video quality (1080p, 720p, etc.) - only for mp4
-/// * `old_preview_msg_id` - Опциональный ID старого preview сообщения для удаления
+/// * `old_preview_msg_id` - Optional ID of the old preview message to delete
 #[allow(clippy::too_many_arguments)]
 pub async fn send_preview(
     bot: &Bot,
@@ -43,13 +43,13 @@ pub async fn send_preview(
     // Override format for photo posts (Instagram photos shouldn't show MP3 button)
     let default_format = if metadata.is_photo { "photo" } else { default_format };
 
-    // Формируем текст превью с экранированием
+    // Build preview text with escaping
     let escaped_title = escape_markdown(&metadata.display_title());
     let mut text = format!("🎵 *{}*\n\n", escaped_title);
 
     if metadata.duration.is_some() {
         let duration_str = metadata.format_duration();
-        text.push_str(&format!("⏱️ Длительность: {}\n", escape_markdown(&duration_str)));
+        text.push_str(&format!("⏱️ Duration: {}\n", escape_markdown(&duration_str)));
     }
 
     if let Some((start, end)) = time_range {
@@ -85,31 +85,31 @@ pub async fn send_preview(
         default_format
     );
 
-    // Для видео показываем список форматов с размерами
+    // For video, show the list of formats with sizes
     if has_video_formats {
         if let Some(formats) = &filtered_formats {
             append_video_formats_text(&mut text, formats, &lang);
         }
     } else if metadata.filesize.is_some() {
         let size_str = metadata.format_filesize();
-        text.push_str(&format!("📦 Примерный размер: {}\n", escape_markdown(&size_str)));
+        text.push_str(&format!("📦 Approximate size: {}\n", escape_markdown(&size_str)));
     }
 
     if let Some(desc) = &metadata.description {
         text.push_str(&format!("\n📝 {}\n", escape_markdown(desc)));
     }
 
-    text.push_str("\nВыбери формат\\:");
+    text.push_str("\nChoose a format\\:");
 
-    // Удаляем старое preview сообщение если указано
+    // Delete the old preview message if specified
     if let Some(old_msg_id) = old_preview_msg_id {
         if let Err(e) = bot.delete_message(chat_id, old_msg_id).await {
             log::warn!("Failed to delete old preview message: {:?}", e);
         }
     }
 
-    // Создаем inline клавиатуру
-    // Сохраняем URL в кэше и получаем короткий ID (вместо base64)
+    // Build inline keyboard
+    // Store URL in cache and get a short ID (instead of base64)
     let url_id = cache::store_url(&db_pool, url.as_str()).await;
     log::debug!("Stored URL {} with ID: {}", url.as_str(), url_id);
 
@@ -146,7 +146,7 @@ pub async fn send_preview(
                     "video_formats is Some but empty, using fallback button for {}",
                     default_format
                 );
-                // Если список форматов пустой, создаем стандартную кнопку
+                // If the formats list is empty, create a standard button
                 create_fallback_keyboard(default_format, default_quality, &url_id, Some(audio_bitrate.as_str()))
             } else {
                 let format_for_keyboard = if default_format == "mp4" || default_format == "mp4+mp3" {
@@ -160,7 +160,7 @@ pub async fn send_preview(
                     default_format,
                     format_for_keyboard
                 );
-                // Для видео создаем кнопки для выбора формата с toggle для Media/Document
+                // For video, create format-selection buttons with a Media/Document toggle
                 create_video_format_keyboard(
                     formats,
                     default_quality,
@@ -171,11 +171,11 @@ pub async fn send_preview(
                 )
             }
         } else {
-            // Если video_formats is None - создаем стандартную кнопку
+            // If video_formats is None — create a standard button
             create_fallback_keyboard(default_format, default_quality, &url_id, Some(audio_bitrate.as_str()))
         }
     } else {
-        // Для других форматов или если video_formats is None - стандартные кнопки
+        // For other formats or if video_formats is None — standard buttons
         log::debug!(
             "Creating fallback keyboard for format: {} (video_formats.is_some() = {})",
             default_format,
@@ -214,15 +214,15 @@ pub async fn send_preview(
         send_as_document
     );
 
-    // Отправляем превью с thumbnail если доступен
+    // Send preview with thumbnail if available
     if let Some(thumb_url) = &metadata.thumbnail_url {
-        // Пытаемся отправить фото с thumbnail
+        // Try to send a photo with the thumbnail
         match reqwest::get(thumb_url).await {
             Ok(response) => {
                 if response.status().is_success() {
                     match response.bytes().await {
                         Ok(bytes) => {
-                            // Отправляем фото с описанием
+                            // Send the photo with caption
                             let bytes_vec = bytes.to_vec();
                             log::info!(
                                 "Sending preview photo ({} bytes) for url_id={}",
@@ -242,7 +242,7 @@ pub async fn send_preview(
                         }
                         Err(e) => {
                             log::warn!("Failed to get thumbnail bytes: {}", e);
-                            // Не продолжаем выполнение - отправим текстовое сообщение ниже
+                            // Do not continue — will send text message below
                         }
                     }
                 } else {
@@ -255,7 +255,7 @@ pub async fn send_preview(
         }
     }
 
-    // Если thumbnail не доступен или произошла ошибка, отправляем текстовое сообщение
+    // If thumbnail is unavailable or an error occurred, send a text message
     log::info!("Sending preview text message for url_id={}", url_id);
     let send_result = bot
         .send_message(chat_id, text)
@@ -268,9 +268,9 @@ pub async fn send_preview(
     send_result
 }
 
-/// Обновляет существующее сообщение превью (редактирует текст/подпись и клавиатуру)
+/// Updates an existing preview message (edits the text/caption and keyboard)
 ///
-/// Используется для возврата из меню настроек без пересоздания сообщения
+/// Used when returning from the settings menu without recreating the message
 pub async fn update_preview_message(
     bot: &Bot,
     chat_id: ChatId,
@@ -287,13 +287,13 @@ pub async fn update_preview_message(
     // Override format for photo posts (Instagram photos shouldn't show MP3 button)
     let default_format = if metadata.is_photo { "photo" } else { default_format };
 
-    // Формируем текст превью с экранированием (копия логики из send_preview)
+    // Build preview text with escaping (mirrors logic from send_preview)
     let escaped_title = escape_markdown(&metadata.display_title());
     let mut text = format!("🎵 *{}*\n\n", escaped_title);
 
     if metadata.duration.is_some() {
         let duration_str = metadata.format_duration();
-        text.push_str(&format!("⏱️ Длительность: {}\n", escape_markdown(&duration_str)));
+        text.push_str(&format!("⏱️ Duration: {}\n", escape_markdown(&duration_str)));
     }
 
     if let Some((start, end)) = time_range {
@@ -329,24 +329,24 @@ pub async fn update_preview_message(
         default_format
     );
 
-    // Для видео показываем список форматов с размерами
+    // For video, show the list of formats with sizes
     if has_video_formats {
         if let Some(formats) = &filtered_formats {
             append_video_formats_text(&mut text, formats, &lang);
         }
     } else if metadata.filesize.is_some() {
         let size_str = metadata.format_filesize();
-        text.push_str(&format!("📦 Примерный размер: {}\n", escape_markdown(&size_str)));
+        text.push_str(&format!("📦 Approximate size: {}\n", escape_markdown(&size_str)));
     }
 
     if let Some(desc) = &metadata.description {
         text.push_str(&format!("\n📝 {}\n", escape_markdown(desc)));
     }
 
-    text.push_str("\nВыбери формат\\:");
+    text.push_str("\nChoose a format\\:");
 
-    // Создаем inline клавиатуру
-    // Сохраняем URL в кэше и получаем короткий ID
+    // Build inline keyboard
+    // Store URL in cache and get a short ID
     let url_id = cache::store_url(&db_pool, url.as_str()).await;
 
     let mut resolved_quality = default_quality.map(|q| q.to_string());
@@ -422,7 +422,7 @@ pub async fn update_preview_message(
         send_as_document
     );
 
-    // Пытаемся отредактировать подпись (если это фото/видео)
+    // Try to edit the caption (if this is a photo/video)
     let caption_req = bot
         .edit_message_caption(chat_id, message_id)
         .caption(text.clone())
@@ -437,7 +437,7 @@ pub async fn update_preview_message(
                 message_id,
                 e
             );
-            // Если не получилось (например, это текстовое сообщение), редактируем текст
+            // If that failed (e.g. it's a text message), edit the text instead
             bot.edit_message_text(chat_id, message_id, text)
                 .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                 .reply_markup(keyboard)
@@ -449,7 +449,7 @@ pub async fn update_preview_message(
 
 /// Helper to build the video formats list text (shared between send_preview and update_preview_message)
 fn append_video_formats_text(text: &mut String, formats: &[VideoFormatInfo], lang: &LanguageIdentifier) {
-    text.push_str("\n📹 *Доступные форматы:*\n");
+    text.push_str("\n📹 *Available formats:*\n");
     for format_info in formats {
         let size_str = if let Some(size) = format_info.size_bytes {
             if size > 1024 * 1024 {

@@ -1,19 +1,19 @@
 use std::path::PathBuf;
-/// Интеграционный тест для проверки работоспособности yt-dlp
+/// Integration test for verifying yt-dlp functionality
 ///
-/// Этот тест проверяет:
-/// - Установлен ли yt-dlp
-/// - Работает ли скачивание видео
-/// - Работают ли cookies (если настроены)
-/// - Правильно ли обрабатываются ошибки
+/// This test checks:
+/// - Whether yt-dlp is installed
+/// - Whether video downloading works
+/// - Whether cookies work (if configured)
+/// - Whether errors are handled correctly
 ///
-/// Запуск: cargo test --test ytdlp_integration_test -- --nocapture --test-threads=1
-/// Запуск конкретного теста: cargo test --test ytdlp_integration_test test_ytdlp_download_with_metadata -- --nocapture
+/// Run: cargo test --test ytdlp_integration_test -- --nocapture --test-threads=1
+/// Run specific test: cargo test --test ytdlp_integration_test test_ytdlp_download_with_metadata -- --nocapture
 use std::process::{Command, Stdio};
 use std::time::Duration;
 use std::{env, fs};
 
-/// Проверяет наличие команды в PATH
+/// Checks whether a command exists in PATH
 fn command_exists(bin: &str) -> bool {
     Command::new("bash")
         .arg("-lc")
@@ -23,14 +23,14 @@ fn command_exists(bin: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Возвращает путь к временной директории для тестов
+/// Returns the path to the temporary directory for tests
 fn get_test_downloads_dir() -> PathBuf {
     let tmp_dir = env::temp_dir().join("doradura_ytdlp_tests");
     let _ = fs::create_dir_all(&tmp_dir);
     tmp_dir
 }
 
-/// Очищает временную директорию после теста
+/// Cleans up the temporary directory after a test
 fn cleanup_test_dir(dir: &PathBuf) {
     if let Ok(entries) = fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -39,201 +39,186 @@ fn cleanup_test_dir(dir: &PathBuf) {
     }
 }
 
-/// Получает путь к файлу cookies из переменной окружения
+/// Gets the path to the cookies file from an environment variable
 fn get_cookies_file() -> Option<String> {
     env::var("YTDL_COOKIES_FILE").ok()
 }
 
-/// Получает название браузера для cookies из переменной окружения
+/// Gets the browser name for cookies from an environment variable
 fn get_cookies_browser() -> Option<String> {
     env::var("YTDL_COOKIES_BROWSER").ok()
 }
 
-/// Тест 1: Проверка установки yt-dlp и ffmpeg
+/// Test 1: Check yt-dlp and ffmpeg installation
 #[test]
 fn test_ytdlp_installed() {
-    println!("=== Проверка установки yt-dlp ===");
+    println!("=== Checking yt-dlp installation ===");
 
     let ytdlp_exists = command_exists("yt-dlp");
     let ffmpeg_exists = command_exists("ffmpeg");
     let ffprobe_exists = command_exists("ffprobe");
 
-    println!(
-        "✓ yt-dlp: {}",
-        if ytdlp_exists {
-            "установлен"
-        } else {
-            "НЕ УСТАНОВЛЕН"
-        }
-    );
+    println!("✓ yt-dlp: {}", if ytdlp_exists { "installed" } else { "NOT INSTALLED" });
     println!(
         "✓ ffmpeg: {}",
-        if ffmpeg_exists {
-            "установлен"
-        } else {
-            "НЕ УСТАНОВЛЕН"
-        }
+        if ffmpeg_exists { "installed" } else { "NOT INSTALLED" }
     );
     println!(
         "✓ ffprobe: {}",
-        if ffprobe_exists {
-            "установлен"
-        } else {
-            "НЕ УСТАНОВЛЕН"
-        }
+        if ffprobe_exists { "installed" } else { "NOT INSTALLED" }
     );
 
     if !ytdlp_exists {
-        println!("\n❌ ОШИБКА: yt-dlp не установлен!");
-        println!("Установите: pip3 install yt-dlp");
+        println!("\n❌ ERROR: yt-dlp is not installed!");
+        println!("Install with: pip3 install yt-dlp");
     }
 
     if !ffmpeg_exists || !ffprobe_exists {
-        println!("\n❌ ОШИБКА: ffmpeg/ffprobe не установлен!");
-        println!("Установите: brew install ffmpeg (macOS) или apt install ffmpeg (Linux)");
+        println!("\n❌ ERROR: ffmpeg/ffprobe is not installed!");
+        println!("Install with: brew install ffmpeg (macOS) or apt install ffmpeg (Linux)");
     }
 
-    assert!(ytdlp_exists, "yt-dlp должен быть установлен");
-    assert!(ffmpeg_exists, "ffmpeg должен быть установлен");
-    assert!(ffprobe_exists, "ffprobe должен быть установлен");
+    assert!(ytdlp_exists, "yt-dlp must be installed");
+    assert!(ffmpeg_exists, "ffmpeg must be installed");
+    assert!(ffprobe_exists, "ffprobe must be installed");
 }
 
-/// Тест 2: Проверка версии yt-dlp
+/// Test 2: Check yt-dlp version
 #[test]
 fn test_ytdlp_version() {
     if !command_exists("yt-dlp") {
-        println!("⚠️  yt-dlp не установлен, пропускаем тест");
+        println!("⚠️  yt-dlp is not installed, skipping test");
         return;
     }
 
-    println!("=== Проверка версии yt-dlp ===");
+    println!("=== Checking yt-dlp version ===");
 
     let output = Command::new("yt-dlp")
         .arg("--version")
         .output()
-        .expect("Не удалось запустить yt-dlp --version");
+        .expect("Failed to run yt-dlp --version");
 
     let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    println!("✓ Версия yt-dlp: {}", version);
+    println!("✓ yt-dlp version: {}", version);
 
-    assert!(!version.is_empty(), "Не удалось получить версию yt-dlp");
+    assert!(!version.is_empty(), "Failed to get yt-dlp version");
 }
 
-/// Тест 3: Проверка конфигурации cookies
+/// Test 3: Check cookies configuration
 #[test]
 fn test_cookies_configuration() {
-    println!("=== Проверка конфигурации cookies ===");
+    println!("=== Checking cookies configuration ===");
 
     let cookies_file = get_cookies_file();
     let cookies_browser = get_cookies_browser();
 
     match (&cookies_file, &cookies_browser) {
         (Some(file), _) => {
-            println!("✓ Используется файл cookies: {}", file);
+            println!("✓ Using cookies file: {}", file);
 
-            // Проверяем существование файла
+            // Check if file exists
             if std::path::Path::new(file).exists() {
-                println!("✓ Файл существует");
+                println!("✓ File exists");
 
-                // Проверяем размер файла
+                // Check file size
                 if let Ok(metadata) = fs::metadata(file) {
-                    println!("✓ Размер файла: {} байт", metadata.len());
-                    assert!(metadata.len() > 0, "Файл cookies пустой");
+                    println!("✓ File size: {} bytes", metadata.len());
+                    assert!(metadata.len() > 0, "Cookies file is empty");
                 }
             } else {
-                println!("❌ ОШИБКА: Файл cookies не найден по пути: {}", file);
-                panic!("Файл cookies не существует");
+                println!("❌ ERROR: Cookies file not found at path: {}", file);
+                panic!("Cookies file does not exist");
             }
         }
         (None, Some(browser)) => {
-            println!("✓ Используется браузер для cookies: {}", browser);
-            println!("⚠️  ВНИМАНИЕ: На macOS требуется Full Disk Access для извлечения cookies из браузера");
-            println!("   Рекомендуется использовать файл cookies вместо браузера");
+            println!("✓ Using browser for cookies: {}", browser);
+            println!("⚠️  WARNING: On macOS Full Disk Access is required to extract cookies from browser");
+            println!("   It is recommended to use a cookies file instead of browser");
         }
         (None, None) => {
-            println!("❌ ОШИБКА: Cookies не настроены!");
-            println!("\nДля работы с YouTube необходимо настроить cookies:");
-            println!("1. Экспортируйте cookies из браузера в файл");
-            println!("2. Установите переменную окружения: export YTDL_COOKIES_FILE=/path/to/cookies.txt");
-            println!("3. Или используйте браузер: export YTDL_COOKIES_BROWSER=chrome");
-            println!("\nСм. документацию: MACOS_COOKIES_FIX.md");
+            println!("❌ ERROR: Cookies are not configured!");
+            println!("\nTo work with YouTube you need to configure cookies:");
+            println!("1. Export cookies from your browser to a file");
+            println!("2. Set environment variable: export YTDL_COOKIES_FILE=/path/to/cookies.txt");
+            println!("3. Or use browser: export YTDL_COOKIES_BROWSER=chrome");
+            println!("\nSee documentation: MACOS_COOKIES_FIX.md");
 
-            // Это предупреждение, не фейлим тест
-            eprintln!("\n⚠️  Без cookies большинство YouTube видео не будут скачиваться!");
+            // This is a warning, not a failure
+            eprintln!("\n⚠️  Without cookies most YouTube videos will not download!");
         }
     }
 }
 
-/// Тест 4: Проверка получения метаданных с публичного видео
+/// Test 4: Check metadata retrieval from a public video
 #[test]
-#[ignore] // Требует сетевого подключения
+#[ignore] // Requires network connection
 fn test_ytdlp_get_metadata() {
     if !command_exists("yt-dlp") {
-        println!("⚠️  yt-dlp не установлен, пропускаем тест");
+        println!("⚠️  yt-dlp is not installed, skipping test");
         return;
     }
 
-    println!("=== Проверка получения метаданных видео ===");
+    println!("=== Checking video metadata retrieval ===");
 
-    // Используем короткое публичное видео
-    let test_url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"; // "Me at the zoo" - первое видео на YouTube
+    // Using a short public video
+    let test_url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"; // "Me at the zoo" - first YouTube video
 
     let mut cmd = Command::new("yt-dlp");
     cmd.args(["--get-title", "--no-playlist"]);
 
-    // Добавляем cookies если есть
+    // Add cookies if available
     if let Some(cookies_file) = get_cookies_file() {
         cmd.args(["--cookies", &cookies_file]);
-        println!("✓ Используется файл cookies: {}", cookies_file);
+        println!("✓ Using cookies file: {}", cookies_file);
     } else if let Some(browser) = get_cookies_browser() {
         cmd.args(["--cookies-from-browser", &browser]);
-        println!("✓ Используется браузер для cookies: {}", browser);
+        println!("✓ Using browser for cookies: {}", browser);
     }
 
     cmd.arg(test_url);
 
-    let output = cmd.output().expect("Не удалось запустить yt-dlp");
+    let output = cmd.output().expect("Failed to run yt-dlp");
 
     if output.status.success() {
         let title = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        println!("✓ Получен title: {}", title);
-        assert!(!title.is_empty(), "Title не должен быть пустым");
+        println!("✓ Retrieved title: {}", title);
+        assert!(!title.is_empty(), "Title must not be empty");
     } else {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        println!("❌ ОШИБКА при получении метаданных:");
+        println!("❌ ERROR retrieving metadata:");
         println!("{}", stderr);
 
-        // Анализируем ошибку
+        // Analyze the error
         if stderr.contains("Please sign in") || stderr.contains("cookies") {
-            println!("\n💡 Решение: Настройте cookies (см. MACOS_COOKIES_FIX.md)");
+            println!("\n💡 Solution: Configure cookies (see MACOS_COOKIES_FIX.md)");
         }
         if stderr.contains("PO Token") {
-            println!("\n💡 Решение: Обновите yt-dlp до последней версии");
+            println!("\n💡 Solution: Update yt-dlp to the latest version");
         }
 
-        panic!("Не удалось получить метаданные видео");
+        panic!("Failed to retrieve video metadata");
     }
 }
 
-/// Тест 5: Скачивание аудио с проверкой успешности
+/// Test 5: Audio download with success verification
 #[test]
-#[ignore] // Требует сетевого подключения
+#[ignore] // Requires network connection
 fn test_ytdlp_download_audio() {
     if !command_exists("yt-dlp") || !command_exists("ffmpeg") {
-        println!("⚠️  yt-dlp или ffmpeg не установлен, пропускаем тест");
+        println!("⚠️  yt-dlp or ffmpeg is not installed, skipping test");
         return;
     }
 
-    println!("=== Тест скачивания аудио ===");
+    println!("=== Audio download test ===");
 
     let tmp_dir = get_test_downloads_dir();
     let output_file = tmp_dir.join("test_audio.mp3");
 
-    // Очищаем старые файлы
+    // Clean up old files
     cleanup_test_dir(&tmp_dir);
 
-    // Используем короткое публичное видео
-    let test_url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"; // ~19 секунд
+    // Using a short public video
+    let test_url = "https://www.youtube.com/watch?v=jNQXAC9IVRw"; // ~19 seconds
 
     let mut cmd = Command::new("yt-dlp");
     cmd.args([
@@ -247,134 +232,134 @@ fn test_ytdlp_download_audio() {
         "--no-playlist",
     ]);
 
-    // Добавляем cookies если есть
+    // Add cookies if available
     if let Some(cookies_file) = get_cookies_file() {
         cmd.args(["--cookies", &cookies_file]);
-        println!("✓ Используется файл cookies: {}", cookies_file);
+        println!("✓ Using cookies file: {}", cookies_file);
     } else if let Some(browser) = get_cookies_browser() {
         cmd.args(["--cookies-from-browser", &browser]);
-        println!("✓ Используется браузер для cookies: {}", browser);
+        println!("✓ Using browser for cookies: {}", browser);
     } else {
-        println!("⚠️  Cookies не настроены, скачивание может не работать");
+        println!("⚠️  Cookies not configured, download may not work");
     }
 
-    // Добавляем настройки клиента
-    // Используем android клиент который не требует PO Token
+    // Add client settings
+    // Using android client which does not require PO Token
     let player_client = "youtube:player_client=android";
 
     cmd.args(["--extractor-args", player_client, "--no-check-certificate", test_url]);
 
-    println!("Запуск команды: {:?}", cmd);
+    println!("Running command: {:?}", cmd);
     let output = cmd
         .stdout(Stdio::inherit())
         .stderr(Stdio::piped())
         .output()
-        .expect("Не удалось запустить yt-dlp");
+        .expect("Failed to run yt-dlp");
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        println!("\n❌ ОШИБКА при скачивании:");
+        println!("\n❌ ERROR during download:");
         println!("{}", stderr);
 
-        // Детальный анализ ошибок
+        // Detailed error analysis
         if stderr.contains("Please sign in") {
-            println!("\n🔴 ПРОБЛЕМА: Требуется аутентификация");
-            println!("💡 РЕШЕНИЕ:");
-            println!("   1. Экспортируйте cookies из браузера");
-            println!("   2. Установите: export YTDL_COOKIES_FILE=./youtube_cookies.txt");
-            println!("   3. Перезапустите тест");
-            println!("\n   Подробная инструкция: MACOS_COOKIES_FIX.md");
+            println!("\n🔴 PROBLEM: Authentication required");
+            println!("💡 SOLUTION:");
+            println!("   1. Export cookies from your browser");
+            println!("   2. Set: export YTDL_COOKIES_FILE=./youtube_cookies.txt");
+            println!("   3. Re-run the test");
+            println!("\n   Detailed instructions: MACOS_COOKIES_FIX.md");
         }
 
         if stderr.contains("PO Token") || stderr.contains("GVS PO Token") {
-            println!("\n🔴 ПРОБЛЕМА: Требуется PO Token (новое требование YouTube)");
-            println!("💡 РЕШЕНИЕ:");
-            println!("   1. Обновите yt-dlp: pip3 install -U yt-dlp");
-            println!("   2. Убедитесь что используете cookies");
+            println!("\n🔴 PROBLEM: PO Token required (new YouTube requirement)");
+            println!("💡 SOLUTION:");
+            println!("   1. Update yt-dlp: pip3 install -U yt-dlp");
+            println!("   2. Make sure you are using cookies");
         }
 
         if stderr.contains("HTTP Error 403") || stderr.contains("bot detection") {
-            println!("\n🔴 ПРОБЛЕМА: YouTube заблокировал запрос (обнаружен бот)");
-            println!("💡 РЕШЕНИЕ:");
-            println!("   1. Обязательно используйте cookies");
-            println!("   2. Попробуйте другой player_client");
+            println!("\n🔴 PROBLEM: YouTube blocked the request (bot detected)");
+            println!("💡 SOLUTION:");
+            println!("   1. Make sure to use cookies");
+            println!("   2. Try a different player_client");
         }
 
         if stderr.contains("formats have been skipped") {
-            println!("\n⚠️  ВНИМАНИЕ: Некоторые форматы пропущены");
-            println!("   Это нормально, продолжаем скачивание доступных форматов");
+            println!("\n⚠️  WARNING: Some formats were skipped");
+            println!("   This is normal, continuing with available formats");
         }
 
-        panic!("Скачивание не удалось");
+        panic!("Download failed");
     }
 
-    // Даем время на завершение ffmpeg конвертации
+    // Give time for ffmpeg conversion to finish
     std::thread::sleep(Duration::from_secs(2));
 
-    // Проверяем что файл создан и не пустой
-    assert!(output_file.exists(), "Файл не был создан: {:?}", output_file);
+    // Check that the file was created and is not empty
+    assert!(output_file.exists(), "File was not created: {:?}", output_file);
 
-    let metadata = fs::metadata(&output_file).expect("Не удалось получить метаданные файла");
-    println!("✓ Файл создан: {:?}", output_file);
+    let metadata = fs::metadata(&output_file).expect("Failed to get file metadata");
+    println!("✓ File created: {:?}", output_file);
     println!(
-        "✓ Размер файла: {} байт ({:.2} MB)",
+        "✓ File size: {} bytes ({:.2} MB)",
         metadata.len(),
         metadata.len() as f64 / 1024.0 / 1024.0
     );
 
-    assert!(metadata.len() > 0, "Файл пустой");
-    assert!(metadata.len() > 10000, "Файл слишком маленький (возможно поврежден)");
+    assert!(metadata.len() > 0, "File is empty");
+    assert!(metadata.len() > 10000, "File is too small (possibly corrupted)");
 
-    // Очищаем
+    // Clean up
     cleanup_test_dir(&tmp_dir);
-    println!("✓ Тест успешно завершен");
+    println!("✓ Test completed successfully");
 }
 
-/// Тест 6: Проверка обработки ошибок (невалидный URL)
+/// Test 6: Check error handling (invalid URL)
 #[test]
 #[ignore]
 fn test_ytdlp_invalid_url() {
     if !command_exists("yt-dlp") {
-        println!("⚠️  yt-dlp не установлен, пропускаем тест");
+        println!("⚠️  yt-dlp is not installed, skipping test");
         return;
     }
 
-    println!("=== Тест обработки невалидного URL ===");
+    println!("=== Invalid URL error handling test ===");
 
     let invalid_url = "https://www.youtube.com/watch?v=INVALID_VIDEO_ID_12345";
 
     let output = Command::new("yt-dlp")
         .args(["--get-title", "--no-playlist", invalid_url])
         .output()
-        .expect("Не удалось запустить yt-dlp");
+        .expect("Failed to run yt-dlp");
 
-    // Ожидаем что команда завершится с ошибкой
+    // Expect the command to exit with an error
     assert!(
         !output.status.success(),
-        "Команда должна была завершиться с ошибкой для невалидного URL"
+        "Command should have exited with error for invalid URL"
     );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    println!("✓ Ожидаемая ошибка получена:");
+    println!("✓ Expected error received:");
     println!("{}", stderr);
 
-    // Проверяем что ошибка содержит релевантную информацию
+    // Check that the error contains relevant information
     assert!(
         stderr.contains("ERROR") || stderr.contains("Video unavailable") || stderr.contains("not available"),
-        "Ошибка должна содержать информацию о недоступности видео"
+        "Error should contain information about video unavailability"
     );
 }
 
-/// Тест 7: Проверка скачивания с разными настройками качества
+/// Test 7: Check download with different quality settings
 #[test]
 #[ignore]
 fn test_ytdlp_different_qualities() {
     if !command_exists("yt-dlp") || !command_exists("ffmpeg") {
-        println!("⚠️  yt-dlp или ffmpeg не установлен, пропускаем тест");
+        println!("⚠️  yt-dlp or ffmpeg is not installed, skipping test");
         return;
     }
 
-    println!("=== Тест скачивания с разными качествами ===");
+    println!("=== Download with different quality settings test ===");
 
     let tmp_dir = get_test_downloads_dir();
     cleanup_test_dir(&tmp_dir);
@@ -383,7 +368,7 @@ fn test_ytdlp_different_qualities() {
     let qualities = vec![("320k", "320k"), ("192k", "192k"), ("128k", "128k")];
 
     for (name, bitrate) in qualities {
-        println!("\n--- Тест качества: {} ---", name);
+        println!("\n--- Quality test: {} ---", name);
         let output_file = tmp_dir.join(format!("test_audio_{}.mp3", name));
 
         let mut cmd = Command::new("yt-dlp");
@@ -400,7 +385,7 @@ fn test_ytdlp_different_qualities() {
             &format!("-acodec libmp3lame -b:a {}", bitrate),
         ]);
 
-        // Добавляем cookies если есть
+        // Add cookies if available
         if let Some(cookies_file) = get_cookies_file() {
             cmd.args(["--cookies", &cookies_file]);
         } else if let Some(browser) = get_cookies_browser() {
@@ -413,7 +398,7 @@ fn test_ytdlp_different_qualities() {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .output()
-            .expect("Не удалось запустить yt-dlp");
+            .expect("Failed to run yt-dlp");
 
         if output.status.success() {
             std::thread::sleep(Duration::from_secs(2));
@@ -422,28 +407,28 @@ fn test_ytdlp_different_qualities() {
                 let size = fs::metadata(&output_file)
                     .expect("Failed to read file metadata in test")
                     .len();
-                println!("✓ Качество {}: {} байт", name, size);
+                println!("✓ Quality {}: {} bytes", name, size);
             } else {
-                println!("⚠️  Файл не создан для качества {}", name);
+                println!("⚠️  File not created for quality {}", name);
             }
         } else {
-            println!("⚠️  Скачивание не удалось для качества {}", name);
+            println!("⚠️  Download failed for quality {}", name);
         }
     }
 
     cleanup_test_dir(&tmp_dir);
-    println!("\n✓ Тест разных качеств завершен");
+    println!("\n✓ Different quality test completed");
 }
 
-/// Вспомогательная функция: Полная диагностика системы
+/// Helper function: Full system diagnostics
 #[test]
 fn test_full_diagnostics() {
     println!("\n╔════════════════════════════════════════════════════════════════╗");
-    println!("║         ПОЛНАЯ ДИАГНОСТИКА СИСТЕМЫ СКАЧИВАНИЯ                 ║");
+    println!("║            FULL DOWNLOAD SYSTEM DIAGNOSTICS                   ║");
     println!("╚════════════════════════════════════════════════════════════════╝\n");
 
-    // 1. Проверка инструментов
-    println!("📦 1. УСТАНОВЛЕННЫЕ ИНСТРУМЕНТЫ:");
+    // 1. Check tools
+    println!("📦 1. INSTALLED TOOLS:");
     let tools = vec![
         ("yt-dlp", command_exists("yt-dlp")),
         ("ffmpeg", command_exists("ffmpeg")),
@@ -451,16 +436,12 @@ fn test_full_diagnostics() {
     ];
 
     for (tool, exists) in &tools {
-        let status = if *exists {
-            "✅ Установлен"
-        } else {
-            "❌ НЕ УСТАНОВЛЕН"
-        };
+        let status = if *exists { "✅ Installed" } else { "❌ NOT INSTALLED" };
         println!("   {} : {}", tool, status);
     }
 
-    // 2. Версии
-    println!("\n📋 2. ВЕРСИИ:");
+    // 2. Versions
+    println!("\n📋 2. VERSIONS:");
     if command_exists("yt-dlp") {
         if let Ok(output) = Command::new("yt-dlp").arg("--version").output() {
             let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
@@ -479,61 +460,61 @@ fn test_full_diagnostics() {
         }
     }
 
-    // 3. Cookies конфигурация
-    println!("\n🍪 3. КОНФИГУРАЦИЯ COOKIES:");
+    // 3. Cookies configuration
+    println!("\n🍪 3. COOKIES CONFIGURATION:");
     match (get_cookies_file(), get_cookies_browser()) {
         (Some(file), _) => {
-            println!("   Тип: Файл");
-            println!("   Путь: {}", file);
+            println!("   Type: File");
+            println!("   Path: {}", file);
             if std::path::Path::new(&file).exists() {
                 let size = fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
-                println!("   Статус: ✅ Существует ({} байт)", size);
+                println!("   Status: ✅ Exists ({} bytes)", size);
             } else {
-                println!("   Статус: ❌ ФАЙЛ НЕ НАЙДЕН");
+                println!("   Status: ❌ FILE NOT FOUND");
             }
         }
         (None, Some(browser)) => {
-            println!("   Тип: Браузер");
-            println!("   Браузер: {}", browser);
-            println!("   Статус: ⚠️  Требует Full Disk Access на macOS");
+            println!("   Type: Browser");
+            println!("   Browser: {}", browser);
+            println!("   Status: ⚠️  Requires Full Disk Access on macOS");
         }
         (None, None) => {
-            println!("   Статус: ❌ НЕ НАСТРОЕНЫ");
-            println!("\n   📖 Инструкция по настройке:");
+            println!("   Status: ❌ NOT CONFIGURED");
+            println!("\n   📖 Setup instructions:");
             println!("      export YTDL_COOKIES_FILE=./youtube_cookies.txt");
-            println!("      См. MACOS_COOKIES_FIX.md для подробностей");
+            println!("      See MACOS_COOKIES_FIX.md for details");
         }
     }
 
-    // 4. Переменные окружения
-    println!("\n🔧 4. ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ:");
+    // 4. Environment variables
+    println!("\n🔧 4. ENVIRONMENT VARIABLES:");
     let env_vars = vec!["YTDL_COOKIES_FILE", "YTDL_COOKIES_BROWSER", "YTDL_BIN"];
 
     for var in env_vars {
         match env::var(var) {
             Ok(value) => println!("   {}: {}", var, value),
-            Err(_) => println!("   {}: (не установлена)", var),
+            Err(_) => println!("   {}: (not set)", var),
         }
     }
 
-    // 5. Итоговая оценка
-    println!("\n📊 5. ИТОГОВАЯ ОЦЕНКА:");
+    // 5. Overall assessment
+    println!("\n📊 5. OVERALL ASSESSMENT:");
     let all_tools_ok = tools.iter().all(|(_, exists)| *exists);
     let cookies_ok = get_cookies_file().is_some() || get_cookies_browser().is_some();
 
     if all_tools_ok && cookies_ok {
-        println!("   ✅ Система готова к работе!");
+        println!("   ✅ System is ready!");
     } else {
-        println!("   ⚠️  Обнаружены проблемы:");
+        println!("   ⚠️  Issues detected:");
         if !all_tools_ok {
-            println!("      • Не все необходимые инструменты установлены");
+            println!("      • Not all required tools are installed");
         }
         if !cookies_ok {
-            println!("      • Cookies не настроены (YouTube видео не будут скачиваться)");
+            println!("      • Cookies not configured (YouTube videos will not download)");
         }
     }
 
     println!("\n╔════════════════════════════════════════════════════════════════╗");
-    println!("║                   ДИАГНОСТИКА ЗАВЕРШЕНА                        ║");
+    println!("║                   DIAGNOSTICS COMPLETE                         ║");
     println!("╚════════════════════════════════════════════════════════════════╝\n");
 }

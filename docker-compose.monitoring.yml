@@ -1,10 +1,10 @@
 services:
-  # Prometheus - сбор метрик
+  # Prometheus - metrics collection
   prometheus:
     image: prom/prometheus:v2.47.0
     container_name: doradura-prometheus
     ports:
-      - "9091:9090"  # Порт 9091 на хосте, чтобы не конфликтовать с metrics сервером бота
+      - "9091:9090"  # Port 9091 on host to avoid conflict with bot metrics server
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml
       - ./prometheus/rules:/etc/prometheus/rules
@@ -14,16 +14,16 @@ services:
       - '--storage.tsdb.path=/prometheus'
       - '--web.console.libraries=/etc/prometheus/console_libraries'
       - '--web.console.templates=/etc/prometheus/consoles'
-      - '--storage.tsdb.retention.time=30d'  # Хранить данные 30 дней
+      - '--storage.tsdb.retention.time=30d'  # Retain data for 30 days
       - '--web.enable-lifecycle'
-    # Для Linux: добавить host.docker.internal
+    # For Linux: add host.docker.internal
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
     networks:
       - monitoring
 
-  # Grafana - визуализация
+  # Grafana - visualization
   grafana:
     image: grafana/grafana:10.1.5
     container_name: doradura-grafana
@@ -31,7 +31,7 @@ services:
       - "3000:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin  # ИЗМЕНИТЬ В ПРОДАКШЕНЕ!
+      - GF_SECURITY_ADMIN_PASSWORD=admin  # CHANGE IN PRODUCTION!
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_SERVER_ROOT_URL=http://localhost:3000
       - GF_INSTALL_PLUGINS=grafana-piechart-panel
@@ -45,7 +45,7 @@ services:
     networks:
       - monitoring
 
-  # AlertManager (опционально) - управление оповещениями
+  # AlertManager (optional) - alert management
   alertmanager:
     image: prom/alertmanager:v0.26.0
     container_name: doradura-alertmanager

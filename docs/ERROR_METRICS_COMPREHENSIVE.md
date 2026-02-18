@@ -1,37 +1,37 @@
-# Comprehensive Error Metrics - Полное Покрытие Ошибок
+# Comprehensive Error Metrics - Full Error Coverage
 
-## Проблема
+## Problem
 
-Метрики ошибок не записывались для большинства типов ошибок. Хотя метрика `doradura_errors_total` была объявлена, она инкрементировалась только при вызове `metrics::record_error()`, который использовался редко.
+Error metrics were not being recorded for most error types. Although the `doradura_errors_total` metric was declared, it was only incremented when `metrics::record_error()` was called, which happened rarely.
 
-## Решение
+## Solution
 
-Добавлена запись метрик для **ВСЕХ** типов ошибок по категориям:
+Added metric recording for **ALL** error types by category:
 
-### 1. YT-DLP Ошибки
+### 1. YT-DLP Errors
 
-Детальная категоризация по типу ошибки yt-dlp с использованием анализатора ошибок.
+Detailed categorization by yt-dlp error type using the error analyzer.
 
-#### Типы yt-dlp Ошибок
+#### YT-DLP Error Types
 
 [src/download/ytdlp_errors.rs:7-18](src/download/ytdlp_errors.rs#L7-L18)
 
 ```rust
 pub enum YtDlpErrorType {
-    /// Cookies недействительны или устарели
+    /// Cookies are invalid or expired
     InvalidCookies,
-    /// YouTube обнаружил бота
+    /// YouTube detected a bot
     BotDetection,
-    /// Видео недоступно (приватное, удалено, региональные ограничения)
+    /// Video unavailable (private, deleted, regional restrictions)
     VideoUnavailable,
-    /// Проблемы с сетью (таймауты, соединение)
+    /// Network issues (timeouts, connection)
     NetworkError,
-    /// Неизвестная ошибка
+    /// Unknown error
     Unknown,
 }
 ```
 
-#### Где Добавлены Метрики
+#### Where Metrics Are Added
 
 **1. Metadata Extraction** - [downloader.rs:767-775](src/download/downloader.rs#L767-L775)
 
@@ -49,10 +49,10 @@ let error_category = match error_type {
 metrics::record_error(error_category, "metadata");
 ```
 
-**Когда срабатывает:**
-- При вызове `get_metadata_from_ytdlp()`
-- Если yt-dlp не может получить название видео
-- Перед началом скачивания
+**When triggered:**
+- When calling `get_metadata_from_ytdlp()`
+- If yt-dlp cannot retrieve the video title
+- Before the download starts
 
 **2. Audio Download** - [downloader.rs:1286-1294](src/download/downloader.rs#L1286-L1294)
 
@@ -70,10 +70,10 @@ let error_category = match error_type {
 metrics::record_error(error_category, "audio_download");
 ```
 
-**Когда срабатывает:**
-- При скачивании MP3 файла
-- Если yt-dlp процесс завершился с ошибкой
-- После анализа stderr
+**When triggered:**
+- When downloading an MP3 file
+- If the yt-dlp process exits with an error
+- After stderr analysis
 
 **3. Video Download** - [downloader.rs:1478-1486](src/download/downloader.rs#L1478-L1486)
 
@@ -91,12 +91,12 @@ let error_category = match error_type {
 metrics::record_error(error_category, "video_download");
 ```
 
-**Когда срабатывает:**
-- При скачивании MP4 файла
-- Если yt-dlp процесс завершился с ошибкой
-- После анализа stderr
+**When triggered:**
+- When downloading an MP4 file
+- If the yt-dlp process exits with an error
+- After stderr analysis
 
-### 2. Telegram API Ошибки
+### 2. Telegram API Errors
 
 #### Send File Errors - [downloader.rs:2300-2301](src/download/downloader.rs#L2300-L2301)
 
@@ -105,58 +105,58 @@ metrics::record_error(error_category, "video_download");
 metrics::record_error("telegram", "send_file");
 ```
 
-**Когда срабатывает:**
-- После всех retry попыток отправки файла
-- Если все `max_attempts` (обычно 3) провалились
-- Для audio, video, document
+**When triggered:**
+- After all retry attempts to send a file have failed
+- If all `max_attempts` (usually 3) have failed
+- For audio, video, document
 
-**Примеры ошибок Telegram:**
+**Example Telegram errors:**
 - Rate limiting (Too Many Requests)
 - File too large for Telegram
-- Network timeout при загрузке
+- Network timeout during upload
 - Invalid file format
 - Bot blocked by user
 
-### 3. Другие Категории Ошибок
+### 3. Other Error Categories
 
-Хотя в текущей реализации не все категории используются, они инициализированы для будущего использования:
+Although not all categories are currently used, they are initialized for future use:
 
 #### Database Errors
 ```rust
 ERRORS_TOTAL.with_label_values(&["database", "query"]);
 ```
 
-**Где можно добавить:**
-- При ошибках `db::get_user()`
-- При ошибках `db::save_download_history()`
-- При ошибках connection pool
+**Where to add:**
+- On `db::get_user()` errors
+- On `db::save_download_history()` errors
+- On connection pool errors
 
 #### Rate Limit Errors
 ```rust
 ERRORS_TOTAL.with_label_values(&["rate_limit", "download"]);
 ```
 
-**Где можно добавить:**
-- Когда RateLimiter блокирует запрос
-- Когда YouTube возвращает 429
+**Where to add:**
+- When RateLimiter blocks a request
+- When YouTube returns 429
 
 #### File Too Large Errors
 ```rust
 ERRORS_TOTAL.with_label_values(&["file_too_large", "download"]);
 ```
 
-**Уже используется в:**
-- Validation файла перед отправкой в `send_file_with_retry`
+**Already used in:**
+- File validation before sending in `send_file_with_retry`
 
-## Метрики в Prometheus Format
+## Metrics in Prometheus Format
 
-После инициализации все метрики экспортируются:
+After initialization all metrics are exported:
 
 ```bash
 curl http://localhost:9094/metrics | grep "errors_total"
 ```
 
-**Результат:**
+**Result:**
 ```
 # HELP doradura_errors_total Total number of errors by type and operation
 # TYPE doradura_errors_total counter
@@ -200,44 +200,44 @@ doradura_errors_total{error_type="file_too_large",operation="download"} 0
 
 ## Grafana Dashboard Query
 
-Панель "Errors by Category" использует:
+The "Errors by Category" panel uses:
 
 ```promql
 sum by (error_type) (rate(doradura_errors_total[5m]))
 ```
 
-**Показывает:**
-- Ошибок в секунду по каждому типу
-- invalid_cookies - проблемы с YouTube cookies
-- bot_detection - YouTube обнаружил бота
-- video_unavailable - видео недоступно
-- network - сетевые проблемы
-- telegram - ошибки Telegram API
+**Shows:**
+- Errors per second by type
+- invalid_cookies - YouTube cookie issues
+- bot_detection - YouTube detected a bot
+- video_unavailable - video is unavailable
+- network - network issues
+- telegram - Telegram API errors
 
-### Альтернативные Queries
+### Alternative Queries
 
-**По операциям:**
+**By operation:**
 ```promql
 sum by (operation) (rate(doradura_errors_total[5m]))
 ```
 
-**Только invalid_cookies:**
+**Only invalid_cookies:**
 ```promql
 sum(rate(doradura_errors_total{error_type="invalid_cookies"}[5m]))
 ```
 
-**Топ-5 ошибок:**
+**Top 5 errors:**
 ```promql
 topk(5, sum by (error_type) (rate(doradura_errors_total[5m])))
 ```
 
-**Процент ошибок каждого типа:**
+**Percentage of each error type:**
 ```promql
 sum by (error_type) (rate(doradura_errors_total[5m])) /
 sum(rate(doradura_errors_total[5m])) * 100
 ```
 
-## Как Работает Анализ Ошибок
+## How Error Analysis Works
 
 ### Flow Diagram
 
@@ -269,7 +269,7 @@ Prometheus scrapes every 10 seconds
 Grafana visualizes in dashboard
 ```
 
-## Примеры Реальных Ошибок
+## Real Error Examples
 
 ### 1. Invalid Cookies
 
@@ -279,15 +279,15 @@ WARNING: [youtube] Cookies are no longer valid. Re-extracting...
 ERROR: [youtube] Sign in to confirm you're not a bot.
 ```
 
-**Метрика:**
+**Metric:**
 ```
 doradura_errors_total{error_type="invalid_cookies",operation="metadata"} += 1
 ```
 
-**Действие:**
-- Администратор получает уведомление (если `should_notify_admin()` вернул true)
-- Пользователь видит: "❌ Cookies для YouTube устарели или недействительны."
-- Метрика записана для мониторинга
+**Action:**
+- Admin receives notification (if `should_notify_admin()` returned true)
+- User sees: "Temporary issue with YouTube."
+- Metric recorded for monitoring
 
 ### 2. Bot Detection
 
@@ -297,7 +297,7 @@ ERROR: [youtube] HTTP Error 403: Forbidden
 ERROR: Unable to extract video info
 ```
 
-**Метрика:**
+**Metric:**
 ```
 doradura_errors_total{error_type="bot_detection",operation="audio_download"} += 1
 ```
@@ -310,7 +310,7 @@ ERROR: [youtube] This video is private
 ERROR: Video unavailable
 ```
 
-**Метрика:**
+**Metric:**
 ```
 doradura_errors_total{error_type="video_unavailable",operation="video_download"} += 1
 ```
@@ -323,7 +323,7 @@ ERROR: Connection timeout after 30 seconds
 ERROR: Failed to connect to youtube.com
 ```
 
-**Метрика:**
+**Metric:**
 ```
 doradura_errors_total{error_type="network",operation="metadata"} += 1
 ```
@@ -335,14 +335,14 @@ doradura_errors_total{error_type="network",operation="metadata"} += 1
 ERROR: All 3 attempts failed to send video to chat 123456: Request timeout
 ```
 
-**Метрика:**
+**Metric:**
 ```
 doradura_errors_total{error_type="telegram",operation="send_file"} += 1
 ```
 
 ## Alert Rules
 
-Можно настроить alerts в Prometheus для критичных ошибок:
+Alerts can be configured in Prometheus for critical errors:
 
 ```yaml
 # prometheus/rules/doradura_alerts.yml
@@ -372,37 +372,37 @@ groups:
           description: "Check Telegram API status and network connectivity"
 ```
 
-## Debugging с Метриками
+## Debugging with Metrics
 
-### Проверка Конкретной Ошибки
+### Checking a Specific Error
 
 ```bash
-# Сколько раз была ошибка invalid_cookies сегодня?
+# How many times did invalid_cookies occur today?
 curl -s 'http://localhost:9091/api/v1/query?query=increase(doradura_errors_total{error_type="invalid_cookies"}[24h])'
 
-# Текущая частота bot detection ошибок
+# Current bot detection error rate
 curl -s 'http://localhost:9091/api/v1/query?query=rate(doradura_errors_total{error_type="bot_detection"}[5m])'
 ```
 
-### Сравнение Ошибок по Операциям
+### Comparing Errors by Operation
 
 ```bash
-# Где чаще всего происходят network errors?
+# Where do network errors occur most often?
 curl -s 'http://localhost:9091/api/v1/query?query=sum%20by%20(operation)%20(rate(doradura_errors_total{error_type="network"}[1h]))'
 ```
 
-### История Ошибок
+### Error History
 
 ```bash
-# График ошибок за последние 24 часа
+# Error graph for last 24 hours
 curl -s 'http://localhost:9091/api/v1/query_range?query=sum(rate(doradura_errors_total[5m]))&start=...&end=...&step=1h'
 ```
 
 ## Best Practices
 
-### 1. Всегда Записывайте Ошибки
+### 1. Always Record Errors
 
-✅ **Правильно:**
+Correct:
 ```rust
 if let Err(e) = operation() {
     log::error!("Operation failed: {}", e);
@@ -411,68 +411,68 @@ if let Err(e) = operation() {
 }
 ```
 
-❌ **Неправильно:**
+Incorrect:
 ```rust
 if let Err(e) = operation() {
     log::error!("Operation failed: {}", e);
-    // Метрика НЕ записана!
+    // Metric NOT recorded!
     return Err(e);
 }
 ```
 
-### 2. Используйте Детальные Категории
+### 2. Use Detailed Categories
 
-✅ **Правильно:**
+Correct:
 ```rust
 let error_category = match ytdlp_error {
-    InvalidCookies => "invalid_cookies",  // Специфичная категория
+    InvalidCookies => "invalid_cookies",  // Specific category
     BotDetection => "bot_detection",
     ...
 };
 ```
 
-❌ **Неправильно:**
+Incorrect:
 ```rust
-metrics::record_error("ytdlp", "download");  // Слишком общая категория
+metrics::record_error("ytdlp", "download");  // Too general a category
 ```
 
-### 3. Записывайте Рано
+### 3. Record Early
 
 ```rust
-// В начале error handling блока
+// At the start of the error handling block
 let error_type = analyze_error(&stderr);
-metrics::record_error(category, operation);  // ← СРАЗУ после анализа
+metrics::record_error(category, operation);  // IMMEDIATELY after analysis
 
-// Затем logging
+// Then logging
 log::error!("...");
 
-// Затем notification
+// Then notification
 if should_notify_admin() { ... }
 
-// Затем return
+// Then return
 return Err(...);
 ```
 
-## Итоговое Покрытие
+## Coverage Summary
 
-| Тип Ошибки | Категория | Операция | Где Записывается |
+| Error Type | Category | Operation | Where Recorded |
 |------------|-----------|----------|-----------------|
-| **Invalid Cookies** | `invalid_cookies` | `metadata`, `audio_download`, `video_download` | При ошибке yt-dlp с cookies |
-| **Bot Detection** | `bot_detection` | `metadata`, `audio_download`, `video_download` | При HTTP 403 или signature error |
-| **Video Unavailable** | `video_unavailable` | `metadata`, `audio_download`, `video_download` | Видео приватное/удалено |
+| **Invalid Cookies** | `invalid_cookies` | `metadata`, `audio_download`, `video_download` | On yt-dlp error with cookies |
+| **Bot Detection** | `bot_detection` | `metadata`, `audio_download`, `video_download` | On HTTP 403 or signature error |
+| **Video Unavailable** | `video_unavailable` | `metadata`, `audio_download`, `video_download` | Video is private/deleted |
 | **Network** | `network` | `metadata`, `audio_download`, `video_download` | Timeout, connection failed |
-| **YT-DLP Unknown** | `ytdlp_unknown` | `metadata`, `audio_download`, `video_download` | Другие yt-dlp ошибки |
-| **Telegram API** | `telegram` | `send_file` | Ошибка отправки в Telegram |
-| **Database** | `database` | `query` | Ошибки БД (TODO) |
-| **Rate Limit** | `rate_limit` | `download` | Rate limiter блокировка (TODO) |
-| **File Too Large** | `file_too_large` | `download` | Файл больше лимита |
+| **YT-DLP Unknown** | `ytdlp_unknown` | `metadata`, `audio_download`, `video_download` | Other yt-dlp errors |
+| **Telegram API** | `telegram` | `send_file` | Error sending to Telegram |
+| **Database** | `database` | `query` | DB errors (TODO) |
+| **Rate Limit** | `rate_limit` | `download` | Rate limiter block (TODO) |
+| **File Too Large** | `file_too_large` | `download` | File exceeds size limit |
 
-**Статус покрытия:** ✅ 90% - Все критичные ошибки покрыты!
+**Coverage status:** 90% - All critical errors covered!
 
-## Связанные Файлы
+## Related Files
 
-- [src/download/downloader.rs](src/download/downloader.rs) - Запись метрик ошибок
-- [src/download/ytdlp_errors.rs](src/download/ytdlp_errors.rs) - Анализ ошибок yt-dlp
-- [src/core/metrics.rs](src/core/metrics.rs) - Определение и инициализация метрик
+- [src/download/downloader.rs](src/download/downloader.rs) - Error metric recording
+- [src/download/ytdlp_errors.rs](src/download/ytdlp_errors.rs) - yt-dlp error analysis
+- [src/core/metrics.rs](src/core/metrics.rs) - Metric definitions and initialization
 - [grafana/dashboards/doradura_overview.json](grafana/dashboards/doradura_overview.json) - Dashboard
-- [METRICS_DASHBOARD_FIX.md](METRICS_DASHBOARD_FIX.md) - Основное исправление метрик
+- [METRICS_DASHBOARD_FIX.md](METRICS_DASHBOARD_FIX.md) - Main metrics fix

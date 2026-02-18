@@ -89,7 +89,7 @@ pub async fn show_cuts_page(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>, pa
         return bot
             .send_message(
                 chat_id,
-                "✂️ У тебя пока нет вырезок.\n\nОткрой /downloads и нажми ✂️ Вырезка у нужного видео.",
+                "✂️ You have no clips yet.\n\nOpen /downloads and press ✂️ Clip on the desired video.",
             )
             .await;
     }
@@ -101,7 +101,7 @@ pub async fn show_cuts_page(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>, pa
     let cuts = db::get_cuts_page(&conn, chat_id.0, ITEMS_PER_PAGE as i64, offset)
         .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
-    let mut text = String::from("✂️ *Твои вырезки*\n\n");
+    let mut text = String::from("✂️ *Your clips*\n\n");
     for cut in &cuts {
         let title = crate::telegram::escape_markdown(&cut.title);
         let icon = if cut.output_kind == "video_note" {
@@ -177,7 +177,7 @@ pub async fn show_cuts_page(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>, pa
     }
 
     rows.push(vec![crate::telegram::cb(
-        "❌ Закрыть".to_string(),
+        "❌ Close".to_string(),
         "cuts:close".to_string(),
     )]);
 
@@ -224,26 +224,26 @@ pub async fn handle_cuts_callback(
             {
                 let mut options = Vec::new();
                 options.push(vec![
-                    crate::telegram::cb("🎬 Как видео".to_string(), format!("cuts:send:video:{}", cut_id)),
-                    crate::telegram::cb("📎 Как документ".to_string(), format!("cuts:send:document:{}", cut_id)),
+                    crate::telegram::cb("🎬 As video".to_string(), format!("cuts:send:video:{}", cut_id)),
+                    crate::telegram::cb("📎 As document".to_string(), format!("cuts:send:document:{}", cut_id)),
                 ]);
                 options.push(vec![
-                    crate::telegram::cb("✂️ Вырезка".to_string(), format!("cuts:clip:{}", cut_id)),
-                    crate::telegram::cb("⭕️ Кружок".to_string(), format!("cuts:circle:{}", cut_id)),
-                    crate::telegram::cb("🔔 Рингтон".to_string(), format!("cuts:iphone_ringtone:{}", cut_id)),
+                    crate::telegram::cb("✂️ Clip".to_string(), format!("cuts:clip:{}", cut_id)),
+                    crate::telegram::cb("⭕️ Circle".to_string(), format!("cuts:circle:{}", cut_id)),
+                    crate::telegram::cb("🔔 Ringtone".to_string(), format!("cuts:iphone_ringtone:{}", cut_id)),
                 ]);
                 options.push(vec![crate::telegram::cb(
-                    "⚙️ Скорость".to_string(),
+                    "⚙️ Speed".to_string(),
                     format!("cuts:speed:{}", cut_id),
                 )]);
                 options.push(vec![crate::telegram::cb(
-                    "❌ Отмена".to_string(),
+                    "❌ Cancel".to_string(),
                     "cuts:cancel".to_string(),
                 )]);
 
                 bot.send_message(
                     chat_id,
-                    format!("Что сделать с *{}*?", crate::telegram::escape_markdown(&cut.title)),
+                    format!("What to do with *{}*?", crate::telegram::escape_markdown(&cut.title)),
                 )
                 .parse_mode(ParseMode::MarkdownV2)
                 .reply_markup(InlineKeyboardMarkup::new(options))
@@ -268,16 +268,16 @@ pub async fn handle_cuts_callback(
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 let Some(telegram_file_id) = cut.file_id.clone() else {
-                    bot.send_message(chat_id, "❌ У этой вырезки нет file_id для отправки.")
+                    bot.send_message(chat_id, "❌ This clip has no file_id for sending.")
                         .await
                         .ok();
                     return Ok(());
                 };
 
                 let status_text = match send_type {
-                    "video" => "⏳ Готовлю отправку как видео…",
-                    "document" => "⏳ Готовлю отправку как документ…",
-                    _ => "⏳ Готовлю отправку…",
+                    "video" => "⏳ Preparing to send as video…",
+                    "document" => "⏳ Preparing to send as document…",
+                    _ => "⏳ Preparing to send…",
                 };
                 let status_msg = bot.send_message(chat_id, status_text).await?;
 
@@ -294,7 +294,7 @@ pub async fn handle_cuts_callback(
                     "document" => send_document_forced(bot, chat_id, &telegram_file_id, "doradura.mp4", caption).await,
                     _ => {
                         bot.delete_message(chat_id, status_msg.id).await.ok();
-                        bot.send_message(chat_id, "❌ Неизвестный режим отправки.").await.ok();
+                        bot.send_message(chat_id, "❌ Unknown send mode.").await.ok();
                         return Ok(());
                     }
                 };
@@ -325,24 +325,21 @@ pub async fn handle_cuts_callback(
                                 Ok(_) => {
                                     bot.send_message(
                                         chat_id,
-                                        "⚠️ Не смог отправить как документ: Telegram отклонил файл по размеру.\nОтправил как видео.\n\nЕсли нужен именно документ — сделай ✂️ вырезку поменьше и отправь её как документ.",
+                                        "⚠️ Couldn't send as document: Telegram rejected the file due to size.\nSent as video instead.\n\nIf you need it as a document — make a ✂️ shorter clip and send that as a document.",
                                     )
                                     .await
                                     .ok();
                                 }
                                 Err(e2) => {
-                                    bot.send_message(
-                                        chat_id,
-                                        format!("❌ Не удалось отправить файл даже как видео: {e2}"),
-                                    )
-                                    .await
-                                    .ok();
+                                    bot.send_message(chat_id, format!("❌ Failed to send file even as video: {e2}"))
+                                        .await
+                                        .ok();
                                 }
                             }
                             return Ok(());
                         }
                         bot.delete_message(chat_id, status_msg.id).await.ok();
-                        bot.send_message(chat_id, format!("❌ Не удалось отправить файл: {e}"))
+                        bot.send_message(chat_id, format!("❌ Failed to send file: {e}"))
                             .await
                             .ok();
                     }
@@ -360,7 +357,7 @@ pub async fn handle_cuts_callback(
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 if cut.file_id.is_none() {
-                    bot.send_message(chat_id, "❌ У этой вырезки нет file_id для рингтона.")
+                    bot.send_message(chat_id, "❌ This clip has no file_id for ringtone.")
                         .await
                         .ok();
                     return Ok(());
@@ -381,13 +378,13 @@ pub async fn handle_cuts_callback(
                 })?;
 
                 let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
-                    "❌ Отмена".to_string(),
+                    "❌ Cancel".to_string(),
                     "cuts:clip_cancel".to_string(),
                 )]]);
 
                 bot.send_message(
                     chat_id,
-                    "🔔 Отправь интервалы для рингтона в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\n\n💡 Если длительность превысит 30 секунд \\(лимит iOS\\), аудио будет автоматически обрезано\\.\n\nПример: `00:10-00:25`",
+                    "🔔 Send intervals for the ringtone in format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nMultiple intervals separated by commas\\.\n\n💡 If duration exceeds 30 seconds \\(iOS limit\\), audio will be automatically trimmed\\.\n\nExample: `00:10-00:25`",
                 )
                 .parse_mode(ParseMode::MarkdownV2)
                 .reply_markup(keyboard)
@@ -420,15 +417,12 @@ pub async fn handle_cuts_callback(
                         crate::telegram::cb("1.5x".to_string(), format!("cuts:apply_speed:1.5:{}", cut_id)),
                         crate::telegram::cb("2.0x".to_string(), format!("cuts:apply_speed:2.0:{}", cut_id)),
                     ],
-                    vec![crate::telegram::cb("❌ Отмена".to_string(), "cuts:cancel".to_string())],
+                    vec![crate::telegram::cb("❌ Cancel".to_string(), "cuts:cancel".to_string())],
                 ];
 
                 bot.send_message(
                     chat_id,
-                    format!(
-                        "⚙️ Выбери скорость для *{}*",
-                        crate::telegram::escape_markdown(&cut.title)
-                    ),
+                    format!("⚙️ Select speed for *{}*", crate::telegram::escape_markdown(&cut.title)),
                 )
                 .parse_mode(ParseMode::MarkdownV2)
                 .reply_markup(InlineKeyboardMarkup::new(rows))
@@ -454,7 +448,7 @@ pub async fn handle_cuts_callback(
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 let Some(file_id) = cut.file_id.clone() else {
-                    bot.send_message(chat_id, "❌ У этой вырезки нет file_id для обработки.")
+                    bot.send_message(chat_id, "❌ This clip has no file_id for processing.")
                         .await
                         .ok();
                     return Ok(());
@@ -465,7 +459,8 @@ pub async fn handle_cuts_callback(
                     .send_message(
                         chat_id,
                         format!(
-                            "⚙️ Обрабатываю видео со скоростью {}x\\.\\.\\.\nЭто может занять несколько минут\\.",
+                            "⚙️ Processing video at {}x speed\\.\\.\\.
+This may take a few minutes\\.",
                             speed_str.replace('.', "\\.")
                         ),
                     )
@@ -508,7 +503,7 @@ pub async fn handle_cuts_callback(
                         bot.delete_message(chat_id, processing.id).await.ok();
                         bot.send_message(
                             chat_id,
-                            "❌ Не удалось обработать видео. Администратор получил уведомление о проблеме.",
+                            "❌ Failed to process video. The administrator has been notified.",
                         )
                         .await
                         .ok();
@@ -536,7 +531,7 @@ pub async fn handle_cuts_callback(
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 if cut.file_id.is_none() {
-                    bot.send_message(chat_id, "❌ У этой вырезки нет file_id для вырезки.")
+                    bot.send_message(chat_id, "❌ This clip has no file_id for clipping.")
                         .await
                         .ok();
                     return Ok(());
@@ -557,13 +552,13 @@ pub async fn handle_cuts_callback(
                 })?;
 
                 let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
-                    "❌ Отмена".to_string(),
+                    "❌ Cancel".to_string(),
                     "cuts:clip_cancel".to_string(),
                 )]]);
 
                 bot.send_message(
                     chat_id,
-                    "✂️ Отправь интервалы для вырезки в формате `мм:сс-мм:сс` или `чч:мм:сс-чч:мм:сс`\\.\nМожно несколько через запятую\\.\n\nПример: `00:10-00:25, 01:00-01:10`",
+                    "✂️ Send intervals for the clip in format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nMultiple intervals separated by commas\\.\n\nExample: `00:10-00:25, 01:00-01:10`",
                 )
                 .parse_mode(ParseMode::MarkdownV2)
                 .reply_markup(keyboard)
@@ -586,7 +581,7 @@ pub async fn handle_cuts_callback(
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 if cut.file_id.is_none() {
-                    bot.send_message(chat_id, "❌ У этой вырезки нет file_id для кружка.")
+                    bot.send_message(chat_id, "❌ This clip has no file_id for video note.")
                         .await
                         .ok();
                     return Ok(());
@@ -656,7 +651,7 @@ pub async fn handle_cuts_callback(
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 if cut.file_id.is_none() {
-                    bot.send_message(chat_id, "❌ У этой вырезки нет file_id для кружка.")
+                    bot.send_message(chat_id, "❌ This clip has no file_id for video note.")
                         .await
                         .ok();
                     return Ok(());
@@ -773,7 +768,7 @@ fn forced_document_unavailable_notice(download_error_text: &str) -> Option<Strin
     let lower = download_error_text.to_lowercase();
     if lower.contains("not available on local bot api server") {
         return Some(format!(
-            "⚠️ Не могу принудительно отправить как документ: локальный Bot API не видит этот файл по /file (нет в local cache/dir).\nОставил как видео.\n\n{}",
+            "⚠️ Cannot force send as document: local Bot API cannot find this file via /file (not in local cache/dir).\nKept as video.\n\n{}",
             bot_api_source_hint()
         ));
     }
@@ -781,7 +776,7 @@ fn forced_document_unavailable_notice(download_error_text: &str) -> Option<Strin
         || lower.contains("local bot api file check failed")
     {
         return Some(format!(
-            "⚠️ Не могу принудительно отправить как документ: ошибка при проверке файла на локальном Bot API.\nОставил как видео.\n\nПричина: {}\n{}",
+            "⚠️ Cannot force send as document: error checking file on local Bot API.\nKept as video.\n\nReason: {}\n{}",
             short_error_text(download_error_text, 180),
             bot_api_source_hint()
         ));
@@ -789,20 +784,20 @@ fn forced_document_unavailable_notice(download_error_text: &str) -> Option<Strin
     if lower.contains("file is too big") {
         if config::bot_api::is_local() {
             return Some(format!(
-                "⚠️ Не могу принудительно отправить как документ: локальный Bot API вернул `file is too big` ещё на `getFile`.\nОбычно это значит, что сервер запущен НЕ в `--local` режиме (и наследует лимит официального Bot API ~20 MB), либо реально применён лимит на стороне сервера.\nОставил как видео.\n\nПричина: {}\n{}",
+                "⚠️ Cannot force send as document: local Bot API returned `file is too big` at the `getFile` stage.\nThis usually means the server is NOT running in `--local` mode (inheriting the ~20 MB official Bot API limit), or a server-side size limit is in effect.\nKept as video.\n\nReason: {}\n{}",
                 short_error_text(download_error_text, 180),
                 bot_api_source_hint()
             ));
         }
         return Some(format!(
-            "⚠️ Не могу принудительно отправить как документ: чтобы «сделать документ», боту нужно скачать файл и пере-залить его.\nНа официальном Bot API скачивание ограничено ~20 MB; на локальном Bot API это работает только если файл доступен через /file.\nОставил как видео.\n\nПричина: {}\n{}",
+            "⚠️ Cannot force send as document: to \"make a document\", the bot needs to download the file and re-upload it.\nOn the official Bot API, downloads are limited to ~20 MB; on the local Bot API this only works if the file is accessible via /file.\nKept as video.\n\nReason: {}\n{}",
             short_error_text(download_error_text, 180),
             bot_api_source_hint()
         ));
     }
     if lower.contains("telegram file download failed") {
         return Some(format!(
-            "⚠️ Не могу принудительно отправить как документ: не получилось скачать файл с file-endpoint Bot API.\nОставил как видео.\n\nПричина: {}\n{}",
+            "⚠️ Cannot force send as document: failed to download file from Bot API file endpoint.\nKept as video.\n\nReason: {}\n{}",
             short_error_text(download_error_text, 180),
             bot_api_source_hint()
         ));
@@ -870,7 +865,7 @@ async fn send_document_forced(
             if is_file_too_big_error(&e) {
                 bot.send_message(
                     chat_id,
-                    "⚠️ Не смог принудительно отправить как документ: Telegram отклонил файл по размеру. Оставил как видео.",
+                    "⚠️ Couldn't force send as document: Telegram rejected the file due to size. Kept as video.",
                 )
                 .await
                 .ok();
@@ -943,7 +938,7 @@ async fn change_video_speed(
 
     let sent = bot
         .send_video(chat_id, teloxide::types::InputFile::file(output_path.clone()))
-        .caption(format!("{} (скорость {}x)", title, speed))
+        .caption(format!("{} (speed {}x)", title, speed))
         .await?;
     let file_size = fs::metadata(&output_path).await.map(|m| m.len() as i64).unwrap_or(0);
 

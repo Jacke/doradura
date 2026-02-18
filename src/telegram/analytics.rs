@@ -25,7 +25,7 @@ pub async fn handle_analytics_command(bot: Bot, msg: Message, db_pool: Arc<DbPoo
     // Check if user is admin
     let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
     if !admin::is_admin(user_id) {
-        bot.send_message(chat_id, "❌ Эта команда доступна только администраторам.")
+        bot.send_message(chat_id, "❌ This command is available to administrators only.")
             .await?;
         return Ok(());
     }
@@ -38,10 +38,10 @@ pub async fn handle_analytics_command(bot: Bot, msg: Message, db_pool: Arc<DbPoo
     // Create keyboard with action buttons
     let keyboard = InlineKeyboardMarkup::new(vec![
         vec![
-            crate::telegram::cb("🔄 Обновить", "analytics:refresh"),
-            crate::telegram::cb("📊 Детали", "analytics:details"),
+            crate::telegram::cb("🔄 Refresh", "analytics:refresh"),
+            crate::telegram::cb("📊 Details", "analytics:details"),
         ],
-        vec![crate::telegram::cb("🔙 Закрыть", "analytics:close")],
+        vec![crate::telegram::cb("🔙 Close", "analytics:close")],
     ]);
 
     bot.send_message(chat_id, dashboard)
@@ -66,7 +66,7 @@ pub async fn handle_health_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>)
     // Check if user is admin
     let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
     if !admin::is_admin(user_id) {
-        bot.send_message(chat_id, "❌ Эта команда доступна только администраторам.")
+        bot.send_message(chat_id, "❌ This command is available to administrators only.")
             .await?;
         return Ok(());
     }
@@ -100,7 +100,7 @@ pub async fn handle_metrics_command(
     // Check if user is admin
     let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
     if !admin::is_admin(user_id) {
-        bot.send_message(chat_id, "❌ Эта команда доступна только администраторам.")
+        bot.send_message(chat_id, "❌ This command is available to administrators only.")
             .await?;
         return Ok(());
     }
@@ -136,7 +136,7 @@ pub async fn handle_revenue_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>
     // Check if user is admin
     let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
     if !admin::is_admin(user_id) {
-        bot.send_message(chat_id, "❌ Эта команда доступна только администраторам.")
+        bot.send_message(chat_id, "❌ This command is available to administrators only.")
             .await?;
         return Ok(());
     }

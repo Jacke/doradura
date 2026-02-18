@@ -53,14 +53,14 @@ fn get_media_icon(media_type: &str) -> &'static str {
     }
 }
 
-/// Get media type name in Russian
+/// Get media type name in English
 fn get_media_type_name(media_type: &str) -> &'static str {
     match media_type {
-        "photo" => "Фото",
-        "video" => "Видео",
-        "audio" => "Аудио",
-        "document" => "Документы",
-        _ => "Все",
+        "photo" => "Photos",
+        "video" => "Videos",
+        "audio" => "Audio",
+        "document" => "Documents",
+        _ => "All",
     }
 }
 
@@ -82,9 +82,9 @@ pub async fn show_videos_page(
 
     if all_uploads.is_empty() {
         let empty_msg = if media_type_filter.is_some() || search_text.is_some() {
-            "📭 Ничего не найдено.\n\nПопробуй изменить фильтры."
+            "📭 Nothing found.\n\nTry changing the filters."
         } else {
-            "📭 У тебя пока нет загруженных файлов.\n\nОтправь мне фото, видео или документ, и он появится здесь!"
+            "📭 You have no uploaded files yet.\n\nSend me a photo, video, or document and it will appear here!"
         };
         return bot.send_message(chat_id, empty_msg).await;
     }
@@ -98,16 +98,16 @@ pub async fn show_videos_page(
     let page_uploads = &all_uploads[start_idx..end_idx];
 
     // Build message text
-    let mut text = String::from("📂 *Твои загрузки*\n\n");
+    let mut text = String::from("📂 *Your uploads*\n\n");
 
     // Show active filters
     if let Some(ref mt) = media_type_filter {
         let icon = get_media_icon(mt);
         let filter_name = get_media_type_name(mt);
-        text.push_str(&format!("Фильтр: {} {}\n\n", icon, filter_name));
+        text.push_str(&format!("Filter: {} {}\n\n", icon, filter_name));
     }
     if let Some(ref search) = search_text {
-        text.push_str(&format!("🔍 Поиск: \"{}\"\n\n", escape_markdown(search)));
+        text.push_str(&format!("🔍 Search: \"{}\"\n\n", escape_markdown(search)));
     }
 
     // List uploads
@@ -144,7 +144,7 @@ pub async fn show_videos_page(
 
     // Page counter
     if total_pages > 1 {
-        text.push_str(&format!("\n_Страница {}/{}_", current_page + 1, total_pages));
+        text.push_str(&format!("\n_Page {}/{}_", current_page + 1, total_pages));
     }
 
     // Build keyboard
@@ -216,28 +216,28 @@ pub async fn show_videos_page(
 
     if media_type_filter.as_deref() != Some("video") {
         filter_row.push(crate::telegram::cb(
-            "🎬 Видео".to_string(),
+            "🎬 Videos".to_string(),
             format!("videos:filter:video:{}", search_text.as_deref().unwrap_or("")),
         ));
     }
 
     if media_type_filter.as_deref() != Some("photo") {
         filter_row.push(crate::telegram::cb(
-            "📷 Фото".to_string(),
+            "📷 Photos".to_string(),
             format!("videos:filter:photo:{}", search_text.as_deref().unwrap_or("")),
         ));
     }
 
     if media_type_filter.as_deref() != Some("document") {
         filter_row.push(crate::telegram::cb(
-            "📄 Документы".to_string(),
+            "📄 Documents".to_string(),
             format!("videos:filter:document:{}", search_text.as_deref().unwrap_or("")),
         ));
     }
 
     if media_type_filter.is_some() {
         filter_row.push(crate::telegram::cb(
-            "🔄 Все".to_string(),
+            "🔄 All".to_string(),
             format!("videos:filter:all:{}", search_text.as_deref().unwrap_or("")),
         ));
     }
@@ -248,7 +248,7 @@ pub async fn show_videos_page(
 
     // Close button
     keyboard_rows.push(vec![crate::telegram::cb(
-        "❌ Закрыть".to_string(),
+        "❌ Close".to_string(),
         "videos:close".to_string(),
     )]);
 
@@ -268,9 +268,9 @@ fn build_upload_action_keyboard(upload: &UploadEntry) -> InlineKeyboardMarkup {
         "video" => {
             // Video: Send submenu + Convert submenu
             rows.push(vec![
-                crate::telegram::cb("📤 Отправить".to_string(), format!("videos:submenu:send:{}", upload.id)),
+                crate::telegram::cb("📤 Send".to_string(), format!("videos:submenu:send:{}", upload.id)),
                 crate::telegram::cb(
-                    "🔄 Конвертировать".to_string(),
+                    "🔄 Convert".to_string(),
                     format!("videos:submenu:convert:{}", upload.id),
                 ),
             ]);
@@ -278,14 +278,14 @@ fn build_upload_action_keyboard(upload: &UploadEntry) -> InlineKeyboardMarkup {
         "photo" | "audio" => {
             // Photo/Audio: Send submenu only (no conversions yet)
             rows.push(vec![crate::telegram::cb(
-                "📤 Отправить".to_string(),
+                "📤 Send".to_string(),
                 format!("videos:submenu:send:{}", upload.id),
             )]);
         }
         _ => {
             // Document: Send directly (single option, no submenu)
             rows.push(vec![crate::telegram::cb(
-                "📤 Отправить".to_string(),
+                "📤 Send".to_string(),
                 format!("videos:send:document:{}", upload.id),
             )]);
         }
@@ -293,8 +293,8 @@ fn build_upload_action_keyboard(upload: &UploadEntry) -> InlineKeyboardMarkup {
 
     // Delete + Cancel
     rows.push(vec![
-        crate::telegram::cb("🗑️ Удалить".to_string(), format!("videos:delete:{}", upload.id)),
-        crate::telegram::cb("❌ Отмена".to_string(), "videos:cancel".to_string()),
+        crate::telegram::cb("🗑️ Delete".to_string(), format!("videos:delete:{}", upload.id)),
+        crate::telegram::cb("❌ Cancel".to_string(), "videos:cancel".to_string()),
     ]);
 
     InlineKeyboardMarkup::new(rows)
@@ -307,25 +307,25 @@ fn build_send_submenu_keyboard(upload: &UploadEntry) -> InlineKeyboardMarkup {
     match upload.media_type.as_str() {
         "video" => {
             rows.push(vec![
-                crate::telegram::cb("📤 Видео".to_string(), format!("videos:send:video:{}", upload.id)),
-                crate::telegram::cb("📎 Документ".to_string(), format!("videos:send:document:{}", upload.id)),
+                crate::telegram::cb("📤 Video".to_string(), format!("videos:send:video:{}", upload.id)),
+                crate::telegram::cb("📎 Document".to_string(), format!("videos:send:document:{}", upload.id)),
             ]);
         }
         "photo" => {
             rows.push(vec![
-                crate::telegram::cb("📤 Фото".to_string(), format!("videos:send:photo:{}", upload.id)),
-                crate::telegram::cb("📎 Документ".to_string(), format!("videos:send:document:{}", upload.id)),
+                crate::telegram::cb("📤 Photo".to_string(), format!("videos:send:photo:{}", upload.id)),
+                crate::telegram::cb("📎 Document".to_string(), format!("videos:send:document:{}", upload.id)),
             ]);
         }
         "audio" => {
             rows.push(vec![
-                crate::telegram::cb("📤 Аудио".to_string(), format!("videos:send:audio:{}", upload.id)),
-                crate::telegram::cb("📎 Документ".to_string(), format!("videos:send:document:{}", upload.id)),
+                crate::telegram::cb("📤 Audio".to_string(), format!("videos:send:audio:{}", upload.id)),
+                crate::telegram::cb("📎 Document".to_string(), format!("videos:send:document:{}", upload.id)),
             ]);
         }
         _ => {
             rows.push(vec![crate::telegram::cb(
-                "📤 Отправить".to_string(),
+                "📤 Send".to_string(),
                 format!("videos:send:document:{}", upload.id),
             )]);
         }
@@ -333,7 +333,7 @@ fn build_send_submenu_keyboard(upload: &UploadEntry) -> InlineKeyboardMarkup {
 
     // Back button
     rows.push(vec![crate::telegram::cb(
-        "⬅️ Назад".to_string(),
+        "⬅️ Back".to_string(),
         format!("videos:open:{}", upload.id),
     )]);
 
@@ -344,16 +344,19 @@ fn build_send_submenu_keyboard(upload: &UploadEntry) -> InlineKeyboardMarkup {
 fn build_convert_submenu_keyboard(upload: &UploadEntry) -> InlineKeyboardMarkup {
     let rows = vec![
         vec![
-            crate::telegram::cb("⭕️ Кружок".to_string(), format!("videos:convert:circle:{}", upload.id)),
+            crate::telegram::cb("⭕️ Circle".to_string(), format!("videos:convert:circle:{}", upload.id)),
             crate::telegram::cb("🎵 MP3".to_string(), format!("videos:convert:audio:{}", upload.id)),
         ],
         vec![
             crate::telegram::cb("🎞️ GIF".to_string(), format!("videos:convert:gif:{}", upload.id)),
-            crate::telegram::cb("📦 Сжать".to_string(), format!("videos:convert:compress:{}", upload.id)),
+            crate::telegram::cb(
+                "📦 Compress".to_string(),
+                format!("videos:convert:compress:{}", upload.id),
+            ),
         ],
         // Back button
         vec![crate::telegram::cb(
-            "⬅️ Назад".to_string(),
+            "⬅️ Back".to_string(),
             format!("videos:open:{}", upload.id),
         )],
     ];
@@ -385,7 +388,7 @@ fn build_upload_info_text(upload: &UploadEntry) -> String {
     };
 
     format!(
-        "{} *Файл:* {}{}\n\nЧто сделать?",
+        "{} *File:* {}{}\n\nWhat to do?",
         icon,
         escape_markdown(&upload.title),
         info_str
@@ -498,11 +501,11 @@ pub async fn handle_videos_callback(
             {
                 let (text, keyboard) = match submenu_type {
                     "send" => {
-                        let text = format!("📤 *Отправить* _{}_*:*", escape_markdown(&upload.title));
+                        let text = format!("📤 *Send* _{}_*:*", escape_markdown(&upload.title));
                         (text, build_send_submenu_keyboard(&upload))
                     }
                     "convert" => {
-                        let text = format!("🔄 *Конвертировать* _{}_*:*", escape_markdown(&upload.title));
+                        let text = format!("🔄 *Convert* _{}_*:*", escape_markdown(&upload.title));
                         (text, build_convert_submenu_keyboard(&upload))
                     }
                     _ => return Ok(()),
@@ -513,7 +516,7 @@ pub async fn handle_videos_callback(
                     .reply_markup(keyboard)
                     .await?;
             } else {
-                bot.edit_message_text(chat_id, message_id, "❌ Файл не найден").await?;
+                bot.edit_message_text(chat_id, message_id, "❌ File not found").await?;
             }
         }
         "send" => {
@@ -532,7 +535,7 @@ pub async fn handle_videos_callback(
                 let file_id = teloxide::types::FileId(upload.file_id.clone());
                 let caption = upload.title.clone();
 
-                let status_msg = bot.send_message(chat_id, "⏳ Отправляю файл...").await?;
+                let status_msg = bot.send_message(chat_id, "⏳ Sending file...").await?;
 
                 let send_result = match send_type {
                     "video" => {
@@ -568,7 +571,7 @@ pub async fn handle_videos_callback(
                         bot.delete_message(chat_id, message_id).await.ok();
                     }
                     Err(e) => {
-                        bot.send_message(chat_id, format!("❌ Не удалось отправить файл: {}", e))
+                        bot.send_message(chat_id, format!("❌ Failed to send file: {}", e))
                             .await
                             .ok();
                     }
@@ -587,10 +590,10 @@ pub async fn handle_videos_callback(
             // Confirm deletion
             let keyboard = InlineKeyboardMarkup::new(vec![vec![
                 crate::telegram::cb(
-                    "✅ Да, удалить".to_string(),
+                    "✅ Yes, delete".to_string(),
                     format!("videos:confirm_delete:{}", upload_id),
                 ),
-                crate::telegram::cb("❌ Отмена".to_string(), "videos:cancel".to_string()),
+                crate::telegram::cb("❌ Cancel".to_string(), "videos:cancel".to_string()),
             ]]);
 
             if let Some(upload) = get_upload_by_id(&conn, chat_id.0, upload_id)
@@ -599,7 +602,7 @@ pub async fn handle_videos_callback(
                 bot.edit_message_text(
                     chat_id,
                     message_id,
-                    format!("🗑️ Удалить *{}*?", escape_markdown(&upload.title)),
+                    format!("🗑️ Delete *{}*?", escape_markdown(&upload.title)),
                 )
                 .parse_mode(ParseMode::MarkdownV2)
                 .reply_markup(keyboard)
@@ -618,14 +621,13 @@ pub async fn handle_videos_callback(
             match delete_upload(&conn, chat_id.0, upload_id) {
                 Ok(true) => {
                     bot.delete_message(chat_id, message_id).await.ok();
-                    bot.send_message(chat_id, "✅ Файл удалён").await?;
+                    bot.send_message(chat_id, "✅ File deleted").await?;
                 }
                 Ok(false) => {
-                    bot.send_message(chat_id, "❌ Файл не найден").await?;
+                    bot.send_message(chat_id, "❌ File not found").await?;
                 }
                 Err(e) => {
-                    bot.send_message(chat_id, format!("❌ Ошибка при удалении: {}", e))
-                        .await?;
+                    bot.send_message(chat_id, format!("❌ Error deleting: {}", e)).await?;
                 }
             }
         }
@@ -670,7 +672,7 @@ pub async fn handle_videos_callback(
                         // Add "Full video" option for videos longer than 60s (splits into multiple circles)
                         if video_duration > VIDEO_NOTE_MAX_DURATION {
                             if let Some(split_info) = calculate_video_note_split(video_duration) {
-                                let full_video_label = format!("📼 Всё видео ({} кружков)", split_info.num_parts);
+                                let full_video_label = format!("📼 Full video ({} circles)", split_info.num_parts);
                                 rows.push(vec![crate::telegram::cb(
                                     full_video_label,
                                     format!("videos:circle_speed:{}:{}", upload_id, video_duration),
@@ -678,14 +680,14 @@ pub async fn handle_videos_callback(
                             } else if is_too_long_for_split(video_duration) {
                                 // Video too long - show warning button (disabled)
                                 rows.push(vec![crate::telegram::cb(
-                                    "⚠️ Видео слишком длинное (макс. 6 мин)".to_string(),
+                                    "⚠️ Video is too long (max 6 min)".to_string(),
                                     "videos:noop".to_string(),
                                 )]);
                             }
                         }
 
                         rows.push(vec![crate::telegram::cb(
-                            "❌ Отмена".to_string(),
+                            "❌ Cancel".to_string(),
                             "videos:cancel".to_string(),
                         )]);
 
@@ -695,21 +697,21 @@ pub async fn handle_videos_callback(
                         let status_text = if video_duration > VIDEO_NOTE_MAX_DURATION {
                             if is_too_long_for_split(video_duration) {
                                 format!(
-                                    "⭕️ *Выбери длительность кружка* для *{}*:\n\n⚠️ Видео длиннее 6 минут — можно создать только кружок до 60с\\.\n\nИли отправь интервал в формате `мм:сс\\-мм:сс`\\.",
+                                    "⭕️ *Choose circle duration* for *{}*:\n\n⚠️ Video is longer than 6 minutes — only circles up to 60s can be created\\.\n\nOr send an interval in the format `mm:ss\\-mm:ss`\\.",
                                     escape_markdown(&upload.title)
                                 )
                             } else {
                                 let split_info = calculate_video_note_split(video_duration);
                                 let num_circles = split_info.map(|s| s.num_parts).unwrap_or(1);
                                 format!(
-                                    "⭕️ *Выбери длительность кружка* для *{}*:\n\n💡 Видео длиннее 60с — можно создать {} кружков\\.\n\nИли отправь интервал в формате `мм:сс\\-мм:сс`\\.",
+                                    "⭕️ *Choose circle duration* for *{}*:\n\n💡 Video is longer than 60s — can create {} circles\\.\n\nOr send an interval in the format `mm:ss\\-mm:ss`\\.",
                                     escape_markdown(&upload.title),
                                     num_circles
                                 )
                             }
                         } else {
                             format!(
-                                "⭕️ *Выбери длительность кружка* для *{}*:\n\nИли отправь интервал в формате `мм:сс\\-мм:сс`\\.",
+                                "⭕️ *Choose circle duration* for *{}*:\n\nOr send an interval in the format `mm:ss\\-mm:ss`\\.",
                                 escape_markdown(&upload.title)
                             )
                         };
@@ -758,7 +760,7 @@ pub async fn handle_videos_callback(
             let keyboard = InlineKeyboardMarkup::new(vec![
                 speed_row,
                 vec![crate::telegram::cb(
-                    "⬅️ Назад".to_string(),
+                    "⬅️ Back".to_string(),
                     format!("videos:convert:circle:{}", upload_id),
                 )],
             ]);
@@ -766,7 +768,7 @@ pub async fn handle_videos_callback(
             bot.edit_message_text(
                 chat_id,
                 message_id,
-                format!("⚡ *Выбери скорость кружка* \\({}s\\):", escape_markdown(duration)),
+                format!("⚡ *Choose circle speed* \\({}s\\):", escape_markdown(duration)),
             )
             .parse_mode(ParseMode::MarkdownV2)
             .reply_markup(keyboard)
@@ -826,7 +828,7 @@ async fn handle_convert_callback(
                 if is_too_long_for_split(duration) {
                     bot.send_message(
                         chat_id,
-                        "❌ Видео слишком длинное\\. Максимум 6 минут для разбивки на кружки\\.",
+                        "❌ Video is too long\\. Maximum 6 minutes for splitting into circles\\.",
                     )
                     .parse_mode(ParseMode::MarkdownV2)
                     .await?;
@@ -840,14 +842,14 @@ async fn handle_convert_callback(
                 let speed_label = speed.map(|s| format!(" x{}", s)).unwrap_or_default();
                 let status_text = if num_circles > 1 {
                     format!(
-                        "⏳ Создаю {} кружков{} из *{}*\\.\\.\\.\n\n_Это может занять несколько минут_",
+                        "⏳ Creating {} circles{} from *{}*\\.\\.\\.\n\n_This may take a few minutes_",
                         num_circles,
                         escape_markdown(&speed_label),
                         escape_markdown(&upload.title)
                     )
                 } else {
                     format!(
-                        "⏳ Создаю кружок{} из *{}*\\.\\.\\.\n\n_Это может занять несколько минут_",
+                        "⏳ Creating circle{} from *{}*\\.\\.\\.\n\n_This may take a few minutes_",
                         escape_markdown(&speed_label),
                         escape_markdown(&upload.title)
                     )
@@ -862,7 +864,7 @@ async fn handle_convert_callback(
                 let temp_input = match download_file_from_telegram(bot, &upload.file_id, None).await {
                     Ok(path) => path,
                     Err(e) => {
-                        bot.edit_message_text(chat_id, status_msg.id, format!("❌ Не удалось скачать файл: {}", e))
+                        bot.edit_message_text(chat_id, status_msg.id, format!("❌ Failed to download file: {}", e))
                             .await?;
                         return Ok(());
                     }
@@ -875,7 +877,7 @@ async fn handle_convert_callback(
                         Ok(output_paths) => {
                             let total = output_paths.len();
                             for (i, output_path) in output_paths.iter().enumerate() {
-                                let progress_text = format!("📤 Отправляю кружок {}/{}...", i + 1, total);
+                                let progress_text = format!("📤 Sending circle {}/{}...", i + 1, total);
                                 bot.edit_message_text(chat_id, status_msg.id, &progress_text).await.ok();
 
                                 // Calculate duration for this part
@@ -898,7 +900,7 @@ async fn handle_convert_callback(
                                         bot.edit_message_text(
                                             chat_id,
                                             status_msg.id,
-                                            format!("❌ Не удалось отправить кружок {}/{}: {}", i + 1, total, e),
+                                            format!("❌ Failed to send circle {}/{}: {}", i + 1, total, e),
                                         )
                                         .await?;
                                         // Clean up remaining files
@@ -920,12 +922,8 @@ async fn handle_convert_callback(
                             }
                         }
                         Err(e) => {
-                            bot.edit_message_text(
-                                chat_id,
-                                status_msg.id,
-                                format!("❌ Ошибка при создании кружков: {}", e),
-                            )
-                            .await?;
+                            bot.edit_message_text(chat_id, status_msg.id, format!("❌ Error creating circles: {}", e))
+                                .await?;
                         }
                     }
                 } else {
@@ -938,7 +936,7 @@ async fn handle_convert_callback(
 
                     match to_video_note(&temp_input, options).await {
                         Ok(output_path) => {
-                            bot.edit_message_text(chat_id, status_msg.id, "📤 Отправляю кружок...")
+                            bot.edit_message_text(chat_id, status_msg.id, "📤 Sending circle...")
                                 .await
                                 .ok();
 
@@ -955,7 +953,7 @@ async fn handle_convert_callback(
                                     bot.edit_message_text(
                                         chat_id,
                                         status_msg.id,
-                                        format!("❌ Не удалось отправить кружок: {}", e),
+                                        format!("❌ Failed to send circle: {}", e),
                                     )
                                     .await?;
                                 }
@@ -964,12 +962,8 @@ async fn handle_convert_callback(
                             tokio::fs::remove_file(&output_path).await.ok();
                         }
                         Err(e) => {
-                            bot.edit_message_text(
-                                chat_id,
-                                status_msg.id,
-                                format!("❌ Ошибка при создании кружка: {}", e),
-                            )
-                            .await?;
+                            bot.edit_message_text(chat_id, status_msg.id, format!("❌ Error creating circle: {}", e))
+                                .await?;
                         }
                     }
                 }
@@ -993,7 +987,7 @@ async fn handle_convert_callback(
                 let status_msg = bot
                     .send_message(
                         chat_id,
-                        format!("⏳ Извлекаю аудио из *{}*\\.\\.\\.", escape_markdown(&upload.title)),
+                        format!("⏳ Extracting audio from *{}*\\.\\.\\.", escape_markdown(&upload.title)),
                     )
                     .parse_mode(ParseMode::MarkdownV2)
                     .await?;
@@ -1002,7 +996,7 @@ async fn handle_convert_callback(
                 let temp_input = match download_file_from_telegram(bot, &upload.file_id, None).await {
                     Ok(path) => path,
                     Err(e) => {
-                        bot.edit_message_text(chat_id, status_msg.id, format!("❌ Не удалось скачать файл: {}", e))
+                        bot.edit_message_text(chat_id, status_msg.id, format!("❌ Failed to download file: {}", e))
                             .await?;
                         return Ok(());
                     }
@@ -1011,7 +1005,7 @@ async fn handle_convert_callback(
                 // Extract audio
                 match extract_audio(&temp_input, "320k").await {
                     Ok(output_path) => {
-                        bot.edit_message_text(chat_id, status_msg.id, "📤 Отправляю аудио...")
+                        bot.edit_message_text(chat_id, status_msg.id, "📤 Sending audio...")
                             .await
                             .ok();
 
@@ -1035,7 +1029,7 @@ async fn handle_convert_callback(
                                 bot.edit_message_text(
                                     chat_id,
                                     status_msg.id,
-                                    format!("❌ Не удалось отправить аудио: {}", e),
+                                    format!("❌ Failed to send audio: {}", e),
                                 )
                                 .await?;
                             }
@@ -1045,7 +1039,7 @@ async fn handle_convert_callback(
                         tokio::fs::remove_file(&output_path).await.ok();
                     }
                     Err(e) => {
-                        bot.edit_message_text(chat_id, status_msg.id, format!("❌ Ошибка при извлечении аудио: {}", e))
+                        bot.edit_message_text(chat_id, status_msg.id, format!("❌ Error extracting audio: {}", e))
                             .await?;
                     }
                 }
@@ -1070,7 +1064,7 @@ async fn handle_convert_callback(
                     .send_message(
                         chat_id,
                         format!(
-                            "⏳ Создаю GIF из *{}*\\.\\.\\.\n\n_Это может занять некоторое время_",
+                            "⏳ Creating GIF from *{}*\\.\\.\\.\n\n_This may take some time_",
                             escape_markdown(&upload.title)
                         ),
                     )
@@ -1081,7 +1075,7 @@ async fn handle_convert_callback(
                 let temp_input = match download_file_from_telegram(bot, &upload.file_id, None).await {
                     Ok(path) => path,
                     Err(e) => {
-                        bot.edit_message_text(chat_id, status_msg.id, format!("❌ Не удалось скачать файл: {}", e))
+                        bot.edit_message_text(chat_id, status_msg.id, format!("❌ Failed to download file: {}", e))
                             .await?;
                         return Ok(());
                     }
@@ -1092,7 +1086,7 @@ async fn handle_convert_callback(
 
                 match to_gif(&temp_input, options).await {
                     Ok(output_path) => {
-                        bot.edit_message_text(chat_id, status_msg.id, "📤 Отправляю GIF...")
+                        bot.edit_message_text(chat_id, status_msg.id, "📤 Sending GIF...")
                             .await
                             .ok();
 
@@ -1102,12 +1096,8 @@ async fn handle_convert_callback(
                                 bot.delete_message(chat_id, status_msg.id).await.ok();
                             }
                             Err(e) => {
-                                bot.edit_message_text(
-                                    chat_id,
-                                    status_msg.id,
-                                    format!("❌ Не удалось отправить GIF: {}", e),
-                                )
-                                .await?;
+                                bot.edit_message_text(chat_id, status_msg.id, format!("❌ Failed to send GIF: {}", e))
+                                    .await?;
                             }
                         }
 
@@ -1115,7 +1105,7 @@ async fn handle_convert_callback(
                         tokio::fs::remove_file(&output_path).await.ok();
                     }
                     Err(e) => {
-                        bot.edit_message_text(chat_id, status_msg.id, format!("❌ Ошибка при создании GIF: {}", e))
+                        bot.edit_message_text(chat_id, status_msg.id, format!("❌ Error creating GIF: {}", e))
                             .await?;
                     }
                 }
@@ -1140,7 +1130,7 @@ async fn handle_convert_callback(
                     .send_message(
                         chat_id,
                         format!(
-                            "⏳ Сжимаю *{}*\\.\\.\\.\n\n_Это может занять несколько минут_",
+                            "⏳ Compressing *{}*\\.\\.\\.\n\n_This may take a few minutes_",
                             escape_markdown(&upload.title)
                         ),
                     )
@@ -1151,7 +1141,7 @@ async fn handle_convert_callback(
                 let temp_input = match download_file_from_telegram(bot, &upload.file_id, None).await {
                     Ok(path) => path,
                     Err(e) => {
-                        bot.edit_message_text(chat_id, status_msg.id, format!("❌ Не удалось скачать файл: {}", e))
+                        bot.edit_message_text(chat_id, status_msg.id, format!("❌ Failed to download file: {}", e))
                             .await?;
                         return Ok(());
                     }
@@ -1177,7 +1167,7 @@ async fn handle_convert_callback(
                             chat_id,
                             status_msg.id,
                             format!(
-                                "📤 Отправляю сжатое видео...\n({} → {}, -{:.0}%)",
+                                "📤 Sending compressed video...\n({} → {}, -{:.0}%)",
                                 format_file_size(original_size as i64),
                                 format_file_size(compressed_size as i64),
                                 size_reduction
@@ -1188,7 +1178,7 @@ async fn handle_convert_callback(
 
                         match bot
                             .send_video(chat_id, InputFile::file(&output_path))
-                            .caption(format!("{} (сжато, -{:.0}%)", upload.title, size_reduction))
+                            .caption(format!("{} (compressed, -{:.0}%)", upload.title, size_reduction))
                             .await
                         {
                             Ok(_) => {
@@ -1198,7 +1188,7 @@ async fn handle_convert_callback(
                                 bot.edit_message_text(
                                     chat_id,
                                     status_msg.id,
-                                    format!("❌ Не удалось отправить видео: {}", e),
+                                    format!("❌ Failed to send video: {}", e),
                                 )
                                 .await?;
                             }
@@ -1208,7 +1198,7 @@ async fn handle_convert_callback(
                         tokio::fs::remove_file(&output_path).await.ok();
                     }
                     Err(e) => {
-                        bot.edit_message_text(chat_id, status_msg.id, format!("❌ Ошибка при сжатии видео: {}", e))
+                        bot.edit_message_text(chat_id, status_msg.id, format!("❌ Error compressing video: {}", e))
                             .await?;
                     }
                 }
@@ -1280,11 +1270,11 @@ mod tests {
 
     #[test]
     fn test_get_media_type_name() {
-        assert_eq!(get_media_type_name("photo"), "Фото");
-        assert_eq!(get_media_type_name("video"), "Видео");
-        assert_eq!(get_media_type_name("audio"), "Аудио");
-        assert_eq!(get_media_type_name("document"), "Документы");
-        assert_eq!(get_media_type_name("unknown"), "Все");
+        assert_eq!(get_media_type_name("photo"), "Photos");
+        assert_eq!(get_media_type_name("video"), "Videos");
+        assert_eq!(get_media_type_name("audio"), "Audio");
+        assert_eq!(get_media_type_name("document"), "Documents");
+        assert_eq!(get_media_type_name("unknown"), "All");
     }
 
     /// Helper to create a test UploadEntry
@@ -1489,14 +1479,14 @@ mod tests {
         let send_kb = build_send_submenu_keyboard(&upload);
         let send_labels = all_labels(&send_kb);
         assert!(
-            send_labels.contains(&"⬅️ Назад".to_string()),
+            send_labels.contains(&"⬅️ Back".to_string()),
             "Send submenu should have back"
         );
 
         let convert_kb = build_convert_submenu_keyboard(&upload);
         let convert_labels = all_labels(&convert_kb);
         assert!(
-            convert_labels.contains(&"⬅️ Назад".to_string()),
+            convert_labels.contains(&"⬅️ Back".to_string()),
             "Convert submenu should have back"
         );
 
@@ -1516,6 +1506,6 @@ mod tests {
 
         assert!(text.contains("🎬"), "Should have video icon");
         assert!(text.contains("Test Video"), "Should contain title");
-        assert!(text.contains("Что сделать"), "Should ask what to do");
+        assert!(text.contains("What to do"), "Should ask what to do");
     }
 }

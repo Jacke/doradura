@@ -6,116 +6,270 @@ use teloxide::prelude::*;
 use teloxide::types::MessageId;
 use unic_langid::LanguageIdentifier;
 
-/// Состояние загрузки файла для отображения прогресса пользователю.
+// ======================== Progress Bar Styles ========================
+
+/// Selectable progress bar visual style.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProgressBarStyle {
+    #[default]
+    Classic, // [█████░░░░░]
+    Gradient, // ▓▓▓▓▒▒░░░░
+    Emoji,    // 🟩🟩🟩🟩⬜⬜⬜⬜
+    Dots,     // ● ● ● ● ○ ○ ○ ○
+    Runner,   // ━━━🏃░░░░░░
+    Rpg,      // ❤️ BOSS ████░░ 50HP
+    Fire,     // 🔥🔥🔥░░░░░░░
+    Moon,     // 🌕🌕🌖🌑🌑
+}
+
+impl ProgressBarStyle {
+    /// Parse from stored string value.
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "classic" => Self::Classic,
+            "gradient" => Self::Gradient,
+            "emoji" => Self::Emoji,
+            "dots" => Self::Dots,
+            "runner" => Self::Runner,
+            "rpg" => Self::Rpg,
+            "fire" => Self::Fire,
+            "moon" => Self::Moon,
+            _ => Self::Classic,
+        }
+    }
+
+    /// Serialize to string for DB storage.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Classic => "classic",
+            Self::Gradient => "gradient",
+            Self::Emoji => "emoji",
+            Self::Dots => "dots",
+            Self::Runner => "runner",
+            Self::Rpg => "rpg",
+            Self::Fire => "fire",
+            Self::Moon => "moon",
+        }
+    }
+
+    /// Human-readable display name.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Classic => "Classic",
+            Self::Gradient => "Gradient",
+            Self::Emoji => "Emoji",
+            Self::Dots => "Dots",
+            Self::Runner => "Runner",
+            Self::Rpg => "RPG Boss",
+            Self::Fire => "Fire",
+            Self::Moon => "Moon",
+        }
+    }
+
+    /// Preview string (short example at 50%).
+    pub fn preview(&self) -> &'static str {
+        match self {
+            Self::Classic => "[█████░░░░░]",
+            Self::Gradient => "▓▓▓▓▓▒▒░░░",
+            Self::Emoji => "🟩🟩🟩🟩🟩⬜⬜⬜⬜⬜",
+            Self::Dots => "● ● ● ● ● ○ ○ ○ ○ ○",
+            Self::Runner => "━━━━━🏃░░░░",
+            Self::Rpg => "❤️ ████░░░░ 50HP",
+            Self::Fire => "🔥🔥🔥🔥🔥░░░░░",
+            Self::Moon => "🌕🌕🌕🌕🌕🌑🌑🌑🌑🌑",
+        }
+    }
+
+    /// All available styles, in display order.
+    pub fn all() -> &'static [Self] {
+        &[
+            Self::Classic,
+            Self::Gradient,
+            Self::Emoji,
+            Self::Dots,
+            Self::Runner,
+            Self::Rpg,
+            Self::Fire,
+            Self::Moon,
+        ]
+    }
+}
+
+/// Returns a display name for the source (host) of a URL.
+pub fn source_display_name(url: &url::Url) -> &'static str {
+    match url.host_str().map(|h| h.to_lowercase()).as_deref() {
+        Some(h) if h.contains("youtube") || h.contains("youtu.be") => "YouTube",
+        Some(h) if h.contains("soundcloud") => "SoundCloud",
+        Some(h) if h.contains("instagram") => "Instagram",
+        Some(h) if h.contains("tiktok") => "TikTok",
+        Some(h) if h.contains("twitter") || h.contains("x.com") => "X",
+        Some(h) if h.contains("vimeo") => "Vimeo",
+        Some(h) if h.contains("twitch") => "Twitch",
+        Some(h) if h.contains("bandcamp") => "Bandcamp",
+        Some(h) if h.contains("reddit") => "Reddit",
+        Some(h) if h.contains("rutube") => "Rutube",
+        Some(h) if h.contains("vk.com") => "VK",
+        _ => "Web",
+    }
+}
+
+/// Download state for displaying progress to the user.
 ///
-/// Используется для отслеживания различных этапов процесса загрузки и отправки файла.
+/// Used to track the various stages of the download and file sending process.
 #[derive(Debug, Clone)]
 pub enum DownloadStatus {
-    /// Начало загрузки
+    /// Download is starting
     Starting {
-        /// Название файла/трека
+        /// File/track title
         title: String,
-        /// Формат файла для выбора эмодзи: "mp3", "mp4", "srt", "txt" (опционально)
+        /// File format for emoji selection: "mp3", "mp4", "srt", "txt" (optional)
         file_format: Option<String>,
+        /// Artist name (optional)
+        artist: Option<String>,
     },
-    /// Процесс загрузки с прогресс-баром
+    /// Download in progress with a progress bar
     Downloading {
-        /// Название файла/трека
+        /// File/track title
         title: String,
-        /// Прогресс загрузки в процентах (0-100)
+        /// Download progress in percent (0-100)
         progress: u8,
-        /// Скорость загрузки в MB/s (опционально)
+        /// Download speed in MB/s (optional)
         speed_mbs: Option<f64>,
-        /// Примерное время до завершения в секундах (опционально)
+        /// Estimated time remaining in seconds (optional)
         eta_seconds: Option<u64>,
-        /// Текущий размер в байтах (опционально)
+        /// Current size in bytes (optional)
         current_size: Option<u64>,
-        /// Общий размер в байтах (опционально)
+        /// Total size in bytes (optional)
         total_size: Option<u64>,
-        /// Формат файла для выбора эмодзи: "mp3", "mp4", "srt", "txt" (опционально)
+        /// File format for emoji selection: "mp3", "mp4", "srt", "txt" (optional)
         file_format: Option<String>,
+        /// Update counter for emoji animation
+        update_count: u32,
+        /// Artist name (optional)
+        artist: Option<String>,
     },
-    /// Отправка файла на сервер Telegram
+    /// Sending file to the Telegram server
     Uploading {
-        /// Название файла/трека
+        /// File/track title
         title: String,
-        /// Количество точек для анимации (0-3)
+        /// Number of dots for animation (0-3)
         dots: u8,
-        /// Примерный прогресс отправки в процентах (0-100, опционально)
+        /// Approximate upload progress in percent (0-100, optional)
         progress: Option<u8>,
-        /// Скорость отправки в MB/s (опционально)
+        /// Upload speed in MB/s (optional)
         speed_mbs: Option<f64>,
-        /// Примерное время до завершения в секундах (опционально)
+        /// Estimated time remaining in seconds (optional)
         eta_seconds: Option<u64>,
-        /// Текущий размер в байтах (опционально)
+        /// Current size in bytes (optional)
         current_size: Option<u64>,
-        /// Общий размер в байтах (опционально)
+        /// Total size in bytes (optional)
         total_size: Option<u64>,
-        /// Формат файла для выбора эмодзи: "mp3", "mp4", "srt", "txt" (опционально)
+        /// File format for emoji selection: "mp3", "mp4", "srt", "txt" (optional)
         file_format: Option<String>,
+        /// Update counter for emoji animation
+        update_count: u32,
+        /// Artist name (optional)
+        artist: Option<String>,
     },
-    /// Успешная загрузка с информацией о времени
+    /// Successful download with timing information
     Success {
-        /// Название файла/трека
+        /// File/track title
         title: String,
-        /// Затраченное время в секундах
+        /// Elapsed time in seconds
         elapsed_secs: u64,
-        /// Формат файла для выбора эмодзи: "mp3", "mp4", "srt", "txt" (опционально)
+        /// File format for emoji selection: "mp3", "mp4", "srt", "txt" (optional)
         file_format: Option<String>,
     },
-    /// Финальное состояние (только название, без дополнительной информации)
+    /// Final state (title only, no additional information)
     Completed {
-        /// Название файла/трека
+        /// File/track title
         title: String,
-        /// Формат файла для выбора эмодзи: "mp3", "mp4", "srt", "txt" (опционально)
+        /// File format for emoji selection: "mp3", "mp4", "srt", "txt" (optional)
         file_format: Option<String>,
     },
-    /// Ошибка при загрузке
+    /// Download error
     Error {
-        /// Название файла/трека
+        /// File/track title
         title: String,
-        /// Описание ошибки
+        /// Error description
         error: String,
-        /// Формат файла для выбора эмодзи: "mp3", "mp4", "srt", "txt" (опционально)
+        /// File format for emoji selection: "mp3", "mp4", "srt", "txt" (optional)
         file_format: Option<String>,
     },
 }
 
 impl DownloadStatus {
-    /// Возвращает эмодзи в зависимости от формата файла
-    ///
-    /// # Arguments
-    ///
-    /// * `file_format` - Формат файла: "mp3", "mp4", "srt", "txt" или None
-    ///
-    /// # Returns
-    ///
-    /// Эмодзи для соответствующего типа файла или 🎵 по умолчанию
+    /// Returns the emoji based on the file format (static, for Starting/Success/Completed/Error)
     fn get_emoji(file_format: Option<&String>) -> &'static str {
         match file_format {
             Some(format) => match format.as_str() {
                 "mp4" | "mp4+mp3" => "🎬",
                 "srt" => "📝",
                 "txt" => "📄",
-                _ => "🎵", // mp3 и другие форматы по умолчанию
+                _ => "🎵",
             },
-            None => "🎵", // По умолчанию нота для обратной совместимости
+            None => "🎵",
         }
     }
 
-    /// Генерирует форматированный текст сообщения для текущего состояния.
+    /// Returns an animated emoji that alternates on each progress update
+    fn get_animated_emoji(file_format: Option<&String>, update_count: u32) -> &'static str {
+        let is_even = update_count.is_multiple_of(2);
+        match file_format {
+            Some(format) => match format.as_str() {
+                "mp4" | "mp4+mp3" => {
+                    if is_even {
+                        "🎬"
+                    } else {
+                        "🎥"
+                    }
+                }
+                "srt" => "📝",
+                "txt" => "📄",
+                _ => {
+                    if is_even {
+                        "🎵"
+                    } else {
+                        "🎶"
+                    }
+                }
+            },
+            None => {
+                if is_even {
+                    "🎵"
+                } else {
+                    "🎶"
+                }
+            }
+        }
+    }
+
+    /// Returns a speed emoji based on MB/s value
+    fn speed_emoji(speed_mbs: f64) -> &'static str {
+        if speed_mbs < 1.0 {
+            "🐌"
+        } else if speed_mbs < 5.0 {
+            "⚡"
+        } else if speed_mbs < 20.0 {
+            "🚀"
+        } else {
+            "💨"
+        }
+    }
+
+    /// Generates the formatted status message text for the current state.
     ///
-    /// Форматирует сообщение в соответствии с MarkdownV2 синтаксисом Telegram,
-    /// включая прогресс-бар для состояния загрузки и экранирование специальных символов.
+    /// Formats the message according to Telegram MarkdownV2 syntax,
+    /// including a progress bar for the downloading state and escaping of special characters.
     ///
     /// # Returns
     ///
-    /// Строка с форматированным сообщением о статусе загрузки.
+    /// A string with the formatted download status message.
     ///
     /// # Example
     ///
     /// ```
-    /// use doradura::download::progress::DownloadStatus;
+    /// use doradura::download::progress::{DownloadStatus, ProgressBarStyle};
     ///
     /// let status = DownloadStatus::Downloading {
     ///     title: "Test Song".to_string(),
@@ -125,21 +279,36 @@ impl DownloadStatus {
     ///     current_size: None,
     ///     total_size: None,
     ///     file_format: Some("mp3".to_string()),
+    ///     update_count: 0,
+    ///     artist: None,
     /// };
     /// let lang: unic_langid::LanguageIdentifier = "ru".parse().unwrap();
-    /// let message = status.to_message(&lang);
+    /// let message = status.to_message(&lang, ProgressBarStyle::default(), None);
     /// ```
-    pub fn to_message(&self, lang: &LanguageIdentifier) -> String {
+    pub fn to_message(&self, lang: &LanguageIdentifier, style: ProgressBarStyle, source_badge: Option<&str>) -> String {
         match self {
-            DownloadStatus::Starting { title, file_format } => {
+            DownloadStatus::Starting {
+                title,
+                file_format,
+                artist,
+            } => {
                 let escaped = escape_markdown(title);
                 let emoji = Self::get_emoji(file_format.as_ref());
                 let starting_text = escape_markdown(&i18n::t(lang, "progress.starting"));
-                let mut s = String::with_capacity(escaped.len() + starting_text.len() + 50);
+                let mut s = String::with_capacity(escaped.len() + starting_text.len() + 100);
                 s.push_str(emoji);
                 s.push_str(" *");
                 s.push_str(&escaped);
-                s.push_str("*\n\n⏳ ");
+                s.push('*');
+                if let Some(a) = artist.as_deref().filter(|a| !a.is_empty()) {
+                    s.push_str("\n👤 ");
+                    s.push_str(&escape_markdown(a));
+                }
+                if let Some(badge) = source_badge.filter(|b| !b.is_empty()) {
+                    s.push_str("\n📺 ");
+                    s.push_str(&escape_markdown(badge));
+                }
+                s.push_str("\n\n⏳ ");
                 s.push_str(&starting_text);
                 s
             }
@@ -151,16 +320,27 @@ impl DownloadStatus {
                 current_size,
                 total_size,
                 file_format,
+                update_count,
+                artist,
             } => {
                 let escaped = escape_markdown(title);
-                let emoji = Self::get_emoji(file_format.as_ref());
-                let bar = create_progress_bar(*progress);
+                let emoji = Self::get_animated_emoji(file_format.as_ref(), *update_count);
+                let bar = create_progress_bar(*progress, style);
                 let downloading_text = escape_markdown(&i18n::t(lang, "progress.downloading"));
                 let mut s = String::with_capacity(escaped.len() + bar.len() + 200);
                 s.push_str(emoji);
                 s.push_str(" *");
                 s.push_str(&escaped);
-                s.push_str("*\n\n📥 ");
+                s.push('*');
+                if let Some(a) = artist.as_deref().filter(|a| !a.is_empty()) {
+                    s.push_str("\n👤 ");
+                    s.push_str(&escape_markdown(a));
+                }
+                if let Some(badge) = source_badge.filter(|b| !b.is_empty()) {
+                    s.push_str("\n📺 ");
+                    s.push_str(&escape_markdown(badge));
+                }
+                s.push_str("\n\n📥 ");
                 s.push_str(&downloading_text);
                 s.push_str(": ");
                 s.push_str(&progress.to_string());
@@ -169,7 +349,10 @@ impl DownloadStatus {
 
                 if let Some(speed) = speed_mbs {
                     let speed_label = escape_markdown(&i18n::t(lang, "progress.speed"));
-                    s.push_str("\n\n⚡ ");
+                    let spd_emoji = Self::speed_emoji(*speed);
+                    s.push_str("\n\n");
+                    s.push_str(spd_emoji);
+                    s.push(' ');
                     s.push_str(&speed_label);
                     s.push_str(": ");
                     s.push_str(&format!("{:.1} MB/s", speed).replace('.', "\\."));
@@ -223,36 +406,59 @@ impl DownloadStatus {
                 current_size,
                 total_size,
                 file_format,
+                update_count,
+                artist,
             } => {
                 let escaped = escape_markdown(title);
-                let emoji = Self::get_emoji(file_format.as_ref());
+                let emoji = Self::get_animated_emoji(file_format.as_ref(), *update_count);
                 let uploading_text = escape_markdown(&i18n::t(lang, "progress.uploading"));
                 let mut s = String::with_capacity(escaped.len() + 2000);
                 s.push_str(emoji);
                 s.push_str(" *");
                 s.push_str(&escaped);
-                s.push_str("*\n\n📤 ");
+                s.push('*');
+                if let Some(a) = artist.as_deref().filter(|a| !a.is_empty()) {
+                    s.push_str("\n👤 ");
+                    s.push_str(&escape_markdown(a));
+                }
+                if let Some(badge) = source_badge.filter(|b| !b.is_empty()) {
+                    s.push_str("\n📺 ");
+                    s.push_str(&escape_markdown(badge));
+                }
+                s.push_str("\n\n📤 ");
                 s.push_str(&uploading_text);
 
                 if let Some(p) = *progress {
-                    let bar = create_progress_bar(p);
+                    let bar = create_progress_bar(p, style);
                     s.push_str(": ");
                     s.push_str(&p.to_string());
                     s.push_str("%\n");
                     s.push_str(&bar);
                 } else {
-                    let dots_count = (*dots % 4) as usize;
-                    let dots_str = if dots_count == 0 {
-                        String::new()
+                    // Sound wave animation for audio, dots for non-audio
+                    let is_audio = matches!(file_format.as_deref(), Some("mp3"));
+                    if is_audio {
+                        const WAVE_FRAMES: &[&str] = &["▁▃▅▇▅▃▁▃", "▃▅▇▅▃▁▃▅", "▅▇▅▃▁▃▅▇", "▇▅▃▁▃▅▇▅"];
+                        let frame = WAVE_FRAMES[(*dots as usize) % WAVE_FRAMES.len()];
+                        s.push(' ');
+                        s.push_str(frame);
                     } else {
-                        "\\.".repeat(dots_count)
-                    };
-                    s.push_str(&dots_str);
+                        let dots_count = (*dots % 4) as usize;
+                        let dots_str = if dots_count == 0 {
+                            String::new()
+                        } else {
+                            "\\.".repeat(dots_count)
+                        };
+                        s.push_str(&dots_str);
+                    }
                 }
 
                 if let Some(speed) = speed_mbs {
                     let speed_label = escape_markdown(&i18n::t(lang, "progress.speed"));
-                    s.push_str("\n\n⚡ ");
+                    let spd_emoji = Self::speed_emoji(*speed);
+                    s.push_str("\n\n");
+                    s.push_str(spd_emoji);
+                    s.push(' ');
                     s.push_str(&speed_label);
                     s.push_str(": ");
                     s.push_str(&format!("{:.1} MB/s", speed).replace('.', "\\."));
@@ -348,42 +554,91 @@ impl DownloadStatus {
     }
 }
 
-/// Создает визуальный прогресс-бар
-fn create_progress_bar(progress: u8) -> String {
+/// Creates a visual progress bar in the selected style
+fn create_progress_bar(progress: u8, style: ProgressBarStyle) -> String {
     let progress = progress.min(100);
     let filled = (progress / 10) as usize;
     let empty = 10 - filled;
 
-    let filled_blocks = "█".repeat(filled);
-    let empty_blocks = "░".repeat(empty);
-
-    format!("[{}{}]", filled_blocks, empty_blocks)
+    match style {
+        ProgressBarStyle::Classic => {
+            format!("[{}{}]", "█".repeat(filled), "░".repeat(empty))
+        }
+        ProgressBarStyle::Gradient => {
+            // Smooth gradient: filled=▓, transition=▒, empty=░
+            let transition = if filled < 10 && filled > 0 { 1 } else { 0 };
+            let grad_filled = if transition > 0 { filled - 1 } else { filled };
+            let grad_empty = empty.saturating_sub(transition);
+            format!(
+                "{}{}{}",
+                "▓".repeat(grad_filled + transition.min(1)),
+                "▒".repeat(transition),
+                "░".repeat(grad_empty)
+            )
+        }
+        ProgressBarStyle::Emoji => {
+            format!("{}{}", "🟩".repeat(filled), "⬜".repeat(empty))
+        }
+        ProgressBarStyle::Dots => {
+            let f: Vec<&str> = std::iter::repeat_n("●", filled).collect();
+            let e: Vec<&str> = std::iter::repeat_n("○", empty).collect();
+            format!("{} {}", f.join(" "), e.join(" "))
+        }
+        ProgressBarStyle::Runner => {
+            if filled == 10 {
+                format!("{}🏁", "━".repeat(9))
+            } else {
+                format!("{}🏃{}", "━".repeat(filled), "░".repeat(empty.saturating_sub(1).max(0)))
+            }
+        }
+        ProgressBarStyle::Rpg => {
+            let hp = progress;
+            format!("❤️ {}{}  {}HP", "█".repeat(filled), "░".repeat(empty), hp)
+        }
+        ProgressBarStyle::Fire => {
+            format!("{}{}", "🔥".repeat(filled), "░".repeat(empty))
+        }
+        ProgressBarStyle::Moon => {
+            // 🌕 = full, 🌑 = empty, middle segment gets 🌖
+            if filled == 0 {
+                "🌑".repeat(10)
+            } else if filled == 10 {
+                "🌕".repeat(10)
+            } else {
+                format!("{}🌖{}", "🌕".repeat(filled.saturating_sub(1)), "🌑".repeat(empty))
+            }
+        }
+    }
 }
 
 // escape_markdown and extract_retry_after are now imported from crate::core
 
-/// Структура для управления сообщением с прогрессом загрузки.
+/// Structure for managing the download progress message.
 ///
-/// Отслеживает ID сообщения с прогрессом и позволяет обновлять его по мере выполнения загрузки.
+/// Tracks the progress message ID and allows updating it as the download proceeds.
 pub struct ProgressMessage {
-    /// ID чата пользователя
+    /// User's chat ID
     pub chat_id: ChatId,
-    /// ID сообщения с прогрессом (None если еще не отправлено)
+    /// Progress message ID (None if not yet sent)
     pub message_id: Option<MessageId>,
-    /// Язык пользователя для локализации прогресс-сообщений
+    /// User's language for localizing progress messages
     pub lang: LanguageIdentifier,
+    /// Progress bar style chosen by the user
+    pub style: ProgressBarStyle,
+    /// Source and quality badge (e.g. "YouTube · MP3 320kbps")
+    pub source_badge: Option<String>,
 }
 
 impl ProgressMessage {
-    /// Создает новое сообщение прогресса для указанного чата.
+    /// Creates a new progress message for the specified chat.
     ///
     /// # Arguments
     ///
-    /// * `chat_id` - ID чата пользователя
+    /// * `chat_id` - User's chat ID
     ///
     /// # Returns
     ///
-    /// Новый экземпляр `ProgressMessage` без отправленного сообщения.
+    /// A new `ProgressMessage` instance with no sent message yet.
     ///
     /// # Example
     ///
@@ -400,22 +655,24 @@ impl ProgressMessage {
             chat_id,
             message_id: None,
             lang,
+            style: ProgressBarStyle::default(),
+            source_badge: None,
         }
     }
 
-    /// Отправляет или обновляет сообщение с прогрессом загрузки.
+    /// Sends or updates the download progress message.
     ///
-    /// Если сообщение еще не было отправлено, создает новое. Если уже существует,
-    /// редактирует существующее сообщение. При ошибке редактирования отправляет новое сообщение.
+    /// If the message has not been sent yet, creates a new one. If it already exists,
+    /// edits the existing message. On edit failure, sends a new message.
     ///
     /// # Arguments
     ///
-    /// * `bot` - Экземпляр Telegram бота
-    /// * `status` - Текущее состояние загрузки
+    /// * `bot` - Telegram bot instance
+    /// * `status` - Current download state
     ///
     /// # Returns
     ///
-    /// Возвращает `ResponseResult<()>` или ошибку при отправке/редактировании сообщения.
+    /// Returns `ResponseResult<()>` or an error when sending/editing the message.
     ///
     /// # Example
     ///
@@ -429,16 +686,17 @@ impl ProgressMessage {
     /// let mut progress = ProgressMessage::new(chat_id, lang);
     /// progress.update(&bot, DownloadStatus::Starting {
     ///     title: "Test Song".to_string(),
-    ///     file_format: Some("mp3".to_string())
+    ///     file_format: Some("mp3".to_string()),
+    ///     artist: None,
     /// }).await?;
     /// # Ok(())
     /// # }
     /// ```
     pub async fn update(&mut self, bot: &Bot, status: DownloadStatus) -> ResponseResult<()> {
-        let text = status.to_message(&self.lang);
+        let text = status.to_message(&self.lang, self.style, self.source_badge.as_deref());
 
         if let Some(msg_id) = self.message_id {
-            // Обновляем существующее сообщение
+            // Update existing message
             match bot
                 .edit_message_text(self.chat_id, msg_id, text.clone())
                 .parse_mode(teloxide::types::ParseMode::MarkdownV2)
@@ -447,22 +705,22 @@ impl ProgressMessage {
                 Ok(_) => Ok(()),
                 Err(e) => {
                     let error_str = e.to_string();
-                    // Если сообщение не изменилось - это нормально, не нужно отправлять новое
+                    // If the message hasn't changed - that's fine, no need to send a new one
                     if error_str.contains("message is not modified") {
-                        // Это нормальная ситуация - сообщение уже содержит этот контент
-                        // Не логируем как ошибку и не отправляем новое сообщение
+                        // This is a normal situation - the message already contains this content
+                        // Don't log as error and don't send a new message
                         return Ok(());
                     }
 
-                    // Проверяем rate limiting
+                    // Check rate limiting
                     if let Some(retry_after_secs) = extract_retry_after(&error_str) {
                         log::warn!(
                             "Rate limit hit when editing message: Retry after {}s. Waiting...",
                             retry_after_secs
                         );
-                        // Ждем указанное время + небольшая задержка для надежности
+                        // Wait the specified time + a small delay for reliability
                         tokio::time::sleep(tokio::time::Duration::from_secs(retry_after_secs + 1)).await;
-                        // Пробуем еще раз отредактировать
+                        // Try to edit again
                         match bot
                             .edit_message_text(self.chat_id, msg_id, text.clone())
                             .parse_mode(teloxide::types::ParseMode::MarkdownV2)
@@ -471,7 +729,7 @@ impl ProgressMessage {
                             Ok(_) => return Ok(()),
                             Err(e2) => {
                                 let error_str2 = e2.to_string();
-                                // Если снова rate limit или другая ошибка - отправляем новое сообщение
+                                // If rate limited again or another error - send a new message
                                 if error_str2.contains("message is not modified") {
                                     return Ok(());
                                 }
@@ -485,7 +743,7 @@ impl ProgressMessage {
                         log::warn!("Failed to edit message: {}. Trying to send new one.", e);
                     }
 
-                    // Если не удалось отредактировать по другой причине, отправляем новое
+                    // If editing failed for another reason, send a new message
                     let msg = bot
                         .send_message(self.chat_id, text)
                         .parse_mode(teloxide::types::ParseMode::MarkdownV2)
@@ -495,7 +753,7 @@ impl ProgressMessage {
                 }
             }
         } else {
-            // Отправляем новое сообщение
+            // Send a new message
             let msg = bot
                 .send_message(self.chat_id, text)
                 .parse_mode(teloxide::types::ParseMode::MarkdownV2)
@@ -505,19 +763,19 @@ impl ProgressMessage {
         }
     }
 
-    /// Очищает сообщение (оставляет только название) после указанной задержки.
+    /// Clears the message (leaves only the title) after the specified delay.
     ///
-    /// Полезно для очистки деталей прогресса после успешной загрузки, оставляя только название файла.
+    /// Useful for clearing progress details after a successful download, leaving only the file title.
     ///
     /// # Arguments
     ///
-    /// * `bot` - Экземпляр Telegram бота
-    /// * `delay_secs` - Задержка в секундах перед очисткой
-    /// * `title` - Название файла для финального сообщения
+    /// * `bot` - Telegram bot instance
+    /// * `delay_secs` - Delay in seconds before clearing
+    /// * `title` - File title for the final message
     ///
     /// # Returns
     ///
-    /// Возвращает `ResponseResult<()>` или ошибку при обновлении сообщения.
+    /// Returns `ResponseResult<()>` or an error when updating the message.
     ///
     /// # Example
     ///
@@ -526,7 +784,7 @@ impl ProgressMessage {
     /// use doradura::download::progress::ProgressMessage;
     ///
     /// # async fn example(bot: Bot, mut progress: ProgressMessage) -> teloxide::RequestError {
-    /// // Очистить сообщение через 10 секунд
+    /// // Clear the message after 10 seconds
     /// progress.clear_after(&bot, 10, "Test Song".to_string(), Some("mp3".to_string())).await?;
     /// # Ok(())
     /// # }
@@ -566,24 +824,70 @@ mod tests {
 
     #[test]
     fn test_progress_bar() {
-        assert_eq!(create_progress_bar(0), "[░░░░░░░░░░]");
-        assert_eq!(create_progress_bar(50), "[█████░░░░░]");
-        assert_eq!(create_progress_bar(100), "[██████████]");
+        let s = ProgressBarStyle::Classic;
+        assert_eq!(create_progress_bar(0, s), "[░░░░░░░░░░]");
+        assert_eq!(create_progress_bar(50, s), "[█████░░░░░]");
+        assert_eq!(create_progress_bar(100, s), "[██████████]");
     }
 
     #[test]
     fn test_progress_bar_intermediate_values() {
-        assert_eq!(create_progress_bar(10), "[█░░░░░░░░░]");
-        assert_eq!(create_progress_bar(25), "[██░░░░░░░░]");
-        assert_eq!(create_progress_bar(75), "[███████░░░]");
-        assert_eq!(create_progress_bar(90), "[█████████░]");
+        let s = ProgressBarStyle::Classic;
+        assert_eq!(create_progress_bar(10, s), "[█░░░░░░░░░]");
+        assert_eq!(create_progress_bar(25, s), "[██░░░░░░░░]");
+        assert_eq!(create_progress_bar(75, s), "[███████░░░]");
+        assert_eq!(create_progress_bar(90, s), "[█████████░]");
     }
 
     #[test]
     fn test_progress_bar_overflow() {
+        let s = ProgressBarStyle::Classic;
         // Progress > 100 should be capped
-        assert_eq!(create_progress_bar(150), "[██████████]");
-        assert_eq!(create_progress_bar(255), "[██████████]");
+        assert_eq!(create_progress_bar(150, s), "[██████████]");
+        assert_eq!(create_progress_bar(255, s), "[██████████]");
+    }
+
+    #[test]
+    fn test_progress_bar_styles() {
+        // Emoji style
+        let bar = create_progress_bar(50, ProgressBarStyle::Emoji);
+        assert!(bar.contains("🟩"));
+        assert!(bar.contains("⬜"));
+
+        // Fire style
+        let bar = create_progress_bar(30, ProgressBarStyle::Fire);
+        assert!(bar.contains("🔥"));
+
+        // Moon style
+        let bar = create_progress_bar(50, ProgressBarStyle::Moon);
+        assert!(bar.contains("🌕"));
+        assert!(bar.contains("🌑"));
+
+        // RPG style
+        let bar = create_progress_bar(50, ProgressBarStyle::Rpg);
+        assert!(bar.contains("❤️"));
+        assert!(bar.contains("50HP"));
+    }
+
+    #[test]
+    fn test_progress_bar_style_roundtrip() {
+        for style in ProgressBarStyle::all() {
+            let s = style.as_str();
+            let parsed = ProgressBarStyle::parse(s);
+            assert_eq!(*style, parsed, "Roundtrip failed for {}", s);
+        }
+    }
+
+    #[test]
+    fn test_source_display_name() {
+        let yt = url::Url::parse("https://www.youtube.com/watch?v=abc").unwrap();
+        assert_eq!(source_display_name(&yt), "YouTube");
+
+        let sc = url::Url::parse("https://soundcloud.com/artist/track").unwrap();
+        assert_eq!(source_display_name(&sc), "SoundCloud");
+
+        let other = url::Url::parse("https://example.com/file.mp3").unwrap();
+        assert_eq!(source_display_name(&other), "Web");
     }
 
     // ==================== escape_markdown Tests ====================
@@ -673,10 +977,25 @@ mod tests {
         let status = DownloadStatus::Starting {
             title: "Test Song".to_string(),
             file_format: Some("mp3".to_string()),
+            artist: None,
         };
-        let msg = status.to_message(&lang);
+        let msg = status.to_message(&lang, ProgressBarStyle::default(), None);
         assert!(msg.contains("Test Song"));
         assert!(msg.contains("⏳"));
+    }
+
+    #[test]
+    fn test_status_starting_with_artist() {
+        let lang = test_lang();
+        let status = DownloadStatus::Starting {
+            title: "Test Song".to_string(),
+            file_format: Some("mp3".to_string()),
+            artist: Some("Rick Astley".to_string()),
+        };
+        let msg = status.to_message(&lang, ProgressBarStyle::default(), None);
+        assert!(msg.contains("Test Song"));
+        assert!(msg.contains("👤"));
+        assert!(msg.contains("Rick Astley"));
     }
 
     #[test]
@@ -690,11 +1009,78 @@ mod tests {
             current_size: Some(50 * 1024 * 1024),
             total_size: Some(100 * 1024 * 1024),
             file_format: Some("mp3".to_string()),
+            update_count: 0,
+            artist: None,
         };
-        let msg = status.to_message(&lang);
+        let msg = status.to_message(&lang, ProgressBarStyle::default(), None);
         assert!(msg.contains("Test Song"));
         assert!(msg.contains("50%"));
         assert!(msg.contains("📥"));
+    }
+
+    #[test]
+    fn test_status_downloading_speed_emoji() {
+        let lang = test_lang();
+        // Slow speed
+        let status = DownloadStatus::Downloading {
+            title: "Test".to_string(),
+            progress: 50,
+            speed_mbs: Some(0.5),
+            eta_seconds: None,
+            current_size: None,
+            total_size: None,
+            file_format: Some("mp3".to_string()),
+            update_count: 0,
+            artist: None,
+        };
+        let msg = status.to_message(&lang, ProgressBarStyle::default(), None);
+        assert!(msg.contains("🐌"));
+
+        // Fast speed
+        let status = DownloadStatus::Downloading {
+            title: "Test".to_string(),
+            progress: 50,
+            speed_mbs: Some(25.0),
+            eta_seconds: None,
+            current_size: None,
+            total_size: None,
+            file_format: Some("mp3".to_string()),
+            update_count: 0,
+            artist: None,
+        };
+        let msg = status.to_message(&lang, ProgressBarStyle::default(), None);
+        assert!(msg.contains("💨"));
+    }
+
+    #[test]
+    fn test_status_downloading_animated_emoji() {
+        let lang = test_lang();
+        let status_even = DownloadStatus::Downloading {
+            title: "Test".to_string(),
+            progress: 50,
+            speed_mbs: None,
+            eta_seconds: None,
+            current_size: None,
+            total_size: None,
+            file_format: Some("mp3".to_string()),
+            update_count: 0,
+            artist: None,
+        };
+        let status_odd = DownloadStatus::Downloading {
+            title: "Test".to_string(),
+            progress: 50,
+            speed_mbs: None,
+            eta_seconds: None,
+            current_size: None,
+            total_size: None,
+            file_format: Some("mp3".to_string()),
+            update_count: 1,
+            artist: None,
+        };
+        let msg_even = status_even.to_message(&lang, ProgressBarStyle::default(), None);
+        let msg_odd = status_odd.to_message(&lang, ProgressBarStyle::default(), None);
+        assert!(msg_even.contains("🎵"));
+        assert!(msg_odd.contains("🎶"));
     }
 
     #[test]
@@ -709,8 +1095,10 @@ mod tests {
             current_size: None,
             total_size: None,
             file_format: None,
+            update_count: 0,
+            artist: None,
         };
-        let msg = status.to_message(&lang);
+        let msg = status.to_message(&lang, ProgressBarStyle::default(), None);
         assert!(msg.contains("Test Song"));
         assert!(msg.contains("📤"));
     }
@@ -727,8 +1115,10 @@ mod tests {
             current_size: None,
             total_size: None,
             file_format: Some("mp4".to_string()),
+            update_count: 0,
+            artist: None,
         };
-        let msg = status.to_message(&lang);
+        let msg = status.to_message(&lang, ProgressBarStyle::default(), None);
         assert!(msg.contains("75%"));
     }
 
@@ -740,7 +1130,7 @@ mod tests {
             elapsed_secs: 5,
             file_format: Some("mp3".to_string()),
         };
-        let msg = status.to_message(&lang);
+        let msg = status.to_message(&lang, ProgressBarStyle::default(), None);
         assert!(msg.contains("Test Song"));
         assert!(msg.contains("✅"));
         assert!(msg.contains("5"));
@@ -753,7 +1143,7 @@ mod tests {
             title: "Test Song".to_string(),
             file_format: Some("mp3".to_string()),
         };
-        let msg = status.to_message(&lang);
+        let msg = status.to_message(&lang, ProgressBarStyle::default(), None);
         assert!(msg.contains("Test Song"));
         assert!(msg.contains("🎵"));
     }
@@ -766,7 +1156,7 @@ mod tests {
             error: "Network error".to_string(),
             file_format: Some("mp3".to_string()),
         };
-        let msg = status.to_message(&lang);
+        let msg = status.to_message(&lang, ProgressBarStyle::default(), None);
         assert!(msg.contains("Test Song"));
         assert!(msg.contains("❌"));
         assert!(msg.contains("Network error"));
@@ -778,8 +1168,9 @@ mod tests {
         let status = DownloadStatus::Starting {
             title: "Test Song".to_string(),
             file_format: Some("mp3".to_string()),
+            artist: None,
         };
-        let msg = status.to_message(&lang);
+        let msg = status.to_message(&lang, ProgressBarStyle::default(), None);
         assert!(msg.contains("Starting download"));
     }
 

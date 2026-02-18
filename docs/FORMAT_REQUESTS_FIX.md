@@ -1,18 +1,18 @@
-# Исправление Метрики "Downloads by Format"
+# Fix: "Downloads by Format" Metric
 
-## Проблема
+## Problem
 
-Панель "Downloads by Format" в Grafana dashboard не показывала данные, хотя метрика `doradura_format_requests_total` экспортировалась с нулевыми значениями.
+The "Downloads by Format" panel in the Grafana dashboard was not showing data, even though the `doradura_format_requests_total` metric was being exported with zero values.
 
-## Диагностика
+## Diagnosis
 
-### 1. Проверка экспорта метрики
+### 1. Check metric export
 
 ```bash
 curl -s http://localhost:9094/metrics | grep "doradura_format_requests_total"
 ```
 
-**Результат:**
+**Result:**
 ```
 # TYPE doradura_format_requests_total counter
 doradura_format_requests_total{format="mp3",plan="free"} 0
@@ -22,15 +22,15 @@ doradura_format_requests_total{format="mp4",plan="free"} 0
 ...
 ```
 
-✅ Метрика экспортируется правильно!
+Metric is exported correctly!
 
-### 2. Проверка query в Prometheus
+### 2. Check query in Prometheus
 
 ```bash
 curl 'http://localhost:9091/api/v1/query?query=sum%20by%20(format)%20(rate(doradura_format_requests_total%5B5m%5D))'
 ```
 
-**Результат:**
+**Result:**
 ```json
 {
   "data": {
@@ -44,38 +44,38 @@ curl 'http://localhost:9091/api/v1/query?query=sum%20by%20(format)%20(rate(dorad
 }
 ```
 
-✅ Query работает и возвращает данные!
+Query works and returns data!
 
-### 3. Проверка использования в коде
+### 3. Check code usage
 
 ```bash
 grep -r "FORMAT_REQUESTS_TOTAL" src/
 ```
 
-**Результат:**
-- ✅ Объявлена в [src/core/metrics.rs:267](src/core/metrics.rs#L267)
-- ✅ Инициализирована в [src/core/metrics.rs:409-416](src/core/metrics.rs#L409-L416)
-- ❌ **НЕ ИСПОЛЬЗУЕТСЯ** нигде в коде загрузки!
+**Result:**
+- Declared in [src/core/metrics.rs:267](src/core/metrics.rs#L267)
+- Initialized in [src/core/metrics.rs:409-416](src/core/metrics.rs#L409-L416)
+- **NEVER USED** anywhere in the download code!
 
-## Причина
+## Root Cause
 
-Метрика `doradura_format_requests_total` была **объявлена и инициализирована**, но **никогда не инкрементировалась** в коде.
+The `doradura_format_requests_total` metric was **declared and initialized**, but **never incremented** in code.
 
-Метрика должна инкрементироваться каждый раз, когда пользователь запрашивает скачивание в определенном формате (mp3/mp4/srt/txt), но вызовы `.inc()` отсутствовали.
+The metric should be incremented every time a user requests a download in a specific format (mp3/mp4/srt/txt), but the `.inc()` calls were missing.
 
-### Почему метрика была = 0
+### Why the metric was always 0
 
 ```promql
 rate(doradura_format_requests_total[5m])
 ```
 
-Функция `rate()` вычисляет **скорость изменения** счетчика за последние 5 минут. Если счетчик никогда не инкрементировался (всегда 0), то rate = 0, и панель показывает пустые данные.
+The `rate()` function computes the **rate of change** of a counter over the last 5 minutes. If the counter was never incremented (always 0), the rate is 0, and the panel shows no data.
 
-## Решение
+## Solution
 
-Добавили инкрементацию метрики во все функции загрузки.
+Added metric incrementation to all download functions.
 
-### 1. Создали Helper Функцию
+### 1. Created a Helper Function
 
 [src/core/metrics.rs:456-459](src/core/metrics.rs#L456-L459)
 
@@ -86,7 +86,7 @@ pub fn record_format_request(format: &str, plan: &str) {
 }
 ```
 
-### 2. Добавили Инкремент в download_and_send_audio
+### 2. Added Increment to download_and_send_audio
 
 [src/download/downloader.rs:1548-1564](src/download/downloader.rs#L1548-L1564)
 
@@ -118,12 +118,12 @@ tokio::spawn(async move {
 });
 ```
 
-**Логика:**
-1. Получаем план пользователя из БД (`free`, `premium`, или `vip`)
-2. Если БД недоступна или пользователя нет → используем `"free"` по умолчанию
-3. Вызываем `record_format_request("mp3", &user_plan)` → инкрементирует счетчик
+**Logic:**
+1. Fetch the user plan from the DB (`free`, `premium`, or `vip`)
+2. If the DB is unavailable or the user is not found, default to `"free"`
+3. Call `record_format_request("mp3", &user_plan)` to increment the counter
 
-### 3. Добавили Инкремент в download_and_send_video
+### 3. Added Increment to download_and_send_video
 
 [src/download/downloader.rs:2740-2756](src/download/downloader.rs#L2740-L2756)
 
@@ -154,7 +154,7 @@ tokio::spawn(async move {
 });
 ```
 
-### 4. Добавили Инкремент в download_and_send_subtitles
+### 4. Added Increment to download_and_send_subtitles
 
 [src/download/downloader.rs:3525-3542](src/download/downloader.rs#L3525-L3542)
 
@@ -186,36 +186,36 @@ tokio::spawn(async move {
 });
 ```
 
-## Как Это Работает
+## How It Works
 
-### Жизненный Цикл Метрики
+### Metric Lifecycle
 
-1. **Пользователь запрашивает загрузку**
-   - Отправляет URL боту
-   - Выбирает формат через меню (MP3 / MP4 / Subtitles)
+1. **User requests a download**
+   - Sends a URL to the bot
+   - Selects a format via menu (MP3 / MP4 / Subtitles)
 
-2. **Бот вызывает функцию загрузки**
-   - `download_and_send_audio()` для MP3
-   - `download_and_send_video()` для MP4
-   - `download_and_send_subtitles()` для SRT/TXT
+2. **Bot calls the download function**
+   - `download_and_send_audio()` for MP3
+   - `download_and_send_video()` for MP4
+   - `download_and_send_subtitles()` for SRT/TXT
 
-3. **Получение плана пользователя**
+3. **Fetching the user plan**
    ```rust
    let user_plan = db::get_user(&conn, chat_id.0)
        .map(|u| u.plan)
        .unwrap_or("free")
    ```
-   - Запрашивает данные из таблицы `users`
-   - Получает поле `plan`: `"free"`, `"premium"`, или `"vip"`
-   - Fallback на `"free"` если пользователя нет в БД
+   - Queries data from the `users` table
+   - Gets the `plan` field: `"free"`, `"premium"`, or `"vip"`
+   - Falls back to `"free"` if the user is not in the DB
 
-4. **Инкрементация метрики**
+4. **Metric incrementation**
    ```rust
    metrics::record_format_request("mp3", "free")
-   // Инкрементирует: doradura_format_requests_total{format="mp3",plan="free"}
+   // Increments: doradura_format_requests_total{format="mp3",plan="free"}
    ```
 
-5. **Экспорт в Prometheus**
+5. **Export to Prometheus**
    ```
    doradura_format_requests_total{format="mp3",plan="free"} 1
    doradura_format_requests_total{format="mp3",plan="free"} 2
@@ -223,36 +223,36 @@ tokio::spawn(async move {
    ...
    ```
 
-6. **Prometheus вычисляет rate**
+6. **Prometheus computes rate**
    ```promql
    rate(doradura_format_requests_total{format="mp3",plan="free"}[5m])
-   # Результат: 0.01 req/sec (если было 3 запроса за 5 минут)
+   # Result: 0.01 req/sec (if there were 3 requests in 5 minutes)
    ```
 
-7. **Grafana агрегирует по формату**
+7. **Grafana aggregates by format**
    ```promql
    sum by (format) (rate(doradura_format_requests_total[5m]))
-   # Суммирует все планы (free + premium + vip) для каждого формата
-   # Результат:
+   # Sums all plans (free + premium + vip) for each format
+   # Result:
    # {format="mp3"} 0.02
    # {format="mp4"} 0.01
    ```
 
-8. **Dashboard показывает график**
-   - Линия "mp3" - все MP3 запросы (от всех пользователей)
-   - Линия "mp4" - все MP4 запросы
-   - Линия "srt" - субтитры SRT
-   - Линия "txt" - субтитры TXT
+8. **Dashboard displays the chart**
+   - "mp3" line - all MP3 requests (from all users)
+   - "mp4" line - all MP4 requests
+   - "srt" line - SRT subtitles
+   - "txt" line - TXT subtitles
 
-## Проверка Исправления
+## Verifying the Fix
 
-### 1. Проверить что метрика инициализирована
+### 1. Check metric initialization
 
 ```bash
 curl http://localhost:9094/metrics | grep "doradura_format_requests_total"
 ```
 
-**Ожидаемый результат:**
+**Expected result:**
 ```
 doradura_format_requests_total{format="mp3",plan="free"} 0
 doradura_format_requests_total{format="mp3",plan="premium"} 0
@@ -260,123 +260,123 @@ doradura_format_requests_total{format="mp3",plan="vip"} 0
 ...
 ```
 
-### 2. Сделать тестовую загрузку
+### 2. Make a test download
 
-Отправьте URL боту и выберите MP3:
+Send a URL to the bot and select MP3:
 ```
 https://www.youtube.com/watch?v=dQw4w9WgXcQ
 ```
 
-### 3. Проверить что метрика инкрементировалась
+### 3. Check that the metric incremented
 
 ```bash
 curl http://localhost:9094/metrics | grep "format_requests_total"
 ```
 
-**Ожидаемый результат:**
+**Expected result:**
 ```
-doradura_format_requests_total{format="mp3",plan="free"} 1  ← Инкрементировалась!
+doradura_format_requests_total{format="mp3",plan="free"} 1  <- Incremented!
 doradura_format_requests_total{format="mp3",plan="premium"} 0
 doradura_format_requests_total{format="mp3",plan="vip"} 0
 ...
 ```
 
-### 4. Проверить в Prometheus
+### 4. Check in Prometheus
 
 ```bash
 curl 'http://localhost:9091/api/v1/query?query=sum%20by%20(format)%20(rate(doradura_format_requests_total%5B5m%5D))'
 ```
 
-**Ожидаемый результат:** Ненулевое значение для mp3
+**Expected result:** Non-zero value for mp3
 
-### 5. Проверить в Grafana
+### 5. Check in Grafana
 
-Откройте dashboard: http://localhost:3000/d/doradura-overview
+Open the dashboard: http://localhost:3000/d/doradura-overview
 
-Панель **"Downloads by Format"** должна показывать:
-- Линия для `mp3` с ненулевым значением
-- Возможно линии для `mp4`, `srt`, `txt` (если были запросы)
+The **"Downloads by Format"** panel should show:
+- A line for `mp3` with a non-zero value
+- Possibly lines for `mp4`, `srt`, `txt` (if there were requests)
 
-## Связь с Другими Метриками
+## Relationship to Other Metrics
 
-### Метрики загрузки работают параллельно:
+### Download metrics work in parallel:
 
-| Метрика | Когда Инкрементируется | Назначение |
-|---------|------------------------|------------|
-| `doradura_format_requests_total` | При **старте** загрузки | Считает запросы по формату и плану |
-| `doradura_download_success_total` | При **успехе** загрузки | Считает успешные загрузки |
-| `doradura_download_failure_total` | При **ошибке** загрузки | Считает неудачные загрузки |
-| `doradura_download_duration_seconds` | При **завершении** загрузки | Измеряет длительность |
+| Metric | When Incremented | Purpose |
+|--------|-----------------|---------|
+| `doradura_format_requests_total` | At download **start** | Counts requests by format and plan |
+| `doradura_download_success_total` | On download **success** | Counts successful downloads |
+| `doradura_download_failure_total` | On download **error** | Counts failed downloads |
+| `doradura_download_duration_seconds` | At download **completion** | Measures duration |
 
-**Пример:**
+**Example:**
 ```
-1. Пользователь запрашивает MP3
-   → format_requests_total{format="mp3"} += 1
+1. User requests MP3
+   -> format_requests_total{format="mp3"} += 1
 
-2. Загрузка начинается
-   → download_duration_seconds starts timer
+2. Download starts
+   -> download_duration_seconds starts timer
 
-3. Загрузка завершается успешно
-   → download_success_total{format="mp3"} += 1
-   → download_duration_seconds observes 8.5 seconds
+3. Download completes successfully
+   -> download_success_total{format="mp3"} += 1
+   -> download_duration_seconds observes 8.5 seconds
 
-ИЛИ
+OR
 
-3. Загрузка завершается с ошибкой
-   → download_failure_total{format="mp3",error_type="timeout"} += 1
-   → download_duration_seconds observes 120 seconds
+3. Download fails
+   -> download_failure_total{format="mp3",error_type="timeout"} += 1
+   -> download_duration_seconds observes 120 seconds
 ```
 
 ## Dashboard Query
 
-Панель использует следующий PromQL query:
+The panel uses the following PromQL query:
 
 ```promql
 sum by (format) (rate(doradura_format_requests_total[5m]))
 ```
 
-**Разбор:**
-- `rate(doradura_format_requests_total[5m])` - вычисляет скорость изменения за 5 минут
-- `sum by (format) (...)` - суммирует по всем планам (free + premium + vip)
-- Результат: запросов в секунду для каждого формата
+**Breakdown:**
+- `rate(doradura_format_requests_total[5m])` - computes rate of change over 5 minutes
+- `sum by (format) (...)` - sums across all plans (free + premium + vip)
+- Result: requests per second for each format
 
-**Альтернативные queries:**
+**Alternative queries:**
 
-Показать breakdown по планам:
+Show breakdown by plan:
 ```promql
 sum by (format, plan) (rate(doradura_format_requests_total[5m]))
 ```
 
-Только premium пользователи:
+Premium users only:
 ```promql
 sum by (format) (rate(doradura_format_requests_total{plan="premium"}[5m]))
 ```
 
-Всего запросов (все форматы):
+All requests (all formats combined):
 ```promql
 sum(rate(doradura_format_requests_total[5m]))
 ```
 
 ## Best Practices
 
-### 1. Инкрементируйте Метрики Рано
+### 1. Increment Metrics Early
 
-✅ **Правильно:**
+Correct:
 ```rust
-// В начале функции - ДО любых await или длительных операций
+// At the start of the function - BEFORE any await or long operations
 metrics::record_format_request("mp3", &user_plan);
 ```
 
-❌ **Неправильно:**
+Incorrect:
 ```rust
-// В конце функции - метрика не запишется если будет ранний return
+// At the end of the function - metric won't be recorded on early return
 if some_error {
-    return Err(e); // Метрика НЕ записалась!
+    return Err(e); // Metric was NOT recorded!
 }
 metrics::record_format_request("mp3", &user_plan);
 ```
 
-### 2. Используйте Fallback Значения
+### 2. Use Fallback Values
 
 ```rust
 let user_plan = db::get_user(&conn, chat_id.0)
@@ -386,32 +386,32 @@ let user_plan = db::get_user(&conn, chat_id.0)
     .unwrap_or_else(|| "free".to_string()); // Fallback!
 ```
 
-Это гарантирует что метрика всегда запишется, даже если БД недоступна.
+This guarantees that the metric is always recorded, even if the DB is unavailable.
 
-### 3. Группируйте Labels Логически
+### 3. Group Labels Logically
 
-Метрика `format_requests_total` имеет 2 labels:
-- `format` - что запросили (mp3/mp4/srt/txt)
-- `plan` - кто запросил (free/premium/vip)
+The `format_requests_total` metric has 2 labels:
+- `format` - what was requested (mp3/mp4/srt/txt)
+- `plan` - who requested it (free/premium/vip)
 
-Это позволяет анализировать:
-- "Какие форматы популярнее?" → `sum by (format)`
-- "Как premium пользователи используют бота?" → `{plan="premium"}`
-- "Сколько free пользователей качают MP4?" → `{format="mp4",plan="free"}`
+This allows analysis of:
+- "Which formats are most popular?" -> `sum by (format)`
+- "How do premium users use the bot?" -> `{plan="premium"}`
+- "How many free users download MP4?" -> `{format="mp4",plan="free"}`
 
-## Итоговое Состояние
+## Final State
 
-После исправления панель "Downloads by Format" работает корректно:
+After the fix, the "Downloads by Format" panel works correctly:
 
-✅ Метрика инкрементируется при каждом запросе на загрузку
-✅ Prometheus собирает данные каждые 10 секунд
-✅ Grafana показывает rate в req/sec по каждому формату
-✅ График обновляется автоматически каждые 30 секунд
+- Metric is incremented on every download request
+- Prometheus collects data every 10 seconds
+- Grafana shows req/sec rate by format
+- Chart updates automatically every 30 seconds
 
-## Связанные Файлы
+## Related Files
 
-- [src/core/metrics.rs](src/core/metrics.rs) - Определение метрик и helper функции
-- [src/download/downloader.rs](src/download/downloader.rs) - Использование метрик в коде загрузки
+- [src/core/metrics.rs](src/core/metrics.rs) - Metric definitions and helper functions
+- [src/download/downloader.rs](src/download/downloader.rs) - Metric usage in download code
 - [grafana/dashboards/doradura_overview.json](grafana/dashboards/doradura_overview.json) - Grafana dashboard
-- [METRICS_DASHBOARD_FIX.md](METRICS_DASHBOARD_FIX.md) - Основное исправление метрик
-- [QUEUE_DEPTH_FIX.md](QUEUE_DEPTH_FIX.md) - Исправление Queue Depth
+- [METRICS_DASHBOARD_FIX.md](METRICS_DASHBOARD_FIX.md) - Main metrics fix
+- [QUEUE_DEPTH_FIX.md](QUEUE_DEPTH_FIX.md) - Queue Depth fix

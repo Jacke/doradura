@@ -108,13 +108,13 @@ async fn get_ytdlp_version() -> Option<String> {
 async fn check_warp_status() -> (bool, String, Option<String>) {
     let warp_proxy = match &*crate::core::config::proxy::WARP_PROXY {
         Some(url) => url.clone(),
-        None => return (false, "Не настроен".to_string(), None),
+        None => return (false, "Not configured".to_string(), None),
     };
 
     // Parse proxy URL to get host:port
     let url = match Url::parse(&warp_proxy) {
         Ok(u) => u,
-        Err(_) => return (false, "Неверный URL".to_string(), Some(warp_proxy)),
+        Err(_) => return (false, "Invalid URL".to_string(), Some(warp_proxy)),
     };
 
     let host = url.host_str().unwrap_or("127.0.0.1");
@@ -122,9 +122,9 @@ async fn check_warp_status() -> (bool, String, Option<String>) {
     let addr = format!("{}:{}", host, port);
 
     match timeout(Duration::from_secs(3), TcpStream::connect(&addr)).await {
-        Ok(Ok(_)) => (true, "Подключен".to_string(), Some(warp_proxy)),
-        Ok(Err(e)) => (false, format!("Ошибка: {}", e), Some(warp_proxy)),
-        Err(_) => (false, "Таймаут".to_string(), Some(warp_proxy)),
+        Ok(Ok(_)) => (true, "Connected".to_string(), Some(warp_proxy)),
+        Ok(Err(e)) => (false, format!("Error: {}", e), Some(warp_proxy)),
+        Err(_) => (false, "Timeout".to_string(), Some(warp_proxy)),
     }
 }
 
@@ -132,21 +132,21 @@ async fn check_warp_status() -> (bool, String, Option<String>) {
 async fn check_pot_server_status() -> (bool, String) {
     let client = match reqwest::Client::builder().timeout(Duration::from_secs(3)).build() {
         Ok(c) => c,
-        Err(_) => return (false, "Ошибка клиента".to_string()),
+        Err(_) => return (false, "Client error".to_string()),
     };
 
     match client.get("http://127.0.0.1:4416").send().await {
         Ok(resp) => {
             // 404 is OK - server is running but no route at /
             if resp.status().is_success() || resp.status().as_u16() == 404 {
-                (true, "Работает".to_string())
+                (true, "Running".to_string())
             } else {
                 (false, format!("HTTP {}", resp.status()))
             }
         }
         Err(e) => {
             if e.is_connect() {
-                (false, "Не запущен".to_string())
+                (false, "Not running".to_string())
             } else {
                 (false, format!("{}", e))
             }
@@ -160,17 +160,17 @@ async fn check_cookies_status() -> (bool, String, Vec<(&'static str, bool)>) {
 
     let cookies_path = match crate::core::config::YTDL_COOKIES_FILE.as_ref() {
         Some(path) => path,
-        None => return (false, "Путь не настроен".to_string(), vec![]),
+        None => return (false, "Path not configured".to_string(), vec![]),
     };
 
     let path = std::path::Path::new(cookies_path);
     if !path.exists() {
-        return (false, "Файл не найден".to_string(), vec![]);
+        return (false, "File not found".to_string(), vec![]);
     }
 
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
-        Err(_) => return (false, "Ошибка чтения".to_string(), vec![]),
+        Err(_) => return (false, "Read error".to_string(), vec![]),
     };
 
     let mut found_cookies = Vec::new();
@@ -182,11 +182,7 @@ async fn check_cookies_status() -> (bool, String, Vec<(&'static str, bool)>) {
     }
 
     let all_found = found_cookies.iter().all(|(_, found)| *found);
-    let status = if all_found {
-        "Найдены"
-    } else {
-        "Неполные"
-    };
+    let status = if all_found { "Found" } else { "Incomplete" };
 
     (all_found, status.to_string(), found_cookies)
 }
@@ -203,7 +199,7 @@ pub async fn handle_version_command(bot: &Bot, chat_id: ChatId, user_id: i64) ->
 
     if !is_admin(user_id) {
         log::warn!("❌ Non-admin user {} attempted to use /version", user_id);
-        bot.send_message(chat_id, "❌ Эта команда доступна только администраторам.")
+        bot.send_message(chat_id, "❌ This command is only available to administrators.")
             .await?;
         return Ok(());
     }
@@ -216,7 +212,7 @@ pub async fn handle_version_command(bot: &Bot, chat_id: ChatId, user_id: i64) ->
         check_cookies_status()
     );
 
-    let ytdlp_ver = ytdlp_version.unwrap_or_else(|| "не получено".to_string());
+    let ytdlp_ver = ytdlp_version.unwrap_or_else(|| "unavailable".to_string());
     let ytdl_bin = &*config::YTDL_BIN;
 
     let (warp_ok, warp_msg, warp_url) = warp_status;
@@ -233,28 +229,28 @@ pub async fn handle_version_command(bot: &Bot, chat_id: ChatId, user_id: i64) ->
     let cookies_path = crate::core::config::YTDL_COOKIES_FILE
         .as_ref()
         .map(|s| s.as_str())
-        .unwrap_or("не задан");
+        .unwrap_or("not set");
 
     let text = format!(
-        "📦 *Версия и статус системы*\n\n\
+        "📦 *Version and System Status*\n\n\
         🔧 *yt\\-dlp*\n\
-        ├ Версия: `{}`\n\
-        └ Бинарник: `{}`\n\n\
+        ├ Version: `{}`\n\
+        └ Binary: `{}`\n\n\
         🌐 *WARP Proxy*\n\
-        ├ Статус: {} {}\n\
-        └ Адрес: `{}`\n\n\
+        ├ Status: {} {}\n\
+        └ Address: `{}`\n\n\
         🎫 *PO Token Server*\n\
-        ├ Статус: {} {}\n\
-        └ Порт: `4416`\n\n\
+        ├ Status: {} {}\n\
+        └ Port: `4416`\n\n\
         🍪 *YouTube Cookies*\n\
-        ├ Статус: {} {}\n\
-        ├ Файл: `{}`\n\
+        ├ Status: {} {}\n\
+        ├ File: `{}`\n\
         └ {}",
         escape_markdown(&ytdlp_ver),
         escape_markdown(ytdl_bin),
         if warp_ok { "✅" } else { "❌" },
         escape_markdown(&warp_msg),
-        escape_markdown(warp_url.as_deref().unwrap_or("не задан")),
+        escape_markdown(warp_url.as_deref().unwrap_or("not set")),
         if pot_ok { "✅" } else { "❌" },
         escape_markdown(&pot_msg),
         if cookies_ok { "✅" } else { "❌" },
@@ -264,7 +260,7 @@ pub async fn handle_version_command(bot: &Bot, chat_id: ChatId, user_id: i64) ->
     );
 
     let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
-        "🔄 Обновить yt-dlp".to_string(),
+        "🔄 Update yt-dlp".to_string(),
         "admin:update_ytdlp".to_string(),
     )]]);
 
@@ -281,21 +277,21 @@ pub async fn handle_update_ytdlp_callback(bot: &Bot, chat_id: ChatId, message_id
     let before = get_ytdlp_version().await.unwrap_or_else(|| "unknown".to_string());
 
     // Update message to show progress
-    bot.edit_message_text(chat_id, message_id, "⏳ Обновляю yt-dlp...")
+    bot.edit_message_text(chat_id, message_id, "⏳ Updating yt-dlp...")
         .await?;
 
     match ytdlp::force_update_ytdlp().await {
         Ok(_) => {
             let after = get_ytdlp_version().await.unwrap_or_else(|| "unknown".to_string());
             let (status, emoji) = if before == after {
-                ("yt\\-dlp уже актуален", "✅")
+                ("yt\\-dlp is already up to date", "✅")
             } else {
-                ("yt\\-dlp обновлен", "🎉")
+                ("yt\\-dlp updated", "🎉")
             };
             let text = format!(
                 "{} *{}*\n\n\
-                Версия до: `{}`\n\
-                Версия после: `{}`",
+                Version before: `{}`\n\
+                Version after: `{}`",
                 emoji,
                 status,
                 escape_markdown(&before),
@@ -304,7 +300,7 @@ pub async fn handle_update_ytdlp_callback(bot: &Bot, chat_id: ChatId, message_id
 
             // Add button to check again
             let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
-                "🔄 Проверить снова".to_string(),
+                "🔄 Check again".to_string(),
                 "admin:check_ytdlp_version".to_string(),
             )]]);
 
@@ -315,8 +311,8 @@ pub async fn handle_update_ytdlp_callback(bot: &Bot, chat_id: ChatId, message_id
         }
         Err(e) => {
             let text = format!(
-                "❌ *Не удалось обновить yt\\-dlp*\n\n\
-                Ошибка: `{}`",
+                "❌ *Failed to update yt\\-dlp*\n\n\
+                Error: `{}`",
                 escape_markdown(&e.to_string())
             );
             bot.edit_message_text(chat_id, message_id, text)
@@ -332,20 +328,20 @@ pub async fn handle_update_ytdlp_callback(bot: &Bot, chat_id: ChatId, message_id
 pub async fn handle_check_ytdlp_version_callback(bot: &Bot, chat_id: ChatId, message_id: MessageId) -> Result<()> {
     let version = get_ytdlp_version()
         .await
-        .unwrap_or_else(|| "не удалось получить".to_string());
+        .unwrap_or_else(|| "failed to retrieve".to_string());
 
     let ytdl_bin = &*config::YTDL_BIN;
 
     let text = format!(
-        "📦 *yt\\-dlp версия*\n\n\
-        Версия: `{}`\n\
-        Бинарник: `{}`",
+        "📦 *yt\\-dlp version*\n\n\
+        Version: `{}`\n\
+        Binary: `{}`",
         escape_markdown(&version),
         escape_markdown(ytdl_bin)
     );
 
     let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
-        "🔄 Обновить yt-dlp".to_string(),
+        "🔄 Update yt-dlp".to_string(),
         "admin:update_ytdlp".to_string(),
     )]]);
 
@@ -360,7 +356,7 @@ pub async fn handle_check_ytdlp_version_callback(bot: &Bot, chat_id: ChatId, mes
 /// Handles the admin:test_cookies callback - tests cookies with yt-dlp
 pub async fn handle_test_cookies_callback(bot: &Bot, chat_id: ChatId, message_id: MessageId) -> Result<()> {
     // Update message to show testing in progress
-    bot.edit_message_text(chat_id, message_id, "⏳ Тестирую cookies с yt\\-dlp\\.\\.\\.")
+    bot.edit_message_text(chat_id, message_id, "⏳ Testing cookies with yt\\-dlp\\.\\.\\.")
         .parse_mode(ParseMode::MarkdownV2)
         .await?;
 
@@ -368,19 +364,19 @@ pub async fn handle_test_cookies_callback(bot: &Bot, chat_id: ChatId, message_id
     let result = cookies::validate_cookies().await;
 
     let text = match result {
-        Ok(()) => "✅ *Cookies работают\\!*\n\n\
-            Тест загрузки прошёл успешно\\.\n\
-            Cookies валидны и могут использоваться для скачивания\\."
+        Ok(()) => "✅ *Cookies are working\\!*\n\n\
+            Download test passed successfully\\.\n\
+            Cookies are valid and can be used for downloading\\."
             .to_string(),
         Err(reason) => {
             format!(
-                "❌ *Cookies не работают*\n\n\
-                *Ошибка:* {}\n\n\
-                *Возможные причины:*\n\
-                • YouTube заблокировал IP адрес\n\
-                • Cookies истекли или были ротированы\n\
-                • Аккаунт требует подтверждение\n\n\
-                Используй /update\\_cookies для загрузки новых\\.",
+                "❌ *Cookies are not working*\n\n\
+                *Error:* {}\n\n\
+                *Possible reasons:*\n\
+                • YouTube blocked the IP address\n\
+                • Cookies expired or were rotated\n\
+                • Account requires confirmation\n\n\
+                Use /update\\_cookies to upload new ones\\.",
                 escape_markdown(&reason)
             )
         }
@@ -432,7 +428,7 @@ struct BotApiUploadPending {
 /// Handle /botapi_speed command - show upload speed stats from local Bot API logs (admin only)
 pub async fn handle_botapi_speed_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> Result<()> {
     if !is_admin(user_id) {
-        bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
+        bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
             .await?;
         return Ok(());
     }
@@ -440,18 +436,15 @@ pub async fn handle_botapi_speed_command(bot: &Bot, chat_id: ChatId, user_id: i6
     let bot_api_url = match std::env::var("BOT_API_URL") {
         Ok(url) => url,
         Err(_) => {
-            bot.send_message(chat_id, "⚠️ BOT_API_URL не задан. Локальный Bot API не используется.")
+            bot.send_message(chat_id, "⚠️ BOT_API_URL is not set. Local Bot API is not in use.")
                 .await?;
             return Ok(());
         }
     };
 
     if !config::bot_api::is_local_url(&bot_api_url) {
-        bot.send_message(
-            chat_id,
-            "⚠️ Используется официальный Bot API. Локальные логи недоступны.",
-        )
-        .await?;
+        bot.send_message(chat_id, "⚠️ Using the official Bot API. Local logs are not available.")
+            .await?;
         return Ok(());
     }
 
@@ -468,7 +461,7 @@ pub async fn handle_botapi_speed_command(bot: &Bot, chat_id: ChatId, user_id: i6
         Err(e) => {
             bot.send_message(
                 chat_id,
-                format!("❌ Не удалось прочитать лог Bot API: {} ({})", log_path.display(), e),
+                format!("❌ Failed to read Bot API log: {} ({})", log_path.display(), e),
             )
             .await?;
             return Ok(());
@@ -548,12 +541,12 @@ pub async fn handle_botapi_speed_command(bot: &Bot, chat_id: ChatId, user_id: i6
     text.push_str("📡 *Bot API upload speed*");
     text.push_str(&format!("\nURL: `{}`", escape_markdown(&bot_api_url)));
     text.push_str(&format!(
-        "\nЛог: `{}`\n",
+        "\nLog: `{}`\n",
         escape_markdown(&log_path.display().to_string())
     ));
 
     if completed.is_empty() && pending.is_empty() {
-        text.push_str("\nНет записей send* в последнем логе.");
+        text.push_str("\nNo send* entries found in the latest log.");
         bot.send_message(chat_id, text)
             .parse_mode(ParseMode::MarkdownV2)
             .await?;
@@ -561,12 +554,12 @@ pub async fn handle_botapi_speed_command(bot: &Bot, chat_id: ChatId, user_id: i6
     }
 
     if !completed.is_empty() {
-        text.push_str("\n\n✅ *Последние завершённые:*");
+        text.push_str("\n\n✅ *Latest completed:*");
         for stat in completed.iter().take(5) {
             let size_mb = stat.size_bytes as f64 / (1024.0 * 1024.0);
             let speed_mbs = size_mb / stat.duration_secs;
             text.push_str(&format!(
-                "\n• {}: {:.1} MB за {:.1} c \\(~{:.2} MB/s\\)",
+                "\n• {}: {:.1} MB in {:.1} s \\(~{:.2} MB/s\\)",
                 escape_markdown(&stat.method),
                 size_mb,
                 stat.duration_secs,
@@ -580,12 +573,12 @@ pub async fn handle_botapi_speed_command(bot: &Bot, chat_id: ChatId, user_id: i6
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs_f64();
-        text.push_str("\n\n⏳ *В процессе:*");
+        text.push_str("\n\n⏳ *In progress:*");
         for stat in pending.iter().take(3) {
             let size_mb = stat.size_bytes as f64 / (1024.0 * 1024.0);
             let elapsed = (now - stat.start_time).max(0.0);
             text.push_str(&format!(
-                "\n• {}: {:.1} MB, уже {:.0} c",
+                "\n• {}: {:.1} MB, elapsed {:.0} s",
                 escape_markdown(&stat.method),
                 size_mb,
                 elapsed
@@ -686,22 +679,22 @@ fn format_transaction_partner_for_log(partner: &TransactionPartner) -> String {
 /// Handle /transactions command - list recent Telegram Stars transactions (admin only)
 pub async fn handle_transactions_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> Result<()> {
     if !is_admin(user_id) {
-        bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
+        bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
             .await?;
         return Ok(());
     }
 
-    bot.send_message(chat_id, "⏳ Получаю список транзакций...").await?;
+    bot.send_message(chat_id, "⏳ Fetching transactions list...").await?;
 
     match bot.get_star_transactions().await {
         Ok(star_transactions) => {
             if star_transactions.transactions.is_empty() {
-                bot.send_message(chat_id, "📭 Транзакции не найдены.").await?;
+                bot.send_message(chat_id, "📭 No transactions found.").await?;
                 return Ok(());
             }
 
             let mut text = String::new();
-            text.push_str("💫 *Последние транзакции Stars*\n\n");
+            text.push_str("💫 *Latest Stars Transactions*\n\n");
 
             for (idx, tx) in star_transactions.transactions.iter().take(20).enumerate() {
                 let date = tx.date.format("%Y-%m-%d %H:%M:%S UTC");
@@ -709,7 +702,7 @@ pub async fn handle_transactions_command(bot: &Bot, chat_id: ChatId, user_id: i6
                 let id = tx.id.0.clone();
 
                 text.push_str(&format!(
-                    "{}\\. ID: `{}`\n• Дата: {}\n• Сумма: {}⭐\n",
+                    "{}\\. ID: `{}`\n• Date: {}\n• Amount: {}⭐\n",
                     idx + 1,
                     escape_markdown(&id),
                     escape_markdown(&date.to_string()),
@@ -751,7 +744,7 @@ pub async fn handle_transactions_command(bot: &Bot, chat_id: ChatId, user_id: i6
         }
         Err(e) => {
             log::error!("❌ Failed to fetch star transactions: {:?}", e);
-            bot.send_message(chat_id, format!("❌ Не удалось получить транзакции: {:?}", e))
+            bot.send_message(chat_id, format!("❌ Failed to fetch transactions: {:?}", e))
                 .await?;
         }
     }
@@ -767,7 +760,7 @@ pub async fn handle_transactions_command(bot: &Bot, chat_id: ChatId, user_id: i6
 /// * `user_id` - Telegram user ID of the requester
 pub async fn handle_backup_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> Result<()> {
     if !is_admin(user_id) {
-        bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
+        bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
             .await?;
         return Ok(());
     }
@@ -778,7 +771,7 @@ pub async fn handle_backup_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> 
             bot.send_message(
                 chat_id,
                 format!(
-                    "✅ Бэкап создан успешно!\n\n📁 Путь: {}\n📊 Всего бэкапов: {}",
+                    "✅ Backup created successfully!\n\n📁 Path: {}\n📊 Total backups: {}",
                     backup_path.display(),
                     backups.len()
                 ),
@@ -786,7 +779,7 @@ pub async fn handle_backup_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> 
             .await?;
         }
         Err(e) => {
-            bot.send_message(chat_id, format!("❌ Ошибка при создании бэкапа: {}", e))
+            bot.send_message(chat_id, format!("❌ Error creating backup: {}", e))
                 .await?;
         }
     }
@@ -813,7 +806,7 @@ pub async fn handle_users_command(
 
     if !is_admin(user_id) {
         log::warn!("User {:?} tried to access /users command without permission", username);
-        bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
+        bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
             .await?;
         return Ok(());
     }
@@ -824,12 +817,9 @@ pub async fn handle_users_command(
     log::debug!("Found {} users in database", users.len());
 
     if users.is_empty() {
-        bot.send_message(
-            chat_id,
-            "👥 *Список пользователей*\n\nВ базе данных пока нет пользователей\\.",
-        )
-        .parse_mode(ParseMode::MarkdownV2)
-        .await?;
+        bot.send_message(chat_id, "👥 *User List*\n\nNo users in the database yet\\.")
+            .parse_mode(ParseMode::MarkdownV2)
+            .await?;
         return Ok(());
     }
 
@@ -848,13 +838,13 @@ pub async fn handle_users_command(
     let recurring_escaped = escape_markdown(&recurring_count.to_string());
 
     let mut text = format!(
-        "👥 *Список пользователей* \\(всего\\: {}\\)\n\n\
-        📊 Статистика:\n\
+        "👥 *User List* \\(total\\: {}\\)\n\n\
+        📊 Statistics:\n\
         • 🌟 Free: {}\n\
         • ⭐ Premium: {}\n\
         • 👑 VIP: {}\n\
-        • 💫 Активных подписок: {}\n\
-        • 🔄 С автопродлением: {}\n\n\
+        • 💫 Active subscriptions: {}\n\
+        • 🔄 With auto-renewal: {}\n\n\
         ━━━━━━━━━━━━━━━━━━━━\n\n",
         total_users, free_escaped, premium_escaped, vip_escaped, subs_escaped, recurring_escaped
     );
@@ -876,19 +866,19 @@ pub async fn handle_users_command(
 
         let plan_emoji = user.plan.emoji();
 
-        // Показываем статус подписки
+        // Show subscription status
         let subscription_status = if user.telegram_charge_id.is_some() {
             let recurring_icon = if user.is_recurring { "🔄" } else { "" };
             let expires_info = if let Some(ref expires_at) = user.subscription_expires_at {
-                // Показываем только дату без времени для компактности
+                // Show only date without time for compactness
                 let date_part = expires_at.split(' ').next().unwrap_or(expires_at);
                 escape_markdown(date_part)
             } else {
-                "бессрочно".to_string()
+                "unlimited".to_string()
             };
-            format!(" 💫{} до {}", recurring_icon, expires_info)
+            format!(" 💫{} until {}", recurring_icon, expires_info)
         } else if user.subscription_expires_at.is_some() {
-            // Подписка была, но истекла
+            // Subscription existed but expired
             " ⏰".to_string()
         } else {
             "".to_string()
@@ -904,7 +894,7 @@ pub async fn handle_users_command(
         // Check if adding this line would exceed the limit
         if text.len() + user_line.len() > MAX_MESSAGE_LENGTH {
             let remaining = escape_markdown(&(users.len() - users_added).to_string());
-            text.push_str(&format!("\n\\.\\.\\. и еще {} пользователей", remaining));
+            text.push_str(&format!("\n\\.\\.\\. and {} more users", remaining));
             break;
         }
 
@@ -929,7 +919,7 @@ pub async fn handle_users_command(
             bot.send_message(
                 chat_id,
                 format!(
-                    "❌ Ошибка при отправке списка. Попробую без форматирования:\n\n{}",
+                    "❌ Error sending the list. Trying without formatting:\n\n{}",
                     text_plain
                 ),
             )
@@ -956,7 +946,7 @@ pub async fn handle_setplan_command(
     db_pool: Arc<DbPool>,
 ) -> Result<()> {
     if !is_admin(user_id) {
-        bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
+        bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
             .await?;
         return Ok(());
     }
@@ -966,17 +956,17 @@ pub async fn handle_setplan_command(
     if parts.len() < 3 {
         bot.send_message(
             chat_id,
-            "❌ *Неверный формат команды*\n\n\
-            *Использование:*\n\
+            "❌ *Invalid command format*\n\n\
+            *Usage:*\n\
             `/setplan <user_id> <plan> [days]`\n\n\
-            *Параметры:*\n\
-            • `user_id` \\- Telegram ID пользователя\n\
-            • `plan` \\- План: free, premium или vip\n\
-            • `days` \\- \\(опционально\\) Количество дней действия подписки\n\n\
-            *Примеры:*\n\
-            `/setplan 123456789 premium` \\- установить бессрочный премиум\n\
-            `/setplan 123456789 premium 30` \\- премиум на 30 дней\n\
-            `/setplan 123456789 free` \\- сбросить на бесплатный план",
+            *Parameters:*\n\
+            • `user_id` \\- Telegram user ID\n\
+            • `plan` \\- Plan: free, premium or vip\n\
+            • `days` \\- \\(optional\\) Number of days the subscription is valid\n\n\
+            *Examples:*\n\
+            `/setplan 123456789 premium` \\- set unlimited premium\n\
+            `/setplan 123456789 premium 30` \\- premium for 30 days\n\
+            `/setplan 123456789 free` \\- reset to free plan",
         )
         .parse_mode(ParseMode::MarkdownV2)
         .await?;
@@ -986,7 +976,7 @@ pub async fn handle_setplan_command(
     let user_id = match parts[1].parse::<i64>() {
         Ok(id) => id,
         Err(_) => {
-            bot.send_message(chat_id, "❌ Неверный формат user_id. Используй числовой ID.")
+            bot.send_message(chat_id, "❌ Invalid user_id format. Use a numeric ID.")
                 .await?;
             return Ok(());
         }
@@ -994,7 +984,7 @@ pub async fn handle_setplan_command(
 
     let plan = parts[2];
     if !["free", "premium", "vip"].contains(&plan) {
-        bot.send_message(chat_id, "❌ Неверный план. Используй: free, premium или vip")
+        bot.send_message(chat_id, "❌ Invalid plan. Use: free, premium or vip")
             .await?;
         return Ok(());
     }
@@ -1004,12 +994,12 @@ pub async fn handle_setplan_command(
         match parts[3].parse::<i32>() {
             Ok(d) if d > 0 => Some(d),
             Ok(_) => {
-                bot.send_message(chat_id, "❌ Количество дней должно быть положительным числом")
+                bot.send_message(chat_id, "❌ Number of days must be a positive integer")
                     .await?;
                 return Ok(());
             }
             Err(_) => {
-                bot.send_message(chat_id, "❌ Неверный формат количества дней. Используй число.")
+                bot.send_message(chat_id, "❌ Invalid number of days format. Use a number.")
                     .await?;
                 return Ok(());
             }
@@ -1042,11 +1032,11 @@ pub async fn handle_setplan_command(
     let expiry_info = if let Some(days_count) = days {
         let expiry_date = chrono::Utc::now() + chrono::Duration::days(days_count as i64);
         let formatted_date = expiry_date.format("%Y-%m-%d").to_string();
-        format!("\n📅 Действует до: {}", formatted_date)
+        format!("\n📅 Valid until: {}", formatted_date)
     } else if plan == "free" {
         String::new()
     } else {
-        "\n♾️ Бессрочная подписка".to_string()
+        "\n♾️ Unlimited subscription".to_string()
     };
 
     let expiry_info_escaped = expiry_info.replace("-", "\\-");
@@ -1055,7 +1045,7 @@ pub async fn handle_setplan_command(
     bot.send_message(
         chat_id,
         format!(
-            "✅ План пользователя {} изменен на {} {}{}",
+            "✅ User {} plan changed to {} {}{}",
             user_id, plan_emoji, plan, expiry_info
         ),
     )
@@ -1066,10 +1056,10 @@ pub async fn handle_setplan_command(
     bot.send_message(
         user_chat_id,
         format!(
-            "💳 *Изменение плана подписки*\n\n\
-            Твой план был изменен администратором\\.\n\n\
-            *Новый план:* {} {}{}\n\n\
-            Изменения вступят в силу немедленно\\! 🎉",
+            "💳 *Subscription Plan Change*\n\n\
+            Your plan has been changed by an administrator\\.\n\n\
+            *New plan:* {} {}{}\n\n\
+            Changes take effect immediately\\! 🎉",
             plan_emoji, plan_name, expiry_info_escaped
         ),
     )
@@ -1088,7 +1078,7 @@ pub async fn handle_setplan_command(
 /// * `db_pool` - Database connection pool
 pub async fn handle_admin_command(bot: &Bot, chat_id: ChatId, user_id: i64, db_pool: Arc<DbPool>) -> Result<()> {
     if !is_admin(user_id) {
-        bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
+        bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
             .await?;
         return Ok(());
     }
@@ -1132,10 +1122,10 @@ pub async fn handle_admin_command(bot: &Bot, chat_id: ChatId, user_id: i64, db_p
     bot.send_message(
         chat_id,
         format!(
-            "🔧 *Панель управления пользователями*\n\n\
-            Выбери пользователя для управления:\n\n\
-            Показано: {} из {}\n\n\
-            💡 Для управления конкретным пользователем используй:\n\
+            "🔧 *User Management Panel*\n\n\
+            Select a user to manage:\n\n\
+            Showing: {} of {}\n\n\
+            💡 To manage a specific user use:\n\
             `/setplan <user_id> <plan>`",
             users.len().min(20),
             users.len()
@@ -1156,7 +1146,7 @@ pub async fn handle_downsub_health_command(
     downsub_gateway: Arc<DownsubGateway>,
 ) -> Result<()> {
     if !is_admin(user_id) {
-        bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
+        bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
             .await?;
         return Ok(());
     }
@@ -1200,7 +1190,7 @@ pub async fn handle_charges_command(
     args: &str,
 ) -> Result<()> {
     if !is_admin(user_id) {
-        bot.send_message(chat_id, "❌ У тебя нет прав для выполнения этой команды.")
+        bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
             .await?;
         return Ok(());
     }
@@ -1208,7 +1198,7 @@ pub async fn handle_charges_command(
     let conn = match crate::storage::db::get_connection(&db_pool) {
         Ok(c) => c,
         Err(e) => {
-            bot.send_message(chat_id, format!("❌ Ошибка подключения к БД: {}", e))
+            bot.send_message(chat_id, format!("❌ DB connection error: {}", e))
                 .await?;
             return Ok(());
         }
@@ -1221,12 +1211,12 @@ pub async fn handle_charges_command(
         match crate::storage::db::get_charges_stats(&conn) {
             Ok((total_charges, total_amount, premium_count, vip_count, recurring_count)) => {
                 let text = format!(
-                    "📊 *Статистика платежей*\n\n\
-                    💰 Всего платежей: {}\n\
-                    ⭐ Общая сумма: {} Stars\n\
-                    🌟 Premium подписок: {}\n\
-                    💎 VIP подписок: {}\n\
-                    🔄 Рекуррентных: {}",
+                    "📊 *Payment Statistics*\n\n\
+                    💰 Total payments: {}\n\
+                    ⭐ Total amount: {} Stars\n\
+                    🌟 Premium subscriptions: {}\n\
+                    💎 VIP subscriptions: {}\n\
+                    🔄 Recurring: {}",
                     total_charges, total_amount, premium_count, vip_count, recurring_count
                 );
                 bot.send_message(chat_id, text)
@@ -1234,7 +1224,7 @@ pub async fn handle_charges_command(
                     .await?;
             }
             Err(e) => {
-                bot.send_message(chat_id, format!("❌ Ошибка получения статистики: {}", e))
+                bot.send_message(chat_id, format!("❌ Error fetching statistics: {}", e))
                     .await?;
             }
         }
@@ -1253,13 +1243,13 @@ pub async fn handle_charges_command(
     } else {
         bot.send_message(
             chat_id,
-            "❌ Использование: /charges [stats|premium|vip|user_id]\n\n\
-            Примеры:\n\
-            • /charges - все платежи (последние 20)\n\
-            • /charges stats - статистика\n\
-            • /charges premium - только Premium\n\
-            • /charges vip - только VIP\n\
-            • /charges 123456789 - платежи пользователя",
+            "❌ Usage: /charges [stats|premium|vip|user_id]\n\n\
+            Examples:\n\
+            • /charges - all payments (last 20)\n\
+            • /charges stats - statistics\n\
+            • /charges premium - Premium only\n\
+            • /charges vip - VIP only\n\
+            • /charges 123456789 - user payments",
         )
         .await?;
         return Ok(());
@@ -1275,28 +1265,24 @@ pub async fn handle_charges_command(
     match charges {
         Ok(charges) => {
             if charges.is_empty() {
-                bot.send_message(chat_id, "📭 Платежи не найдены.").await?;
+                bot.send_message(chat_id, "📭 No payments found.").await?;
                 return Ok(());
             }
 
             let mut text = String::new();
-            text.push_str("💳 *Платежи*\n\n");
+            text.push_str("💳 *Payments*\n\n");
 
             for (idx, charge) in charges.iter().enumerate() {
                 let plan_emoji = if charge.plan == Plan::Premium { "⭐" } else { "💎" };
                 let recurring_mark = if charge.is_recurring { " 🔄" } else { "" };
-                let first_mark = if charge.is_first_recurring {
-                    " (первый)"
-                } else {
-                    ""
-                };
+                let first_mark = if charge.is_first_recurring { " (first)" } else { "" };
 
                 text.push_str(&format!(
                     "{}\\. {} *{}*{}{}\n\
                     • User ID: `{}`\n\
-                    • Сумма: {} {}\n\
+                    • Amount: {} {}\n\
                     • Charge ID: `{}`\n\
-                    • Дата: {}\n",
+                    • Date: {}\n",
                     idx + 1,
                     plan_emoji,
                     escape_markdown(&charge.plan.as_str().to_uppercase()),
@@ -1310,7 +1296,7 @@ pub async fn handle_charges_command(
                 ));
 
                 if let Some(ref exp_date) = charge.subscription_expiration_date {
-                    text.push_str(&format!("• Истекает: {}\n", escape_markdown(exp_date)));
+                    text.push_str(&format!("• Expires: {}\n", escape_markdown(exp_date)));
                 }
 
                 text.push('\n');
@@ -1321,7 +1307,7 @@ pub async fn handle_charges_command(
                         .parse_mode(ParseMode::MarkdownV2)
                         .await?;
                     text.clear();
-                    text.push_str("💳 *Платежи \\(продолжение\\)*\n\n");
+                    text.push_str("💳 *Payments \\(continued\\)*\n\n");
                 }
             }
 
@@ -1332,7 +1318,7 @@ pub async fn handle_charges_command(
             }
         }
         Err(e) => {
-            bot.send_message(chat_id, format!("❌ Ошибка получения платежей: {}", e))
+            bot.send_message(chat_id, format!("❌ Error fetching payments: {}", e))
                 .await?;
         }
     }
@@ -1888,7 +1874,7 @@ fn build_file_url(base: &Url, token: &str, file_path: &str) -> Result<Url> {
 ///
 /// # Example
 /// User sends: `/download_tg BQACAgIAAxkBAAIBCGXxxx...`
-/// Bot responds: `✅ Файл скачан: ./downloads/file_123.pdf (1.5 MB)`
+/// Bot responds: `✅ File downloaded: ./downloads/file_123.pdf (1.5 MB)`
 pub async fn handle_download_tg_command(
     bot: &Bot,
     chat_id: ChatId,
@@ -1898,7 +1884,7 @@ pub async fn handle_download_tg_command(
 ) -> Result<()> {
     // Check admin permissions
     if !is_admin(user_id) {
-        bot.send_message(chat_id, "❌ Эта команда доступна только администраторам.")
+        bot.send_message(chat_id, "❌ This command is only available to administrators.")
             .await?;
         return Ok(());
     }
@@ -1908,13 +1894,13 @@ pub async fn handle_download_tg_command(
     if parts.len() < 2 {
         bot.send_message(
             chat_id,
-            "❌ Использование: /download_tg <file_id>\n\n\
-            Пример:\n\
+            "❌ Usage: /download_tg <file_id>\n\n\
+            Example:\n\
             /download_tg BQACAgIAAxkBAAIBCGXxxx...\n\n\
-            Чтобы получить file_id:\n\
-            1. Отправьте боту файл\n\
-            2. Используйте методы Telegram Bot API для получения file_id\n\
-            3. Или используйте команду /getfile (если реализовано)",
+            To get a file_id:\n\
+            1. Send the bot a file\n\
+            2. Use Telegram Bot API methods to get the file_id\n\
+            3. Or use the /getfile command (if implemented)",
         )
         .await?;
         return Ok(());
@@ -1928,7 +1914,9 @@ pub async fn handle_download_tg_command(
     );
 
     // Send "processing" message
-    let processing_msg = bot.send_message(chat_id, "⏳ Скачиваю файл из Telegram...").await?;
+    let processing_msg = bot
+        .send_message(chat_id, "⏳ Downloading file from Telegram...")
+        .await?;
 
     // Download the file
     match download_file_from_telegram(bot, file_id, None).await {
@@ -1939,10 +1927,10 @@ pub async fn handle_download_tg_command(
             let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
 
             let success_message = format!(
-                "✅ *Файл успешно скачан\\!*\n\n\
-                📁 Путь: `{}`\n\
-                📄 Имя: `{}`\n\
-                📊 Размер: {:.2} MB\n\
+                "✅ *File downloaded successfully\\!*\n\n\
+                📁 Path: `{}`\n\
+                📄 Name: `{}`\n\
+                📊 Size: {:.2} MB\n\
                 🆔 File ID: `{}`",
                 escape_markdown(&path.display().to_string()),
                 escape_markdown(filename),
@@ -1968,12 +1956,12 @@ pub async fn handle_download_tg_command(
 
             // Send error message
             let error_message = format!(
-                "❌ Ошибка при скачивании файла:\n\n{}\n\n\
-                Возможные причины:\n\
-                • Неверный file_id\n\
-                • Файл был удален из Telegram\n\
-                • Файл слишком старый (>1 часа для не-документов)\n\
-                • Нет прав доступа к файлу",
+                "❌ Error downloading file:\n\n{}\n\n\
+                Possible reasons:\n\
+                • Invalid file_id\n\
+                • File was deleted from Telegram\n\
+                • File is too old (>1 hour for non-documents)\n\
+                • No access rights to the file",
                 escape_markdown(&e.to_string())
             );
 
@@ -2016,7 +2004,7 @@ pub async fn handle_sent_files_command(
 
     // Check admin permissions
     if !is_admin(user_id) {
-        bot.send_message(chat_id, "❌ Эта команда доступна только администраторам.")
+        bot.send_message(chat_id, "❌ This command is only available to administrators.")
             .await?;
         return Ok(());
     }
@@ -2044,8 +2032,8 @@ pub async fn handle_sent_files_command(
             if files.is_empty() {
                 bot.send_message(
                     chat_id,
-                    "📭 *Нет отправленных файлов*\n\n\
-                    Файлы с file\\_id появятся здесь после успешной отправки пользователям\\.",
+                    "📭 *No sent files*\n\n\
+                    Files with file\\_id will appear here after successfully sending to users\\.",
                 )
                 .parse_mode(ParseMode::MarkdownV2)
                 .await?;
@@ -2053,7 +2041,7 @@ pub async fn handle_sent_files_command(
             }
 
             // Build response message
-            let mut response = format!("📋 *Отправленные файлы* \\({} шт\\.\\)\n\n", files.len());
+            let mut response = format!("📋 *Sent Files* \\({} items\\)\n\n", files.len());
 
             for (idx, file) in files.iter().enumerate() {
                 let user_display = if let Some(ref uname) = file.username {
@@ -2085,9 +2073,9 @@ pub async fn handle_sent_files_command(
             }
 
             response.push_str(
-                "\n💡 *Использование:*\n\
-                `/download_tg <file_id>` \\- скачать файл\n\n\
-                Для большего количества файлов: `/sent_files <лимит>`",
+                "\n💡 *Usage:*\n\
+                `/download_tg <file_id>` \\- download a file\n\n\
+                For more files: `/sent_files <limit>`",
             );
 
             // Send response with MarkdownV2
@@ -2104,10 +2092,7 @@ pub async fn handle_sent_files_command(
             log::error!("❌ Failed to retrieve sent files: {}", e);
             bot.send_message(
                 chat_id,
-                format!(
-                    "❌ Ошибка при получении списка файлов:\n\n{}",
-                    escape_markdown(&e.to_string())
-                ),
+                format!("❌ Error fetching file list:\n\n{}", escape_markdown(&e.to_string())),
             )
             .parse_mode(ParseMode::MarkdownV2)
             .await?;
@@ -2122,12 +2107,12 @@ pub async fn handle_sent_files_command(
 /// Shows detailed diagnostic information about the current cookies file
 pub async fn handle_diagnose_cookies_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> Result<()> {
     if !is_admin(user_id) {
-        bot.send_message(chat_id, "❌ Команда только для администраторов.")
+        bot.send_message(chat_id, "❌ This command is for administrators only.")
             .await?;
         return Ok(());
     }
 
-    let processing_msg = bot.send_message(chat_id, "⏳ Анализирую cookies...").await?;
+    let processing_msg = bot.send_message(chat_id, "⏳ Analysing cookies...").await?;
 
     // Get diagnostic
     let diagnostic = cookies::diagnose_cookies_file().await;
@@ -2137,7 +2122,7 @@ pub async fn handle_diagnose_cookies_command(bot: &Bot, chat_id: ChatId, user_id
     let _ = bot.delete_message(chat_id, processing_msg.id).await;
 
     // Send report
-    let message = format!("🍪 *Диагностика YouTube Cookies*\n\n{}", escape_markdown(&report));
+    let message = format!("🍪 *YouTube Cookies Diagnostics*\n\n{}", escape_markdown(&report));
 
     bot.send_message(chat_id, message)
         .parse_mode(ParseMode::MarkdownV2)
@@ -2146,11 +2131,11 @@ pub async fn handle_diagnose_cookies_command(bot: &Bot, chat_id: ChatId, user_id
     // If cookies look valid structurally, offer to test with yt-dlp
     if diagnostic.is_valid {
         let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
-            "🧪 Тестировать с yt-dlp",
+            "🧪 Test with yt-dlp",
             "admin:test_cookies",
         )]]);
 
-        bot.send_message(chat_id, "Хочешь протестировать cookies с yt\\-dlp?")
+        bot.send_message(chat_id, "Do you want to test cookies with yt\\-dlp?")
             .parse_mode(ParseMode::MarkdownV2)
             .reply_markup(keyboard)
             .await?;
@@ -2178,7 +2163,7 @@ pub async fn handle_diagnose_cookies_command(bot: &Bot, chat_id: ChatId, user_id
 ///
 /// # Example
 /// User sends: `/update_cookies`
-/// Bot responds: `📤 Отправь файл с cookies`
+/// Bot responds: `📤 Send your cookies file`
 pub async fn handle_update_cookies_command(
     db_pool: Arc<crate::storage::db::DbPool>,
     bot: &Bot,
@@ -2195,7 +2180,7 @@ pub async fn handle_update_cookies_command(
     // Check admin permissions
     if !is_admin(user_id) {
         log::warn!("❌ Non-admin user {} attempted to use /update_cookies", user_id);
-        bot.send_message(chat_id, "❌ Эта команда доступна только администраторам.")
+        bot.send_message(chat_id, "❌ This command is only available to administrators.")
             .await?;
         return Ok(());
     }
@@ -2219,13 +2204,13 @@ pub async fn handle_update_cookies_command(
 
     bot.send_message(
         chat_id,
-        "📤 *Отправь файл с cookies*\n\n\
-        Отправь txt файл с cookies в формате Netscape HTTP Cookie File\\.\n\n\
-        *Как получить cookies:*\n\
-        1\\. Установи расширение для экспорта cookies\n\
-        2\\. Экспортируй cookies для youtube\\.com\n\
-        3\\. Отправь файл сюда\n\n\
-        ⏱ Сессия истечет через 10 минут\\.",
+        "📤 *Send your cookies file*\n\n\
+        Send a txt file with cookies in Netscape HTTP Cookie File format\\.\n\n\
+        *How to get cookies:*\n\
+        1\\. Install a cookies export extension\n\
+        2\\. Export cookies for youtube\\.com\n\
+        3\\. Send the file here\n\n\
+        ⏱ Session expires in 10 minutes\\.",
     )
     .parse_mode(ParseMode::MarkdownV2)
     .await?;
@@ -2246,27 +2231,27 @@ pub async fn handle_update_ytdlp_command(bot: &Bot, chat_id: ChatId, user_id: i6
 
     if !is_admin(user_id) {
         log::warn!("❌ Non-admin user {} attempted to use /update_ytdlp", user_id);
-        bot.send_message(chat_id, "❌ Эта команда доступна только администраторам.")
+        bot.send_message(chat_id, "❌ This command is only available to administrators.")
             .await?;
         return Ok(());
     }
 
     let before = get_ytdlp_version().await.unwrap_or_else(|| "unknown".to_string());
-    let processing_msg = bot.send_message(chat_id, "⏳ Обновляю yt-dlp...").await?;
+    let processing_msg = bot.send_message(chat_id, "⏳ Updating yt-dlp...").await?;
 
     match ytdlp::check_and_update_ytdlp().await {
         Ok(_) => {
             let after = get_ytdlp_version().await.unwrap_or_else(|| "unknown".to_string());
             let status = if before == after {
-                "yt-dlp уже актуален"
+                "yt-dlp is already up to date"
             } else {
-                "yt-dlp обновлен"
+                "yt-dlp updated"
             };
-            let text = format!("✅ {}\nВерсия до: {}\nВерсия после: {}", status, before, after);
+            let text = format!("✅ {}\nVersion before: {}\nVersion after: {}", status, before, after);
             bot.edit_message_text(chat_id, processing_msg.id, text).await?;
         }
         Err(e) => {
-            let text = format!("❌ Не удалось обновить yt-dlp: {}", e);
+            let text = format!("❌ Failed to update yt-dlp: {}", e);
             bot.edit_message_text(chat_id, processing_msg.id, text).await?;
         }
     }
@@ -2315,20 +2300,20 @@ pub async fn notify_admin_cookies_refresh(bot: &Bot, admin_id: i64, reason: &str
                 .unwrap_or_default();
 
             let found_str = if required_found.is_empty() {
-                "нет".to_string()
+                "none".to_string()
             } else {
                 required_found.join(", ")
             };
             let missing_str = if required_missing.is_empty() {
-                "нет".to_string()
+                "none".to_string()
             } else {
                 required_missing.join(", ")
             };
 
             format!(
-                "\n\n*Состояние cookies \\({} шт\\.\\):*\n\
-                 ✅ Найдены: {}\n\
-                 ❌ Отсутствуют: {}",
+                "\n\n*Cookies status \\({} items\\):*\n\
+                 ✅ Found: {}\n\
+                 ❌ Missing: {}",
                 cookie_count,
                 escape_markdown(&found_str),
                 escape_markdown(&missing_str)
@@ -2338,14 +2323,14 @@ pub async fn notify_admin_cookies_refresh(bot: &Bot, admin_id: i64, reason: &str
     };
 
     let message = format!(
-        "🔴 *Требуется обновление YouTube cookies*\n\n\
-        Причина: _{}_\
+        "🔴 *YouTube cookies update required*\n\n\
+        Reason: _{}_\
         {}\n\n\
-        Для обновления:\n\
-        • /browser\\_login — войти через браузер \\(рекомендуется\\)\n\
-        • /update\\_cookies — загрузить cookies файл вручную\n\
-        • /browser\\_status — проверить статус cookie manager\n\n\
-        Без валидных cookies загрузка видео с YouTube может не работать\\.",
+        To update:\n\
+        • /browser\\_login — log in via browser \\(recommended\\)\n\
+        • /update\\_cookies — upload cookies file manually\n\
+        • /browser\\_status — check cookie manager status\n\n\
+        Without valid cookies YouTube video downloads may not work\\.",
         escape_markdown(reason),
         cookie_detail
     );
@@ -2397,7 +2382,7 @@ pub async fn handle_cookies_file_upload(
     log::info!("✅ Active cookies upload session found for user {}", user_id);
 
     // Send processing message
-    let processing_msg = bot.send_message(chat_id, "⏳ Обрабатываю файл с cookies...").await?;
+    let processing_msg = bot.send_message(chat_id, "⏳ Processing cookies file...").await?;
 
     // Download file
     let _file = bot.get_file(document.file.id.clone()).await?;
@@ -2440,7 +2425,7 @@ pub async fn handle_cookies_file_upload(
 
                             if diagnostic.is_valid {
                                 // Cookies look good structurally, now test with yt-dlp
-                                let test_msg = bot.send_message(chat_id, "⏳ Тестирую cookies с YouTube...").await?;
+                                let test_msg = bot.send_message(chat_id, "⏳ Testing cookies with YouTube...").await?;
 
                                 let validation_result = cookies::validate_cookies().await;
                                 let _ = bot.delete_message(chat_id, test_msg.id).await;
@@ -2448,11 +2433,11 @@ pub async fn handle_cookies_file_upload(
                                 match validation_result {
                                     Ok(()) => {
                                         let success_message = format!(
-                                            "✅ *Cookies успешно обновлены и проверены\\!*\n\n\
-                                            📁 Путь: `{}`\n\n\
+                                            "✅ *Cookies updated and verified successfully\\!*\n\n\
+                                            📁 Path: `{}`\n\n\
                                             {}\n\n\
-                                            ✓ Тест загрузки с YouTube прошёл успешно\\!\n\n\
-                                            Бот теперь использует новые cookies для загрузки видео\\.",
+                                            ✓ YouTube download test passed successfully\\!\n\n\
+                                            The bot now uses the new cookies for video downloads\\.",
                                             escape_markdown(&path.display().to_string()),
                                             escape_markdown(&diagnostic_report)
                                         );
@@ -2465,18 +2450,18 @@ pub async fn handle_cookies_file_upload(
                                     }
                                     Err(reason) => {
                                         let warning_message = format!(
-                                            "⚠️ *Cookies обновлены, но тест с YouTube не прошёл*\n\n\
-                                            📁 Путь: `{}`\n\n\
+                                            "⚠️ *Cookies updated, but YouTube test failed*\n\n\
+                                            📁 Path: `{}`\n\n\
                                             {}\n\n\
-                                            *⚠️ Ошибка yt\\-dlp:* {}\n\n\
-                                            *Возможные причины:*\n\
-                                            • YouTube заблокировал IP адрес \\(нужен другой proxy\\)\n\
-                                            • Cookies были ротированы после экспорта\n\
-                                            • Аккаунт требует подтверждение \\(капча/SMS\\)\n\n\
-                                            Попробуй:\n\
-                                            1\\. Зайди на YouTube в браузере\n\
-                                            2\\. Посмотри любое видео до конца\n\
-                                            3\\. Экспортируй cookies заново",
+                                            *⚠️ yt\\-dlp error:* {}\n\n\
+                                            *Possible reasons:*\n\
+                                            • YouTube blocked the IP address \\(need a different proxy\\)\n\
+                                            • Cookies were rotated after export\n\
+                                            • Account requires confirmation \\(captcha/SMS\\)\n\n\
+                                            Try:\n\
+                                            1\\. Open YouTube in the browser\n\
+                                            2\\. Watch any video to the end\n\
+                                            3\\. Export cookies again",
                                             escape_markdown(&path.display().to_string()),
                                             escape_markdown(&diagnostic_report),
                                             escape_markdown(&reason)
@@ -2495,13 +2480,13 @@ pub async fn handle_cookies_file_upload(
                             } else {
                                 // Cookies have structural issues - report them without testing
                                 let warning_message = format!(
-                                    "⚠️ *Cookies обновлены, но обнаружены проблемы*\n\n\
-                                    📁 Путь: `{}`\n\n\
+                                    "⚠️ *Cookies updated, but issues were found*\n\n\
+                                    📁 Path: `{}`\n\n\
                                     {}\n\n\
-                                    *Как исправить:*\n\
-                                    1\\. Залогинься в YouTube в браузере\n\
-                                    2\\. Убедись что используешь правильное расширение для экспорта\n\
-                                    3\\. Экспортируй cookies заново \\(\"Get cookies\\.txt LOCALLY\"\\)",
+                                    *How to fix:*\n\
+                                    1\\. Log in to YouTube in the browser\n\
+                                    2\\. Make sure you use the correct export extension\n\
+                                    3\\. Export cookies again \\(\"Get cookies\\.txt LOCALLY\"\\)",
                                     escape_markdown(&path.display().to_string()),
                                     escape_markdown(&diagnostic_report)
                                 );
@@ -2524,11 +2509,11 @@ pub async fn handle_cookies_file_upload(
                             crate::storage::db::delete_cookies_upload_session_by_user(&conn, user_id)?;
 
                             let error_message = format!(
-                                "❌ *Ошибка при обновлении cookies:*\n\n{}\n\n\
-                                Возможные причины:\n\
-                                • Неверный формат cookies файла\n\
-                                • Отсутствует переменная YTDL\\_COOKIES\\_FILE\n\
-                                • Проблемы с правами на запись файла",
+                                "❌ *Error updating cookies:*\n\n{}\n\n\
+                                Possible reasons:\n\
+                                • Invalid cookies file format\n\
+                                • YTDL\\_COOKIES\\_FILE variable is not set\n\
+                                • File write permission issues",
                                 escape_markdown(&e.to_string())
                             );
 
@@ -2546,7 +2531,7 @@ pub async fn handle_cookies_file_upload(
 
                     bot.send_message(
                         chat_id,
-                        format!("❌ *Ошибка чтения файла:*\n\n{}", escape_markdown(&e.to_string())),
+                        format!("❌ *File read error:*\n\n{}", escape_markdown(&e.to_string())),
                     )
                     .parse_mode(ParseMode::MarkdownV2)
                     .await?;
@@ -2560,7 +2545,7 @@ pub async fn handle_cookies_file_upload(
 
             bot.send_message(
                 chat_id,
-                format!("❌ *Ошибка скачивания файла:*\n\n{}", escape_markdown(&e.to_string())),
+                format!("❌ *File download error:*\n\n{}", escape_markdown(&e.to_string())),
             )
             .parse_mode(ParseMode::MarkdownV2)
             .await?;
@@ -2590,7 +2575,7 @@ pub async fn handle_update_ig_cookies_command(
 
     if !is_admin(user_id) {
         log::warn!("❌ Non-admin user {} attempted to use /update_ig_cookies", user_id);
-        bot.send_message(chat_id, "❌ Эта команда доступна только администраторам.")
+        bot.send_message(chat_id, "❌ This command is only available to administrators.")
             .await?;
         return Ok(());
     }
@@ -2610,15 +2595,15 @@ pub async fn handle_update_ig_cookies_command(
 
     bot.send_message(
         chat_id,
-        "📤 *Отправь файл с Instagram cookies*\n\n\
-        Отправь txt файл с cookies в формате Netscape HTTP Cookie File\\.\n\n\
-        *Как получить cookies:*\n\
-        1\\. Установи расширение для экспорта cookies \\(Get cookies\\.txt LOCALLY\\)\n\
-        2\\. Залогинься в Instagram в браузере\n\
-        3\\. Экспортируй cookies для instagram\\.com\n\
-        4\\. Отправь файл сюда\n\n\
-        *Ключевые cookies:* `sessionid`, `csrftoken`, `ds_user_id`\n\n\
-        ⏱ Сессия истечет через 10 минут\\.",
+        "📤 *Send your Instagram cookies file*\n\n\
+        Send a txt file with cookies in Netscape HTTP Cookie File format\\.\n\n\
+        *How to get cookies:*\n\
+        1\\. Install a cookies export extension \\(Get cookies\\.txt LOCALLY\\)\n\
+        2\\. Log in to Instagram in the browser\n\
+        3\\. Export cookies for instagram\\.com\n\
+        4\\. Send the file here\n\n\
+        *Key cookies:* `sessionid`, `csrftoken`, `ds_user_id`\n\n\
+        ⏱ Session expires in 10 minutes\\.",
     )
     .parse_mode(ParseMode::MarkdownV2)
     .await?;
@@ -2650,7 +2635,7 @@ pub async fn handle_ig_cookies_file_upload(
     }
 
     let processing_msg = bot
-        .send_message(chat_id, "⏳ Обрабатываю файл с Instagram cookies...")
+        .send_message(chat_id, "⏳ Processing Instagram cookies file...")
         .await?;
 
     let _file = bot.get_file(document.file.id.clone()).await?;
@@ -2676,7 +2661,7 @@ pub async fn handle_ig_cookies_file_upload(
                         let diagnostic_report = diagnostic.format_report();
 
                         if diagnostic.is_valid {
-                            let test_msg = bot.send_message(chat_id, "⏳ Тестирую Instagram cookies...").await?;
+                            let test_msg = bot.send_message(chat_id, "⏳ Testing Instagram cookies...").await?;
 
                             let validation_result = cookies::validate_ig_cookies().await;
                             let _ = bot.delete_message(chat_id, test_msg.id).await;
@@ -2684,13 +2669,13 @@ pub async fn handle_ig_cookies_file_upload(
                             match validation_result {
                                 Ok(()) => {
                                     let success_message = format!(
-                                            "✅ *Instagram cookies успешно обновлены\\!*\n\n\
-                                            📁 Путь: `{}`\n\n\
+                                        "✅ *Instagram cookies updated successfully\\!*\n\n\
+                                            📁 Path: `{}`\n\n\
                                             {}\n\n\
-                                            Бот теперь использует Instagram cookies для доступа к закрытому контенту\\.",
-                                            escape_markdown(&path.display().to_string()),
-                                            escape_markdown(&diagnostic_report)
-                                        );
+                                            The bot now uses Instagram cookies to access private content\\.",
+                                        escape_markdown(&path.display().to_string()),
+                                        escape_markdown(&diagnostic_report)
+                                    );
 
                                     bot.send_message(chat_id, success_message)
                                         .parse_mode(ParseMode::MarkdownV2)
@@ -2698,11 +2683,11 @@ pub async fn handle_ig_cookies_file_upload(
                                 }
                                 Err(reason) => {
                                     let warning_message = format!(
-                                        "⚠️ *Instagram cookies обновлены, но тест не прошёл*\n\n\
-                                            📁 Путь: `{}`\n\n\
+                                        "⚠️ *Instagram cookies updated, but test failed*\n\n\
+                                            📁 Path: `{}`\n\n\
                                             {}\n\n\
-                                            *⚠️ Ошибка:* {}\n\n\
-                                            Cookies сохранены и будут использоваться для GraphQL запросов\\.",
+                                            *⚠️ Error:* {}\n\n\
+                                            Cookies saved and will be used for GraphQL requests\\.",
                                         escape_markdown(&path.display().to_string()),
                                         escape_markdown(&diagnostic_report),
                                         escape_markdown(&reason)
@@ -2715,12 +2700,12 @@ pub async fn handle_ig_cookies_file_upload(
                             }
                         } else {
                             let warning_message = format!(
-                                "⚠️ *Instagram cookies обновлены, но обнаружены проблемы*\n\n\
-                                    📁 Путь: `{}`\n\n\
+                                "⚠️ *Instagram cookies updated, but issues were found*\n\n\
+                                    📁 Path: `{}`\n\n\
                                     {}\n\n\
-                                    *Как исправить:*\n\
-                                    1\\. Залогинься в Instagram в браузере\n\
-                                    2\\. Экспортируй cookies заново",
+                                    *How to fix:*\n\
+                                    1\\. Log in to Instagram in the browser\n\
+                                    2\\. Export cookies again",
                                 escape_markdown(&path.display().to_string()),
                                 escape_markdown(&diagnostic_report)
                             );
@@ -2737,10 +2722,10 @@ pub async fn handle_ig_cookies_file_upload(
                         crate::storage::db::delete_ig_cookies_upload_session_by_user(&conn, user_id)?;
 
                         let error_message = format!(
-                            "❌ *Ошибка при обновлении Instagram cookies:*\n\n{}\n\n\
-                                Возможные причины:\n\
-                                • Неверный формат cookies файла\n\
-                                • Отсутствует переменная INSTAGRAM\\_COOKIES\\_FILE",
+                            "❌ *Error updating Instagram cookies:*\n\n{}\n\n\
+                                Possible causes:\n\
+                                • Invalid cookies file format\n\
+                                • Missing INSTAGRAM\\_COOKIES\\_FILE variable",
                             escape_markdown(&e.to_string())
                         );
 
@@ -2758,7 +2743,7 @@ pub async fn handle_ig_cookies_file_upload(
 
                 bot.send_message(
                     chat_id,
-                    format!("❌ *Ошибка чтения файла:*\n\n{}", escape_markdown(&e.to_string())),
+                    format!("❌ *File read error:*\n\n{}", escape_markdown(&e.to_string())),
                 )
                 .parse_mode(ParseMode::MarkdownV2)
                 .await?;
@@ -2771,7 +2756,7 @@ pub async fn handle_ig_cookies_file_upload(
 
             bot.send_message(
                 chat_id,
-                format!("❌ *Ошибка скачивания файла:*\n\n{}", escape_markdown(&e.to_string())),
+                format!("❌ *File download error:*\n\n{}", escape_markdown(&e.to_string())),
             )
             .parse_mode(ParseMode::MarkdownV2)
             .await?;

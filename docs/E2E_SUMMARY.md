@@ -1,54 +1,54 @@
-# ✅ E2E Тестирование БЕЗ Реального Telegram - ГОТОВО!
+# E2E Testing WITHOUT Real Telegram - DONE!
 
-## 🎯 Что реализовано
+## What Was Implemented
 
-### ✅ Полная изоляция от Telegram API
+### Full isolation from Telegram API
 
 ```rust
 #[tokio::test]
 async fn e2e_start_command() {
-    // 1. Загружается snapshot с РЕАЛЬНЫМИ ответами от Telegram
+    // 1. Load snapshot with REAL responses from Telegram
     let env = TestEnvironment::new("start_command").await?;
 
-    // 2. Проверяется ВСЯ логика без HTTP запросов
+    // 2. Verify ALL logic without HTTP requests
     let snapshot = env.snapshot();
     assert_eq!(snapshot.interactions.len(), 1);
 
-    // 3. Проверяется структура ответа, текст, кнопки
+    // 3. Verify response structure, text, buttons
     let (call, response) = &snapshot.interactions[0];
-    assert!(response.body["result"]["text"].as_str().unwrap().contains("Привет"));
+    assert!(response.body["result"]["text"].as_str().unwrap().contains("Hey"));
 
-    // ✅ НИ ОДНОГО запроса к серверам Telegram!
+    // NOT A SINGLE request to Telegram servers!
 }
 ```
 
-### 📊 Статистика
+### Statistics
 
 ```
-✅ 18 E2E тестов проходят успешно
-✅ 7 полных user flows протестированы
-✅ 0 реальных HTTP запросов
-✅ ~0.02 секунды время выполнения
-✅ 100% детерминированность
+✅ 18 E2E tests pass successfully
+✅ 7 complete user flows tested
+✅ 0 real HTTP requests
+✅ ~0.02 seconds execution time
+✅ 100% determinism
 ```
 
-### 🧪 Тестируемые flows
+### Tested flows
 
-| Flow | Тест | Что проверяет |
+| Flow | Test | What is verified |
 |------|------|---------------|
-| **Команда /start** | `e2e_start_command` | Приветственное сообщение + клавиатура |
-| **Команда /info** | `e2e_info_command` | Информация о форматах и сервисах |
-| **Команда /settings** | `e2e_settings_menu` | Меню настроек с текущими значениями |
-| **Выбор языка** | `e2e_language_selection_flow` | 3 шага: меню → выбор → обновление |
-| **Обработка YouTube** | `e2e_youtube_processing_flow` | Processing → Preview → Cleanup |
-| **Скачивание аудио** | `e2e_audio_download_complete` | 5 шагов с прогрессом 0%→100% |
-| **Rate limit** | `e2e_rate_limit_error` | Обработка ошибки превышения лимита |
+| **/start command** | `e2e_start_command` | Welcome message + keyboard |
+| **/info command** | `e2e_info_command` | Format and service information |
+| **/settings command** | `e2e_settings_menu` | Settings menu with current values |
+| **Language selection** | `e2e_language_selection_flow` | 3 steps: menu → select → update |
+| **YouTube processing** | `e2e_youtube_processing_flow` | Processing → Preview → Cleanup |
+| **Audio download** | `e2e_audio_download_complete` | 5 steps with progress 0%→100% |
+| **Rate limit** | `e2e_rate_limit_error` | Error handling for rate limit |
 
-## 🏗️ Архитектура
+## Architecture
 
 ```
 ┌──────────────────────────────────────────────────┐
-│           Ваши E2E тесты                         │
+│           Your E2E tests                          │
 │   (e2e_test.rs)                                  │
 └───────────────────┬──────────────────────────────┘
                     │
@@ -56,7 +56,7 @@ async fn e2e_start_command() {
 ┌──────────────────────────────────────────────────┐
 │        TestEnvironment                           │
 │  - Mock Telegram server (wiremock)               │
-│  - Snapshots с реальными ответами                │
+│  - Snapshots with real responses                 │
 │  - Verification helpers                          │
 └───────────────────┬──────────────────────────────┘
                     │
@@ -68,9 +68,9 @@ async fn e2e_start_command() {
 └────────────────┘    └────────────────┘
 ```
 
-## 🎨 Что можно проверять
+## What Can Be Verified
 
-### ✅ API Вызовы
+### API Calls
 ```rust
 env.verify_sequence(&[
     ("POST", "/sendMessage"),
@@ -79,41 +79,41 @@ env.verify_sequence(&[
 ]);
 ```
 
-### ✅ Содержимое сообщений
+### Message Content
 ```rust
 let text = response.body["result"]["text"].as_str().unwrap();
-assert!(text.contains("Привет"));
-assert!(text.contains("музыку"));
+assert!(text.contains("Hey"));
+assert!(text.contains("music"));
 ```
 
-### ✅ Inline клавиатуры
+### Inline Keyboards
 ```rust
 let keyboard = result["reply_markup"]["inline_keyboard"].as_array().unwrap();
 assert!(!keyboard.is_empty());
 ```
 
-### ✅ Последовательность действий
+### Action Sequences
 ```rust
-// Шаг 1: Processing
-// Шаг 2: Preview
-// Шаг 3: Cleanup
+// Step 1: Processing
+// Step 2: Preview
+// Step 3: Cleanup
 assert_eq!(snapshot.interactions.len(), 3);
 ```
 
-### ✅ Прогресс операций
+### Operation Progress
 ```rust
 assert!(caption.contains("0%"));   // Start
 assert!(caption.contains("45%"));  // Progress
 assert!(caption.contains("100%")); // Complete
 ```
 
-### ✅ Metadata и типы ошибок
+### Metadata and Error Types
 ```rust
 assert_eq!(snapshot.metadata.get("error_type"), Some(&"rate_limit"));
 assert_eq!(snapshot.metadata.get("remaining_seconds"), Some(&"45"));
 ```
 
-## 📁 Структура файлов
+## File Structure
 
 ```
 tests/
@@ -132,59 +132,59 @@ tests/
 │   ├── audio_download_complete.json
 │   └── rate_limit_error.json
 │
-├── e2e_test.rs            ✅ 18 E2E тестов
-├── bot_commands_test.rs   ✅ 11 тестов структуры
-└── bot_snapshots_test.rs  ✅ 7 базовых тестов
+├── e2e_test.rs            ✅ 18 E2E tests
+├── bot_commands_test.rs   ✅ 11 structure tests
+└── bot_snapshots_test.rs  ✅ 7 basic tests
 
 docs/
-├── E2E_TESTING.md                      ✅ Полное руководство
-├── SNAPSHOT_TESTING.md                 ✅ Основная документация
-├── SNAPSHOT_TESTING_INTEGRATION.md     ✅ Интеграция с логикой
-└── SNAPSHOT_TESTING_QUICKSTART.md      ✅ Быстрый старт
+├── E2E_TESTING.md                      ✅ Complete guide
+├── SNAPSHOT_TESTING.md                 ✅ Main documentation
+├── SNAPSHOT_TESTING_INTEGRATION.md     ✅ Integration with logic
+└── SNAPSHOT_TESTING_QUICKSTART.md      ✅ Quick start
 ```
 
-## 🚀 Запуск
+## Running Tests
 
 ```bash
-# Все E2E тесты
+# All E2E tests
 cargo test --test e2e_test
 
-# Конкретный тест
+# Specific test
 cargo test e2e_start_command
 
-# С подробным выводом
+# With verbose output
 cargo test --test e2e_test -- --nocapture
 
-# Все тесты проекта (E2E + unit + integration)
+# All project tests (E2E + unit + integration)
 cargo test
 ```
 
-## 💡 Примеры использования
+## Usage Examples
 
-### Простой E2E тест
+### Simple E2E test
 ```rust
 #[tokio::test]
 async fn e2e_my_command() {
     let env = TestEnvironment::new("my_command").await?;
 
-    // Проверить что snapshot корректный
+    // Verify that snapshot is correct
     let snapshot = env.snapshot();
     assert_eq!(snapshot.interactions.len(), 1);
 
-    // Проверить содержимое
+    // Verify content
     let (call, response) = &snapshot.interactions[0];
     assert_eq!(call.path, "/sendMessage");
     assert!(response.body["ok"].as_bool().unwrap());
 }
 ```
 
-### Тест сложного flow
+### Complex flow test
 ```rust
 #[tokio::test]
 async fn e2e_complete_download_flow() {
     let env = TestEnvironment::new("download_flow").await?;
 
-    // Проверить последовательность
+    // Verify sequence
     env.verify_sequence(&[
         ("POST", "/sendMessage"),      // "Processing..."
         ("POST", "/sendPhoto"),         // Preview
@@ -193,129 +193,129 @@ async fn e2e_complete_download_flow() {
         ("POST", "/deleteMessage"),     // Cleanup
     ]);
 
-    // Проверить детали каждого шага
+    // Verify details of each step
     let snapshot = env.snapshot();
-    // ... детальные assertions
+    // ... detailed assertions
 }
 ```
 
-## 🎓 Ключевые преимущества
+## Key Advantages
 
-### ✅ Полная изоляция
-- **Нет внешних зависимостей** - никаких сетевых запросов
-- **Работает оффлайн** - можно тестировать в самолёте
-- **Нет rate limits** - запускай сколько хочешь
+### Full Isolation
+- **No external dependencies** - no network requests
+- **Works offline** - can test on a plane
+- **No rate limits** - run as many times as needed
 
-### ✅ Скорость
-- **~0.02 сек** для всех 18 тестов
-- **Мгновенный фидбек** при разработке
-- **CI/CD friendly** - быстрый pipeline
+### Speed
+- **~0.02 sec** for all 18 tests
+- **Instant feedback** during development
+- **CI/CD friendly** - fast pipeline
 
-### ✅ Детерминированность
-- **Всегда одинаковый результат** - нет flaky tests
-- **Snapshots не меняются** - стабильные ожидания
-- **Воспроизводимость** - на любой машине
+### Determinism
+- **Always same result** - no flaky tests
+- **Snapshots don't change** - stable expectations
+- **Reproducible** - on any machine
 
-### ✅ Документация
-- **Snapshots = примеры** - видно как работает API
-- **Тесты = спецификация** - что должен делать бот
-- **Понятно новичкам** - легко разобраться
+### Documentation
+- **Snapshots = examples** - shows how the API works
+- **Tests = specification** - what the bot should do
+- **Clear for newcomers** - easy to understand
 
-## 📈 Что НЕ тестируется (и это нормально)
+## What is NOT Tested (and that's fine)
 
-### ❌ Реальная сеть
-- Сетевые ошибки (timeout, connection refused)
-- DNS проблемы
-- Firewall блокировки
+### Real Network
+- Network errors (timeout, connection refused)
+- DNS issues
+- Firewall blocks
 
-**Решение:** Эти сценарии можно добавить через отдельные error snapshots
+**Solution:** These scenarios can be added via separate error snapshots
 
-### ❌ Реальная БД
+### Real DB
 - Database locks
 - Concurrent writes
-- Performance под нагрузкой
+- Performance under load
 
-**Решение:** Отдельные integration тесты с реальной PostgreSQL
+**Solution:** Separate integration tests with real PostgreSQL
 
-### ❌ Реальный yt-dlp
-- Скачивание файлов
-- Парсинг метаданных
-- Обработка различных сайтов
+### Real yt-dlp
+- File downloads
+- Metadata parsing
+- Processing various sites
 
-**Решение:** Integration тесты в `tests/ytdlp_integration_test.rs` (уже есть)
+**Solution:** Integration tests in `tests/ytdlp_integration_test.rs` (already present)
 
-## 🔮 Будущие улучшения
+## Future Improvements
 
-### Уровень 1: Snapshot validation (✅ ГОТОВО)
-- Проверка структуры JSON
-- Валидация API ответов
+### Level 1: Snapshot validation (DONE)
+- JSON structure verification
+- API response validation
 - Verification helpers
 
-### Уровень 2: E2E без реальной логики (✅ ГОТОВО)
+### Level 2: E2E without real logic (DONE)
 - TestEnvironment
 - Flow verification
 - Message content checks
 
-### Уровень 3: E2E с реальной логикой (⚠️ БУДУЩЕЕ)
-- Вызов handle_start_command()
-- Вызов handle_message()
-- Проверка DB состояния
+### Level 3: E2E with real logic (FUTURE)
+- Calling handle_start_command()
+- Calling handle_message()
+- Verifying DB state
 
-**Блокер:** Создание полных Message объектов сложное в teloxide
+**Blocker:** Creating full Message objects is complex in teloxide
 
-### Уровень 4: Property-based testing (💡 ИДЕЯ)
-- Генерация случайных inputs
-- Fuzzing на основе snapshots
-- QuickCheck для Telegram типов
+### Level 4: Property-based testing (IDEA)
+- Generating random inputs
+- Fuzzing based on snapshots
+- QuickCheck for Telegram types
 
-## 🎯 Когда использовать E2E тесты
+## When to Use E2E Tests
 
-### ✅ Используйте E2E для:
-1. **Проверки flows** - последовательности действий
-2. **Regression testing** - ничего не сломалось
-3. **API contracts** - формат не изменился
-4. **Документации** - примеры взаимодействий
+### Use E2E for:
+1. **Flow verification** - action sequences
+2. **Regression testing** - nothing is broken
+3. **API contracts** - format has not changed
+4. **Documentation** - interaction examples
 
-### ⚠️ НЕ используйте E2E для:
-1. **Unit тестов** - используйте обычные #[test]
-2. **Performance** - используйте criterion
-3. **Нагрузочного тестирования** - используйте специальные tools
+### Do NOT use E2E for:
+1. **Unit tests** - use regular #[test]
+2. **Performance** - use criterion
+3. **Load testing** - use specialized tools
 
-## 📚 Документация
+## Documentation
 
-Читайте в порядке:
-1. **[SNAPSHOT_TESTING.md](docs/SNAPSHOT_TESTING.md)** - начало
-2. **[SNAPSHOT_TESTING_QUICKSTART.md](docs/SNAPSHOT_TESTING_QUICKSTART.md)** - быстрый старт
-3. **[E2E_TESTING.md](docs/E2E_TESTING.md)** - это руководство
-4. **[tests/e2e_test.rs](tests/e2e_test.rs)** - примеры кода
+Read in order:
+1. **[SNAPSHOT_TESTING.md](docs/SNAPSHOT_TESTING.md)** - start here
+2. **[SNAPSHOT_TESTING_QUICKSTART.md](docs/SNAPSHOT_TESTING_QUICKSTART.md)** - quick start
+3. **[E2E_TESTING.md](docs/E2E_TESTING.md)** - this guide
+4. **[tests/e2e_test.rs](tests/e2e_test.rs)** - code examples
 
-## 🎉 Итого
+## Summary
 
-### ✅ У вас есть:
+### You now have:
 
-1. **7 snapshots** - реальные API взаимодействия
-2. **18 E2E тестов** - полное покрытие flows
-3. **TestEnvironment** - удобная обёртка для тестов
-4. **Verification helpers** - проверка sequences и content
-5. **Полная документация** - 4 документа + примеры
+1. **7 snapshots** - real API interactions
+2. **18 E2E tests** - complete flow coverage
+3. **TestEnvironment** - convenient test wrapper
+4. **Verification helpers** - sequence and content checks
+5. **Full documentation** - 4 documents + examples
 
-### 🚀 Вы можете:
+### You can:
 
-- **Добавлять новые E2E тесты** - просто создать snapshot
-- **Проверять регрессии** - `cargo test`
-- **Документировать flows** - snapshots как примеры
-- **Разрабатывать уверенно** - тесты покажут проблемы
+- **Add new E2E tests** - just create a snapshot
+- **Check regressions** - `cargo test`
+- **Document flows** - snapshots as examples
+- **Develop with confidence** - tests will catch problems
 
-### 💪 E2E тесты защищают от:
+### E2E tests protect against:
 
-✅ Случайного изменения API формата
-✅ Поломки flows при рефакторинге
-✅ Regression багов
-✅ Неправильной последовательности вызовов
-✅ Отсутствия обязательных полей
+- Accidental changes to API format
+- Breaking flows during refactoring
+- Regression bugs
+- Incorrect call sequences
+- Missing required fields
 
 ---
 
-**Статус:** ✅ **ПОЛНОСТЬЮ ГОТОВО К ИСПОЛЬЗОВАНИЮ**
+**Status:** FULLY READY FOR USE
 
-**Запустите:** `cargo test --test e2e_test` и убедитесь сами! 🎊
+**Run:** `cargo test --test e2e_test` and see for yourself!

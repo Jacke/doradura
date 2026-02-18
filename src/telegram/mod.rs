@@ -90,6 +90,6 @@ pub use operation::{
     Completed, InProgress, MarkdownV2Formatter, MessageFormatter, NotStarted, Operation, OperationBuilder,
     OperationError, OperationInfo, OperationStatus, PlainTextFormatter, DEFAULT_EMOJI,
 };
-pub use reactions::{emoji, try_set_reaction};
+pub use reactions::{emoji, success_reaction_for_format, try_set_reaction};
 pub use videos::{handle_videos_callback, show_videos_page};
 pub use voice::{send_random_voice_message, send_voice_with_waveform, VOICE_FILES};

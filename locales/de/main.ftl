@@ -122,6 +122,7 @@ bot_commands =
     .users = Alle Nutzer auflisten (nur Admin)
     .setplan = Nutzerplan ändern (nur Admin)
     .subscriptions = Meine Inhalts-Abonnements
+    .style = Fortschrittsbalken-Stil
 
 video_circle =
     .prompt = ⭕️ Sende Intervalle für Videonachricht im Format `mm:ss-mm:ss` oder `hh:mm:ss-hh:mm:ss`\\.\nDu kannst mehrere Intervalle durch Kommas trennen\\.\n\nOder verwende Befehle:\n• `full` \\- gesamtes Video\n• `first30` \\- erste 30 Sekunden\n• `last30` \\- letzte 30 Sekunden\n• `middle30` \\- 30 Sekunden aus der Mitte\n\n💡 Du kannst Geschwindigkeit hinzufügen: `first30 2x`, `full 1\\.5x`\n\n💡 Wenn die Dauer 60 Sekunden überschreitet \\(Telegram-Limit\\), wird das Video automatisch gekürzt\\.\n\nBeispiel: `00:10-00:25` oder `first30 2x`

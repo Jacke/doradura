@@ -192,3 +192,18 @@ pub(super) async fn handle_cuts_command(bot: &Bot, msg: &Message, deps: &Handler
 
     Ok(())
 }
+
+/// Handle /style command
+pub(super) async fn handle_style_command(bot: &Bot, msg: &Message, deps: &HandlerDeps) -> Result<(), HandlerError> {
+    use crate::telegram::menu::show_progress_bar_style_menu;
+    use teloxide::prelude::Requester;
+
+    let sent = bot
+        .send_message(msg.chat.id, "Loading...")
+        .await
+        .map_err(HandlerError::from)?;
+    show_progress_bar_style_menu(bot, msg.chat.id, sent.id, deps.db_pool.clone())
+        .await
+        .map_err(HandlerError::from)?;
+    Ok(())
+}

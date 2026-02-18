@@ -7,14 +7,14 @@ pub fn keyboard_stats(keyboard: &InlineKeyboardMarkup) -> (usize, usize) {
     (rows, buttons)
 }
 
-/// Создает стандартную клавиатуру с кнопкой скачивания
+/// Creates a standard keyboard with a download button
 ///
-/// Используется как fallback когда список форматов недоступен
+/// Used as fallback when the format list is unavailable
 ///
-/// # Параметры
-/// - `default_format` - формат файла (mp3, mp4, srt, txt)
-/// - `default_quality` - качество видео (только для mp4: "1080p", "720p", "480p", "360p", "best")
-/// - `url_id` - ID URL в кэше
+/// # Parameters
+/// - `default_format` - file format (mp3, mp4, srt, txt)
+/// - `default_quality` - video quality (mp4 only: "1080p", "720p", "480p", "360p", "best")
+/// - `url_id` - URL ID in cache
 pub fn create_fallback_keyboard(
     default_format: &str,
     default_quality: Option<&str>,
@@ -31,30 +31,30 @@ pub fn create_fallback_keyboard(
         .map(|bitrate| format!("MP3 {}", bitrate))
         .unwrap_or_else(|| "MP3".to_string());
 
-    // Формируем текст кнопки с учетом формата и качества
+    // Build button text based on format and quality
     let (button_text, callback_data) = match default_format {
         "mp4" => {
-            // Для видео показываем качество
+            // For video show quality
             let (quality_display, quality_for_callback) = match default_quality {
                 Some("1080p") => ("1080p", "1080p"),
                 Some("720p") => ("720p", "720p"),
                 Some("480p") => ("480p", "480p"),
                 Some("360p") => ("360p", "360p"),
                 Some("best") => ("Best", "best"),
-                _ => ("Best", "best"), // По умолчанию используем "best" вместо "MP4"
+                _ => ("Best", "best"), // Default to "best" instead of "MP4"
             };
 
-            // Формируем callback data: для mp4 всегда используем формат dl:mp4:quality:url_id
+            // Build callback data: for mp4 always use dl:mp4:quality:url_id format
             let callback = format!("dl:mp4:{}:{}", quality_for_callback, url_id);
 
-            (format!("📥 Скачать ({})", quality_display), callback)
+            (format!("📥 Download ({})", quality_display), callback)
         }
-        "mp3" => (format!("📥 Скачать ({})", mp3_label), format!("dl:mp3:{}", url_id)),
-        "photo" => ("📷 Скачать фото".to_string(), format!("dl:photo:{}", url_id)),
-        "mp4+mp3" => ("📥 Скачать (MP4 + MP3)".to_string(), format!("dl:mp4+mp3:{}", url_id)),
-        "srt" => ("📥 Скачать (SRT)".to_string(), format!("dl:srt:{}", url_id)),
-        "txt" => ("📥 Скачать (TXT)".to_string(), format!("dl:txt:{}", url_id)),
-        _ => (format!("📥 Скачать ({})", mp3_label), format!("dl:mp3:{}", url_id)),
+        "mp3" => (format!("📥 Download ({})", mp3_label), format!("dl:mp3:{}", url_id)),
+        "photo" => ("📷 Download photo".to_string(), format!("dl:photo:{}", url_id)),
+        "mp4+mp3" => ("📥 Download (MP4 + MP3)".to_string(), format!("dl:mp4+mp3:{}", url_id)),
+        "srt" => ("📥 Download (SRT)".to_string(), format!("dl:srt:{}", url_id)),
+        "txt" => ("📥 Download (TXT)".to_string(), format!("dl:txt:{}", url_id)),
+        _ => (format!("📥 Download ({})", mp3_label), format!("dl:mp3:{}", url_id)),
     };
 
     let mut rows = vec![vec![crate::telegram::cb(button_text, callback_data)]];
@@ -67,23 +67,23 @@ pub fn create_fallback_keyboard(
     }
 
     rows.push(vec![crate::telegram::cb(
-        "⚙️ Настройки".to_string(),
+        "⚙️ Settings".to_string(),
         format!("pv:set:{}", url_id),
     )]);
     rows.push(vec![crate::telegram::cb(
-        "❌ Отмена".to_string(),
+        "❌ Cancel".to_string(),
         format!("pv:cancel:{}", url_id),
     )]);
 
     InlineKeyboardMarkup::new(rows)
 }
 
-/// Создает клавиатуру для выбора формата видео
+/// Creates a keyboard for video format selection
 ///
-/// - Большая кнопка для default формата (из настроек пользователя)
-/// - Маленькие кнопки для остальных форматов (по 2 в ряд)
-/// - Toggle кнопка для выбора Media/Document
-/// - Большая кнопка "Отмена" внизу
+/// - Large button for default format (from user settings)
+/// - Small buttons for other formats (2 per row)
+/// - Toggle button for Media/Document selection
+/// - Large "Cancel" button at the bottom
 pub fn create_video_format_keyboard(
     formats: &[VideoFormatInfo],
     default_quality: Option<&str>,
@@ -105,8 +105,8 @@ pub fn create_video_format_keyboard(
         .unwrap_or_else(|| "MP3".to_string());
     let mut buttons: Vec<Vec<InlineKeyboardButton>> = Vec::new();
 
-    // Находим default формат (из настроек пользователя)
-    // Маппим "best" на первый (лучший) формат из списка
+    // Find default format (from user settings)
+    // Map "best" to the first (best) format in the list
     let default_format_info = if let Some(quality) = default_quality {
         if quality == "best" {
             formats.first()
@@ -120,7 +120,7 @@ pub fn create_video_format_keyboard(
         formats.first()
     };
 
-    // Большая кнопка для default формата (только для MP4, для MP4+MP3 показываем все как маленькие)
+    // Large button for default format (MP4 only; for MP4+MP3 show all as small buttons)
     if default_format != "mp4+mp3" {
         if let Some(format_info) = default_format_info {
             let size_str = format_info
@@ -143,29 +143,29 @@ pub fn create_video_format_keyboard(
         }
     }
 
-    // Маленькие кнопки для форматов (по 2 в ряд)
-    // Для MP4+MP3 показываем ВСЕ форматы, для MP4 - исключаем default и показываем максимум 4
+    // Small buttons for formats (2 per row)
+    // For MP4+MP3 show ALL formats; for MP4 exclude default and show max 4
     let mut row = Vec::new();
     let default_index = if default_format == "mp4+mp3" {
-        usize::MAX // Для MP4+MP3 не исключаем default, показываем все
+        usize::MAX // For MP4+MP3 don't exclude default, show all
     } else {
         default_format_info
             .and_then(|df| formats.iter().position(|f| f.quality == df.quality))
-            .unwrap_or(usize::MAX) // Если default не найден, пропускаем все
+            .unwrap_or(usize::MAX) // If default not found, skip all
     };
 
     let mut added_count = 0;
-    // Для MP4+MP3 показываем все форматы, для MP4 - максимум 4 дополнительных
+    // For MP4+MP3 show all formats; for MP4 show at most 4 additional formats
     let max_formats = if default_format == "mp4+mp3" {
-        formats.len() // Показываем все форматы для MP4+MP3
+        formats.len() // Show all formats for MP4+MP3
     } else {
-        4 // Для MP4 показываем максимум 4 дополнительных формата
+        4 // For MP4 show max 4 additional formats
     };
 
     for (idx, format_info) in formats.iter().enumerate() {
-        // Для MP4 пропускаем default, для MP4+MP3 показываем все
+        // For MP4, skip the default; for MP4+MP3 show all
         if default_format != "mp4+mp3" && idx == default_index {
-            continue; // Пропускаем default формат только для MP4
+            continue; // Skip default format only for MP4
         }
 
         if added_count >= max_formats {
@@ -197,7 +197,7 @@ pub fn create_video_format_keyboard(
         }
     }
 
-    // Добавляем оставшиеся кнопки если есть
+    // Add remaining buttons if any
     if !row.is_empty() {
         buttons.push(row);
     }
@@ -207,26 +207,26 @@ pub fn create_video_format_keyboard(
         format!("dl:mp3:{}", url_id),
     )]);
 
-    // Toggle кнопка для выбора типа отправки (Media/Document)
+    // Toggle button for send type (Media/Document)
     buttons.push(vec![crate::telegram::cb(
         if send_as_document == 0 {
-            "📹 Отправка: Media ✓"
+            "📹 Send as: Media ✓"
         } else {
-            "📄 Отправка: Document ✓"
+            "📄 Send as: Document ✓"
         }
         .to_string(),
         format!("video_send_type:toggle:{}", url_id),
     )]);
 
-    // Кнопка "Настройки"
+    // Settings button
     buttons.push(vec![crate::telegram::cb(
-        "⚙️ Настройки".to_string(),
+        "⚙️ Settings".to_string(),
         format!("pv:set:{}", url_id),
     )]);
 
-    // Большая кнопка "Отмена" внизу
+    // Large Cancel button at the bottom
     buttons.push(vec![crate::telegram::cb(
-        "❌ Отмена".to_string(),
+        "❌ Cancel".to_string(),
         format!("pv:cancel:{}", url_id),
     )]);
 
@@ -244,10 +244,10 @@ const NUM_EMOJI: [&str; 10] = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️
 /// # Layout
 /// ```text
 /// [1️⃣ ✅] [2️⃣ ✅] [3️⃣ ⬜] [4️⃣ ✅] [5️⃣ ✅]
-/// [✅ Все] [❌ Сбросить]
-/// [📷 Скачать выбранные (4)]
-/// [⚙️ Настройки]
-/// [❌ Отмена]
+/// [✅ All] [❌ Reset]
+/// [📷 Download selected (4)]
+/// [⚙️ Settings]
+/// [❌ Cancel]
 /// ```
 pub fn create_carousel_keyboard(carousel_count: u8, mask: u32, url_id: &str) -> InlineKeyboardMarkup {
     let count = carousel_count as usize;
@@ -272,13 +272,13 @@ pub fn create_carousel_keyboard(carousel_count: u8, mask: u32, url_id: &str) -> 
     // Select all / Clear all
     let full_mask = (1u32 << count) - 1;
     rows.push(vec![
-        crate::telegram::cb("✅ Все".to_string(), format!("ct:all:{}:{}", url_id, full_mask)),
-        crate::telegram::cb("❌ Сбросить".to_string(), format!("ct:all:{}:0", url_id)),
+        crate::telegram::cb("✅ All".to_string(), format!("ct:all:{}:{}", url_id, full_mask)),
+        crate::telegram::cb("❌ Reset".to_string(), format!("ct:all:{}:0", url_id)),
     ]);
 
     // Download button with count of selected items
     let selected_count = (0..count).filter(|i| mask & (1 << i) != 0).count();
-    let dl_label = format!("📷 Скачать выбранные ({})", selected_count);
+    let dl_label = format!("📷 Download selected ({})", selected_count);
     rows.push(vec![crate::telegram::cb(
         dl_label,
         format!("dl:photo:{}:{}", url_id, mask),
@@ -286,13 +286,13 @@ pub fn create_carousel_keyboard(carousel_count: u8, mask: u32, url_id: &str) -> 
 
     // Settings button
     rows.push(vec![crate::telegram::cb(
-        "⚙️ Настройки".to_string(),
+        "⚙️ Settings".to_string(),
         format!("pv:set:{}", url_id),
     )]);
 
     // Cancel button
     rows.push(vec![crate::telegram::cb(
-        "❌ Отмена".to_string(),
+        "❌ Cancel".to_string(),
         format!("pv:cancel:{}", url_id),
     )]);
 

@@ -29,7 +29,7 @@ use teloxide::prelude::*;
 /// #[test]
 /// async fn test_process_text() {
 ///     let result = process_text("/info", ChatId(123)).await?;
-///     assert!(result.contains("Информация"));
+///     assert!(result.contains("Information"));
 /// }
 /// ```
 ///

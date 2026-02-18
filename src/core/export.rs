@@ -5,29 +5,29 @@ use teloxide::prelude::*;
 use teloxide::types::InputFile;
 use teloxide::RequestError;
 
-/// Экспортирует историю в TXT формат
+/// Exports download history to TXT format
 fn export_to_txt(entries: &[db::DownloadHistoryEntry]) -> String {
-    let mut content = "История загрузок\n".to_string();
+    let mut content = "Download History\n".to_string();
     content.push_str("=".repeat(50).as_str());
     content.push_str("\n\n");
 
     for (idx, entry) in entries.iter().enumerate() {
         content.push_str(&format!("{}. {}\n", idx + 1, entry.title));
         content.push_str(&format!("   URL: {}\n", entry.url));
-        content.push_str(&format!("   Формат: {}\n", entry.format));
-        content.push_str(&format!("   Дата: {}\n", entry.downloaded_at));
+        content.push_str(&format!("   Format: {}\n", entry.format));
+        content.push_str(&format!("   Date: {}\n", entry.downloaded_at));
         content.push('\n');
     }
 
     content
 }
 
-/// Экспортирует историю в CSV формат
+/// Exports download history to CSV format
 fn export_to_csv(entries: &[db::DownloadHistoryEntry]) -> String {
-    let mut content = "Название,URL,Формат,Дата\n".to_string();
+    let mut content = "Title,URL,Format,Date\n".to_string();
 
     for entry in entries {
-        // Экранируем кавычки и запятые в CSV
+        // Escape quotes and commas for CSV
         let title = entry.title.replace('"', "\"\"").replace('\n', " ");
         let url = entry.url.replace('"', "\"\"").replace('\n', " ");
         content.push_str(&format!(
@@ -39,7 +39,7 @@ fn export_to_csv(entries: &[db::DownloadHistoryEntry]) -> String {
     content
 }
 
-/// Экспортирует историю в JSON формат
+/// Exports download history to JSON format
 fn export_to_json(entries: &[db::DownloadHistoryEntry]) -> Result<String, serde_json::Error> {
     #[derive(serde::Serialize)]
     struct ExportEntry {
@@ -62,7 +62,7 @@ fn export_to_json(entries: &[db::DownloadHistoryEntry]) -> Result<String, serde_
     serde_json::to_string_pretty(&export_entries)
 }
 
-/// Показывает меню выбора формата экспорта
+/// Shows the export format selection menu
 pub async fn show_export_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
     let conn = db::get_connection(&db_pool)
         .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
@@ -72,14 +72,18 @@ pub async fn show_export_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) 
         Err(e) => {
             log::error!("Failed to get download history: {}", e);
             return bot
-                .send_message(chat_id, "У меня не получилось загрузить историю 😢 Попробуй позже\\.")
+                .send_message(chat_id, "Failed to load history 😢 Please try again later\\.")
                 .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                 .await;
         }
     };
 
     if entries.is_empty() {
-        return bot.send_message(chat_id, "📚 *Экспорт истории*\n\nУ тебя пока нет загрузок для экспорта\\. Отправь мне ссылку на трек или видео\\!")
+        return bot
+            .send_message(
+                chat_id,
+                "📚 *Export History*\n\nYou have no downloads to export yet\\. Send me a link to a track or video\\!",
+            )
             .parse_mode(teloxide::types::ParseMode::MarkdownV2)
             .await;
     }
@@ -96,7 +100,7 @@ pub async fn show_export_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) 
     bot.send_message(
         chat_id,
         format!(
-            "📚 *Экспорт истории*\n\nНайдено записей: {}\n\nВыбери формат экспорта:",
+            "📚 *Export History*\n\nFound {} records\\.\n\nChoose an export format:",
             entries.len()
         ),
     )
@@ -105,7 +109,7 @@ pub async fn show_export_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) 
     .await
 }
 
-/// Обрабатывает запрос на экспорт в выбранном формате
+/// Handles an export request for the chosen format
 pub async fn handle_export(bot: &Bot, chat_id: ChatId, format: &str, db_pool: Arc<DbPool>) -> ResponseResult<()> {
     let conn = db::get_connection(&db_pool)
         .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
@@ -114,7 +118,7 @@ pub async fn handle_export(bot: &Bot, chat_id: ChatId, format: &str, db_pool: Ar
         Ok(entries) => entries,
         Err(e) => {
             log::error!("Failed to get download history: {}", e);
-            bot.send_message(chat_id, "У меня не получилось загрузить историю 😢 Попробуй позже\\.")
+            bot.send_message(chat_id, "Failed to load history 😢 Please try again later\\.")
                 .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                 .await?;
             return Ok(());
@@ -122,7 +126,7 @@ pub async fn handle_export(bot: &Bot, chat_id: ChatId, format: &str, db_pool: Ar
     };
 
     if entries.is_empty() {
-        bot.send_message(chat_id, "У тебя нет записей для экспорта\\.")
+        bot.send_message(chat_id, "You have no records to export\\.")
             .parse_mode(teloxide::types::ParseMode::MarkdownV2)
             .await?;
         return Ok(());
@@ -135,21 +139,21 @@ pub async fn handle_export(bot: &Bot, chat_id: ChatId, format: &str, db_pool: Ar
             Ok(content) => content,
             Err(e) => {
                 log::error!("Failed to export to JSON: {}", e);
-                bot.send_message(chat_id, "Ошибка при создании JSON файла\\.")
+                bot.send_message(chat_id, "Error creating JSON file\\.")
                     .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                     .await?;
                 return Ok(());
             }
         },
         _ => {
-            bot.send_message(chat_id, "Неизвестный формат экспорта\\.")
+            bot.send_message(chat_id, "Unknown export format\\.")
                 .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                 .await?;
             return Ok(());
         }
     };
 
-    // Создаем временный файл
+    // Create a temporary file
     let temp_file = format!(
         "{}/doradura_export_{}_{}.{}",
         crate::core::config::TEMP_FILES_DIR.as_str(),
@@ -163,22 +167,22 @@ pub async fn handle_export(bot: &Bot, chat_id: ChatId, format: &str, db_pool: Ar
 
     if let Err(e) = std::fs::write(&temp_file, content) {
         log::error!("Failed to write export file: {}", e);
-        bot.send_message(chat_id, "Ошибка при создании файла экспорта\\.")
+        bot.send_message(chat_id, "Error creating export file\\.")
             .parse_mode(teloxide::types::ParseMode::MarkdownV2)
             .await?;
         return Ok(());
     }
 
-    // Отправляем файл
+    // Send the file
     match bot.send_document(chat_id, InputFile::file(&temp_file)).await {
         Ok(_) => {
-            // Удаляем временный файл
+            // Delete the temporary file
             let _ = std::fs::remove_file(&temp_file);
         }
         Err(e) => {
             log::error!("Failed to send export file: {:?}", e);
             let _ = std::fs::remove_file(&temp_file);
-            bot.send_message(chat_id, "Ошибка при отправке файла\\.")
+            bot.send_message(chat_id, "Error sending file\\.")
                 .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                 .await?;
         }

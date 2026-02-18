@@ -43,8 +43,8 @@ async fn e2e_start_command() {
     // Verify message content
     let result = &response.body["result"];
     let text = result["text"].as_str().unwrap();
-    assert!(text.contains("Привет"));
-    assert!(text.contains("музыку"));
+    assert!(text.contains("Hello") || text.contains("Привет"));
+    assert!(text.contains("music") || text.contains("музыку"));
 
     // Verify inline keyboard exists
     assert!(result["reply_markup"]["inline_keyboard"].is_array());
@@ -69,8 +69,14 @@ async fn e2e_info_command() {
     let text = response.body["result"]["text"].as_str().unwrap();
 
     // Check that all required information is present
-    assert!(text.contains("Видео"), "Should mention video formats");
-    assert!(text.contains("Аудио"), "Should mention audio formats");
+    assert!(
+        text.contains("Video") || text.contains("Видео"),
+        "Should mention video formats"
+    );
+    assert!(
+        text.contains("Audio") || text.contains("Аудио"),
+        "Should mention audio formats"
+    );
     assert!(text.contains("YouTube"), "Should mention YouTube");
     assert!(text.contains("1080p"), "Should mention video quality");
     assert!(text.contains("320 kbps"), "Should mention audio quality");
@@ -93,7 +99,7 @@ async fn e2e_settings_menu() {
 
     // Verify settings are displayed
     let text = result["text"].as_str().unwrap();
-    assert!(text.contains("Настройки"));
+    assert!(text.contains("Settings") || text.contains("Настройки"));
     assert!(text.contains("1080p")); // Current video quality
     assert!(text.contains("192 kbps")); // Current audio bitrate
 
@@ -129,7 +135,10 @@ async fn e2e_youtube_processing_flow() {
     // Step 1: Verify processing message
     let (_call1, resp1) = &snapshot.interactions[0];
     let text1 = resp1.body["result"]["text"].as_str().unwrap();
-    assert!(text1.contains("Обрабатываю"), "Should show processing status");
+    assert!(
+        text1.contains("Processing") || text1.contains("Обрабатываю"),
+        "Should show processing status"
+    );
 
     // Step 2: Verify preview
     let (call2, resp2) = &snapshot.interactions[1];
@@ -137,7 +146,10 @@ async fn e2e_youtube_processing_flow() {
 
     let caption = resp2.body["result"]["caption"].as_str().unwrap();
     assert!(caption.contains("Rick Astley"), "Should show video title");
-    assert!(caption.contains("Выбери качество"), "Should prompt for quality");
+    assert!(
+        caption.contains("Select quality") || caption.contains("Выбери качество"),
+        "Should prompt for quality"
+    );
 
     // Verify quality buttons
     let keyboard = resp2.body["result"]["reply_markup"]["inline_keyboard"]
@@ -216,7 +228,7 @@ async fn e2e_language_selection_flow() {
     // Verify language menu
     let (_call1, resp1) = &snapshot.interactions[0];
     let text1 = resp1.body["result"]["text"].as_str().unwrap();
-    assert!(text1.contains("Выбери язык"));
+    assert!(text1.contains("Select language") || text1.contains("Выбери язык"));
     assert!(text1.contains("Choose language"));
 
     // Verify callback answer
@@ -226,7 +238,10 @@ async fn e2e_language_selection_flow() {
     // Verify settings updated
     let (_call3, resp3) = &snapshot.interactions[2];
     let text3 = resp3.body["result"]["text"].as_str().unwrap();
-    assert!(text3.contains("🇷🇺 Русский"), "Language should be updated");
+    assert!(
+        text3.contains("🇷🇺 Russian") || text3.contains("🇷🇺 Русский"),
+        "Language should be updated"
+    );
 
     println!("✓ E2E: Language selection flow works correctly");
 }
@@ -245,7 +260,10 @@ async fn e2e_rate_limit_error() {
     let (_call, resp) = &snapshot.interactions[0];
     let text = resp.body["result"]["text"].as_str().unwrap();
 
-    assert!(text.contains("Подожди"), "Should show rate limit message");
+    assert!(
+        text.contains("Wait") || text.contains("Подожди"),
+        "Should show rate limit message"
+    );
     assert!(text.contains("45"), "Should show wait time");
     assert!(text.contains("/plan"), "Should suggest upgrade");
     assert!(text.contains("Premium"), "Should mention Premium plan");

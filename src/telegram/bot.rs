@@ -17,68 +17,64 @@ use crate::telegram::bot_api_logger::Bot;
 
 /// Bot commands enum with descriptions
 #[derive(BotCommands, Clone, Debug)]
-#[command(rename_rule = "lowercase", description = "Медиа-бот:")]
+#[command(rename_rule = "lowercase", description = "Media bot:")]
 pub enum Command {
-    #[command(description = "показывает главное меню")]
+    #[command(description = "show the main menu")]
     Start,
-    #[command(description = "настройки загрузки и конвертации")]
+    #[command(description = "download and conversion settings")]
     Settings,
-    #[command(description = "показать информацию о доступных форматах")]
+    #[command(description = "show information about available formats")]
     Info,
-    #[command(description = "запросить суммари и субтитры через Downsub")]
+    #[command(description = "request summary and subtitles via Downsub")]
     Downsub,
-    #[command(description = "история загрузок")]
+    #[command(description = "download history")]
     History,
-    #[command(description = "мои загрузки")]
+    #[command(description = "my downloads")]
     Downloads,
-    #[command(description = "мои файлы")]
+    #[command(description = "my files")]
     Uploads,
-    #[command(description = "мои вырезки")]
+    #[command(description = "my clips")]
     Cuts,
-    #[command(description = "личная статистика")]
+    #[command(description = "personal statistics")]
     Stats,
-    #[command(description = "экспорт истории")]
+    #[command(description = "export history")]
     Export,
-    #[command(description = "информация о подписке и тарифах")]
+    #[command(description = "subscription and plan information")]
     Plan,
-    #[command(description = "создать бэкап БД (только для администраторов)")]
+    #[command(description = "create a DB backup (admins only)")]
     Backup,
-    #[command(description = "список всех пользователей (только для администратора)")]
+    #[command(description = "list all users (admin only)")]
     Users,
-    #[command(description = "изменить план пользователя (только для администратора)")]
+    #[command(description = "change user plan (admin only)")]
     Setplan,
-    #[command(description = "посмотреть транзакции Stars (только для администратора)")]
+    #[command(description = "view Stars transactions (admin only)")]
     Transactions,
-    #[command(description = "панель управления пользователями (только для администратора)")]
+    #[command(description = "user management panel (admin only)")]
     Admin,
-    #[command(description = "просмотр всех платежей (только для администратора)")]
+    #[command(description = "view all payments (admin only)")]
     Charges,
-    #[command(description = "скачать файл из Telegram по file_id (только для администратора)")]
+    #[command(description = "download a file from Telegram by file_id (admin only)")]
     DownloadTg,
-    #[command(description = "список отправленных файлов с file_id (только для администратора)")]
+    #[command(description = "list of sent files with file_id (admin only)")]
     SentFiles,
-    #[command(description = "аналитика и метрики (только для администратора)")]
+    #[command(description = "analytics and metrics (admin only)")]
     Analytics,
-    #[command(description = "состояние системы (только для администратора)")]
+    #[command(description = "system status (admin only)")]
     Health,
-    #[command(
-        rename = "downsub_health",
-        description = "проверка Downsub gRPC (только для администратора)"
-    )]
+    #[command(rename = "downsub_health", description = "check Downsub gRPC (admin only)")]
     DownsubHealth,
-    #[command(description = "детальные метрики (только для администратора)")]
+    #[command(description = "detailed metrics (admin only)")]
     Metrics,
-    #[command(description = "финансовая аналитика (только для администратора)")]
+    #[command(description = "financial analytics (admin only)")]
     Revenue,
-    #[command(
-        rename = "botapi_speed",
-        description = "скорость загрузки через локальный Bot API (только для администратора)"
-    )]
+    #[command(rename = "botapi_speed", description = "upload speed via local Bot API (admin only)")]
     BotApiSpeed,
-    #[command(description = "версия и обновление (только для администратора)")]
+    #[command(description = "version and update (admin only)")]
     Version,
-    #[command(description = "мои подписки на обновления")]
+    #[command(description = "my content subscriptions")]
     Subscriptions,
+    #[command(description = "choose progress bar style")]
+    Style,
 }
 
 const BOT_COMMAND_DEFINITIONS: &[(&str, &str)] = &[
@@ -97,6 +93,7 @@ const BOT_COMMAND_DEFINITIONS: &[(&str, &str)] = &[
     //("backup", "bot_commands.backup"),
     ("plan", "bot_commands.plan"),
     ("subscriptions", "bot_commands.subscriptions"),
+    ("style", "bot_commands.style"),
     //("users", "bot_commands.users"),
     //("setplan", "bot_commands.setplan"),
     //("transactions", "bot_commands.transactions"),
@@ -254,7 +251,7 @@ mod tests {
         let command_list = format!("{}", commands);
 
         // Check that the description header is present
-        assert!(command_list.contains("Медиа-бот"));
+        assert!(command_list.contains("Media bot"));
 
         // Check that some key commands are present
         assert!(command_list.contains("start"));

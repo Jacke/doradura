@@ -145,7 +145,7 @@ pub enum YtDlpErrorType {
 
 **Behavior:**
 - Does NOT notify admin (temporary)
-- User message: "Временная проблема при загрузке видео"
+- User message: "Temporary problem downloading video"
 - Automatic retries handle most cases
 
 ### 6. Documentation
@@ -290,7 +290,7 @@ cargo test
 
 ## Backwards Compatibility
 
-✅ All changes are backward compatible:
+All changes are backward compatible:
 - Existing `check_and_update_ytdlp()` still works
 - New commands are additive
 - Fragment retry is transparent to downloads

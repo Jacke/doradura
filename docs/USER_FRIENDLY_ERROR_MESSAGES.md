@@ -1,137 +1,137 @@
-# User-Friendly Error Messages - Удобные Сообщения об Ошибках
+# User-Friendly Error Messages
 
-## Проблема
+## Problem
 
-Пользователи получали слишком технические и раздражающие сообщения об ошибках:
+Users were receiving overly technical and frustrating error messages:
 
-**Было:**
+**Before:**
 ```
-❌ Cookies для YouTube устарели или недействительны.
+Cookies for YouTube are expired or invalid.
 
-Пожалуйста, обнови cookies.
-Обратись к @stansob.
+Please update cookies.
+Contact @stansob.
 ```
 
-**Проблемы:**
-1. ❌ Упоминание админа в каждой ошибке раздражает пользователя
-2. ❌ Технические детали про "cookies" непонятны обычному пользователю
-3. ❌ Слишком длинное сообщение
-4. ❌ Не дает actionable совет ("обнови cookies" - как?)
+**Issues:**
+1. Mentioning the admin in every error message is annoying to the user
+2. Technical details about "cookies" are not understood by regular users
+3. Message is too long
+4. Gives no actionable advice ("update cookies" - how?)
 
-## Решение
+## Solution
 
-Переписаны все сообщения об ошибках на user-friendly версии:
+All error messages have been rewritten into user-friendly versions:
 
 ### 1. Invalid Cookies
 
-**Было:**
+**Before:**
 ```
-❌ Cookies для YouTube устарели или недействительны.
+Cookies for YouTube are expired or invalid.
 
-Пожалуйста, обнови cookies.
-Обратись к @stansob.
-```
-
-**Стало:**
-```
-❌ Временная проблема с YouTube.
-
-Попробуй другое видео или повтори попытку позже.
+Please update cookies.
+Contact @stansob.
 ```
 
-**Почему лучше:**
-- ✅ Не упоминает технические детали
-- ✅ Не пугает пользователя
-- ✅ Дает простой совет: попробуй другое видео
-- ✅ Нет упоминания админа
+**After:**
+```
+Temporary issue with YouTube.
+
+Try a different video or retry later.
+```
+
+**Why it's better:**
+- Does not mention technical details
+- Does not alarm the user
+- Gives simple advice: try a different video
+- No admin mention
 
 ### 2. Bot Detection
 
-**Было:**
+**Before:**
 ```
-❌ YouTube заблокировал запрос (обнаружен бот).
+YouTube blocked the request (bot detected).
 
-Проблема решается обновлением cookies.
-Обратись к @stansob.
-```
-
-**Стало:**
-```
-❌ YouTube заблокировал запрос.
-
-Попробуй другое видео или повтори попытку позже.
+The issue is resolved by updating cookies.
+Contact @stansob.
 ```
 
-**Почему лучше:**
-- ✅ Убрали "(обнаружен бот)" - не пугает пользователя
-- ✅ Не упоминает cookies
-- ✅ Простой совет
+**After:**
+```
+YouTube blocked the request.
+
+Try a different video or retry later.
+```
+
+**Why it's better:**
+- Removed "(bot detected)" - does not alarm the user
+- Does not mention cookies
+- Simple advice
 
 ### 3. Video Unavailable
 
-**Было:**
+**Before:**
 ```
-❌ Видео недоступно.
+Video unavailable.
 
-Возможные причины:
-• Видео приватное или удалено
-• Региональные ограничения
-• Видео заблокировано автором
-```
-
-**Стало:**
-```
-❌ Видео недоступно.
-
-Возможно оно приватное, удалено или заблокировано в твоём регионе.
+Possible reasons:
+• Video is private or deleted
+• Regional restrictions
+• Video blocked by the author
 ```
 
-**Почему лучше:**
-- ✅ Короче
-- ✅ Те же причины, но в одной строке
-- ✅ Дружелюбный тон ("твоём")
+**After:**
+```
+Video unavailable.
+
+It may be private, deleted, or blocked in your region.
+```
+
+**Why it's better:**
+- Shorter
+- Same reasons but in one line
+- Friendly tone
 
 ### 4. Network Error
 
-**Было:**
+**Before:**
 ```
-❌ Проблема с сетью при получении данных.
-```
-
-**Стало:**
-```
-❌ Проблема с сетью.
-
-Попробуй ещё раз через минуту.
+Network issue while retrieving data.
 ```
 
-**Почему лучше:**
-- ✅ Короче
-- ✅ Конкретный совет: подожди минуту
+**After:**
+```
+Network issue.
+
+Try again in a minute.
+```
+
+**Why it's better:**
+- Shorter
+- Specific advice: wait a minute
 
 ### 5. Unknown Error
 
-**Было:**
+**Before:**
 ```
-❌ Не удалось получить данные о видео.
+Could not retrieve video data.
 
-Проверь, что ссылка корректна и видео доступно.
-Обратись к @stansob.
-```
-
-**Стало:**
-```
-❌ Не удалось скачать видео.
-
-Проверь, что ссылка корректна.
+Check that the link is correct and the video is available.
+Contact @stansob.
 ```
 
-**Почему лучше:**
-- ✅ Короче
-- ✅ Нет упоминания админа
-- ✅ Простой совет
+**After:**
+```
+Could not download the video.
 
-## Код Изменений
+Check that the link is correct.
+```
+
+**Why it's better:**
+- Shorter
+- No admin mention
+- Simple advice
+
+## Code Changes
 
 [src/download/ytdlp_errors.rs:94-112](src/download/ytdlp_errors.rs#L94-L112)
 
@@ -139,59 +139,59 @@
 pub fn get_error_message(error_type: &YtDlpErrorType) -> String {
     match error_type {
         YtDlpErrorType::InvalidCookies => {
-            "❌ Временная проблема с YouTube.\n\nПопробуй другое видео или повтори попытку позже.".to_string()
+            "Temporary issue with YouTube.\n\nTry a different video or retry later.".to_string()
         }
         YtDlpErrorType::BotDetection => {
-            "❌ YouTube заблокировал запрос.\n\nПопробуй другое видео или повтори попытку позже.".to_string()
+            "YouTube blocked the request.\n\nTry a different video or retry later.".to_string()
         }
         YtDlpErrorType::VideoUnavailable => {
-            "❌ Видео недоступно.\n\nВозможно оно приватное, удалено или заблокировано в твоём регионе.".to_string()
+            "Video unavailable.\n\nIt may be private, deleted, or blocked in your region.".to_string()
         }
         YtDlpErrorType::NetworkError => {
-            "❌ Проблема с сетью.\n\nПопробуй ещё раз через минуту.".to_string()
+            "Network issue.\n\nTry again in a minute.".to_string()
         }
         YtDlpErrorType::Unknown => {
-            "❌ Не удалось скачать видео.\n\nПроверь, что ссылка корректна.".to_string()
+            "Could not download the video.\n\nCheck that the link is correct.".to_string()
         }
     }
 }
 ```
 
-### Удалена Функция admin_contact_line()
+### Removed admin_contact_line() Function
 
-Функция больше не нужна, так как не упоминаем админа в user-facing сообщениях.
+The function is no longer needed since we no longer mention the admin in user-facing messages.
 
-**Удалено:**
+**Removed:**
 ```rust
 fn admin_contact_line() -> Option<String> {
     let admin_username = crate::core::config::admin::ADMIN_USERNAME.as_str();
     if admin_username.is_empty() {
         None
     } else {
-        Some(format!("\nОбратись к @{}.", admin_username))
+        Some(format!("\nContact @{}.", admin_username))
     }
 }
 ```
 
-## Где Администратор Всё Ещё Получает Уведомления
+## Where the Admin Still Receives Notifications
 
-Важно: **Администратор всё ещё получает детальные уведомления** о критичных ошибках!
+Important: **The admin still receives detailed notifications** about critical errors!
 
 [src/download/ytdlp_errors.rs:141-149](src/download/ytdlp_errors.rs#L141-L149)
 
 ```rust
 pub fn should_notify_admin(error_type: &YtDlpErrorType) -> bool {
     match error_type {
-        YtDlpErrorType::InvalidCookies => true,   // ← Админ получит уведомление
-        YtDlpErrorType::BotDetection => true,     // ← Админ получит уведомление
+        YtDlpErrorType::InvalidCookies => true,   // Admin will be notified
+        YtDlpErrorType::BotDetection => true,     // Admin will be notified
         YtDlpErrorType::VideoUnavailable => false,
         YtDlpErrorType::NetworkError => false,
-        YtDlpErrorType::Unknown => true,          // ← Админ получит уведомление
+        YtDlpErrorType::Unknown => true,          // Admin will be notified
     }
 }
 ```
 
-**Что получит админ:**
+**What the admin receives:**
 ```
 YTDLP ERROR (video download)
 user_chat_id: 53170594
@@ -209,181 +209,181 @@ WARNING: [youtube] Cookies are no longer valid. Re-extracting...
 ERROR: [youtube] Sign in to confirm you're not a bot.
 
 recommendations:
-🔧 РЕКОМЕНДАЦИИ ПО ИСПРАВЛЕНИЮ:
-• Cookies устарели или были обновлены в браузере
+RECOMMENDATIONS FOR FIXING:
+• Cookies are expired or were updated in the browser
 ...
 ```
 
-## Принципы User-Friendly Сообщений
+## Principles of User-Friendly Messages
 
-### 1. Не Пугать Пользователя
+### 1. Do Not Alarm the User
 
-❌ **Плохо:**
-- "Cookies недействительны"
-- "Обнаружен бот"
-- "Сигнатура извлечения провалилась"
+Bad:
+- "Cookies are invalid"
+- "Bot detected"
+- "Extraction signature failed"
 
-✅ **Хорошо:**
-- "Временная проблема"
-- "Попробуй позже"
-- "Видео недоступно"
+Good:
+- "Temporary issue"
+- "Try again later"
+- "Video unavailable"
 
-### 2. Давать Actionable Советы
+### 2. Give Actionable Advice
 
-❌ **Плохо:**
-- "Обнови cookies" (как?)
-- "Проверь конфигурацию" (какую?)
+Bad:
+- "Update cookies" (how?)
+- "Check the configuration" (which one?)
 
-✅ **Хорошо:**
-- "Попробуй другое видео"
-- "Повтори попытку позже"
-- "Проверь, что ссылка корректна"
+Good:
+- "Try a different video"
+- "Retry later"
+- "Check that the link is correct"
 
-### 3. Быть Кратким
+### 3. Be Brief
 
-❌ **Плохо:**
+Bad:
 ```
-❌ Видео недоступно.
+Video unavailable.
 
-Возможные причины:
-• Видео приватное или удалено
-• Региональные ограничения
-• Видео заблокировано автором
-• Проблемы с авторскими правами
-• Временная недоступность сервиса
-```
-
-✅ **Хорошо:**
-```
-❌ Видео недоступно.
-
-Возможно оно приватное, удалено или заблокировано в твоём регионе.
+Possible reasons:
+• Video is private or deleted
+• Regional restrictions
+• Video blocked by the author
+• Copyright issues
+• Temporary service unavailability
 ```
 
-### 4. Не Упоминать Техническую Информацию
+Good:
+```
+Video unavailable.
 
-❌ **Плохо:**
+It may be private, deleted, or blocked in your region.
+```
+
+### 4. Do Not Mention Technical Information
+
+Bad:
 - "HTTP Error 403"
 - "Signature extraction failed"
 - "Cookie rotation detected"
 
-✅ **Хорошо:**
-- "Проблема с доступом"
-- "Временная проблема"
-- "Попробуй позже"
+Good:
+- "Access issue"
+- "Temporary issue"
+- "Try again later"
 
-### 5. Не Упоминать Админа Без Нужды
+### 5. Do Not Mention the Admin Unnecessarily
 
-❌ **Плохо:**
+Bad:
 ```
-❌ Ошибка.
+Error.
 
-Обратись к @admin.
-```
-
-✅ **Хорошо:**
-```
-❌ Ошибка.
-
-Попробуй ещё раз.
+Contact @admin.
 ```
 
-**Когда упоминать админа:**
-- Только если проблема требует ручного вмешательства
-- Если это критичный баг
-- Если пользователь уже пробовал несколько раз
+Good:
+```
+Error.
 
-## Сравнение До/После
+Try again.
+```
 
-| Ситуация | До | После |
-|----------|----|----|
-| **Invalid Cookies** | "Cookies недействительны. Обнови cookies. Обратись к @admin" (3 строки, упоминание админа) | "Временная проблема с YouTube. Попробуй другое видео" (2 строки, простой совет) |
-| **Bot Detection** | "YouTube обнаружил бота. Обнови cookies. Обратись к @admin" (3 строки, страшно) | "YouTube заблокировал запрос. Попробуй позже" (2 строки, спокойно) |
-| **Video Unavailable** | Список из 3 пунктов (многословно) | Одна строка с возможными причинами (кратко) |
-| **Network Error** | "Проблема с сетью при получении данных" (непонятно что делать) | "Проблема с сетью. Попробуй через минуту" (конкретный совет) |
-| **Unknown** | "Не удалось получить данные. Обратись к @admin" (упоминание админа) | "Не удалось скачать видео. Проверь ссылку" (простой совет) |
+**When to mention the admin:**
+- Only if the problem requires manual intervention
+- If it is a critical bug
+- If the user has already tried multiple times
 
-## Примеры Реальных Сценариев
+## Before/After Comparison
 
-### Сценарий 1: Устаревшие Cookies
+| Situation | Before | After |
+|----------|-------|-------|
+| **Invalid Cookies** | "Cookies are invalid. Update cookies. Contact @admin" (3 lines, admin mention) | "Temporary issue with YouTube. Try a different video" (2 lines, simple advice) |
+| **Bot Detection** | "YouTube detected a bot. Update cookies. Contact @admin" (3 lines, scary) | "YouTube blocked the request. Try again later" (2 lines, calm) |
+| **Video Unavailable** | List of 3 bullet points (verbose) | One line with possible reasons (concise) |
+| **Network Error** | "Network issue while retrieving data" (unclear what to do) | "Network issue. Try again in a minute" (specific advice) |
+| **Unknown** | "Could not retrieve data. Contact @admin" (admin mention) | "Could not download video. Check the link" (simple advice) |
 
-**Пользователь отправляет:**
+## Real Scenario Examples
+
+### Scenario 1: Expired Cookies
+
+**User sends:**
 ```
 https://www.youtube.com/watch?v=dQw4w9WgXcQ
 ```
 
-**Бот отвечает:**
+**Bot replies:**
 ```
-❌ Временная проблема с YouTube.
+Temporary issue with YouTube.
 
-Попробуй другое видео или повтори попытку позже.
+Try a different video or retry later.
 ```
 
-**Пользователь думает:**
-- "Ок, временная проблема, попробую другое видео"
-- Не паникует, не пишет админу
+**User thinks:**
+- "Ok, temporary issue, I'll try another video"
+- Does not panic, does not write to admin
 
-**Админ получает:**
+**Admin receives:**
 ```
 YTDLP ERROR (video download)
 user_chat_id: 12345
 error_type: InvalidCookies
 ...
-🔧 РЕКОМЕНДАЦИИ: Обнови cookies
+RECOMMENDATIONS: Update cookies
 ```
 
-**Админ:**
-- Видит проблему
-- Обновляет cookies
-- Проблема решена для всех пользователей
+**Admin:**
+- Sees the issue
+- Updates cookies
+- Problem resolved for all users
 
-### Сценарий 2: Видео Недоступно
+### Scenario 2: Video Unavailable
 
-**Пользователь отправляет:**
+**User sends:**
 ```
 https://www.youtube.com/watch?v=private_video
 ```
 
-**Бот отвечает:**
+**Bot replies:**
 ```
-❌ Видео недоступно.
+Video unavailable.
 
-Возможно оно приватное, удалено или заблокировано в твоём регионе.
+It may be private, deleted, or blocked in your region.
 ```
 
-**Пользователь думает:**
-- "Понятно, видео приватное"
-- Попробует другое видео
-- Не пишет админу (потому что это его проблема, а не бота)
+**User thinks:**
+- "Right, the video is private"
+- Will try another video
+- Does not write to admin (because it's their problem, not the bot's)
 
-**Админ:**
-- НЕ получает уведомление (это не баг бота)
+**Admin:**
+- Does NOT receive a notification (this is not a bot bug)
 
-### Сценарий 3: Проблема с Сетью
+### Scenario 3: Network Issue
 
-**Пользователь отправляет:**
+**User sends:**
 ```
 https://www.youtube.com/watch?v=some_video
 ```
 
-**Бот отвечает:**
+**Bot replies:**
 ```
-❌ Проблема с сетью.
+Network issue.
 
-Попробуй ещё раз через минуту.
+Try again in a minute.
 ```
 
-**Пользователь:**
-- Ждет минуту
-- Пробует снова
-- Работает!
+**User:**
+- Waits a minute
+- Tries again
+- Works!
 
-**Админ:**
-- НЕ получает спам от временных сетевых проблем
+**Admin:**
+- Does NOT receive spam from temporary network issues
 
-## Метрики Остаются Детальными
+## Metrics Remain Detailed
 
-Важно: **Метрики всё ещё детальные и показывают реальные типы ошибок!**
+Important: **Metrics are still detailed and show real error types!**
 
 ```bash
 curl http://localhost:9094/metrics | grep errors_total
@@ -396,56 +396,56 @@ doradura_errors_total{error_type="video_unavailable",operation="audio_download"}
 ...
 ```
 
-**В Grafana:**
-- Админ видит точные категории ошибок
-- Может отслеживать тренды
-- Может настроить alerts
+**In Grafana:**
+- Admin sees exact error categories
+- Can track trends
+- Can configure alerts
 
 ## Best Practices
 
-### Для Пользовательских Сообщений
+### For User Messages
 
-1. **Будь кратким** - максимум 2 строки
-2. **Говори простым языком** - без технических терминов
-3. **Давай actionable совет** - что пользователь может сделать?
-4. **Не пугай** - избегай слов типа "ошибка", "провал", "критично"
-5. **Не упоминай админа** - только если это действительно критично
+1. **Be brief** - maximum 2 lines
+2. **Use plain language** - no technical terms
+3. **Give actionable advice** - what can the user do?
+4. **Do not alarm** - avoid words like "error", "failure", "critical"
+5. **Do not mention the admin** - only if truly critical
 
-### Для Логов и Админ-уведомлений
+### For Logs and Admin Notifications
 
-1. **Будь детальным** - вся техническая информация
-2. **Включай контекст** - URL, user_id, команда, stderr
-3. **Давай рекомендации** - как исправить
-4. **Используй структуру** - легко читать и парсить
+1. **Be detailed** - all technical information
+2. **Include context** - URL, user_id, command, stderr
+3. **Give recommendations** - how to fix
+4. **Use structure** - easy to read and parse
 
-### Для Метрик
+### For Metrics
 
-1. **Используй детальные категории** - invalid_cookies, bot_detection, etc.
-2. **Добавляй labels** - operation (metadata, audio_download, video_download)
-3. **Инкрементируй всегда** - даже если не показываем пользователю
+1. **Use detailed categories** - invalid_cookies, bot_detection, etc.
+2. **Add labels** - operation (metadata, audio_download, video_download)
+3. **Always increment** - even if not shown to the user
 
-## Итого
+## Summary
 
-**Пользователи:**
-- ✅ Видят короткие, понятные сообщения
-- ✅ Не паникуют от технических терминов
-- ✅ Не спамят админа по пустякам
-- ✅ Получают actionable советы
+**Users:**
+- See short, understandable messages
+- Are not alarmed by technical terms
+- Do not spam the admin over trivial issues
+- Receive actionable advice
 
-**Администратор:**
-- ✅ Получает детальные уведомления о критичных ошибках
-- ✅ Видит полные логи и stderr
-- ✅ Имеет рекомендации по исправлению
-- ✅ Может отслеживать метрики в Grafana
+**Admin:**
+- Receives detailed notifications about critical errors
+- Sees full logs and stderr
+- Has recommendations for fixing
+- Can track metrics in Grafana
 
-**Метрики и Мониторинг:**
-- ✅ Остаются детальными
-- ✅ Показывают реальные типы ошибок
-- ✅ Можно настроить alerts
-- ✅ История сохраняется для анализа
+**Metrics and Monitoring:**
+- Remain detailed
+- Show real error types
+- Alerts can be configured
+- History is saved for analysis
 
-## Связанные Файлы
+## Related Files
 
-- [src/download/ytdlp_errors.rs](src/download/ytdlp_errors.rs) - Сообщения об ошибках
-- [ERROR_METRICS_COMPREHENSIVE.md](ERROR_METRICS_COMPREHENSIVE.md) - Метрики ошибок
-- [HOW_TO_VIEW_METRICS.md](HOW_TO_VIEW_METRICS.md) - Как смотреть метрики
+- [src/download/ytdlp_errors.rs](src/download/ytdlp_errors.rs) - Error messages
+- [ERROR_METRICS_COMPREHENSIVE.md](ERROR_METRICS_COMPREHENSIVE.md) - Error metrics
+- [HOW_TO_VIEW_METRICS.md](HOW_TO_VIEW_METRICS.md) - How to view metrics

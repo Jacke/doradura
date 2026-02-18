@@ -71,35 +71,35 @@ const DORA_MESSAGES: &[&str] = &[
     "You did it!",
 ];
 
-/// Russian Dora-themed messages for Russian-speaking users
+/// Alternative Dora-themed messages (bilingual Russian/Spanish style)
 const DORA_MESSAGES_RU: &[&str] = &[
-    // Classic Dora translations
-    "Мы сделали это! ¡Lo hicimos!",
-    "Поехали! ¡Vámonos!",
-    "Мы бы не справились без тебя!",
+    // Classic Dora bilingual
+    "We did it! ¡Lo hicimos!",
+    "Let's go! ¡Vámonos!",
+    "We couldn't have done it without you!",
     // Map references
-    "Я — Карта! I'm the Map!",
+    "I'm the Map! I'm the Map!",
     // Adventure vibes
-    "Вперёд, vámonos! Все вместе!",
-    "Вкуснятина! Delicioso!",
+    "Come on, vámonos! All together!",
+    "Delicious! Delicioso!",
     // Backpack references
-    "Рюкзачок, Рюкзачок!",
+    "Backpack, Backpack!",
     // Encouraging
-    "Если веришь в себя — всё возможно!",
-    "Надо идти дальше, что бы ни случилось!",
+    "If you believe in yourself, anything is possible!",
+    "You have to keep going no matter what!",
     // Swiper reference
-    "Жулик, не воруй! Swiper, no swiping!",
+    "Swiper, no swiping!",
     // Short and sweet
-    "Отлично! ¡Excelente!",
-    "Супер!",
-    "Ты справился!",
-    "Рада была помочь!",
-    "Приключение завершено!",
+    "Excellent! ¡Excelente!",
+    "Super!",
+    "You did it!",
+    "Happy to help!",
+    "Adventure complete!",
 ];
 
 /// Get a random Dora message
 pub fn get_random_dora_message() -> &'static str {
-    let messages = DORA_MESSAGES_RU; // Use Russian messages by default
+    let messages = DORA_MESSAGES_RU; // Use the default message set
     let index = rand::thread_rng().gen_range(0..messages.len());
     messages[index]
 }
@@ -114,8 +114,8 @@ pub fn get_random_dora_message_en() -> &'static str {
 /// Formats a copyright signature for media captions
 ///
 /// Returns a string like:
-/// "Мы сделали это! ¡Lo hicimos!
-/// Ваша, @SaveAsBot"
+/// "We did it! ¡Lo hicimos!
+/// Yours, @SaveAsBot"
 pub fn format_copyright_signature() -> String {
     if !*COPYRIGHT_ENABLED {
         return String::new();
@@ -125,7 +125,7 @@ pub fn format_copyright_signature() -> String {
     let tag = get_bot_tag();
 
     format!(
-        "\n\n_{}_\nВаша, {}",
+        "\n\n_{}_\nYours, {}",
         escape_markdown_v2(message),
         escape_markdown_v2(&tag)
     )
@@ -163,7 +163,7 @@ mod tests {
     #[test]
     fn test_format_copyright_signature() {
         let sig = format_copyright_signature();
-        // Should contain "Ваш," and be non-empty (when enabled) or empty (when disabled)
-        assert!(sig.contains("Ваша,") || sig.is_empty());
+        // Should contain "Yours," and be non-empty (when enabled) or empty (when disabled)
+        assert!(sig.contains("Yours,") || sig.is_empty());
     }
 }

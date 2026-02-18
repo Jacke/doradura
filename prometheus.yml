@@ -1,46 +1,46 @@
 # Prometheus configuration for Doradura Bot
 
 global:
-  scrape_interval: 15s      # Собирать метрики каждые 15 секунд
-  evaluation_interval: 15s  # Проверять rules каждые 15 секунд
+  scrape_interval: 15s      # Collect metrics every 15 seconds
+  evaluation_interval: 15s  # Evaluate rules every 15 seconds
   external_labels:
     monitor: 'doradura-bot'
     environment: 'production'
 
-# Alertmanager configuration (опционально)
+# Alertmanager configuration (optional)
 alerting:
   alertmanagers:
     - static_configs:
         - targets:
             - alertmanager:9093
 
-# Load rules (опционально)
+# Load rules (optional)
 rule_files:
   - '/etc/prometheus/rules/*.yml'
 
 # Scrape configurations
 scrape_configs:
-  # Метрики самого Prometheus
+  # Prometheus self-metrics
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
 
-  # Метрики вашего бота
+  # Bot metrics
   - job_name: 'doradura-bot'
     static_configs:
-      - targets: ['host.docker.internal:9094']  # Для Docker Desktop (Mac/Windows)
-        # Для Linux используйте: ['172.17.0.1:9094'] или IP хост-машины
-    scrape_interval: 10s  # Чаще для бота
+      - targets: ['host.docker.internal:9094']  # For Docker Desktop (Mac/Windows)
+        # For Linux use: ['172.17.0.1:9094'] or host machine IP
+    scrape_interval: 10s  # More frequent for the bot
     scrape_timeout: 5s
     metrics_path: '/metrics'
 
-    # Опциональные метаданные
+    # Optional metadata
     relabel_configs:
       - source_labels: [__address__]
         target_label: instance
         replacement: 'doradura-bot'
 
-  # Метрики Node Exporter (опционально - системные метрики сервера)
+  # Node Exporter metrics (optional - server system metrics)
   # - job_name: 'node'
   #   static_configs:
   #     - targets: ['node-exporter:9100']

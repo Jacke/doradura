@@ -17,10 +17,10 @@ use url::Url;
 
 use super::formats::{extract_video_formats_from_json, get_video_formats_list};
 
-/// Получает метаданные из JSON ответа yt-dlp
+/// Fetches metadata from the yt-dlp JSON response
 ///
-/// Использует --dump-json для получения всех метаданных за один вызов.
-/// При ошибке связанной с прокси автоматически пробует следующий прокси из цепочки.
+/// Uses --dump-json to retrieve all metadata in a single call.
+/// On proxy-related errors, automatically tries the next proxy in the chain.
 pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<Value, AppError> {
     let proxy_chain = get_proxy_chain();
     let total_proxies = proxy_chain.len();
@@ -108,7 +108,7 @@ pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<
         let stderr = String::from_utf8_lossy(&json_output.stderr);
         let error_type = analyze_ytdlp_error(&stderr);
 
-        // Логируем детальную информацию об ошибке
+        // Log detailed error information
         log::error!(
             "❌ Preview metadata (no-cookies) failed with [{}], error type: {:?}",
             proxy_name,
@@ -207,7 +207,7 @@ pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<
     Err(last_error.unwrap_or_else(|| AppError::Download(DownloadError::YtDlp("All proxies failed".to_string()))))
 }
 
-/// Извлекает значение из JSON по ключу
+/// Extracts a value from JSON by key
 pub(super) fn get_json_value(json: &Value, key: &str) -> Option<String> {
     json.get(key)
         .and_then(|v| {
@@ -225,7 +225,7 @@ pub(super) fn get_json_value(json: &Value, key: &str) -> Option<String> {
         .filter(|s| !s.is_empty() && s != "NA")
 }
 
-/// Пытается получить размер файла для конкретного качества видео из JSON
+/// Tries to get the file size for a specific video quality from JSON
 pub(super) fn get_video_filesize_from_json(json: &Value, quality: &str) -> Option<u64> {
     let target_height = match quality {
         "1080p" => 1080,
@@ -235,16 +235,16 @@ pub(super) fn get_video_filesize_from_json(json: &Value, quality: &str) -> Optio
         _ => return None,
     };
 
-    // Пробуем получить из formats массива
+    // Try to fetch from the formats array
     json.get("formats").and_then(|v| v.as_array()).and_then(|formats| {
         formats
             .iter()
             .filter_map(|format| {
-                // Ищем формат с нужным разрешением
+                // Look for a format with the desired resolution
                 let height = format.get("height").and_then(|v| v.as_u64()).unwrap_or(0);
 
                 if height == target_height as u64 {
-                    // Пробуем получить filesize или filesize_approx
+                    // Try to get filesize or filesize_approx
                     format
                         .get("filesize")
                         .or_else(|| format.get("filesize_approx"))
@@ -253,18 +253,18 @@ pub(super) fn get_video_filesize_from_json(json: &Value, quality: &str) -> Optio
                     None
                 }
             })
-            .max() // Берем максимальный размер среди всех форматов с нужным разрешением
+            .max() // Take the maximum size among all formats with the desired resolution
     })
 }
 
-/// Получает расширенные метаданные для превью
+/// Fetches extended metadata for the preview
 ///
-/// Оптимизированная версия: использует --dump-json для получения всех метаданных за один вызов
+/// Optimised version: uses --dump-json to retrieve all metadata in a single call
 ///
 /// # Arguments
-/// * `url` - URL видео/аудио
-/// * `format` - Формат загрузки ("mp3", "mp4", "srt", "txt")
-/// * `video_quality` - Качество видео (только для mp4, например "1080p", "720p", "480p", "360p")
+/// * `url` - Video/audio URL
+/// * `format` - Download format ("mp3", "mp4", "srt", "txt")
+/// * `video_quality` - Video quality (mp4 only, e.g. "1080p", "720p", "480p", "360p")
 pub async fn get_preview_metadata(
     url: &Url,
     format: Option<&str>,
@@ -303,7 +303,7 @@ async fn get_preview_metadata_inner(
         }
     }
 
-    // Проверяем кэш превью
+    // Check the preview cache
     if let Some(mut metadata) = PREVIEW_CACHE.get(url.as_str()).await {
         log::debug!("Preview metadata found in cache for URL: {}", url);
         let needs_video_formats = metadata.video_formats.as_ref().is_none_or(|formats| formats.is_empty());
@@ -323,17 +323,17 @@ async fn get_preview_metadata_inner(
         return Ok(metadata);
     }
 
-    // Проверяем кэш для базовых метаданных (старый кэш, если нужно)
+    // Check the cache for basic metadata (legacy cache, if needed)
     let (cached_title, cached_artist) = if let Some((title, artist)) = cache::get_cached_metadata(url).await {
         (Some(title), Some(artist))
     } else {
         (None, None)
     };
 
-    // Получаем все метаданные за один вызов через JSON (оптимизация скорости)
+    // Fetch all metadata in a single JSON call (speed optimisation)
     let json_metadata = get_metadata_from_json(url, ytdl_bin).await?;
 
-    // Извлекаем title из JSON (используем кэш если доступен)
+    // Extract title from JSON (use cache if available)
     let title = if let Some(cached) = cached_title {
         cached
     } else {
@@ -351,24 +351,24 @@ async fn get_preview_metadata_inner(
         )));
     }
 
-    // Извлекаем artist из JSON (используем кэш если доступен, но игнорируем "NA")
+    // Extract artist from JSON (use cache if available, but ignore "NA")
     let mut artist = if let Some(cached) = cached_artist {
-        // Если в кэше "NA" - игнорируем и получаем свежие данные
+        // If the cache holds "NA" — ignore it and fetch fresh data
         if cached.trim() == "NA" || cached.trim().is_empty() {
-            String::new() // Будем получать свежие данные
+            String::new() // Will fetch fresh data
         } else {
             cached
         }
     } else {
-        String::new() // Будем получать свежие данные
+        String::new() // Will fetch fresh data
     };
 
-    // Если artist пустой - получаем из JSON
+    // If artist is empty — get it from JSON
     if artist.is_empty() {
         artist = get_json_value(&json_metadata, "artist").unwrap_or_default();
     }
 
-    // Если artist все еще пустой или "NA" - получаем uploader (channel) из JSON
+    // If artist is still empty or "NA" — get uploader (channel) from JSON
     if artist.trim().is_empty() || artist.trim() == "NA" {
         log::debug!("Artist is empty or 'NA' in preview, trying to get channel/uploader");
         if let Some(uploader) = get_json_value(&json_metadata, "uploader") {
@@ -377,15 +377,15 @@ async fn get_preview_metadata_inner(
         }
     }
 
-    // Извлекаем thumbnail URL из JSON
-    // Пробуем несколько возможных полей для thumbnail
+    // Extract thumbnail URL from JSON
+    // Try several possible fields for the thumbnail
     let thumbnail_url = get_json_value(&json_metadata, "thumbnail").or_else(|| {
-        // Если thumbnails это массив, берем лучший (обычно последний или с максимальным width)
+        // If thumbnails is an array, take the best one (usually the last or the one with max width)
         json_metadata
             .get("thumbnails")
             .and_then(|v| v.as_array())
             .and_then(|arr| {
-                // Ищем thumbnail с максимальным width (лучшее качество)
+                // Find the thumbnail with the maximum width (best quality)
                 arr.iter()
                     .filter_map(|thumb| {
                         thumb.get("url").and_then(|v| v.as_str()).map(|url| {
@@ -398,29 +398,29 @@ async fn get_preview_metadata_inner(
             })
     });
 
-    // Извлекаем duration из JSON
+    // Extract duration from JSON
     let duration = get_json_value(&json_metadata, "duration")
         .and_then(|d| d.parse::<f64>().ok())
         .map(|d| d as u32);
 
-    // Проверяем длительность видео: максимум 4 часа (14400 секунд)
+    // Check video duration: maximum 4 hours (14400 seconds)
     // Skip this check when time_range is set — partial downloads handle long videos fine.
     if !has_time_range {
         if let Some(dur) = duration {
-            const MAX_DURATION_SECONDS: u32 = 14400; // 4 часа
+            const MAX_DURATION_SECONDS: u32 = 14400; // 4 hours
             if dur > MAX_DURATION_SECONDS {
                 let hours = dur / 3600;
                 let minutes = (dur % 3600) / 60;
                 return Err(AppError::Download(DownloadError::Other(format!(
-                    "Видео слишком длинное ({}ч {}мин). Максимальная длительность: 4 часа.",
+                    "Video is too long ({}h {}min). Maximum duration: 4 hours.",
                     hours, minutes
                 ))));
             }
         }
     }
 
-    // Получаем список доступных форматов с размерами (если они есть у источника).
-    // Используем --list-formats, так как JSON не всегда содержит точные размеры для всех форматов.
+    // Fetch the list of available formats with sizes (if the source provides them).
+    // Use --list-formats because JSON doesn't always contain exact sizes for every format.
     let mut video_formats: Option<Vec<VideoFormatInfo>> = match get_video_formats_list(url, ytdl_bin).await {
         Ok(formats) => {
             if formats.is_empty() {
@@ -437,7 +437,7 @@ async fn get_preview_metadata_inner(
                 url,
                 e
             );
-            // Не возвращаем ошибку, а просто логируем - создадим стандартную кнопку
+            // Do not return an error — just log it and create a standard button
             None
         }
     };
@@ -470,27 +470,27 @@ async fn get_preview_metadata_inner(
         }
     }
 
-    // Получаем примерный размер файла
-    // Для видео получаем размер для конкретного качества через --list-formats (если нужно)
-    // Для аудио используем filesize из JSON
+    // Fetch the approximate file size
+    // For video: get the size for a specific quality via --list-formats (if needed)
+    // For audio: use the filesize from JSON
     let mut filesize = if format == Some("mp4") {
         if let Some(quality) = video_quality {
-            // Для видео с конкретным качеством пытаемся получить из JSON formats массива
+            // For video with a specific quality, try to get it from the JSON formats array
             get_video_filesize_from_json(&json_metadata, quality)
         } else {
-            // Для видео без конкретного качества - используем filesize из JSON
+            // For video without a specific quality — use filesize from JSON
             get_json_value(&json_metadata, "filesize")
                 .or_else(|| get_json_value(&json_metadata, "filesize_approx"))
                 .and_then(|s| s.parse::<u64>().ok())
         }
     } else {
-        // Для аудио используем filesize из JSON
+        // For audio use filesize from JSON
         get_json_value(&json_metadata, "filesize")
             .or_else(|| get_json_value(&json_metadata, "filesize_approx"))
             .and_then(|s| s.parse::<u64>().ok())
     };
 
-    // Если filesize не получен из JSON для видео с конкретным качеством, используем размер из video_formats
+    // If filesize was not obtained from JSON for video with a specific quality, use the size from video_formats
     if filesize.is_none() && format == Some("mp4") {
         if let Some(quality) = video_quality {
             filesize = video_formats
@@ -499,9 +499,9 @@ async fn get_preview_metadata_inner(
         }
     }
 
-    // Извлекаем description из JSON
+    // Extract description from JSON
     let description = get_json_value(&json_metadata, "description").map(|desc| {
-        // Ограничиваем длину описания (безопасно, по границам символов)
+        // Truncate description length (safely, at character boundaries)
         const MAX_CHARS: usize = 200;
         let char_count = desc.chars().count();
         if char_count > MAX_CHARS {
@@ -512,7 +512,7 @@ async fn get_preview_metadata_inner(
         }
     });
 
-    // Извлекаем таймкоды из URL и метаданных
+    // Extract timestamps from URL and metadata
     let timestamps = extract_all_timestamps(url, Some(&json_metadata));
     if !timestamps.is_empty() {
         log::debug!("Extracted {} timestamps for URL: {}", timestamps.len(), url);
@@ -531,7 +531,7 @@ async fn get_preview_metadata_inner(
         carousel_count: 0,
     };
 
-    // Сохраняем расширенные метаданные в кэш только если title не пустой и не "Unknown Track"
+    // Cache the extended metadata only if the title is non-empty and not "Unknown Track"
     if !title.trim().is_empty() && title.trim() != "Unknown Track" {
         cache::cache_extended_metadata(
             url,
@@ -543,7 +543,7 @@ async fn get_preview_metadata_inner(
         )
         .await;
 
-        // Сохраняем в новый кэш превью
+        // Store in the new preview cache
         PREVIEW_CACHE.set(url.as_str().to_string(), metadata.clone()).await;
     } else {
         log::warn!("Not caching metadata with invalid title: '{}'", title);

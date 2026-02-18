@@ -63,7 +63,7 @@ pub(crate) async fn start_download_from_preview(
         None => {
             log::warn!("URL not found in cache for ID: {} (expired or invalid)", url_id);
             bot.answer_callback_query(callback_id.clone())
-                .text("Ссылка устарела, отправь её снова")
+                .text("Link expired, please send it again")
                 .await?;
             return Ok(());
         }
@@ -74,7 +74,7 @@ pub(crate) async fn start_download_from_preview(
         Err(e) => {
             log::error!("Failed to parse URL from cache: {}", e);
             bot.answer_callback_query(callback_id.clone())
-                .text("Ошибка: неверная ссылка")
+                .text("Error: invalid link")
                 .await?;
             return Ok(());
         }
@@ -94,7 +94,7 @@ pub(crate) async fn start_download_from_preview(
 
     let _ = bot
         .answer_callback_query(callback_id.clone())
-        .text("⏳ Обрабатываю...")
+        .text("⏳ Processing...")
         .await;
 
     if let Err(e) = bot.delete_message(chat_id, message_id).await {

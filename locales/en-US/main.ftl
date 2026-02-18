@@ -110,8 +110,8 @@ commands =
     .info_failed = ❌ Failed to get file info:\n{$error}
     .video_too_long = Video is too long
     .task_added = ✅ Task added to queue! I'll send the file soon.
-    .task_added_position = ✅ Task added to queue!\n\n📊 Your position: <b>#{$position}</b> of {$total}\n\nI'll send the file soon.
-    .queue_upgrade_hint = \n\n💡 <b>High demand!</b> Want to skip the queue?\n⭐ Premium/VIP = priority → /plan
+    .task_added_position = 🎫 You're #{$position} in queue of {$total}\n⏳ Starting soon!
+    .queue_upgrade_hint = \n💎 Premium — skip the queue! → /plan
     .link_expired = Link expired, send it again
     .wait_seconds = Wait {$seconds} seconds
     .wait = Wait a bit
@@ -147,6 +147,7 @@ bot_commands =
     .panel = User management panel (admin only)
     .charges = View all payments (admin only)
     .subscriptions = My content subscriptions
+    .style = Progress bar style
 
 admin =
     .no_permission = ❌ You don't have permission to run this command\.

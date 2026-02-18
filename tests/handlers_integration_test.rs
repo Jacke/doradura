@@ -24,18 +24,18 @@ type HandlerError = Box<dyn std::error::Error + Send + Sync + 'static>;
 async fn mock_handle_start(bot: Bot, msg: Message) -> Result<(), HandlerError> {
     let keyboard = teloxide::types::InlineKeyboardMarkup::new(vec![
         vec![
-            teloxide::types::InlineKeyboardButton::callback("ℹ️ Информация", "menu:info"),
-            teloxide::types::InlineKeyboardButton::callback("⚙️ Настройки", "menu:settings"),
+            teloxide::types::InlineKeyboardButton::callback("ℹ️ Information", "menu:info"),
+            teloxide::types::InlineKeyboardButton::callback("⚙️ Settings", "menu:settings"),
         ],
         vec![teloxide::types::InlineKeyboardButton::callback(
-            "📥 Мои загрузки",
+            "📥 My downloads",
             "menu:downloads",
         )],
     ]);
 
     bot.send_message(
         msg.chat.id,
-        "🎵 Привет! Я помогу тебе скачать музыку и видео с YouTube и других платформ.\n\n📝 Просто отправь мне ссылку на видео или трек!",
+        "🎵 Hello! I can help you download music and video from YouTube and other platforms.\n\n📝 Just send me a link to a video or track!",
     )
     .reply_markup(keyboard)
     .await?;
@@ -69,9 +69,9 @@ async fn test_start_command_sends_welcome_message() {
     let text = msg.text().expect("Message should have text");
     println!("text: {}", text);
 
-    assert!(text.contains("Привет"), "Should contain greeting");
-    assert!(text.contains("музыку"), "Should mention music");
-    assert!(text.contains("видео"), "Should mention video");
+    assert!(text.contains("Hello"), "Should contain greeting");
+    assert!(text.contains("music"), "Should mention music");
+    assert!(text.contains("video"), "Should mention video");
 }
 
 #[tokio::test]
@@ -95,12 +95,12 @@ async fn test_start_command_has_inline_keyboard() {
         // Check first row has Info and Settings
         let first_row = &keyboard[0];
         assert_eq!(first_row.len(), 2, "First row should have 2 buttons");
-        assert!(first_row[0].text.contains("Информация"), "Should have Info button");
-        assert!(first_row[1].text.contains("Настройки"), "Should have Settings button");
+        assert!(first_row[0].text.contains("Information"), "Should have Info button");
+        assert!(first_row[1].text.contains("Settings"), "Should have Settings button");
 
         // Check second row has Downloads
         let second_row = &keyboard[1];
-        assert!(second_row[0].text.contains("загрузки"), "Should have Downloads button");
+        assert!(second_row[0].text.contains("downloads"), "Should have Downloads button");
     }
 }
 
@@ -114,17 +114,14 @@ async fn mock_handle_callback(bot: Bot, q: CallbackQuery) -> Result<(), HandlerE
         match data.as_str() {
             "menu:info" => {
                 if let Some(msg) = q.message {
-                    bot.send_message(
-                        msg.chat().id,
-                        "ℹ️ *Информация о боте*\n\nЯ умею скачивать видео и аудио.",
-                    )
-                    .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-                    .await?;
+                    bot.send_message(msg.chat().id, "ℹ️ *Bot Information*\n\nI can download video and audio.")
+                        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                        .await?;
                 }
             }
             "menu:settings" => {
                 if let Some(msg) = q.message {
-                    bot.send_message(msg.chat().id, "⚙️ Настройки").await?;
+                    bot.send_message(msg.chat().id, "⚙️ Settings").await?;
                 }
             }
             _ => {}
@@ -159,7 +156,7 @@ async fn test_info_callback_shows_info() {
 
     let msg = &responses.sent_messages[0];
     let text = msg.text().expect("Should have text");
-    assert!(text.contains("Информация"), "Should contain info text");
+    assert!(text.contains("Information"), "Should contain info text");
 }
 
 #[tokio::test]
@@ -179,7 +176,7 @@ async fn test_settings_callback_shows_settings() {
 
     let msg = &responses.sent_messages[0];
     let text = msg.text().expect("Should have text");
-    assert!(text.contains("Настройки"), "Should show settings");
+    assert!(text.contains("Settings"), "Should show settings");
 }
 
 // ==================== URL message handler ====================
@@ -191,7 +188,7 @@ async fn mock_handle_url_message(bot: Bot, msg: Message) -> Result<(), HandlerEr
         let url_regex = regex::Regex::new(r"https?://[^\s]+").unwrap();
 
         if url_regex.is_match(text) {
-            bot.send_message(msg.chat.id, "⏳ Обрабатываю ссылку...").await?;
+            bot.send_message(msg.chat.id, "⏳ Processing link...").await?;
         }
     }
     Ok(())
@@ -215,13 +212,13 @@ async fn test_youtube_url_triggers_processing() {
 
     let msg = &responses.sent_messages[0];
     let text = msg.text().expect("Should have text");
-    assert!(text.contains("Обрабатываю"), "Should show processing status");
+    assert!(text.contains("Processing"), "Should show processing status");
 }
 
 #[tokio::test]
 #[serial]
 async fn test_plain_text_no_url_no_processing() {
-    let message = MockMessageText::new().text("Привет, как дела?");
+    let message = MockMessageText::new().text("Hello, how are you?");
     let mut bot = MockBot::new(message, mock_url_handler_tree());
 
     bot.dispatch().await;
@@ -231,7 +228,7 @@ async fn test_plain_text_no_url_no_processing() {
     let has_processing = responses
         .sent_messages
         .iter()
-        .any(|m| m.text().unwrap_or("").contains("Обрабатываю"));
+        .any(|m| m.text().unwrap_or("").contains("Processing"));
     assert!(!has_processing, "Should not show processing for non-URL messages");
 }
 
@@ -270,10 +267,10 @@ async fn test_multiple_messages_in_sequence() {
     assert_eq!(responses.sent_messages.len(), 2, "Should send 2 messages for 2 inputs");
 
     // First should be welcome
-    assert!(responses.sent_messages[0].text().unwrap().contains("Привет"));
+    assert!(responses.sent_messages[0].text().unwrap().contains("Hello"));
 
     // Second should be processing
-    assert!(responses.sent_messages[1].text().unwrap().contains("Обрабатываю"));
+    assert!(responses.sent_messages[1].text().unwrap().contains("Processing"));
 }
 
 // ============================================================================

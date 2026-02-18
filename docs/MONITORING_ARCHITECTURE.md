@@ -1,6 +1,6 @@
-# 📊 Архитектура Системы Мониторинга
+# Monitoring System Architecture
 
-## Обзор
+## Overview
 
 ```mermaid
 graph TB
@@ -43,9 +43,9 @@ graph TB
     style AlertManager fill:#FFB74D
 ```
 
-## Поток Данных
+## Data Flow
 
-### 1. Сбор Метрик
+### 1. Metrics Collection
 
 ```mermaid
 sequenceDiagram
@@ -63,7 +63,7 @@ sequenceDiagram
     Bot-->>User: Send file
 ```
 
-### 2. Экспорт Метрик
+### 2. Metrics Export
 
 ```mermaid
 sequenceDiagram
@@ -79,7 +79,7 @@ sequenceDiagram
     end
 ```
 
-### 3. Алертинг
+### 3. Alerting
 
 ```mermaid
 sequenceDiagram
@@ -97,7 +97,7 @@ sequenceDiagram
     Note over Admin: 🔴 CRITICAL ALERT<br/>High Error Rate: 12%
 ```
 
-## Компоненты
+## Components
 
 ### Metrics Registry (In-Memory)
 
@@ -117,11 +117,11 @@ lazy_static! {
 }
 ```
 
-**Характеристики:**
-- 🚀 Очень быстро (<0.1% overhead)
-- 💾 Хранится в памяти процесса
-- 🔒 Thread-safe (Atomic operations)
-- 📊 Автоматическая агрегация
+**Characteristics:**
+- Very fast (<0.1% overhead)
+- Stored in process memory
+- Thread-safe (Atomic operations)
+- Automatic aggregation
 
 ### HTTP Metrics Server (Axum)
 
@@ -131,16 +131,16 @@ GET /health   → JSON health status
 GET /         → Service info
 ```
 
-**Особенности:**
-- ⚡ Асинхронный (Tokio + Axum)
-- 🔓 Открыт для Prometheus (0.0.0.0:9090)
-- 📝 Стандартный Prometheus exposition format
+**Features:**
+- Asynchronous (Tokio + Axum)
+- Open for Prometheus (0.0.0.0:9090)
+- Standard Prometheus exposition format
 
 ### Prometheus
 
-**Конфигурация:**
+**Configuration:**
 - Scrape interval: 15s
-- Retention: 30 дней
+- Retention: 30 days
 - Storage: TSDB (time-series database)
 
 **Recording Rules:**
@@ -150,16 +150,16 @@ doradura:error_rate:5m
 doradura:download_duration:p95:5m
 ```
 
-Позволяют быстро вычислять часто используемые метрики.
+Allow fast computation of frequently used metrics.
 
 ### Grafana
 
 **Provisioning:**
-- Datasource настраивается автоматически
-- Dashboard импортируется при старте
-- Не нужна ручная настройка
+- Datasource configured automatically
+- Dashboard imported on startup
+- No manual configuration required
 
-**Dashboard Панели:**
+**Dashboard Panels:**
 1. Download Rate (timeseries)
 2. Success Rate (gauge)
 3. Queue Depth (stat)
@@ -178,35 +178,35 @@ Warning alerts  → Grouped, 30s delay
 ```
 
 **Throttling:**
-- Payment failures: нет throttle (немедленно)
-- High error rate: 30 минут между алертами
-- Queue backup: 15 минут
+- Payment failures: no throttle (immediate)
+- High error rate: 30 minutes between alerts
+- Queue backup: 15 minutes
 
-## Типы Метрик
+## Metric Types
 
-### Counter (только растет)
+### Counter (only increases)
 
 ```rust
 DOWNLOAD_SUCCESS_TOTAL.with_label_values(&["mp3", "320k"]).inc();
 ```
 
-**Используется для:**
-- Количество загрузок
-- Количество ошибок
+**Used for:**
+- Download count
+- Error count
 - Revenue
 
-### Gauge (может расти и падать)
+### Gauge (can increase and decrease)
 
 ```rust
 QUEUE_DEPTH.set(current_queue_size as f64);
 ```
 
-**Используется для:**
-- Глубина очереди
-- Активные пользователи
-- Активные подписки
+**Used for:**
+- Queue depth
+- Active users
+- Active subscriptions
 
-### Histogram (распределение значений)
+### Histogram (value distribution)
 
 ```rust
 let timer = DOWNLOAD_DURATION_SECONDS
@@ -216,57 +216,57 @@ let timer = DOWNLOAD_DURATION_SECONDS
 timer.observe_duration();
 ```
 
-**Используется для:**
-- Длительность загрузок
-- Время ожидания в очереди
+**Used for:**
+- Download duration
+- Queue wait time
 
-**Генерирует:**
-- `_bucket{le="1"}` - количество значений ≤ 1
-- `_bucket{le="5"}` - количество значений ≤ 5
-- `_sum` - сумма всех значений
-- `_count` - количество наблюдений
+**Generates:**
+- `_bucket{le="1"}` - count of values <= 1
+- `_bucket{le="5"}` - count of values <= 5
+- `_sum` - sum of all values
+- `_count` - number of observations
 
-**Позволяет вычислять:**
+**Allows computing:**
 - Percentiles (p50, p95, p99)
-- Средние значения
-- Распределение
+- Averages
+- Distribution
 
-## Примеры Запросов
+## Query Examples
 
-### Простые
+### Simple
 
 ```promql
-# Текущая глубина очереди
+# Current queue depth
 doradura_queue_depth
 
-# Всего загрузок (с начала)
+# Total downloads (since start)
 doradura_download_success_total
 
 # DAU
 doradura_daily_active_users
 ```
 
-### Rate (за период)
+### Rate (over period)
 
 ```promql
-# Загрузок в секунду (за последние 5 минут)
+# Downloads per second (over last 5 minutes)
 rate(doradura_download_success_total[5m])
 
-# Ошибок в секунду
+# Errors per second
 rate(doradura_errors_total[5m])
 ```
 
-### Агрегация
+### Aggregation
 
 ```promql
-# Всего загрузок в секунду (все форматы)
+# Total downloads per second (all formats)
 sum(rate(doradura_download_success_total[5m]))
 
-# По формату
+# By format
 sum by (format) (rate(doradura_download_success_total[5m]))
 ```
 
-### Вычисления
+### Calculations
 
 ```promql
 # Success rate (%)
@@ -274,79 +274,79 @@ sum(rate(doradura_download_success_total[5m])) /
 (sum(rate(doradura_download_success_total[5m])) +
  sum(rate(doradura_download_failure_total[5m]))) * 100
 
-# Медианная длительность
+# Median duration
 histogram_quantile(0.5,
   rate(doradura_download_duration_seconds_bucket[5m]))
 
-# 95-й перцентиль
+# 95th percentile
 histogram_quantile(0.95,
   rate(doradura_download_duration_seconds_bucket[5m]))
 ```
 
-## Безопасность
+## Security
 
 ### Development
 
 ```
-Metrics Server: 0.0.0.0:9090 (открыт для localhost)
-Prometheus:     127.0.0.1:9091 (только localhost)
-Grafana:        127.0.0.1:3000 (только localhost)
+Metrics Server: 0.0.0.0:9090 (open for localhost)
+Prometheus:     127.0.0.1:9091 (localhost only)
+Grafana:        127.0.0.1:3000 (localhost only)
 ```
 
 ### Production
 
-**Опция 1: Internal Network**
+**Option 1: Internal Network**
 ```
 Metrics Server: 0.0.0.0:9090 (internal Railway network)
-Prometheus:     Отдельный сервис
-Access:         Только через VPN или internal domains
+Prometheus:     Separate service
+Access:         Only via VPN or internal domains
 ```
 
-**Опция 2: Authentication**
+**Option 2: Authentication**
 ```rust
-// Добавить basic auth в metrics server
+// Add basic auth to metrics server
 .layer(middleware::from_fn(basic_auth_middleware))
 ```
 
-**Опция 3: IP Whitelist**
+**Option 3: IP Whitelist**
 ```rust
-// Разрешить только Prometheus IP
+// Allow only Prometheus IP
 if !allowed_ips.contains(&client_ip) {
     return StatusCode::FORBIDDEN;
 }
 ```
 
-## Производительность
+## Performance
 
 ### Overhead
 
-- **CPU**: <0.1% (atomic operations очень быстрые)
-- **Memory**: ~1-10 MB (зависит от количества label combinations)
-- **Network**: ~50-100 KB per scrape (зависит от количества метрик)
+- **CPU**: <0.1% (atomic operations are very fast)
+- **Memory**: ~1-10 MB (depends on number of label combinations)
+- **Network**: ~50-100 KB per scrape (depends on number of metrics)
 
-### Оптимизация
+### Optimization
 
-1. **Limit cardinality** - не создавайте бесконечные labels
+1. **Limit cardinality** - do not create unbounded labels
    ```rust
-   // ❌ Плохо (бесконечная cardinality)
+   // Bad (infinite cardinality)
    METRIC.with_label_values(&[user_id, url])
 
-   // ✅ Хорошо (ограниченная cardinality)
+   // Good (bounded cardinality)
    METRIC.with_label_values(&[format, quality])
    ```
 
-2. **Use recording rules** для сложных запросов
+2. **Use recording rules** for complex queries
 
-3. **Set retention policy** чтобы не хранить метрики вечно
+3. **Set retention policy** to avoid storing metrics forever
 
-## Масштабирование
+## Scaling
 
-### Вертикальное
+### Vertical
 
-- Больше retention → больше RAM (Prometheus)
-- Больше метрик → больше RAM (Bot)
+- More retention → more RAM (Prometheus)
+- More metrics → more RAM (Bot)
 
-### Горизонтальное
+### Horizontal
 
 **Multi-instance Bot:**
 ```yaml
@@ -359,9 +359,9 @@ scrape_configs:
           - 'bot-instance-3:9090'
 ```
 
-Prometheus автоматически агрегирует метрики с разных инстансов.
+Prometheus automatically aggregates metrics from different instances.
 
-**Federation (несколько Prometheus):**
+**Federation (multiple Prometheus instances):**
 ```yaml
 scrape_configs:
   - job_name: 'federate'
@@ -386,11 +386,11 @@ scrape_configs:
 
 2. **Labels vs Metrics**
    ```rust
-   // ✅ Хорошо - один metric, разные labels
+   // Good - one metric, different labels
    DOWNLOADS.with_label_values(&["mp3"])
    DOWNLOADS.with_label_values(&["mp4"])
 
-   // ❌ Плохо - разные metrics
+   // Bad - separate metrics
    MP3_DOWNLOADS
    MP4_DOWNLOADS
    ```
@@ -401,53 +401,53 @@ scrape_configs:
    ```
 
 4. **Use summary only if needed**
-   - Histogram почти всегда лучше
-   - Summary не агрегируется между инстансами
+   - Histogram is almost always better
+   - Summary does not aggregate across instances
 
 5. **Test your PromQL queries**
-   - Используйте Prometheus UI для тестирования
-   - Проверяйте на production data
+   - Use Prometheus UI for testing
+   - Verify against production data
 
 ## Troubleshooting
 
 ### High Memory Usage
 
 ```bash
-# Уменьшить retention
+# Reduce retention
 --storage.tsdb.retention.time=7d
 
-# Увеличить scrape interval
+# Increase scrape interval
 scrape_interval: 30s
 ```
 
 ### Missing Metrics
 
 ```bash
-# Проверить что метрики создаются
+# Check that metrics are being created
 curl localhost:9090/metrics | grep doradura
 
-# Проверить targets
+# Check targets
 curl localhost:9091/api/v1/targets
 
-# Проверить logs
+# Check logs
 docker logs doradura-prometheus
 ```
 
 ### Slow Queries
 
-- Используйте recording rules
-- Уменьшите time range
-- Добавьте больше RAM Prometheus
+- Use recording rules
+- Reduce time range
+- Add more RAM to Prometheus
 
-## Мониторинг Мониторинга
+## Monitoring the Monitor
 
-Да, мы мониторим мониторинг! 😄
+Yes, we monitor the monitoring!
 
 ```promql
-# Prometheus использование памяти
+# Prometheus memory usage
 process_resident_memory_bytes{job="prometheus"}
 
-# Количество активных timeseries
+# Number of active timeseries
 prometheus_tsdb_head_series
 
 # Scrape duration
@@ -456,4 +456,4 @@ prometheus_target_interval_length_seconds
 
 ---
 
-**Итого:** Полнофункциональная система мониторинга, готовая к production! 🚀
+**Summary:** A fully functional monitoring system, production-ready!
