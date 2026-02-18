@@ -349,7 +349,7 @@ async fn handle_tab_switch(bot: &Bot, chat_id: ChatId, _data: &str, tab: &str, u
                 }
             };
 
-            let stories = match source.fetch_reel_media(&user_id).await {
+            let stories = match source.fetch_stories(&user_id).await {
                 Ok(s) => s,
                 Err(e) => {
                     log::warn!("Failed to fetch stories for @{}: {}", username, e);
@@ -487,7 +487,13 @@ async fn handle_highlight_browse(bot: &Bot, chat_id: ChatId, _data: &str, highli
 async fn handle_story_download(bot: &Bot, chat_id: ChatId, reel_id: &str, index: usize) {
     let source = InstagramSource::new();
 
-    let items = match source.fetch_reel_media(reel_id).await {
+    // Highlights use reels_media endpoint, user stories use dedicated stories endpoint
+    let items = if reel_id.starts_with("highlight:") {
+        source.fetch_reel_media(reel_id).await
+    } else {
+        source.fetch_stories(reel_id).await
+    };
+    let items = match items {
         Ok(items) => items,
         Err(e) => {
             log::warn!("Failed to fetch reel {} for download: {}", reel_id, e);

@@ -255,11 +255,6 @@ pub mod network {
 pub static INSTAGRAM_DOC_ID: Lazy<String> =
     Lazy::new(|| env::var("INSTAGRAM_DOC_ID").unwrap_or_else(|_| "10015901848480474".to_string()));
 
-/// Instagram GraphQL doc_id for profile queries.
-/// Separate from media doc_id; also rotates periodically.
-pub static INSTAGRAM_PROFILE_DOC_ID: Lazy<String> =
-    Lazy::new(|| env::var("INSTAGRAM_PROFILE_DOC_ID").unwrap_or_else(|_| "34579740524958711".to_string()));
-
 /// Downsub gRPC configuration
 pub static DOWNSUB_GRPC_ENDPOINT: Lazy<Option<String>> = Lazy::new(|| {
     env::var("DOWNSUB_GRPC_ENDPOINT").ok().and_then(|value| {

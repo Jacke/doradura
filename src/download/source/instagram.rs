@@ -184,31 +184,84 @@ impl InstagramSource {
         Self::extract_shortcode(url)
     }
 
-    /// Execute Instagram GraphQL request via curl (bypasses TLS fingerprinting).
+    /// Authenticated GET request via curl for Instagram REST API endpoints.
     ///
-    /// reqwest/rustls has a detectable TLS fingerprint that Instagram blocks on
-    /// datacenter IPs. curl uses OpenSSL with a standard fingerprint that passes.
-    async fn curl_graphql_request(shortcode: &str) -> Result<String, AppError> {
-        let doc_id = config::INSTAGRAM_DOC_ID.as_str();
-        let variables = format!(r#"{{"shortcode":"{}"}}"#, shortcode);
-        let body = format!(
-            "doc_id={}&variables={}&lsd={}",
-            doc_id,
-            urlencoding::encode(&variables),
-            FB_LSD_TOKEN
-        );
-
+    /// `use_cookies`: if true AND cookies are available, sends session cookies.
+    /// Used for profile info, feed, highlights, stories.
+    async fn curl_get(endpoint: &str, use_cookies: bool) -> Result<String, AppError> {
         let binary = Self::curl_binary();
         let mut cmd = tokio::process::Command::new(binary);
-        // lexiforest/curl-impersonate uses --impersonate flag to select browser profile
         if binary == "curl-impersonate" {
             cmd.arg("--impersonate").arg("chrome131");
         }
-        // --compressed: auto-decompress gzip/deflate/br (needed because curl-impersonate
-        // sends Accept-Encoding like Chrome, so server returns compressed content)
-        // Only set Instagram-specific headers; curl-impersonate already sets
-        // User-Agent, Accept, Accept-Language, Sec-Fetch-*, Sec-Ch-Ua to match Chrome.
-        // Overriding them can create fingerprint mismatches that Instagram detects.
+
+        cmd.arg("-s")
+            .arg("--compressed")
+            .arg(endpoint)
+            .arg("-H")
+            .arg(format!("X-IG-App-ID: {}", IG_APP_ID))
+            .arg("-H")
+            .arg("User-Agent: Instagram 275.0.0.27.98 Android")
+            .arg("-H")
+            .arg("X-Requested-With: XMLHttpRequest")
+            .arg("--max-time")
+            .arg("30");
+
+        let has_cookies = if use_cookies {
+            if let Some(cookie_header) = crate::download::cookies::load_instagram_cookie_header() {
+                cmd.arg("-H").arg(format!("Cookie: {}", cookie_header));
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        if let Some(ref proxy_url) = *config::proxy::WARP_PROXY {
+            let trimmed = proxy_url.trim();
+            if !trimmed.is_empty() && trimmed != "none" && trimmed != "disabled" {
+                cmd.arg("--proxy").arg(trimmed);
+            }
+        }
+
+        log::info!("InstagramSource: curl GET {} (cookies={})", endpoint, has_cookies);
+
+        let output = cmd
+            .output()
+            .await
+            .map_err(|e| AppError::Download(DownloadError::Instagram(format!("curl GET failed: {}", e))))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(AppError::Download(DownloadError::Instagram(format!(
+                "curl GET error (exit {}): {}",
+                output.status.code().unwrap_or(-1),
+                stderr.chars().take(300).collect::<String>()
+            ))));
+        }
+
+        let text = String::from_utf8_lossy(&output.stdout).to_string();
+        if text.is_empty() {
+            return Err(AppError::Download(DownloadError::Instagram(
+                "curl GET returned empty response".to_string(),
+            )));
+        }
+
+        Ok(text)
+    }
+
+    /// Anonymous POST request via curl for Instagram GraphQL API.
+    ///
+    /// Uses web headers (Chrome UA, LSD token, ASBD-ID). No cookies — expired/invalid
+    /// cookies cause Instagram to return HTML login page instead of JSON.
+    async fn curl_graphql(body: &str) -> Result<String, AppError> {
+        let binary = Self::curl_binary();
+        let mut cmd = tokio::process::Command::new(binary);
+        if binary == "curl-impersonate" {
+            cmd.arg("--impersonate").arg("chrome131");
+        }
+
         cmd.arg("-s")
             .arg("--compressed")
             .arg("-X")
@@ -231,7 +284,6 @@ impl InstagramSource {
             .arg("--max-time")
             .arg("30");
 
-        // Add proxy if configured
         if let Some(ref proxy_url) = *config::proxy::WARP_PROXY {
             let trimmed = proxy_url.trim();
             if !trimmed.is_empty() && trimmed != "none" && trimmed != "disabled" {
@@ -239,34 +291,32 @@ impl InstagramSource {
             }
         }
 
-        // Skip cookies for GraphQL — expired/invalid cookies cause Instagram to
-        // return HTML login page instead of JSON. Public posts work without cookies.
-        log::info!("InstagramSource: curl GraphQL: anonymous (no cookies, public posts only)");
+        cmd.arg("-d").arg(body);
 
-        cmd.arg("-d").arg(&body);
+        log::info!("InstagramSource: curl GraphQL POST (anonymous)");
 
         let output = cmd
             .output()
             .await
-            .map_err(|e| AppError::Download(DownloadError::Instagram(format!("Failed to run curl: {}", e))))?;
+            .map_err(|e| AppError::Download(DownloadError::Instagram(format!("curl GraphQL failed: {}", e))))?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             return Err(AppError::Download(DownloadError::Instagram(format!(
-                "curl failed (exit {}): {}",
+                "curl GraphQL error (exit {}): {}",
                 output.status.code().unwrap_or(-1),
                 stderr.chars().take(300).collect::<String>()
             ))));
         }
 
-        let response_text = String::from_utf8_lossy(&output.stdout).to_string();
-        if response_text.is_empty() {
+        let text = String::from_utf8_lossy(&output.stdout).to_string();
+        if text.is_empty() {
             return Err(AppError::Download(DownloadError::Instagram(
-                "curl returned empty response".to_string(),
+                "curl GraphQL returned empty response".to_string(),
             )));
         }
 
-        Ok(response_text)
+        Ok(text)
     }
 
     /// Fetch media data from Instagram's GraphQL API.
@@ -278,7 +328,15 @@ impl InstagramSource {
             return Err(AppError::Download(DownloadError::Instagram("Rate limited".to_string())));
         }
 
-        let response_text = Self::curl_graphql_request(shortcode).await?;
+        let doc_id = config::INSTAGRAM_DOC_ID.as_str();
+        let variables = format!(r#"{{"shortcode":"{}"}}"#, shortcode);
+        let body = format!(
+            "doc_id={}&variables={}&lsd={}",
+            doc_id,
+            urlencoding::encode(&variables),
+            FB_LSD_TOKEN
+        );
+        let response_text = Self::curl_graphql(&body).await?;
 
         let body: serde_json::Value = serde_json::from_str(&response_text).map_err(|e| {
             log::error!(
@@ -504,69 +562,7 @@ impl InstagramSource {
         Some(username.to_string())
     }
 
-    /// Fetch Instagram profile via REST API.
-    ///
-    /// Uses `i.instagram.com/api/v1/users/web_profile_info/` which accepts
-    /// username directly and returns `/data/user` with full profile + 12 recent posts.
-    /// This endpoint works anonymously (no cookies needed) and doesn't use rotating doc_ids.
-    async fn curl_profile_request(username: &str) -> Result<String, AppError> {
-        let url = format!(
-            "https://i.instagram.com/api/v1/users/web_profile_info/?username={}",
-            urlencoding::encode(username)
-        );
-
-        let binary = Self::curl_binary();
-        let mut cmd = tokio::process::Command::new(binary);
-        if binary == "curl-impersonate" {
-            cmd.arg("--impersonate").arg("chrome131");
-        }
-        cmd.arg("-s")
-            .arg("--compressed")
-            .arg(&url)
-            .arg("-H")
-            .arg(format!("X-IG-App-ID: {}", IG_APP_ID))
-            .arg("-H")
-            .arg("User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
-            .arg("--max-time")
-            .arg("30");
-
-        // Send cookies when available — Railway IPs get "require_login" without auth
-        let has_cookies = if let Some(cookie_header) = crate::download::cookies::load_instagram_cookie_header() {
-            cmd.arg("-H").arg(format!("Cookie: {}", cookie_header));
-            true
-        } else {
-            false
-        };
-
-        if let Some(ref proxy_url) = *config::proxy::WARP_PROXY {
-            let trimmed = proxy_url.trim();
-            if !trimmed.is_empty() && trimmed != "none" && trimmed != "disabled" {
-                cmd.arg("--proxy").arg(trimmed);
-            }
-        }
-
-        log::info!(
-            "InstagramSource: fetching profile via REST API (cookies={})",
-            has_cookies
-        );
-
-        let output = cmd
-            .output()
-            .await
-            .map_err(|e| AppError::Download(DownloadError::Instagram(format!("Failed to run curl: {}", e))))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AppError::Download(DownloadError::Instagram(format!(
-                "curl profile failed: {}",
-                stderr.chars().take(300).collect::<String>()
-            ))));
-        }
-
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
-    }
-
-    /// Fetch profile data from Instagram's GraphQL API.
+    /// Fetch profile data from Instagram's REST API.
     ///
     /// Returns profile info and recent posts for the profile browsing UI.
     pub async fn fetch_profile(&self, username: &str) -> Result<InstagramProfile, AppError> {
@@ -574,7 +570,12 @@ impl InstagramSource {
             return Err(AppError::Download(DownloadError::Instagram("Rate limited".to_string())));
         }
 
-        let response_text = Self::curl_profile_request(username).await?;
+        // Send cookies when available — Railway IPs get "require_login" without auth
+        let profile_endpoint = format!(
+            "https://i.instagram.com/api/v1/users/web_profile_info/?username={}",
+            urlencoding::encode(username)
+        );
+        let response_text = Self::curl_get(&profile_endpoint, true).await?;
 
         let body: serde_json::Value = serde_json::from_str(&response_text).map_err(|e| {
             AppError::Download(DownloadError::Instagram(format!(
@@ -662,6 +663,23 @@ impl InstagramSource {
                 )));
             };
 
+        // REST API web_profile_info returns edges=[] — fetch posts via feed API
+        let (posts, end_cursor) = if posts.is_empty() && !is_private {
+            if let Some(ref uid) = user_id {
+                match Self::fetch_user_feed(uid).await {
+                    Ok((feed_posts, feed_cursor)) => (feed_posts, feed_cursor),
+                    Err(e) => {
+                        log::warn!("InstagramSource: feed API failed for {}: {}", uid, e);
+                        (posts, end_cursor)
+                    }
+                }
+            } else {
+                (posts, end_cursor)
+            }
+        } else {
+            (posts, end_cursor)
+        };
+
         Ok(InstagramProfile {
             username: username.to_string(),
             full_name,
@@ -676,64 +694,55 @@ impl InstagramSource {
         })
     }
 
-    /// Execute an authenticated Instagram REST API GET request via curl.
+    /// Fetch user posts via the feed API (`/api/v1/feed/user/{user_id}/`).
     ///
-    /// Requires session cookies (`instagram_cookies.txt`). Used for private endpoints
-    /// like highlights tray, highlight media, and stories.
-    async fn curl_rest_api(endpoint: &str) -> Result<String, AppError> {
-        let cookie_header = crate::download::cookies::load_instagram_cookie_header().ok_or_else(|| {
-            AppError::Download(DownloadError::Instagram(
-                "Instagram cookies not available (needed for highlights/stories)".to_string(),
-            ))
-        })?;
+    /// Returns up to 12 posts with shortcode, is_video, is_carousel, thumbnail.
+    /// Requires cookies for authenticated access.
+    async fn fetch_user_feed(user_id: &str) -> Result<(Vec<ProfilePost>, Option<String>), AppError> {
+        let endpoint = format!("https://i.instagram.com/api/v1/feed/user/{}/", user_id);
+        log::info!("InstagramSource: fetching user feed for user_id={}", user_id);
 
-        let binary = Self::curl_binary();
-        let mut cmd = tokio::process::Command::new(binary);
-        if binary == "curl-impersonate" {
-            cmd.arg("--impersonate").arg("chrome131");
-        }
+        let text = Self::curl_get(&endpoint, true).await?;
+        let body: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|e| AppError::Download(DownloadError::Instagram(format!("Feed JSON parse error: {}", e))))?;
 
-        cmd.arg("-s")
-            .arg("--compressed")
-            .arg(endpoint)
-            .arg("-H")
-            .arg(format!("Cookie: {}", cookie_header))
-            .arg("-H")
-            .arg(format!("X-IG-App-ID: {}", IG_APP_ID))
-            .arg("-H")
-            .arg("X-Requested-With: XMLHttpRequest")
-            .arg("-H")
-            .arg("User-Agent: Instagram 275.0.0.27.98 Android")
-            .arg("--max-time")
-            .arg("30");
+        let items = body.get("items").and_then(|v| v.as_array());
+        let posts: Vec<ProfilePost> = items
+            .map(|arr| {
+                arr.iter()
+                    .take(12)
+                    .filter_map(|item| {
+                        let shortcode = item.get("code")?.as_str()?.to_string();
+                        let media_type = item.get("media_type").and_then(|v| v.as_u64()).unwrap_or(1);
+                        let is_video = media_type == 2;
+                        let is_carousel = media_type == 8
+                            || item.get("carousel_media_count").and_then(|v| v.as_u64()).unwrap_or(0) > 0;
+                        let thumbnail = item
+                            .pointer("/image_versions2/candidates/0/url")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        Some(ProfilePost {
+                            shortcode,
+                            is_video,
+                            is_carousel,
+                            thumbnail_url: thumbnail,
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
 
-        if let Some(ref proxy_url) = *config::proxy::WARP_PROXY {
-            let trimmed = proxy_url.trim();
-            if !trimmed.is_empty() && trimmed != "none" && trimmed != "disabled" {
-                cmd.arg("--proxy").arg(trimmed);
-            }
-        }
+        let end_cursor = body
+            .get("next_max_id")
+            .and_then(|v| v.as_str().map(String::from).or_else(|| Some(v.to_string())));
 
-        let output = cmd
-            .output()
-            .await
-            .map_err(|e| AppError::Download(DownloadError::Instagram(format!("curl REST API failed: {}", e))))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AppError::Download(DownloadError::Instagram(format!(
-                "REST API curl error: {}",
-                stderr.chars().take(300).collect::<String>()
-            ))));
-        }
-
-        let text = String::from_utf8_lossy(&output.stdout).to_string();
-        if text.is_empty() {
-            return Err(AppError::Download(DownloadError::Instagram(
-                "REST API returned empty response".to_string(),
-            )));
-        }
-        Ok(text)
+        log::info!(
+            "InstagramSource: feed returned {} posts for user_id={}",
+            posts.len(),
+            user_id
+        );
+        Ok((posts, end_cursor))
     }
 
     /// Fetch highlights tray (list of highlight reels) for a user.
@@ -747,7 +756,7 @@ impl InstagramSource {
         let endpoint = format!("https://i.instagram.com/api/v1/highlights/{}/highlights_tray/", user_id);
         log::info!("InstagramSource: fetching highlights tray for user_id={}", user_id);
 
-        let text = Self::curl_rest_api(&endpoint).await?;
+        let text = Self::curl_get(&endpoint, true).await?;
         let body: serde_json::Value = serde_json::from_str(&text)
             .map_err(|e| AppError::Download(DownloadError::Instagram(format!("Highlights JSON parse error: {}", e))))?;
 
@@ -801,10 +810,11 @@ impl InstagramSource {
         Ok(highlights)
     }
 
-    /// Fetch story/highlight items by reel ID.
+    /// Fetch highlight items by reel ID.
     ///
-    /// For stories: reel_id = user_id (e.g., "12345678")
     /// For highlights: reel_id = "highlight:12345678"
+    /// Uses `/api/v1/feed/reels_media/` which is the correct endpoint for highlights.
+    /// For user stories, use `fetch_stories()` instead.
     pub async fn fetch_reel_media(&self, reel_id: &str) -> Result<Vec<StoryItem>, AppError> {
         if !self.rate_limiter.acquire() {
             return Err(AppError::Download(DownloadError::Instagram("Rate limited".to_string())));
@@ -816,7 +826,7 @@ impl InstagramSource {
         );
         log::info!("InstagramSource: fetching reel media for reel_id={}", reel_id);
 
-        let text = Self::curl_rest_api(&endpoint).await?;
+        let text = Self::curl_get(&endpoint, true).await?;
         let body: serde_json::Value = serde_json::from_str(&text)
             .map_err(|e| AppError::Download(DownloadError::Instagram(format!("Reel media JSON parse error: {}", e))))?;
 
@@ -913,6 +923,108 @@ impl InstagramSource {
         }
 
         log::info!("InstagramSource: found {} items in reel {}", story_items.len(), reel_id);
+        Ok(story_items)
+    }
+
+    /// Fetch active stories for a user via the dedicated stories endpoint.
+    ///
+    /// Uses `GET /api/v1/feed/user/{user_id}/story/` which returns `{ "reel": { "items": [...] } }`.
+    /// This is the correct endpoint for user stories — `reels_media` is for highlights.
+    pub async fn fetch_stories(&self, user_id: &str) -> Result<Vec<StoryItem>, AppError> {
+        if !self.rate_limiter.acquire() {
+            return Err(AppError::Download(DownloadError::Instagram("Rate limited".to_string())));
+        }
+
+        let endpoint = format!("https://i.instagram.com/api/v1/feed/user/{}/story/", user_id);
+        log::info!("InstagramSource: fetching stories for user_id={}", user_id);
+
+        let text = Self::curl_get(&endpoint, true).await?;
+        let body: serde_json::Value = serde_json::from_str(&text)
+            .map_err(|e| AppError::Download(DownloadError::Instagram(format!("Stories JSON parse error: {}", e))))?;
+
+        // Response: { "reel": { "items": [...] }, "status": "ok" }
+        // When no active stories: { "reel": null, "status": "ok" }
+        let items_array = body.pointer("/reel/items").and_then(|v| v.as_array());
+
+        let items = match items_array {
+            Some(arr) => arr,
+            None => {
+                log::info!("InstagramSource: no active stories for user_id={}", user_id);
+                return Ok(Vec::new());
+            }
+        };
+
+        let mut story_items = Vec::new();
+        for item in items {
+            let id = item
+                .get("id")
+                .or_else(|| item.get("pk"))
+                .map(|v| match v {
+                    serde_json::Value::String(s) => s.clone(),
+                    serde_json::Value::Number(n) => n.to_string(),
+                    _ => String::new(),
+                })
+                .unwrap_or_default();
+            if id.is_empty() {
+                continue;
+            }
+
+            let media_type = item.get("media_type").and_then(|v| v.as_u64()).unwrap_or(1);
+            let is_video = media_type == 2;
+
+            let media_url = if is_video {
+                item.get("video_versions")
+                    .and_then(|v| v.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|v| v.get("url"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            } else {
+                item.get("image_versions2")
+                    .and_then(|v| v.get("candidates"))
+                    .and_then(|v| v.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|v| v.get("url"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            };
+
+            if media_url.is_empty() {
+                continue;
+            }
+
+            let thumbnail_url = if is_video {
+                item.get("image_versions2")
+                    .and_then(|v| v.get("candidates"))
+                    .and_then(|v| v.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|v| v.get("url"))
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            } else {
+                None
+            };
+
+            let duration_secs = item.get("video_duration").and_then(|v| v.as_f64());
+            let taken_at = item.get("taken_at").and_then(|v| v.as_i64());
+
+            story_items.push(StoryItem {
+                id,
+                is_video,
+                media_url,
+                thumbnail_url,
+                duration_secs,
+                taken_at,
+            });
+        }
+
+        log::info!(
+            "InstagramSource: found {} stories for user_id={}",
+            story_items.len(),
+            user_id
+        );
         Ok(story_items)
     }
 
