@@ -309,9 +309,9 @@ pub async fn send_error_with_sticker_and_message(bot: &Bot, chat_id: ChatId, cus
     }
 
     // Send error message
-    let error_text = custom_message.unwrap_or("У меня не получилось, все сломалось. Я написала Стэну");
+    let error_text = custom_message.unwrap_or("Something went wrong. Stan has been notified.");
 
-    // CRITICAL LOG: Track every time we send "У меня не получилось" message
+    // CRITICAL LOG: Track every time we send the error message to the user
     log::error!(
         "🚨 SENDING ERROR MESSAGE TO USER: chat_id={}, message=\"{}\", custom_message={:?}",
         chat_id.0,
@@ -395,7 +395,7 @@ where
             max_mb
         );
         return Err(AppError::Validation(format!(
-            "Файл слишком большой ({:.2} MB). Максимальный размер: {:.2} MB",
+            "File too large ({:.2} MB). Maximum size: {:.2} MB",
             size_mb, max_mb
         )));
     }
@@ -736,7 +736,7 @@ where
 
                         // Send notification to user
                         let notification_msg = match file_type {
-                            "video" => "Видео успешно загружено на сервер Telegram и обрабатывается.\n\nОно появится в чате через несколько минут.\n\nОбработка больших файлов может занять до 10-15 минут.",
+                            "video" => "Video successfully uploaded to Telegram and is being processed.\n\nIt will appear in the chat within a few minutes.\n\nProcessing large files may take up to 10-15 minutes.",
                             _ => "File uploaded to Telegram and is being processed. It will appear in chat shortly.",
                         };
 
@@ -767,10 +767,7 @@ where
                         );
                         metrics::record_error("telegram_api", "send_file");
                         let error_msg = match file_type {
-                            "video" => format!(
-                                "У меня не получилось отправить тебе видео, попробуй как-нибудь позже. Ошибка: {}",
-                                e
-                            ),
+                            "video" => format!("Failed to send you the video, please try again later. Error: {}", e),
                             _ => format!("Failed to send {} file after timeout/network retry: {}", file_type, e),
                         };
                         return Err(AppError::Download(DownloadError::SendFailed(error_msg)));
@@ -810,8 +807,14 @@ where
                 metrics::record_error("telegram_api", "send_file");
 
                 let error_msg = match file_type {
-                    "video" => format!("У меня не получилось отправить тебе видео, попробуй как-нибудь позже. Все {} попытки не удались: {}", max_attempts, e),
-                    _ => format!("Failed to send {} file after {} attempts: {}", file_type, max_attempts, e),
+                    "video" => format!(
+                        "Failed to send you the video, please try again later. All {} attempts failed: {}",
+                        max_attempts, e
+                    ),
+                    _ => format!(
+                        "Failed to send {} file after {} attempts: {}",
+                        file_type, max_attempts, e
+                    ),
                 };
                 return Err(AppError::Download(DownloadError::SendFailed(error_msg)));
             }

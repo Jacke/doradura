@@ -155,14 +155,14 @@ pub fn spawn_downloader_with_fallback(ytdl_bin: &str, args: &[&str]) -> Result<s
 pub fn parse_progress(line: &str) -> Option<crate::download::source::SourceProgress> {
     use crate::download::source::SourceProgress;
 
-    // Проверяем базовые требования
+    // Check basic requirements
     if !line.contains("[download]") {
         return None;
     }
 
-    // Для отладки: логируем все строки с [download]
+    // For debugging: log all lines with [download]
     if !line.contains("%") {
-        // Это может быть другое сообщение, например "[download] Destination: ..."
+        // This may be a different message, e.g. "[download] Destination: ..."
         log::trace!("Download line without percent: {}", line);
         return None;
     }
@@ -173,19 +173,19 @@ pub fn parse_progress(line: &str) -> Option<crate::download::source::SourceProgr
     let mut downloaded_bytes = None;
     let mut total_bytes = None;
 
-    // Парсим без аллокации Vec - используем peek iterator
+    // Parse without Vec allocation — use peek iterator
     let mut parts = line.split_whitespace().peekable();
     while let Some(part) = parts.next() {
-        // Парсим процент
+        // Parse percent
         if part.ends_with('%') {
             if let Ok(p) = part.trim_end_matches('%').parse::<f32>() {
-                // Обрезаем в разумные границы, чтобы не прыгать на 100% при мусорных данных
+                // Clamp to sane bounds to avoid jumping to 100% on garbage data
                 let clamped = p.clamp(0.0, 100.0) as u8;
                 percent = Some(clamped);
             }
         }
 
-        // Парсим размер: "of 10.00MiB"
+        // Parse size: "of 10.00MiB"
         if part == "of" {
             if let Some(&next) = parts.peek() {
                 if let Some(size_bytes) = parse_size(next) {
@@ -194,7 +194,7 @@ pub fn parse_progress(line: &str) -> Option<crate::download::source::SourceProgr
             }
         }
 
-        // Парсим скорость: "at 500.00KiB/s" или "at 2.3MiB/s"
+        // Parse speed: "at 500.00KiB/s" or "at 2.3MiB/s"
         if part == "at" {
             if let Some(&next) = parts.peek() {
                 if let Some(speed) = parse_size(next) {
@@ -204,7 +204,7 @@ pub fn parse_progress(line: &str) -> Option<crate::download::source::SourceProgr
             }
         }
 
-        // Парсим ETA: "ETA 00:10" или "ETA 1:23"
+        // Parse ETA: "ETA 00:10" or "ETA 1:23"
         if part == "ETA" {
             if let Some(&next) = parts.peek() {
                 if let Some(eta) = parse_eta(next) {
@@ -214,9 +214,9 @@ pub fn parse_progress(line: &str) -> Option<crate::download::source::SourceProgr
         }
     }
 
-    // Если есть процент, возвращаем SourceProgress
+    // If we have a percent, return SourceProgress
     if let Some(p) = percent {
-        // Вычисляем текущий размер на основе процента
+        // Calculate current size based on percent
         if let Some(total) = total_bytes {
             downloaded_bytes = Some((total as f64 * (p as f64 / 100.0)) as u64);
         }
@@ -241,9 +241,9 @@ pub fn parse_progress(line: &str) -> Option<crate::download::source::SourceProgr
     }
 }
 
-/// Парсит размер из строки типа "10.00MiB" или "500.00KiB"
+/// Parses a size from a string like "10.00MiB" or "500.00KiB"
 fn parse_size(size_str: &str) -> Option<u64> {
-    let size_str = size_str.trim_end_matches("/s"); // Убираем "/s" если есть
+    let size_str = size_str.trim_end_matches("/s"); // Strip "/s" suffix if present
     if size_str.ends_with("MiB") {
         if let Ok(mb) = size_str.trim_end_matches("MiB").parse::<f64>() {
             return Some((mb * 1024.0 * 1024.0) as u64);
@@ -260,7 +260,7 @@ fn parse_size(size_str: &str) -> Option<u64> {
     None
 }
 
-/// Парсит ETA из строки типа "00:10" или "1:23"
+/// Parses ETA from a string like "00:10" or "1:23"
 fn parse_eta(eta_str: &str) -> Option<u64> {
     // Use split_once to avoid Vec allocation
     let (minutes_str, seconds_str) = eta_str.split_once(':')?;
@@ -303,7 +303,7 @@ pub fn generate_file_name_with_ext(title: &str, artist: &str, extension: &str) -
         format!("{} - {}.{}", artist_trimmed, title_trimmed, extension)
     };
 
-    // Заменяем пробелы на подчеркивания перед возвратом
+    // Replace spaces with underscores before returning
     sanitize_filename(&filename)
 }
 
@@ -376,7 +376,7 @@ pub async fn download_and_send_subtitles(
                 Ok(meta) => meta,
                 Err(e) => {
                     log::error!("Failed to get metadata: {:?}", e);
-                    // Проверяем, является ли это ошибкой таймаута
+                    // Check if this is a timeout error
                     if e.to_string().contains("timed out") {
                         log::warn!("yt-dlp timed out, sending error message to user");
                         send_error_with_sticker(&bot_clone, chat_id).await;
@@ -421,7 +421,7 @@ pub async fn download_and_send_subtitles(
             add_cookies_args(&mut args);
             args.push(url.as_str());
 
-            // Логируем полную команду для отладки
+            // Log the full command for debugging
             let command_str = format!("{} {}", ytdl_bin, args.join(" "));
             log::debug!("yt-dlp command for subtitles download: {}", command_str);
 
@@ -614,7 +614,7 @@ pub async fn download_and_send_subtitles(
                 .update(
                     &bot_clone,
                     DownloadStatus::Error {
-                        title: "Скачивание".to_string(),
+                        title: "Downloading".to_string(),
                         error: user_error,
                         file_format: Some(subtitle_format.clone()),
                     },
@@ -750,7 +750,7 @@ pub async fn burn_subtitles_into_video(
         output_path
     );
 
-    // Проверяем наличие исходных файлов
+    // Verify source files exist
     if !std::path::Path::new(video_path).exists() {
         return Err(AppError::Download(DownloadError::FileNotFound(format!(
             "Video file not found: {}",
@@ -764,18 +764,18 @@ pub async fn burn_subtitles_into_video(
         ))));
     }
 
-    // Escape путь к субтитрам для ffmpeg filter
-    // Важно: ffmpeg требует экранирования специальных символов в пути
+    // Escape subtitle path for ffmpeg filter
+    // Important: ffmpeg requires escaping special characters in the path
     let escaped_subtitle_path = subtitle_path
         .replace("\\", "\\\\")
         .replace(":", "\\:")
         .replace("'", "\\'");
 
-    // Команда ffmpeg для вшивания субтитров
-    // Используем фильтр subtitles для наложения субтитров на видео
-    // -c:v libx264 - используем H.264 кодек для видео
-    // -c:a copy - копируем аудио без перекодирования
-    // -preset fast - быстрая скорость кодирования
+    // ffmpeg command for burning subtitles into video
+    // Use the subtitles filter to overlay subtitles on the video
+    // -c:v libx264 — use H.264 codec for video
+    // -c:a copy — copy audio without re-encoding
+    // -preset fast — faster encoding speed
     let mut cmd = TokioCommand::new("ffmpeg");
     cmd.arg("-i")
         .arg(video_path)
@@ -787,7 +787,7 @@ pub async fn burn_subtitles_into_video(
         .arg("copy")
         .arg("-preset")
         .arg("fast")
-        .arg("-y") // Перезаписывать выходной файл если существует
+        .arg("-y") // Overwrite output file if it exists
         .arg(output_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -810,7 +810,7 @@ pub async fn burn_subtitles_into_video(
         ))));
     }
 
-    // Проверяем что выходной файл был создан
+    // Verify that the output file was created
     if !std::path::Path::new(output_path).exists() {
         return Err(AppError::Download(DownloadError::FileNotFound(format!(
             "Output video file was not created: {}",

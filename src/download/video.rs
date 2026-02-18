@@ -136,7 +136,7 @@ pub async fn download_and_send_video(
                             &bot_clone,
                             DownloadStatus::Error {
                                 title: display_title.as_ref().to_string(),
-                                error: "Видео файл повреждён или не содержит все необходимые дорожки".to_string(),
+                                error: "Video file is corrupted or missing required tracks".to_string(),
                                 file_format: Some("mp4".to_string()),
                             },
                         )
@@ -362,7 +362,7 @@ pub async fn download_and_send_video(
                     config::download::GLOBAL_TIMEOUT_SECS
                 );
                 Err(AppError::Download(DownloadError::Timeout(format!(
-                    "Таймаут загрузки видео (превышено {} минут)",
+                    "Video upload timeout (exceeded {} minutes)",
                     config::download::GLOBAL_TIMEOUT_SECS / 60
                 ))))
             }
