@@ -504,21 +504,15 @@ impl InstagramSource {
         Some(username.to_string())
     }
 
-    /// Execute Instagram profile GraphQL request via curl.
+    /// Fetch Instagram profile via REST API.
     ///
-    /// Uses PolarisProfilePostsQuery (doc_id 34579740524958711) which accepts
-    /// username directly and returns both user info and recent posts.
+    /// Uses `i.instagram.com/api/v1/users/web_profile_info/` which accepts
+    /// username directly and returns `/data/user` with full profile + 12 recent posts.
+    /// This endpoint works anonymously (no cookies needed) and doesn't use rotating doc_ids.
     async fn curl_profile_request(username: &str) -> Result<String, AppError> {
-        let doc_id = config::INSTAGRAM_PROFILE_DOC_ID.as_str();
-        let variables = format!(
-            r#"{{"data":{{"count":12,"include_reel_media_seen_timestamp":false,"include_relationship_info":true,"latest_besties_reel_media":false,"latest_reel_media":false}},"username":"{}"}}"#,
-            username
-        );
-        let body = format!(
-            "doc_id={}&variables={}&lsd={}",
-            doc_id,
-            urlencoding::encode(&variables),
-            FB_LSD_TOKEN
+        let url = format!(
+            "https://i.instagram.com/api/v1/users/web_profile_info/?username={}",
+            urlencoding::encode(username)
         );
 
         let binary = Self::curl_binary();
@@ -526,27 +520,13 @@ impl InstagramSource {
         if binary == "curl-impersonate" {
             cmd.arg("--impersonate").arg("chrome131");
         }
-        // --compressed: auto-decompress gzip/deflate/br (needed because curl-impersonate
-        // sends Accept-Encoding like Chrome, so server returns compressed content)
         cmd.arg("-s")
             .arg("--compressed")
-            .arg("-X")
-            .arg("POST")
-            .arg(GRAPHQL_ENDPOINT)
+            .arg(&url)
             .arg("-H")
             .arg(format!("X-IG-App-ID: {}", IG_APP_ID))
             .arg("-H")
-            .arg(format!("X-FB-LSD: {}", FB_LSD_TOKEN))
-            .arg("-H")
-            .arg(format!("X-ASBD-ID: {}", FB_ASBD_ID))
-            .arg("-H")
-            .arg("X-Requested-With: XMLHttpRequest")
-            .arg("-H")
-            .arg("Content-Type: application/x-www-form-urlencoded")
-            .arg("-H")
-            .arg("Referer: https://www.instagram.com/")
-            .arg("-H")
-            .arg("Origin: https://www.instagram.com")
+            .arg("User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
             .arg("--max-time")
             .arg("30");
 
@@ -557,10 +537,7 @@ impl InstagramSource {
             }
         }
 
-        // Skip cookies — expired cookies cause login page redirect
-        log::info!("InstagramSource: curl profile GraphQL: anonymous (no cookies)");
-
-        cmd.arg("-d").arg(&body);
+        log::info!("InstagramSource: fetching profile via REST API (anonymous)");
 
         let output = cmd
             .output()
@@ -595,118 +572,9 @@ impl InstagramSource {
             )))
         })?;
 
-        // Try multiple JSON paths — different doc_ids return different structures
-        // Path 1: PolarisProfilePostsQuery (doc_id 34579740524958711)
-        //   /data/xdt_api__v1__feed__user_timeline_graphql_connection/edges/*/node
-        //   User info is inside each node's "user" field
-        // Path 2: Legacy profile queries
-        //   /data/user with edge_owner_to_timeline_media/edges
-        let timeline_connection = body.pointer("/data/xdt_api__v1__feed__user_timeline_graphql_connection");
-
-        // Extract user info and posts depending on response format
+        // REST API returns /data/user with full profile info + edge_owner_to_timeline_media/edges
         let (full_name, biography, profile_pic_url, is_private, user_id, post_count, follower_count, posts, end_cursor) =
-            if let Some(connection) = timeline_connection {
-                // PolarisProfilePostsQuery format — user info is inside each post node
-                let edges = connection.get("edges").and_then(|v| v.as_array());
-
-                // Get user info from the first post's user field
-                let first_user = edges
-                    .and_then(|e| e.first())
-                    .and_then(|edge| edge.get("node"))
-                    .and_then(|node| node.get("user"));
-
-                let full_name = first_user
-                    .and_then(|u| u.get("full_name"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let biography = first_user
-                    .and_then(|u| u.get("biography"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                let profile_pic_url = first_user
-                    .and_then(|u| {
-                        u.get("hd_profile_pic_url_info")
-                            .and_then(|v| v.get("url"))
-                            .and_then(|v| v.as_str())
-                            .or_else(|| u.get("profile_pic_url").and_then(|v| v.as_str()))
-                    })
-                    .unwrap_or("")
-                    .to_string();
-                let is_private = first_user
-                    .and_then(|u| u.get("is_private"))
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
-                let user_id = first_user
-                    .and_then(|u| u.get("pk").or_else(|| u.get("id")))
-                    .map(|v| match v {
-                        serde_json::Value::String(s) => s.clone(),
-                        serde_json::Value::Number(n) => n.to_string(),
-                        _ => String::new(),
-                    })
-                    .filter(|s| !s.is_empty());
-                let follower_count = first_user
-                    .and_then(|u| u.get("follower_count"))
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as u32;
-                let post_count = first_user
-                    .and_then(|u| u.get("media_count"))
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as u32;
-
-                // Extract posts from edges
-                let posts: Vec<ProfilePost> = edges
-                    .map(|edges| {
-                        edges
-                            .iter()
-                            .take(12)
-                            .filter_map(|edge| {
-                                let node = edge.get("node")?;
-                                let code = node.get("code").and_then(|v| v.as_str());
-                                let shortcode = code.map(String::from)?;
-                                let media_type = node.get("media_type").and_then(|v| v.as_u64()).unwrap_or(1);
-                                let is_video = media_type == 2;
-                                let is_carousel = media_type == 8
-                                    || node.get("carousel_media_count").and_then(|v| v.as_u64()).unwrap_or(0) > 0;
-                                let thumbnail = node
-                                    .pointer("/image_versions2/candidates/0/url")
-                                    .or_else(|| node.get("thumbnail_url"))
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_string();
-                                Some(ProfilePost {
-                                    shortcode,
-                                    is_video,
-                                    is_carousel,
-                                    thumbnail_url: thumbnail,
-                                })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                let end_cursor = connection
-                    .pointer("/page_info/end_cursor")
-                    .and_then(|v| v.as_str())
-                    .map(String::from);
-
-                (
-                    full_name,
-                    biography,
-                    profile_pic_url,
-                    is_private,
-                    user_id,
-                    post_count,
-                    follower_count,
-                    posts,
-                    end_cursor,
-                )
-            } else if let Some(user) = body
-                .pointer("/data/user")
-                .or_else(|| body.pointer("/data/xdt_api__v1__users__web_profile_info/data/user"))
-            {
-                // Legacy format — user object with edge_owner_to_timeline_media
+            if let Some(user) = body.pointer("/data/user") {
                 let full_name = user.get("full_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let biography = user.get("biography").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let profile_pic_url = user
