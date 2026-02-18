@@ -1,85 +1,85 @@
-# Railway Deployment Guide для Telegram Bot API с Persistent Storage
+# Railway Deployment Guide for Telegram Bot API with Persistent Storage
 
-## Обзор
+## Overview
 
-Этот гайд поможет настроить Local Telegram Bot API Server на Railway с **persistent volume** для хранения файлов размером до 2GB.
+This guide will help you configure a Local Telegram Bot API Server on Railway with a **persistent volume** for storing files up to 2GB.
 
-## Что даёт persistent storage?
+## What does persistent storage give you?
 
-✅ Файлы до **2GB** (вместо 20MB лимита официального API)
-✅ Файлы **сохраняются** между перезапусками
-✅ **Быстрый доступ** к файлам через прямое копирование
-✅ **Fallback** на api.telegram.org при проблемах
+✅ Files up to **2GB** (instead of the official API's 20MB limit)
+✅ Files **persist** across restarts
+✅ **Fast access** to files via direct copy
+✅ **Fallback** to api.telegram.org on failure
 
-## Стоимость
+## Cost
 
-Railway Volume: **~$5-10/месяц** за 1GB storage
-(Точная цена зависит от региона и использования)
+Railway Volume: **~$5-10/month** per 1GB storage
+(Exact price depends on region and usage)
 
 ---
 
-## Пошаговая инструкция
+## Step-by-step instructions
 
-### Шаг 1: Создать Volume на Railway
+### Step 1: Create a Volume on Railway
 
-1. Открой Railway Dashboard: https://railway.app
-2. Выбери проект Bot API (или создай новый)
-3. Перейди в раздел **Variables**
-4. Нажми **New Variable** → **Volume**
-5. Настройки volume:
+1. Open Railway Dashboard: https://railway.app
+2. Select the Bot API project (or create a new one)
+3. Go to the **Variables** section
+4. Click **New Variable** → **Volume**
+5. Volume settings:
    - **Name:** `telegram-bot-api-data`
    - **Mount Path:** `/telegram-bot-api`
-   - **Size:** 1GB (можно увеличить позже)
+   - **Size:** 1GB (can be increased later)
 
-### Шаг 2: Настроить переменные окружения
+### Step 2: Configure environment variables
 
-В Railway Dashboard → Variables добавь:
+In Railway Dashboard → Variables, add:
 
 ```bash
-# Обязательные переменные (уже должны быть)
+# Required variables (should already be set)
 TELEGRAM_API_ID=<your_api_id>
 TELEGRAM_API_HASH=<your_api_hash>
 TELEGRAM_HTTP_PORT=8081
 
-# НОВАЯ переменная для основного бота
+# NEW variable for the main bot
 BOT_API_DATA_DIR=/telegram-bot-api
 ```
 
-**Важно:** `BOT_API_DATA_DIR` должна быть установлена в **основном боте**, а не в Bot API сервере!
+**Important:** `BOT_API_DATA_DIR` must be set in the **main bot**, not in the Bot API server!
 
-### Шаг 3: Деплой обновлённой конфигурации
+### Step 3: Deploy the updated configuration
 
 ```bash
-# 1. Закоммить изменения
+# 1. Commit the changes
 git add bot-api/
 git commit -m "feat: add persistent volume support for Bot API"
 
-# 2. Запушить на Railway
+# 2. Push to Railway
 git push railway main
 
-# 3. Railway автоматически пересоберёт контейнер с volume
+# 3. Railway will automatically rebuild the container with the volume
 ```
 
-### Шаг 4: Проверка
+### Step 4: Verify
 
-После деплоя проверь логи Bot API:
+After deploying, check the Bot API logs:
 
 ```
 Starting Telegram Bot API with persistent storage...
 Data directory: /telegram-bot-api
 ```
 
-Если видишь эти строки - всё работает! ✅
+If you see these lines — everything is working! ✅
 
 ---
 
-## Тестирование
+## Testing
 
-### Тест 1: Загрузка большого файла
+### Test 1: Uploading a large file
 
-1. Отправь видео боту (>20MB)
-2. Попробуй сделать clip/cut
-3. Проверь логи - должен использоваться direct copy:
+1. Send a video to the bot (>20MB)
+2. Try to make a clip/cut
+3. Check the logs — should use direct copy:
 
 ```
 📂 Local Bot API: attempting direct file copy from /telegram-bot-api/...
@@ -87,22 +87,22 @@ Data directory: /telegram-bot-api
 ✅ File copied successfully
 ```
 
-### Тест 2: Fallback на api.telegram.org
+### Test 2: Fallback to api.telegram.org
 
-1. Отправь файл <20MB
-2. Если файл не найден на Local API:
+1. Send a file <20MB
+2. If the file is not found on the Local API:
 
 ```
 ⚠️ File not found on local Bot API server, falling back to api.telegram.org
 ```
 
-Это нормально - бот автоматически скачает с официального API.
+This is normal — the bot will automatically download from the official API.
 
 ---
 
-## Архитектура
+## Architecture
 
-### Текущая схема (С volume)
+### Current setup (with volume)
 
 ```
 User → Telegram → Railway Bot API → Volume (/telegram-bot-api)
@@ -112,7 +112,7 @@ User → Telegram → Railway Bot API → Volume (/telegram-bot-api)
                     Processing ✅
 ```
 
-### Fallback схема (Без volume или при 404)
+### Fallback setup (without volume or on 404)
 
 ```
 User → Telegram → Railway Bot API → ❌ 404 Not Found
@@ -124,9 +124,9 @@ User → Telegram → Railway Bot API → ❌ 404 Not Found
 
 ---
 
-## Переменные окружения
+## Environment Variables
 
-### В Bot API сервере (Railway)
+### In the Bot API server (Railway)
 
 ```bash
 TELEGRAM_API_ID=<your_api_id>
@@ -134,39 +134,39 @@ TELEGRAM_API_HASH=<your_api_hash>
 TELEGRAM_HTTP_PORT=8081
 ```
 
-### В основном боте (Railway/VPS)
+### In the main bot (Railway/VPS)
 
 ```bash
 BOT_API_URL=https://telegram-bot-api-production-d892.up.railway.app
-BOT_API_DATA_DIR=/telegram-bot-api  # ← ВАЖНО!
+BOT_API_DATA_DIR=/telegram-bot-api  # ← IMPORTANT!
 ```
 
-**Примечание:** Если `BOT_API_DATA_DIR` не установлена, бот будет использовать HTTP fallback.
+**Note:** If `BOT_API_DATA_DIR` is not set, the bot will use HTTP fallback.
 
 ---
 
-## Мониторинг Volume
+## Volume Monitoring
 
-### Проверка использования диска
+### Checking disk usage
 
-В Railway Dashboard → Metrics можно посмотреть:
-- Использование volume (GB)
-- I/O операции
-- Стоимость
+In Railway Dashboard → Metrics you can view:
+- Volume usage (GB)
+- I/O operations
+- Cost
 
-### Очистка старых файлов
+### Cleaning up old files
 
-Telegram Bot API автоматически удаляет старые файлы через 1 час.
-Но можно настроить manual cleanup:
+Telegram Bot API automatically deletes old files after 1 hour.
+You can also configure manual cleanup:
 
 ```bash
-# SSH в Railway container (если нужно)
+# SSH into Railway container (if needed)
 railway run bash
 
-# Проверить размер
+# Check size
 du -sh /telegram-bot-api
 
-# Удалить старые файлы (>24ч)
+# Delete old files (>24h)
 find /telegram-bot-api -type f -mtime +1 -delete
 ```
 
@@ -174,72 +174,72 @@ find /telegram-bot-api -type f -mtime +1 -delete
 
 ## Troubleshooting
 
-### Проблема: "BOT_API_DATA_DIR not set"
+### Issue: "BOT_API_DATA_DIR not set"
 
-**Решение:** Установи переменную окружения в **основном боте**:
+**Fix:** Set the environment variable in the **main bot**:
 ```bash
 BOT_API_DATA_DIR=/telegram-bot-api
 ```
 
-### Проблема: "File not found" (404)
+### Issue: "File not found" (404)
 
-**Причины:**
-1. Volume не примонтирован - проверь Railway Dashboard
-2. Файл уже удалён Telegram (>1 час)
-3. Permissions issue - проверь логи Bot API
+**Causes:**
+1. Volume not mounted — check Railway Dashboard
+2. File already deleted by Telegram (>1 hour)
+3. Permissions issue — check Bot API logs
 
-**Решение:** Бот автоматически fallback на api.telegram.org
+**Fix:** The bot will automatically fall back to api.telegram.org
 
-### Проблема: Permission denied
+### Issue: Permission denied
 
-**Решение:** В Dockerfile уже есть `chown`, но если проблема повторяется:
+**Fix:** The Dockerfile already has a `chown`, but if the issue persists:
 
 ```bash
-# В entrypoint.sh
+# In entrypoint.sh
 chown -R telegram-bot-api:telegram-bot-api /telegram-bot-api
 ```
 
-### Проблема: Volume full (нет места)
+### Issue: Volume full (no space)
 
-**Решение:** Увеличь размер volume в Railway Dashboard или настрой auto-cleanup:
+**Fix:** Increase the volume size in Railway Dashboard or configure auto-cleanup:
 
 ```bash
-# В cron (если нужно)
+# In cron (if needed)
 0 */6 * * * find /telegram-bot-api -type f -mtime +1 -delete
 ```
 
 ---
 
-## Откат изменений
+## Rolling Back
 
-Если что-то пошло не так, можно вернуться к HTTP-only режиму:
+If something goes wrong, you can revert to HTTP-only mode:
 
-1. Убери `BOT_API_URL` из переменных окружения
-2. Бот автоматически переключится на `api.telegram.org`
-3. Лимит файлов вернётся к 20MB
+1. Remove `BOT_API_URL` from environment variables
+2. The bot will automatically switch to `api.telegram.org`
+3. File size limit will revert to 20MB
 
 ---
 
 ## FAQ
 
-**Q: Сколько стоит volume?**
-A: ~$5-10/месяц за 1GB на Railway
+**Q: How much does the volume cost?**
+A: ~$5-10/month per 1GB on Railway
 
-**Q: Можно ли увеличить размер?**
-A: Да, в Railway Dashboard → Volume → Resize
+**Q: Can I increase the size?**
+A: Yes, in Railway Dashboard → Volume → Resize
 
-**Q: Что если volume недоступен?**
-A: Бот автоматически fallback на api.telegram.org (лимит 20MB)
+**Q: What if the volume is unavailable?**
+A: The bot will automatically fall back to api.telegram.org (20MB limit)
 
-**Q: Нужно ли бэкапить volume?**
-A: Нет, файлы временные (Telegram удаляет через 1 час)
+**Q: Do I need to back up the volume?**
+A: No, files are temporary (Telegram deletes them after 1 hour)
 
-**Q: Можно ли использовать S3 вместо volume?**
-A: Telegram Bot API не поддерживает S3 напрямую, только local filesystem
+**Q: Can I use S3 instead of a volume?**
+A: Telegram Bot API does not support S3 directly, only local filesystem
 
 ---
 
-## Полезные ссылки
+## Useful Links
 
 - [Railway Volumes Documentation](https://docs.railway.app/reference/volumes)
 - [Telegram Bot API Documentation](https://core.telegram.org/bots/api)
@@ -247,11 +247,11 @@ A: Telegram Bot API не поддерживает S3 напрямую, толь�
 
 ---
 
-## Поддержка
+## Support
 
-Если возникли проблемы, проверь:
-1. Логи Bot API сервера в Railway
-2. Логи основного бота
+If you run into issues, check:
+1. Bot API server logs in Railway
+2. Main bot logs
 3. Railway Dashboard → Metrics → Volume usage
 
-Нашёл баг? Создай issue в GitHub!
+Found a bug? Open an issue on GitHub!
