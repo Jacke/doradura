@@ -147,7 +147,7 @@ fn build_posts_keyboard(
     if profile.end_cursor.is_some() && profile.posts.len() >= 12 {
         rows.push(vec![InlineKeyboardButton::callback(
             i18n::t(lang, "instagram-more"),
-            format!("ig:page:{}:{}", username, profile.end_cursor.as_deref().unwrap_or("")),
+            format!("ig:page:{}", username),
         )]);
     }
 
@@ -158,7 +158,7 @@ fn build_posts_keyboard(
 ///
 /// Callback formats:
 /// - `ig:dl:<shortcode>` — download a post
-/// - `ig:page:<username>:<cursor>` — load more posts
+/// - `ig:page:<username>` — load more posts
 /// - `ig:tab:hl:<username>` — switch to highlights tab
 /// - `ig:tab:stories:<username>` — switch to stories tab
 /// - `ig:tab:posts:<username>` — switch back to posts tab
@@ -185,7 +185,7 @@ pub async fn handle_instagram_callback(
             let url = format!("https://www.instagram.com/p/{}/", shortcode);
             let _ = bot.send_message(chat_id, &url).await;
         }
-        "page" if parts.len() >= 4 => {
+        "page" if parts.len() >= 3 => {
             let username = parts[2];
             let lang = i18n::lang_from_code("ru");
             show_instagram_profile(bot, chat_id, username, &lang).await;
