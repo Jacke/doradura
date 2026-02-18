@@ -263,7 +263,7 @@ pub async fn handle_version_command(bot: &Bot, chat_id: ChatId, user_id: i64) ->
         escape_markdown(&cookies_detail)
     );
 
-    let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+    let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
         "🔄 Обновить yt-dlp".to_string(),
         "admin:update_ytdlp".to_string(),
     )]]);
@@ -303,7 +303,7 @@ pub async fn handle_update_ytdlp_callback(bot: &Bot, chat_id: ChatId, message_id
             );
 
             // Add button to check again
-            let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+            let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
                 "🔄 Проверить снова".to_string(),
                 "admin:check_ytdlp_version".to_string(),
             )]]);
@@ -344,7 +344,7 @@ pub async fn handle_check_ytdlp_version_callback(bot: &Bot, chat_id: ChatId, mes
         escape_markdown(ytdl_bin)
     );
 
-    let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+    let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
         "🔄 Обновить yt-dlp".to_string(),
         "admin:update_ytdlp".to_string(),
     )]]);
@@ -1113,7 +1113,7 @@ pub async fn handle_admin_command(bot: &Bot, chat_id: ChatId, user_id: i64, db_p
         let button_text = format!("{} {}", plan_emoji, username_display);
         let callback_data = format!("admin:user:{}", user.telegram_id);
 
-        current_row.push(InlineKeyboardButton::callback(button_text, callback_data));
+        current_row.push(crate::telegram::cb(button_text, callback_data));
 
         // Every 2 buttons create a new row
         if current_row.len() == 2 {
@@ -2145,7 +2145,7 @@ pub async fn handle_diagnose_cookies_command(bot: &Bot, chat_id: ChatId, user_id
 
     // If cookies look valid structurally, offer to test with yt-dlp
     if diagnostic.is_valid {
-        let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+        let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
             "🧪 Тестировать с yt-dlp",
             "admin:test_cookies",
         )]]);
@@ -2960,8 +2960,8 @@ pub async fn handle_browser_login_command(bot: &Bot, chat_id: ChatId, user_id: i
                 }
             }
             rows.push(vec![
-                InlineKeyboardButton::callback("✅ Done — export cookies", "admin:browser_login_done".to_string()),
-                InlineKeyboardButton::callback("❌ Cancel", "admin:browser_login_cancel".to_string()),
+                crate::telegram::cb("✅ Done — export cookies", "admin:browser_login_done".to_string()),
+                crate::telegram::cb("❌ Cancel", "admin:browser_login_cancel".to_string()),
             ]);
             let keyboard = InlineKeyboardMarkup::new(rows);
 
@@ -3096,14 +3096,14 @@ pub async fn handle_browser_status_command(bot: &Bot, chat_id: ChatId, user_id: 
 
             let mut buttons = vec![];
             if needs_relogin || !profile_exists {
-                buttons.push(vec![InlineKeyboardButton::callback(
+                buttons.push(vec![crate::telegram::cb(
                     "🌐 Start login",
                     "admin:browser_login_start".to_string(),
                 )]);
             }
             buttons.push(vec![
-                InlineKeyboardButton::callback("🔄 Refresh", "admin:browser_force_refresh".to_string()),
-                InlineKeyboardButton::callback("🔃 Restart browser", "admin:browser_restart".to_string()),
+                crate::telegram::cb("🔄 Refresh", "admin:browser_force_refresh".to_string()),
+                crate::telegram::cb("🔃 Restart browser", "admin:browser_restart".to_string()),
             ]);
 
             let keyboard = InlineKeyboardMarkup::new(buttons);
@@ -3251,11 +3251,8 @@ pub async fn handle_browser_callback(
                                 .unwrap_or_else(|_| "https://example.com".parse().unwrap()),
                         )],
                         vec![
-                            InlineKeyboardButton::callback(
-                                "✅ Done — export cookies",
-                                "admin:browser_login_done".to_string(),
-                            ),
-                            InlineKeyboardButton::callback("❌ Cancel", "admin:browser_login_cancel".to_string()),
+                            crate::telegram::cb("✅ Done — export cookies", "admin:browser_login_done".to_string()),
+                            crate::telegram::cb("❌ Cancel", "admin:browser_login_cancel".to_string()),
                         ],
                     ]);
 

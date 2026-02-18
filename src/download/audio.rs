@@ -193,11 +193,11 @@ async fn add_audio_effects_button(bot: &Bot, chat_id: ChatId, result: &PipelineR
                     let sent_message_id = result.sent_message.id;
                     let session_id_clone = session_id.clone();
                     tokio::spawn(async move {
-                        use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
+                        use teloxide::types::InlineKeyboardMarkup;
 
                         let keyboard = InlineKeyboardMarkup::new(vec![vec![
-                            InlineKeyboardButton::callback("Edit Audio", format!("ae:open:{}", session_id_clone)),
-                            InlineKeyboardButton::callback("Cut Audio", format!("ac:open:{}", session_id_clone)),
+                            crate::telegram::cb("Edit Audio", format!("ae:open:{}", session_id_clone)),
+                            crate::telegram::cb("Cut Audio", format!("ac:open:{}", session_id_clone)),
                         ]]);
 
                         if let Err(e) = bot_for_button

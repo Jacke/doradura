@@ -183,6 +183,26 @@ pub async fn send_preview(
         );
         create_fallback_keyboard(default_format, default_quality, &url_id, Some(audio_bitrate.as_str()))
     };
+
+    // Instagram links don't need the settings button — remove it
+    let keyboard = if url.host_str().is_some_and(|h| h.contains("instagram.com")) {
+        let filtered: Vec<Vec<_>> = keyboard
+            .inline_keyboard
+            .into_iter()
+            .filter(|row| {
+                !row.iter().any(|btn| {
+                    matches!(
+                        &btn.kind,
+                        teloxide::types::InlineKeyboardButtonKind::CallbackData(d) if d.starts_with("pv:set:")
+                    )
+                })
+            })
+            .collect();
+        teloxide::types::InlineKeyboardMarkup::new(filtered)
+    } else {
+        keyboard
+    };
+
     let (keyboard_rows, keyboard_buttons) = keyboard_stats(&keyboard);
     log::info!(
         "Preview keyboard built (rows={}, buttons={}, format={}, quality={:?}, url_id={}, send_as_document={})",
@@ -371,6 +391,26 @@ pub async fn update_preview_message(
     } else {
         create_fallback_keyboard(default_format, default_quality, &url_id, Some(audio_bitrate.as_str()))
     };
+
+    // Instagram links don't need the settings button — remove it
+    let keyboard = if url.host_str().is_some_and(|h| h.contains("instagram.com")) {
+        let filtered: Vec<Vec<_>> = keyboard
+            .inline_keyboard
+            .into_iter()
+            .filter(|row| {
+                !row.iter().any(|btn| {
+                    matches!(
+                        &btn.kind,
+                        teloxide::types::InlineKeyboardButtonKind::CallbackData(d) if d.starts_with("pv:set:")
+                    )
+                })
+            })
+            .collect();
+        teloxide::types::InlineKeyboardMarkup::new(filtered)
+    } else {
+        keyboard
+    };
+
     let (keyboard_rows, keyboard_buttons) = keyboard_stats(&keyboard);
     log::info!(
         "Preview update keyboard built (rows={}, buttons={}, format={}, quality={:?}, url_id={}, send_as_document={})",

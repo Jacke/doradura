@@ -755,6 +755,9 @@ impl InstagramSource {
                     _ => String::new(),
                 })
                 .unwrap_or_default();
+            // Strip "highlight:" prefix — we re-add it when calling fetch_reel_media,
+            // and the colon conflicts with callback data `:` separator.
+            let id_str = id_str.strip_prefix("highlight:").unwrap_or(&id_str).to_string();
             if id_str.is_empty() {
                 continue;
             }
@@ -821,7 +824,11 @@ impl InstagramSource {
         let items = match items_array {
             Some(arr) => arr,
             None => {
-                log::warn!("InstagramSource: no items in reel response for {}", reel_id);
+                log::warn!(
+                    "InstagramSource: no items in reel response for {}. Keys: {:?}",
+                    reel_id,
+                    body.as_object().map(|o| o.keys().collect::<Vec<_>>())
+                );
                 return Ok(Vec::new());
             }
         };

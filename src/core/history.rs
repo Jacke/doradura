@@ -5,7 +5,7 @@ use crate::telegram::Bot;
 use chrono::NaiveDateTime;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{CallbackQueryId, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId};
+use teloxide::types::{CallbackQueryId, ChatId, InlineKeyboardMarkup, MessageId};
 use teloxide::RequestError;
 use url::Url;
 
@@ -134,8 +134,8 @@ pub async fn show_history_page(
 
         // Одна строка с двумя кнопками: повтор и удаление
         keyboard_rows.push(vec![
-            InlineKeyboardButton::callback(format!("🔄 {}", short_title), callback_data),
-            InlineKeyboardButton::callback("🗑️".to_string(), delete_callback),
+            crate::telegram::cb(format!("🔄 {}", short_title), callback_data),
+            crate::telegram::cb("🗑️".to_string(), delete_callback),
         ]);
 
         // Добавляем визуальный разделитель в текст между записями (кроме последней)
@@ -150,7 +150,7 @@ pub async fn show_history_page(
     let mut nav_buttons = Vec::new();
 
     if current_page > 0 {
-        nav_buttons.push(InlineKeyboardButton::callback(
+        nav_buttons.push(crate::telegram::cb(
             "⬅️".to_string(),
             format!("history:page:{}", current_page - 1),
         ));
@@ -158,14 +158,14 @@ pub async fn show_history_page(
 
     // Показываем номер страницы как неактивную кнопку (callback не будет обрабатываться)
     if total_pages > 1 {
-        nav_buttons.push(InlineKeyboardButton::callback(
+        nav_buttons.push(crate::telegram::cb(
             format!("{}/{}", current_page + 1, total_pages),
             format!("history:page:{}", current_page), // Клик на текущую страницу не делает ничего
         ));
     }
 
     if current_page < total_pages - 1 {
-        nav_buttons.push(InlineKeyboardButton::callback(
+        nav_buttons.push(crate::telegram::cb(
             "➡️".to_string(),
             format!("history:page:{}", current_page + 1),
         ));
@@ -175,10 +175,7 @@ pub async fn show_history_page(
         keyboard_rows.push(nav_buttons);
     }
 
-    keyboard_rows.push(vec![InlineKeyboardButton::callback(
-        "🔙 В главное меню".to_string(),
-        "back:start",
-    )]);
+    keyboard_rows.push(vec![crate::telegram::cb("🔙 В главное меню".to_string(), "back:start")]);
 
     let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
 

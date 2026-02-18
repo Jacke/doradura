@@ -50,7 +50,7 @@ pub async fn show_services_menu(
 
             text.push_str(&format!("{} *{}*\n└ {} \\| {}\n\n", ext.icon(), name, desc, status));
 
-            buttons.push(vec![InlineKeyboardButton::callback(
+            buttons.push(vec![crate::telegram::cb(
                 format!("{} {}", ext.icon(), name),
                 format!("ext:detail:{}", ext.id()),
             )]);
@@ -59,7 +59,7 @@ pub async fn show_services_menu(
 
     text.push_str(&i18n::t(lang, "extensions.footer"));
 
-    buttons.push(vec![InlineKeyboardButton::callback(
+    buttons.push(vec![crate::telegram::cb(
         i18n::t(lang, "common.back"),
         "back:enhanced_main",
     )]);
@@ -104,7 +104,7 @@ pub(crate) async fn show_extension_detail(
         }
     }
 
-    let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+    let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
         i18n::t(lang, "extensions.detail_back"),
         "ext:back",
     )]]);

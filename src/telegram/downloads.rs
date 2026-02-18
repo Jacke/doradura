@@ -45,7 +45,7 @@ fn build_duration_buttons(download_id: i64, lang: &unic_langid::LanguageIdentifi
         .iter()
         .map(|&dur| {
             let label = format!("▶ 0:00–{}", format_duration_short(dur));
-            InlineKeyboardButton::callback(label, format!("downloads:dur:first:{}:{}", download_id, dur))
+            crate::telegram::cb(label, format!("downloads:dur:first:{}:{}", download_id, dur))
         })
         .collect();
 
@@ -54,7 +54,7 @@ fn build_duration_buttons(download_id: i64, lang: &unic_langid::LanguageIdentifi
         .iter()
         .map(|&dur| {
             let label = format!("◀ ...–{}", format_duration_short(dur));
-            InlineKeyboardButton::callback(label, format!("downloads:dur:last:{}:{}", download_id, dur))
+            crate::telegram::cb(label, format!("downloads:dur:last:{}:{}", download_id, dur))
         })
         .collect();
 
@@ -62,8 +62,8 @@ fn build_duration_buttons(download_id: i64, lang: &unic_langid::LanguageIdentifi
     let btn_middle = crate::i18n::t(lang, "video_circle.btn_middle");
     let btn_full = crate::i18n::t(lang, "video_circle.btn_full");
     let special_row = vec![
-        InlineKeyboardButton::callback(btn_middle, format!("downloads:dur:middle:{}:30", download_id)),
-        InlineKeyboardButton::callback(btn_full, format!("downloads:dur:full:{}", download_id)),
+        crate::telegram::cb(btn_middle, format!("downloads:dur:middle:{}:30", download_id)),
+        crate::telegram::cb(btn_full, format!("downloads:dur:full:{}", download_id)),
     ];
 
     vec![first_row, last_row, special_row]
@@ -103,7 +103,7 @@ fn build_timestamp_ui(
         // Callback format: downloads:ts:{output_kind}:{download_id}:{time_seconds}
         let callback = format!("downloads:ts:{}:{}:{}", output_kind, download_id, ts.time_seconds);
 
-        current_row.push(InlineKeyboardButton::callback(button_text, callback));
+        current_row.push(crate::telegram::cb(button_text, callback));
 
         if current_row.len() == 2 {
             button_rows.push(current_row);
@@ -273,7 +273,7 @@ pub async fn show_downloads_page(
                 download.title.clone()
             }
         );
-        keyboard_rows.push(vec![InlineKeyboardButton::callback(
+        keyboard_rows.push(vec![crate::telegram::cb(
             button_text,
             if download.format == "edit" {
                 format!("downloads:resend_cut:{}", download.id)
@@ -287,7 +287,7 @@ pub async fn show_downloads_page(
     let mut nav_buttons = Vec::new();
 
     if current_page > 0 {
-        nav_buttons.push(InlineKeyboardButton::callback(
+        nav_buttons.push(crate::telegram::cb(
             "⬅️".to_string(),
             format!(
                 "downloads:page:{}:{}:{}",
@@ -299,7 +299,7 @@ pub async fn show_downloads_page(
     }
 
     if total_pages > 1 {
-        nav_buttons.push(InlineKeyboardButton::callback(
+        nav_buttons.push(crate::telegram::cb(
             format!("{}/{}", current_page + 1, total_pages),
             format!(
                 "downloads:page:{}:{}:{}",
@@ -311,7 +311,7 @@ pub async fn show_downloads_page(
     }
 
     if current_page < total_pages - 1 {
-        nav_buttons.push(InlineKeyboardButton::callback(
+        nav_buttons.push(crate::telegram::cb(
             "➡️".to_string(),
             format!(
                 "downloads:page:{}:{}:{}",
@@ -330,28 +330,28 @@ pub async fn show_downloads_page(
     let mut filter_row = Vec::new();
 
     if file_type_filter.as_deref() != Some("mp3") {
-        filter_row.push(InlineKeyboardButton::callback(
+        filter_row.push(crate::telegram::cb(
             "🎵 MP3".to_string(),
             format!("downloads:filter:mp3:{}", search_text.as_deref().unwrap_or("")),
         ));
     }
 
     if file_type_filter.as_deref() != Some("mp4") {
-        filter_row.push(InlineKeyboardButton::callback(
+        filter_row.push(crate::telegram::cb(
             "🎬 MP4".to_string(),
             format!("downloads:filter:mp4:{}", search_text.as_deref().unwrap_or("")),
         ));
     }
 
     if file_type_filter.as_deref() != Some("edit") {
-        filter_row.push(InlineKeyboardButton::callback(
+        filter_row.push(crate::telegram::cb(
             "✂️ Отрезки".to_string(),
             format!("downloads:filter:edit:{}", search_text.as_deref().unwrap_or("")),
         ));
     }
 
     if file_type_filter.is_some() {
-        filter_row.push(InlineKeyboardButton::callback(
+        filter_row.push(crate::telegram::cb(
             "🔄 Все".to_string(),
             format!("downloads:filter:all:{}", search_text.as_deref().unwrap_or("")),
         ));
@@ -362,7 +362,7 @@ pub async fn show_downloads_page(
     }
 
     // Close button
-    keyboard_rows.push(vec![InlineKeyboardButton::callback(
+    keyboard_rows.push(vec![crate::telegram::cb(
         "❌ Закрыть".to_string(),
         "downloads:close".to_string(),
     )]);
@@ -460,65 +460,53 @@ pub async fn handle_downloads_callback(
 
                     if download.format == "mp3" {
                         options.push(vec![
-                            InlineKeyboardButton::callback(
+                            crate::telegram::cb(
                                 "🎵 Как аудио".to_string(),
                                 format!("downloads:send:audio:{}", download_id),
                             ),
-                            InlineKeyboardButton::callback(
+                            crate::telegram::cb(
                                 "📎 Как документ".to_string(),
                                 format!("downloads:send:document:{}", download_id),
                             ),
                         ]);
                         options.push(vec![
-                            InlineKeyboardButton::callback(
-                                "✂️ Вырезка".to_string(),
-                                format!("downloads:clip:{}", download_id),
-                            ),
-                            InlineKeyboardButton::callback(
-                                "⭕️ Кружок".to_string(),
-                                format!("downloads:circle:{}", download_id),
-                            ),
-                            InlineKeyboardButton::callback(
+                            crate::telegram::cb("✂️ Вырезка".to_string(), format!("downloads:clip:{}", download_id)),
+                            crate::telegram::cb("⭕️ Кружок".to_string(), format!("downloads:circle:{}", download_id)),
+                            crate::telegram::cb(
                                 "🔔 Сделать рингтон".to_string(),
                                 format!("downloads:iphone_ringtone:{}", download_id),
                             ),
                         ]);
-                        options.push(vec![InlineKeyboardButton::callback(
+                        options.push(vec![crate::telegram::cb(
                             "⚙️ Изменить скорость".to_string(),
                             format!("downloads:speed:{}", download_id),
                         )]);
                     } else {
                         options.push(vec![
-                            InlineKeyboardButton::callback(
+                            crate::telegram::cb(
                                 "🎬 Как видео".to_string(),
                                 format!("downloads:send:video:{}", download_id),
                             ),
-                            InlineKeyboardButton::callback(
+                            crate::telegram::cb(
                                 "📎 Как документ".to_string(),
                                 format!("downloads:send:document:{}", download_id),
                             ),
                         ]);
                         options.push(vec![
-                            InlineKeyboardButton::callback(
-                                "✂️ Вырезка".to_string(),
-                                format!("downloads:clip:{}", download_id),
-                            ),
-                            InlineKeyboardButton::callback(
-                                "⭕️ Кружок".to_string(),
-                                format!("downloads:circle:{}", download_id),
-                            ),
-                            InlineKeyboardButton::callback(
+                            crate::telegram::cb("✂️ Вырезка".to_string(), format!("downloads:clip:{}", download_id)),
+                            crate::telegram::cb("⭕️ Кружок".to_string(), format!("downloads:circle:{}", download_id)),
+                            crate::telegram::cb(
                                 "🔔 Сделать рингтон".to_string(),
                                 format!("downloads:iphone_ringtone:{}", download_id),
                             ),
                         ]);
-                        options.push(vec![InlineKeyboardButton::callback(
+                        options.push(vec![crate::telegram::cb(
                             "⚙️ Изменить скорость".to_string(),
                             format!("downloads:speed:{}", download_id),
                         )]);
                     }
 
-                    options.push(vec![InlineKeyboardButton::callback(
+                    options.push(vec![crate::telegram::cb(
                         "❌ Отмена".to_string(),
                         "downloads:cancel".to_string(),
                     )]);
@@ -560,37 +548,31 @@ pub async fn handle_downloads_callback(
 
                     // Cuts are usually MP4
                     options.push(vec![
-                        InlineKeyboardButton::callback(
+                        crate::telegram::cb(
                             "🎬 Как видео".to_string(),
                             format!("downloads:send_cut:video:{}", cut_id),
                         ),
-                        InlineKeyboardButton::callback(
+                        crate::telegram::cb(
                             "📎 Как документ".to_string(),
                             format!("downloads:send_cut:document:{}", cut_id),
                         ),
                     ]);
 
                     options.push(vec![
-                        InlineKeyboardButton::callback(
-                            "✂️ Вырезка".to_string(),
-                            format!("downloads:clip_cut:{}", cut_id),
-                        ),
-                        InlineKeyboardButton::callback(
-                            "⭕️ Кружок".to_string(),
-                            format!("downloads:circle_cut:{}", cut_id),
-                        ),
-                        InlineKeyboardButton::callback(
+                        crate::telegram::cb("✂️ Вырезка".to_string(), format!("downloads:clip_cut:{}", cut_id)),
+                        crate::telegram::cb("⭕️ Кружок".to_string(), format!("downloads:circle_cut:{}", cut_id)),
+                        crate::telegram::cb(
                             "🔔 Сделать рингтон".to_string(),
                             format!("downloads:iphone_ringtone_cut:{}", cut_id),
                         ),
                     ]);
 
-                    options.push(vec![InlineKeyboardButton::callback(
+                    options.push(vec![crate::telegram::cb(
                         "⚙️ Изменить скорость".to_string(),
                         format!("downloads:speed_cut:{}", cut_id),
                     )]);
 
-                    options.push(vec![InlineKeyboardButton::callback(
+                    options.push(vec![crate::telegram::cb(
                         "❌ Отмена".to_string(),
                         "downloads:cancel".to_string(),
                     )]);
@@ -816,7 +798,7 @@ pub async fn handle_downloads_callback(
 
                 // Build keyboard with timestamp buttons and cancel button
                 let mut keyboard_rows = ts_buttons;
-                keyboard_rows.push(vec![InlineKeyboardButton::callback(
+                keyboard_rows.push(vec![crate::telegram::cb(
                     "❌ Отмена".to_string(),
                     "downloads:clip_cancel".to_string(),
                 )]);
@@ -863,7 +845,7 @@ pub async fn handle_downloads_callback(
                 crate::storage::db::upsert_video_clip_session(&conn, &session).map_err(|e| {
                     teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
-                let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+                let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
                     "❌ Отмена".to_string(),
                     "downloads:clip_cancel".to_string(),
                 )]]);
@@ -921,7 +903,7 @@ pub async fn handle_downloads_callback(
                 // Build keyboard: duration buttons + timestamp buttons + cancel button
                 let mut keyboard_rows = build_duration_buttons(download_id, &lang);
                 keyboard_rows.extend(ts_buttons);
-                keyboard_rows.push(vec![InlineKeyboardButton::callback(
+                keyboard_rows.push(vec![crate::telegram::cb(
                     crate::i18n::t(&lang, "common.cancel"),
                     "downloads:clip_cancel".to_string(),
                 )]);
@@ -968,7 +950,7 @@ pub async fn handle_downloads_callback(
                 crate::storage::db::upsert_video_clip_session(&conn, &session).map_err(|e| {
                     teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
-                let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+                let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
                     "❌ Отмена".to_string(),
                     "downloads:clip_cancel".to_string(),
                 )]]);
@@ -1008,7 +990,7 @@ pub async fn handle_downloads_callback(
                 crate::storage::db::upsert_video_clip_session(&conn, &session).map_err(|e| {
                     teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
-                let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+                let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
                     "❌ Отмена".to_string(),
                     "downloads:clip_cancel".to_string(),
                 )]]);
@@ -1201,34 +1183,22 @@ pub async fn handle_downloads_callback(
             {
                 let speed_options = vec![
                     vec![
-                        InlineKeyboardButton::callback(
-                            "0.5x".to_string(),
-                            format!("downloads:apply_speed:0.5:{}", download_id),
-                        ),
-                        InlineKeyboardButton::callback(
+                        crate::telegram::cb("0.5x".to_string(), format!("downloads:apply_speed:0.5:{}", download_id)),
+                        crate::telegram::cb(
                             "0.75x".to_string(),
                             format!("downloads:apply_speed:0.75:{}", download_id),
                         ),
-                        InlineKeyboardButton::callback(
-                            "1.0x".to_string(),
-                            format!("downloads:apply_speed:1.0:{}", download_id),
-                        ),
+                        crate::telegram::cb("1.0x".to_string(), format!("downloads:apply_speed:1.0:{}", download_id)),
                     ],
                     vec![
-                        InlineKeyboardButton::callback(
+                        crate::telegram::cb(
                             "1.25x".to_string(),
                             format!("downloads:apply_speed:1.25:{}", download_id),
                         ),
-                        InlineKeyboardButton::callback(
-                            "1.5x".to_string(),
-                            format!("downloads:apply_speed:1.5:{}", download_id),
-                        ),
-                        InlineKeyboardButton::callback(
-                            "2.0x".to_string(),
-                            format!("downloads:apply_speed:2.0:{}", download_id),
-                        ),
+                        crate::telegram::cb("1.5x".to_string(), format!("downloads:apply_speed:1.5:{}", download_id)),
+                        crate::telegram::cb("2.0x".to_string(), format!("downloads:apply_speed:2.0:{}", download_id)),
                     ],
-                    vec![InlineKeyboardButton::callback(
+                    vec![crate::telegram::cb(
                         "❌ Отмена".to_string(),
                         "downloads:cancel".to_string(),
                     )],
@@ -1257,34 +1227,22 @@ pub async fn handle_downloads_callback(
             {
                 let speed_options = vec![
                     vec![
-                        InlineKeyboardButton::callback(
-                            "0.5x".to_string(),
-                            format!("downloads:apply_speed_cut:0.5:{}", cut_id),
-                        ),
-                        InlineKeyboardButton::callback(
+                        crate::telegram::cb("0.5x".to_string(), format!("downloads:apply_speed_cut:0.5:{}", cut_id)),
+                        crate::telegram::cb(
                             "0.75x".to_string(),
                             format!("downloads:apply_speed_cut:0.75:{}", cut_id),
                         ),
-                        InlineKeyboardButton::callback(
-                            "1.0x".to_string(),
-                            format!("downloads:apply_speed_cut:1.0:{}", cut_id),
-                        ),
+                        crate::telegram::cb("1.0x".to_string(), format!("downloads:apply_speed_cut:1.0:{}", cut_id)),
                     ],
                     vec![
-                        InlineKeyboardButton::callback(
+                        crate::telegram::cb(
                             "1.25x".to_string(),
                             format!("downloads:apply_speed_cut:1.25:{}", cut_id),
                         ),
-                        InlineKeyboardButton::callback(
-                            "1.5x".to_string(),
-                            format!("downloads:apply_speed_cut:1.5:{}", cut_id),
-                        ),
-                        InlineKeyboardButton::callback(
-                            "2.0x".to_string(),
-                            format!("downloads:apply_speed_cut:2.0:{}", cut_id),
-                        ),
+                        crate::telegram::cb("1.5x".to_string(), format!("downloads:apply_speed_cut:1.5:{}", cut_id)),
+                        crate::telegram::cb("2.0x".to_string(), format!("downloads:apply_speed_cut:2.0:{}", cut_id)),
                     ],
-                    vec![InlineKeyboardButton::callback(
+                    vec![crate::telegram::cb(
                         "❌ Отмена".to_string(),
                         "downloads:cancel".to_string(),
                     )],
@@ -1538,8 +1496,8 @@ async fn add_audio_tools_buttons_from_history(
     db::create_audio_effect_session(&conn, &session).map_err(|e| e.to_string())?;
 
     let keyboard = InlineKeyboardMarkup::new(vec![vec![
-        InlineKeyboardButton::callback("🎛️ Edit Audio", format!("ae:open:{}", session_id)),
-        InlineKeyboardButton::callback("✂️ Cut Audio", format!("ac:open:{}", session_id)),
+        crate::telegram::cb("🎛️ Edit Audio", format!("ae:open:{}", session_id)),
+        crate::telegram::cb("✂️ Cut Audio", format!("ac:open:{}", session_id)),
     ]]);
 
     bot.edit_message_reply_markup(chat_id, message_id)
@@ -1556,7 +1514,7 @@ async fn add_video_cut_button_from_history(
     message_id: MessageId,
     download_id: i64,
 ) -> Result<(), String> {
-    let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+    let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
         "✂️ Cut Video",
         format!("downloads:clip:{}", download_id),
     )]]);

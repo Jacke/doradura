@@ -57,20 +57,20 @@ pub fn create_fallback_keyboard(
         _ => (format!("📥 Скачать ({})", mp3_label), format!("dl:mp3:{}", url_id)),
     };
 
-    let mut rows = vec![vec![InlineKeyboardButton::callback(button_text, callback_data)]];
+    let mut rows = vec![vec![crate::telegram::cb(button_text, callback_data)]];
 
     if default_format == "mp4" || default_format == "mp4+mp3" {
-        rows.push(vec![InlineKeyboardButton::callback(
+        rows.push(vec![crate::telegram::cb(
             format!("🎵 {}", mp3_label),
             format!("dl:mp3:{}", url_id),
         )]);
     }
 
-    rows.push(vec![InlineKeyboardButton::callback(
+    rows.push(vec![crate::telegram::cb(
         "⚙️ Настройки".to_string(),
         format!("pv:set:{}", url_id),
     )]);
-    rows.push(vec![InlineKeyboardButton::callback(
+    rows.push(vec![crate::telegram::cb(
         "❌ Отмена".to_string(),
         format!("pv:cancel:{}", url_id),
     )]);
@@ -136,7 +136,7 @@ pub fn create_video_format_keyboard(
                 })
                 .unwrap_or_else(|| "?".to_string());
 
-            buttons.push(vec![InlineKeyboardButton::callback(
+            buttons.push(vec![crate::telegram::cb(
                 format!("📥 {} ({})", format_info.quality, size_str),
                 format!("dl:{}:{}:{}", default_format, format_info.quality, url_id),
             )]);
@@ -185,7 +185,7 @@ pub fn create_video_format_keyboard(
             })
             .unwrap_or_else(|| "?".to_string());
 
-        row.push(InlineKeyboardButton::callback(
+        row.push(crate::telegram::cb(
             format!("{} {}", format_info.quality, size_str),
             format!("dl:{}:{}:{}", default_format, format_info.quality, url_id),
         ));
@@ -202,13 +202,13 @@ pub fn create_video_format_keyboard(
         buttons.push(row);
     }
 
-    buttons.push(vec![InlineKeyboardButton::callback(
+    buttons.push(vec![crate::telegram::cb(
         format!("🎵 {}", mp3_label),
         format!("dl:mp3:{}", url_id),
     )]);
 
     // Toggle кнопка для выбора типа отправки (Media/Document)
-    buttons.push(vec![InlineKeyboardButton::callback(
+    buttons.push(vec![crate::telegram::cb(
         if send_as_document == 0 {
             "📹 Отправка: Media ✓"
         } else {
@@ -219,13 +219,13 @@ pub fn create_video_format_keyboard(
     )]);
 
     // Кнопка "Настройки"
-    buttons.push(vec![InlineKeyboardButton::callback(
+    buttons.push(vec![crate::telegram::cb(
         "⚙️ Настройки".to_string(),
         format!("pv:set:{}", url_id),
     )]);
 
     // Большая кнопка "Отмена" внизу
-    buttons.push(vec![InlineKeyboardButton::callback(
+    buttons.push(vec![crate::telegram::cb(
         "❌ Отмена".to_string(),
         format!("pv:cancel:{}", url_id),
     )]);
@@ -263,7 +263,7 @@ pub fn create_carousel_keyboard(carousel_count: u8, mask: u32, url_id: &str) -> 
         // Toggle: flip this bit in the mask
         let new_mask = mask ^ (1 << i);
         let callback = format!("ct:{}:{}:{}", i, url_id, new_mask);
-        current_row.push(InlineKeyboardButton::callback(label, callback));
+        current_row.push(crate::telegram::cb(label, callback));
         if current_row.len() == 5 || i == count - 1 {
             rows.push(std::mem::take(&mut current_row));
         }
@@ -272,26 +272,26 @@ pub fn create_carousel_keyboard(carousel_count: u8, mask: u32, url_id: &str) -> 
     // Select all / Clear all
     let full_mask = (1u32 << count) - 1;
     rows.push(vec![
-        InlineKeyboardButton::callback("✅ Все".to_string(), format!("ct:all:{}:{}", url_id, full_mask)),
-        InlineKeyboardButton::callback("❌ Сбросить".to_string(), format!("ct:all:{}:0", url_id)),
+        crate::telegram::cb("✅ Все".to_string(), format!("ct:all:{}:{}", url_id, full_mask)),
+        crate::telegram::cb("❌ Сбросить".to_string(), format!("ct:all:{}:0", url_id)),
     ]);
 
     // Download button with count of selected items
     let selected_count = (0..count).filter(|i| mask & (1 << i) != 0).count();
     let dl_label = format!("📷 Скачать выбранные ({})", selected_count);
-    rows.push(vec![InlineKeyboardButton::callback(
+    rows.push(vec![crate::telegram::cb(
         dl_label,
         format!("dl:photo:{}:{}", url_id, mask),
     )]);
 
     // Settings button
-    rows.push(vec![InlineKeyboardButton::callback(
+    rows.push(vec![crate::telegram::cb(
         "⚙️ Настройки".to_string(),
         format!("pv:set:{}", url_id),
     )]);
 
     // Cancel button
-    rows.push(vec![InlineKeyboardButton::callback(
+    rows.push(vec![crate::telegram::cb(
         "❌ Отмена".to_string(),
         format!("pv:cancel:{}", url_id),
     )]);

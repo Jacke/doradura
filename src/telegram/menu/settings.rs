@@ -5,7 +5,7 @@ use crate::telegram::Bot;
 use fluent_templates::fluent_bundle::FluentArgs;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, MessageId};
+use teloxide::types::{InlineKeyboardMarkup, MessageId};
 use teloxide::RequestError;
 
 use super::helpers::edit_caption_or_text;
@@ -51,7 +51,7 @@ pub async fn show_download_type_menu(
 
     let keyboard = InlineKeyboardMarkup::new(vec![
         vec![
-            InlineKeyboardButton::callback(
+            crate::telegram::cb(
                 if current_format == "mp3" {
                     "🎵 MP3 ✓"
                 } else {
@@ -60,7 +60,7 @@ pub async fn show_download_type_menu(
                 .to_string(),
                 format_callback("mp3"),
             ),
-            InlineKeyboardButton::callback(
+            crate::telegram::cb(
                 if current_format == "mp4" {
                     "🎬 MP4 ✓"
                 } else {
@@ -70,7 +70,7 @@ pub async fn show_download_type_menu(
                 format_callback("mp4"),
             ),
         ],
-        vec![InlineKeyboardButton::callback(
+        vec![crate::telegram::cb(
             if current_format == "mp4+mp3" {
                 "🎬🎵 MP4 + MP3 ✓"
             } else {
@@ -80,7 +80,7 @@ pub async fn show_download_type_menu(
             format_callback("mp4+mp3"),
         )],
         vec![
-            InlineKeyboardButton::callback(
+            crate::telegram::cb(
                 if current_format == "srt" {
                     "📝 SRT ✓"
                 } else {
@@ -89,7 +89,7 @@ pub async fn show_download_type_menu(
                 .to_string(),
                 format_callback("srt"),
             ),
-            InlineKeyboardButton::callback(
+            crate::telegram::cb(
                 if current_format == "txt" {
                     "📄 TXT ✓"
                 } else {
@@ -99,10 +99,7 @@ pub async fn show_download_type_menu(
                 format_callback("txt"),
             ),
         ],
-        vec![InlineKeyboardButton::callback(
-            i18n::t(&lang, "common.back"),
-            back_callback,
-        )],
+        vec![crate::telegram::cb(i18n::t(&lang, "common.back"), back_callback)],
     ]);
 
     let format_display = match current_format.as_str() {
@@ -169,7 +166,7 @@ pub async fn send_download_type_menu_as_new(
 
     let keyboard = InlineKeyboardMarkup::new(vec![
         vec![
-            InlineKeyboardButton::callback(
+            crate::telegram::cb(
                 if current_format == "mp3" {
                     "🎵 MP3 ✓"
                 } else {
@@ -178,7 +175,7 @@ pub async fn send_download_type_menu_as_new(
                 .to_string(),
                 format_callback("mp3"),
             ),
-            InlineKeyboardButton::callback(
+            crate::telegram::cb(
                 if current_format == "mp4" {
                     "🎬 MP4 ✓"
                 } else {
@@ -188,7 +185,7 @@ pub async fn send_download_type_menu_as_new(
                 format_callback("mp4"),
             ),
         ],
-        vec![InlineKeyboardButton::callback(
+        vec![crate::telegram::cb(
             if current_format == "mp4+mp3" {
                 "🎬🎵 MP4 + MP3 ✓"
             } else {
@@ -198,7 +195,7 @@ pub async fn send_download_type_menu_as_new(
             format_callback("mp4+mp3"),
         )],
         vec![
-            InlineKeyboardButton::callback(
+            crate::telegram::cb(
                 if current_format == "srt" {
                     "📝 SRT ✓"
                 } else {
@@ -207,7 +204,7 @@ pub async fn send_download_type_menu_as_new(
                 .to_string(),
                 format_callback("srt"),
             ),
-            InlineKeyboardButton::callback(
+            crate::telegram::cb(
                 if current_format == "txt" {
                     "📄 TXT ✓"
                 } else {
@@ -217,10 +214,7 @@ pub async fn send_download_type_menu_as_new(
                 format_callback("txt"),
             ),
         ],
-        vec![InlineKeyboardButton::callback(
-            i18n::t(&lang, "common.back"),
-            back_callback,
-        )],
+        vec![crate::telegram::cb(i18n::t(&lang, "common.back"), back_callback)],
     ]);
 
     let format_display = match current_format.as_str() {
@@ -261,7 +255,7 @@ pub async fn show_video_quality_menu(
 
     let mut keyboard_rows = vec![
         vec![
-            InlineKeyboardButton::callback(
+            crate::telegram::cb(
                 if current_quality == "1080p" {
                     "🎬 1080p (Full HD) ✓"
                 } else {
@@ -270,7 +264,7 @@ pub async fn show_video_quality_menu(
                 .to_string(),
                 "quality:1080p",
             ),
-            InlineKeyboardButton::callback(
+            crate::telegram::cb(
                 if current_quality == "720p" {
                     "🎬 720p (HD) ✓"
                 } else {
@@ -281,7 +275,7 @@ pub async fn show_video_quality_menu(
             ),
         ],
         vec![
-            InlineKeyboardButton::callback(
+            crate::telegram::cb(
                 if current_quality == "480p" {
                     "🎬 480p (SD) ✓"
                 } else {
@@ -290,7 +284,7 @@ pub async fn show_video_quality_menu(
                 .to_string(),
                 "quality:480p",
             ),
-            InlineKeyboardButton::callback(
+            crate::telegram::cb(
                 if current_quality == "360p" {
                     "🎬 360p (Low) ✓"
                 } else {
@@ -300,7 +294,7 @@ pub async fn show_video_quality_menu(
                 "quality:360p",
             ),
         ],
-        vec![InlineKeyboardButton::callback(
+        vec![crate::telegram::cb(
             if current_quality == "best" {
                 "🎬 Best (Авто) ✓"
             } else {
@@ -309,7 +303,7 @@ pub async fn show_video_quality_menu(
             .to_string(),
             "quality:best",
         )],
-        vec![InlineKeyboardButton::callback(
+        vec![crate::telegram::cb(
             if send_as_document == 0 {
                 i18n::t(&lang, "menu.send_video_media")
             } else {
@@ -329,13 +323,13 @@ pub async fn show_video_quality_menu(
         };
         burn_args.set("status", status);
 
-        keyboard_rows.push(vec![InlineKeyboardButton::callback(
+        keyboard_rows.push(vec![crate::telegram::cb(
             i18n::t_args(&lang, "menu.burn_subtitles_button", &burn_args),
             "video:toggle_burn_subs",
         )]);
     }
 
-    keyboard_rows.push(vec![InlineKeyboardButton::callback(
+    keyboard_rows.push(vec![crate::telegram::cb(
         i18n::t(&lang, "common.back"),
         url_id.map_or_else(|| "back:main".to_string(), |id| format!("back:main:preview:{}", id)),
     )]);
@@ -390,7 +384,7 @@ pub async fn show_audio_bitrate_menu(
 
     let keyboard = InlineKeyboardMarkup::new(vec![
         vec![
-            InlineKeyboardButton::callback(
+            crate::telegram::cb(
                 if current_bitrate == "128k" {
                     "🎵 128 kbps ✓"
                 } else {
@@ -399,7 +393,7 @@ pub async fn show_audio_bitrate_menu(
                 .to_string(),
                 "bitrate:128k",
             ),
-            InlineKeyboardButton::callback(
+            crate::telegram::cb(
                 if current_bitrate == "192k" {
                     "🎵 192 kbps ✓"
                 } else {
@@ -410,7 +404,7 @@ pub async fn show_audio_bitrate_menu(
             ),
         ],
         vec![
-            InlineKeyboardButton::callback(
+            crate::telegram::cb(
                 if current_bitrate == "256k" {
                     "🎵 256 kbps ✓"
                 } else {
@@ -419,7 +413,7 @@ pub async fn show_audio_bitrate_menu(
                 .to_string(),
                 "bitrate:256k",
             ),
-            InlineKeyboardButton::callback(
+            crate::telegram::cb(
                 if current_bitrate == "320k" {
                     "🎵 320 kbps ✓"
                 } else {
@@ -429,7 +423,7 @@ pub async fn show_audio_bitrate_menu(
                 "bitrate:320k",
             ),
         ],
-        vec![InlineKeyboardButton::callback(
+        vec![crate::telegram::cb(
             if send_audio_as_document == 0 {
                 i18n::t(&lang, "menu.send_audio_media")
             } else {
@@ -437,7 +431,7 @@ pub async fn show_audio_bitrate_menu(
             },
             "audio_send_type:toggle",
         )],
-        vec![InlineKeyboardButton::callback(
+        vec![crate::telegram::cb(
             i18n::t(&lang, "common.back"),
             url_id.map_or_else(|| "back:main".to_string(), |id| format!("back:main:preview:{}", id)),
         )],
@@ -498,10 +492,10 @@ pub async fn show_language_menu(
         } else {
             format!("language:set:{}", code)
         };
-        buttons.push(vec![InlineKeyboardButton::callback(label, callback)]);
+        buttons.push(vec![crate::telegram::cb(label, callback)]);
     }
 
-    buttons.push(vec![InlineKeyboardButton::callback(
+    buttons.push(vec![crate::telegram::cb(
         i18n::t(&lang, "common.back"),
         url_id
             .map(|id| format!("back:preview:{}", id))
@@ -536,7 +530,7 @@ pub async fn show_language_selection_menu(bot: &Bot, chat_id: ChatId) -> Respons
         let label = format!("{} {}", flag, name);
         // Use special callback for new user language selection
         let callback = format!("language:select_new:{}", code);
-        buttons.push(vec![InlineKeyboardButton::callback(label, callback)]);
+        buttons.push(vec![crate::telegram::cb(label, callback)]);
     }
 
     let keyboard = InlineKeyboardMarkup::new(buttons);

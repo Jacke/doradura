@@ -10,7 +10,7 @@ use crate::telegram::admin;
 use crate::telegram::Bot;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, ParseMode};
+use teloxide::types::{InlineKeyboardMarkup, ParseMode};
 
 /// Handles /analytics command - shows overview dashboard
 ///
@@ -38,10 +38,10 @@ pub async fn handle_analytics_command(bot: Bot, msg: Message, db_pool: Arc<DbPoo
     // Create keyboard with action buttons
     let keyboard = InlineKeyboardMarkup::new(vec![
         vec![
-            InlineKeyboardButton::callback("🔄 Обновить", "analytics:refresh"),
-            InlineKeyboardButton::callback("📊 Детали", "analytics:details"),
+            crate::telegram::cb("🔄 Обновить", "analytics:refresh"),
+            crate::telegram::cb("📊 Детали", "analytics:details"),
         ],
-        vec![InlineKeyboardButton::callback("🔙 Закрыть", "analytics:close")],
+        vec![crate::telegram::cb("🔙 Закрыть", "analytics:close")],
     ]);
 
     bot.send_message(chat_id, dashboard)

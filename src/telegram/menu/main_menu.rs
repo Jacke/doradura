@@ -7,7 +7,7 @@ use crate::telegram::Bot;
 use fluent_templates::fluent_bundle::FluentArgs;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, MessageId};
+use teloxide::types::{InlineKeyboardMarkup, MessageId};
 use teloxide::RequestError;
 use unic_langid::LanguageIdentifier;
 
@@ -45,23 +45,23 @@ pub async fn show_main_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) ->
     bitrate_args.set("bitrate", bitrate_display);
 
     let keyboard = InlineKeyboardMarkup::new(vec![
-        vec![InlineKeyboardButton::callback(
+        vec![crate::telegram::cb(
             i18n::t_args(&lang, "menu.video_quality_button", &quality_args),
             "mode:video_quality",
         )],
-        vec![InlineKeyboardButton::callback(
+        vec![crate::telegram::cb(
             i18n::t_args(&lang, "menu.audio_bitrate_button", &bitrate_args),
             "mode:audio_bitrate",
         )],
-        vec![InlineKeyboardButton::callback(
+        vec![crate::telegram::cb(
             i18n::t(&lang, "menu.services_button"),
             "mode:services",
         )],
-        vec![InlineKeyboardButton::callback(
+        vec![crate::telegram::cb(
             i18n::t(&lang, "menu.subscription_button"),
             "mode:subscription",
         )],
-        vec![InlineKeyboardButton::callback(
+        vec![crate::telegram::cb(
             i18n::t(&lang, "menu.language_button"),
             "mode:language",
         )],
@@ -88,20 +88,20 @@ pub(crate) fn build_enhanced_menu(
 
     let keyboard = InlineKeyboardMarkup::new(vec![
         vec![
-            InlineKeyboardButton::callback(i18n::t(lang, "menu.button_settings"), "main:settings"),
-            InlineKeyboardButton::callback(i18n::t(lang, "menu.button_current"), "main:current"),
+            crate::telegram::cb(i18n::t(lang, "menu.button_settings"), "main:settings"),
+            crate::telegram::cb(i18n::t(lang, "menu.button_current"), "main:current"),
         ],
         vec![
-            InlineKeyboardButton::callback(i18n::t(lang, "menu.button_stats"), "main:stats"),
-            InlineKeyboardButton::callback(i18n::t(lang, "menu.button_history"), "main:history"),
+            crate::telegram::cb(i18n::t(lang, "menu.button_stats"), "main:stats"),
+            crate::telegram::cb(i18n::t(lang, "menu.button_history"), "main:history"),
         ],
         vec![
-            InlineKeyboardButton::callback(i18n::t(lang, "menu.services_button"), "main:services"),
-            InlineKeyboardButton::callback(i18n::t(lang, "menu.button_subscription"), "main:subscription"),
+            crate::telegram::cb(i18n::t(lang, "menu.services_button"), "main:services"),
+            crate::telegram::cb(i18n::t(lang, "menu.button_subscription"), "main:subscription"),
         ],
         vec![
-            InlineKeyboardButton::callback(i18n::t(lang, "menu.language_button"), "mode:language"),
-            InlineKeyboardButton::callback(i18n::t(lang, "menu.button_feedback"), "main:feedback"),
+            crate::telegram::cb(i18n::t(lang, "menu.language_button"), "mode:language"),
+            crate::telegram::cb(i18n::t(lang, "menu.button_feedback"), "main:feedback"),
         ],
     ]);
 
@@ -154,23 +154,23 @@ pub(crate) async fn edit_main_menu(
     bitrate_args.set("bitrate", bitrate_display);
 
     let mut keyboard_rows = vec![
-        vec![InlineKeyboardButton::callback(
+        vec![crate::telegram::cb(
             i18n::t_args(&lang, "menu.video_quality_button", &quality_args),
             mode_callback("video_quality"),
         )],
-        vec![InlineKeyboardButton::callback(
+        vec![crate::telegram::cb(
             i18n::t_args(&lang, "menu.audio_bitrate_button", &bitrate_args),
             mode_callback("audio_bitrate"),
         )],
-        vec![InlineKeyboardButton::callback(
+        vec![crate::telegram::cb(
             i18n::t(&lang, "menu.services_button"),
             mode_callback("services"),
         )],
-        vec![InlineKeyboardButton::callback(
+        vec![crate::telegram::cb(
             i18n::t(&lang, "menu.subscription_button"),
             mode_callback("subscription"),
         )],
-        vec![InlineKeyboardButton::callback(
+        vec![crate::telegram::cb(
             i18n::t(&lang, "menu.language_button"),
             mode_callback("language"),
         )],
@@ -178,7 +178,7 @@ pub(crate) async fn edit_main_menu(
 
     // Add a Back button when the menu is opened from preview
     if let Some(id) = url_id {
-        keyboard_rows.push(vec![InlineKeyboardButton::callback(
+        keyboard_rows.push(vec![crate::telegram::cb(
             i18n::t(&lang, "menu.back_to_preview"),
             format!("back:preview:{}", id),
         )]);
@@ -242,23 +242,23 @@ pub async fn send_main_menu_as_new(
     bitrate_args.set("bitrate", bitrate_display);
 
     let mut keyboard_rows = vec![
-        vec![InlineKeyboardButton::callback(
+        vec![crate::telegram::cb(
             i18n::t_args(&lang, "menu.video_quality_button", &quality_args),
             mode_callback("video_quality"),
         )],
-        vec![InlineKeyboardButton::callback(
+        vec![crate::telegram::cb(
             i18n::t_args(&lang, "menu.audio_bitrate_button", &bitrate_args),
             mode_callback("audio_bitrate"),
         )],
-        vec![InlineKeyboardButton::callback(
+        vec![crate::telegram::cb(
             i18n::t(&lang, "menu.services_button"),
             mode_callback("services"),
         )],
-        vec![InlineKeyboardButton::callback(
+        vec![crate::telegram::cb(
             i18n::t(&lang, "menu.subscription_button"),
             mode_callback("subscription"),
         )],
-        vec![InlineKeyboardButton::callback(
+        vec![crate::telegram::cb(
             i18n::t(&lang, "menu.language_button"),
             mode_callback("language"),
         )],
@@ -271,7 +271,7 @@ pub async fn send_main_menu_as_new(
         } else {
             format!("back:preview:{}", id)
         };
-        keyboard_rows.push(vec![InlineKeyboardButton::callback(
+        keyboard_rows.push(vec![crate::telegram::cb(
             i18n::t(&lang, "menu.back_to_preview"),
             back_callback,
         )]);
@@ -536,7 +536,7 @@ pub(crate) async fn show_current_settings_detail(
         video_send_type, audio_send_type, plan_display
     ));
 
-    let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+    let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
         "🔙 Назад в меню".to_string(),
         "back:enhanced_main",
     )]]);
@@ -575,7 +575,7 @@ pub(crate) async fn show_help_menu(bot: &Bot, chat_id: ChatId, message_id: Messa
         admin_line
     );
 
-    let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+    let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
         "🔙 Назад в меню".to_string(),
         "back:enhanced_main",
     )]]);

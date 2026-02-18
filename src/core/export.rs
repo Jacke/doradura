@@ -84,12 +84,13 @@ pub async fn show_export_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) 
             .await;
     }
 
-    use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
+    use crate::telegram::cb;
+    use teloxide::types::InlineKeyboardMarkup;
 
     let keyboard = InlineKeyboardMarkup::new(vec![vec![
-        InlineKeyboardButton::callback("📄 TXT".to_string(), "export:txt"),
-        InlineKeyboardButton::callback("📊 CSV".to_string(), "export:csv"),
-        InlineKeyboardButton::callback("📋 JSON".to_string(), "export:json"),
+        cb("📄 TXT".to_string(), "export:txt"),
+        cb("📊 CSV".to_string(), "export:csv"),
+        cb("📋 JSON".to_string(), "export:json"),
     ]]);
 
     bot.send_message(

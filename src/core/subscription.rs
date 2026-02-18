@@ -4,7 +4,7 @@ use crate::storage::db::{self, DbPool};
 use crate::telegram::Bot;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, Seconds};
+use teloxide::types::{InlineKeyboardMarkup, Seconds};
 use teloxide::RequestError;
 use url::Url;
 
@@ -410,26 +410,17 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
 
     if !has_subscription {
         // Показываем кнопки подписки только если нет активной подписки
-        keyboard_rows.push(vec![InlineKeyboardButton::callback(
-            "⭐ Premium".to_string(),
-            "subscribe:premium",
-        )]);
-        keyboard_rows.push(vec![InlineKeyboardButton::callback(
-            "👑 VIP".to_string(),
-            "subscribe:vip",
-        )]);
+        keyboard_rows.push(vec![crate::telegram::cb("⭐ Premium".to_string(), "subscribe:premium")]);
+        keyboard_rows.push(vec![crate::telegram::cb("👑 VIP".to_string(), "subscribe:vip")]);
     } else if subscription_is_recurring && subscription_charge_id.is_some() {
         // Показываем кнопку отмены автопродления только для рекуррентных подписок
-        keyboard_rows.push(vec![InlineKeyboardButton::callback(
+        keyboard_rows.push(vec![crate::telegram::cb(
             "❌ Отменить автопродление".to_string(),
             "subscription:cancel",
         )]);
     }
 
-    keyboard_rows.push(vec![InlineKeyboardButton::callback(
-        "🔙 Назад".to_string(),
-        "back:main",
-    )]);
+    keyboard_rows.push(vec![crate::telegram::cb("🔙 Назад".to_string(), "back:main")]);
 
     let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
 

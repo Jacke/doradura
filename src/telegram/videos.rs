@@ -162,7 +162,7 @@ pub async fn show_videos_page(
                 upload.title.clone()
             }
         );
-        keyboard_rows.push(vec![InlineKeyboardButton::callback(
+        keyboard_rows.push(vec![crate::telegram::cb(
             button_text,
             format!("videos:open:{}", upload.id),
         )]);
@@ -172,7 +172,7 @@ pub async fn show_videos_page(
     let mut nav_buttons = Vec::new();
 
     if current_page > 0 {
-        nav_buttons.push(InlineKeyboardButton::callback(
+        nav_buttons.push(crate::telegram::cb(
             "⬅️".to_string(),
             format!(
                 "videos:page:{}:{}:{}",
@@ -184,7 +184,7 @@ pub async fn show_videos_page(
     }
 
     if total_pages > 1 {
-        nav_buttons.push(InlineKeyboardButton::callback(
+        nav_buttons.push(crate::telegram::cb(
             format!("{}/{}", current_page + 1, total_pages),
             format!(
                 "videos:page:{}:{}:{}",
@@ -196,7 +196,7 @@ pub async fn show_videos_page(
     }
 
     if current_page < total_pages - 1 {
-        nav_buttons.push(InlineKeyboardButton::callback(
+        nav_buttons.push(crate::telegram::cb(
             "➡️".to_string(),
             format!(
                 "videos:page:{}:{}:{}",
@@ -215,28 +215,28 @@ pub async fn show_videos_page(
     let mut filter_row = Vec::new();
 
     if media_type_filter.as_deref() != Some("video") {
-        filter_row.push(InlineKeyboardButton::callback(
+        filter_row.push(crate::telegram::cb(
             "🎬 Видео".to_string(),
             format!("videos:filter:video:{}", search_text.as_deref().unwrap_or("")),
         ));
     }
 
     if media_type_filter.as_deref() != Some("photo") {
-        filter_row.push(InlineKeyboardButton::callback(
+        filter_row.push(crate::telegram::cb(
             "📷 Фото".to_string(),
             format!("videos:filter:photo:{}", search_text.as_deref().unwrap_or("")),
         ));
     }
 
     if media_type_filter.as_deref() != Some("document") {
-        filter_row.push(InlineKeyboardButton::callback(
+        filter_row.push(crate::telegram::cb(
             "📄 Документы".to_string(),
             format!("videos:filter:document:{}", search_text.as_deref().unwrap_or("")),
         ));
     }
 
     if media_type_filter.is_some() {
-        filter_row.push(InlineKeyboardButton::callback(
+        filter_row.push(crate::telegram::cb(
             "🔄 Все".to_string(),
             format!("videos:filter:all:{}", search_text.as_deref().unwrap_or("")),
         ));
@@ -247,7 +247,7 @@ pub async fn show_videos_page(
     }
 
     // Close button
-    keyboard_rows.push(vec![InlineKeyboardButton::callback(
+    keyboard_rows.push(vec![crate::telegram::cb(
         "❌ Закрыть".to_string(),
         "videos:close".to_string(),
     )]);
@@ -268,11 +268,8 @@ fn build_upload_action_keyboard(upload: &UploadEntry) -> InlineKeyboardMarkup {
         "video" => {
             // Video: Send submenu + Convert submenu
             rows.push(vec![
-                InlineKeyboardButton::callback(
-                    "📤 Отправить".to_string(),
-                    format!("videos:submenu:send:{}", upload.id),
-                ),
-                InlineKeyboardButton::callback(
+                crate::telegram::cb("📤 Отправить".to_string(), format!("videos:submenu:send:{}", upload.id)),
+                crate::telegram::cb(
                     "🔄 Конвертировать".to_string(),
                     format!("videos:submenu:convert:{}", upload.id),
                 ),
@@ -280,14 +277,14 @@ fn build_upload_action_keyboard(upload: &UploadEntry) -> InlineKeyboardMarkup {
         }
         "photo" | "audio" => {
             // Photo/Audio: Send submenu only (no conversions yet)
-            rows.push(vec![InlineKeyboardButton::callback(
+            rows.push(vec![crate::telegram::cb(
                 "📤 Отправить".to_string(),
                 format!("videos:submenu:send:{}", upload.id),
             )]);
         }
         _ => {
             // Document: Send directly (single option, no submenu)
-            rows.push(vec![InlineKeyboardButton::callback(
+            rows.push(vec![crate::telegram::cb(
                 "📤 Отправить".to_string(),
                 format!("videos:send:document:{}", upload.id),
             )]);
@@ -296,8 +293,8 @@ fn build_upload_action_keyboard(upload: &UploadEntry) -> InlineKeyboardMarkup {
 
     // Delete + Cancel
     rows.push(vec![
-        InlineKeyboardButton::callback("🗑️ Удалить".to_string(), format!("videos:delete:{}", upload.id)),
-        InlineKeyboardButton::callback("❌ Отмена".to_string(), "videos:cancel".to_string()),
+        crate::telegram::cb("🗑️ Удалить".to_string(), format!("videos:delete:{}", upload.id)),
+        crate::telegram::cb("❌ Отмена".to_string(), "videos:cancel".to_string()),
     ]);
 
     InlineKeyboardMarkup::new(rows)
@@ -310,33 +307,24 @@ fn build_send_submenu_keyboard(upload: &UploadEntry) -> InlineKeyboardMarkup {
     match upload.media_type.as_str() {
         "video" => {
             rows.push(vec![
-                InlineKeyboardButton::callback("📤 Видео".to_string(), format!("videos:send:video:{}", upload.id)),
-                InlineKeyboardButton::callback(
-                    "📎 Документ".to_string(),
-                    format!("videos:send:document:{}", upload.id),
-                ),
+                crate::telegram::cb("📤 Видео".to_string(), format!("videos:send:video:{}", upload.id)),
+                crate::telegram::cb("📎 Документ".to_string(), format!("videos:send:document:{}", upload.id)),
             ]);
         }
         "photo" => {
             rows.push(vec![
-                InlineKeyboardButton::callback("📤 Фото".to_string(), format!("videos:send:photo:{}", upload.id)),
-                InlineKeyboardButton::callback(
-                    "📎 Документ".to_string(),
-                    format!("videos:send:document:{}", upload.id),
-                ),
+                crate::telegram::cb("📤 Фото".to_string(), format!("videos:send:photo:{}", upload.id)),
+                crate::telegram::cb("📎 Документ".to_string(), format!("videos:send:document:{}", upload.id)),
             ]);
         }
         "audio" => {
             rows.push(vec![
-                InlineKeyboardButton::callback("📤 Аудио".to_string(), format!("videos:send:audio:{}", upload.id)),
-                InlineKeyboardButton::callback(
-                    "📎 Документ".to_string(),
-                    format!("videos:send:document:{}", upload.id),
-                ),
+                crate::telegram::cb("📤 Аудио".to_string(), format!("videos:send:audio:{}", upload.id)),
+                crate::telegram::cb("📎 Документ".to_string(), format!("videos:send:document:{}", upload.id)),
             ]);
         }
         _ => {
-            rows.push(vec![InlineKeyboardButton::callback(
+            rows.push(vec![crate::telegram::cb(
                 "📤 Отправить".to_string(),
                 format!("videos:send:document:{}", upload.id),
             )]);
@@ -344,7 +332,7 @@ fn build_send_submenu_keyboard(upload: &UploadEntry) -> InlineKeyboardMarkup {
     }
 
     // Back button
-    rows.push(vec![InlineKeyboardButton::callback(
+    rows.push(vec![crate::telegram::cb(
         "⬅️ Назад".to_string(),
         format!("videos:open:{}", upload.id),
     )]);
@@ -356,15 +344,15 @@ fn build_send_submenu_keyboard(upload: &UploadEntry) -> InlineKeyboardMarkup {
 fn build_convert_submenu_keyboard(upload: &UploadEntry) -> InlineKeyboardMarkup {
     let rows = vec![
         vec![
-            InlineKeyboardButton::callback("⭕️ Кружок".to_string(), format!("videos:convert:circle:{}", upload.id)),
-            InlineKeyboardButton::callback("🎵 MP3".to_string(), format!("videos:convert:audio:{}", upload.id)),
+            crate::telegram::cb("⭕️ Кружок".to_string(), format!("videos:convert:circle:{}", upload.id)),
+            crate::telegram::cb("🎵 MP3".to_string(), format!("videos:convert:audio:{}", upload.id)),
         ],
         vec![
-            InlineKeyboardButton::callback("🎞️ GIF".to_string(), format!("videos:convert:gif:{}", upload.id)),
-            InlineKeyboardButton::callback("📦 Сжать".to_string(), format!("videos:convert:compress:{}", upload.id)),
+            crate::telegram::cb("🎞️ GIF".to_string(), format!("videos:convert:gif:{}", upload.id)),
+            crate::telegram::cb("📦 Сжать".to_string(), format!("videos:convert:compress:{}", upload.id)),
         ],
         // Back button
-        vec![InlineKeyboardButton::callback(
+        vec![crate::telegram::cb(
             "⬅️ Назад".to_string(),
             format!("videos:open:{}", upload.id),
         )],
@@ -598,11 +586,11 @@ pub async fn handle_videos_callback(
 
             // Confirm deletion
             let keyboard = InlineKeyboardMarkup::new(vec![vec![
-                InlineKeyboardButton::callback(
+                crate::telegram::cb(
                     "✅ Да, удалить".to_string(),
                     format!("videos:confirm_delete:{}", upload_id),
                 ),
-                InlineKeyboardButton::callback("❌ Отмена".to_string(), "videos:cancel".to_string()),
+                crate::telegram::cb("❌ Отмена".to_string(), "videos:cancel".to_string()),
             ]]);
 
             if let Some(upload) = get_upload_by_id(&conn, chat_id.0, upload_id)
@@ -663,7 +651,7 @@ pub async fn handle_videos_callback(
                         let mut current_row: Vec<InlineKeyboardButton> = vec![];
 
                         for dur in durations {
-                            let button = InlineKeyboardButton::callback(
+                            let button = crate::telegram::cb(
                                 format!("{}s", dur),
                                 format!("videos:circle_speed:{}:{}", upload_id, dur),
                             );
@@ -683,20 +671,20 @@ pub async fn handle_videos_callback(
                         if video_duration > VIDEO_NOTE_MAX_DURATION {
                             if let Some(split_info) = calculate_video_note_split(video_duration) {
                                 let full_video_label = format!("📼 Всё видео ({} кружков)", split_info.num_parts);
-                                rows.push(vec![InlineKeyboardButton::callback(
+                                rows.push(vec![crate::telegram::cb(
                                     full_video_label,
                                     format!("videos:circle_speed:{}:{}", upload_id, video_duration),
                                 )]);
                             } else if is_too_long_for_split(video_duration) {
                                 // Video too long - show warning button (disabled)
-                                rows.push(vec![InlineKeyboardButton::callback(
+                                rows.push(vec![crate::telegram::cb(
                                     "⚠️ Видео слишком длинное (макс. 6 мин)".to_string(),
                                     "videos:noop".to_string(),
                                 )]);
                             }
                         }
 
-                        rows.push(vec![InlineKeyboardButton::callback(
+                        rows.push(vec![crate::telegram::cb(
                             "❌ Отмена".to_string(),
                             "videos:cancel".to_string(),
                         )]);
@@ -760,7 +748,7 @@ pub async fn handle_videos_callback(
             let speed_row: Vec<InlineKeyboardButton> = speeds
                 .iter()
                 .map(|(label, val)| {
-                    InlineKeyboardButton::callback(
+                    crate::telegram::cb(
                         label.to_string(),
                         format!("convert:circle:{}:{}:{}", upload_id, duration, val),
                     )
@@ -769,7 +757,7 @@ pub async fn handle_videos_callback(
 
             let keyboard = InlineKeyboardMarkup::new(vec![
                 speed_row,
-                vec![InlineKeyboardButton::callback(
+                vec![crate::telegram::cb(
                     "⬅️ Назад".to_string(),
                     format!("videos:convert:circle:{}", upload_id),
                 )],

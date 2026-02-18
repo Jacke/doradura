@@ -13,7 +13,7 @@ use crate::telegram::setup_chat_bot_commands;
 use crate::telegram::Bot;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, ParseMode};
+use teloxide::types::{InlineKeyboardMarkup, ParseMode};
 use teloxide::RequestError;
 use url::Url;
 
@@ -1032,10 +1032,10 @@ pub async fn handle_menu_callback(
 
                         let keyboard = InlineKeyboardMarkup::new(vec![
                             vec![
-                                InlineKeyboardButton::callback("🔄 Обновить", "analytics:refresh"),
-                                InlineKeyboardButton::callback("📊 Детали", "analytics:details"),
+                                crate::telegram::cb("🔄 Обновить", "analytics:refresh"),
+                                crate::telegram::cb("📊 Детали", "analytics:details"),
                             ],
-                            vec![InlineKeyboardButton::callback("🔙 Закрыть", "analytics:close")],
+                            vec![crate::telegram::cb("🔙 Закрыть", "analytics:close")],
                         ]);
 
                         bot.edit_message_text(chat_id, message_id, dashboard)
@@ -1047,10 +1047,10 @@ pub async fn handle_menu_callback(
                         // Show detailed metrics menu
                         let details_text = "📊 *Детальные Метрики*\n\nВыберите категорию:";
                         let keyboard = InlineKeyboardMarkup::new(vec![
-                            vec![InlineKeyboardButton::callback("⚡ Performance", "metrics:performance")],
-                            vec![InlineKeyboardButton::callback("💰 Business", "metrics:business")],
-                            vec![InlineKeyboardButton::callback("👥 Engagement", "metrics:engagement")],
-                            vec![InlineKeyboardButton::callback("🔙 Назад", "analytics:refresh")],
+                            vec![crate::telegram::cb("⚡ Performance", "metrics:performance")],
+                            vec![crate::telegram::cb("💰 Business", "metrics:business")],
+                            vec![crate::telegram::cb("👥 Engagement", "metrics:engagement")],
+                            vec![crate::telegram::cb("🔙 Назад", "analytics:refresh")],
                         ]);
 
                         bot.edit_message_text(chat_id, message_id, details_text)
@@ -1082,7 +1082,7 @@ pub async fn handle_menu_callback(
                 use crate::telegram::analytics::generate_metrics_report;
                 let metrics_text = generate_metrics_report(&db_pool, Some(category.to_string())).await;
 
-                let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+                let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
                     "🔙 К общей панели",
                     "analytics:refresh",
                 )]]);
@@ -1203,22 +1203,20 @@ pub async fn handle_menu_callback(
                                         };
 
                                         // Build an action keyboard
-                                        use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
-
                                         let keyboard = InlineKeyboardMarkup::new(vec![
-                                            vec![InlineKeyboardButton::callback(
+                                            vec![crate::telegram::cb(
                                                 "🌟 Set Free",
                                                 format!("admin:setplan:{}:free", user_id),
                                             )],
-                                            vec![InlineKeyboardButton::callback(
+                                            vec![crate::telegram::cb(
                                                 "⭐ Set Premium",
                                                 format!("admin:setplan:{}:premium", user_id),
                                             )],
-                                            vec![InlineKeyboardButton::callback(
+                                            vec![crate::telegram::cb(
                                                 "👑 Set VIP",
                                                 format!("admin:setplan:{}:vip", user_id),
                                             )],
-                                            vec![InlineKeyboardButton::callback("🔙 Назад к списку", "admin:back")],
+                                            vec![crate::telegram::cb("🔙 Назад к списку", "admin:back")],
                                         ]);
 
                                         let _ = bot
@@ -1320,8 +1318,6 @@ pub async fn handle_menu_callback(
                     match db::get_connection(&db_pool) {
                         Ok(conn) => match db::get_all_users(&conn) {
                             Ok(users) => {
-                                use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
-
                                 let mut keyboard_rows = Vec::new();
                                 let mut current_row = Vec::new();
 
@@ -1337,7 +1333,7 @@ pub async fn handle_menu_callback(
                                     let button_text = format!("{} {}", plan_emoji, username_display);
                                     let callback_data = format!("admin:user:{}", user.telegram_id);
 
-                                    current_row.push(InlineKeyboardButton::callback(button_text, callback_data));
+                                    current_row.push(crate::telegram::cb(button_text, callback_data));
 
                                     if current_row.len() == 2 {
                                         keyboard_rows.push(current_row.clone());

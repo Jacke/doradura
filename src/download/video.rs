@@ -249,12 +249,11 @@ pub async fn download_and_send_video(
                                     let bot_for_button = bot_clone.clone();
                                     let msg_id = sent_message.id;
                                     tokio::spawn(async move {
-                                        use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
-                                        let keyboard =
-                                            InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
-                                                "✂️ Cut Video",
-                                                format!("downloads:clip:{}", id),
-                                            )]]);
+                                        use teloxide::types::InlineKeyboardMarkup;
+                                        let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
+                                            "✂️ Cut Video",
+                                            format!("downloads:clip:{}", id),
+                                        )]]);
                                         if let Err(e) = bot_for_button
                                             .edit_message_reply_markup(chat_id, msg_id)
                                             .reply_markup(keyboard)

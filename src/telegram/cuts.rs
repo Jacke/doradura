@@ -46,7 +46,7 @@ fn build_duration_buttons_for_cut(
         .iter()
         .map(|&dur| {
             let label = format!("▶ 0:00–{}", format_duration_short(dur));
-            InlineKeyboardButton::callback(label, format!("cuts:dur:first:{}:{}", cut_id, dur))
+            crate::telegram::cb(label, format!("cuts:dur:first:{}:{}", cut_id, dur))
         })
         .collect();
 
@@ -55,7 +55,7 @@ fn build_duration_buttons_for_cut(
         .iter()
         .map(|&dur| {
             let label = format!("◀ ...–{}", format_duration_short(dur));
-            InlineKeyboardButton::callback(label, format!("cuts:dur:last:{}:{}", cut_id, dur))
+            crate::telegram::cb(label, format!("cuts:dur:last:{}:{}", cut_id, dur))
         })
         .collect();
 
@@ -63,8 +63,8 @@ fn build_duration_buttons_for_cut(
     let btn_middle = crate::i18n::t(lang, "video_circle.btn_middle");
     let btn_full = crate::i18n::t(lang, "video_circle.btn_full");
     let special_row = vec![
-        InlineKeyboardButton::callback(btn_middle, format!("cuts:dur:middle:{}:30", cut_id)),
-        InlineKeyboardButton::callback(btn_full, format!("cuts:dur:full:{}", cut_id)),
+        crate::telegram::cb(btn_middle, format!("cuts:dur:middle:{}:30", cut_id)),
+        crate::telegram::cb(btn_full, format!("cuts:dur:full:{}", cut_id)),
     ];
 
     vec![first_row, last_row, special_row]
@@ -139,7 +139,7 @@ pub async fn show_cuts_page(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>, pa
         } else {
             cut.title.clone()
         };
-        rows.push(vec![InlineKeyboardButton::callback(
+        rows.push(vec![crate::telegram::cb(
             format!(
                 "{} {}",
                 if cut.output_kind == "video_note" {
@@ -155,19 +155,19 @@ pub async fn show_cuts_page(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>, pa
 
     let mut nav = Vec::new();
     if current_page > 0 {
-        nav.push(InlineKeyboardButton::callback(
+        nav.push(crate::telegram::cb(
             "⬅️".to_string(),
             format!("cuts:page:{}", current_page - 1),
         ));
     }
     if total_pages > 1 {
-        nav.push(InlineKeyboardButton::callback(
+        nav.push(crate::telegram::cb(
             format!("{}/{}", current_page + 1, total_pages),
             format!("cuts:page:{}", current_page),
         ));
     }
     if current_page + 1 < total_pages {
-        nav.push(InlineKeyboardButton::callback(
+        nav.push(crate::telegram::cb(
             "➡️".to_string(),
             format!("cuts:page:{}", current_page + 1),
         ));
@@ -176,7 +176,7 @@ pub async fn show_cuts_page(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>, pa
         rows.push(nav);
     }
 
-    rows.push(vec![InlineKeyboardButton::callback(
+    rows.push(vec![crate::telegram::cb(
         "❌ Закрыть".to_string(),
         "cuts:close".to_string(),
     )]);
@@ -224,25 +224,19 @@ pub async fn handle_cuts_callback(
             {
                 let mut options = Vec::new();
                 options.push(vec![
-                    InlineKeyboardButton::callback("🎬 Как видео".to_string(), format!("cuts:send:video:{}", cut_id)),
-                    InlineKeyboardButton::callback(
-                        "📎 Как документ".to_string(),
-                        format!("cuts:send:document:{}", cut_id),
-                    ),
+                    crate::telegram::cb("🎬 Как видео".to_string(), format!("cuts:send:video:{}", cut_id)),
+                    crate::telegram::cb("📎 Как документ".to_string(), format!("cuts:send:document:{}", cut_id)),
                 ]);
                 options.push(vec![
-                    InlineKeyboardButton::callback("✂️ Вырезка".to_string(), format!("cuts:clip:{}", cut_id)),
-                    InlineKeyboardButton::callback("⭕️ Кружок".to_string(), format!("cuts:circle:{}", cut_id)),
-                    InlineKeyboardButton::callback(
-                        "🔔 Рингтон".to_string(),
-                        format!("cuts:iphone_ringtone:{}", cut_id),
-                    ),
+                    crate::telegram::cb("✂️ Вырезка".to_string(), format!("cuts:clip:{}", cut_id)),
+                    crate::telegram::cb("⭕️ Кружок".to_string(), format!("cuts:circle:{}", cut_id)),
+                    crate::telegram::cb("🔔 Рингтон".to_string(), format!("cuts:iphone_ringtone:{}", cut_id)),
                 ]);
-                options.push(vec![InlineKeyboardButton::callback(
+                options.push(vec![crate::telegram::cb(
                     "⚙️ Скорость".to_string(),
                     format!("cuts:speed:{}", cut_id),
                 )]);
-                options.push(vec![InlineKeyboardButton::callback(
+                options.push(vec![crate::telegram::cb(
                     "❌ Отмена".to_string(),
                     "cuts:cancel".to_string(),
                 )]);
@@ -386,7 +380,7 @@ pub async fn handle_cuts_callback(
                     teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
 
-                let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+                let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
                     "❌ Отмена".to_string(),
                     "cuts:clip_cancel".to_string(),
                 )]]);
@@ -417,25 +411,16 @@ pub async fn handle_cuts_callback(
             {
                 let rows = vec![
                     vec![
-                        InlineKeyboardButton::callback("0.5x".to_string(), format!("cuts:apply_speed:0.5:{}", cut_id)),
-                        InlineKeyboardButton::callback(
-                            "0.75x".to_string(),
-                            format!("cuts:apply_speed:0.75:{}", cut_id),
-                        ),
-                        InlineKeyboardButton::callback("1.0x".to_string(), format!("cuts:apply_speed:1.0:{}", cut_id)),
+                        crate::telegram::cb("0.5x".to_string(), format!("cuts:apply_speed:0.5:{}", cut_id)),
+                        crate::telegram::cb("0.75x".to_string(), format!("cuts:apply_speed:0.75:{}", cut_id)),
+                        crate::telegram::cb("1.0x".to_string(), format!("cuts:apply_speed:1.0:{}", cut_id)),
                     ],
                     vec![
-                        InlineKeyboardButton::callback(
-                            "1.25x".to_string(),
-                            format!("cuts:apply_speed:1.25:{}", cut_id),
-                        ),
-                        InlineKeyboardButton::callback("1.5x".to_string(), format!("cuts:apply_speed:1.5:{}", cut_id)),
-                        InlineKeyboardButton::callback("2.0x".to_string(), format!("cuts:apply_speed:2.0:{}", cut_id)),
+                        crate::telegram::cb("1.25x".to_string(), format!("cuts:apply_speed:1.25:{}", cut_id)),
+                        crate::telegram::cb("1.5x".to_string(), format!("cuts:apply_speed:1.5:{}", cut_id)),
+                        crate::telegram::cb("2.0x".to_string(), format!("cuts:apply_speed:2.0:{}", cut_id)),
                     ],
-                    vec![InlineKeyboardButton::callback(
-                        "❌ Отмена".to_string(),
-                        "cuts:cancel".to_string(),
-                    )],
+                    vec![crate::telegram::cb("❌ Отмена".to_string(), "cuts:cancel".to_string())],
                 ];
 
                 bot.send_message(
@@ -571,7 +556,7 @@ pub async fn handle_cuts_callback(
                     teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
                 })?;
 
-                let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+                let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
                     "❌ Отмена".to_string(),
                     "cuts:clip_cancel".to_string(),
                 )]]);
@@ -626,7 +611,7 @@ pub async fn handle_cuts_callback(
 
                 // Build keyboard: duration buttons + cancel button
                 let mut keyboard_rows = build_duration_buttons_for_cut(cut_id, &lang);
-                keyboard_rows.push(vec![InlineKeyboardButton::callback(
+                keyboard_rows.push(vec![crate::telegram::cb(
                     crate::i18n::t(&lang, "common.cancel"),
                     "cuts:clip_cancel".to_string(),
                 )]);

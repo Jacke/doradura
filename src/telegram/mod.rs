@@ -1,5 +1,49 @@
 //! Telegram bot integration and handlers
 
+use teloxide::types::InlineKeyboardButton;
+
+/// Max callback data size allowed by Telegram Bot API (bytes).
+const CALLBACK_DATA_MAX: usize = 64;
+
+/// Create an inline keyboard callback button with data length validation.
+///
+/// In debug/test builds, panics if `data` exceeds 64 bytes (Telegram's limit).
+/// In release builds, truncates to 64 bytes and logs a warning.
+///
+/// Use this instead of `InlineKeyboardButton::callback` everywhere to catch
+/// `BUTTON_DATA_INVALID` errors before they reach Telegram.
+pub fn cb(label: impl Into<String>, data: impl Into<String>) -> InlineKeyboardButton {
+    let data = data.into();
+    if data.len() > CALLBACK_DATA_MAX {
+        debug_assert!(
+            false,
+            "callback data too long ({} bytes, max {}): {}",
+            data.len(),
+            CALLBACK_DATA_MAX,
+            data
+        );
+        log::error!(
+            "callback data too long ({} bytes, max {}): {}",
+            data.len(),
+            CALLBACK_DATA_MAX,
+            &data[..data.len().min(100)]
+        );
+        // Truncate at a clean UTF-8 boundary to avoid partial characters
+        let truncated: String = data
+            .chars()
+            .take_while({
+                let mut len = 0;
+                move |c| {
+                    len += c.len_utf8();
+                    len <= CALLBACK_DATA_MAX
+                }
+            })
+            .collect();
+        return InlineKeyboardButton::callback(label, truncated);
+    }
+    InlineKeyboardButton::callback(label, data)
+}
+
 pub mod admin;
 pub mod analytics;
 pub mod bot;

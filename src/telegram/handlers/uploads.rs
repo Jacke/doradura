@@ -344,35 +344,30 @@ pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::
 
 /// Build inline keyboard for upload response based on media type (Level 1).
 pub(super) fn build_upload_keyboard(media_type: &str, upload_id: i64) -> teloxide::types::InlineKeyboardMarkup {
-    use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
+    use crate::telegram::cb;
+    use teloxide::types::InlineKeyboardMarkup;
 
     let mut rows = Vec::new();
 
     match media_type {
         "video" => {
             rows.push(vec![
-                InlineKeyboardButton::callback("📤 Отправить", format!("videos:submenu:send:{}", upload_id)),
-                InlineKeyboardButton::callback("🔄 Конвертировать", format!("videos:submenu:convert:{}", upload_id)),
+                cb("📤 Отправить", format!("videos:submenu:send:{}", upload_id)),
+                cb("🔄 Конвертировать", format!("videos:submenu:convert:{}", upload_id)),
             ]);
         }
         "photo" | "audio" => {
-            rows.push(vec![InlineKeyboardButton::callback(
-                "📤 Отправить",
-                format!("videos:submenu:send:{}", upload_id),
-            )]);
+            rows.push(vec![cb("📤 Отправить", format!("videos:submenu:send:{}", upload_id))]);
         }
         _ => {
             // Document: send directly
-            rows.push(vec![InlineKeyboardButton::callback(
-                "📤 Отправить",
-                format!("videos:send:document:{}", upload_id),
-            )]);
+            rows.push(vec![cb("📤 Отправить", format!("videos:send:document:{}", upload_id))]);
         }
     }
 
     rows.push(vec![
-        InlineKeyboardButton::callback("🗑️ Удалить", format!("videos:delete:{}", upload_id)),
-        InlineKeyboardButton::callback("📂 Все загрузки", "videos:page:0:all:".to_string()),
+        cb("🗑️ Удалить", format!("videos:delete:{}", upload_id)),
+        cb("📂 Все загрузки", "videos:page:0:all:".to_string()),
     ]);
 
     InlineKeyboardMarkup::new(rows)

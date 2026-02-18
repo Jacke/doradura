@@ -109,16 +109,16 @@ fn build_posts_keyboard(
     let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
 
     // Tab bar (Posts is active)
-    let mut tabs = vec![InlineKeyboardButton::callback(
+    let mut tabs = vec![crate::telegram::cb(
         "[ Posts ]".to_string(),
         "ig:noop".to_string(), // active tab — no-op
     )];
     if has_cookies {
-        tabs.push(InlineKeyboardButton::callback(
+        tabs.push(crate::telegram::cb(
             "Highlights".to_string(),
             format!("ig:tab:hl:{}", username),
         ));
-        tabs.push(InlineKeyboardButton::callback(
+        tabs.push(crate::telegram::cb(
             "Stories".to_string(),
             format!("ig:tab:stories:{}", username),
         ));
@@ -137,7 +137,7 @@ fn build_posts_keyboard(
         };
         let label = format!("{} {}", emoji, i + 1);
         let callback = format!("ig:dl:{}", post.shortcode);
-        current_row.push(InlineKeyboardButton::callback(label, callback));
+        current_row.push(crate::telegram::cb(label, callback));
         if current_row.len() == 4 || i == profile.posts.len() - 1 {
             rows.push(std::mem::take(&mut current_row));
         }
@@ -145,7 +145,7 @@ fn build_posts_keyboard(
 
     // Pagination
     if profile.end_cursor.is_some() && profile.posts.len() >= 12 {
-        rows.push(vec![InlineKeyboardButton::callback(
+        rows.push(vec![crate::telegram::cb(
             i18n::t(lang, "instagram-more"),
             format!("ig:page:{}", username),
         )]);
@@ -328,9 +328,9 @@ fn build_highlights_keyboard(
 
     // Tab bar (Highlights is active)
     rows.push(vec![
-        InlineKeyboardButton::callback("Posts".to_string(), format!("ig:tab:posts:{}", username)),
-        InlineKeyboardButton::callback("[ Highlights ]".to_string(), "ig:noop".to_string()),
-        InlineKeyboardButton::callback("Stories".to_string(), format!("ig:tab:stories:{}", username)),
+        crate::telegram::cb("Posts".to_string(), format!("ig:tab:posts:{}", username)),
+        crate::telegram::cb("[ Highlights ]".to_string(), "ig:noop".to_string()),
+        crate::telegram::cb("Stories".to_string(), format!("ig:tab:stories:{}", username)),
     ]);
 
     // Highlight reels (2 per row, max 10)
@@ -344,14 +344,14 @@ fn build_highlights_keyboard(
             label
         };
         let callback = format!("ig:hl:{}", hl.id);
-        current_row.push(InlineKeyboardButton::callback(display_label, callback));
+        current_row.push(crate::telegram::cb(display_label, callback));
         if current_row.len() == 2 || i == highlights.len().min(10) - 1 {
             rows.push(std::mem::take(&mut current_row));
         }
     }
 
     if highlights.is_empty() {
-        rows.push(vec![InlineKeyboardButton::callback(
+        rows.push(vec![crate::telegram::cb(
             "No highlights".to_string(),
             "ig:noop".to_string(),
         )]);
@@ -370,9 +370,9 @@ fn build_stories_keyboard(
 
     // Tab bar (Stories is active)
     rows.push(vec![
-        InlineKeyboardButton::callback("Posts".to_string(), format!("ig:tab:posts:{}", username)),
-        InlineKeyboardButton::callback("Highlights".to_string(), format!("ig:tab:hl:{}", username)),
-        InlineKeyboardButton::callback("[ Stories ]".to_string(), "ig:noop".to_string()),
+        crate::telegram::cb("Posts".to_string(), format!("ig:tab:posts:{}", username)),
+        crate::telegram::cb("Highlights".to_string(), format!("ig:tab:hl:{}", username)),
+        crate::telegram::cb("[ Stories ]".to_string(), "ig:noop".to_string()),
     ]);
 
     // Story items (4 per row)
@@ -381,7 +381,7 @@ fn build_stories_keyboard(
         let emoji = if item.is_video { "🎬" } else { "📷" };
         let label = format!("{} {}", emoji, i + 1);
         let callback = format!("ig:storydl:{}:{}", user_id, i);
-        current_row.push(InlineKeyboardButton::callback(label, callback));
+        current_row.push(crate::telegram::cb(label, callback));
         if current_row.len() == 4 || i == stories.len() - 1 {
             rows.push(std::mem::take(&mut current_row));
         }
@@ -417,7 +417,7 @@ async fn handle_highlight_browse(bot: &Bot, chat_id: ChatId, _data: &str, highli
         let emoji = if item.is_video { "🎬" } else { "📷" };
         let label = format!("{} {}", emoji, i + 1);
         let callback = format!("ig:hldl:{}:{}", highlight_id, i);
-        current_row.push(InlineKeyboardButton::callback(label, callback));
+        current_row.push(crate::telegram::cb(label, callback));
         if current_row.len() == 4 || i == items.len() - 1 {
             rows.push(std::mem::take(&mut current_row));
         }

@@ -3,7 +3,7 @@ use crate::storage::db::{self, DbPool};
 use crate::telegram::Bot;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, MessageId};
+use teloxide::types::{InlineKeyboardMarkup, MessageId};
 use teloxide::RequestError;
 use uuid::Uuid;
 
@@ -85,7 +85,7 @@ pub(crate) async fn handle_audio_cut_callback(bot: Bot, q: CallbackQuery, db_poo
                     log::warn!("Failed to remove buttons from audio message: {}", e);
                 }
 
-                let keyboard = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+                let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
                     "❌ Отмена".to_string(),
                     "ac:cancel".to_string(),
                 )]]);
@@ -132,7 +132,7 @@ pub(crate) fn create_audio_effects_keyboard(
                 let marker = if current_pitch == value { " ✓" } else { "" };
                 let prefix = if value >= 0 { "P+" } else { "P" };
                 let label = format!("{}{}{}", prefix, value.abs(), marker);
-                InlineKeyboardButton::callback(label, format!("ae:pitch:{}:{}", session_id, value))
+                crate::telegram::cb(label, format!("ae:pitch:{}:{}", session_id, value))
             })
             .collect()
     };
@@ -148,7 +148,7 @@ pub(crate) fn create_audio_effects_keyboard(
                 } else {
                     ""
                 };
-                InlineKeyboardButton::callback(
+                crate::telegram::cb(
                     format!("T{}x{}", value, marker),
                     format!("ae:tempo:{}:{}", session_id, value),
                 )
@@ -163,7 +163,7 @@ pub(crate) fn create_audio_effects_keyboard(
             .iter()
             .map(|&value| {
                 let marker = if current_bass == value { " ✓" } else { "" };
-                InlineKeyboardButton::callback(
+                crate::telegram::cb(
                     format!("B{:+}{}", value, marker),
                     format!("ae:bass:{}:{:+}", session_id, value),
                 )
@@ -174,16 +174,13 @@ pub(crate) fn create_audio_effects_keyboard(
     let bass_rows = vec![build_bass_row(&[-6, -3, 0]), build_bass_row(&[3, 6])];
 
     let action_row = vec![
-        InlineKeyboardButton::callback("✅ Apply Changes", format!("ae:apply:{}", session_id)),
-        InlineKeyboardButton::callback("🔄 Reset", format!("ae:reset:{}", session_id)),
+        crate::telegram::cb("✅ Apply Changes", format!("ae:apply:{}", session_id)),
+        crate::telegram::cb("🔄 Reset", format!("ae:reset:{}", session_id)),
     ];
 
-    let skip_row = vec![InlineKeyboardButton::callback(
-        "⏭️ Skip",
-        format!("ae:skip:{}", session_id),
-    )];
+    let skip_row = vec![crate::telegram::cb("⏭️ Skip", format!("ae:skip:{}", session_id))];
 
-    let morph_row = vec![InlineKeyboardButton::callback(
+    let morph_row = vec![crate::telegram::cb(
         format!(
             "🤖 M: {}",
             match current_morph {
@@ -733,8 +730,8 @@ pub(crate) async fn process_audio_effects(
 
             // Add "Edit Again" and "Get Original" buttons
             let keyboard = InlineKeyboardMarkup::new(vec![vec![
-                InlineKeyboardButton::callback("🎛️ Edit Again", format!("ae:again:{}", session_id)),
-                InlineKeyboardButton::callback("📥 Get Original", format!("ae:original:{}", session_id)),
+                crate::telegram::cb("🎛️ Edit Again", format!("ae:again:{}", session_id)),
+                crate::telegram::cb("📥 Get Original", format!("ae:original:{}", session_id)),
             ]]);
 
             // Replace the sent audio message caption with the new buttons (no text change)
