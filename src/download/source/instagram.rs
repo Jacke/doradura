@@ -530,6 +530,14 @@ impl InstagramSource {
             .arg("--max-time")
             .arg("30");
 
+        // Send cookies when available — Railway IPs get "require_login" without auth
+        let has_cookies = if let Some(cookie_header) = crate::download::cookies::load_instagram_cookie_header() {
+            cmd.arg("-H").arg(format!("Cookie: {}", cookie_header));
+            true
+        } else {
+            false
+        };
+
         if let Some(ref proxy_url) = *config::proxy::WARP_PROXY {
             let trimmed = proxy_url.trim();
             if !trimmed.is_empty() && trimmed != "none" && trimmed != "disabled" {
@@ -537,7 +545,10 @@ impl InstagramSource {
             }
         }
 
-        log::info!("InstagramSource: fetching profile via REST API (anonymous)");
+        log::info!(
+            "InstagramSource: fetching profile via REST API (cookies={})",
+            has_cookies
+        );
 
         let output = cmd
             .output()
