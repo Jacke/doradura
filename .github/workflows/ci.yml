@@ -12,34 +12,8 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  test:
-    name: Test Suite
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y ffmpeg python3-pip
-          pip3 install yt-dlp
-
-      - name: Verify dependencies
-        run: |
-          ffmpeg -version
-          ffprobe -version
-          yt-dlp --version
-
-      - name: Run tests
-        run: cargo test --verbose
-
-  fmt:
-    name: Rustfmt
+  lint:
+    name: Lint (fmt + clippy)
     runs-on: ubuntu-latest
 
     steps:
@@ -49,32 +23,20 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt, clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-  clippy:
-    name: Clippy
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
       - name: Run clippy
         run: cargo clippy -- -D warnings
 
-  smoke-tests:
-    name: Smoke Tests
+  test:
+    name: Test Suite + Smoke Tests
     runs-on: ubuntu-latest
-    # Run after tests pass
-    needs: [test]
 
     steps:
       - name: Checkout code
@@ -82,6 +44,9 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
 
       - name: Install system dependencies
         run: |
@@ -89,21 +54,8 @@ jobs:
           sudo apt-get install -y ffmpeg python3-pip
           pip3 install yt-dlp
 
-      - name: Verify dependencies
-        run: |
-          ffmpeg -version
-          ffprobe -version
-          yt-dlp --version
+      - name: Run tests
+        run: cargo test --verbose
 
       - name: Run smoke tests
         run: cargo test --test smoke_test -- --nocapture
-
-      # Full smoke tests are disabled by default because they:
-      # - Require network access to YouTube
-      # - Can be flaky due to YouTube rate limiting
-      # - Take longer to run
-      # Uncomment to enable full smoke tests:
-      # - name: Run full smoke tests
-      #   run: cargo test --test smoke_test smoke_test_full_suite -- --nocapture
-      #   env:
-      #     RUST_LOG: info
