@@ -1047,7 +1047,12 @@ impl InstagramSource {
         } else {
             let first_line = media.caption.lines().next().unwrap_or(&media.caption);
             if first_line.len() > 100 {
-                format!("{}...", &first_line[..97])
+                let truncated = first_line
+                    .char_indices()
+                    .nth(97)
+                    .map(|(i, _)| &first_line[..i])
+                    .unwrap_or(first_line);
+                format!("{}...", truncated)
             } else {
                 first_line.to_string()
             }

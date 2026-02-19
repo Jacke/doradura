@@ -288,6 +288,31 @@ pub fn get_active_source_groups(conn: &Connection) -> Result<Vec<SourceGroup>, S
     Ok(groups)
 }
 
+#[cfg(test)]
+pub(crate) fn create_test_schema(conn: &Connection) {
+    conn.execute_batch("PRAGMA foreign_keys = OFF;").unwrap();
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS content_subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            source_type TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            display_name TEXT NOT NULL DEFAULT '',
+            watch_mask INTEGER NOT NULL DEFAULT 3,
+            last_seen_state TEXT DEFAULT NULL,
+            source_meta TEXT DEFAULT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            last_checked_at DATETIME DEFAULT NULL,
+            last_error TEXT DEFAULT NULL,
+            consecutive_errors INTEGER NOT NULL DEFAULT 0,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(user_id, source_type, source_id)
+        );",
+    )
+    .unwrap();
+}
+
 /// Check if a user already has a subscription for this source.
 pub fn has_subscription(
     conn: &Connection,
@@ -306,4 +331,353 @@ pub fn has_subscription(
     )
     .optional()
     .map_err(|e| format!("Failed to check subscription: {}", e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rusqlite::Connection;
+    use serde_json::json;
+
+    fn make_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        create_test_schema(&conn);
+        conn
+    }
+
+    // ── upsert_subscription ──────────────────────────────────────────────────
+
+    #[test]
+    fn upsert_creates_new_subscription() {
+        let conn = make_conn();
+        let id = upsert_subscription(&conn, 100, "instagram", "dashaostro", "@dashaostro", 3, None);
+        assert!(id.is_ok(), "upsert should succeed: {:?}", id.err());
+        assert!(id.unwrap() > 0);
+    }
+
+    #[test]
+    fn upsert_is_idempotent_returns_same_id() {
+        let conn = make_conn();
+        let id1 = upsert_subscription(&conn, 100, "instagram", "cristiano", "@cristiano", 3, None).unwrap();
+        let id2 = upsert_subscription(&conn, 100, "instagram", "cristiano", "@cristiano", 1, None).unwrap();
+        assert_eq!(
+            id1, id2,
+            "upsert of same (user, source_type, source_id) must return same id"
+        );
+    }
+
+    #[test]
+    fn upsert_updates_watch_mask_on_conflict() {
+        let conn = make_conn();
+        upsert_subscription(&conn, 100, "instagram", "cristiano", "@cristiano", 3, None).unwrap();
+        // Re-upsert with mask=1
+        upsert_subscription(&conn, 100, "instagram", "cristiano", "@cristiano", 1, None).unwrap();
+
+        let sub = has_subscription(&conn, 100, "instagram", "cristiano").unwrap().unwrap();
+        assert_eq!(sub.watch_mask, 1, "watch_mask must be updated on conflict");
+    }
+
+    #[test]
+    fn upsert_reactivates_inactive_subscription() {
+        let conn = make_conn();
+        let id = upsert_subscription(&conn, 100, "instagram", "test_user", "@test_user", 3, None).unwrap();
+        deactivate_subscription(&conn, id).unwrap();
+
+        // Re-upsert: should reactivate
+        upsert_subscription(&conn, 100, "instagram", "test_user", "@test_user", 3, None).unwrap();
+
+        let sub = has_subscription(&conn, 100, "instagram", "test_user").unwrap().unwrap();
+        assert!(sub.is_active, "subscription must be reactivated on upsert");
+    }
+
+    #[test]
+    fn upsert_with_source_meta() {
+        let conn = make_conn();
+        let meta = json!({"ig_user_id": "3494148660"});
+        let id = upsert_subscription(&conn, 100, "instagram", "dashaostro", "@dashaostro", 3, Some(&meta));
+        assert!(id.is_ok());
+
+        let sub = get_subscription(&conn, id.unwrap()).unwrap().unwrap();
+        let stored_meta = sub.source_meta.unwrap();
+        assert_eq!(stored_meta["ig_user_id"], "3494148660");
+    }
+
+    // ── get_subscription ─────────────────────────────────────────────────────
+
+    #[test]
+    fn get_subscription_returns_correct_fields() {
+        let conn = make_conn();
+        let id = upsert_subscription(&conn, 42, "instagram", "dashaostro", "@dashaostro", 3, None).unwrap();
+
+        let sub = get_subscription(&conn, id).unwrap().expect("must exist");
+        assert_eq!(sub.user_id, 42);
+        assert_eq!(sub.source_type, "instagram");
+        assert_eq!(sub.source_id, "dashaostro");
+        assert_eq!(sub.display_name, "@dashaostro");
+        assert_eq!(sub.watch_mask, 3);
+        assert!(sub.is_active);
+        assert_eq!(sub.consecutive_errors, 0);
+        assert!(sub.last_error.is_none());
+    }
+
+    #[test]
+    fn get_subscription_nonexistent_returns_none() {
+        let conn = make_conn();
+        let result = get_subscription(&conn, 99999).unwrap();
+        assert!(result.is_none());
+    }
+
+    // ── get_user_subscriptions ───────────────────────────────────────────────
+
+    #[test]
+    fn get_user_subscriptions_returns_only_active() {
+        let conn = make_conn();
+        let id1 = upsert_subscription(&conn, 10, "instagram", "user_a", "@user_a", 3, None).unwrap();
+        let _id2 = upsert_subscription(&conn, 10, "instagram", "user_b", "@user_b", 1, None).unwrap();
+        // Deactivate first
+        deactivate_subscription(&conn, id1).unwrap();
+
+        let subs = get_user_subscriptions(&conn, 10).unwrap();
+        assert_eq!(subs.len(), 1, "only active subscriptions must be returned");
+        assert_eq!(subs[0].source_id, "user_b");
+    }
+
+    #[test]
+    fn get_user_subscriptions_empty_for_new_user() {
+        let conn = make_conn();
+        let subs = get_user_subscriptions(&conn, 999).unwrap();
+        assert!(subs.is_empty());
+    }
+
+    #[test]
+    fn get_user_subscriptions_isolates_users() {
+        let conn = make_conn();
+        upsert_subscription(&conn, 1, "instagram", "cristiano", "@cristiano", 3, None).unwrap();
+        upsert_subscription(&conn, 2, "instagram", "cristiano", "@cristiano", 3, None).unwrap();
+
+        let subs_user1 = get_user_subscriptions(&conn, 1).unwrap();
+        let subs_user2 = get_user_subscriptions(&conn, 2).unwrap();
+        assert_eq!(subs_user1.len(), 1);
+        assert_eq!(subs_user2.len(), 1);
+    }
+
+    // ── count_user_subscriptions ─────────────────────────────────────────────
+
+    #[test]
+    fn count_user_subscriptions_correct() {
+        let conn = make_conn();
+        assert_eq!(count_user_subscriptions(&conn, 5).unwrap(), 0);
+
+        upsert_subscription(&conn, 5, "instagram", "a", "@a", 3, None).unwrap();
+        assert_eq!(count_user_subscriptions(&conn, 5).unwrap(), 1);
+
+        upsert_subscription(&conn, 5, "instagram", "b", "@b", 3, None).unwrap();
+        assert_eq!(count_user_subscriptions(&conn, 5).unwrap(), 2);
+    }
+
+    #[test]
+    fn count_does_not_include_inactive() {
+        let conn = make_conn();
+        let id = upsert_subscription(&conn, 7, "instagram", "x", "@x", 3, None).unwrap();
+        assert_eq!(count_user_subscriptions(&conn, 7).unwrap(), 1);
+        deactivate_subscription(&conn, id).unwrap();
+        assert_eq!(count_user_subscriptions(&conn, 7).unwrap(), 0);
+    }
+
+    // ── has_subscription ─────────────────────────────────────────────────────
+
+    #[test]
+    fn has_subscription_returns_some_when_exists() {
+        let conn = make_conn();
+        upsert_subscription(&conn, 10, "instagram", "dashaostro", "@dashaostro", 3, None).unwrap();
+
+        let result = has_subscription(&conn, 10, "instagram", "dashaostro").unwrap();
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn has_subscription_returns_none_when_absent() {
+        let conn = make_conn();
+        let result = has_subscription(&conn, 10, "instagram", "nobody").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn has_subscription_returns_inactive_too() {
+        // has_subscription checks any row (active or not) — used for duplicate detection
+        let conn = make_conn();
+        let id = upsert_subscription(&conn, 10, "instagram", "ghost", "@ghost", 3, None).unwrap();
+        deactivate_subscription(&conn, id).unwrap();
+
+        let result = has_subscription(&conn, 10, "instagram", "ghost").unwrap();
+        assert!(result.is_some(), "has_subscription must return inactive subs too");
+        assert!(!result.unwrap().is_active);
+    }
+
+    // ── deactivate_subscription ──────────────────────────────────────────────
+
+    #[test]
+    fn deactivate_subscription_sets_inactive() {
+        let conn = make_conn();
+        let id = upsert_subscription(&conn, 20, "instagram", "test", "@test", 3, None).unwrap();
+
+        deactivate_subscription(&conn, id).unwrap();
+
+        let sub = get_subscription(&conn, id).unwrap().unwrap();
+        assert!(!sub.is_active, "subscription must be inactive after deactivate");
+    }
+
+    #[test]
+    fn deactivate_nonexistent_does_not_error() {
+        let conn = make_conn();
+        let result = deactivate_subscription(&conn, 99999);
+        assert!(result.is_ok(), "deactivating nonexistent sub must not error");
+    }
+
+    // ── deactivate_all_for_user ──────────────────────────────────────────────
+
+    #[test]
+    fn deactivate_all_for_user_deactivates_all() {
+        let conn = make_conn();
+        upsert_subscription(&conn, 30, "instagram", "a", "@a", 3, None).unwrap();
+        upsert_subscription(&conn, 30, "instagram", "b", "@b", 3, None).unwrap();
+
+        let count = deactivate_all_for_user(&conn, 30).unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(count_user_subscriptions(&conn, 30).unwrap(), 0);
+    }
+
+    #[test]
+    fn deactivate_all_does_not_affect_other_users() {
+        let conn = make_conn();
+        upsert_subscription(&conn, 31, "instagram", "a", "@a", 3, None).unwrap();
+        upsert_subscription(&conn, 32, "instagram", "a", "@a", 3, None).unwrap();
+
+        deactivate_all_for_user(&conn, 31).unwrap();
+
+        assert_eq!(count_user_subscriptions(&conn, 31).unwrap(), 0);
+        assert_eq!(
+            count_user_subscriptions(&conn, 32).unwrap(),
+            1,
+            "user 32 must be unaffected"
+        );
+    }
+
+    // ── update_watch_mask ────────────────────────────────────────────────────
+
+    #[test]
+    fn update_watch_mask_changes_mask() {
+        let conn = make_conn();
+        let id = upsert_subscription(&conn, 40, "instagram", "test", "@test", 3, None).unwrap();
+
+        update_watch_mask(&conn, id, 1).unwrap();
+
+        let sub = get_subscription(&conn, id).unwrap().unwrap();
+        assert_eq!(sub.watch_mask, 1, "watch_mask must be updated to 1 (Posts only)");
+    }
+
+    #[test]
+    fn update_watch_mask_posts_only() {
+        let conn = make_conn();
+        let id = upsert_subscription(&conn, 40, "instagram", "u1", "@u1", 3, None).unwrap();
+        update_watch_mask(&conn, id, 1).unwrap(); // Posts only
+        assert_eq!(get_subscription(&conn, id).unwrap().unwrap().watch_mask, 1);
+    }
+
+    #[test]
+    fn update_watch_mask_stories_only() {
+        let conn = make_conn();
+        let id = upsert_subscription(&conn, 40, "instagram", "u2", "@u2", 3, None).unwrap();
+        update_watch_mask(&conn, id, 2).unwrap(); // Stories only
+        assert_eq!(get_subscription(&conn, id).unwrap().unwrap().watch_mask, 2);
+    }
+
+    // ── update_check_success / update_check_error ────────────────────────────
+
+    #[test]
+    fn update_check_success_clears_error() {
+        let conn = make_conn();
+        upsert_subscription(&conn, 50, "instagram", "user_x", "@user_x", 3, None).unwrap();
+        // First record an error
+        update_check_error(&conn, "instagram", "user_x", "some error").unwrap();
+
+        // Then record success
+        let new_state = json!({"last_shortcode": "ABC123", "last_story_ts": 0});
+        update_check_success(&conn, "instagram", "user_x", &new_state, None).unwrap();
+
+        let sub = has_subscription(&conn, 50, "instagram", "user_x").unwrap().unwrap();
+        assert!(sub.last_error.is_none(), "last_error must be cleared after success");
+        assert_eq!(sub.consecutive_errors, 0, "consecutive_errors must be reset");
+        let state = sub.last_seen_state.unwrap();
+        assert_eq!(state["last_shortcode"], "ABC123");
+    }
+
+    #[test]
+    fn update_check_error_increments_consecutive_errors() {
+        let conn = make_conn();
+        upsert_subscription(&conn, 51, "instagram", "err_user", "@err_user", 3, None).unwrap();
+
+        update_check_error(&conn, "instagram", "err_user", "timeout").unwrap();
+        update_check_error(&conn, "instagram", "err_user", "timeout").unwrap();
+
+        let sub = has_subscription(&conn, 51, "instagram", "err_user").unwrap().unwrap();
+        assert_eq!(sub.consecutive_errors, 2);
+        assert_eq!(sub.last_error.as_deref(), Some("timeout"));
+    }
+
+    // ── get_active_source_groups ─────────────────────────────────────────────
+
+    #[test]
+    fn get_active_source_groups_groups_by_source() {
+        let conn = make_conn();
+        // Two users subscribed to the same Instagram profile
+        upsert_subscription(&conn, 60, "instagram", "celebrity", "@celebrity", 1, None).unwrap();
+        upsert_subscription(&conn, 61, "instagram", "celebrity", "@celebrity", 2, None).unwrap();
+
+        let groups = get_active_source_groups(&conn).unwrap();
+        assert_eq!(groups.len(), 1, "same source must be grouped into one entry");
+        let g = &groups[0];
+        assert_eq!(g.source_type, "instagram");
+        assert_eq!(g.source_id, "celebrity");
+        assert_eq!(g.combined_mask, 3, "combined_mask must be OR of all subscribers: 1|2=3");
+        assert_eq!(g.subscriptions.len(), 2);
+    }
+
+    #[test]
+    fn get_active_source_groups_excludes_inactive() {
+        let conn = make_conn();
+        let id = upsert_subscription(&conn, 62, "instagram", "inactive_star", "@inactive_star", 3, None).unwrap();
+        deactivate_subscription(&conn, id).unwrap();
+
+        let groups = get_active_source_groups(&conn).unwrap();
+        assert!(groups.is_empty(), "inactive subscriptions must not appear in groups");
+    }
+
+    // ── auto_disable_errored ─────────────────────────────────────────────────
+
+    #[test]
+    fn auto_disable_errored_disables_at_threshold() {
+        let conn = make_conn();
+        upsert_subscription(&conn, 70, "instagram", "flaky", "@flaky", 3, None).unwrap();
+
+        // Simulate 5 consecutive errors
+        for _ in 0..5 {
+            update_check_error(&conn, "instagram", "flaky", "network error").unwrap();
+        }
+
+        let disabled = auto_disable_errored(&conn, "instagram", "flaky", 5).unwrap();
+        assert_eq!(disabled, 1, "one subscription must be disabled");
+        assert_eq!(count_user_subscriptions(&conn, 70).unwrap(), 0, "must be deactivated");
+    }
+
+    #[test]
+    fn auto_disable_errored_does_not_disable_below_threshold() {
+        let conn = make_conn();
+        upsert_subscription(&conn, 71, "instagram", "reliable", "@reliable", 3, None).unwrap();
+        update_check_error(&conn, "instagram", "reliable", "one error").unwrap();
+
+        let disabled = auto_disable_errored(&conn, "instagram", "reliable", 5).unwrap();
+        assert_eq!(disabled, 0, "must not disable with only 1 error (threshold=5)");
+        assert_eq!(count_user_subscriptions(&conn, 71).unwrap(), 1);
+    }
 }

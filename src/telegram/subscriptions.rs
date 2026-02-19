@@ -203,7 +203,7 @@ pub async fn show_subscribe_confirm(
     let keyboard = InlineKeyboardMarkup::new(vec![
         toggle_row,
         vec![
-            cb("✔ Confirm", format!("cw:ok:ig:{}:{}", username, effective_mask)),
+            cb("✔ Confirm", format!("cw:ok:instagram:{}:{}", username, effective_mask)),
             cb("✖ Cancel", "cw:cancel".to_string()),
         ],
     ]);
@@ -404,7 +404,7 @@ async fn update_toggle_keyboard(bot: &Bot, chat_id: ChatId, message_id: MessageI
     let keyboard = InlineKeyboardMarkup::new(vec![
         toggle_row,
         vec![
-            cb("✔ Confirm", format!("cw:ok:ig:{}:{}", username, new_mask)),
+            cb("✔ Confirm", format!("cw:ok:instagram:{}:{}", username, new_mask)),
             cb("✖ Cancel", "cw:cancel".to_string()),
         ],
     ]);

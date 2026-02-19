@@ -261,8 +261,8 @@ pub async fn download_and_send_video(
                                     first_part_db_id = Some(id);
                                 }
 
-                                // Add "Cut Video" button for single-part videos
-                                if total_parts == 1 {
+                                // Add "Cut Video" button for single-part videos (not for time_range clips)
+                                if total_parts == 1 && format.time_range().is_none() {
                                     let bot_for_button = bot_clone.clone();
                                     let msg_id = sent_message.id;
                                     tokio::spawn(async move {

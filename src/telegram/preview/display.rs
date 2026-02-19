@@ -13,6 +13,45 @@ use super::keyboard::{
     create_carousel_keyboard, create_fallback_keyboard, create_video_format_keyboard, keyboard_stats,
 };
 
+fn parse_time_to_secs(s: &str) -> Option<u32> {
+    let parts: Vec<&str> = s.split(':').collect();
+    match parts.len() {
+        2 => {
+            let m: u32 = parts[0].parse().ok()?;
+            let s: u32 = parts[1].parse().ok()?;
+            Some(m * 60 + s)
+        }
+        3 => {
+            let h: u32 = parts[0].parse().ok()?;
+            let m: u32 = parts[1].parse().ok()?;
+            let s: u32 = parts[2].parse().ok()?;
+            Some(h * 3600 + m * 60 + s)
+        }
+        _ => None,
+    }
+}
+
+fn format_secs_duration(secs: u32) -> String {
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    if h > 0 {
+        format!("{h}:{m:02}:{s:02}")
+    } else {
+        format!("{m}:{s:02}")
+    }
+}
+
+fn format_bytes(size: u64) -> String {
+    if size > 1024 * 1024 {
+        format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
+    } else if size > 1024 {
+        format!("{:.1} KB", size as f64 / 1024.0)
+    } else {
+        format!("{} B", size)
+    }
+}
+
 /// Sends a preview with metadata and confirmation buttons
 ///
 /// For video, shows a list of formats with selection buttons
@@ -47,9 +86,29 @@ pub async fn send_preview(
     let escaped_title = escape_markdown(&metadata.display_title());
     let mut text = format!("🎵 *{}*\n\n", escaped_title);
 
-    if metadata.duration.is_some() {
-        let duration_str = metadata.format_duration();
-        text.push_str(&format!("⏱️ Duration: {}\n", escape_markdown(&duration_str)));
+    // Scale factor for time_range: trimmed_secs / full_duration
+    let scale_ratio: Option<f64> = if let Some((start, end)) = time_range {
+        if let (Some(s), Some(e), Some(d)) = (parse_time_to_secs(start), parse_time_to_secs(end), metadata.duration) {
+            if d > 0 && e > s {
+                Some(((e - s) as f64 / d as f64).min(1.0))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if let Some(full_dur) = metadata.duration {
+        let dur_str = if let Some(ratio) = scale_ratio {
+            let trimmed = (full_dur as f64 * ratio).round() as u32;
+            format_secs_duration(trimmed)
+        } else {
+            metadata.format_duration()
+        };
+        text.push_str(&format!("⏱️ Duration: {}\n", escape_markdown(&dur_str)));
     }
 
     if let Some((start, end)) = time_range {
@@ -88,11 +147,29 @@ pub async fn send_preview(
     // For video, show the list of formats with sizes
     if has_video_formats {
         if let Some(formats) = &filtered_formats {
-            append_video_formats_text(&mut text, formats, &lang);
+            let display_formats: Vec<crate::telegram::types::VideoFormatInfo> = if let Some(ratio) = scale_ratio {
+                formats
+                    .iter()
+                    .map(|f| crate::telegram::types::VideoFormatInfo {
+                        size_bytes: f.size_bytes.map(|s| (s as f64 * ratio) as u64),
+                        ..f.clone()
+                    })
+                    .collect()
+            } else {
+                formats.clone()
+            };
+            append_video_formats_text(&mut text, &display_formats, &lang);
         }
-    } else if metadata.filesize.is_some() {
-        let size_str = metadata.format_filesize();
-        text.push_str(&format!("📦 Approximate size: {}\n", escape_markdown(&size_str)));
+    } else if let Some(filesize) = metadata.filesize {
+        let scaled_size = if let Some(ratio) = scale_ratio {
+            (filesize as f64 * ratio) as u64
+        } else {
+            filesize
+        };
+        text.push_str(&format!(
+            "📦 Approximate size: {}\n",
+            escape_markdown(&format_bytes(scaled_size))
+        ));
     }
 
     if let Some(desc) = &metadata.description {
@@ -291,9 +368,29 @@ pub async fn update_preview_message(
     let escaped_title = escape_markdown(&metadata.display_title());
     let mut text = format!("🎵 *{}*\n\n", escaped_title);
 
-    if metadata.duration.is_some() {
-        let duration_str = metadata.format_duration();
-        text.push_str(&format!("⏱️ Duration: {}\n", escape_markdown(&duration_str)));
+    // Scale factor for time_range: trimmed_secs / full_duration
+    let scale_ratio: Option<f64> = if let Some((start, end)) = time_range {
+        if let (Some(s), Some(e), Some(d)) = (parse_time_to_secs(start), parse_time_to_secs(end), metadata.duration) {
+            if d > 0 && e > s {
+                Some(((e - s) as f64 / d as f64).min(1.0))
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    if let Some(full_dur) = metadata.duration {
+        let dur_str = if let Some(ratio) = scale_ratio {
+            let trimmed = (full_dur as f64 * ratio).round() as u32;
+            format_secs_duration(trimmed)
+        } else {
+            metadata.format_duration()
+        };
+        text.push_str(&format!("⏱️ Duration: {}\n", escape_markdown(&dur_str)));
     }
 
     if let Some((start, end)) = time_range {
@@ -332,11 +429,29 @@ pub async fn update_preview_message(
     // For video, show the list of formats with sizes
     if has_video_formats {
         if let Some(formats) = &filtered_formats {
-            append_video_formats_text(&mut text, formats, &lang);
+            let display_formats: Vec<crate::telegram::types::VideoFormatInfo> = if let Some(ratio) = scale_ratio {
+                formats
+                    .iter()
+                    .map(|f| crate::telegram::types::VideoFormatInfo {
+                        size_bytes: f.size_bytes.map(|s| (s as f64 * ratio) as u64),
+                        ..f.clone()
+                    })
+                    .collect()
+            } else {
+                formats.clone()
+            };
+            append_video_formats_text(&mut text, &display_formats, &lang);
         }
-    } else if metadata.filesize.is_some() {
-        let size_str = metadata.format_filesize();
-        text.push_str(&format!("📦 Approximate size: {}\n", escape_markdown(&size_str)));
+    } else if let Some(filesize) = metadata.filesize {
+        let scaled_size = if let Some(ratio) = scale_ratio {
+            (filesize as f64 * ratio) as u64
+        } else {
+            filesize
+        };
+        text.push_str(&format!(
+            "📦 Approximate size: {}\n",
+            escape_markdown(&format_bytes(scaled_size))
+        ));
     }
 
     if let Some(desc) = &metadata.description {
