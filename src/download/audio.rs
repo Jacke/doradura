@@ -10,6 +10,7 @@ use crate::core::rate_limiter::RateLimiter;
 use crate::core::types::Plan;
 use crate::download::error::DownloadError;
 use crate::download::pipeline::{self, PipelineFormat, PipelineResult};
+use crate::download::progress::ProgressMessage;
 use crate::download::source::SourceRegistry;
 use crate::storage::db::{self as db, DbPool};
 use crate::telegram::Bot;
@@ -74,6 +75,13 @@ pub async fn download_and_send_audio(
         };
         let registry = SourceRegistry::global();
 
+        // Create progress_msg BEFORE timeout so we can clean it up if timeout fires
+        let lang = db_pool_clone
+            .as_ref()
+            .map(|pool| crate::i18n::user_lang_from_pool(pool, chat_id.0))
+            .unwrap_or_else(|| crate::i18n::lang_from_code("ru"));
+        let mut progress_msg = ProgressMessage::new(chat_id, lang);
+
         // Global timeout for entire download operation
         let result: Result<(), AppError> = match timeout(config::download::global_timeout(), async {
             let pipeline_result = pipeline::execute(
@@ -85,6 +93,7 @@ pub async fn download_and_send_audio(
                 message_id,
                 alert_manager.as_ref(),
                 registry,
+                &mut progress_msg,
             )
             .await
             .map_err(|e| e.into_app_error())?;
@@ -133,6 +142,11 @@ pub async fn download_and_send_audio(
                     e
                 );
                 timer.observe_duration();
+
+                // Delete hanging ⏳ progress message so it doesn't stay on screen forever
+                if let Some(msg_id) = progress_msg.message_id {
+                    let _ = bot_clone.delete_message(chat_id, msg_id).await;
+                }
 
                 let pipeline_error = pipeline::PipelineError::Operational(e);
                 pipeline::handle_pipeline_error(

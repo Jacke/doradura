@@ -395,15 +395,12 @@ pub async fn execute(
     message_id: Option<i32>,
     _alert_manager: Option<&Arc<crate::core::alerts::AlertManager>>,
     registry: &SourceRegistry,
+    progress_msg: &mut ProgressMessage,
 ) -> Result<PipelineResult, PipelineError> {
     let start_time = std::time::Instant::now();
-    let lang = db_pool
-        .map(|pool| crate::i18n::user_lang_from_pool(pool, chat_id.0))
-        .unwrap_or_else(|| crate::i18n::lang_from_code("ru"));
-    let mut progress_msg = ProgressMessage::new(chat_id, lang);
     let file_format_str = format.label().to_string();
 
-    let phase = download_phase(bot, chat_id, url, format, registry, &mut progress_msg, message_id).await?;
+    let phase = download_phase(bot, chat_id, url, format, registry, progress_msg, message_id).await?;
     let DownloadPhaseResult {
         output: download_output,
         title,
@@ -492,7 +489,7 @@ pub async fn execute(
                 chat_id,
                 &download_output.file_path,
                 duration,
-                &mut progress_msg,
+                progress_msg,
                 caption.as_ref(),
                 send_as_document,
                 message_id,
@@ -505,7 +502,7 @@ pub async fn execute(
                     bot,
                     chat_id,
                     &download_output.file_path,
-                    &mut progress_msg,
+                    progress_msg,
                     &display_title,
                     None, // thumbnail URL — video.rs handles this via download_phase()
                     send_as_document,

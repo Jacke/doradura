@@ -379,6 +379,11 @@ pub async fn download_and_send_video(
                 log::error!("Video download error for chat {} ({}): {:?}", chat_id, url, e);
                 timer.observe_duration();
 
+                // Delete hanging ⏳ progress message so it doesn't stay on screen forever
+                if let Some(msg_id) = progress_msg.message_id {
+                    let _ = bot_clone.delete_message(chat_id, msg_id).await;
+                }
+
                 let pipeline_error = pipeline::PipelineError::Operational(e);
                 pipeline::handle_pipeline_error(
                     &bot_clone,
