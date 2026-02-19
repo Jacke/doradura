@@ -7,7 +7,7 @@ use crate::core::rate_limiter::RateLimiter;
 use crate::core::utils::{escape_filename, sanitize_filename};
 use crate::download::error::DownloadError;
 use crate::download::metadata::{add_cookies_args, get_metadata_from_ytdlp, probe_video_metadata};
-use crate::download::progress::{DownloadStatus, ProgressMessage};
+use crate::download::progress::{DownloadStatus, ProgressBarStyle, ProgressMessage};
 use crate::download::proxy::ProxyListManager;
 use crate::download::send::send_error_with_sticker;
 use crate::download::ytdlp_errors::sanitize_user_error_message;
@@ -344,6 +344,13 @@ pub async fn download_and_send_subtitles(
             .map(|pool| crate::i18n::user_lang_from_pool(pool, chat_id.0))
             .unwrap_or_else(|| crate::i18n::lang_from_code("ru"));
         let mut progress_msg = ProgressMessage::new(chat_id, lang);
+        if let Some(ref pool) = db_pool_clone {
+            if let Ok(conn) = db::get_connection(pool) {
+                if let Ok(style_str) = db::get_user_progress_bar_style(&conn, chat_id.0) {
+                    progress_msg.style = ProgressBarStyle::parse(&style_str);
+                }
+            }
+        }
         let start_time = std::time::Instant::now();
 
         // Get user plan for metrics

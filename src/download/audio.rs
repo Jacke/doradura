@@ -10,7 +10,7 @@ use crate::core::rate_limiter::RateLimiter;
 use crate::core::types::Plan;
 use crate::download::error::DownloadError;
 use crate::download::pipeline::{self, PipelineFormat, PipelineResult};
-use crate::download::progress::ProgressMessage;
+use crate::download::progress::{ProgressBarStyle, ProgressMessage};
 use crate::download::source::SourceRegistry;
 use crate::storage::db::{self as db, DbPool};
 use crate::telegram::Bot;
@@ -81,6 +81,13 @@ pub async fn download_and_send_audio(
             .map(|pool| crate::i18n::user_lang_from_pool(pool, chat_id.0))
             .unwrap_or_else(|| crate::i18n::lang_from_code("ru"));
         let mut progress_msg = ProgressMessage::new(chat_id, lang);
+        if let Some(ref pool) = db_pool_clone {
+            if let Ok(conn) = db::get_connection(pool) {
+                if let Ok(style_str) = db::get_user_progress_bar_style(&conn, chat_id.0) {
+                    progress_msg.style = ProgressBarStyle::parse(&style_str);
+                }
+            }
+        }
 
         // Global timeout for entire download operation
         let result: Result<(), AppError> = match timeout(config::download::global_timeout(), async {

@@ -5,7 +5,7 @@ use crate::storage::db::{save_task_to_queue, DbPool};
 const MAX_QUEUE_SIZE: usize = 1000;
 use chrono::{DateTime, Utc};
 use log::info; // Using logging instead of println
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use teloxide::types::ChatId;
 use tokio::sync::Mutex;
@@ -190,6 +190,9 @@ pub struct DownloadQueue {
     /// Set of active tasks (queued + being processed).
     /// Stores (URL, chat_id, format) tuples to prevent duplicates.
     active_tasks: Mutex<HashSet<(String, i64, String)>>,
+    /// Maps chat_id -> queue notification message ID.
+    /// Separate from the task so deletion works even when the task is already dequeued.
+    notification_msgs: Mutex<HashMap<i64, i32>>,
 }
 
 impl Default for DownloadQueue {
@@ -216,6 +219,7 @@ impl DownloadQueue {
         Self {
             queue: Mutex::new(VecDeque::new()),
             active_tasks: Mutex::new(HashSet::new()),
+            notification_msgs: Mutex::new(HashMap::new()),
         }
     }
 
@@ -517,13 +521,24 @@ impl DownloadQueue {
 
     /// Sets the queue message ID for the last task belonging to the given chat.
     ///
-    /// Called after sending the "Task added to queue" message so that the
-    /// message can be deleted when the task starts being processed.
+    /// Stores in a separate map (not only on the task) so deletion works even
+    /// when the task has already been dequeued (race condition with fast queues).
     pub async fn set_queue_message_id(&self, chat_id: ChatId, msg_id: i32) {
+        // Store in the dedicated map (race-condition-safe)
+        self.notification_msgs.lock().await.insert(chat_id.0, msg_id);
+        // Also set on the task if it's still in the queue
         let mut queue = self.queue.lock().await;
         if let Some(task) = queue.iter_mut().rev().find(|t| t.chat_id == chat_id) {
             task.queue_message_id = Some(msg_id);
         }
+    }
+
+    /// Removes and returns the queue notification message ID for a chat.
+    ///
+    /// Returns `Some(msg_id)` if a notification was stored, `None` otherwise.
+    /// Calling this also clears the stored ID, so it won't be returned again.
+    pub async fn take_notification_message(&self, chat_id: ChatId) -> Option<i32> {
+        self.notification_msgs.lock().await.remove(&chat_id.0)
     }
 }
 

@@ -1174,10 +1174,18 @@ async fn process_queue(
                     }
                 };
 
-                // Delete the "Task added to queue" message now that processing starts
-                if let Some(qmsg_id) = task.queue_message_id {
+                // Delete the "Task added to queue" message now that processing starts.
+                // Use the dedicated notification map (race-condition-safe) or fall back
+                // to the task field for tasks that were set before the map was populated.
+                {
                     use teloxide::types::MessageId;
-                    let _ = bot.delete_message(task.chat_id, MessageId(qmsg_id)).await;
+                    let qmsg_id = queue_for_cleanup
+                        .take_notification_message(task.chat_id)
+                        .await
+                        .or(task.queue_message_id);
+                    if let Some(id) = qmsg_id {
+                        let _ = bot.delete_message(task.chat_id, MessageId(id)).await;
+                    }
                 }
 
                 if let Some(msg_id) = task.message_id {
