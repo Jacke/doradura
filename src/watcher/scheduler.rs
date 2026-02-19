@@ -45,6 +45,16 @@ pub fn start_scheduler(
     rx
 }
 
+/// Accumulates per-cycle statistics for a single summary log line.
+#[derive(Default)]
+struct CycleSummary {
+    checked: u32,
+    updates: u32,
+    errors: u32,
+    deferred: u32,
+    disabled: u32,
+}
+
 /// Run one check cycle: iterate source groups, check for updates, emit notifications.
 async fn run_check_cycle(
     db_pool: &Arc<DbPool>,
@@ -56,18 +66,15 @@ async fn run_check_cycle(
     drop(conn);
 
     if groups.is_empty() {
+        log::debug!("Watcher: no active subscriptions");
         return Ok(());
     }
 
     let max_requests = *config::watcher::MAX_REQUESTS_PER_CYCLE;
     let max_errors = *config::watcher::MAX_CONSECUTIVE_ERRORS;
     let mut budget = max_requests;
-
-    log::info!(
-        "Watcher cycle: {} source group(s), budget: {} requests",
-        groups.len(),
-        budget
-    );
+    let cycle_start = std::time::Instant::now();
+    let mut summary = CycleSummary::default();
 
     for group in &groups {
         let watcher = match registry.get(&group.source_type) {
@@ -80,11 +87,8 @@ async fn run_check_cycle(
 
         let cost = watcher.requests_per_check(group.combined_mask);
         if cost > budget {
-            log::info!(
-                "Watcher budget exhausted ({} remaining, need {}), deferring rest",
-                budget,
-                cost
-            );
+            // Count all remaining groups (current + rest) as deferred
+            summary.deferred += (groups.len() as u32).saturating_sub(summary.checked + summary.errors);
             break;
         }
         budget -= cost;
@@ -136,8 +140,10 @@ async fn run_check_cycle(
                     }
                 }
 
+                summary.checked += 1;
                 if !result.updates.is_empty() {
-                    log::info!(
+                    summary.updates += result.updates.len() as u32;
+                    log::debug!(
                         "Watcher: {} update(s) for {}:{}",
                         result.updates.len(),
                         group.source_type,
@@ -152,25 +158,44 @@ async fn run_check_cycle(
                     group.source_id,
                     e
                 );
+                summary.errors += 1;
 
                 let conn = get_connection(db_pool).map_err(|e| format!("DB error: {}", e))?;
                 let error_count = db::update_check_error(&conn, &group.source_type, &group.source_id, &e)?;
 
                 if error_count >= max_errors {
                     let disabled = db::auto_disable_errored(&conn, &group.source_type, &group.source_id, max_errors)?;
-                    if disabled > 0 {
-                        log::warn!(
-                            "Auto-disabled {} subscription(s) for {}:{} ({} consecutive errors)",
-                            disabled,
-                            group.source_type,
-                            group.source_id,
-                            error_count
-                        );
-                    }
+                    summary.disabled += disabled;
                 }
                 drop(conn);
             }
         }
+    }
+
+    let elapsed_ms = cycle_start.elapsed().as_millis() as u64;
+    let budget_used = max_requests - budget;
+    let has_news = summary.updates > 0 || summary.errors > 0 || summary.deferred > 0 || summary.disabled > 0;
+
+    if has_news {
+        log::info!(
+            "Watcher: checked={} updates={} errors={} deferred={} disabled={} elapsed={}ms budget={}/{}",
+            summary.checked,
+            summary.updates,
+            summary.errors,
+            summary.deferred,
+            summary.disabled,
+            elapsed_ms,
+            budget_used,
+            max_requests
+        );
+    } else {
+        log::debug!(
+            "Watcher: checked={} ok elapsed={}ms budget={}/{}",
+            summary.checked,
+            elapsed_ms,
+            budget_used,
+            max_requests
+        );
     }
 
     Ok(())
