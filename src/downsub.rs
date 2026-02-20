@@ -185,6 +185,7 @@ const DEFAULT_SUMMARY_TOKENS: i32 = 400;
 pub struct DownsubGateway {
     client: Option<proto::downsub_service_client::DownsubServiceClient<Channel>>,
     timeout: Duration,
+    api_key: Option<String>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -262,7 +263,11 @@ impl DownsubGateway {
             }
         }
 
-        Self { client, timeout }
+        Self {
+            client,
+            timeout,
+            api_key: std::env::var("DOWNSUB_API_KEY").ok(),
+        }
     }
 
     pub fn is_available(&self) -> bool {
@@ -293,7 +298,14 @@ impl DownsubGateway {
             max_length_tokens: DEFAULT_SUMMARY_TOKENS,
         };
 
-        let response = timeout(self.timeout, client.get_summary(Request::new(request)))
+        let mut grpc_request = Request::new(request);
+        if let Some(ref key) = self.api_key {
+            grpc_request
+                .metadata_mut()
+                .insert("authorization", format!("Bearer {}", key).parse().unwrap());
+        }
+
+        let response = timeout(self.timeout, client.get_summary(grpc_request))
             .await
             .map_err(|_| DownsubError::Timeout)?
             .map_err(DownsubError::Status)?
@@ -343,7 +355,14 @@ impl DownsubGateway {
             format: format.clone(),
         };
 
-        let response = timeout(self.timeout, client.get_subtitles(Request::new(request)))
+        let mut grpc_request = Request::new(request);
+        if let Some(ref key) = self.api_key {
+            grpc_request
+                .metadata_mut()
+                .insert("authorization", format!("Bearer {}", key).parse().unwrap());
+        }
+
+        let response = timeout(self.timeout, client.get_subtitles(grpc_request))
             .await
             .map_err(|_| DownsubError::Timeout)?
             .map_err(DownsubError::Status)?
