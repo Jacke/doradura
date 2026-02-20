@@ -2,19 +2,19 @@ syntax = "proto3";
 
 package downsub.v1;
 
-message UserContext {
-  int64 telegram_id = 1;
+message User {
+  string telegram_id = 1;
   string phone = 2;
 }
 
-message MediaReference {
+message Media {
   string url = 1;
   string title = 2;
 }
 
 message SummaryRequest {
-  UserContext user = 1;
-  MediaReference media = 2;
+  User user = 1;
+  Media media = 2;
   string language = 3;
   int32 max_length_tokens = 4;
 }
@@ -31,8 +31,8 @@ message SummaryResponse {
 }
 
 message SubtitlesRequest {
-  UserContext user = 1;
-  MediaReference media = 2;
+  User user = 1;
+  Media media = 2;
   string language = 3;
   string format = 4;
 }

@@ -16,15 +16,15 @@ pub mod proto {
     use super::*;
 
     #[derive(Clone, PartialEq, Message)]
-    pub struct UserContext {
-        #[prost(int64, tag = "1")]
-        pub telegram_id: i64,
+    pub struct User {
+        #[prost(string, tag = "1")]
+        pub telegram_id: String,
         #[prost(string, tag = "2")]
         pub phone: String,
     }
 
     #[derive(Clone, PartialEq, Message)]
-    pub struct MediaReference {
+    pub struct Media {
         #[prost(string, tag = "1")]
         pub url: String,
         #[prost(string, tag = "2")]
@@ -34,9 +34,9 @@ pub mod proto {
     #[derive(Clone, PartialEq, Message)]
     pub struct SummaryRequest {
         #[prost(message, optional, tag = "1")]
-        pub user: Option<UserContext>,
+        pub user: Option<User>,
         #[prost(message, optional, tag = "2")]
-        pub media: Option<MediaReference>,
+        pub media: Option<Media>,
         #[prost(string, tag = "3")]
         pub language: String,
         #[prost(int32, tag = "4")]
@@ -64,9 +64,9 @@ pub mod proto {
     #[derive(Clone, PartialEq, Message)]
     pub struct SubtitlesRequest {
         #[prost(message, optional, tag = "1")]
-        pub user: Option<UserContext>,
+        pub user: Option<User>,
         #[prost(message, optional, tag = "2")]
-        pub media: Option<MediaReference>,
+        pub media: Option<Media>,
         #[prost(string, tag = "3")]
         pub language: String,
         #[prost(string, tag = "4")]
@@ -283,14 +283,14 @@ impl DownsubGateway {
     ) -> Result<SummaryResult, DownsubError> {
         let mut client = self.client.clone().ok_or(DownsubError::Unavailable)?;
 
-        let media = proto::MediaReference {
+        let media = proto::Media {
             url: url.into(),
             title: String::new(),
         };
 
         let request = proto::SummaryRequest {
-            user: Some(proto::UserContext {
-                telegram_id,
+            user: Some(proto::User {
+                telegram_id: telegram_id.to_string(),
                 phone: phone.unwrap_or_default(),
             }),
             media: Some(media),
@@ -340,14 +340,14 @@ impl DownsubGateway {
         let mut client = self.client.clone().ok_or(DownsubError::Unavailable)?;
 
         let format = format_hint.unwrap_or_else(|| "srt".to_string());
-        let media = proto::MediaReference {
+        let media = proto::Media {
             url: url.into(),
             title: String::new(),
         };
 
         let request = proto::SubtitlesRequest {
-            user: Some(proto::UserContext {
-                telegram_id,
+            user: Some(proto::User {
+                telegram_id: telegram_id.to_string(),
                 phone: phone.unwrap_or_default(),
             }),
             media: Some(media),
