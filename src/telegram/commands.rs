@@ -1456,8 +1456,12 @@ pub async fn process_video_clip(
         })
         .collect();
 
-    let base_filter_av = build_cut_filter(&seeked_segments, has_video, true);
-    let base_filter_v = if has_video {
+    // For ringtones the input is audio-only (MP3); embedded album art must be ignored
+    // so that the filter_complex doesn't produce an unconnected [v] output which
+    // makes ffmpeg exit with code 234 when using -f ipod.
+    let has_video_for_filter = has_video && !is_ringtone;
+    let base_filter_av = build_cut_filter(&seeked_segments, has_video_for_filter, true);
+    let base_filter_v = if has_video_for_filter {
         build_cut_filter(&seeked_segments, true, false)
     } else {
         String::new()
@@ -1597,8 +1601,10 @@ pub async fn process_video_clip(
     cmd.arg("-i").arg(&input_path);
 
     if is_ringtone {
-        // For ringtone we only care about audio
-        cmd.arg("-filter_complex")
+        // For ringtone we only care about audio; -vn ensures no video stream
+        // is passed to the ipod muxer even if the input has embedded album art
+        cmd.arg("-vn")
+            .arg("-filter_complex")
             .arg(&filter_av)
             .arg("-map")
             .arg(map_a_label)
