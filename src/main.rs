@@ -614,7 +614,7 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
     Arc::clone(&rate_limiter).spawn_cleanup_task(std::time::Duration::from_secs(300));
 
     let download_queue = Arc::new(DownloadQueue::new());
-    let downsub_gateway = Arc::new(DownsubGateway::from_env().await);
+    let downsub_gateway = Arc::new(DownsubGateway::from_env());
     if downsub_gateway.is_available() {
         log::info!(
             "Downsub gRPC gateway enabled ({})",

@@ -237,28 +237,22 @@ pub struct SubtitleSegment {
 }
 
 impl DownsubGateway {
-    pub async fn from_env() -> Self {
+    pub fn from_env() -> Self {
         let timeout = config::downsub::timeout();
         let mut client = None;
 
-        if let Some(endpoint) = config::DOWNSUB_GRPC_ENDPOINT
+        if let Some(endpoint_url) = config::DOWNSUB_GRPC_ENDPOINT
             .as_ref()
             .filter(|url| !url.trim().is_empty())
         {
-            match Endpoint::from_shared(endpoint.clone()) {
+            match Endpoint::from_shared(endpoint_url.clone()) {
                 Ok(endpoint) => {
-                    let cloned_endpoint = endpoint.clone();
-                    match endpoint.connect_timeout(timeout).connect().await {
-                        Ok(channel) => {
-                            client = Some(proto::downsub_service_client::DownsubServiceClient::new(channel));
-                        }
-                        Err(err) => {
-                            log::warn!("Failed to connect to Downsub gRPC at {:?}: {}", cloned_endpoint, err);
-                        }
-                    }
+                    let channel = endpoint.connect_timeout(timeout).connect_lazy();
+                    client = Some(proto::downsub_service_client::DownsubServiceClient::new(channel));
+                    log::info!("Downsub gRPC gateway configured (lazy connect): {}", endpoint_url);
                 }
                 Err(err) => {
-                    log::warn!("Invalid Downsub gRPC endpoint {:?}: {}", endpoint, err);
+                    log::warn!("Invalid Downsub gRPC endpoint {:?}: {}", endpoint_url, err);
                 }
             }
         }

@@ -138,7 +138,7 @@ impl RealHandlerTest {
 
         let download_queue = Arc::new(DownloadQueue::new());
         let rate_limiter = Arc::new(RateLimiter::new());
-        let downsub_gateway = Arc::new(DownsubGateway::from_env().await);
+        let downsub_gateway = Arc::new(DownsubGateway::from_env());
 
         let extension_registry = Arc::new(doradura::extension::ExtensionRegistry::default_registry());
 

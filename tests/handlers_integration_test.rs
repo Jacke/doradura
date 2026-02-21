@@ -324,7 +324,7 @@ async fn create_test_deps() -> HandlerDeps {
     let rate_limiter = Arc::new(RateLimiter::new());
 
     // Create a downsub gateway (will be unavailable without DOWNSUB_GRPC_ENDPOINT)
-    let downsub_gateway = Arc::new(DownsubGateway::from_env().await);
+    let downsub_gateway = Arc::new(DownsubGateway::from_env());
 
     let extension_registry = Arc::new(doradura::extension::ExtensionRegistry::default_registry());
 
