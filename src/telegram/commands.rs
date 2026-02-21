@@ -2435,7 +2435,7 @@ pub async fn handle_downsub_command(
     }
 
     let action = tokens[1].to_lowercase();
-    let options = parse_downsub_options(&tokens[3..]);
+    let options = parse_downsub_options(tokens.get(3..).unwrap_or(&[]));
 
     match action.as_str() {
         "summary" => {
