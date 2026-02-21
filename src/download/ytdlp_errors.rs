@@ -73,7 +73,7 @@ pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
         return YtDlpErrorType::BotDetection;
     }
 
-    // Check for unavailable video
+    // Check for unavailable video (private, deleted, geo-restricted)
     if stderr_lower.contains("private video")
         || stderr_lower.contains("video unavailable")
         || stderr_lower.contains("this video is not available")
@@ -81,6 +81,13 @@ pub fn analyze_ytdlp_error(stderr: &str) -> YtDlpErrorType {
         || stderr_lower.contains("video has been removed")
         || stderr_lower.contains("this video does not exist")
         || stderr_lower.contains("video is not available")
+        || stderr_lower.contains("not made this video available")
+        || stderr_lower.contains("not available in your country")
+        || stderr_lower.contains("not available in your region")
+        || stderr_lower.contains("geographical restriction")
+        || stderr_lower.contains("geo-blocked")
+        || stderr_lower.contains("geoblocked")
+        || stderr_lower.contains("blocked in your country")
     {
         return YtDlpErrorType::VideoUnavailable;
     }
@@ -139,7 +146,7 @@ pub fn get_error_message(error_type: &YtDlpErrorType) -> String {
             "❌ YouTube blocked the request.\n\nTry a different video or retry later.".to_string()
         }
         YtDlpErrorType::VideoUnavailable => {
-            "❌ Video unavailable.\n\nIt may be private, deleted, or blocked in your region.".to_string()
+            "❌ Video unavailable.\n\nIt may be private, deleted, or geo-restricted (not available in the server's region).".to_string()
         }
         YtDlpErrorType::NetworkError => "❌ Network problem.\n\nTry again in a minute.".to_string(),
         YtDlpErrorType::FragmentError => "❌ Temporary issue while downloading video.\n\nPlease retry.".to_string(),
@@ -340,6 +347,13 @@ mod tests {
             "Video has been removed",
             "This video does not exist",
             "Video is not available",
+            // Geo-restriction patterns
+            "ERROR: [youtube] ekr2nIex040: The uploader has not made this video available in your country",
+            "not available in your country",
+            "not available in your region",
+            "geographical restriction",
+            "geo-blocked",
+            "blocked in your country",
         ];
 
         for case in cases {
