@@ -6,7 +6,8 @@
 
 use super::results::SmokeTestReport;
 use super::test_cases::{
-    test_audio_download, test_cookies_validation, test_ffmpeg_toolchain, test_metadata_extraction, test_video_download,
+    test_audio_download, test_cookies_validation, test_ffmpeg_toolchain, test_metadata_extraction,
+    test_ringtone_conversion, test_video_download,
 };
 use super::{DEFAULT_TEST_TIMEOUT_SECS, DEFAULT_TEST_URL, PRODUCTION_TEST_TIMEOUT_SECS};
 use crate::download::metadata::ProxyConfig;
@@ -147,6 +148,12 @@ pub async fn run_all_smoke_tests(config: &SmokeTestConfig) -> SmokeTestReport {
     // Test 5: Video download
     log::info!("Running test: video_download");
     let result = test_video_download(&config.test_url, &config.temp_dir, config.timeout, &proxy_chain).await;
+    log::info!("  Result: {:?}", result.status);
+    results.push(result);
+
+    // Test 6: Ringtone conversion (local ffmpeg only — no network required)
+    log::info!("Running test: ringtone_conversion");
+    let result = test_ringtone_conversion(&config.temp_dir).await;
     log::info!("  Result: {:?}", result.status);
     results.push(result);
 

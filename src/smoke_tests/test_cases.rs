@@ -12,7 +12,8 @@
 
 use super::results::SmokeTestResult;
 use super::validators::{
-    is_ffmpeg_available, is_ffprobe_available, is_ytdlp_available, validate_audio_file, validate_video_file,
+    is_ffmpeg_available, is_ffprobe_available, is_ytdlp_available, validate_audio_file, validate_ringtone_file,
+    validate_video_file,
 };
 use crate::core::config;
 use crate::download::metadata::{validate_cookies_file_format, ProxyConfig};
@@ -420,6 +421,155 @@ pub async fn test_video_download(
     SmokeTestResult::failed(test_name, start.elapsed(), "All proxies failed for video download")
 }
 
+/// Test 6: Ringtone conversion pipeline.
+///
+/// Verifies the full ringtone FFmpeg pipeline without network access:
+/// 1. Generates a short MP3 with embedded album art (cover image) using ffmpeg.
+///    Album art is the exact input that previously caused exit code 234.
+/// 2. Calls `create_iphone_ringtone()` to produce a `.m4r` file.
+/// 3. Validates the output:
+///    - Has audio stream
+///    - Has NO video stream (album art must be stripped by `-vn`)
+///    - Duration ≤ 30 s
+pub async fn test_ringtone_conversion(temp_dir: &str) -> SmokeTestResult {
+    use crate::download::ringtone::create_iphone_ringtone;
+
+    let start = std::time::Instant::now();
+    let test_name = "ringtone_conversion";
+
+    if !is_ffmpeg_available() {
+        return SmokeTestResult::skipped(test_name, "ffmpeg not available");
+    }
+
+    let ts = chrono::Utc::now().timestamp_millis();
+    let silence_path = format!("{}/smoke_ringtone_silence_{}.mp3", temp_dir, ts);
+    let cover_path = format!("{}/smoke_ringtone_cover_{}.jpg", temp_dir, ts);
+    let input_path = format!("{}/smoke_ringtone_in_{}.mp3", temp_dir, ts);
+    let output_path = format!("{}/smoke_ringtone_out_{}.m4r", temp_dir, ts);
+
+    let cleanup = |paths: &[&str]| {
+        for p in paths {
+            let _ = std::fs::remove_file(p);
+        }
+    };
+    let all_files = [
+        silence_path.as_str(),
+        cover_path.as_str(),
+        input_path.as_str(),
+        output_path.as_str(),
+    ];
+
+    // Generate 10 s of silence as MP3
+    let silence_ok = tokio::process::Command::new("ffmpeg")
+        .args([
+            "-f",
+            "lavfi",
+            "-i",
+            "anullsrc=r=44100:cl=stereo",
+            "-t",
+            "10",
+            "-y",
+            &silence_path,
+        ])
+        .output()
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !silence_ok {
+        cleanup(&all_files);
+        return SmokeTestResult::failed(test_name, start.elapsed(), "ffmpeg failed to generate silence MP3");
+    }
+
+    // Generate a 1×1 JPEG cover image (album art — the source of exit code 234)
+    let cover_ok = tokio::process::Command::new("ffmpeg")
+        .args([
+            "-f",
+            "lavfi",
+            "-i",
+            "color=red:size=1x1",
+            "-frames:v",
+            "1",
+            "-y",
+            &cover_path,
+        ])
+        .output()
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !cover_ok {
+        // Cover generation failed — skip album-art regression, use plain silence
+        log::warn!("[smoke_test] Could not generate cover art, testing without album art");
+        if let Err(e) = std::fs::copy(&silence_path, &input_path) {
+            cleanup(&all_files);
+            return SmokeTestResult::failed(test_name, start.elapsed(), &format!("copy failed: {}", e));
+        }
+    } else {
+        // Embed cover art into the MP3 to replicate the album-art regression
+        let embed_ok = tokio::process::Command::new("ffmpeg")
+            .args([
+                "-i",
+                &silence_path,
+                "-i",
+                &cover_path,
+                "-map",
+                "0:a",
+                "-map",
+                "1:v",
+                "-c:a",
+                "copy",
+                "-c:v",
+                "copy",
+                "-id3v2_version",
+                "3",
+                "-y",
+                &input_path,
+            ])
+            .output()
+            .await
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        if !embed_ok {
+            cleanup(&all_files);
+            return SmokeTestResult::failed(test_name, start.elapsed(), "ffmpeg failed to embed album art");
+        }
+    }
+
+    // Run the ringtone conversion (5 seconds starting at 0)
+    match create_iphone_ringtone(&input_path, &output_path, 0, 5).await {
+        Ok(()) => {}
+        Err(e) => {
+            cleanup(&all_files);
+            return SmokeTestResult::failed(
+                test_name,
+                start.elapsed(),
+                &format!("create_iphone_ringtone failed: {}", e),
+            );
+        }
+    }
+
+    // Validate the output .m4r
+    let validation = validate_ringtone_file(std::path::Path::new(&output_path));
+    cleanup(&all_files);
+
+    if !validation.is_valid {
+        return SmokeTestResult::failed(
+            test_name,
+            start.elapsed(),
+            &validation
+                .error
+                .unwrap_or_else(|| "unknown validation error".to_string()),
+        );
+    }
+
+    let mut result = SmokeTestResult::passed(test_name, start.elapsed());
+    result.file_size_bytes = Some(validation.size);
+    result.media_duration_secs = validation.duration;
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::results::SmokeTestStatus;
@@ -441,5 +591,18 @@ mod tests {
         let result = test_cookies_validation().await;
         assert!(!result.test_name.is_empty());
         // Can be Passed, Skipped, or Failed depending on config
+    }
+
+    #[tokio::test]
+    async fn test_ringtone_conversion_smoke() {
+        let temp_dir = std::env::temp_dir().to_string_lossy().to_string();
+        let result = test_ringtone_conversion(&temp_dir).await;
+        assert!(!result.test_name.is_empty());
+        // Passes when ffmpeg is available; skipped otherwise
+        assert!(
+            matches!(result.status, SmokeTestStatus::Passed | SmokeTestStatus::Skipped),
+            "ringtone_conversion failed: {:?}",
+            result.error_message
+        );
     }
 }

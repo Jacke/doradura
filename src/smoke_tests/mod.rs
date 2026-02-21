@@ -32,11 +32,12 @@ pub use results::{SmokeTestReport, SmokeTestResult, SmokeTestStatus};
 pub use runner::{run_all_smoke_tests, SmokeTestConfig};
 pub use scheduler::{start_health_check_scheduler, HealthCheckScheduler};
 pub use test_cases::{
-    test_audio_download, test_cookies_validation, test_ffmpeg_toolchain, test_metadata_extraction, test_video_download,
+    test_audio_download, test_cookies_validation, test_ffmpeg_toolchain, test_metadata_extraction,
+    test_ringtone_conversion, test_video_download,
 };
 pub use validators::{
-    is_ffmpeg_available, is_ffprobe_available, is_ytdlp_available, validate_audio_file, validate_video_file,
-    AudioFileValidation, VideoFileValidation,
+    is_ffmpeg_available, is_ffprobe_available, is_ytdlp_available, validate_audio_file, validate_ringtone_file,
+    validate_video_file, AudioFileValidation, RingtoneFileValidation, VideoFileValidation,
 };
 
 /// Default test URL - "Me at the zoo" (first YouTube video, ~19 seconds)

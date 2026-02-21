@@ -321,6 +321,96 @@ pub fn validate_video_file(path: &Path) -> VideoFileValidation {
     validation
 }
 
+/// Result of ringtone file validation
+#[derive(Debug, Clone)]
+pub struct RingtoneFileValidation {
+    /// File size in bytes
+    pub size: u64,
+    /// Duration in seconds
+    pub duration: Option<u32>,
+    /// Whether the file has an audio stream
+    pub has_audio_stream: bool,
+    /// Whether the file has a video stream (should be false for ringtones)
+    pub has_video_stream: bool,
+    /// Whether the file is valid
+    pub is_valid: bool,
+    /// Error message if invalid
+    pub error: Option<String>,
+}
+
+/// Validates an iPhone ringtone file (.m4r)
+///
+/// Checks:
+/// - File exists and is non-empty (> 1 KB)
+/// - Has audio stream
+/// - Has NO video stream (validates -vn fix for album art)
+/// - Duration is between 1 and 30 seconds (iOS limit)
+pub fn validate_ringtone_file(path: &Path) -> RingtoneFileValidation {
+    let mut validation = RingtoneFileValidation {
+        size: 0,
+        duration: None,
+        has_audio_stream: false,
+        has_video_stream: false,
+        is_valid: false,
+        error: None,
+    };
+
+    if !path.exists() {
+        validation.error = Some("Ringtone file does not exist".to_string());
+        return validation;
+    }
+
+    match fs::metadata(path) {
+        Ok(meta) => {
+            validation.size = meta.len();
+            if validation.size < 1_000 {
+                validation.error = Some(format!("Ringtone too small ({} bytes)", validation.size));
+                return validation;
+            }
+        }
+        Err(e) => {
+            validation.error = Some(format!("Failed to read ringtone metadata: {}", e));
+            return validation;
+        }
+    }
+
+    let path_str = path.to_str().unwrap_or_default();
+
+    validation.duration = probe_duration(path_str);
+    if validation.duration.is_none() {
+        validation.error = Some("Failed to probe ringtone duration".to_string());
+        return validation;
+    }
+
+    if let Some(d) = validation.duration {
+        if d == 0 {
+            validation.error = Some("Ringtone duration is 0 seconds".to_string());
+            return validation;
+        }
+        if d > 30 {
+            validation.error = Some(format!("Ringtone duration {}s exceeds iOS 30s limit", d));
+            return validation;
+        }
+    }
+
+    validation.has_audio_stream = has_audio_stream(path_str);
+    if !validation.has_audio_stream {
+        validation.error = Some("Ringtone has no audio stream".to_string());
+        return validation;
+    }
+
+    // A ringtone must NOT contain a video stream — this validates the -vn fix.
+    // Embedded album art from the source MP3 must be stripped.
+    validation.has_video_stream = has_video_stream(path_str);
+    if validation.has_video_stream {
+        validation.error = Some("Ringtone contains a video stream (album art not stripped by -vn)".to_string());
+        return validation;
+    }
+
+    validation.is_valid = true;
+    validation
+}
+
 /// Checks if ffmpeg is available
 pub fn is_ffmpeg_available() -> bool {
     run_with_timeout(Command::new("ffmpeg").arg("-version"), VERSION_CHECK_TIMEOUT)
