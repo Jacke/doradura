@@ -3,10 +3,12 @@ use crate::core::rate_limiter::RateLimiter;
 use crate::core::subscription::{create_subscription_invoice, show_subscription_info};
 use crate::core::types::Plan;
 use crate::download::queue::{DownloadQueue, DownloadTask};
+use crate::downsub::DownsubGateway;
 use crate::extension::ExtensionRegistry;
 use crate::i18n;
 use crate::storage::cache;
 use crate::storage::db::{self, DbPool};
+use crate::storage::SubtitleCache;
 use crate::telegram::admin;
 use crate::telegram::cache as tg_cache;
 use crate::telegram::setup_chat_bot_commands;
@@ -39,6 +41,8 @@ pub async fn handle_menu_callback(
     download_queue: Arc<DownloadQueue>,
     rate_limiter: Arc<RateLimiter>,
     extension_registry: Arc<ExtensionRegistry>,
+    downsub_gateway: Arc<DownsubGateway>,
+    subtitle_cache: Arc<SubtitleCache>,
 ) -> ResponseResult<()> {
     let callback_id = q.id.clone();
     let data_clone = q.data.clone();
@@ -1153,6 +1157,8 @@ pub async fn handle_menu_callback(
                     &data,
                     db_pool.clone(),
                     q.from.username.clone(),
+                    downsub_gateway.clone(),
+                    subtitle_cache.clone(),
                 )
                 .await?;
             } else if data.starts_with("cuts:") {

@@ -2415,6 +2415,7 @@ pub async fn handle_downsub_command(
     msg: Message,
     db_pool: Arc<DbPool>,
     downsub_gateway: Arc<DownsubGateway>,
+    subtitle_cache: Arc<crate::storage::SubtitleCache>,
 ) -> ResponseResult<()> {
     let lang = i18n::user_lang_from_pool(&db_pool, msg.chat.id.0);
     let usage_text = i18n::t(&lang, "commands.downsub_usage");
@@ -2445,11 +2446,15 @@ pub async fn handle_downsub_command(
             }
 
             let url = tokens[2].to_string();
+            let loading_msg = bot.send_message(msg.chat.id, "⏳ Generating summary…").await?;
+
             match downsub_gateway
                 .summarize_url(msg.chat.id.0, options.phone.clone(), url, options.language.clone())
                 .await
             {
                 Ok(summary) => {
+                    bot.delete_message(msg.chat.id, loading_msg.id).await.ok();
+
                     let mut response = String::new();
                     response.push_str(&i18n::t(&lang, "commands.downsub_summary_header"));
                     response.push('\n');
@@ -2479,14 +2484,14 @@ pub async fn handle_downsub_command(
                     bot.send_message(msg.chat.id, response).await?;
                 }
                 Err(DownsubError::Unavailable) => {
+                    bot.delete_message(msg.chat.id, loading_msg.id).await.ok();
                     bot.send_message(msg.chat.id, disabled_text.clone()).await?;
                 }
                 Err(err) => {
                     log::warn!("Downsub summary request failed: {}", err);
-                    let mut args = FluentArgs::new();
-                    args.set("error", err.to_string());
-                    bot.send_message(msg.chat.id, i18n::t_args(&lang, "commands.downsub_error", &args))
-                        .await?;
+                    bot.edit_message_text(msg.chat.id, loading_msg.id, format!("❌ Error: {}", err))
+                        .await
+                        .ok();
                 }
             }
         }
@@ -2497,45 +2502,40 @@ pub async fn handle_downsub_command(
             }
 
             let url = tokens[2].to_string();
-            match downsub_gateway
-                .fetch_subtitles(
-                    msg.chat.id.0,
-                    options.phone.clone(),
-                    url,
-                    options.format.clone(),
-                    options.language.clone(),
-                )
-                .await
-            {
-                Ok(result) => {
-                    let segments_count = result.segments.len() as i64;
-                    let format_value = if result.format.is_empty() {
-                        "srt".to_string()
-                    } else {
-                        result.format.clone()
-                    };
-                    let extension = format_value.split('.').next().unwrap_or("srt").to_lowercase();
-                    let file_name = format!("downsub_subtitles.{}", extension);
-                    let bytes = result.raw_subtitles.into_bytes();
+            let loading_msg = bot
+                .send_message(msg.chat.id, "⏳ Fetching subtitles (SRT + TXT)…")
+                .await?;
 
-                    bot.send_document(msg.chat.id, InputFile::memory(bytes).file_name(file_name))
-                        .await?;
+            let lang_str = options.language.clone().unwrap_or_default();
+            use crate::telegram::downloads::fetch_subtitles_for_command;
+            match fetch_subtitles_for_command(&downsub_gateway, &subtitle_cache, msg.chat.id.0, &url, &lang_str).await {
+                Ok((srt_content, txt_content, segment_count)) => {
+                    bot.edit_message_text(
+                        msg.chat.id,
+                        loading_msg.id,
+                        format!("✅ {} segments fetched", segment_count),
+                    )
+                    .await
+                    .ok();
 
-                    let mut args = FluentArgs::new();
-                    args.set("format", format_value.clone());
-                    args.set("count", segments_count);
-                    let text = i18n::t_args(&lang, "commands.downsub_subtitles_sent", &args);
-                    bot.send_message(msg.chat.id, text).await?;
-                }
-                Err(DownsubError::Unavailable) => {
-                    bot.send_message(msg.chat.id, disabled_text.clone()).await?;
+                    bot.send_document(
+                        msg.chat.id,
+                        InputFile::memory(srt_content.into_bytes()).file_name("subtitles.srt"),
+                    )
+                    .await
+                    .ok();
+                    bot.send_document(
+                        msg.chat.id,
+                        InputFile::memory(txt_content.into_bytes()).file_name("subtitles.txt"),
+                    )
+                    .await
+                    .ok();
                 }
                 Err(err) => {
                     log::warn!("Downsub subtitles request failed: {}", err);
-                    let mut args = FluentArgs::new();
-                    args.set("error", err.to_string());
-                    bot.send_message(msg.chat.id, i18n::t_args(&lang, "commands.downsub_error", &args))
-                        .await?;
+                    bot.edit_message_text(msg.chat.id, loading_msg.id, format!("❌ Error: {}", err))
+                        .await
+                        .ok();
                 }
             }
         }

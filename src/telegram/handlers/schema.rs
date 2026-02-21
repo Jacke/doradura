@@ -342,6 +342,7 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                             msg.clone(),
                             deps.db_pool.clone(),
                             deps.downsub_gateway.clone(),
+                            deps.subtitle_cache.clone(),
                         )
                         .await;
                     }
@@ -603,6 +604,8 @@ fn callback_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                 deps.download_queue.clone(),
                 deps.rate_limiter.clone(),
                 deps.extension_registry.clone(),
+                deps.downsub_gateway.clone(),
+                deps.subtitle_cache.clone(),
             )
             .await
             {

@@ -11,7 +11,7 @@ use crate::download::queue::DownloadQueue;
 use crate::downsub::DownsubGateway;
 use crate::extension::ExtensionRegistry;
 use crate::storage::db::{self, create_user, create_user_with_language, get_user};
-use crate::storage::get_connection;
+use crate::storage::{get_connection, SubtitleCache};
 use crate::telegram::notifications::notify_admin_new_user;
 use crate::telegram::Bot;
 
@@ -25,6 +25,7 @@ pub struct HandlerDeps {
     pub download_queue: Arc<DownloadQueue>,
     pub rate_limiter: Arc<RateLimiter>,
     pub downsub_gateway: Arc<DownsubGateway>,
+    pub subtitle_cache: Arc<SubtitleCache>,
     pub bot_username: Option<String>,
     pub bot_id: UserId,
     pub alert_manager: Option<Arc<AlertManager>>,
@@ -38,6 +39,7 @@ impl HandlerDeps {
         download_queue: Arc<DownloadQueue>,
         rate_limiter: Arc<RateLimiter>,
         downsub_gateway: Arc<DownsubGateway>,
+        subtitle_cache: Arc<SubtitleCache>,
         bot_username: Option<String>,
         bot_id: UserId,
         alert_manager: Option<Arc<AlertManager>>,
@@ -48,6 +50,7 @@ impl HandlerDeps {
             download_queue,
             rate_limiter,
             downsub_gateway,
+            subtitle_cache,
             bot_username,
             bot_id,
             alert_manager,

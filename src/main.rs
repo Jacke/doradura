@@ -804,12 +804,19 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
     // Create extension registry
     let extension_registry = Arc::new(doradura::extension::ExtensionRegistry::default_registry());
 
+    // Create subtitle cache (permanent disk cache for subtitle files)
+    let subtitle_cache = Arc::new(doradura::storage::SubtitleCache::new(&format!(
+        "{}/subtitles",
+        *config::DOWNLOAD_FOLDER
+    )));
+
     // Create handler dependencies for the modular schema
     let handler_deps = HandlerDeps::new(
         Arc::clone(&db_pool),
         Arc::clone(&download_queue),
         Arc::clone(&rate_limiter),
         Arc::clone(&downsub_gateway),
+        Arc::clone(&subtitle_cache),
         bot_username.map(|s| s.to_string()),
         bot_id,
         alert_manager,

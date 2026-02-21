@@ -328,11 +328,14 @@ async fn create_test_deps() -> HandlerDeps {
 
     let extension_registry = Arc::new(doradura::extension::ExtensionRegistry::default_registry());
 
+    let subtitle_cache = Arc::new(doradura::storage::SubtitleCache::new("/tmp/doradura_test_subtitles"));
+
     HandlerDeps::new(
         db_pool,
         download_queue,
         rate_limiter,
         downsub_gateway,
+        subtitle_cache,
         Some("test_bot".to_string()),
         UserId(123456789),
         None, // alert_manager - not needed for tests

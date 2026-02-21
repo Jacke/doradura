@@ -142,11 +142,14 @@ impl RealHandlerTest {
 
         let extension_registry = Arc::new(doradura::extension::ExtensionRegistry::default_registry());
 
+        let subtitle_cache = Arc::new(doradura::storage::SubtitleCache::new("/tmp/doradura_test_subtitles"));
+
         let deps = HandlerDeps::new(
             db_pool,
             download_queue,
             rate_limiter,
             downsub_gateway,
+            subtitle_cache,
             Some("test_bot".to_string()),
             UserId(987654321),
             None, // alert_manager - not needed for tests
@@ -748,6 +751,8 @@ async fn test_real_handle_menu_callback() {
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
+        test.deps.downsub_gateway.clone(),
+        test.deps.subtitle_cache.clone(),
     )
     .await;
     assert!(result.is_ok(), "handle_menu_callback should succeed");
@@ -796,6 +801,8 @@ async fn test_real_settings_callback() {
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
+        test.deps.downsub_gateway.clone(),
+        test.deps.subtitle_cache.clone(),
     )
     .await;
     assert!(result.is_ok(), "settings callback should succeed");
@@ -851,6 +858,8 @@ async fn test_real_downloads_callback() {
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
+        test.deps.downsub_gateway.clone(),
+        test.deps.subtitle_cache.clone(),
     )
     .await;
     assert!(result.is_ok(), "downloads callback should succeed");
@@ -906,6 +915,8 @@ async fn test_real_info_callback() {
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
+        test.deps.downsub_gateway.clone(),
+        test.deps.subtitle_cache.clone(),
     )
     .await;
     assert!(result.is_ok(), "info callback should succeed");
@@ -1201,6 +1212,8 @@ async fn test_callback_mode_services() {
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
+        test.deps.downsub_gateway.clone(),
+        test.deps.subtitle_cache.clone(),
     )
     .await;
     assert!(result.is_ok(), "mode:services callback should succeed");
@@ -1252,6 +1265,8 @@ async fn test_callback_main_services() {
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
+        test.deps.downsub_gateway.clone(),
+        test.deps.subtitle_cache.clone(),
     )
     .await;
     assert!(result.is_ok(), "main:services callback should succeed");
@@ -1291,6 +1306,8 @@ async fn test_callback_ext_detail_ytdlp() {
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
+        test.deps.downsub_gateway.clone(),
+        test.deps.subtitle_cache.clone(),
     )
     .await;
     assert!(result.is_ok(), "ext:detail:ytdlp callback should succeed");
@@ -1350,6 +1367,8 @@ async fn test_callback_ext_detail_converter() {
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
+        test.deps.downsub_gateway.clone(),
+        test.deps.subtitle_cache.clone(),
     )
     .await;
     assert!(result.is_ok(), "ext:detail:converter callback should succeed");
@@ -1392,6 +1411,8 @@ async fn test_callback_ext_detail_audio_effects() {
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
+        test.deps.downsub_gateway.clone(),
+        test.deps.subtitle_cache.clone(),
     )
     .await;
     assert!(result.is_ok(), "ext:detail:audio_effects callback should succeed");
@@ -1433,6 +1454,8 @@ async fn test_callback_ext_detail_http() {
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
+        test.deps.downsub_gateway.clone(),
+        test.deps.subtitle_cache.clone(),
     )
     .await;
     assert!(result.is_ok(), "ext:detail:http callback should succeed");
@@ -1475,6 +1498,8 @@ async fn test_callback_ext_back() {
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
+        test.deps.downsub_gateway.clone(),
+        test.deps.subtitle_cache.clone(),
     )
     .await;
     assert!(result.is_ok(), "ext:back callback should succeed");
@@ -1534,6 +1559,8 @@ async fn test_callback_ext_detail_nonexistent() {
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
+        test.deps.downsub_gateway.clone(),
+        test.deps.subtitle_cache.clone(),
     )
     .await;
     // Should not crash, just silently return Ok
@@ -1985,6 +2012,8 @@ async fn test_ext_detail_ytdlp_all_capabilities() {
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
+        test.deps.downsub_gateway.clone(),
+        test.deps.subtitle_cache.clone(),
     )
     .await;
     assert!(result.is_ok());
@@ -2041,6 +2070,8 @@ async fn test_ext_detail_http_all_capabilities() {
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
+        test.deps.downsub_gateway.clone(),
+        test.deps.subtitle_cache.clone(),
     )
     .await;
     assert!(result.is_ok());
@@ -2090,6 +2121,8 @@ async fn test_ext_detail_converter_all_capabilities() {
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
+        test.deps.downsub_gateway.clone(),
+        test.deps.subtitle_cache.clone(),
     )
     .await;
     assert!(result.is_ok());
@@ -2135,6 +2168,8 @@ async fn test_ext_detail_audio_effects_all_capabilities() {
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
+        test.deps.downsub_gateway.clone(),
+        test.deps.subtitle_cache.clone(),
     )
     .await;
     assert!(result.is_ok());
@@ -2191,6 +2226,8 @@ async fn test_ext_detail_all_locales() {
             test.deps.download_queue.clone(),
             test.deps.rate_limiter.clone(),
             test.deps.extension_registry.clone(),
+            test.deps.downsub_gateway.clone(),
+            test.deps.subtitle_cache.clone(),
         )
         .await;
         assert!(

@@ -1,13 +1,23 @@
 use crate::core::{config, escape_markdown};
-use crate::storage::{db, DbPool};
+use crate::downsub::DownsubGateway;
+use crate::storage::{db, DbPool, SubtitleCache};
 use crate::telegram::commands::{process_video_clip, CutSegment};
 use crate::telegram::Bot;
 use crate::timestamps::{format_timestamp, select_best_timestamps, VideoTimestamp};
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{CallbackQueryId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode};
+use teloxide::types::{CallbackQueryId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, MessageId, ParseMode};
 
 const ITEMS_PER_PAGE: usize = 5;
+
+fn is_youtube_url(url: &str) -> bool {
+    // Check for the domain after the scheme to avoid false positives like "notyoutube.com"
+    url.contains("://youtube.com/")
+        || url.contains("://www.youtube.com/")
+        || url.contains("://m.youtube.com/")
+        || url.contains("://music.youtube.com/")
+        || url.contains("://youtu.be/")
+}
 
 /// Format file size for display
 fn format_file_size(bytes: i64) -> String {
@@ -220,14 +230,6 @@ pub async fn show_downloads_page(
         // Format metadata
         let mut metadata_parts = Vec::new();
 
-        if let Some(is_local) = download.bot_api_is_local {
-            if is_local == 1 {
-                metadata_parts.push("🏠 local Bot API".to_string());
-            } else {
-                metadata_parts.push("☁️ official Bot API".to_string());
-            }
-        }
-
         if let Some(size) = download.file_size {
             metadata_parts.push(format_file_size(size));
         }
@@ -384,6 +386,8 @@ pub async fn handle_downloads_callback(
     data: &str,
     db_pool: Arc<DbPool>,
     username: Option<String>,
+    downsub_gateway: Arc<DownsubGateway>,
+    subtitle_cache: Arc<SubtitleCache>,
 ) -> ResponseResult<()> {
     log::info!("📥 handle_downloads_callback called with data: {}", data);
     bot.answer_callback_query(callback_id).await?;
@@ -503,6 +507,13 @@ pub async fn handle_downloads_callback(
                         options.push(vec![crate::telegram::cb(
                             "⚙️ Change speed".to_string(),
                             format!("downloads:speed:{}", download_id),
+                        )]);
+                    }
+
+                    if is_youtube_url(&download.url) {
+                        options.push(vec![crate::telegram::cb(
+                            "📝 Subtitles".to_string(),
+                            format!("downloads:subtitles:{}", download_id),
                         )]);
                     }
 
@@ -1424,19 +1435,91 @@ pub async fn handle_downloads_callback(
             if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id)
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
-                if let Some(file_id) = download.file_id {
-                    let lang = crate::i18n::user_lang(&conn, chat_id.0);
+                if let Some(ref file_id) = download.file_id {
                     bot.delete_message(chat_id, message_id).await.ok();
-                    let processing_msg = bot.send_message(chat_id, "⏳ Preparing ringtone...").await?;
-                    match handle_iphone_ringtone(bot, chat_id, &file_id, &download.title, &lang).await {
-                        Ok(_) => {
-                            bot.delete_message(chat_id, processing_msg.id).await.ok();
-                        }
-                        Err(e) => {
-                            bot.delete_message(chat_id, processing_msg.id).await.ok();
-                            bot.send_message(chat_id, format!("❌ Error creating ringtone: {}", e))
+
+                    // Send audio preview so user can hear the track
+                    bot.send_audio(chat_id, InputFile::file_id(teloxide::types::FileId(file_id.clone())))
+                        .await
+                        .ok();
+
+                    // Create a VideoClipSession so the text handler can process the time range
+                    let session = crate::storage::db::VideoClipSession {
+                        id: uuid::Uuid::new_v4().to_string(),
+                        user_id: chat_id.0,
+                        source_download_id: download_id,
+                        source_kind: "download".to_string(),
+                        source_id: download_id,
+                        original_url: download.url.clone(),
+                        output_kind: "iphone_ringtone".to_string(),
+                        created_at: chrono::Utc::now(),
+                        expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                    };
+                    crate::storage::db::upsert_video_clip_session(&conn, &session).map_err(|e| {
+                        teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+                    })?;
+
+                    let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
+                        "❌ Cancel".to_string(),
+                        "downloads:clip_cancel".to_string(),
+                    )]]);
+                    bot.send_message(
+                        chat_id,
+                        "🔔 *Make Ringtone*\n\n⏱ Max duration: 30 sec \\(iOS limit\\)\n\nEnter time range:\n`mm:ss–mm:ss`  or  `hh:mm:ss–hh:mm:ss`\n\nExample: `00:00–00:30`",
+                    )
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .reply_markup(keyboard)
+                    .await?;
+                }
+            }
+        }
+        "subtitles" => {
+            if parts.len() < 3 {
+                return Ok(());
+            }
+            let download_id = parts[2].parse::<i64>().unwrap_or(0);
+            let conn = db::get_connection(&db_pool)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+
+            if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+            {
+                let loading_msg = bot
+                    .edit_message_text(chat_id, message_id, "⏳ Fetching subtitles (SRT \\+ TXT)…")
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .await
+                    .ok();
+
+                let url = download.url.clone();
+                let lang = ""; // default: server decides
+
+                match fetch_subtitles_for_command(&downsub_gateway, &subtitle_cache, chat_id.0, &url, lang).await {
+                    Ok((srt_content, txt_content, segment_count)) => {
+                        if let Some(msg) = loading_msg {
+                            bot.edit_message_text(chat_id, msg.id, format!("✅ {} segments fetched", segment_count))
                                 .await
                                 .ok();
+                        }
+                        bot.send_document(
+                            chat_id,
+                            InputFile::memory(srt_content.into_bytes()).file_name("subtitles.srt"),
+                        )
+                        .await
+                        .ok();
+                        bot.send_document(
+                            chat_id,
+                            InputFile::memory(txt_content.into_bytes()).file_name("subtitles.txt"),
+                        )
+                        .await
+                        .ok();
+                    }
+                    Err(e) => {
+                        if let Some(msg) = loading_msg {
+                            bot.edit_message_text(chat_id, msg.id, format!("❌ Error: {}", e))
+                                .await
+                                .ok();
+                        } else {
+                            bot.send_message(chat_id, format!("❌ Error: {}", e)).await.ok();
                         }
                     }
                 }
@@ -1452,6 +1535,55 @@ pub async fn handle_downloads_callback(
     }
 
     Ok(())
+}
+
+/// Fetches both SRT and TXT subtitle formats, using cache when available.
+/// Returns (srt_content, txt_content, segment_count).
+/// Used by both the downloads callback and the /downsub command.
+pub async fn fetch_subtitles_for_command(
+    gateway: &DownsubGateway,
+    cache: &SubtitleCache,
+    user_id: i64,
+    url: &str,
+    lang: &str,
+) -> Result<(String, String, usize), String> {
+    // Treat empty string same as "no preference" (None) for the gateway
+    let lang_opt = if lang.is_empty() { None } else { Some(lang.to_string()) };
+
+    // Fetch SRT
+    let srt = if let Some(cached) = cache.get(url, lang, "srt").await {
+        cached
+    } else {
+        let result = gateway
+            .fetch_subtitles(
+                user_id,
+                None,
+                url.to_string(),
+                Some("srt".to_string()),
+                lang_opt.clone(),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        cache.save(url, lang, "srt", &result.raw_subtitles).await;
+        result.raw_subtitles
+    };
+
+    // Fetch TXT
+    let txt = if let Some(cached) = cache.get(url, lang, "txt").await {
+        cached
+    } else {
+        let result = gateway
+            .fetch_subtitles(user_id, None, url.to_string(), Some("txt".to_string()), lang_opt)
+            .await
+            .map_err(|e| e.to_string())?;
+        cache.save(url, lang, "txt", &result.raw_subtitles).await;
+        result.raw_subtitles
+    };
+
+    // Count subtitle segments: each SRT segment has exactly one "-->" timestamp line
+    let segment_count = srt.matches("-->").count();
+
+    Ok((srt, txt, segment_count))
 }
 
 fn request_error_from_text(text: String) -> teloxide::RequestError {
@@ -1747,49 +1879,6 @@ async fn change_video_speed(
     Ok((sent, file_size))
 }
 
-async fn handle_iphone_ringtone(
-    bot: &Bot,
-    chat_id: ChatId,
-    file_id: &str,
-    title: &str,
-    lang: &unic_langid::LanguageIdentifier,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use std::path::PathBuf;
-    use tokio::fs;
-
-    // Create temp directory
-    let temp_dir = PathBuf::from(crate::core::config::TEMP_FILES_DIR.as_str()).join("doradura_ringtone");
-    fs::create_dir_all(&temp_dir).await?;
-
-    // Save input file
-    let input_filename = format!("ringtone_in_{}_{}", chat_id.0, uuid::Uuid::new_v4());
-    let input_path = temp_dir.join(&input_filename);
-
-    crate::telegram::download_file_from_telegram(bot, file_id, Some(input_path.clone()))
-        .await
-        .map_err(|e| format!("Failed to download file from Telegram: {}", e))?;
-
-    // Output file path
-    let output_path = temp_dir.join(format!("{}.m4r", title.replace("/", "_")));
-
-    // Convert to ringtone (first 30 seconds)
-    crate::download::ringtone::create_iphone_ringtone(&input_path, &output_path, 0, 30).await?;
-
-    // Send the ringtone as a document (required for iOS to recognize it)
-    let caption = crate::i18n::t(lang, "history.iphone_ringtone_instructions");
-
-    bot.send_document(chat_id, teloxide::types::InputFile::file(output_path.clone()))
-        .caption(caption)
-        .parse_mode(ParseMode::MarkdownV2)
-        .await?;
-
-    // Cleanup temp files
-    fs::remove_file(&input_path).await.ok();
-    fs::remove_file(&output_path).await.ok();
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1970,5 +2059,139 @@ mod tests {
     #[test]
     fn test_items_per_page_value() {
         assert_eq!(ITEMS_PER_PAGE, 5);
+    }
+
+    // ==================== is_youtube_url tests ====================
+
+    #[test]
+    fn test_is_youtube_url_standard() {
+        assert!(is_youtube_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ"));
+    }
+
+    #[test]
+    fn test_is_youtube_url_no_www() {
+        assert!(is_youtube_url("https://youtube.com/watch?v=dQw4w9WgXcQ"));
+    }
+
+    #[test]
+    fn test_is_youtube_url_mobile() {
+        assert!(is_youtube_url("https://m.youtube.com/watch?v=dQw4w9WgXcQ"));
+    }
+
+    #[test]
+    fn test_is_youtube_url_music() {
+        assert!(is_youtube_url("https://music.youtube.com/watch?v=dQw4w9WgXcQ"));
+    }
+
+    #[test]
+    fn test_is_youtube_url_short_link() {
+        assert!(is_youtube_url("https://youtu.be/dQw4w9WgXcQ"));
+    }
+
+    #[test]
+    fn test_is_youtube_url_shorts() {
+        assert!(is_youtube_url("https://www.youtube.com/shorts/dQw4w9WgXcQ"));
+    }
+
+    #[test]
+    fn test_is_youtube_url_not_youtube_vimeo() {
+        assert!(!is_youtube_url("https://vimeo.com/12345678"));
+    }
+
+    #[test]
+    fn test_is_youtube_url_not_youtube_instagram() {
+        assert!(!is_youtube_url("https://www.instagram.com/p/abc123/"));
+    }
+
+    #[test]
+    fn test_is_youtube_url_false_positive_prevention() {
+        // "notyoutube.com" contains "youtube.com" as a substring — must NOT match
+        assert!(!is_youtube_url("https://notyoutube.com/watch?v=abc"));
+    }
+
+    #[test]
+    fn test_is_youtube_url_false_positive_youtu_be_alike() {
+        // domain ending in "youtu.be" but different
+        assert!(!is_youtube_url("https://notyoutu.be/abc"));
+    }
+
+    #[test]
+    fn test_is_youtube_url_empty_string() {
+        assert!(!is_youtube_url(""));
+    }
+
+    // ==================== fetch_subtitles_for_command tests ====================
+
+    /// When both SRT and TXT are already in cache, the gateway is never called.
+    /// We verify this by using an "unavailable" gateway (no DOWNSUB_GRPC_ENDPOINT)
+    /// and expecting success purely from cache reads.
+    #[tokio::test]
+    async fn test_fetch_subtitles_cache_hit_bypasses_gateway() {
+        use crate::downsub::DownsubGateway;
+        use crate::storage::SubtitleCache;
+
+        let dir = tempfile::tempdir().unwrap();
+        let cache = SubtitleCache::new(dir.path().to_str().unwrap());
+
+        let srt_data = "1\n00:00:01,000 --> 00:00:02,000\nHello\n\n2\n00:00:02,000 --> 00:00:03,000\nWorld\n\n";
+        let txt_data = "Hello\nWorld\n";
+        let url = "https://www.youtube.com/watch?v=test123";
+
+        cache.save(url, "", "srt", srt_data).await;
+        cache.save(url, "", "txt", txt_data).await;
+
+        // Gateway with no endpoint configured → would return Unavailable if called
+        let gateway = DownsubGateway::from_env();
+
+        let result = fetch_subtitles_for_command(&gateway, &cache, 12345, url, "").await;
+        assert!(result.is_ok(), "Expected cache hit, got: {:?}", result.err());
+
+        let (srt, txt, count) = result.unwrap();
+        assert_eq!(srt, srt_data);
+        assert_eq!(txt, txt_data);
+        assert_eq!(count, 2, "Expected 2 '-->' markers in SRT");
+    }
+
+    /// When the cache is empty and the gateway is unavailable, an error is returned.
+    #[tokio::test]
+    async fn test_fetch_subtitles_gateway_unavailable_returns_error() {
+        use crate::downsub::DownsubGateway;
+        use crate::storage::SubtitleCache;
+
+        let dir = tempfile::tempdir().unwrap();
+        let cache = SubtitleCache::new(dir.path().to_str().unwrap());
+
+        let gateway = DownsubGateway::from_env();
+        if gateway.is_available() {
+            // Gateway is actually configured in this env — skip to avoid hitting real server
+            return;
+        }
+
+        let result =
+            fetch_subtitles_for_command(&gateway, &cache, 12345, "https://www.youtube.com/watch?v=test456", "").await;
+        assert!(result.is_err());
+        let err_str = result.unwrap_err();
+        // DownsubError::Unavailable maps to "Downsub is disabled"
+        assert!(
+            err_str.contains("disabled") || err_str.contains("Unavailable"),
+            "Unexpected error: {}",
+            err_str
+        );
+    }
+
+    /// Segment count is derived from the number of "-->" markers in the SRT.
+    #[test]
+    fn test_segment_count_from_srt() {
+        let srt = "1\n00:00:01,000 --> 00:00:02,000\nLine one\n\n\
+                   2\n00:00:02,000 --> 00:00:03,000\nLine two\n\n\
+                   3\n00:00:03,000 --> 00:00:04,000\nLine three\n\n";
+        let count = srt.matches("-->").count();
+        assert_eq!(count, 3);
+    }
+
+    #[test]
+    fn test_segment_count_empty_srt() {
+        let srt = "";
+        assert_eq!(srt.matches("-->").count(), 0);
     }
 }
