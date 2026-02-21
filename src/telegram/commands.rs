@@ -1259,7 +1259,7 @@ pub async fn process_video_clip(
                     return Ok(());
                 }
             };
-            if download.format != "mp4" {
+            if download.format != "mp4" && !is_ringtone {
                 bot.send_message(chat_id, i18n::t(&lang, "commands.cut_only_mp4"))
                     .await
                     .ok();
