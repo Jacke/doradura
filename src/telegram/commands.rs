@@ -160,6 +160,30 @@ pub async fn handle_message(
             return Ok(None);
         }
 
+        // New-category sessions (from downloads:newcat callback)
+        if !text.trim().starts_with('/') {
+            if let Ok(conn) = db::get_connection(&db_pool) {
+                if let Ok(Some(download_id)) = db::get_active_new_category_session(&conn, msg.chat.id.0) {
+                    let name = text.trim();
+                    if name.is_empty() || name.len() > 64 {
+                        bot.send_message(msg.chat.id, "❌ Category name must be 1–64 characters")
+                            .await
+                            .ok();
+                    } else {
+                        // Truncate to 32 chars for callback data safety
+                        let name: String = name.chars().take(32).collect();
+                        let _ = db::create_user_category(&conn, msg.chat.id.0, &name);
+                        let _ = db::set_download_category(&conn, msg.chat.id.0, download_id, Some(&name));
+                        let _ = db::delete_new_category_session(&conn, msg.chat.id.0);
+                        bot.send_message(msg.chat.id, format!("✅ Category «{}» created and assigned", name))
+                            .await
+                            .ok();
+                    }
+                    return Ok(None);
+                }
+            }
+        }
+
         // Audio cut sessions (from "Cut Audio" button)
         if !text.trim().starts_with('/') {
             if let Ok(conn) = db::get_connection(&db_pool) {

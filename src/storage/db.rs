@@ -990,6 +990,8 @@ pub struct DownloadHistoryEntry {
     pub source_id: Option<i64>,
     /// Part number (for split videos)
     pub part_index: Option<i32>,
+    /// User-defined category name (optional)
+    pub category: Option<String>,
 }
 
 fn current_bot_api_info() -> (Option<String>, i64) {
@@ -1080,7 +1082,7 @@ pub fn get_download_history(
     let limit = limit.unwrap_or(20);
     let mut stmt = conn.prepare(
         "SELECT id, url, title, format, downloaded_at, file_id, author, file_size, duration, video_quality, audio_bitrate,
-                bot_api_url, bot_api_is_local, source_id, part_index
+                bot_api_url, bot_api_is_local, source_id, part_index, category
          FROM download_history
          WHERE user_id = ? ORDER BY downloaded_at DESC LIMIT ?",
     )?;
@@ -1101,6 +1103,7 @@ pub fn get_download_history(
             bot_api_is_local: row.get(12)?,
             source_id: row.get(13)?,
             part_index: row.get(14)?,
+            category: row.get(15)?,
         })
     })?;
 
@@ -1219,7 +1222,7 @@ pub fn get_download_history_entry(
 ) -> Result<Option<DownloadHistoryEntry>> {
     let mut stmt = conn.prepare(
         "SELECT id, url, title, format, downloaded_at, file_id, author, file_size, duration, video_quality, audio_bitrate,
-                bot_api_url, bot_api_is_local, source_id, part_index
+                bot_api_url, bot_api_is_local, source_id, part_index, category
          FROM download_history
          WHERE id = ?1 AND user_id = ?2",
     )?;
@@ -1240,6 +1243,7 @@ pub fn get_download_history_entry(
             bot_api_is_local: row.get(12)?,
             source_id: row.get(13)?,
             part_index: row.get(14)?,
+            category: row.get(15)?,
         })
     })?;
 
@@ -1420,7 +1424,7 @@ pub fn get_global_stats(conn: &DbConnection) -> Result<GlobalStats> {
 pub fn get_all_download_history(conn: &DbConnection, telegram_id: i64) -> Result<Vec<DownloadHistoryEntry>> {
     let mut stmt = conn.prepare(
         "SELECT id, url, title, format, downloaded_at, file_id, author, file_size, duration, video_quality, audio_bitrate,
-                bot_api_url, bot_api_is_local, source_id, part_index
+                bot_api_url, bot_api_is_local, source_id, part_index, category
          FROM download_history
          WHERE user_id = ? ORDER BY downloaded_at DESC",
     )?;
@@ -1441,6 +1445,7 @@ pub fn get_all_download_history(conn: &DbConnection, telegram_id: i64) -> Result
             bot_api_is_local: row.get(12)?,
             source_id: row.get(13)?,
             part_index: row.get(14)?,
+            category: row.get(15)?,
         })
     })?;
 
@@ -1460,10 +1465,11 @@ pub fn get_download_history_filtered(
     user_id: i64,
     file_type_filter: Option<&str>,
     search_text: Option<&str>,
+    category_filter: Option<&str>,
 ) -> Result<Vec<DownloadHistoryEntry>> {
     let mut query = String::from(
         "SELECT id, url, title, format, downloaded_at, file_id, author, file_size,
-         duration, video_quality, audio_bitrate, bot_api_url, bot_api_is_local, source_id, part_index
+         duration, video_quality, audio_bitrate, bot_api_url, bot_api_is_local, source_id, part_index, category
          FROM download_history WHERE user_id = ?",
     );
 
@@ -1485,6 +1491,11 @@ pub fn get_download_history_filtered(
         let search_pattern = format!("%{}%", search);
         params.push(Box::new(search_pattern.clone()));
         params.push(Box::new(search_pattern));
+    }
+
+    if let Some(cat) = category_filter {
+        query.push_str(" AND category = ?");
+        params.push(Box::new(cat.to_string()));
     }
 
     query.push_str(" ORDER BY downloaded_at DESC");
@@ -1510,11 +1521,90 @@ pub fn get_download_history_filtered(
                 bot_api_is_local: row.get(12)?,
                 source_id: row.get(13)?,
                 part_index: row.get(14)?,
+                category: row.get(15)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
     Ok(downloads)
+}
+
+// ==================== User Categories ====================
+
+/// Creates a user category (or ignores if it already exists).
+pub fn create_user_category(conn: &DbConnection, user_id: i64, name: &str) -> Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO user_categories (user_id, name) VALUES (?1, ?2)",
+        rusqlite::params![user_id, name],
+    )?;
+    Ok(())
+}
+
+/// Returns the user's category names ordered alphabetically.
+pub fn get_user_categories(conn: &DbConnection, user_id: i64) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare("SELECT name FROM user_categories WHERE user_id = ? ORDER BY name")?;
+    let rows = stmt.query_map(rusqlite::params![user_id], |row| row.get(0))?;
+    let mut cats = Vec::new();
+    for row in rows {
+        cats.push(row?);
+    }
+    Ok(cats)
+}
+
+/// Deletes a user category. Existing download assignments keep their text value but won't be filterable.
+pub fn delete_user_category(conn: &DbConnection, user_id: i64, name: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM user_categories WHERE user_id = ?1 AND name = ?2",
+        rusqlite::params![user_id, name],
+    )?;
+    Ok(())
+}
+
+/// Sets (or clears) the category on a download history entry.
+pub fn set_download_category(
+    conn: &DbConnection,
+    user_id: i64,
+    download_id: i64,
+    category: Option<&str>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE download_history SET category = ?1 WHERE id = ?2 AND user_id = ?3",
+        rusqlite::params![category, download_id, user_id],
+    )?;
+    Ok(())
+}
+
+// ==================== New Category Sessions ====================
+
+/// Stores a new-category session: user is creating a category for a specific download.
+pub fn create_new_category_session(conn: &DbConnection, user_id: i64, download_id: i64) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO new_category_sessions (user_id, download_id, created_at) VALUES (?1, ?2, datetime('now'))",
+        rusqlite::params![user_id, download_id],
+    )?;
+    Ok(())
+}
+
+/// Returns the download_id for an active new-category session, or None.
+pub fn get_active_new_category_session(conn: &DbConnection, user_id: i64) -> Result<Option<i64>> {
+    let mut stmt = conn.prepare(
+        "SELECT download_id FROM new_category_sessions WHERE user_id = ? AND created_at > datetime('now', '-10 minutes')",
+    )?;
+    let mut rows = stmt.query_map(rusqlite::params![user_id], |row| row.get(0))?;
+    if let Some(row) = rows.next() {
+        Ok(Some(row?))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Deletes the new-category session for a user.
+pub fn delete_new_category_session(conn: &DbConnection, user_id: i64) -> Result<()> {
+    conn.execute(
+        "DELETE FROM new_category_sessions WHERE user_id = ?",
+        rusqlite::params![user_id],
+    )?;
+    Ok(())
 }
 
 /// Gets filtered cuts history for the /downloads command
@@ -1562,6 +1652,7 @@ pub fn get_cuts_history_filtered(
                 bot_api_is_local: None,
                 source_id: None,
                 part_index: None,
+                category: None,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
@@ -3843,20 +3934,20 @@ mod tests {
         .unwrap();
 
         // No filter - should get mp3 and mp4 with file_id
-        let filtered = get_download_history_filtered(&conn, 12375, None, None).unwrap();
+        let filtered = get_download_history_filtered(&conn, 12375, None, None, None).unwrap();
         assert_eq!(filtered.len(), 2);
 
         // Filter by mp3
-        let filtered = get_download_history_filtered(&conn, 12375, Some("mp3"), None).unwrap();
+        let filtered = get_download_history_filtered(&conn, 12375, Some("mp3"), None, None).unwrap();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].format, "mp3");
 
         // Search by title
-        let filtered = get_download_history_filtered(&conn, 12375, None, Some("Song")).unwrap();
+        let filtered = get_download_history_filtered(&conn, 12375, None, Some("Song"), None).unwrap();
         assert_eq!(filtered.len(), 1);
 
         // Search by author
-        let filtered = get_download_history_filtered(&conn, 12375, None, Some("Artist A")).unwrap();
+        let filtered = get_download_history_filtered(&conn, 12375, None, Some("Artist A"), None).unwrap();
         assert_eq!(filtered.len(), 1);
     }
 

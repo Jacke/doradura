@@ -1,6 +1,7 @@
 //! Core utilities, configuration, and common functionality
 
 pub mod alerts;
+pub mod categorizer;
 pub mod config;
 pub mod copyright;
 pub mod disk;

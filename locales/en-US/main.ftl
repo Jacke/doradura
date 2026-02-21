@@ -237,7 +237,7 @@ history =
     .delete_failed = Delete failed
     .invalid_id = Error: invalid entry ID
     .iphone_ringtone_button = 🔔 Create Ringtone
-    .iphone_ringtone_instructions = 🔔 *Your ringtone is ready\!*\n\n1\. Save this file to the *Files* app\.\n2\. Open the *GarageBand* app\.\n3\. Tap the `+` icon and choose *Audio Recorder*\.\n4\. Switch to tracks view mode \(icon in the top left\)\.\n5\. Tap the loops icon \(top right\), select the *Files* tab, and add your ringtone\.\n6\. Save the project, then long\-press it and choose *Share* → *Ringtone*\.\n\n💡 _Now you can set it in iPhone Settings\!_
+    .iphone_ringtone_instructions = 🔔 *Your ringtone is ready\!*\n\n🍎 *iPhone \(iOS\):*\n1️⃣ Save the file to the *Files* app\n2️⃣ Open *GarageBand* → tap `+` → *Audio Recorder*\n3️⃣ Tap the tracks icon ↖️ \(top left\)\n4️⃣ Tap the loop icon ↗️ \(top right\) → *Files* tab → add the file\n5️⃣ Long\-press the project → *Share* → *Ringtone*\n✅ _Settings → Sounds → Ringtone_\n\n🤖 *Android:*\n1️⃣ Rename the file: `\.m4r` → `\.m4a`\n2️⃣ Long\-press the file in a *File Manager* → *Set as ringtone*\n_or copy it to the_ `Ringtones/` _folder on your device_\n✅ _Settings → Sound → Phone ringtone_
     .unknown_action = Unknown action
 
 stats =

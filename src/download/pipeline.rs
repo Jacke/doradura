@@ -617,6 +617,32 @@ pub async fn execute(
                     if let Err(e) = db::update_download_message_id(&conn, db_id, sent_msg_id, chat_id.0) {
                         log::warn!("Failed to save message_id for download {}: {}", db_id, e);
                     }
+                    // Auto-categorize in background if user has categories and API key is set
+                    let db_pool_c = Arc::clone(pool);
+                    let title_c = title.clone();
+                    let artist_c = artist.clone();
+                    let user_id_c = chat_id.0;
+                    tokio::spawn(async move {
+                        let Ok(conn_c) = db::get_connection(&db_pool_c) else {
+                            return;
+                        };
+                        let Ok(cats) = db::get_user_categories(&conn_c, user_id_c) else {
+                            return;
+                        };
+                        if cats.is_empty() {
+                            return;
+                        }
+                        let Some(category) =
+                            crate::core::categorizer::suggest_category(&cats, &title_c, &artist_c).await
+                        else {
+                            return;
+                        };
+                        if let Err(e) = db::set_download_category(&conn_c, user_id_c, db_id, Some(&category)) {
+                            log::warn!("Failed to auto-set category for download {}: {}", db_id, e);
+                        } else {
+                            log::info!("auto-categorized download {} → '{}'", db_id, category);
+                        }
+                    });
                 }
                 Err(e) => {
                     log::warn!("Failed to save download history: {}", e);

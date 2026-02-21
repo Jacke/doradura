@@ -159,6 +159,7 @@ pub async fn show_downloads_page(
     page: usize,
     file_type_filter: Option<String>,
     search_text: Option<String>,
+    category_filter: Option<String>,
 ) -> ResponseResult<Message> {
     let conn = db::get_connection(&db_pool)
         .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
@@ -168,12 +169,18 @@ pub async fn show_downloads_page(
         db::get_cuts_history_filtered(&conn, chat_id.0, search_text.as_deref())
             .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
     } else {
-        db::get_download_history_filtered(&conn, chat_id.0, file_type_filter.as_deref(), search_text.as_deref())
-            .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+        db::get_download_history_filtered(
+            &conn,
+            chat_id.0,
+            file_type_filter.as_deref(),
+            search_text.as_deref(),
+            category_filter.as_deref(),
+        )
+        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
     };
 
     if all_downloads.is_empty() {
-        let empty_msg = if file_type_filter.is_some() || search_text.is_some() {
+        let empty_msg = if file_type_filter.is_some() || search_text.is_some() || category_filter.is_some() {
             "📭 Nothing found.\n\nTry changing the filters."
         } else {
             "📭 You have no downloaded files yet.\n\nDownload something and it will appear here!"
@@ -210,6 +217,9 @@ pub async fn show_downloads_page(
     if let Some(ref search) = search_text {
         text.push_str(&format!("🔍 Search: \"{}\"\n\n", search));
     }
+    if let Some(ref cat) = category_filter {
+        text.push_str(&format!("🏷 Category: {}\n\n", escape_markdown(cat)));
+    }
 
     // List downloads
     for download in page_downloads {
@@ -224,8 +234,13 @@ pub async fn show_downloads_page(
         } else {
             download.title.clone()
         };
+        let cat_badge = download
+            .category
+            .as_deref()
+            .map(|c| format!(" _({})", escape_markdown(c)))
+            .unwrap_or_default();
 
-        text.push_str(&format!("{} *{}*\n", icon, escape_markdown(&title)));
+        text.push_str(&format!("{} *{}*{}\n", icon, escape_markdown(&title), cat_badge));
 
         // Format metadata
         let mut metadata_parts = Vec::new();
@@ -328,7 +343,7 @@ pub async fn show_downloads_page(
         keyboard_rows.push(nav_buttons);
     }
 
-    // Filter buttons row
+    // Format filter buttons row
     let mut filter_row = Vec::new();
 
     if file_type_filter.as_deref() != Some("mp3") {
@@ -363,6 +378,46 @@ pub async fn show_downloads_page(
         keyboard_rows.push(filter_row);
     }
 
+    // Category filter buttons row
+    let user_cats = db::get_user_categories(&conn, chat_id.0).unwrap_or_default();
+    if !user_cats.is_empty() {
+        let ft_str = file_type_filter.as_deref().unwrap_or("");
+        let search_str = search_text.as_deref().unwrap_or("");
+        let mut cat_row: Vec<InlineKeyboardButton> = Vec::new();
+        for cat in &user_cats {
+            let active = category_filter.as_deref() == Some(cat.as_str());
+            let label = if active { format!("• {}", cat) } else { cat.clone() };
+            // Truncate label to fit Telegram button limits
+            let label = if label.chars().count() > 20 {
+                let t: String = label.chars().take(18).collect();
+                format!("{}…", t)
+            } else {
+                label
+            };
+            cat_row.push(crate::telegram::cb(
+                label,
+                format!(
+                    "downloads:catfilter:{}:{}:{}",
+                    urlencoding::encode(cat),
+                    ft_str,
+                    search_str
+                ),
+            ));
+            if cat_row.len() == 3 {
+                keyboard_rows.push(std::mem::take(&mut cat_row));
+            }
+        }
+        if !cat_row.is_empty() {
+            keyboard_rows.push(cat_row);
+        }
+        if category_filter.is_some() {
+            keyboard_rows.push(vec![crate::telegram::cb(
+                "📂 All".to_string(),
+                format!("downloads:catfilter::{}:{}", ft_str, search_str),
+            )]);
+        }
+    }
+
     // Close button
     keyboard_rows.push(vec![crate::telegram::cb(
         "❌ Close".to_string(),
@@ -392,7 +447,7 @@ pub async fn handle_downloads_callback(
     log::info!("📥 handle_downloads_callback called with data: {}", data);
     bot.answer_callback_query(callback_id).await?;
 
-    let parts: Vec<&str> = data.splitn(5, ':').collect();
+    let parts: Vec<&str> = data.splitn(6, ':').collect();
     log::info!("📥 Parsed parts: {:?}", parts);
     if parts.len() < 2 {
         log::warn!("📥 Not enough parts in callback data");
@@ -420,7 +475,7 @@ pub async fn handle_downloads_callback(
             };
 
             bot.delete_message(chat_id, message_id).await?;
-            show_downloads_page(bot, chat_id, db_pool, page, filter, search).await?;
+            show_downloads_page(bot, chat_id, db_pool, page, filter, search, None).await?;
         }
         "filter" => {
             if parts.len() < 4 {
@@ -438,7 +493,29 @@ pub async fn handle_downloads_callback(
             };
 
             bot.delete_message(chat_id, message_id).await?;
-            show_downloads_page(bot, chat_id, db_pool, 0, filter, search).await?;
+            show_downloads_page(bot, chat_id, db_pool, 0, filter, search, None).await?;
+        }
+        "catfilter" => {
+            if parts.len() < 5 {
+                return Ok(());
+            }
+            let category = if parts[2].is_empty() {
+                None
+            } else {
+                Some(urlencoding::decode(parts[2]).unwrap_or_default().to_string())
+            };
+            let format = if parts[3].is_empty() {
+                None
+            } else {
+                Some(parts[3].to_string())
+            };
+            let search = if parts[4].is_empty() {
+                None
+            } else {
+                Some(parts[4].to_string())
+            };
+            bot.delete_message(chat_id, message_id).await?;
+            show_downloads_page(bot, chat_id, db_pool, 0, format, search, category).await?;
         }
         "resend" => {
             log::info!("📥 Handling resend action");
@@ -516,6 +593,16 @@ pub async fn handle_downloads_callback(
                             format!("downloads:subtitles:{}", download_id),
                         )]);
                     }
+
+                    // Category button
+                    let cat_label = match &download.category {
+                        Some(c) => format!("🏷 {}", c),
+                        None => "🏷 Add to Category".to_string(),
+                    };
+                    options.push(vec![crate::telegram::cb(
+                        cat_label,
+                        format!("downloads:setcat:{}", download_id),
+                    )]);
 
                     options.push(vec![crate::telegram::cb(
                         "❌ Cancel".to_string(),
@@ -1524,6 +1611,155 @@ pub async fn handle_downloads_callback(
                     }
                 }
             }
+        }
+        // Show category picker for a download
+        "setcat" => {
+            if parts.len() < 3 {
+                return Ok(());
+            }
+            let download_id = parts[2].parse::<i64>().unwrap_or(0);
+            let conn = db::get_connection(&db_pool)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+            let user_cats = db::get_user_categories(&conn, chat_id.0).unwrap_or_default();
+            let download = db::get_download_history_entry(&conn, chat_id.0, download_id)
+                .ok()
+                .flatten();
+            let mut rows: Vec<Vec<InlineKeyboardButton>> = user_cats
+                .iter()
+                .map(|c| {
+                    vec![crate::telegram::cb(
+                        c.clone(),
+                        format!("downloads:savecat:{}:{}", download_id, urlencoding::encode(c)),
+                    )]
+                })
+                .collect();
+            rows.push(vec![crate::telegram::cb(
+                "➕ New category".to_string(),
+                format!("downloads:newcat:{}", download_id),
+            )]);
+            if download.as_ref().and_then(|d| d.category.as_ref()).is_some() {
+                rows.push(vec![crate::telegram::cb(
+                    "✖ Remove category".to_string(),
+                    format!("downloads:savecat:{}:", download_id),
+                )]);
+            }
+            rows.push(vec![crate::telegram::cb(
+                "« Back".to_string(),
+                format!("downloads:resend:{}", download_id),
+            )]);
+            bot.edit_message_reply_markup(chat_id, message_id)
+                .reply_markup(InlineKeyboardMarkup::new(rows))
+                .await
+                .ok();
+        }
+        // Save category assignment
+        "savecat" => {
+            if parts.len() < 3 {
+                return Ok(());
+            }
+            let download_id = parts[2].parse::<i64>().unwrap_or(0);
+            let category = parts
+                .get(3)
+                .filter(|s| !s.is_empty())
+                .map(|s| urlencoding::decode(s).unwrap_or_default().to_string());
+            let conn = db::get_connection(&db_pool)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+            let _ = db::set_download_category(&conn, chat_id.0, download_id, category.as_deref());
+
+            // Reload download and rebuild resend keyboard with updated category button
+            if let Ok(Some(download)) = db::get_download_history_entry(&conn, chat_id.0, download_id) {
+                let mut options: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+                if download.format == "mp3" {
+                    options.push(vec![
+                        crate::telegram::cb(
+                            "🎵 As audio".to_string(),
+                            format!("downloads:send:audio:{}", download_id),
+                        ),
+                        crate::telegram::cb(
+                            "📎 As document".to_string(),
+                            format!("downloads:send:document:{}", download_id),
+                        ),
+                    ]);
+                    options.push(vec![
+                        crate::telegram::cb("✂️ Clip".to_string(), format!("downloads:clip:{}", download_id)),
+                        crate::telegram::cb("⭕️ Circle".to_string(), format!("downloads:circle:{}", download_id)),
+                        crate::telegram::cb(
+                            "🔔 Make ringtone".to_string(),
+                            format!("downloads:iphone_ringtone:{}", download_id),
+                        ),
+                    ]);
+                    options.push(vec![crate::telegram::cb(
+                        "⚙️ Change speed".to_string(),
+                        format!("downloads:speed:{}", download_id),
+                    )]);
+                } else {
+                    options.push(vec![
+                        crate::telegram::cb(
+                            "🎬 As video".to_string(),
+                            format!("downloads:send:video:{}", download_id),
+                        ),
+                        crate::telegram::cb(
+                            "📎 As document".to_string(),
+                            format!("downloads:send:document:{}", download_id),
+                        ),
+                    ]);
+                    options.push(vec![
+                        crate::telegram::cb("✂️ Clip".to_string(), format!("downloads:clip:{}", download_id)),
+                        crate::telegram::cb("⭕️ Circle".to_string(), format!("downloads:circle:{}", download_id)),
+                        crate::telegram::cb(
+                            "🔔 Make ringtone".to_string(),
+                            format!("downloads:iphone_ringtone:{}", download_id),
+                        ),
+                    ]);
+                    options.push(vec![crate::telegram::cb(
+                        "⚙️ Change speed".to_string(),
+                        format!("downloads:speed:{}", download_id),
+                    )]);
+                }
+                if is_youtube_url(&download.url) {
+                    options.push(vec![crate::telegram::cb(
+                        "📝 Subtitles".to_string(),
+                        format!("downloads:subtitles:{}", download_id),
+                    )]);
+                }
+                let cat_label = match &download.category {
+                    Some(c) => format!("🏷 {}", c),
+                    None => "🏷 Add to Category".to_string(),
+                };
+                options.push(vec![crate::telegram::cb(
+                    cat_label,
+                    format!("downloads:setcat:{}", download_id),
+                )]);
+                options.push(vec![crate::telegram::cb(
+                    "❌ Cancel".to_string(),
+                    "downloads:cancel".to_string(),
+                )]);
+                bot.edit_message_reply_markup(chat_id, message_id)
+                    .reply_markup(InlineKeyboardMarkup::new(options))
+                    .await
+                    .ok();
+            }
+        }
+        // Start new-category text session
+        "newcat" => {
+            if parts.len() < 3 {
+                return Ok(());
+            }
+            let download_id = parts[2].parse::<i64>().unwrap_or(0);
+            let conn = db::get_connection(&db_pool)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+            let _ = db::create_new_category_session(&conn, chat_id.0, download_id);
+            bot.edit_message_text(
+                chat_id,
+                message_id,
+                "📝 *New Category*\n\nSend a name for the new category:",
+            )
+            .parse_mode(ParseMode::MarkdownV2)
+            .reply_markup(InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
+                "« Cancel".to_string(),
+                format!("downloads:setcat:{}", download_id),
+            )]]))
+            .await?;
         }
         "cancel" => {
             bot.delete_message(chat_id, message_id).await?;

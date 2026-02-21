@@ -131,7 +131,7 @@ pub(super) async fn handle_downloads_command(bot: &Bot, msg: &Message, deps: &Ha
         search
     );
 
-    match show_downloads_page(bot, msg.chat.id, deps.db_pool.clone(), 0, filter, search).await {
+    match show_downloads_page(bot, msg.chat.id, deps.db_pool.clone(), 0, filter, search, None).await {
         Ok(_) => log::info!("✅ Downloads page shown successfully"),
         Err(e) => log::error!("❌ Failed to show downloads page: {:?}", e),
     }

@@ -1322,6 +1322,15 @@ async fn process_queue(
                     .remove_active_task(&task_url, task_chat_id, &task_format)
                     .await;
 
+                // Clean up queue notification that may have been stored after processing started
+                // (race condition: task dequeued before set_queue_message_id was called)
+                {
+                    use teloxide::types::MessageId;
+                    if let Some(id) = queue_for_cleanup.take_notification_message(task_chat_id).await {
+                        let _ = bot.delete_message(task_chat_id, MessageId(id)).await;
+                    }
+                }
+
                 log::info!("Task {} processing finished, permit released", task_id);
                 // Permit is automatically released when _permit goes out of scope
             });

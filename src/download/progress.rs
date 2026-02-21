@@ -793,21 +793,14 @@ impl ProgressMessage {
         &mut self,
         bot: &Bot,
         delay_secs: u64,
-        title: String,
-        file_format: Option<String>,
+        _title: String,
+        _file_format: Option<String>,
     ) -> ResponseResult<()> {
-        if self.message_id.is_some() {
+        if let Some(msg_id) = self.message_id.take() {
             tokio::time::sleep(tokio::time::Duration::from_secs(delay_secs)).await;
-            self.update(
-                bot,
-                DownloadStatus::Completed {
-                    title: title.clone(),
-                    file_format,
-                },
-            )
-            .await?;
+            let _ = bot.delete_message(self.chat_id, msg_id).await;
             log::info!(
-                "Cleared progress message for chat {} after {} seconds",
+                "Deleted progress message for chat {} after {} seconds",
                 self.chat_id,
                 delay_secs
             );
