@@ -1866,7 +1866,7 @@ pub async fn process_video_clip(
         let instructions = i18n::t(&lang, "history.iphone_ringtone_instructions");
         match bot
             .send_document(chat_id, teloxide::types::InputFile::file(output_path.clone()))
-            .caption(format!("{}\n\n{}", clip_title, instructions))
+            .caption(format!("{}\n\n{}", escape_markdown(&clip_title), instructions))
             .parse_mode(ParseMode::MarkdownV2)
             .await
         {
