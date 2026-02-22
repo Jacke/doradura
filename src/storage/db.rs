@@ -2354,6 +2354,27 @@ pub fn delete_video_clip_session_by_user(conn: &DbConnection, user_id: i64) -> R
     Ok(())
 }
 
+// ==================== Bot Assets ====================
+
+/// Get a cached bot asset file_id by key (e.g. "ringtone_instruction_iphone_1")
+pub fn get_bot_asset(conn: &DbConnection, key: &str) -> Result<Option<String>> {
+    let result = conn.query_row("SELECT file_id FROM bot_assets WHERE key = ?1", [key], |row| row.get(0));
+    match result {
+        Ok(file_id) => Ok(Some(file_id)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Set (upsert) a bot asset file_id for a key
+pub fn set_bot_asset(conn: &DbConnection, key: &str, file_id: &str) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO bot_assets (key, file_id, created_at) VALUES (?1, ?2, datetime('now'))",
+        rusqlite::params![key, file_id],
+    )?;
+    Ok(())
+}
+
 // ==================== Video Timestamps ====================
 
 use crate::timestamps::{TimestampSource, VideoTimestamp};
@@ -4691,5 +4712,117 @@ mod tests {
 
         assert!(conn1.is_ok());
         assert!(conn2.is_ok());
+    }
+
+    // ==================== Bot Assets Tests ====================
+
+    #[test]
+    fn test_get_bot_asset_nonexistent() {
+        let pool = setup_test_db();
+        let conn = get_connection(&pool).unwrap();
+
+        let result = get_bot_asset(&conn, "nonexistent_key").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_set_and_get_bot_asset() {
+        let pool = setup_test_db();
+        let conn = get_connection(&pool).unwrap();
+
+        set_bot_asset(&conn, "ringtone_instruction_iphone_1", "file_id_abc123").unwrap();
+
+        let result = get_bot_asset(&conn, "ringtone_instruction_iphone_1").unwrap();
+        assert_eq!(result, Some("file_id_abc123".to_string()));
+    }
+
+    #[test]
+    fn test_set_bot_asset_upserts_existing_key() {
+        let pool = setup_test_db();
+        let conn = get_connection(&pool).unwrap();
+
+        set_bot_asset(&conn, "key1", "first_value").unwrap();
+        set_bot_asset(&conn, "key1", "updated_value").unwrap();
+
+        let result = get_bot_asset(&conn, "key1").unwrap();
+        assert_eq!(result, Some("updated_value".to_string()));
+    }
+
+    #[test]
+    fn test_multiple_bot_assets_are_independent() {
+        let pool = setup_test_db();
+        let conn = get_connection(&pool).unwrap();
+
+        for i in 1..=6 {
+            let key = format!("ringtone_instruction_iphone_{}", i);
+            let fid = format!("file_id_iphone_{}", i);
+            set_bot_asset(&conn, &key, &fid).unwrap();
+        }
+
+        for i in 1..=6 {
+            let key = format!("ringtone_instruction_iphone_{}", i);
+            let expected = format!("file_id_iphone_{}", i);
+            let result = get_bot_asset(&conn, &key).unwrap();
+            assert_eq!(result, Some(expected), "Mismatch at step {}", i);
+        }
+    }
+
+    #[test]
+    fn test_iphone_and_android_assets_are_independent() {
+        let pool = setup_test_db();
+        let conn = get_connection(&pool).unwrap();
+
+        set_bot_asset(&conn, "ringtone_instruction_iphone_1", "iphone_fid").unwrap();
+        set_bot_asset(&conn, "ringtone_instruction_android_1", "android_fid").unwrap();
+
+        assert_eq!(
+            get_bot_asset(&conn, "ringtone_instruction_iphone_1").unwrap(),
+            Some("iphone_fid".to_string())
+        );
+        assert_eq!(
+            get_bot_asset(&conn, "ringtone_instruction_android_1").unwrap(),
+            Some("android_fid".to_string())
+        );
+    }
+
+    #[test]
+    fn test_all_cached_detection_logic() {
+        let pool = setup_test_db();
+        let conn = get_connection(&pool).unwrap();
+        let prefix = "ringtone_instruction_iphone_";
+        let total = 3;
+
+        // Before setting: none cached → not all_cached
+        let cached: Vec<Option<String>> = (1..=total)
+            .map(|i| get_bot_asset(&conn, &format!("{}{}", prefix, i)).ok().flatten())
+            .collect();
+        let all_cached = total > 0 && cached.iter().all(|id| id.is_some());
+        assert!(!all_cached, "Should not be all_cached when nothing stored");
+
+        // Set only 2 out of 3 — still not all_cached
+        set_bot_asset(&conn, &format!("{}1", prefix), "fid_1").unwrap();
+        set_bot_asset(&conn, &format!("{}2", prefix), "fid_2").unwrap();
+        let cached: Vec<Option<String>> = (1..=total)
+            .map(|i| get_bot_asset(&conn, &format!("{}{}", prefix, i)).ok().flatten())
+            .collect();
+        let all_cached = total > 0 && cached.iter().all(|id| id.is_some());
+        assert!(!all_cached, "Should not be all_cached when only 2/3 set");
+
+        // Set the last one — now all_cached
+        set_bot_asset(&conn, &format!("{}3", prefix), "fid_3").unwrap();
+        let cached: Vec<Option<String>> = (1..=total)
+            .map(|i| get_bot_asset(&conn, &format!("{}{}", prefix, i)).ok().flatten())
+            .collect();
+        let all_cached = total > 0 && cached.iter().all(|id| id.is_some());
+        assert!(all_cached, "Should be all_cached when all 3 set");
+    }
+
+    #[test]
+    fn test_all_cached_zero_total_is_false() {
+        // Edge case: if there are no images (total=0), all_cached must be false
+        let total = 0usize;
+        let cached: Vec<Option<String>> = vec![];
+        let all_cached = total > 0 && cached.iter().all(|id| id.is_some());
+        assert!(!all_cached, "all_cached with total=0 must be false");
     }
 }

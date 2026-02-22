@@ -7,9 +7,9 @@
 use super::results::SmokeTestReport;
 use super::test_cases::{
     test_audio_download, test_cookies_validation, test_ffmpeg_toolchain, test_lyrics_fetch, test_metadata_extraction,
-    test_ringtone_conversion, test_video_download,
+    test_odesli_fetch, test_ringtone_conversion, test_video_download, test_web_server_health,
 };
-use super::{DEFAULT_TEST_TIMEOUT_SECS, DEFAULT_TEST_URL, PRODUCTION_TEST_TIMEOUT_SECS};
+use super::{DEFAULT_TEST_TIMEOUT_SECS, DEFAULT_TEST_URL, ODESLI_TEST_URL, PRODUCTION_TEST_TIMEOUT_SECS};
 use crate::download::metadata::ProxyConfig;
 use std::time::{Duration, Instant};
 
@@ -160,6 +160,19 @@ pub async fn run_all_smoke_tests(config: &SmokeTestConfig) -> SmokeTestReport {
     // Test 7: Lyrics fetch (LRCLIB / Genius — network only, no yt-dlp)
     log::info!("Running test: lyrics_fetch");
     let result = test_lyrics_fetch().await;
+    log::info!("  Result: {:?}", result.status);
+    results.push(result);
+
+    // Test 8: Odesli streaming links (api.song.link — network only, no yt-dlp)
+    // Uses a dedicated music track URL — DEFAULT_TEST_URL ("Me at the zoo") is not a song.
+    log::info!("Running test: odesli_fetch");
+    let result = test_odesli_fetch(ODESLI_TEST_URL).await;
+    log::info!("  Result: {:?}", result.status);
+    results.push(result);
+
+    // Test 9: Web server health (skipped if WEB_BASE_URL not configured)
+    log::info!("Running test: web_server_health");
+    let result = test_web_server_health().await;
     log::info!("  Result: {:?}", result.status);
     results.push(result);
 

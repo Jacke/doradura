@@ -555,7 +555,7 @@ pub async fn handle_downloads_callback(
                             crate::telegram::cb("⭕️ Circle".to_string(), format!("downloads:circle:{}", download_id)),
                             crate::telegram::cb(
                                 "🔔 Make ringtone".to_string(),
-                                format!("downloads:iphone_ringtone:{}", download_id),
+                                format!("ringtone:select:download:{}", download_id),
                             ),
                         ]);
                         options.push(vec![crate::telegram::cb(
@@ -578,7 +578,7 @@ pub async fn handle_downloads_callback(
                             crate::telegram::cb("⭕️ Circle".to_string(), format!("downloads:circle:{}", download_id)),
                             crate::telegram::cb(
                                 "🔔 Make ringtone".to_string(),
-                                format!("downloads:iphone_ringtone:{}", download_id),
+                                format!("ringtone:select:download:{}", download_id),
                             ),
                         ]);
                         options.push(vec![crate::telegram::cb(
@@ -658,7 +658,7 @@ pub async fn handle_downloads_callback(
                         crate::telegram::cb("⭕️ Circle".to_string(), format!("downloads:circle_cut:{}", cut_id)),
                         crate::telegram::cb(
                             "🔔 Make ringtone".to_string(),
-                            format!("downloads:iphone_ringtone_cut:{}", cut_id),
+                            format!("ringtone:select:cut:{}", cut_id),
                         ),
                     ]);
 
@@ -1047,46 +1047,6 @@ pub async fn handle_downloads_callback(
                     "downloads:clip_cancel".to_string(),
                 )]]);
                 bot.send_message(chat_id, "⭕️ Send the intervals for the circle in the format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nMultiple ranges separated by commas\\.\n\nExample: `00:10-00:25` or `first30 2x`").parse_mode(ParseMode::MarkdownV2).reply_markup(keyboard).await?;
-                bot.send_message(chat_id, cut.original_url.clone()).await.ok();
-                bot.delete_message(chat_id, message_id).await.ok();
-            }
-        }
-        "iphone_ringtone_cut" => {
-            if parts.len() < 3 {
-                return Ok(());
-            }
-            let cut_id = parts[2].parse::<i64>().unwrap_or(0);
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
-            {
-                if cut.file_id.is_none() {
-                    bot.send_message(chat_id, "❌ Could not find file\\_id for this file\\.")
-                        .parse_mode(ParseMode::MarkdownV2)
-                        .await
-                        .ok();
-                    return Ok(());
-                }
-                let session = crate::storage::db::VideoClipSession {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    user_id: chat_id.0,
-                    source_download_id: 0, // Not applicable for cut-from-cut
-                    source_kind: "cut".to_string(),
-                    source_id: cut_id,
-                    original_url: cut.original_url.clone(),
-                    output_kind: "iphone_ringtone".to_string(),
-                    created_at: chrono::Utc::now(),
-                    expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
-                };
-                crate::storage::db::upsert_video_clip_session(&conn, &session).map_err(|e| {
-                    teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
-                let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
-                    "❌ Cancel".to_string(),
-                    "downloads:clip_cancel".to_string(),
-                )]]);
-                bot.send_message(chat_id, "🔔 Send the intervals for the ringtone in the format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nMultiple ranges separated by commas\\.\n\n💡 If the duration exceeds 40 seconds \\(iOS limit\\), the audio will be trimmed automatically\\.\n\nExample: `00:10-00:25`").parse_mode(ParseMode::MarkdownV2).reply_markup(keyboard).await?;
                 bot.send_message(chat_id, cut.original_url.clone()).await.ok();
                 bot.delete_message(chat_id, message_id).await.ok();
             }
@@ -1511,55 +1471,6 @@ pub async fn handle_downloads_callback(
                 }
             }
         }
-        "iphone_ringtone" => {
-            if parts.len() < 3 {
-                return Ok(());
-            }
-            let download_id = parts[2].parse::<i64>().unwrap_or(0);
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-            if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
-            {
-                if let Some(ref file_id) = download.file_id {
-                    bot.delete_message(chat_id, message_id).await.ok();
-
-                    // Send audio preview so user can hear the track
-                    bot.send_audio(chat_id, InputFile::file_id(teloxide::types::FileId(file_id.clone())))
-                        .await
-                        .ok();
-
-                    // Create a VideoClipSession so the text handler can process the time range
-                    let session = crate::storage::db::VideoClipSession {
-                        id: uuid::Uuid::new_v4().to_string(),
-                        user_id: chat_id.0,
-                        source_download_id: download_id,
-                        source_kind: "download".to_string(),
-                        source_id: download_id,
-                        original_url: download.url.clone(),
-                        output_kind: "iphone_ringtone".to_string(),
-                        created_at: chrono::Utc::now(),
-                        expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
-                    };
-                    crate::storage::db::upsert_video_clip_session(&conn, &session).map_err(|e| {
-                        teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                    })?;
-
-                    let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
-                        "❌ Cancel".to_string(),
-                        "downloads:clip_cancel".to_string(),
-                    )]]);
-                    bot.send_message(
-                        chat_id,
-                        "🔔 *Make Ringtone*\n\n⏱ Max duration: 30 sec \\(iOS limit\\)\n\nEnter time range:\n`mm:ss–mm:ss`  or  `hh:mm:ss–hh:mm:ss`\n\nExample: `00:00–00:30`",
-                    )
-                    .parse_mode(ParseMode::MarkdownV2)
-                    .reply_markup(keyboard)
-                    .await?;
-                }
-            }
-        }
         "subtitles" => {
             if parts.len() < 3 {
                 return Ok(());
@@ -1685,7 +1596,7 @@ pub async fn handle_downloads_callback(
                         crate::telegram::cb("⭕️ Circle".to_string(), format!("downloads:circle:{}", download_id)),
                         crate::telegram::cb(
                             "🔔 Make ringtone".to_string(),
-                            format!("downloads:iphone_ringtone:{}", download_id),
+                            format!("ringtone:select:download:{}", download_id),
                         ),
                     ]);
                     options.push(vec![crate::telegram::cb(
@@ -1708,7 +1619,7 @@ pub async fn handle_downloads_callback(
                         crate::telegram::cb("⭕️ Circle".to_string(), format!("downloads:circle:{}", download_id)),
                         crate::telegram::cb(
                             "🔔 Make ringtone".to_string(),
-                            format!("downloads:iphone_ringtone:{}", download_id),
+                            format!("ringtone:select:download:{}", download_id),
                         ),
                     ]);
                     options.push(vec![crate::telegram::cb(

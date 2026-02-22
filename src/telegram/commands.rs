@@ -1163,7 +1163,9 @@ pub async fn process_video_clip(
     let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
     let total_len: i64 = segments.iter().map(|s| (s.end_secs - s.start_secs).max(0)).sum();
     let is_video_note = session.output_kind == "video_note";
-    let is_ringtone = session.output_kind == "iphone_ringtone";
+    let is_iphone_ringtone = session.output_kind == "iphone_ringtone";
+    let is_android_ringtone = session.output_kind == "android_ringtone";
+    let is_ringtone = is_iphone_ringtone || is_android_ringtone;
 
     // Effective duration accounting for speed (e.g., 86s at 2x = 43s)
     let effective_len = if let Some(spd) = speed {
@@ -1193,8 +1195,10 @@ pub async fn process_video_clip(
         VIDEO_NOTE_MAX_DURATION as i64
     } else if is_video_note && video_note_needs_split {
         (VIDEO_NOTE_MAX_DURATION * VIDEO_NOTE_MAX_PARTS as u64) as i64 // Allow full duration for split
-    } else if is_ringtone {
-        30
+    } else if is_iphone_ringtone {
+        crate::download::ringtone::MAX_IPHONE_DURATION_SECS as i64
+    } else if is_android_ringtone {
+        crate::download::ringtone::MAX_ANDROID_DURATION_SECS as i64
     } else {
         60 * 10
     };
@@ -1261,7 +1265,12 @@ pub async fn process_video_clip(
 
     // Notify user if segments were truncated (only for ringtones now)
     if truncated {
-        let limit_text = i18n::t(&lang, "commands.cut_limit_ringtone");
+        let max_secs = if is_iphone_ringtone {
+            crate::download::ringtone::MAX_IPHONE_DURATION_SECS as i64
+        } else {
+            crate::download::ringtone::MAX_ANDROID_DURATION_SECS as i64
+        };
+        let limit_text = format!("{} ({}s)", i18n::t(&lang, "commands.cut_limit_ringtone"), max_secs);
         let mut args = FluentArgs::new();
         args.set("total", total_len);
         args.set("limit", limit_text);
@@ -1389,19 +1398,19 @@ pub async fn process_video_clip(
     log::info!("📂 Temp directory ready: {:?}", temp_dir);
 
     let input_path = temp_dir.join(format!("input_{}_{}.mp4", chat_id.0, session.source_id));
-    let output_path = temp_dir.join(format!(
-        "{}_{}_{}.{}",
-        if is_video_note {
-            "circle"
-        } else if is_ringtone {
-            "ringtone"
-        } else {
-            "cut"
-        },
-        chat_id.0,
-        uuid::Uuid::new_v4(),
-        if is_ringtone { "m4r" } else { "mp4" }
-    ));
+    let output_path = if is_ringtone {
+        let safe_title = crate::download::ringtone::sanitize_filename(&base_title);
+        let ext = if is_iphone_ringtone { "m4r" } else { "mp3" };
+        temp_dir.join(format!("{}_ringtone.{}", safe_title, ext))
+    } else {
+        temp_dir.join(format!(
+            "{}_{}_{}{}",
+            if is_video_note { "circle" } else { "cut" },
+            chat_id.0,
+            uuid::Uuid::new_v4(),
+            ".mp4"
+        ))
+    };
 
     log::info!(
         "🔽 Starting download for video note: file_id={}, output_path={:?}",
@@ -1624,9 +1633,9 @@ pub async fn process_video_clip(
 
     cmd.arg("-i").arg(&input_path);
 
-    if is_ringtone {
-        // For ringtone we only care about audio; -vn ensures no video stream
-        // is passed to the ipod muxer even if the input has embedded album art
+    if is_iphone_ringtone {
+        // For iPhone ringtone: AAC in MPEG-4 container (.m4r)
+        // -vn strips embedded album art to avoid exit code 234 with -f ipod
         cmd.arg("-vn")
             .arg("-filter_complex")
             .arg(&filter_av)
@@ -1638,6 +1647,19 @@ pub async fn process_video_clip(
             .arg("192k")
             .arg("-f")
             .arg("ipod");
+    } else if is_android_ringtone {
+        // For Android ringtone: MP3 at 192k
+        cmd.arg("-vn")
+            .arg("-filter_complex")
+            .arg(&filter_av)
+            .arg("-map")
+            .arg(map_a_label)
+            .arg("-c:a")
+            .arg("libmp3lame")
+            .arg("-b:a")
+            .arg("192k")
+            .arg("-f")
+            .arg("mp3");
     } else {
         cmd.arg("-filter_complex").arg(&filter_av);
         if has_video {
@@ -1887,10 +1909,9 @@ pub async fn process_video_clip(
         }
     } else if is_ringtone {
         let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
-        let instructions = i18n::t(&lang, "history.iphone_ringtone_instructions");
         match bot
             .send_document(chat_id, teloxide::types::InputFile::file(output_path.clone()))
-            .caption(format!("{}\n\n{}", escape_markdown(&clip_title), instructions))
+            .caption(escape_markdown(&clip_title))
             .parse_mode(ParseMode::MarkdownV2)
             .await
         {
@@ -1906,7 +1927,23 @@ pub async fn process_video_clip(
                 tokio::fs::remove_file(&output_path).await.ok();
                 return Ok(());
             }
+        };
+        // Send platform-specific instructions with images
+        let platform = if is_iphone_ringtone {
+            crate::telegram::menu::ringtone::Platform::Iphone
+        } else {
+            crate::telegram::menu::ringtone::Platform::Android
+        };
+        if let Err(e) =
+            crate::telegram::menu::ringtone::send_ringtone_instructions(&bot, chat_id, platform, &db_pool).await
+        {
+            log::warn!("Failed to send ringtone instructions: {}", e);
         }
+        // Clean up files and return early (don't fall through to clip_title logic below)
+        bot.delete_message(chat_id, status.id).await.ok();
+        tokio::fs::remove_file(&input_path).await.ok();
+        tokio::fs::remove_file(&output_path).await.ok();
+        return Ok(());
     } else if has_video {
         match bot
             .send_video(chat_id, teloxide::types::InputFile::file(output_path.clone()))

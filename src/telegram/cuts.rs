@@ -230,7 +230,7 @@ pub async fn handle_cuts_callback(
                 options.push(vec![
                     crate::telegram::cb("✂️ Clip".to_string(), format!("cuts:clip:{}", cut_id)),
                     crate::telegram::cb("⭕️ Circle".to_string(), format!("cuts:circle:{}", cut_id)),
-                    crate::telegram::cb("🔔 Ringtone".to_string(), format!("cuts:iphone_ringtone:{}", cut_id)),
+                    crate::telegram::cb("🔔 Ringtone".to_string(), format!("ringtone:select:cut:{}", cut_id)),
                 ]);
                 options.push(vec![crate::telegram::cb(
                     "⚙️ Speed".to_string(),
@@ -344,56 +344,6 @@ pub async fn handle_cuts_callback(
                             .ok();
                     }
                 }
-            }
-        }
-        "iphone_ringtone" => {
-            if parts.len() < 3 {
-                return Ok(());
-            }
-            let cut_id = parts[2].parse::<i64>().unwrap_or(0);
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
-            {
-                if cut.file_id.is_none() {
-                    bot.send_message(chat_id, "❌ This clip has no file_id for ringtone.")
-                        .await
-                        .ok();
-                    return Ok(());
-                }
-                let session = db::VideoClipSession {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    user_id: chat_id.0,
-                    source_download_id: 0,
-                    source_kind: "cut".to_string(),
-                    source_id: cut_id,
-                    original_url: cut.original_url.clone(),
-                    output_kind: "iphone_ringtone".to_string(),
-                    created_at: chrono::Utc::now(),
-                    expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
-                };
-                db::upsert_video_clip_session(&conn, &session).map_err(|e| {
-                    teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
-
-                let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
-                    "❌ Cancel".to_string(),
-                    "cuts:clip_cancel".to_string(),
-                )]]);
-
-                bot.send_message(
-                    chat_id,
-                    "🔔 Send intervals for the ringtone in format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nMultiple intervals separated by commas\\.\n\n💡 If duration exceeds 30 seconds \\(iOS limit\\), audio will be automatically trimmed\\.\n\nExample: `00:10-00:25`",
-                )
-                .parse_mode(ParseMode::MarkdownV2)
-                .reply_markup(keyboard)
-                .await?;
-
-                if !cut.original_url.trim().is_empty() {
-                    bot.send_message(chat_id, cut.original_url).await.ok();
-                }
-                bot.delete_message(chat_id, message_id).await.ok();
             }
         }
         "speed" => {

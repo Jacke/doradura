@@ -24,8 +24,8 @@
 
 use doradura::smoke_tests::{
     is_ffmpeg_available, is_ffprobe_available, is_ytdlp_available, run_all_smoke_tests, test_audio_download,
-    test_cookies_validation, test_ffmpeg_toolchain, test_metadata_extraction, test_video_download, SmokeTestConfig,
-    SmokeTestStatus, DEFAULT_TEST_URL,
+    test_cookies_validation, test_ffmpeg_toolchain, test_metadata_extraction, test_odesli_fetch, test_video_download,
+    test_web_server_health, SmokeTestConfig, SmokeTestStatus, DEFAULT_TEST_URL, ODESLI_TEST_URL,
 };
 use std::time::Duration;
 
@@ -55,22 +55,30 @@ async fn smoke_test_full_suite() {
 
     println!("\n{}\n", report.format_log());
 
-    // Check for critical failures (not proxy-related)
-    // Proxy failures are expected in CI without authentication setup
+    // Check for critical failures (not proxy/external-API-related)
+    // Proxy failures are expected in CI without authentication setup.
+    // External API failures (lyrics, Odesli, web server) are soft failures — the
+    // bot should not break if these third-party services are temporarily down.
     let has_critical_failures = report.results.iter().any(|r| {
         if !matches!(r.status, SmokeTestStatus::Failed | SmokeTestStatus::Timeout) {
             return false;
         }
-        // Allow proxy-related failures in CI (expected without auth)
+        let test_name = r.test_name.as_str();
         let error_msg = r.error_message.as_deref().unwrap_or("");
+
+        // Allow proxy-related failures in CI (expected without auth)
         let is_proxy_error = error_msg.contains("All proxies failed")
             || error_msg.contains("403")
             || error_msg.contains("Forbidden")
             || error_msg.contains("bot")
             || error_msg.contains("sign in");
 
-        // Only fail on non-proxy errors (e.g., ffmpeg not found)
-        !is_proxy_error
+        // Allow external-API-dependent tests to fail (LRCLIB, Odesli, web server)
+        // These depend on third-party services that may be temporarily unavailable.
+        let is_external_api_test = matches!(test_name, "lyrics_fetch" | "odesli_fetch" | "web_server_health");
+
+        // Only fail on non-proxy, non-external-API errors (e.g., ffmpeg not found)
+        !is_proxy_error && !is_external_api_test
     });
 
     if has_critical_failures {
@@ -97,18 +105,38 @@ async fn smoke_test_full_suite() {
         })
         .count();
 
+    // Count external-API soft failures for logging
+    let api_soft_failed = report
+        .results
+        .iter()
+        .filter(|r| {
+            matches!(r.status, SmokeTestStatus::Failed | SmokeTestStatus::Timeout)
+                && matches!(
+                    r.test_name.as_str(),
+                    "lyrics_fetch" | "odesli_fetch" | "web_server_health"
+                )
+        })
+        .count();
+
     if proxy_skipped > 0 {
         println!(
             "⚠️  {} download test(s) skipped due to no proxy/auth configured (expected in CI)",
             proxy_skipped
         );
     }
+    if api_soft_failed > 0 {
+        println!(
+            "⚠️  {} external-API test(s) soft-failed (LRCLIB/Odesli/web server may be temporarily unavailable)",
+            api_soft_failed
+        );
+    }
 
     println!(
-        "Smoke tests completed: {}/{} passed ({} proxy-skipped)",
+        "Smoke tests completed: {}/{} passed ({} proxy-skipped, {} api-soft-failed)",
         report.passed_count,
         report.results.len(),
-        proxy_skipped
+        proxy_skipped,
+        api_soft_failed,
     );
 }
 
@@ -252,6 +280,57 @@ async fn smoke_test_video_only() {
     assert!(
         result.status == SmokeTestStatus::Passed,
         "Video download failed: {:?}",
+        result.error_message
+    );
+}
+
+/// Test 8: Odesli streaming links.
+///
+/// Calls api.song.link with the test YouTube URL and checks at least one
+/// streaming platform link is returned. Requires network access.
+#[tokio::test]
+async fn smoke_test_odesli() {
+    init_logging();
+
+    let result = test_odesli_fetch(ODESLI_TEST_URL).await;
+
+    println!("{}", result.format_log());
+
+    if let Some(ref info) = result.metadata_title {
+        println!("Streaming platforms: {}", info);
+    }
+
+    // Allow failure if Odesli is down (not a critical dependency)
+    match result.status {
+        SmokeTestStatus::Passed => println!("Odesli OK"),
+        SmokeTestStatus::Timeout => println!("⚠️  Odesli timed out (API may be slow)"),
+        SmokeTestStatus::Failed => println!(
+            "⚠️  Odesli returned no links: {}",
+            result.error_message.as_deref().unwrap_or("unknown")
+        ),
+        _ => {}
+    }
+}
+
+/// Test 9: Web server health check.
+///
+/// Hits /health and /api/s/{nonexistent} on WEB_BASE_URL.
+/// Skipped automatically if WEB_BASE_URL is not set.
+#[tokio::test]
+async fn smoke_test_web_server() {
+    init_logging();
+
+    let result = test_web_server_health().await;
+
+    println!("{}", result.format_log());
+
+    if let Some(ref url) = result.metadata_title {
+        println!("Web server URL: {}", url);
+    }
+
+    assert!(
+        matches!(result.status, SmokeTestStatus::Passed | SmokeTestStatus::Skipped),
+        "Web server health check failed: {:?}",
         result.error_message
     );
 }

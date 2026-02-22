@@ -222,6 +222,16 @@ subscription =
     .unknown_plan = Unknown plan
     .upgrade_prompt = 🚀 *Upgrade to {$plan}*\n\nTo activate a subscription, use the /plan command and choose your plan\\.\n\nThere you can review the terms and pay for the subscription\.
 
+ringtone-platform-select = 📱 Choose your platform:
+
+ringtone-prompt-iphone = 🔔 *Make Ringtone — iPhone*\n\n⏱ Max duration: 30 sec \(iOS limit\)\n\nEnter time range:\n`mm:ss–mm:ss`\n\nExample: `00:00–00:30`
+
+ringtone-prompt-android = 🔔 *Make Ringtone — Android*\n\n⏱ Max duration: 40 sec\n\nEnter time range:\n`mm:ss–mm:ss`\n\nExample: `00:00–00:40`
+
+ringtone-instructions-iphone = 🔔 *Your iPhone ringtone is ready\!*\n\n🍎 *How to set as ringtone \(iOS\):*\n1️⃣ Save the \.m4r file to the *Files* app\n2️⃣ Open *GarageBand* → tap \+ → *Audio Recorder*\n3️⃣ Tap the tracks icon ↖️ \(top left\)\n4️⃣ Tap the loop icon ↗️ \(top right\) → *Files* tab → select your file\n5️⃣ Long\-press the project → *Share* → *Ringtone* → *Export*\n✅ *Settings* → *Sounds* → *Ringtone* → select your ringtone
+
+ringtone-instructions-android = 🔔 *Your Android ringtone is ready\!*\n\n🤖 *How to set as ringtone \(Android\):*\n1️⃣ Download the \.mp3 file to your device\n2️⃣ Open *Files* app → long\-press the file → *Set as ringtone*\n_or copy it to the_ *Ringtones/* _folder on internal storage_\n✅ *Settings* → *Sound* → *Phone ringtone* → select your track
+
 history =
     .load_failed = Couldn't load history 😢 Try again later\\.
     .empty = 📚 *Download History*\n\nYou don't have any downloads yet\\. Send me a track or video link\\!

@@ -1233,6 +1233,21 @@ pub async fn handle_menu_callback(
                     .parse_mode(ParseMode::MarkdownV2)
                     .reply_markup(keyboard)
                     .await?;
+            } else if data.starts_with("ringtone:") {
+                use crate::telegram::menu::ringtone::handle_ringtone_callback;
+                if let Err(e) = handle_ringtone_callback(
+                    &bot,
+                    callback_id.clone(),
+                    chat_id,
+                    message_id,
+                    &data,
+                    Arc::clone(&db_pool),
+                )
+                .await
+                {
+                    log::error!("Ringtone callback error: {}", e);
+                }
+                return Ok(());
             } else if data.starts_with("downloads:") {
                 // Handle downloads callback queries
                 use crate::telegram::downloads::handle_downloads_callback;

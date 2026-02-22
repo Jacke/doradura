@@ -3,6 +3,7 @@ mod callback_router;
 mod helpers;
 pub(crate) mod lyrics;
 mod main_menu;
+pub mod ringtone;
 mod services;
 mod settings;
 

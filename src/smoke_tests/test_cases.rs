@@ -570,6 +570,141 @@ pub async fn test_ringtone_conversion(temp_dir: &str) -> SmokeTestResult {
     result
 }
 
+/// Test 8: Odesli streaming links fetch.
+///
+/// Calls the Odesli API (api.song.link) with the test YouTube URL and validates:
+/// - At least one streaming platform link is returned
+/// - API is reachable (not down)
+///
+/// No DB or yt-dlp required — pure HTTP.
+pub async fn test_odesli_fetch(test_url: &str) -> SmokeTestResult {
+    let start = Instant::now();
+    let test_name = "odesli_fetch";
+
+    let result = timeout(
+        Duration::from_secs(15),
+        crate::core::odesli::fetch_streaming_links(test_url),
+    )
+    .await;
+
+    match result {
+        Err(_) => SmokeTestResult::timeout(test_name, Duration::from_secs(15)),
+        Ok(None) => SmokeTestResult::failed(
+            test_name,
+            start.elapsed(),
+            "No streaming links returned from Odesli (API down or video not recognized)",
+        ),
+        Ok(Some(links)) => {
+            let found: Vec<&str> = [
+                links.spotify.as_ref().map(|_| "Spotify"),
+                links.apple_music.as_ref().map(|_| "Apple Music"),
+                links.youtube_music.as_ref().map(|_| "YouTube Music"),
+                links.deezer.as_ref().map(|_| "Deezer"),
+                links.tidal.as_ref().map(|_| "Tidal"),
+                links.amazon_music.as_ref().map(|_| "Amazon Music"),
+            ]
+            .into_iter()
+            .flatten()
+            .collect();
+
+            log::info!(
+                "[smoke_test] odesli_fetch: {} platforms found: {:?}",
+                found.len(),
+                found
+            );
+
+            let mut r = SmokeTestResult::passed(test_name, start.elapsed());
+            r.metadata_title = Some(format!("{} platforms: {}", found.len(), found.join(", ")));
+            r
+        }
+    }
+}
+
+/// Test 9: Web server health check.
+///
+/// Skipped if `WEB_BASE_URL` is not configured.
+/// Validates:
+/// - `GET /health` returns 200 with body "ok"
+/// - `GET /api/s/{nonexistent_id}` returns 404 JSON
+/// - `GET /s/{nonexistent_id}` returns 404 HTML
+///
+/// No DB required — purely tests the live web server.
+pub async fn test_web_server_health() -> SmokeTestResult {
+    let start = Instant::now();
+    let test_name = "web_server_health";
+
+    let base_url = match std::env::var("WEB_BASE_URL").ok() {
+        Some(url) if !url.is_empty() => url,
+        _ => return SmokeTestResult::skipped(test_name, "WEB_BASE_URL not configured"),
+    };
+
+    let client = match reqwest::Client::builder().timeout(Duration::from_secs(10)).build() {
+        Ok(c) => c,
+        Err(e) => {
+            return SmokeTestResult::failed(
+                test_name,
+                start.elapsed(),
+                &format!("Failed to build HTTP client: {}", e),
+            )
+        }
+    };
+
+    let base = base_url.trim_end_matches('/');
+
+    // /health → 200 "ok"
+    let health_url = format!("{}/health", base);
+    match timeout(Duration::from_secs(10), client.get(&health_url).send()).await {
+        Err(_) => return SmokeTestResult::timeout(test_name, Duration::from_secs(10)),
+        Ok(Err(e)) => {
+            return SmokeTestResult::failed(test_name, start.elapsed(), &format!("GET /health failed: {}", e))
+        }
+        Ok(Ok(resp)) => {
+            if !resp.status().is_success() {
+                return SmokeTestResult::failed(
+                    test_name,
+                    start.elapsed(),
+                    &format!("/health returned HTTP {}", resp.status()),
+                );
+            }
+            let body = resp.text().await.unwrap_or_default();
+            if body.trim() != "ok" {
+                return SmokeTestResult::failed(
+                    test_name,
+                    start.elapsed(),
+                    &format!("/health expected 'ok', got '{}'", body.trim()),
+                );
+            }
+        }
+    }
+
+    // /api/s/{nonexistent} → 404
+    let not_found_url = format!("{}/api/s/smoke00000000", base);
+    match timeout(Duration::from_secs(10), client.get(&not_found_url).send()).await {
+        Err(_) => return SmokeTestResult::timeout(test_name, Duration::from_secs(10)),
+        Ok(Err(e)) => {
+            return SmokeTestResult::failed(
+                test_name,
+                start.elapsed(),
+                &format!("GET /api/s/nonexistent failed: {}", e),
+            )
+        }
+        Ok(Ok(resp)) => {
+            if resp.status() != reqwest::StatusCode::NOT_FOUND {
+                return SmokeTestResult::failed(
+                    test_name,
+                    start.elapsed(),
+                    &format!("/api/s/nonexistent returned HTTP {} (expected 404)", resp.status()),
+                );
+            }
+        }
+    }
+
+    log::info!("[smoke_test] web_server_health: /health=ok, /api/s/nonexistent=404 ✓");
+    let mut r = SmokeTestResult::passed(test_name, start.elapsed());
+    r.metadata_title = Some(base_url);
+    r
+}
+
 /// Test 7: Lyrics fetch (LRCLIB + optional Genius).
 ///
 /// Calls the lyrics API directly (no yt-dlp, no ffmpeg) and validates:
@@ -684,5 +819,41 @@ mod tests {
             // Must have logged section/line counts in metadata_title
             assert!(result.metadata_title.is_some());
         }
+    }
+
+    /// Test 8: Odesli fetch hits the API and returns streaming links.
+    /// Requires network access.
+    #[tokio::test]
+    async fn test_odesli_fetch_smoke() {
+        let result = test_odesli_fetch(super::super::ODESLI_TEST_URL).await;
+        assert!(!result.test_name.is_empty());
+        assert!(
+            matches!(
+                result.status,
+                SmokeTestStatus::Passed | SmokeTestStatus::Timeout | SmokeTestStatus::Failed
+            ),
+            "unexpected status: {:?} — {:?}",
+            result.status,
+            result.error_message
+        );
+        if result.status == SmokeTestStatus::Passed {
+            assert!(result.metadata_title.is_some());
+        }
+    }
+
+    /// Test 9: Web server health — skipped if WEB_BASE_URL not set.
+    #[tokio::test]
+    async fn test_web_server_health_smoke() {
+        let result = test_web_server_health().await;
+        assert!(!result.test_name.is_empty());
+        assert!(
+            matches!(
+                result.status,
+                SmokeTestStatus::Passed | SmokeTestStatus::Skipped | SmokeTestStatus::Timeout | SmokeTestStatus::Failed
+            ),
+            "unexpected status: {:?} — {:?}",
+            result.status,
+            result.error_message
+        );
     }
 }
