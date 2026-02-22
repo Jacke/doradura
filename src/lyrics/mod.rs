@@ -154,7 +154,7 @@ fn title_case(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
     let mut cap_next = true;
     for c in s.chars() {
-        if c.is_whitespace() {
+        if c.is_whitespace() || c == '-' {
             cap_next = true;
             result.push(c);
         } else if cap_next {

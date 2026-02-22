@@ -10,7 +10,7 @@ use crate::telegram::Bot;
 use std::collections::HashMap;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{CallbackQueryId, InlineKeyboardMarkup, ParseMode};
+use teloxide::types::{InlineKeyboardMarkup, ParseMode};
 use teloxide::RequestError;
 use uuid::Uuid;
 
@@ -241,6 +241,3 @@ fn db_err(e: impl std::fmt::Display) -> RequestError {
 fn json_err(e: impl std::fmt::Display) -> RequestError {
     RequestError::from(Arc::new(std::io::Error::other(e.to_string())))
 }
-
-// Suppress unused import warning for CallbackQueryId (used in the function signature above)
-const _: fn(CallbackQueryId) = |_| {};
