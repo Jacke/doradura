@@ -627,6 +627,20 @@ async fn run_bot(use_webhook: bool) -> Result<()> {
     // Do not restore failed tasks on startup; users should retry manually
     // recover_failed_tasks(&download_queue, &db_pool).await;
 
+    // Start public web server for share pages (if WEB_BASE_URL is configured)
+    if config::share::base_url().is_some() {
+        let web_port = config::share::web_port();
+        let db_pool_web = Arc::clone(&db_pool);
+        log::info!("Starting web server on port {} (WEB_BASE_URL configured)", web_port);
+        tokio::spawn(async move {
+            if let Err(e) = doradura::core::web_server::start_web_server(web_port, db_pool_web).await {
+                log::error!("Web server failed: {}", e);
+            }
+        });
+    } else {
+        log::info!("Web server disabled (WEB_BASE_URL not set)");
+    }
+
     // Start metrics HTTP server if enabled
     if *config::metrics::ENABLED {
         let metrics_port = *config::metrics::PORT;

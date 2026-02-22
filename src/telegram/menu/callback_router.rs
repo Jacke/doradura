@@ -21,6 +21,7 @@ use url::Url;
 
 use super::audio_effects::{handle_audio_cut_callback, handle_audio_effects_callback};
 use super::helpers::{send_queue_position_message, start_download_from_preview};
+use super::lyrics::handle_lyrics_callback;
 use super::main_menu::{
     edit_enhanced_main_menu, edit_main_menu, send_main_menu_as_new, show_current_settings_detail,
     show_enhanced_main_menu, show_help_menu,
@@ -54,6 +55,23 @@ pub async fn handle_menu_callback(
 
         if let (Some(chat_id), Some(message_id)) = (chat_id, message_id) {
             let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+            // Lyrics callbacks
+            if data.starts_with("lyr:") {
+                let lyr_query = CallbackQuery {
+                    id: callback_id.clone(),
+                    from: q.from.clone(),
+                    message: message_clone.clone(),
+                    inline_message_id: q.inline_message_id.clone(),
+                    chat_instance: q.chat_instance.clone(),
+                    data: data_clone.clone(),
+                    game_short_name: q.game_short_name.clone(),
+                };
+                if let Err(e) = handle_lyrics_callback(bot.clone(), lyr_query, Arc::clone(&db_pool)).await {
+                    log::error!("Lyrics callback error: {}", e);
+                }
+                return Ok(());
+            }
+
             // Handle audio cut/effects callbacks first
             if data.starts_with("ac:") {
                 // Reconstruct CallbackQuery for audio cut handler
@@ -787,6 +805,75 @@ pub async fn handle_menu_callback(
                     // Update the menu to show new selection
                     show_download_type_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None, None).await?;
                 }
+            } else if data.starts_with("dl:tm:") {
+                // MP3 toggle: flip quality buttons between dl:mp4+mp3:q:uid and dl:mp4:q:uid
+                let _ = bot.answer_callback_query(callback_id.clone()).await;
+                let parts: Vec<&str> = data.split(':').collect();
+                if parts.len() >= 3 {
+                    let url_id = parts[2];
+                    if let Some(teloxide::types::MaybeInaccessibleMessage::Regular(regular_msg)) = q.message.as_ref() {
+                        if let Some(keyboard) = regular_msg.reply_markup() {
+                            let mut new_buttons = keyboard.inline_keyboard.clone();
+
+                            // Detect current state: any 4-part dl:mp4+mp3: button = ON
+                            let currently_on = new_buttons.iter().flatten().any(|btn| {
+                                matches!(&btn.kind,
+                                    teloxide::types::InlineKeyboardButtonKind::CallbackData(d)
+                                    if d.starts_with("dl:mp4+mp3:") && d.split(':').count() == 4)
+                            });
+
+                            for row in &mut new_buttons {
+                                for button in row {
+                                    if let teloxide::types::InlineKeyboardButtonKind::CallbackData(ref mut cb) =
+                                        button.kind
+                                    {
+                                        if currently_on {
+                                            // mp4+mp3:q:uid → mp4:q:uid
+                                            if cb.starts_with("dl:mp4+mp3:") && cb.split(':').count() == 4 {
+                                                let without_prefix = cb.trim_start_matches("dl:mp4+mp3:");
+                                                *cb = format!("dl:mp4:{}", without_prefix);
+                                            }
+                                        } else {
+                                            // mp4:q:uid → mp4+mp3:q:uid (skip dl:mp3: standalone)
+                                            if cb.starts_with("dl:mp4:") && cb.split(':').count() == 4 {
+                                                let without_prefix = cb.trim_start_matches("dl:mp4:");
+                                                *cb = format!("dl:mp4+mp3:{}", without_prefix);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Update toggle button text in a second pass
+                            for row in &mut new_buttons {
+                                for button in row {
+                                    if let teloxide::types::InlineKeyboardButtonKind::CallbackData(ref cb) = button.kind
+                                    {
+                                        if cb == &format!("dl:tm:{}", url_id) {
+                                            button.text = if currently_on {
+                                                "☐ 🎵 MP3".to_string()
+                                            } else {
+                                                "☑ + 🎵 MP3".to_string()
+                                            };
+                                        }
+                                    }
+                                }
+                            }
+
+                            let new_keyboard = teloxide::types::InlineKeyboardMarkup::new(new_buttons);
+                            let _ = bot
+                                .edit_message_reply_markup(chat_id, message_id)
+                                .reply_markup(new_keyboard)
+                                .await;
+                            log::info!(
+                                "MP3 toggle: {} → {} for user {}",
+                                if currently_on { "ON" } else { "OFF" },
+                                if currently_on { "OFF" } else { "ON" },
+                                chat_id.0
+                            );
+                        }
+                    }
+                }
             } else if data.starts_with("dl:") {
                 // Answer callback and delete preview IMMEDIATELY to prevent double-clicks
                 // This gives instant visual feedback that the action was processed
@@ -824,8 +911,8 @@ pub async fn handle_menu_callback(
                     };
 
                     // Extract quality if provided (new format)
-                    let selected_quality = if parts.len() == 4 && format == "mp4" {
-                        Some(parts[2].to_string()) // quality from dl:mp4:quality:url_id
+                    let selected_quality = if parts.len() == 4 && (format == "mp4" || format == "mp4+mp3") {
+                        Some(parts[2].to_string()) // quality from dl:mp4:quality:url_id or dl:mp4+mp3:quality:url_id
                     } else {
                         None
                     };

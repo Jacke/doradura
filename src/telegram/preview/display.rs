@@ -226,8 +226,9 @@ pub async fn send_preview(
                 // If the formats list is empty, create a standard button
                 create_fallback_keyboard(default_format, default_quality, &url_id, Some(audio_bitrate.as_str()))
             } else {
+                // Default to mp4+mp3 so that quality buttons queue both video and MP3
                 let format_for_keyboard = if default_format == "mp4" || default_format == "mp4+mp3" {
-                    default_format
+                    "mp4+mp3"
                 } else {
                     "mp4"
                 };
@@ -499,7 +500,7 @@ pub async fn update_preview_message(
                 resolved_quality.as_deref(),
                 &url_id,
                 send_as_document,
-                "mp4",
+                "mp4+mp3",
                 Some(audio_bitrate.as_str()),
             )
         }

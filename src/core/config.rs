@@ -78,6 +78,13 @@ pub static BOT_TOKEN: Lazy<String> = Lazy::new(|| {
 /// Read from WEBHOOK_URL environment variable
 pub static WEBHOOK_URL: Lazy<Option<String>> = Lazy::new(|| env::var("WEBHOOK_URL").ok());
 
+/// Genius API client access token for structured lyrics fetching (optional).
+/// Read from GENIUS_CLIENT_TOKEN environment variable.
+/// When set, Genius is used as primary lyrics source for verse/chorus structure.
+/// When absent, LRCLIB is used directly (still good coverage, less structure).
+/// Get a free token at: https://genius.com/api-clients
+pub static GENIUS_CLIENT_TOKEN: Lazy<Option<String>> = Lazy::new(|| env::var("GENIUS_CLIENT_TOKEN").ok());
+
 /// Rate limiting configuration
 pub mod rate_limit {
     use super::Duration;
@@ -629,6 +636,39 @@ pub mod bot_api {
     /// Returns true if the URL doesn't contain "api.telegram.org".
     pub fn is_local_url(url: &str) -> bool {
         !url.contains("api.telegram.org")
+    }
+}
+
+/// Share page configuration
+pub mod share {
+    use once_cell::sync::Lazy;
+    use std::env;
+
+    /// Base URL for public share pages (e.g. "https://doradura.up.railway.app")
+    /// Read from WEB_BASE_URL environment variable.
+    /// If not set, share page creation is skipped silently.
+    pub static BASE_URL: Lazy<Option<String>> = Lazy::new(|| {
+        env::var("WEB_BASE_URL")
+            .ok()
+            .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
+    });
+
+    /// Port for the public web server.
+    /// Read from WEB_PORT environment variable, falls back to Railway's PORT, then 3000.
+    pub static PORT: Lazy<u16> = Lazy::new(|| {
+        env::var("WEB_PORT")
+            .or_else(|_| env::var("PORT"))
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(3000)
+    });
+
+    pub fn base_url() -> Option<String> {
+        BASE_URL.clone()
+    }
+
+    pub fn web_port() -> u16 {
+        *PORT
     }
 }
 

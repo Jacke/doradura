@@ -3333,6 +3333,68 @@ pub fn cleanup_old_errors(conn: &DbConnection, days: i64) -> Result<usize> {
     Ok(deleted)
 }
 
+// ==================== Lyrics Sessions ====================
+
+/// Store fetched lyrics (with parsed sections as JSON) for later retrieval by section.
+pub fn create_lyrics_session(
+    conn: &DbConnection,
+    id: &str,
+    user_id: i64,
+    artist: &str,
+    title: &str,
+    sections_json: &str,
+    has_structure: bool,
+) -> Result<()> {
+    let now = chrono::Utc::now();
+    let expires_at = now + chrono::Duration::hours(24);
+    conn.execute(
+        "INSERT INTO lyrics_sessions (id, user_id, artist, title, sections_json, has_structure, created_at, expires_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        rusqlite::params![
+            id,
+            user_id,
+            artist,
+            title,
+            sections_json,
+            has_structure as i32,
+            now.to_rfc3339(),
+            expires_at.to_rfc3339(),
+        ],
+    )?;
+    Ok(())
+}
+
+/// Retrieve a lyrics session by ID. Returns (artist, title, sections_json, has_structure).
+pub fn get_lyrics_session(conn: &DbConnection, id: &str) -> Result<Option<(String, String, String, bool)>> {
+    let result = conn.query_row(
+        "SELECT artist, title, sections_json, has_structure FROM lyrics_sessions WHERE id = ?1 AND expires_at > ?2",
+        rusqlite::params![id, chrono::Utc::now().to_rfc3339()],
+        |row| {
+            let has_structure: i32 = row.get(3)?;
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                has_structure != 0,
+            ))
+        },
+    );
+    match result {
+        Ok(v) => Ok(Some(v)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// Delete expired lyrics sessions.
+pub fn delete_expired_lyrics_sessions(conn: &DbConnection) -> Result<usize> {
+    let deleted = conn.execute(
+        "DELETE FROM lyrics_sessions WHERE expires_at < ?1",
+        [chrono::Utc::now().to_rfc3339()],
+    )?;
+    Ok(deleted)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -207,6 +207,17 @@ pub fn create_video_format_keyboard(
         format!("dl:mp3:{}", url_id),
     )]);
 
+    // MP3 toggle button (on = mp4+mp3 mode, off = mp4 only)
+    let mp3_on = default_format == "mp4+mp3";
+    buttons.push(vec![crate::telegram::cb(
+        if mp3_on {
+            "☑ + 🎵 MP3".to_string()
+        } else {
+            "☐ 🎵 MP3".to_string()
+        },
+        format!("dl:tm:{}", url_id),
+    )]);
+
     // Toggle button for send type (Media/Document)
     buttons.push(vec![crate::telegram::cb(
         if send_as_document == 0 {

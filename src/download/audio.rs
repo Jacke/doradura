@@ -108,6 +108,39 @@ pub async fn download_and_send_audio(
             // Audio-specific: add effects button
             add_audio_effects_button(&bot_clone, chat_id, &pipeline_result, db_pool_clone.as_ref()).await;
 
+            // Share page: create after successful audio send (YouTube only, fire-and-forget)
+            if crate::core::share::is_youtube_url(url.as_str()) {
+                if let Some(ref pool) = db_pool_clone {
+                    let pool_share = std::sync::Arc::clone(pool);
+                    let url_str = url.to_string();
+                    let title_share = pipeline_result.title.clone();
+                    let artist_share = pipeline_result.artist.clone();
+                    let duration_share = pipeline_result.duration;
+                    let bot_share = bot_clone.clone();
+                    tokio::spawn(async move {
+                        let thumb = crate::core::share::youtube_thumbnail_url(&url_str);
+                        let artist_opt = if artist_share.trim().is_empty() {
+                            None
+                        } else {
+                            Some(artist_share.as_str())
+                        };
+                        if let Some((share_url, streaming_links)) = crate::core::share::create_share_page(
+                            &pool_share,
+                            &url_str,
+                            &title_share,
+                            artist_opt,
+                            thumb.as_deref(),
+                            Some(duration_share as u64),
+                        )
+                        .await
+                        {
+                            send_share_message(&bot_share, chat_id, &title_share, &share_url, streaming_links.as_ref())
+                                .await;
+                        }
+                    });
+                }
+            }
+
             // Schedule file cleanup (including any carousel extras)
             let extra_paths: Vec<String> = pipeline_result
                 .output
@@ -217,10 +250,13 @@ async fn add_audio_effects_button(bot: &Bot, chat_id: ChatId, result: &PipelineR
                     tokio::spawn(async move {
                         use teloxide::types::InlineKeyboardMarkup;
 
-                        let keyboard = InlineKeyboardMarkup::new(vec![vec![
-                            crate::telegram::cb("Edit Audio", format!("ae:open:{}", session_id_clone)),
-                            crate::telegram::cb("Cut Audio", format!("ac:open:{}", session_id_clone)),
-                        ]]);
+                        let keyboard = InlineKeyboardMarkup::new(vec![
+                            vec![
+                                crate::telegram::cb("Edit Audio", format!("ae:open:{}", session_id_clone)),
+                                crate::telegram::cb("Cut Audio", format!("ac:open:{}", session_id_clone)),
+                            ],
+                            vec![crate::telegram::cb("🎵 Lyrics", format!("lyr:{}", session_id_clone))],
+                        ]);
 
                         if let Err(e) = bot_for_button
                             .edit_message_reply_markup(chat_id, sent_message_id)
@@ -250,5 +286,65 @@ async fn add_audio_effects_button(bot: &Bot, chat_id: ChatId, result: &PipelineR
                 session_file_path
             );
         }
+    }
+}
+
+/// Send a follow-up Telegram message with streaming service buttons after a successful download.
+async fn send_share_message(
+    bot: &Bot,
+    chat_id: ChatId,
+    title: &str,
+    share_url: &str,
+    streaming_links: Option<&crate::core::odesli::StreamingLinks>,
+) {
+    use teloxide::requests::Requester;
+    use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
+
+    let mut row1: Vec<InlineKeyboardButton> = Vec::new();
+    let mut has_links = false;
+
+    if let Some(links) = streaming_links {
+        if let Some(ref url) = links.spotify {
+            if let Ok(u) = url.parse() {
+                row1.push(InlineKeyboardButton::url("Spotify", u));
+                has_links = true;
+            }
+        }
+        if let Some(ref url) = links.apple_music {
+            if let Ok(u) = url.parse() {
+                row1.push(InlineKeyboardButton::url("Apple Music", u));
+                has_links = true;
+            }
+        }
+        if let Some(ref url) = links.youtube_music {
+            if let Ok(u) = url.parse() {
+                row1.push(InlineKeyboardButton::url("YT Music", u));
+                has_links = true;
+            }
+        }
+    }
+
+    let Ok(share_parsed) = share_url.parse() else {
+        log::warn!("Invalid share URL: {}", share_url);
+        return;
+    };
+    let row2 = vec![InlineKeyboardButton::url("All platforms →", share_parsed)];
+
+    let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+    if !row1.is_empty() {
+        rows.push(row1);
+    }
+    rows.push(row2);
+
+    let keyboard = InlineKeyboardMarkup::new(rows);
+
+    let text = if has_links {
+        format!("Listen \"{}\" legally on streaming services:", title)
+    } else {
+        format!("Share page for \"{}\":", title)
+    };
+
+    if let Err(e) = bot.send_message(chat_id, text).reply_markup(keyboard).await {
+        log::warn!("Failed to send share message: {}", e);
     }
 }

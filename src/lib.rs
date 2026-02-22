@@ -22,6 +22,7 @@ pub mod downsub;
 pub mod experimental;
 pub mod extension;
 pub mod i18n;
+pub mod lyrics;
 pub mod metadata_refresh;
 pub mod storage;
 pub mod telegram;

@@ -1,6 +1,7 @@
 mod audio_effects;
 mod callback_router;
 mod helpers;
+pub(crate) mod lyrics;
 mod main_menu;
 mod services;
 mod settings;
