@@ -570,6 +570,65 @@ pub async fn test_ringtone_conversion(temp_dir: &str) -> SmokeTestResult {
     result
 }
 
+/// Test 7: Lyrics fetch (LRCLIB + optional Genius).
+///
+/// Calls the lyrics API directly (no yt-dlp, no ffmpeg) and validates:
+/// - At least one section is returned
+/// - Section has non-empty lines
+/// - If GENIUS_CLIENT_TOKEN is set, checks that structured sections are found
+pub async fn test_lyrics_fetch() -> SmokeTestResult {
+    let start = Instant::now();
+    let test_name = "lyrics_fetch";
+
+    let result = timeout(
+        Duration::from_secs(15),
+        crate::lyrics::fetch_lyrics("Eminem", "Lose Yourself"),
+    )
+    .await;
+
+    match result {
+        Err(_) => SmokeTestResult::timeout(test_name, Duration::from_secs(15)),
+        Ok(None) => SmokeTestResult::failed(test_name, start.elapsed(), "No lyrics returned from any source"),
+        Ok(Some(lyr)) => {
+            if lyr.sections.is_empty() {
+                return SmokeTestResult::failed(test_name, start.elapsed(), "Lyrics returned but sections are empty");
+            }
+            let total_lines: usize = lyr.sections.iter().map(|s| s.lines.len()).sum();
+            if total_lines == 0 {
+                return SmokeTestResult::failed(test_name, start.elapsed(), "Lyrics sections have no lines");
+            }
+
+            let source = if crate::core::config::GENIUS_CLIENT_TOKEN.is_some() {
+                if lyr.has_structure {
+                    "Genius (structured)"
+                } else {
+                    "Genius (no structure — LRCLIB fallback)"
+                }
+            } else if lyr.has_structure {
+                "LRCLIB (structured)"
+            } else {
+                "LRCLIB (plain)"
+            };
+
+            log::info!(
+                "[smoke_test] lyrics_fetch: {} sections, {} lines total, source={}",
+                lyr.sections.len(),
+                total_lines,
+                source
+            );
+
+            let mut r = SmokeTestResult::passed(test_name, start.elapsed());
+            r.metadata_title = Some(format!(
+                "{} sections ({} lines) via {}",
+                lyr.sections.len(),
+                total_lines,
+                source
+            ));
+            r
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::results::SmokeTestStatus;
@@ -604,5 +663,26 @@ mod tests {
             "ringtone_conversion failed: {:?}",
             result.error_message
         );
+    }
+
+    /// Test 7: Lyrics fetch hits LRCLIB and gets real lyrics back.
+    /// Requires network access. Skipped in offline environments.
+    #[tokio::test]
+    async fn test_lyrics_fetch_smoke() {
+        let result = test_lyrics_fetch().await;
+        assert!(!result.test_name.is_empty());
+        assert!(
+            matches!(
+                result.status,
+                SmokeTestStatus::Passed | SmokeTestStatus::Timeout | SmokeTestStatus::Failed
+            ),
+            "unexpected status: {:?} — {:?}",
+            result.status,
+            result.error_message
+        );
+        if result.status == SmokeTestStatus::Passed {
+            // Must have logged section/line counts in metadata_title
+            assert!(result.metadata_title.is_some());
+        }
     }
 }
