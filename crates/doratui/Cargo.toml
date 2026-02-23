@@ -5,6 +5,14 @@ edition = "2021"
 authors = ["Stan <iamjacke@gmail.com>"]
 description = "dora — beautiful TUI for media downloading (yt-dlp + ffmpeg)"
 license = "MIT"
+repository = "https://github.com/Jacke/doradura"
+homepage = "https://github.com/Jacke/doradura"
+readme = "../../README.md"
+keywords = ["tui", "download", "youtube", "media", "yt-dlp"]
+categories = ["command-line-utilities", "multimedia"]
+
+[package.metadata.dist]
+dist = true
 
 [[bin]]
 name = "dora"

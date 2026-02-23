@@ -11,6 +11,9 @@ keywords = ["telegram", "bot", "download", "convert", "media"]
 categories = ["command-line-utilities"]
 default-run = "doradura"
 
+[package.metadata.dist]
+dist = false
+
 [dependencies]
 doracore = { path = "../doracore", features = ["telegram"] }
 

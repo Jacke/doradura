@@ -1,0 +1,24 @@
+[workspace]
+members = ["crates/doratui"]
+
+[workspace.metadata.dist]
+# cargo-dist version that generated this config
+cargo-dist-version = "0.22.1"
+# CI backend
+ci = "github"
+# Installers to generate
+installers = ["homebrew", "shell"]
+# Homebrew tap repository (Jacke/homebrew-dora → user taps with: brew tap Jacke/dora)
+tap = "Jacke/homebrew-dora"
+# Publish the Homebrew formula after each release
+publish-jobs = ["homebrew"]
+# Target triples to build
+targets = [
+  "aarch64-apple-darwin",
+  "x86_64-apple-darwin",
+  "x86_64-unknown-linux-gnu",
+]
+# Create a GitHub Release automatically
+create-release = true
+# Generate release notes from git log
+auto-includes = true

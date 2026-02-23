@@ -50,7 +50,15 @@ use video_info::{fetch_thumbnail_art, fetch_video_info, PreviewResult};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    const VERSION: &str = env!("CARGO_PKG_VERSION");
+
     let args: Vec<String> = std::env::args().collect();
+
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("dora {}", VERSION);
+        return Ok(());
+    }
+
     let demo = args.iter().any(|a| a == "--demo");
     let verbose = args.iter().any(|a| a == "--verbose" || a == "-v");
 
