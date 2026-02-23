@@ -226,11 +226,11 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
     if let Some((msg, set_at)) = &app.status_msg {
         // Fade the red toward SUBTEXT in the last 3 seconds.
         let elapsed = set_at.elapsed().as_secs_f32();
-        let color = if elapsed < 7.0 {
+        let color = if elapsed < 4.0 {
             theme::RED
         } else {
-            // lerp RED → SUBTEXT over the final 3 s
-            let t = ((elapsed - 7.0) / 3.0).clamp(0.0, 1.0);
+            // lerp RED → SUBTEXT over the final 2 s
+            let t = ((elapsed - 4.0) / 2.0).clamp(0.0, 1.0);
             lerp_color((243, 139, 168), (166, 173, 200), 1.0 - t)
         };
         let max_chars = chunks[0].width.saturating_sub(1) as usize;

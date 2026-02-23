@@ -470,7 +470,7 @@ impl App {
 
         // Auto-expire status bar messages after 10 seconds.
         if let Some((_, set_at)) = &self.status_msg {
-            if set_at.elapsed() >= std::time::Duration::from_secs(10) {
+            if set_at.elapsed() >= std::time::Duration::from_secs(6) {
                 self.status_msg = None;
             }
         }
