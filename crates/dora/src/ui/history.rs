@@ -5,11 +5,11 @@ use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table};
 use ratatui::Frame;
 
-use crate::app::App;
+use crate::app::{App, ClickTarget};
 use crate::theme;
 
 /// Render the History tab.
-pub fn render_history(f: &mut Frame, area: Rect, app: &App) {
+pub fn render_history(f: &mut Frame, area: Rect, app: &mut App) {
     let block = Block::default()
         .title(format!(" Download History  {} entries ", app.history.len()))
         .borders(Borders::ALL)
@@ -93,6 +93,21 @@ pub fn render_history(f: &mut Frame, area: Rect, app: &App) {
     .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
     f.render_widget(table, area);
+
+    // ── Register click areas for each visible data row ────────────────────────
+    // Layout: area.y=border, area.y+1=header, area.y+2..=data rows (1 row each)
+    let data_start_y = area.y + 2; // after top border + header row
+    let max_data_rows = area.height.saturating_sub(4) as usize; // borders + header + hint
+    for i in 0..max_data_rows {
+        let abs_idx = skip + i;
+        if abs_idx >= app.history.len() {
+            break;
+        }
+        app.click_map.push((
+            Rect::new(area.x + 1, data_start_y + i as u16, area.width.saturating_sub(2), 1),
+            ClickTarget::HistorySelectRow(abs_idx),
+        ));
+    }
 
     // Key hint in bottom-left corner
     let hint_area = ratatui::layout::Rect::new(area.x + 1, area.y + area.height.saturating_sub(1), 30, 1);

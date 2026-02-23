@@ -855,6 +855,10 @@ fn handle_click(app: &mut App, target: app::ClickTarget, dl_tx: mpsc::Sender<(us
             app.logo_scheme = app.logo_scheme.next();
             app.logo_burst = 100;
         }
+        ClickTarget::HistorySelectRow(idx) => {
+            let max = app.history.len().saturating_sub(1);
+            app.history_scroll = (idx as u16).min(max as u16);
+        }
     }
 }
 

@@ -123,6 +123,8 @@ pub enum ClickTarget {
     SettingsCycleRight(usize),
     /// Click on the logo — cycle colour scheme + trigger burst animation.
     LogoClick,
+    /// Click on a history row — select (scroll to) that entry.
+    HistorySelectRow(usize),
 }
 
 /// State of a single download slot.
