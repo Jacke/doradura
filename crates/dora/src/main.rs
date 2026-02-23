@@ -41,7 +41,7 @@ mod theme;
 mod ui;
 mod video_info;
 
-use app::{App, DownloadFormat, HistoryEntry, LyricsResult, PreviewState, SlotState, Tab};
+use app::{App, DownloadFormat, HistoryEntry, LyricsResult, PreviewState, SlotState, Tab, YtdlpStartup};
 use download_runner::{spawn_download, SlotEvent};
 use events::{next_event, InputEvent};
 use settings::DoraSettings;
@@ -83,6 +83,17 @@ async fn main() -> anyhow::Result<()> {
     let (preview_tx, preview_rx) = mpsc::channel::<PreviewResult>(4);
     // Channel: thumbnail art (arrives separately, after info) → main loop
     let (thumb_tx, thumb_rx) = mpsc::channel::<video_info::ThumbnailArt>(4);
+    // Channel: yt-dlp update status lines → main loop
+    let (ytdlp_tx, ytdlp_rx) = mpsc::channel::<String>(16);
+
+    // Kick off yt-dlp check / update in the background
+    if !demo {
+        let ytdlp_bin = app.settings.ytdlp_bin.clone();
+        let tx = ytdlp_tx.clone();
+        tokio::spawn(async move {
+            ytdlp_startup_check(ytdlp_bin, tx).await;
+        });
+    }
 
     let result = run_loop(
         &mut terminal,
@@ -98,6 +109,7 @@ async fn main() -> anyhow::Result<()> {
         preview_rx,
         thumb_tx,
         thumb_rx,
+        ytdlp_rx,
     )
     .await;
 
@@ -128,6 +140,7 @@ async fn run_loop(
     mut preview_rx: mpsc::Receiver<PreviewResult>,
     thumb_tx: mpsc::Sender<video_info::ThumbnailArt>,
     mut thumb_rx: mpsc::Receiver<video_info::ThumbnailArt>,
+    mut ytdlp_rx: mpsc::Receiver<String>,
 ) -> anyhow::Result<()> {
     loop {
         // ── Draw ─────────────────────────────────────────────────────────────
@@ -160,6 +173,18 @@ async fn run_loop(
         // ── Drain thumbnail art results ───────────────────────────────────────
         while let Ok(art) = thumb_rx.try_recv() {
             app.preview_thumbnail = Some(art);
+        }
+
+        // ── Drain yt-dlp startup update lines ────────────────────────────────
+        while let Ok(msg) = ytdlp_rx.try_recv() {
+            if msg == "__done__" {
+                app.ytdlp_startup = YtdlpStartup::Done;
+            } else if msg == "__missing__" {
+                app.ytdlp_startup = YtdlpStartup::Missing;
+                app.ytdlp_available = false;
+            } else {
+                app.ytdlp_startup = YtdlpStartup::Updating { msg };
+            }
         }
 
         // ── Drain file-picker results (macOS osascript) ───────────────────────
@@ -246,7 +271,7 @@ async fn run_loop(
                         }
                     }
                     MouseEventKind::ScrollDown => match app.active_tab {
-                        Tab::History => {
+                        Tab::Downloads => {
                             let max = app.history.len().saturating_sub(1) as u16;
                             if app.history_scroll < max {
                                 app.history_scroll += 1;
@@ -258,7 +283,7 @@ async fn run_loop(
                         _ => {}
                     },
                     MouseEventKind::ScrollUp => match app.active_tab {
-                        Tab::History => {
+                        Tab::Downloads => {
                             app.history_scroll = app.history_scroll.saturating_sub(1);
                         }
                         Tab::Lyrics => {
@@ -271,6 +296,21 @@ async fn run_loop(
             }
 
             InputEvent::Key(key) => {
+                // ── yt-dlp missing popup intercepts ALL keys ──────────────────
+                if app.ytdlp_startup == YtdlpStartup::Missing {
+                    match key.code {
+                        KeyCode::Char('i') => {
+                            // Open yt-dlp releases page in browser
+                            open_in_browser("https://github.com/yt-dlp/yt-dlp/releases/latest");
+                        }
+                        KeyCode::Char('q') | KeyCode::Esc => {
+                            break; // quit the app
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 // ── Esc: universal dismiss (cookies → help → error → reveal → settings edit → clear) ──
                 if key.code == KeyCode::Esc {
                     if app.show_cookies_input {
@@ -280,6 +320,8 @@ async fn run_loop(
                         app.help_visible = false;
                     } else if app.error_popup.is_some() {
                         app.error_popup = None;
+                    } else if app.history_popup.is_some() {
+                        app.history_popup = None;
                     } else if app.reveal_popup.is_some() {
                         app.reveal_popup = None;
                     } else if app.preview_state.is_visible() {
@@ -293,9 +335,8 @@ async fn run_loop(
                         app.settings_edit_buf.clear();
                     } else {
                         match app.active_tab {
-                            Tab::Queue => app.url_input.clear(),
+                            Tab::Downloads => app.url_input.clear(),
                             Tab::Lyrics => app.lyrics_query.clear(),
-                            Tab::History => {}
                             Tab::Settings => {}
                         }
                     }
@@ -344,6 +385,42 @@ async fn run_loop(
                     continue;
                 }
 
+                // ── History detail popup intercepts keys ─────────────────────
+                if let Some(idx) = app.history_popup {
+                    match key.code {
+                        KeyCode::Char('r') | KeyCode::Enter => {
+                            if let Some(entry) = app.history.iter().rev().nth(idx) {
+                                let path = entry.path.clone();
+                                app.history_popup = None;
+                                reveal_file(app, path);
+                            }
+                        }
+                        KeyCode::Char('b') => {
+                            if let Some(entry) = app.history.iter().rev().nth(idx) {
+                                if !entry.url.is_empty() {
+                                    let url = entry.url.clone();
+                                    open_in_browser(&url);
+                                }
+                            }
+                        }
+                        KeyCode::Char('d') => {
+                            // Remove this entry from history (display-index → vec index)
+                            let vec_idx = app.history.len().saturating_sub(1).saturating_sub(idx);
+                            if vec_idx < app.history.len() {
+                                app.history.remove(vec_idx);
+                                app.history_save();
+                            }
+                            app.history_popup = None;
+                            app.clamp_history_scroll();
+                        }
+                        KeyCode::Esc => {
+                            app.history_popup = None;
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
                 // ── Any key dismisses reveal popup ────────────────────────────
                 if app.reveal_popup.is_some() {
                     app.reveal_popup = None;
@@ -370,7 +447,7 @@ async fn run_loop(
 
                 // ── '?' opens help (only when not typing in a text input) ────
                 if key.code == KeyCode::Char('?') {
-                    let typing = (app.active_tab == Tab::Queue && !app.url_input.is_empty())
+                    let typing = (app.active_tab == Tab::Downloads && !app.url_input.is_empty())
                         || (app.active_tab == Tab::Lyrics && !app.lyrics_query.is_empty());
                     if !typing {
                         app.help_visible = true;
@@ -378,8 +455,8 @@ async fn run_loop(
                     }
                 }
 
-                // ── 'c' opens cookies popup (Queue tab, only when not typing) ───
-                if app.active_tab == Tab::Queue && app.url_input.is_empty() && key.code == KeyCode::Char('c') {
+                // ── 'c' opens cookies popup (Downloads tab, only when not typing) ───
+                if app.active_tab == Tab::Downloads && app.url_input.is_empty() && key.code == KeyCode::Char('c') {
                     app.show_cookies_input = true;
                     app.cookies_input = app.cookies_file.clone().unwrap_or_default();
                     continue;
@@ -387,21 +464,19 @@ async fn run_loop(
 
                 // ── Tab-specific handling ─────────────────────────────────────
                 match app.active_tab {
-                    Tab::Queue => handle_queue_key(app, key),
-                    Tab::History => handle_history_key(app, key),
+                    Tab::Downloads => handle_downloads_key(app, key),
                     Tab::Lyrics => handle_lyrics_key(app, key, lyrics_tx.clone()),
                     Tab::Settings => handle_settings_key(app, key, picker_tx.clone()),
                 }
 
                 // ── Global tab-switching (suppressed while typing in a text input) ──
-                let typing_in_input = (app.active_tab == Tab::Queue && !app.url_input.is_empty())
+                let typing_in_input = (app.active_tab == Tab::Downloads && !app.url_input.is_empty())
                     || (app.active_tab == Tab::Lyrics && !app.lyrics_query.is_empty());
                 if !typing_in_input {
                     match key.code {
-                        KeyCode::Char('1') => app.active_tab = Tab::Queue,
-                        KeyCode::Char('2') => app.active_tab = Tab::History,
-                        KeyCode::Char('3') => app.active_tab = Tab::Lyrics,
-                        KeyCode::Char('4') => app.active_tab = Tab::Settings,
+                        KeyCode::Char('1') => app.active_tab = Tab::Downloads,
+                        KeyCode::Char('2') => app.active_tab = Tab::Lyrics,
+                        KeyCode::Char('3') => app.active_tab = Tab::Settings,
                         _ => {}
                     }
                 }
@@ -449,12 +524,12 @@ fn handle_slot_event(app: &mut App, slot_id: usize, event: SlotEvent) {
                 .slots
                 .iter()
                 .find(|s| s.id == slot_id)
-                .map(|s| (s.title.clone(), s.artist.clone(), s.format));
+                .map(|s| (s.title.clone(), s.artist.clone(), s.format, s.url.clone()));
 
             if let Some(slot) = app.slot_mut(slot_id) {
                 slot.state = SlotState::Done { path: path.clone() };
             }
-            if let Some((title, artist, format)) = info {
+            if let Some((title, artist, format, url)) = info {
                 app.push_history(HistoryEntry {
                     title: title.unwrap_or_else(|| "Unknown".to_string()),
                     artist: artist.unwrap_or_default(),
@@ -462,6 +537,7 @@ fn handle_slot_event(app: &mut App, slot_id: usize, event: SlotEvent) {
                     size_mb,
                     path,
                     finished_at: chrono::Local::now(),
+                    url,
                 });
             }
         }
@@ -475,12 +551,43 @@ fn handle_slot_event(app: &mut App, slot_id: usize, event: SlotEvent) {
 
 // ── Per-tab key handlers ──────────────────────────────────────────────────────
 
+/// Combined Downloads tab handler — URL queue + history navigation.
+fn handle_downloads_key(app: &mut App, key: crossterm::event::KeyEvent) {
+    // ↑/↓ scroll history when the URL input is empty
+    if app.url_input.is_empty() {
+        match key.code {
+            KeyCode::Up => {
+                app.history_scroll = app.history_scroll.saturating_sub(1);
+                app.clamp_history_scroll();
+                return;
+            }
+            KeyCode::Down => {
+                let max = app.history.len().saturating_sub(1) as u16;
+                if app.history_scroll < max {
+                    app.history_scroll += 1;
+                }
+                return;
+            }
+            // [r] or [Enter] on an empty input → reveal selected history entry
+            KeyCode::Char('r') | KeyCode::Enter if app.url_input.is_empty() && !app.history.is_empty() => {
+                let idx = app.history_scroll as usize;
+                if let Some(path) = app.history.iter().rev().nth(idx).map(|e| e.path.clone()) {
+                    reveal_file(app, path);
+                }
+                return;
+            }
+            _ => {}
+        }
+    }
+    handle_queue_key(app, key);
+}
+
 fn handle_queue_key(app: &mut App, key: crossterm::event::KeyEvent) {
     match key.code {
         KeyCode::Char(c) => {
-            // '1'-'4' switch tabs only when the URL bar is empty (handled globally).
+            // '1'-'3' switch tabs only when the URL bar is empty (handled globally).
             // When the user is typing, digits are part of the URL — let them through.
-            if app.url_input.is_empty() && matches!(c, '1' | '2' | '3' | '4') {
+            if app.url_input.is_empty() && matches!(c, '1' | '2' | '3') {
                 return;
             }
             // [d] / [r] hotkeys only fire when the URL bar is empty.
@@ -539,6 +646,7 @@ fn handle_queue_key(app: &mut App, key: crossterm::event::KeyEvent) {
     }
 }
 
+#[allow(dead_code)]
 fn handle_history_key(app: &mut App, key: crossterm::event::KeyEvent) {
     match key.code {
         KeyCode::Up => {
@@ -567,8 +675,8 @@ fn handle_history_key(app: &mut App, key: crossterm::event::KeyEvent) {
 fn handle_lyrics_key(app: &mut App, key: crossterm::event::KeyEvent, lyrics_tx: mpsc::Sender<Option<LyricsResult>>) {
     match key.code {
         KeyCode::Char(c) => {
-            // Same as Queue: digits switch tabs only when the query is empty.
-            if app.lyrics_query.is_empty() && matches!(c, '1' | '2' | '3' | '4') {
+            // Digits switch tabs only when the query is empty.
+            if app.lyrics_query.is_empty() && matches!(c, '1' | '2' | '3') {
                 return;
             }
             app.lyrics_query.push(c);
@@ -668,10 +776,7 @@ fn handle_settings_key(app: &mut App, key: crossterm::event::KeyEvent, picker_tx
     use ui::settings::{cycle_value, get_value, set_value, ItemKind, ITEMS};
 
     // Global tab keys are handled above — ignore them here
-    if matches!(
-        key.code,
-        KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3') | KeyCode::Char('4')
-    ) {
+    if matches!(key.code, KeyCode::Char('1') | KeyCode::Char('2') | KeyCode::Char('3')) {
         return;
     }
 
@@ -812,6 +917,56 @@ fn normalize_url(url: &str) -> String {
     url.to_string()
 }
 
+// ── yt-dlp startup check / update ────────────────────────────────────────────
+
+/// Checks for yt-dlp binary presence and runs `yt-dlp -U` if found.
+/// Sends status strings through `tx`; "__done__" and "__missing__" are
+/// sentinel values consumed by the main loop.
+async fn ytdlp_startup_check(ytdlp_bin: String, tx: mpsc::Sender<String>) {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    use tokio::process::Command;
+
+    // Check if the binary exists at all
+    let version_ok = Command::new(&ytdlp_bin)
+        .arg("--version")
+        .output()
+        .await
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if !version_ok {
+        let _ = tx.send("__missing__".to_string()).await;
+        return;
+    }
+
+    // Binary found — run `yt-dlp -U` to self-update
+    let mut child = match Command::new(&ytdlp_bin)
+        .args(["-U", "--no-color"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(_) => {
+            let _ = tx.send("__done__".to_string()).await;
+            return;
+        }
+    };
+
+    if let Some(stdout) = child.stdout.take() {
+        let mut lines = BufReader::new(stdout).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            let trimmed = line.trim().to_string();
+            if !trimmed.is_empty() {
+                let _ = tx.send(trimmed).await;
+            }
+        }
+    }
+
+    let _ = child.wait().await;
+    let _ = tx.send("__done__".to_string()).await;
+}
+
 // ── Mouse click handler ───────────────────────────────────────────────────────
 
 fn handle_click(app: &mut App, target: app::ClickTarget, dl_tx: mpsc::Sender<(usize, SlotEvent)>) {
@@ -855,9 +1010,11 @@ fn handle_click(app: &mut App, target: app::ClickTarget, dl_tx: mpsc::Sender<(us
             app.logo_scheme = app.logo_scheme.next();
             app.logo_burst = 100;
         }
-        ClickTarget::HistorySelectRow(idx) => {
+        ClickTarget::HistoryOpenPopup(idx) => {
             let max = app.history.len().saturating_sub(1);
-            app.history_scroll = (idx as u16).min(max as u16);
+            let clamped = idx.min(max);
+            app.history_scroll = clamped as u16;
+            app.history_popup = Some(clamped);
         }
     }
 }

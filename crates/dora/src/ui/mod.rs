@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Tabs, Wrap};
 use ratatui::Frame;
 
-use crate::app::{App, ClickTarget, SlotState};
+use crate::app::{App, ClickTarget, HistoryEntry, SlotState, YtdlpStartup};
 use crate::theme;
 
 mod history;
@@ -37,8 +37,7 @@ pub fn render(f: &mut Frame, app: &mut App) {
     render_tabs(f, vertical[1], app);
 
     match app.active_tab {
-        crate::app::Tab::Queue => queue::render_queue(f, vertical[2], app),
-        crate::app::Tab::History => history::render_history(f, vertical[2], app),
+        crate::app::Tab::Downloads => render_downloads_combined(f, vertical[2], app),
         crate::app::Tab::Lyrics => lyrics::render_lyrics(f, vertical[2], app),
         crate::app::Tab::Settings => settings::render_settings(f, vertical[2], app),
     }
@@ -61,27 +60,54 @@ pub fn render(f: &mut Frame, app: &mut App) {
     if app.preview_state.is_visible() {
         preview::render_preview_popup(f, size, app);
     }
+    if let Some(idx) = app.history_popup {
+        if let Some(entry) = app.history.iter().rev().nth(idx).cloned() {
+            render_history_popup(f, size, &entry);
+        }
+    }
+
+    // yt-dlp startup popups render on top of everything (highest z-order).
+    match &app.ytdlp_startup.clone() {
+        YtdlpStartup::Missing => render_ytdlp_missing_popup(f, size),
+        YtdlpStartup::Updating { msg } => render_ytdlp_updating_popup(f, size, msg),
+        YtdlpStartup::Done => {}
+    }
 }
 
 // ── Private helpers ───────────────────────────────────────────────────────────
 
+/// Combined Downloads tab: queue panel on the left, history on the right.
+fn render_downloads_combined(f: &mut Frame, area: Rect, app: &mut App) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(46), // queue panel (fixed width)
+            Constraint::Min(0),     // history panel (remaining width)
+        ])
+        .split(area);
+
+    queue::render_queue(f, chunks[0], app);
+    history::render_history(f, chunks[1], app);
+}
+
 fn render_tabs(f: &mut Frame, area: Rect, app: &mut App) {
-    let titles: Vec<Line> = [
-        crate::app::Tab::Queue,
-        crate::app::Tab::History,
+    let tabs_list = [
+        crate::app::Tab::Downloads,
         crate::app::Tab::Lyrics,
         crate::app::Tab::Settings,
-    ]
-    .iter()
-    .map(|t| {
-        let style = if *t == app.active_tab {
-            Style::default().fg(theme::LAVENDER).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(theme::SUBTEXT)
-        };
-        Line::from(Span::styled(t.label(), style))
-    })
-    .collect();
+    ];
+
+    let titles: Vec<Line> = tabs_list
+        .iter()
+        .map(|t| {
+            let style = if *t == app.active_tab {
+                Style::default().fg(theme::LAVENDER).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme::SUBTEXT)
+            };
+            Line::from(Span::styled(t.label(), style))
+        })
+        .collect();
 
     // Draw the bottom border spanning the full width
     let border_block = Block::default()
@@ -90,18 +116,10 @@ fn render_tabs(f: &mut Frame, area: Rect, app: &mut App) {
     f.render_widget(border_block, area);
 
     // Compute approximate tab-bar content width so we can center it.
-    // Labels (visible chars) + dividers (5 chars each between tabs) + 2-char padding each side.
-    let tab_labels = [
-        crate::app::Tab::Queue.label(),
-        crate::app::Tab::History.label(),
-        crate::app::Tab::Lyrics.label(),
-        crate::app::Tab::Settings.label(),
-    ];
-    let n = tab_labels.len();
-    // Each tab: 1 padding_left + label_chars + 1 padding_right; dividers between tabs: "  │  " = 5 chars
-    let label_chars: usize = tab_labels.iter().map(|l| l.chars().count()).sum();
+    let n = tabs_list.len();
+    let label_chars: usize = tabs_list.iter().map(|t| t.label().chars().count()).sum();
     let divider_chars = 5 * (n.saturating_sub(1));
-    let padding_chars = 2 * n; // default 1 char each side per tab
+    let padding_chars = 2 * n;
     let content_w = (label_chars + divider_chars + padding_chars) as u16;
 
     // Centre the tabs widget inside the area
@@ -121,12 +139,6 @@ fn render_tabs(f: &mut Frame, area: Rect, app: &mut App) {
 
     // Register each tab's clickable area in the app's click map
     {
-        let tabs_list = [
-            crate::app::Tab::Queue,
-            crate::app::Tab::History,
-            crate::app::Tab::Lyrics,
-            crate::app::Tab::Settings,
-        ];
         let mut x = centered_area.x;
         for (i, tab) in tabs_list.iter().enumerate() {
             let label_w = tab.label().chars().count() as u16 + 2;
@@ -136,6 +148,45 @@ fn render_tabs(f: &mut Frame, area: Rect, app: &mut App) {
             if i < tabs_list.len() - 1 {
                 x += 5; // "  │  " divider
             }
+        }
+    }
+
+    // ── Plugin availability badges (right side of tab bar) ──────────────────
+    // Show mini icons for configured/available integrations.
+    let mut badge_spans: Vec<Span> = Vec::new();
+    if app.ytdlp_available {
+        badge_spans.push(Span::styled(
+            "▶ yt",
+            Style::default()
+                .fg(ratatui::style::Color::Red)
+                .add_modifier(Modifier::BOLD),
+        ));
+        badge_spans.push(Span::styled("-dlp", Style::default().fg(ratatui::style::Color::White)));
+    }
+    let ig_active = !app.settings.instagram_cookies.is_empty() || !app.settings.instagram_doc_id.is_empty();
+    if ig_active {
+        if !badge_spans.is_empty() {
+            badge_spans.push(Span::raw("  "));
+        }
+        badge_spans.push(Span::styled(
+            "◉",
+            Style::default()
+                .fg(ratatui::style::Color::Magenta)
+                .add_modifier(Modifier::BOLD),
+        ));
+        badge_spans.push(Span::styled(
+            " Instagram",
+            Style::default().fg(ratatui::style::Color::LightMagenta),
+        ));
+    }
+    if !badge_spans.is_empty() {
+        badge_spans.push(Span::raw(" "));
+        let badges_w: u16 = badge_spans.iter().map(|s| s.content.chars().count() as u16).sum();
+        let badge_x = area.x + area.width.saturating_sub(badges_w);
+        let badge_y = area.y + area.height.saturating_sub(2); // above the bottom border
+        if badge_x > centered_area.x + content_w {
+            let badge_area = Rect::new(badge_x, badge_y, badges_w, 1);
+            f.render_widget(Paragraph::new(Line::from(badge_spans)), badge_area);
         }
     }
 }
@@ -167,7 +218,7 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Min(1), Constraint::Length(right_width)])
         .split(area);
 
-    let left = Paragraph::new(" [1-4] Tabs  [Enter] Preview  [r] Reveal  [d] Delete  [?] Help  [Esc]  [Ctrl+C] Quit")
+    let left = Paragraph::new(" [1-3] Tabs  [Enter] Preview  [r] Reveal  [d] Delete  [?] Help  [Esc]  [Ctrl+C] Quit")
         .style(Style::default().fg(theme::SUBTEXT));
 
     let right = Paragraph::new(right_str)
@@ -373,14 +424,14 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
         Line::from(""),
         Line::from(h("  Global")),
         Line::from(vec![
-            k("  1/2/3/4         "),
-            d("Switch tabs (Queue / History / Lyrics / Settings)"),
+            k("  1/2/3           "),
+            d("Switch tabs (Downloads / Lyrics / Settings)"),
         ]),
         Line::from(vec![k("  ?               "), d("Open this help overlay")]),
         Line::from(vec![k("  Esc             "), d("Close popup  /  clear active input")]),
         Line::from(vec![k("  Ctrl+C          "), d("Quit")]),
         Line::from(""),
-        Line::from(h("  Queue Tab")),
+        Line::from(h("  Downloads Tab")),
         Line::from(vec![k("  Enter           "), d("Open preview → then confirm download")]),
         Line::from(vec![
             k("  c               "),
@@ -395,9 +446,14 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
         Line::from(vec![k("  Enter           "), d("Start download with selected options")]),
         Line::from(vec![k("  Esc             "), d("Cancel preview, restore URL")]),
         Line::from(""),
-        Line::from(h("  History Tab")),
-        Line::from(vec![k("  ↑ / ↓           "), d("Navigate history entries")]),
-        Line::from(vec![k("  r / Enter       "), d("Reveal selected file in Finder")]),
+        Line::from(vec![
+            k("  ↑ / ↓           "),
+            d("Scroll history (when URL bar is empty)"),
+        ]),
+        Line::from(vec![
+            k("  r / Enter       "),
+            d("Reveal selected history file in Finder"),
+        ]),
         Line::from(""),
         Line::from(h("  Lyrics Tab")),
         Line::from(vec![k("  Enter           "), d("Search for lyrics")]),
@@ -416,4 +472,216 @@ fn render_help_overlay(f: &mut Frame, area: Rect) {
     let help = Paragraph::new(text).block(block);
     f.render_widget(Clear, popup_area);
     f.render_widget(help, popup_area);
+}
+
+fn render_ytdlp_missing_popup(f: &mut Frame, area: Rect) {
+    let popup_w = 62_u16.min(area.width.saturating_sub(4));
+    let popup_h = 9_u16.min(area.height.saturating_sub(4));
+    let popup_x = area.x + (area.width.saturating_sub(popup_w)) / 2;
+    let popup_y = area.y + (area.height.saturating_sub(popup_h)) / 2;
+    let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
+
+    let block = Block::default()
+        .title(" ⚠  yt-dlp not found ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Double)
+        .border_style(Style::default().fg(theme::RED))
+        .style(Style::default().bg(theme::BASE));
+    let inner = block.inner(popup_area);
+
+    let k = |s: &'static str| Span::styled(s, Style::default().fg(theme::PEACH).add_modifier(Modifier::BOLD));
+    let d = |s: &'static str| Span::styled(s, Style::default().fg(theme::TEXT));
+
+    let text: Vec<Line> = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            "  yt-dlp is required for dora to download media.",
+            Style::default().fg(theme::SUBTEXT),
+        )),
+        Line::from(Span::styled(
+            "  Install it with:  pip install yt-dlp  or  brew install yt-dlp",
+            Style::default().fg(theme::SUBTEXT),
+        )),
+        Line::from(""),
+        Line::from(vec![
+            k("  [i]"),
+            d(" Open yt-dlp releases in browser    "),
+            k("[q] / [Esc]"),
+            d(" Quit"),
+        ]),
+    ];
+
+    f.render_widget(Clear, popup_area);
+    f.render_widget(block, popup_area);
+    f.render_widget(Paragraph::new(text), inner);
+}
+
+fn render_ytdlp_updating_popup(f: &mut Frame, area: Rect, msg: &str) {
+    let popup_w = 58_u16.min(area.width.saturating_sub(4));
+    let popup_h = 6_u16.min(area.height.saturating_sub(4));
+    let popup_x = area.x + (area.width.saturating_sub(popup_w)) / 2;
+    let popup_y = area.y + area.height.saturating_sub(popup_h + 2); // bottom of screen
+    let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
+
+    let block = Block::default()
+        .title(" ↑  yt-dlp ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme::BLUE))
+        .style(Style::default().bg(theme::BASE));
+    let inner = block.inner(popup_area);
+
+    // Truncate the message to fit in the popup width
+    let max_chars = (popup_w.saturating_sub(4)) as usize;
+    let display: String = msg.chars().take(max_chars).collect();
+
+    let text: Vec<Line> = vec![
+        Line::from(""),
+        Line::from(Span::styled(format!("  {}", display), Style::default().fg(theme::BLUE))),
+    ];
+
+    f.render_widget(Clear, popup_area);
+    f.render_widget(block, popup_area);
+    f.render_widget(Paragraph::new(text), inner);
+}
+
+fn render_history_popup(f: &mut Frame, area: Rect, entry: &HistoryEntry) {
+    let popup_w = 74_u16.min(area.width.saturating_sub(4));
+    let popup_h = 20_u16.min(area.height.saturating_sub(4));
+    let popup_x = area.x + (area.width.saturating_sub(popup_w)) / 2;
+    let popup_y = area.y + (area.height.saturating_sub(popup_h)) / 2;
+    let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
+
+    let is_mp4 = entry.format == crate::app::DownloadFormat::Mp4;
+    let fmt_color = if is_mp4 { theme::BLUE } else { theme::PEACH };
+
+    let title_trunc: String = entry.title.chars().take(50).collect();
+    let block = Block::default()
+        .title(format!(" {} ", title_trunc))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(Style::default().fg(theme::LAVENDER))
+        .style(Style::default().bg(theme::BASE));
+
+    let inner = block.inner(popup_area);
+    f.render_widget(Clear, popup_area);
+    f.render_widget(block, popup_area);
+
+    // ── Layout: art column (left) | info+buttons (right) ─────────────────────
+    let art_w: u16 = 18;
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(art_w), Constraint::Min(0)])
+        .split(inner);
+
+    // ── Left: format ASCII art ─────────────────────────────────────────────────
+    let art_lines: Vec<Line> = if is_mp4 {
+        vec![
+            Line::from(Span::styled("  ╭──────────╮  ", Style::default().fg(theme::BLUE))),
+            Line::from(Span::styled("  │          │  ", Style::default().fg(theme::BLUE))),
+            Line::from(Span::styled("  │ ┌──────┐ │  ", Style::default().fg(theme::BLUE))),
+            Line::from(Span::styled("  │ │      │ │  ", Style::default().fg(theme::BLUE))),
+            Line::from(vec![
+                Span::styled("  │ │  ", Style::default().fg(theme::BLUE)),
+                Span::styled("▶", Style::default().fg(theme::LAVENDER).add_modifier(Modifier::BOLD)),
+                Span::styled("   │ │  ", Style::default().fg(theme::BLUE)),
+            ]),
+            Line::from(Span::styled("  │ │      │ │  ", Style::default().fg(theme::BLUE))),
+            Line::from(Span::styled("  │ └──────┘ │  ", Style::default().fg(theme::BLUE))),
+            Line::from(Span::styled("  │          │  ", Style::default().fg(theme::BLUE))),
+            Line::from(Span::styled("  ╰──────────╯  ", Style::default().fg(theme::BLUE))),
+            Line::from(Span::raw("")),
+            Line::from(Span::styled(
+                "      MP4       ",
+                Style::default().fg(theme::BLUE).add_modifier(Modifier::BOLD),
+            )),
+        ]
+    } else {
+        vec![
+            Line::from(Span::styled("  ╭──────────╮  ", Style::default().fg(theme::PEACH))),
+            Line::from(Span::styled("  │          │  ", Style::default().fg(theme::PEACH))),
+            Line::from(Span::styled("  │  ♩  ♫   │  ", Style::default().fg(theme::YELLOW))),
+            Line::from(Span::styled("  │          │  ", Style::default().fg(theme::PEACH))),
+            Line::from(Span::styled("  │ ▂▄█▆▂▄█ │  ", Style::default().fg(theme::GREEN))),
+            Line::from(Span::styled("  │ ▂▄███▂▄ │  ", Style::default().fg(theme::GREEN))),
+            Line::from(Span::styled("  │  ♪  ♬   │  ", Style::default().fg(theme::YELLOW))),
+            Line::from(Span::styled("  │          │  ", Style::default().fg(theme::PEACH))),
+            Line::from(Span::styled("  ╰──────────╯  ", Style::default().fg(theme::PEACH))),
+            Line::from(Span::raw("")),
+            Line::from(Span::styled(
+                "      MP3       ",
+                Style::default().fg(theme::PEACH).add_modifier(Modifier::BOLD),
+            )),
+        ]
+    };
+    f.render_widget(Paragraph::new(art_lines), chunks[0]);
+
+    // ── Right: info + actions ─────────────────────────────────────────────────
+    let right = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(0),    // info rows
+            Constraint::Length(3), // action buttons
+        ])
+        .split(chunks[1]);
+
+    let max_info = right[0].width.saturating_sub(3) as usize;
+    let trunc = |s: &str| -> String { s.chars().take(max_info).collect() };
+
+    let when = entry.finished_at.format("%H:%M  %d %b %Y").to_string();
+
+    let info_lines: Vec<Line> = vec![
+        Line::from(""),
+        Line::from(Span::styled(
+            trunc(&entry.title),
+            Style::default().fg(theme::TEXT).add_modifier(Modifier::BOLD),
+        )),
+        Line::from(Span::styled(trunc(&entry.artist), Style::default().fg(theme::SUBTEXT))),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Format  ", Style::default().fg(theme::SUBTEXT)),
+            Span::styled(
+                entry.format.label(),
+                Style::default().fg(fmt_color).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Size    ", Style::default().fg(theme::SUBTEXT)),
+            Span::styled(format!("{:.1} MB", entry.size_mb), Style::default().fg(theme::BLUE)),
+        ]),
+        Line::from(vec![
+            Span::styled("Date    ", Style::default().fg(theme::SUBTEXT)),
+            Span::styled(when, Style::default().fg(theme::LAVENDER)),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Path  ", Style::default().fg(theme::SUBTEXT)),
+            Span::styled(trunc(&entry.path), Style::default().fg(theme::TEXT)),
+        ]),
+    ];
+    f.render_widget(Paragraph::new(info_lines), right[0]);
+
+    // ── Action buttons ─────────────────────────────────────────────────────────
+    let k = |s: &'static str| Span::styled(s, Style::default().fg(theme::PEACH).add_modifier(Modifier::BOLD));
+    let d = |s: &'static str| Span::styled(s, Style::default().fg(theme::SUBTEXT));
+    let sep = || Span::raw("   ");
+
+    let mut btn_spans = vec![k(" [r] "), d("Reveal"), sep()];
+    if !entry.url.is_empty() {
+        btn_spans.push(k("[b] "));
+        btn_spans.push(d("Browser"));
+        btn_spans.push(sep());
+    }
+    btn_spans.push(k("[d] "));
+    btn_spans.push(d("Delete"));
+    btn_spans.push(sep());
+    btn_spans.push(k("[Esc] "));
+    btn_spans.push(d("Close"));
+
+    let btn_block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(theme::SURFACE0));
+    let btn_inner = btn_block.inner(right[1]);
+    f.render_widget(btn_block, right[1]);
+    f.render_widget(Paragraph::new(Line::from(btn_spans)), btn_inner);
 }

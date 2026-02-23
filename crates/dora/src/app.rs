@@ -12,30 +12,27 @@ use crate::video_info::{ThumbnailArt, VideoInfo};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Tab {
     #[default]
-    Queue = 0,
-    History = 1,
-    Lyrics = 2,
-    Settings = 3,
+    Downloads = 0,
+    Lyrics = 1,
+    Settings = 2,
 }
 
 impl Tab {
     #[allow(dead_code)]
     pub fn from_index(i: usize) -> Option<Self> {
         match i {
-            0 => Some(Tab::Queue),
-            1 => Some(Tab::History),
-            2 => Some(Tab::Lyrics),
-            3 => Some(Tab::Settings),
+            0 => Some(Tab::Downloads),
+            1 => Some(Tab::Lyrics),
+            2 => Some(Tab::Settings),
             _ => None,
         }
     }
 
     pub fn label(&self) -> &'static str {
         match self {
-            Tab::Queue => "[1] ⬇  Queue",
-            Tab::History => "[2] 📋 History",
-            Tab::Lyrics => "[3] 🎵 Lyrics",
-            Tab::Settings => "[4] ⚙  Settings",
+            Tab::Downloads => "[1] ⬇  Downloads",
+            Tab::Lyrics => "[2] 🎵 Lyrics",
+            Tab::Settings => "[3] ⚙  Settings",
         }
     }
 
@@ -61,6 +58,18 @@ impl PreviewState {
     pub fn is_visible(&self) -> bool {
         !matches!(self, PreviewState::Hidden)
     }
+}
+
+/// State of the yt-dlp startup check/update.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum YtdlpStartup {
+    /// Not showing any popup (check done / skipped).
+    #[default]
+    Done,
+    /// Binary not found — show install-or-quit dialog.
+    Missing,
+    /// Binary found, running `yt-dlp -U` in the background.
+    Updating { msg: String },
 }
 
 /// Logo colour scheme, cycled on logo click.
@@ -123,8 +132,8 @@ pub enum ClickTarget {
     SettingsCycleRight(usize),
     /// Click on the logo — cycle colour scheme + trigger burst animation.
     LogoClick,
-    /// Click on a history row — select (scroll to) that entry.
-    HistorySelectRow(usize),
+    /// Open the history detail popup for a specific display-index entry.
+    HistoryOpenPopup(usize),
 }
 
 /// State of a single download slot.
@@ -179,6 +188,9 @@ pub struct HistoryEntry {
     pub size_mb: f64,
     pub path: String,
     pub finished_at: chrono::DateTime<chrono::Local>,
+    /// Original source URL (empty for entries saved before this field was added).
+    #[serde(default)]
+    pub url: String,
 }
 
 /// A lyrics search result.
@@ -195,6 +207,8 @@ pub struct App {
     pub slots: Vec<DownloadSlot>,
     pub history: Vec<HistoryEntry>,
     pub history_scroll: u16,
+    /// Display-index (0 = newest) of the history entry currently shown in the detail popup.
+    pub history_popup: Option<usize>,
     pub url_input: String,
 
     // ── Lyrics tab ────────────────────────────────────────────────────────────
@@ -256,6 +270,12 @@ pub struct App {
 
     pub demo_mode: bool,
 
+    /// Whether the yt-dlp binary is available on PATH at startup.
+    pub ytdlp_available: bool,
+
+    /// State of the yt-dlp startup check popup.
+    pub ytdlp_startup: YtdlpStartup,
+
     // ── Internal ──────────────────────────────────────────────────────────────
     next_slot_id: usize,
 }
@@ -263,11 +283,16 @@ pub struct App {
 impl App {
     pub fn new() -> Self {
         let settings = DoraSettings::load();
+        let ytdlp_available = std::process::Command::new(&settings.ytdlp_bin)
+            .arg("--version")
+            .output()
+            .is_ok();
         Self {
-            active_tab: Tab::Queue,
+            active_tab: Tab::Downloads,
             slots: Vec::new(),
             history: history_load(),
             history_scroll: 0,
+            history_popup: None,
             url_input: String::new(),
             lyrics_query: String::new(),
             lyrics_result: None,
@@ -301,6 +326,14 @@ impl App {
             logo_scheme: LogoScheme::default(),
             logo_burst: 0,
             demo_mode: false,
+            ytdlp_available,
+            ytdlp_startup: if ytdlp_available {
+                YtdlpStartup::Updating {
+                    msg: "Checking for updates…".to_string(),
+                }
+            } else {
+                YtdlpStartup::Missing
+            },
             next_slot_id: 0,
         }
     }
@@ -382,6 +415,7 @@ impl App {
                 size_mb: 12.4,
                 path: "~/Downloads/Bohemian_Rhapsody.mp3".to_string(),
                 finished_at: now - chrono::Duration::seconds(3600),
+                url: "https://www.youtube.com/watch?v=fJ9rUzIMcZQ".to_string(),
             },
             HistoryEntry {
                 title: "Hotel California".to_string(),
@@ -390,6 +424,7 @@ impl App {
                 size_mb: 9.8,
                 path: "~/Downloads/Hotel_California.mp3".to_string(),
                 finished_at: now - chrono::Duration::seconds(10800),
+                url: "https://www.youtube.com/watch?v=BciS5krYL80".to_string(),
             },
             HistoryEntry {
                 title: "Comfortably Numb".to_string(),
@@ -398,6 +433,7 @@ impl App {
                 size_mb: 156.2,
                 path: "~/Downloads/Comfortably_Numb.mp4".to_string(),
                 finished_at: now - chrono::Duration::seconds(18000),
+                url: "https://www.youtube.com/watch?v=_FrOQC-zEog".to_string(),
             },
             HistoryEntry {
                 title: "Stairway to Heaven".to_string(),
@@ -406,6 +442,7 @@ impl App {
                 size_mb: 15.7,
                 path: "~/Downloads/Stairway_to_Heaven.mp3".to_string(),
                 finished_at: now - chrono::Duration::seconds(86400),
+                url: "https://www.youtube.com/watch?v=QkF3oxziUI4".to_string(),
             },
         ];
 
@@ -471,6 +508,11 @@ impl App {
     /// Push a history entry and persist to disk.
     pub fn push_history(&mut self, entry: HistoryEntry) {
         self.history.push(entry);
+        history_save(&self.history);
+    }
+
+    /// Persist the current history to disk.
+    pub fn history_save(&self) {
         history_save(&self.history);
     }
 }

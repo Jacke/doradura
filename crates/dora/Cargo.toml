@@ -1,6 +1,6 @@
 [package]
 name = "dora"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Stan <iamjacke@gmail.com>"]
 description = "dora — beautiful TUI for media downloading (yt-dlp + ffmpeg)"

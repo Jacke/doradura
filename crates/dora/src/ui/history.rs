@@ -103,9 +103,10 @@ pub fn render_history(f: &mut Frame, area: Rect, app: &mut App) {
         if abs_idx >= app.history.len() {
             break;
         }
+        // Single click → open detail popup
         app.click_map.push((
             Rect::new(area.x + 1, data_start_y + i as u16, area.width.saturating_sub(2), 1),
-            ClickTarget::HistorySelectRow(abs_idx),
+            ClickTarget::HistoryOpenPopup(abs_idx),
         ));
     }
 
