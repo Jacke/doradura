@@ -280,6 +280,10 @@ pub struct App {
     /// State of the yt-dlp startup check popup.
     pub ytdlp_startup: YtdlpStartup,
 
+    // ── Status bar notification ───────────────────────────────────────────────
+    /// Transient message shown in the status bar. Cleared automatically after 10 seconds.
+    pub status_msg: Option<(String, Instant)>,
+
     // ── Internal ──────────────────────────────────────────────────────────────
     next_slot_id: usize,
 }
@@ -338,6 +342,7 @@ impl App {
             } else {
                 YtdlpStartup::Missing
             },
+            status_msg: None,
             next_slot_id: 0,
         }
     }
@@ -461,6 +466,13 @@ impl App {
         // Decay burst animation counter.
         if self.logo_burst > 0 {
             self.logo_burst -= 1;
+        }
+
+        // Auto-expire status bar messages after 10 seconds.
+        if let Some((_, set_at)) = &self.status_msg {
+            if set_at.elapsed() >= std::time::Duration::from_secs(10) {
+                self.status_msg = None;
+            }
         }
 
         // Tick down the yt-dlp update fade-out animation.

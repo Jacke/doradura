@@ -1074,9 +1074,12 @@ fn open_in_browser(url: &str) {
 // ── Reveal file in Finder / show path popup ───────────────────────────────────
 
 fn reveal_file(app: &mut App, path: String) {
+    if !std::path::Path::new(&path).exists() {
+        app.status_msg = Some((format!("✖  File not found: {}", path), std::time::Instant::now()));
+        return;
+    }
     #[cfg(target_os = "macos")]
     {
-        let _ = app; // not needed on macOS — Finder does everything
         std::process::Command::new("open").args(["-R", &path]).spawn().ok();
     }
     #[cfg(not(target_os = "macos"))]

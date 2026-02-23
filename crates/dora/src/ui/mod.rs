@@ -222,15 +222,37 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Min(1), Constraint::Length(right_width)])
         .split(area);
 
-    let left = Paragraph::new(" [1-3] Tabs  [Enter] Preview  [r] Reveal  [d] Delete  [?] Help  [Esc]  [Ctrl+C] Quit")
-        .style(Style::default().fg(theme::SUBTEXT));
+    // Left side: error notification takes priority over the normal hint line.
+    if let Some((msg, set_at)) = &app.status_msg {
+        // Fade the red toward SUBTEXT in the last 3 seconds.
+        let elapsed = set_at.elapsed().as_secs_f32();
+        let color = if elapsed < 7.0 {
+            theme::RED
+        } else {
+            // lerp RED → SUBTEXT over the final 3 s
+            let t = ((elapsed - 7.0) / 3.0).clamp(0.0, 1.0);
+            lerp_color((243, 139, 168), (166, 173, 200), 1.0 - t)
+        };
+        let max_chars = chunks[0].width.saturating_sub(1) as usize;
+        let display: String = msg.chars().take(max_chars).collect();
+        f.render_widget(
+            Paragraph::new(display).style(Style::default().fg(color).add_modifier(Modifier::BOLD)),
+            chunks[0],
+        );
+    } else {
+        f.render_widget(
+            Paragraph::new(" [1-3] Tabs  [Enter] Preview  [r] Reveal  [d] Delete  [?] Help  [Esc]  [Ctrl+C] Quit")
+                .style(Style::default().fg(theme::SUBTEXT)),
+            chunks[0],
+        );
+    }
 
-    let right = Paragraph::new(right_str)
-        .style(Style::default().fg(theme::LAVENDER))
-        .alignment(Alignment::Right);
-
-    f.render_widget(left, chunks[0]);
-    f.render_widget(right, chunks[1]);
+    f.render_widget(
+        Paragraph::new(right_str)
+            .style(Style::default().fg(theme::LAVENDER))
+            .alignment(Alignment::Right),
+        chunks[1],
+    );
 }
 
 fn render_cookies_popup(f: &mut Frame, area: Rect, app: &App) {
