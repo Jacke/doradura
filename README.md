@@ -193,21 +193,6 @@ Morph profiles:
   Wide        Stereo enhancement · extra-stereo
 ```
 
-### Subscription Tiers
-
-| Feature | Free | Premium | VIP |
-|---------|:----:|:-------:|:---:|
-| Rate limit between downloads | 30 s | 10 s | 5 s |
-| Daily download limit | 5 | ∞ | ∞ |
-| Max file size | 49 MB | 100 MB | 200 MB |
-| Quality & bitrate selection | ✗ | ✓ | ✓ |
-| Audio effects | ✗ | ✓ | ✓ |
-| Ringtone creator | ✗ | ✓ | ✓ |
-| Queue priority | Normal | High | Highest |
-| Subtitles & subtitles burn-in | ✗ | ✓ | ✓ |
-
-Subscriptions are paid via **Telegram Stars** and auto-tracked in SQLite with hourly expiry checks.
-
 ### Multi-language
 
 **English** · **Русский** · **Français** · **Deutsch** — per-user language preference stored in the database, powered by Fluent localisation.
@@ -236,16 +221,6 @@ Telegram ──► teloxide long-poll / webhook
                │
                ▼
          Prometheus metrics  /  Admin alert system
-```
-
-### YouTube Download Strategy
-
-Railway IPs are flagged by YouTube bot detection — doradura uses a battle-tested fallback chain:
-
-```
-1. android_vr + web_safari client — no cookies required
-2. Cookies + PO token (bgutil HTTP server, Deno-based)
-3. WARP / Tailscale proxy (mandatory on Railway)
 ```
 
 ### Deploy on Railway
