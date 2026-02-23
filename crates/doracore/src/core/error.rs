@@ -69,6 +69,15 @@ pub type AppResult<T> = Result<T, AppError>;
 /// Type alias for backward compatibility
 pub type BotError = AppError;
 
+/// When the `telegram` feature is enabled, convert `teloxide::RequestError` directly into
+/// `AppError::Telegram` (serialised to string so doracore stays Telegram-free by default).
+#[cfg(feature = "telegram")]
+impl From<teloxide::RequestError> for AppError {
+    fn from(e: teloxide::RequestError) -> Self {
+        AppError::Telegram(e.to_string())
+    }
+}
+
 /// Helper function to convert String to AppError::Download(Other)
 impl From<String> for AppError {
     fn from(err: String) -> Self {

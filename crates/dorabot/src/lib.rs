@@ -8,35 +8,37 @@
 //!
 //! - `core`: Core utilities, configuration, errors, and common features
 //! - `storage`: Database, cache, and backup functionality
-
-#![allow(clippy::too_many_arguments)]
-#![allow(clippy::manual_flatten)]
 //! - `download`: Download management and processing
 //! - `telegram`: Telegram bot integration and handlers
 
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::manual_flatten)]
+
+// ── Local modules ─────────────────────────────────────────────────────────────
 pub mod cli;
-pub mod conversion;
 pub mod core;
 pub mod download;
-pub mod downsub;
 pub mod experimental;
-pub mod extension;
-pub mod i18n;
-pub mod lyrics;
 pub mod metadata_refresh;
-pub mod storage;
 pub mod telegram;
-pub mod timestamps;
 pub mod watcher;
 
-// Testing utilities (only available in tests and test binaries)
+// ── Shared modules — re-exported from doracore ───────────────────────────────
+pub use doracore::conversion;
+pub use doracore::downsub;
+pub use doracore::extension;
+pub use doracore::i18n;
+pub use doracore::lyrics;
+pub use doracore::storage;
+pub use doracore::timestamps;
+
+// ── Testing utilities ─────────────────────────────────────────────────────────
 #[cfg(test)]
 pub mod testing;
 
-// Smoke tests module (available for tests and health checks)
 pub mod smoke_tests;
 
-// Re-export commonly used types for convenience
+// ── Re-exports for convenience ────────────────────────────────────────────────
 pub use core::{config, BotError};
 pub use download::{download_and_send_audio, download_and_send_subtitles, download_and_send_video, DownloadQueue};
 pub use storage::{create_pool, get_connection, DbConnection, DbPool};

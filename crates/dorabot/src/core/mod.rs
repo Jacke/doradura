@@ -1,31 +1,39 @@
-//! Core utilities, configuration, and common functionality
+//! Core utilities, configuration, and common functionality.
+//!
+//! Shared modules are re-exported from `doracore`. Bot-specific modules
+//! (alerts, disk with AlertManager, subscriptions, stats, etc.) live here.
 
-pub mod alerts;
-pub mod categorizer;
-pub mod config;
-pub mod copyright;
+// ── Shared modules — provided by doracore ────────────────────────────────────
+pub use doracore::core::categorizer;
+pub use doracore::core::config;
+pub use doracore::core::copyright;
+pub use doracore::core::error;
+pub use doracore::core::error_logger;
+pub use doracore::core::logging;
+pub use doracore::core::metrics;
+pub use doracore::core::metrics_server;
+pub use doracore::core::odesli;
+pub use doracore::core::process;
+pub use doracore::core::share;
+pub use doracore::core::types;
+pub use doracore::core::utils;
+pub use doracore::core::validation;
+pub use doracore::core::web_server;
+
+// ── Bot-specific: disk with AlertManager integration ─────────────────────────
 pub mod disk;
-pub mod error;
-pub mod error_logger;
+
+// ── Bot-only modules ──────────────────────────────────────────────────────────
+pub mod alerts;
 pub mod export;
 pub mod history;
-pub mod logging;
-pub mod metrics;
-pub mod metrics_server;
-pub mod odesli;
-pub mod process;
 pub mod rate_limiter;
 pub mod retry;
-pub mod share;
 pub mod stats;
 pub mod stats_reporter;
 pub mod subscription;
-pub mod types;
-pub mod utils;
-pub mod validation;
-pub mod web_server;
 
-// Re-exports for convenience
+// ── Re-exports for convenience (mirrors doracore::core) ──────────────────────
 pub use config::*;
 pub use error::BotError;
 pub use logging::{init_logger, log_cookies_configuration};
@@ -36,5 +44,5 @@ pub use utils::{
     RETRY_AFTER_REGEX, TELEGRAM_MESSAGE_LIMIT,
 };
 
-/// Alias for backward compatibility - use escape_markdown_v2
+/// Alias for backward compatibility — use `escape_markdown_v2`.
 pub use utils::escape_markdown_v2 as escape_markdown;

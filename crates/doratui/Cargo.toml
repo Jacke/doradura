@@ -1,5 +1,5 @@
 [package]
-name = "dora"
+name = "doratui"
 version = "0.3.0"
 edition = "2021"
 authors = ["Stan <iamjacke@gmail.com>"]
@@ -11,7 +11,7 @@ name = "dora"
 path = "src/main.rs"
 
 [dependencies]
-doradura-core = { path = "../core" }
+doracore = { path = "../doracore" }
 
 tokio = { workspace = true }
 serde = { workspace = true }

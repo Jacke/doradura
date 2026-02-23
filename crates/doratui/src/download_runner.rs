@@ -262,7 +262,7 @@ async fn fetch_metadata(url: &str) -> (Option<String>, Option<String>) {
         Ok(u) => u,
         Err(_) => return (None, None),
     };
-    let registry = doradura_core::download::source::SourceRegistry::global();
+    let registry = doracore::download::source::SourceRegistry::global();
     match registry.resolve(&parsed) {
         Some(source) => match source.get_metadata(&parsed).await {
             Ok(meta) => (
@@ -277,13 +277,13 @@ async fn fetch_metadata(url: &str) -> (Option<String>, Option<String>) {
 
 /// Return the yt-dlp binary name, honouring the `YTDL_BIN` env var (same as doradura-core).
 fn ytdlp_bin() -> String {
-    doradura_core::config::YTDL_BIN.clone()
+    doracore::config::YTDL_BIN.clone()
 }
 
 /// Parse a yt-dlp stdout/stderr line for a progress update.
 /// Delegates to doradura-core's `parse_progress` for consistency.
 fn parse_yt_progress(line: &str) -> Option<SlotEvent> {
-    let sp = doradura_core::download::parse_progress(line)?;
+    let sp = doracore::download::parse_progress(line)?;
     Some(SlotEvent::Progress {
         percent: sp.percent,
         speed_mbs: sp.speed_bytes_sec.unwrap_or(0.0) / 1_048_576.0,

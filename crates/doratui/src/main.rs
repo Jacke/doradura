@@ -708,7 +708,7 @@ fn handle_lyrics_key(app: &mut App, key: crossterm::event::KeyEvent, lyrics_tx: 
 
             // Spawn background task — never blocks the render loop
             tokio::spawn(async move {
-                let result = doradura_core::lyrics::fetch_lyrics(&artist, &title).await;
+                let result = doracore::lyrics::fetch_lyrics(&artist, &title).await;
                 let event = result.map(|r| LyricsResult {
                     artist,
                     title,

@@ -15,7 +15,7 @@ use tokio::process::Command;
 /// Image format detected by magic bytes
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ImageFormat {
+pub enum ImageFormat {
     Jpeg,
     Png,
     WebP,
@@ -32,7 +32,7 @@ pub(crate) enum ImageFormat {
 ///
 /// The detected `ImageFormat` or `ImageFormat::Unknown` if the format cannot be determined
 #[allow(dead_code)]
-pub(crate) fn detect_image_format(bytes: &[u8]) -> ImageFormat {
+pub fn detect_image_format(bytes: &[u8]) -> ImageFormat {
     if bytes.len() < 4 {
         return ImageFormat::Unknown;
     }
@@ -74,7 +74,7 @@ pub(crate) fn detect_image_format(bytes: &[u8]) -> ImageFormat {
 ///
 /// The JPEG image bytes on success, or an error if conversion fails
 #[allow(dead_code)]
-pub(crate) async fn convert_webp_to_jpeg(webp_bytes: &[u8]) -> Result<Vec<u8>, AppError> {
+pub async fn convert_webp_to_jpeg(webp_bytes: &[u8]) -> Result<Vec<u8>, AppError> {
     // Create temporary file for WebP
     let temp_dir = std::env::temp_dir();
     let temp_webp = temp_dir.join(format!(
@@ -155,7 +155,7 @@ pub(crate) async fn convert_webp_to_jpeg(webp_bytes: &[u8]) -> Result<Vec<u8>, A
 ///
 /// The compressed JPEG bytes if successful and under 200KB, or `None` otherwise
 #[allow(dead_code)]
-pub(crate) async fn compress_thumbnail_jpeg(jpeg_bytes: &[u8]) -> Option<Vec<u8>> {
+pub async fn compress_thumbnail_jpeg(jpeg_bytes: &[u8]) -> Option<Vec<u8>> {
     // Create temporary files
     let temp_dir = std::env::temp_dir();
     let temp_input = temp_dir.join(format!(
@@ -232,7 +232,7 @@ pub(crate) async fn compress_thumbnail_jpeg(jpeg_bytes: &[u8]) -> Option<Vec<u8>
 ///
 /// The JPEG thumbnail bytes if successful, or `None` if extraction fails
 #[allow(dead_code)]
-pub(crate) async fn generate_thumbnail_from_video(video_path: &str) -> Option<Vec<u8>> {
+pub async fn generate_thumbnail_from_video(video_path: &str) -> Option<Vec<u8>> {
     log::info!("[THUMBNAIL] Generating thumbnail from video file: {}", video_path);
 
     // Create temporary file for thumbnail

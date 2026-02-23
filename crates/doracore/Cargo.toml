@@ -1,13 +1,18 @@
 [package]
-name = "doradura-core"
+name = "doracore"
 version = "0.13.0"
 edition = "2021"
 authors = ["Stan <iamjacke@gmail.com>"]
 description = "Core library for Doradura — download engine, storage, i18n, lyrics (no Telegram)"
 license = "MIT"
 
+[features]
+# Enables From<teloxide::RequestError> impl on AppError
+telegram = ["dep:teloxide"]
+
 [dependencies]
 tokio = { workspace = true }
+teloxide = { workspace = true, optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 rusqlite = { workspace = true }

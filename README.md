@@ -133,7 +133,7 @@ Click the logo to cycle through 7 themes — each click fires a burst animation:
 
 ```bash
 # Install
-cargo install --path crates/dora
+cargo install --path crates/doratui
 
 # Run
 dora
@@ -303,10 +303,10 @@ pip install yt-dlp && sudo apt install ffmpeg   # Linux
 # Build & run
 git clone https://github.com/Jacke/doradura.git
 cd doradura
-cargo run -p dora
+cargo run -p doratui
 
 # Or install globally
-cargo install --path crates/dora
+cargo install --path crates/doratui
 dora
 ```
 
@@ -316,7 +316,7 @@ dora
 cp .env.example .env
 # Edit .env → add TELOXIDE_TOKEN, TELEGRAM_API_ID/HASH, ADMIN_USERNAME
 
-cargo run -p doradura -- run
+cargo run -p doratuidura -- run
 ```
 
 ### Docker
@@ -370,8 +370,8 @@ docker run -e TELOXIDE_TOKEN=... -e TELEGRAM_API_ID=... \
 cargo test
 
 # Specific crate
-cargo test -p doradura
-cargo test -p dora
+cargo test -p doratuidura
+cargo test -p doratui
 
 # With integration tests
 cargo test -- --ignored

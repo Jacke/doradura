@@ -12,7 +12,7 @@ categories = ["command-line-utilities"]
 default-run = "doradura"
 
 [dependencies]
-doradura-core = { path = "../core" }
+doracore = { path = "../doracore", features = ["telegram"] }
 
 tokio = { workspace = true }
 serde = { workspace = true }
