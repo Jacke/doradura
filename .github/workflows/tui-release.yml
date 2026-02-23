@@ -187,6 +187,7 @@ jobs:
     name: Update Homebrew Tap
     needs: release
     runs-on: ubuntu-latest
+    continue-on-error: true
     if: ${{ !contains(github.ref_name, '-rc') && !contains(github.ref_name, '-beta') }}
 
     steps:
