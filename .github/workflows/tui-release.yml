@@ -123,9 +123,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: dist/
-
-      - name: Flatten dist directory
-        run: find dist/ -type f | xargs -I{} mv {} dist/
+          merge-multiple: true
 
       - name: Generate combined checksums file
         run: |
@@ -199,9 +197,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: dist/
-
-      - name: Flatten dist directory
-        run: find dist/ -type f | xargs -I{} mv {} dist/
+          merge-multiple: true
 
       - name: Extract version and checksums
         id: meta
