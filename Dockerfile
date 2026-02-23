@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Build stage for Rust application with cargo-chef for dependency caching
-# cache-bust: 2026-02-18
+# cache-bust: 2026-02-23
 FROM rust:1.93-alpine AS chef
 # hadolint ignore=DL3018
 RUN apk add --no-cache musl-dev && \
@@ -9,10 +9,9 @@ WORKDIR /app
 
 FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
-COPY src ./src
+COPY crates ./crates
 COPY locales ./locales
 COPY migrations ./migrations
-COPY benches ./benches
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS rust-builder
@@ -32,12 +31,11 @@ RUN cargo chef cook --release --recipe-path recipe.json
 
 # Build application
 COPY Cargo.toml Cargo.lock ./
-COPY src ./src
+COPY crates ./crates
 COPY locales ./locales
 COPY migrations ./migrations
-COPY benches ./benches
 
-RUN cargo build --release && \
+RUN cargo build --release -p doradura && \
     cp /app/target/release/doradura /app/doradura-bin && \
     echo "Binary built successfully:" && \
     ls -lh /app/doradura-bin && \
