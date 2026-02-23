@@ -568,48 +568,58 @@ fn render_history_popup(f: &mut Frame, area: Rect, entry: &HistoryEntry) {
     f.render_widget(block, popup_area);
 
     // ── Layout: art column (left) | info+buttons (right) ─────────────────────
-    let art_w: u16 = 18;
+    // art_w = 20: each art line is exactly 18 printable chars + 1 space margin right.
+    // All chars used are unambiguously narrow (block elements, ASCII, box-drawing).
+    let art_w: u16 = 20;
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(art_w), Constraint::Min(0)])
         .split(inner);
 
-    // ── Left: format ASCII art ─────────────────────────────────────────────────
+    // ── Left: format ASCII art (all single-width chars only) ──────────────────
+    // Each string is exactly 18 chars wide (verified by comment count).
+    let b = |s: &'static str, c| Span::styled(s, Style::default().fg(c));
+
     let art_lines: Vec<Line> = if is_mp4 {
+        // MP4: film strip + play indicator
+        // "  ╭────────────╮ " = 2+1+12+1+1+1 = 18? Let me count:
+        // sp sp ╭ ────────────(12) ╮ sp = 2+1+12+1+1 = 17... need 18
+        // "  ╭────────────╮  " = 2+1+12+1+2 = 18 ✓
         vec![
-            Line::from(Span::styled("  ╭──────────╮  ", Style::default().fg(theme::BLUE))),
-            Line::from(Span::styled("  │          │  ", Style::default().fg(theme::BLUE))),
-            Line::from(Span::styled("  │ ┌──────┐ │  ", Style::default().fg(theme::BLUE))),
-            Line::from(Span::styled("  │ │      │ │  ", Style::default().fg(theme::BLUE))),
+            Line::from(b("  ╭────────────╮  ", theme::BLUE)),
+            Line::from(b("  │ [][][][][] │  ", theme::SURFACE0)),
+            Line::from(b("  │            │  ", theme::BLUE)),
             Line::from(vec![
-                Span::styled("  │ │  ", Style::default().fg(theme::BLUE)),
-                Span::styled("▶", Style::default().fg(theme::LAVENDER).add_modifier(Modifier::BOLD)),
-                Span::styled("   │ │  ", Style::default().fg(theme::BLUE)),
+                b("  │     ", theme::BLUE),
+                Span::styled(">>", Style::default().fg(theme::LAVENDER).add_modifier(Modifier::BOLD)),
+                b("     │  ", theme::BLUE),
             ]),
-            Line::from(Span::styled("  │ │      │ │  ", Style::default().fg(theme::BLUE))),
-            Line::from(Span::styled("  │ └──────┘ │  ", Style::default().fg(theme::BLUE))),
-            Line::from(Span::styled("  │          │  ", Style::default().fg(theme::BLUE))),
-            Line::from(Span::styled("  ╰──────────╯  ", Style::default().fg(theme::BLUE))),
+            Line::from(b("  │            │  ", theme::BLUE)),
+            Line::from(b("  │  VIDEO  MP4│  ", theme::BLUE)),
+            Line::from(b("  │            │  ", theme::BLUE)),
+            Line::from(b("  │ [][][][][] │  ", theme::SURFACE0)),
+            Line::from(b("  ╰────────────╯  ", theme::BLUE)),
             Line::from(Span::raw("")),
             Line::from(Span::styled(
-                "      MP4       ",
+                "      [ MP4 ]     ",
                 Style::default().fg(theme::BLUE).add_modifier(Modifier::BOLD),
             )),
         ]
     } else {
+        // MP3: audio waveform using block elements (all narrow, guaranteed 1-wide)
         vec![
-            Line::from(Span::styled("  ╭──────────╮  ", Style::default().fg(theme::PEACH))),
-            Line::from(Span::styled("  │          │  ", Style::default().fg(theme::PEACH))),
-            Line::from(Span::styled("  │  ♩  ♫   │  ", Style::default().fg(theme::YELLOW))),
-            Line::from(Span::styled("  │          │  ", Style::default().fg(theme::PEACH))),
-            Line::from(Span::styled("  │ ▂▄█▆▂▄█ │  ", Style::default().fg(theme::GREEN))),
-            Line::from(Span::styled("  │ ▂▄███▂▄ │  ", Style::default().fg(theme::GREEN))),
-            Line::from(Span::styled("  │  ♪  ♬   │  ", Style::default().fg(theme::YELLOW))),
-            Line::from(Span::styled("  │          │  ", Style::default().fg(theme::PEACH))),
-            Line::from(Span::styled("  ╰──────────╯  ", Style::default().fg(theme::PEACH))),
+            Line::from(b("  ╭────────────╮  ", theme::PEACH)),
+            Line::from(b("  │            │  ", theme::PEACH)),
+            Line::from(b("  │  ▁▂▄▆▄▂▁▂  │  ", theme::GREEN)),
+            Line::from(b("  │  ▂▄▇█▇▄▂▄  │  ", theme::GREEN)),
+            Line::from(b("  │  ▃▆██▇▅▃▅  │  ", theme::GREEN)),
+            Line::from(b("  │  ▁▃▆▇▆▃▁▃  │  ", theme::GREEN)),
+            Line::from(b("  │  ▁▂▄▅▄▂▁▁  │  ", theme::GREEN)),
+            Line::from(b("  │            │  ", theme::PEACH)),
+            Line::from(b("  ╰────────────╯  ", theme::PEACH)),
             Line::from(Span::raw("")),
             Line::from(Span::styled(
-                "      MP3       ",
+                "      [ MP3 ]     ",
                 Style::default().fg(theme::PEACH).add_modifier(Modifier::BOLD),
             )),
         ]
