@@ -154,6 +154,12 @@ async fn run_loop(
         // ── Drain lyrics events (non-blocking) ────────────────────────────────
         while let Ok(result) = lyrics_rx.try_recv() {
             app.lyrics_loading = false;
+            if result.is_none() && !app.lyrics_query.is_empty() {
+                app.status_msg = Some((
+                    "✖  No lyrics found — try a different search".to_string(),
+                    std::time::Instant::now(),
+                ));
+            }
             app.lyrics_result = result;
         }
 
@@ -318,8 +324,6 @@ async fn run_loop(
                         app.cookies_input.clear();
                     } else if app.help_visible {
                         app.help_visible = false;
-                    } else if app.error_popup.is_some() {
-                        app.error_popup = None;
                     } else if app.history_popup.is_some() {
                         app.history_popup = None;
                     } else if app.reveal_popup.is_some() {
@@ -433,12 +437,6 @@ async fn run_loop(
                     continue;
                 }
 
-                // ── Any key dismisses error popup ─────────────────────────────
-                if app.error_popup.is_some() {
-                    app.error_popup = None;
-                    continue;
-                }
-
                 // ── Any key closes help overlay ───────────────────────────────
                 if app.help_visible {
                     app.help_visible = false;
@@ -542,6 +540,8 @@ fn handle_slot_event(app: &mut App, slot_id: usize, event: SlotEvent) {
             }
         }
         SlotEvent::Failed { reason } => {
+            let short: String = reason.chars().take(80).collect();
+            app.status_msg = Some((format!("✖  Download failed: {}", short), std::time::Instant::now()));
             if let Some(slot) = app.slot_mut(slot_id) {
                 slot.state = SlotState::Failed { reason };
             }
@@ -844,7 +844,7 @@ fn handle_settings_key(app: &mut App, key: crossterm::event::KeyEvent, picker_tx
         // [s] — save settings
         KeyCode::Char('s') => {
             if let Err(e) = app.settings.save() {
-                app.error_popup = Some(format!("Failed to save settings: {}", e));
+                app.status_msg = Some((format!("✖  Settings save failed: {}", e), std::time::Instant::now()));
             }
         }
         // [r] — reset to defaults (confirm not needed; user can [s] to persist or quit)

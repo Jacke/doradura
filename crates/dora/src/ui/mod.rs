@@ -3,7 +3,7 @@
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Tabs, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Tabs};
 use ratatui::Frame;
 
 use crate::app::{App, ClickTarget, HistoryEntry, SlotState, YtdlpStartup};
@@ -45,9 +45,6 @@ pub fn render(f: &mut Frame, app: &mut App) {
     render_status_bar(f, vertical[3], app);
 
     // Overlays rendered last so they appear on top of everything.
-    if let Some(msg) = app.error_popup.clone() {
-        render_error_popup(f, size, &msg);
-    }
     if app.help_visible {
         render_help_overlay(f, size);
     }
@@ -357,29 +354,6 @@ fn render_cookies_popup(f: &mut Frame, area: Rect, app: &App) {
         d(" Cancel"),
     ]);
     f.render_widget(Paragraph::new(hints), rows[5]);
-}
-
-fn render_error_popup(f: &mut Frame, area: Rect, message: &str) {
-    let popup_w = 60_u16.min(area.width.saturating_sub(4));
-    let popup_h = 7_u16.min(area.height.saturating_sub(4));
-    let popup_x = area.x + (area.width.saturating_sub(popup_w)) / 2;
-    let popup_y = area.y + (area.height.saturating_sub(popup_h)) / 2;
-    let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
-
-    let block = Block::default()
-        .title(" ✖ Error ")
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::RED))
-        .style(Style::default().bg(theme::BASE));
-
-    let text = Paragraph::new(message)
-        .block(block)
-        .style(Style::default().fg(theme::TEXT).add_modifier(Modifier::BOLD))
-        .wrap(Wrap { trim: true });
-
-    f.render_widget(Clear, popup_area);
-    f.render_widget(text, popup_area);
 }
 
 fn render_reveal_popup(f: &mut Frame, area: Rect, path: &str) {

@@ -222,7 +222,6 @@ pub struct App {
     pub lyrics_scroll: u16,
 
     // ── Overlays ──────────────────────────────────────────────────────────────
-    pub error_popup: Option<String>,
     pub help_visible: bool,
 
     /// When true, a cookies-file input popup is displayed.
@@ -306,7 +305,6 @@ impl App {
             lyrics_result: None,
             lyrics_loading: false,
             lyrics_scroll: 0,
-            error_popup: None,
             help_visible: false,
             show_cookies_input: false,
             cookies_input: String::new(),
