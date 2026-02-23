@@ -1,11 +1,17 @@
 //! Application state for the dora TUI.
 
-use std::time::Instant;
+use std::collections::{HashMap, VecDeque};
+use std::time::{Duration, Instant};
 
 use chrono::Local;
 use ratatui::layout::Rect;
+use ratatui::style::Color;
 
 use crate::settings::DoraSettings;
+use crate::theme::{palette, ThemeColors};
+
+/// Re-export LogoScheme so that `ui/logo.rs` and other modules can import from `crate::app`.
+pub use crate::theme::LogoScheme;
 use crate::video_info::{ThumbnailArt, VideoInfo};
 
 /// Which tab is currently active.
@@ -74,41 +80,36 @@ pub enum YtdlpStartup {
     FadingOut { ticks: u8 },
 }
 
-/// Logo colour scheme, cycled on logo click.
+/// Sort order for the history panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum LogoScheme {
+pub enum HistorySortMode {
+    /// Newest first (default).
     #[default]
-    Catppuccin,
-    Fire,
-    Ice,
-    Matrix,
-    Sunset,
-    Neon,
-    Gold,
+    DateDesc,
+    /// Oldest first.
+    DateAsc,
+    /// Largest file first.
+    SizeDesc,
+    /// Alphabetical by title.
+    TitleAsc,
 }
 
-impl LogoScheme {
+impl HistorySortMode {
     pub fn next(self) -> Self {
         match self {
-            Self::Catppuccin => Self::Fire,
-            Self::Fire => Self::Ice,
-            Self::Ice => Self::Matrix,
-            Self::Matrix => Self::Sunset,
-            Self::Sunset => Self::Neon,
-            Self::Neon => Self::Gold,
-            Self::Gold => Self::Catppuccin,
+            Self::DateDesc => Self::DateAsc,
+            Self::DateAsc => Self::SizeDesc,
+            Self::SizeDesc => Self::TitleAsc,
+            Self::TitleAsc => Self::DateDesc,
         }
     }
 
-    pub fn tagline(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
-            Self::Catppuccin => "The Ultimate Media Downloader \u{b7} yt-dlp + ffmpeg",
-            Self::Fire => "\u{1f525}  Burn your bandwidth  \u{b7}  yt-dlp + ffmpeg",
-            Self::Ice => "\u{2744}\u{fe0f}  Ice-cold downloads  \u{b7}  yt-dlp + ffmpeg",
-            Self::Matrix => "\u{2593}  Follow the white rabbit  \u{b7}  yt-dlp + ffmpeg",
-            Self::Sunset => "\u{1f305}  Sunset vibes  \u{b7}  yt-dlp + ffmpeg",
-            Self::Neon => "\u{26a1}  Neon overdrive  \u{b7}  yt-dlp + ffmpeg",
-            Self::Gold => "\u{2728}  Golden ratio downloads  \u{b7}  yt-dlp + ffmpeg",
+            Self::DateDesc => "Date ↓",
+            Self::DateAsc => "Date ↑",
+            Self::SizeDesc => "Size ↓",
+            Self::TitleAsc => "Title A-Z",
         }
     }
 }
@@ -145,9 +146,22 @@ pub enum ClickTarget {
 pub enum SlotState {
     Pending,
     Fetching,
-    Downloading { percent: u8, speed_mbs: f64, eta_secs: u64 },
-    Done { path: String },
-    Failed { reason: String },
+    Downloading {
+        percent: u8,
+        speed_mbs: f64,
+        eta_secs: u64,
+    },
+    /// 1-second colour burst animation played when a download completes.
+    Celebrating {
+        path: String,
+        started: Instant,
+    },
+    Done {
+        path: String,
+    },
+    Failed {
+        reason: String,
+    },
 }
 
 /// Output format requested by the user.
@@ -181,6 +195,10 @@ pub struct DownloadSlot {
     pub started: Instant,
     /// True once `spawn_download` has been called for this slot.
     pub task_spawned: bool,
+    /// Ring buffer of the last 20 download speed samples (MB/s).
+    pub speed_history: VecDeque<f64>,
+    /// Handle to abort the background download task (set when task is spawned).
+    pub cancel: Option<tokio::task::AbortHandle>,
 }
 
 /// A completed-download entry kept in history.
@@ -205,6 +223,18 @@ pub struct LyricsResult {
     pub lyrics: String,
 }
 
+/// A single supernova particle ejected when a download completes.
+pub struct Particle {
+    pub x: f32,
+    pub y: f32,
+    pub vx: f32,
+    pub vy: f32,
+    pub ch: char,
+    pub color: Color,
+    pub age: f32,
+    pub max_age: f32,
+}
+
 /// Central application state.
 pub struct App {
     pub active_tab: Tab,
@@ -214,6 +244,14 @@ pub struct App {
     /// Display-index (0 = newest) of the history entry currently shown in the detail popup.
     pub history_popup: Option<usize>,
     pub url_input: String,
+
+    // ── History search / sort ──────────────────────────────────────────────────
+    /// When true, keyboard input goes to the history filter bar.
+    pub history_search_mode: bool,
+    /// Current filter string (live-filtered in history panel).
+    pub history_filter: String,
+    /// Current sort order for the history panel.
+    pub history_sort: HistorySortMode,
 
     // ── Lyrics tab ────────────────────────────────────────────────────────────
     pub lyrics_query: String,
@@ -246,6 +284,12 @@ pub struct App {
     pub preview_thumbnail: Option<ThumbnailArt>,
     /// True when the run loop should spawn the video-info fetch task.
     pub preview_fetch_needed: bool,
+    /// URL waiting for debounce before the preview fetch is dispatched.
+    pub preview_pending_url: Option<String>,
+    /// When `preview_pending_url` was last set (used for 300ms debounce).
+    pub preview_debounce: Instant,
+    /// Cache of already-fetched VideoInfo (keyed by normalised URL).
+    pub preview_cache: HashMap<String, VideoInfo>,
     /// Clickable regions rebuilt each frame. Used by the mouse handler.
     pub click_map: Vec<(Rect, ClickTarget)>,
 
@@ -264,6 +308,10 @@ pub struct App {
     pub logo_frame: u16,
     pub spinner_frame: u8,
     pub last_tick: Instant,
+    /// Cursor blink state — toggled every 500 ms by the tick handler.
+    pub blink_on: bool,
+    /// When the cursor blink was last toggled.
+    pub last_blink: Instant,
 
     // ── Logo easter egg ───────────────────────────────────────────────────────
     /// Active colour scheme for the logo.
@@ -283,6 +331,21 @@ pub struct App {
     /// Transient message shown in the status bar. Cleared automatically after 10 seconds.
     pub status_msg: Option<(String, Instant)>,
 
+    // ── Session stats ─────────────────────────────────────────────────────────
+    /// When the app was started (for uptime display in the stats footer).
+    pub session_start: Instant,
+
+    // ── Active theme ──────────────────────────────────────────────────────────
+    /// Current Catppuccin colour palette.  Cycled with `[T]`.
+    pub theme: ThemeColors,
+
+    // ── Supernova particle system ─────────────────────────────────────────────
+    /// Particles spawned when a download completes its 1-second celebration.
+    pub particles: Vec<Particle>,
+    /// Terminal rects of rendered download slots (populated by queue renderer each
+    /// frame; used by `tick()` to position the supernova burst).
+    pub slot_screen_rects: HashMap<usize, Rect>,
+
     // ── Internal ──────────────────────────────────────────────────────────────
     next_slot_id: usize,
 }
@@ -294,6 +357,9 @@ impl App {
             .arg("--version")
             .output()
             .is_ok();
+        let now = Instant::now();
+        let theme = palette(settings.theme_flavour);
+        let logo_scheme = settings.logo_scheme; // Copy before settings is moved into Self
         Self {
             active_tab: Tab::Downloads,
             slots: Vec::new(),
@@ -301,6 +367,9 @@ impl App {
             history_scroll: 0,
             history_popup: None,
             url_input: String::new(),
+            history_search_mode: false,
+            history_filter: String::new(),
+            history_sort: HistorySortMode::default(),
             lyrics_query: String::new(),
             lyrics_result: None,
             lyrics_loading: false,
@@ -320,6 +389,9 @@ impl App {
             preview_quality_cursor: 0,
             preview_thumbnail: None,
             preview_fetch_needed: false,
+            preview_pending_url: None,
+            preview_debounce: now,
+            preview_cache: HashMap::new(),
             click_map: Vec::new(),
             settings,
             settings_cursor: 0,
@@ -328,8 +400,10 @@ impl App {
             settings_file_picker_field: None,
             logo_frame: 0,
             spinner_frame: 0,
-            last_tick: Instant::now(),
-            logo_scheme: LogoScheme::default(),
+            last_tick: now,
+            blink_on: true,
+            last_blink: now,
+            logo_scheme,
             logo_burst: 0,
             demo_mode: false,
             ytdlp_available,
@@ -341,6 +415,10 @@ impl App {
                 YtdlpStartup::Missing
             },
             status_msg: None,
+            session_start: now,
+            theme,
+            particles: Vec::new(),
+            slot_screen_rects: HashMap::new(),
             next_slot_id: 0,
         }
     }
@@ -366,6 +444,15 @@ impl App {
                 },
                 started: Instant::now(),
                 task_spawned: true,
+                speed_history: {
+                    let mut dq = VecDeque::new();
+                    for i in 0..20usize {
+                        let v = 8.0 + (i as f64 * 0.3).sin() * 4.0;
+                        dq.push_back(v.max(0.1));
+                    }
+                    dq
+                },
+                cancel: None,
             },
             DownloadSlot {
                 id: 1,
@@ -376,6 +463,8 @@ impl App {
                 state: SlotState::Fetching,
                 started: Instant::now(),
                 task_spawned: true,
+                speed_history: VecDeque::new(),
+                cancel: None,
             },
             DownloadSlot {
                 id: 2,
@@ -386,6 +475,8 @@ impl App {
                 state: SlotState::Pending,
                 started: Instant::now(),
                 task_spawned: true, // demo: don't auto-spawn real tasks
+                speed_history: VecDeque::new(),
+                cancel: None,
             },
             DownloadSlot {
                 id: 3,
@@ -398,6 +489,8 @@ impl App {
                 },
                 started: Instant::now(),
                 task_spawned: true,
+                speed_history: VecDeque::new(),
+                cancel: None,
             },
             DownloadSlot {
                 id: 4,
@@ -410,6 +503,8 @@ impl App {
                 },
                 started: Instant::now(),
                 task_spawned: true,
+                speed_history: VecDeque::new(),
+                cancel: None,
             },
         ];
         app.next_slot_id = 5;
@@ -457,18 +552,25 @@ impl App {
     }
 
     pub fn tick(&mut self) {
+        let dt = self.last_tick.elapsed().as_secs_f32().clamp(0.001, 0.1);
         self.logo_frame = self.logo_frame.wrapping_add(1);
         self.spinner_frame = self.spinner_frame.wrapping_add(1);
         self.last_tick = Instant::now();
+
+        // Wall-clock cursor blink: toggle every 500 ms regardless of FPS.
+        if self.last_blink.elapsed() >= Duration::from_millis(500) {
+            self.blink_on = !self.blink_on;
+            self.last_blink = Instant::now();
+        }
 
         // Decay burst animation counter.
         if self.logo_burst > 0 {
             self.logo_burst -= 1;
         }
 
-        // Auto-expire status bar messages after 10 seconds.
+        // Auto-expire status bar messages after 6 seconds.
         if let Some((_, set_at)) = &self.status_msg {
-            if set_at.elapsed() >= std::time::Duration::from_secs(6) {
+            if set_at.elapsed() >= Duration::from_secs(6) {
                 self.status_msg = None;
             }
         }
@@ -481,6 +583,44 @@ impl App {
                 *ticks -= 1;
             }
         }
+
+        // Advance Celebrating slots → Done after 1 second; spawn supernova burst.
+        let celebrating_done: Vec<(usize, Rect)> = self
+            .slots
+            .iter()
+            .filter_map(|s| {
+                if let SlotState::Celebrating { started, .. } = &s.state {
+                    if started.elapsed() >= Duration::from_secs(1) {
+                        let rect = self.slot_screen_rects.get(&s.id).copied().unwrap_or_default();
+                        return Some((s.id, rect));
+                    }
+                }
+                None
+            })
+            .collect();
+        for (id, rect) in celebrating_done {
+            if let Some(slot) = self.slot_mut(id) {
+                if let SlotState::Celebrating { path, .. } = std::mem::replace(&mut slot.state, SlotState::Pending) {
+                    slot.state = SlotState::Done { path };
+                }
+            }
+            // Spawn particles only when we have a valid screen rect.
+            if rect.width > 0 && rect.height > 0 {
+                let cx = rect.x as f32 + rect.width as f32 / 2.0;
+                let cy = rect.y as f32 + rect.height as f32 / 2.0;
+                let burst = spawn_burst_particles(cx, cy, &self.theme);
+                self.particles.extend(burst);
+            }
+        }
+
+        // Advance particle physics.
+        for p in &mut self.particles {
+            p.x += p.vx * dt * 30.0; // vx=1 ≈ 30 cells/sec
+            p.y += p.vy * dt * 30.0;
+            p.vy += 0.06 * dt; // downward gravity
+            p.age += dt;
+        }
+        self.particles.retain(|p| p.age < p.max_age);
 
         // In demo mode, animate the downloading slot
         if self.demo_mode && self.spinner_frame.is_multiple_of(12) {
@@ -495,9 +635,40 @@ impl App {
                     let phase = (*percent as f64) * 0.063;
                     *speed_mbs = 8.0 + phase.sin() * 6.0;
                     *eta_secs = (100u64.saturating_sub(*percent as u64)).saturating_mul(12) / 60;
+                    // Push demo speed sample
+                    slot.speed_history.push_back(*speed_mbs);
+                    if slot.speed_history.len() > 20 {
+                        slot.speed_history.pop_front();
+                    }
                 }
             }
         }
+    }
+
+    /// True when the UI has active animations that require a fast redraw (~30 fps).
+    /// True when the UI has active animations that require ~30 fps redraws.
+    pub fn needs_fast_tick(&self) -> bool {
+        let has_download = self
+            .slots
+            .iter()
+            .any(|s| matches!(s.state, SlotState::Downloading { .. } | SlotState::Celebrating { .. }));
+        has_download
+            || !self.particles.is_empty()
+            || self.logo_burst > 0
+            || self.lyrics_loading
+            || matches!(self.preview_state, PreviewState::Loading)
+            || matches!(self.ytdlp_startup, YtdlpStartup::FadingOut { .. })
+            || self.demo_mode
+    }
+
+    /// True when there is an active text input that needs a blinking cursor (500 ms tick).
+    pub fn needs_blink_tick(&self) -> bool {
+        use crate::app::Tab;
+        !self.url_input.is_empty()
+            || self.settings_editing
+            || self.show_cookies_input
+            || self.history_search_mode
+            || (self.active_tab == Tab::Lyrics && !self.lyrics_query.is_empty())
     }
 
     /// Add a new download slot. Returns the slot's stable ID.
@@ -513,6 +684,8 @@ impl App {
             state: SlotState::Pending,
             started: Instant::now(),
             task_spawned: false,
+            speed_history: VecDeque::new(),
+            cancel: None,
         });
         id
     }
@@ -544,6 +717,62 @@ impl Default for App {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// ── Supernova particle burst ──────────────────────────────────────────────────
+
+/// Spawn a sparkle burst of 8 particles from (cx, cy) on mouse click.
+/// Short lifetime (0.2s), radius ~2 cells — subtle but satisfying.
+pub fn spawn_ripple_particles(cx: f32, cy: f32, theme: &ThemeColors) -> Vec<Particle> {
+    const CHARS: &[char] = &['✦', '*', '·', '+', '✦', '·', '*', '+'];
+    let colors = [theme.lavender, theme.mauve, theme.peach, theme.yellow];
+    let mut out = Vec::with_capacity(8);
+    for i in 0..8usize {
+        let angle = (i as f32 / 8.0) * std::f32::consts::TAU;
+        // speed chosen so particles travel ~2 cells in 0.2s: d = v * dt * 30 * t
+        let speed = 0.28 + (i % 3) as f32 * 0.04;
+        out.push(Particle {
+            x: cx,
+            y: cy,
+            vx: angle.cos() * speed,
+            vy: angle.sin() * speed * 0.5, // narrower vertically (char aspect ratio)
+            ch: CHARS[i],
+            color: colors[i % colors.len()],
+            age: 0.0,
+            max_age: 0.20,
+        });
+    }
+    out
+}
+
+/// Spawn a burst of 24 particles from terminal cell (cx, cy).
+fn spawn_burst_particles(cx: f32, cy: f32, theme: &ThemeColors) -> Vec<Particle> {
+    const CHARS: &[char] = &['*', '·', '°', '★', '+', '×', '•', '◦', '✧', '⋆', '✦', '✨'];
+    let colors = [
+        theme.lavender,
+        theme.green,
+        theme.yellow,
+        theme.peach,
+        theme.mauve,
+        theme.teal,
+        theme.blue,
+    ];
+    let mut out = Vec::with_capacity(24);
+    for i in 0..24usize {
+        let angle = (i as f32 / 24.0) * std::f32::consts::TAU;
+        let speed = 0.15 + (i % 4) as f32 * 0.08;
+        out.push(Particle {
+            x: cx,
+            y: cy,
+            vx: angle.cos() * speed,
+            vy: angle.sin() * speed * 0.45, // narrower vertical spread (char aspect)
+            ch: CHARS[i % CHARS.len()],
+            color: colors[i % colors.len()],
+            age: 0.0,
+            max_age: 1.2 + (i % 5) as f32 * 0.25, // 1.2 – 2.2 seconds
+        });
+    }
+    out
 }
 
 // ── History persistence ───────────────────────────────────────────────────────

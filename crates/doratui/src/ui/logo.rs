@@ -147,12 +147,12 @@ pub fn render_logo(f: &mut Frame, area: Rect, app: &mut App) {
         })
         .collect();
 
-    // Tagline: flashes with scheme colours during burst, then settles to SUBTEXT.
+    // Tagline: flashes with scheme colours during burst, then settles to subtext.
     let tagline_style = if burst > 20 {
         let idx = (frame / 2) % n;
         Style::default().fg(colors[idx]).add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(theme::SUBTEXT)
+        Style::default().fg(app.theme.subtext)
     };
 
     let mut all_lines = logo_lines;

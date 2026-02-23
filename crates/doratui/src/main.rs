@@ -14,7 +14,8 @@
 //! | `Tab`        | Toggle MP3 / MP4 format          |
 //! | `Enter`      | Start download / search lyrics   |
 //! | `c`          | Set cookies file (Queue tab)     |
-//! | `d`          | Remove last finished/failed slot |
+//! | `d` / `Del`  | Remove last finished/failed slot, or cancel active |
+//! | `/`          | Search history (Downloads tab)   |
 //! | `?`          | Open help overlay                |
 //! | `Esc`        | Close popup / clear input        |
 //! | `Ctrl+C`     | Quit                             |
@@ -66,12 +67,17 @@ async fn main() -> anyhow::Result<()> {
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, crossterm::event::EnableMouseCapture)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        crossterm::event::EnableMouseCapture,
+        crossterm::event::EnableBracketedPaste,
+    )?;
 
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     let mut app = if demo { App::new_demo() } else { App::new() };
-    let tick_rate = Duration::from_millis(16); // ~60 fps
+    // tick_rate is computed dynamically inside the loop (see needs_fast_tick).
 
     // Channel: background download tasks → main loop
     let (dl_tx, dl_rx) = mpsc::channel::<(usize, SlotEvent)>(256);
@@ -98,7 +104,6 @@ async fn main() -> anyhow::Result<()> {
     let result = run_loop(
         &mut terminal,
         &mut app,
-        tick_rate,
         dl_tx,
         dl_rx,
         lyrics_tx,
@@ -118,7 +123,8 @@ async fn main() -> anyhow::Result<()> {
     let _ = execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        crossterm::event::DisableMouseCapture
+        crossterm::event::DisableMouseCapture,
+        crossterm::event::DisableBracketedPaste,
     );
     let _ = terminal.show_cursor();
 
@@ -129,7 +135,6 @@ async fn main() -> anyhow::Result<()> {
 async fn run_loop(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
-    tick_rate: Duration,
     dl_tx: mpsc::Sender<(usize, SlotEvent)>,
     mut dl_rx: mpsc::Receiver<(usize, SlotEvent)>,
     lyrics_tx: mpsc::Sender<Option<LyricsResult>>,
@@ -167,7 +172,8 @@ async fn run_loop(
         while let Ok(result) = preview_rx.try_recv() {
             match result {
                 Ok((info, _thumb)) => {
-                    // Thumbnail arrives separately on thumb_rx — show ready state first
+                    // Store in cache (keyed by the URL that was pending when fetch started).
+                    app.preview_cache.insert(app.preview_url.clone(), info.clone());
                     app.preview_state = PreviewState::Ready { info };
                 }
                 Err(msg) => {
@@ -207,7 +213,45 @@ async fn run_loop(
             }
         }
 
-        // ── Kick off preview fetch once when preview_fetch_needed is set ──────
+        // ── Preview debounce: dispatch fetch after 300ms of stability ─────────
+        if let Some(ref pending_url) = app.preview_pending_url.clone() {
+            if app.preview_debounce.elapsed() >= Duration::from_millis(300) {
+                let url = pending_url.clone();
+                app.preview_pending_url = None;
+
+                // Check cache first — avoid a redundant yt-dlp -J call.
+                if let Some(info) = app.preview_cache.get(&url).cloned() {
+                    app.preview_state = PreviewState::Ready { info };
+                } else {
+                    app.preview_state = PreviewState::Loading;
+                    let ytdlp_bin = if app.settings.ytdlp_bin.trim().is_empty() {
+                        "yt-dlp".to_string()
+                    } else {
+                        app.settings.ytdlp_bin.clone()
+                    };
+                    let p_tx = preview_tx.clone();
+                    let t_tx = thumb_tx.clone();
+                    tokio::spawn(async move {
+                        match fetch_video_info(&url, &ytdlp_bin).await {
+                            Ok(info) => {
+                                let thumb_url = info.thumbnail_url.clone();
+                                let _ = p_tx.send(Ok((info, None))).await;
+                                if let Some(turl) = thumb_url {
+                                    if let Some(art) = fetch_thumbnail_art(&turl).await {
+                                        let _ = t_tx.send(art).await;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                let _ = p_tx.send(Err(e)).await;
+                            }
+                        }
+                    });
+                }
+            }
+        }
+
+        // ── Legacy immediate-fetch path (set by confirm_preview_download) ─────
         if app.preview_fetch_needed {
             app.preview_fetch_needed = false;
             let url = app.preview_url.clone();
@@ -247,16 +291,68 @@ async fn run_loop(
                 if let Some(ref c) = cookies_override {
                     s.ytdlp_cookies = c.clone();
                 }
-                spawn_download(slot.id, slot.url.clone(), slot.format, s, dl_tx.clone());
+                let handle = spawn_download(slot.id, slot.url.clone(), slot.format, s, dl_tx.clone());
+                slot.cancel = Some(handle);
             }
         }
 
         // ── Input event (blocks up to tick_rate) ─────────────────────────────
+        // Three tiers to avoid burning CPU when idle:
+        //   • 33 ms  — active animation (downloads, particles, burst, spinners)
+        //   • 500 ms — text input visible (cursor blink needs 500 ms granularity)
+        //   • 10 s   — fully idle (no animation, no typing) — wake only for uptime counter
+        let tick_rate = if app.needs_fast_tick() {
+            Duration::from_millis(33)
+        } else if app.needs_blink_tick() {
+            Duration::from_millis(500)
+        } else {
+            Duration::from_secs(10)
+        };
         match next_event(tick_rate)? {
             InputEvent::Quit => break,
 
             InputEvent::Tick => {
                 app.tick();
+            }
+
+            InputEvent::Paste(text) => {
+                if app.active_tab == Tab::Downloads && !app.preview_state.is_visible() {
+                    let urls: Vec<String> = text
+                        .split('\n')
+                        .map(str::trim)
+                        .filter(|s| s.starts_with("http://") || s.starts_with("https://"))
+                        .map(normalize_url)
+                        .collect();
+                    match urls.len() {
+                        0 => {
+                            // No valid URLs — append raw text to url_input
+                            app.url_input.push_str(text.trim());
+                        }
+                        1 => {
+                            // Single URL: open preview like pressing Enter
+                            let url = urls.into_iter().next().unwrap();
+                            app.preview_url = url.clone();
+                            app.preview_quality_cursor = 0;
+                            app.preview_thumbnail = None;
+                            app.preview_state = PreviewState::Loading;
+                            app.preview_pending_url = Some(url);
+                            app.preview_debounce = std::time::Instant::now();
+                            app.url_input.clear();
+                        }
+                        count => {
+                            // Multiple URLs: queue all directly without preview
+                            let fmt = if app.settings.default_format == "MP4" {
+                                DownloadFormat::Mp4
+                            } else {
+                                DownloadFormat::Mp3
+                            };
+                            for url in urls {
+                                app.add_download(url, fmt);
+                            }
+                            app.status_msg = Some((format!("  Queued {} downloads", count), std::time::Instant::now()));
+                        }
+                    }
+                }
             }
 
             InputEvent::Mouse(mouse) => {
@@ -265,6 +361,10 @@ async fn run_loop(
                     MouseEventKind::Down(MouseButton::Left) => {
                         let col = mouse.column;
                         let row = mouse.row;
+                        // Spawn a small ripple at the click point.
+                        let theme = app.theme;
+                        let ripple = app::spawn_ripple_particles(col as f32, row as f32, &theme);
+                        app.particles.extend(ripple);
                         let targets: Vec<_> = app.click_map.clone();
                         // Iterate in reverse: later-registered (more specific) targets
                         // take priority over earlier broad ones (e.g. ← → over whole row).
@@ -317,7 +417,7 @@ async fn run_loop(
                     continue;
                 }
 
-                // ── Esc: universal dismiss (cookies → help → error → reveal → settings edit → clear) ──
+                // ── Esc: universal dismiss ────────────────────────────────────
                 if key.code == KeyCode::Esc {
                     if app.show_cookies_input {
                         app.show_cookies_input = false;
@@ -334,9 +434,14 @@ async fn run_loop(
                         app.url_input = url;
                         app.preview_state = PreviewState::Hidden;
                         app.preview_thumbnail = None;
+                        app.preview_pending_url = None;
                     } else if app.settings_editing {
                         app.settings_editing = false;
                         app.settings_edit_buf.clear();
+                    } else if app.history_search_mode {
+                        // Esc clears history filter
+                        app.history_search_mode = false;
+                        app.history_filter.clear();
                     } else {
                         match app.active_tab {
                             Tab::Downloads => app.url_input.clear(),
@@ -383,6 +488,27 @@ async fn run_loop(
                         }
                         KeyCode::Char(c) => {
                             app.cookies_input.push(c);
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
+
+                // ── History search mode intercepts text input ─────────────────
+                if app.history_search_mode {
+                    match key.code {
+                        KeyCode::Backspace => {
+                            app.history_filter.pop();
+                            if app.history_filter.is_empty() {
+                                app.history_search_mode = false;
+                            }
+                        }
+                        KeyCode::Enter => {
+                            // Lock in the filter; search mode stays active but Enter stops editing
+                            app.history_search_mode = false;
+                        }
+                        KeyCode::Char(c) => {
+                            app.history_filter.push(c);
                         }
                         _ => {}
                     }
@@ -453,6 +579,13 @@ async fn run_loop(
                     }
                 }
 
+                // ── '/' in Downloads tab — activate history search ────────────
+                if app.active_tab == Tab::Downloads && app.url_input.is_empty() && key.code == KeyCode::Char('/') {
+                    app.history_search_mode = true;
+                    app.history_filter.clear();
+                    continue;
+                }
+
                 // ── 'c' opens cookies popup (Downloads tab, only when not typing) ───
                 if app.active_tab == Tab::Downloads && app.url_input.is_empty() && key.code == KeyCode::Char('c') {
                     app.show_cookies_input = true;
@@ -515,6 +648,11 @@ fn handle_slot_event(app: &mut App, slot_id: usize, event: SlotEvent) {
                     speed_mbs,
                     eta_secs,
                 };
+                // Keep a ring buffer of the last 20 speed samples.
+                slot.speed_history.push_back(speed_mbs);
+                if slot.speed_history.len() > 20 {
+                    slot.speed_history.pop_front();
+                }
             }
         }
         SlotEvent::Done { path, size_mb } => {
@@ -525,7 +663,12 @@ fn handle_slot_event(app: &mut App, slot_id: usize, event: SlotEvent) {
                 .map(|s| (s.title.clone(), s.artist.clone(), s.format, s.url.clone()));
 
             if let Some(slot) = app.slot_mut(slot_id) {
-                slot.state = SlotState::Done { path: path.clone() };
+                // Transition through Celebrating first (1-second animation).
+                slot.state = SlotState::Celebrating {
+                    path: path.clone(),
+                    started: std::time::Instant::now(),
+                };
+                slot.cancel = None; // task is done, handle is no longer valid
             }
             if let Some((title, artist, format, url)) = info {
                 app.push_history(HistoryEntry {
@@ -544,6 +687,7 @@ fn handle_slot_event(app: &mut App, slot_id: usize, event: SlotEvent) {
             app.status_msg = Some((format!("✖  Download failed: {}", short), std::time::Instant::now()));
             if let Some(slot) = app.slot_mut(slot_id) {
                 slot.state = SlotState::Failed { reason };
+                slot.cancel = None;
             }
         }
     }
@@ -576,6 +720,11 @@ fn handle_downloads_key(app: &mut App, key: crossterm::event::KeyEvent) {
                 }
                 return;
             }
+            // [s] — cycle history sort order
+            KeyCode::Char('s') if app.url_input.is_empty() => {
+                app.history_sort = app.history_sort.next();
+                return;
+            }
             _ => {}
         }
     }
@@ -591,17 +740,9 @@ fn handle_queue_key(app: &mut App, key: crossterm::event::KeyEvent) {
                 return;
             }
             // [d] / [r] hotkeys only fire when the URL bar is empty.
-            // If the user is typing, 'd' and 'r' are part of the URL
-            // (e.g. video ID "dQw4w9WgXcQ" starts with 'd').
             if app.url_input.is_empty() {
                 if c == 'd' {
-                    if let Some(pos) = app
-                        .slots
-                        .iter()
-                        .rposition(|s| matches!(s.state, SlotState::Done { .. } | SlotState::Failed { .. }))
-                    {
-                        app.slots.remove(pos);
-                    }
+                    remove_or_cancel_slot(app);
                     return;
                 }
                 if c == 'r' {
@@ -625,24 +766,46 @@ fn handle_queue_key(app: &mut App, key: crossterm::event::KeyEvent) {
         KeyCode::Enter => {
             let url = normalize_url(app.url_input.trim());
             if !url.is_empty() {
-                app.preview_url = url;
+                // Set up debounced preview fetch (300ms).
+                app.preview_url = url.clone();
                 app.preview_quality_cursor = 0;
                 app.preview_thumbnail = None;
                 app.preview_state = PreviewState::Loading;
-                app.preview_fetch_needed = true; // run loop will spawn the fetch task
+                app.preview_pending_url = Some(url);
+                app.preview_debounce = std::time::Instant::now();
                 app.url_input.clear();
             }
         }
         KeyCode::Delete => {
-            if let Some(pos) = app
-                .slots
-                .iter()
-                .rposition(|s| matches!(s.state, SlotState::Done { .. } | SlotState::Failed { .. }))
-            {
-                app.slots.remove(pos);
-            }
+            remove_or_cancel_slot(app);
         }
         _ => {}
+    }
+}
+
+/// Remove the last finished/failed/celebrating slot, or abort + remove the last active slot.
+fn remove_or_cancel_slot(app: &mut App) {
+    // Prefer removing a terminal-state slot first.
+    if let Some(pos) = app.slots.iter().rposition(|s| {
+        matches!(
+            s.state,
+            SlotState::Done { .. } | SlotState::Failed { .. } | SlotState::Celebrating { .. }
+        )
+    }) {
+        app.slots.remove(pos);
+        return;
+    }
+    // Otherwise abort the last active slot.
+    if let Some(pos) = app.slots.iter().rposition(|s| {
+        matches!(
+            s.state,
+            SlotState::Downloading { .. } | SlotState::Fetching | SlotState::Pending
+        )
+    }) {
+        if let Some(handle) = app.slots[pos].cancel.take() {
+            handle.abort();
+        }
+        app.slots.remove(pos);
     }
 }
 
@@ -791,6 +954,9 @@ fn handle_settings_key(app: &mut App, key: crossterm::event::KeyEvent, picker_tx
                 set_value(app, cur, val);
                 app.settings_editing = false;
                 app.settings_edit_buf.clear();
+                // Auto-save after confirming a text edit.
+                let _ = app.settings.save();
+                app.status_msg = Some(("  Settings saved".to_string(), std::time::Instant::now()));
             }
             KeyCode::Backspace => {
                 app.settings_edit_buf.pop();
@@ -817,11 +983,13 @@ fn handle_settings_key(app: &mut App, key: crossterm::event::KeyEvent, picker_tx
         KeyCode::Left => {
             if item.kind == ItemKind::Cycle {
                 cycle_value(app, cur, -1);
+                let _ = app.settings.save();
             }
         }
         KeyCode::Right => {
             if item.kind == ItemKind::Cycle {
                 cycle_value(app, cur, 1);
+                let _ = app.settings.save();
             }
         }
         KeyCode::Enter => {
@@ -831,6 +999,7 @@ fn handle_settings_key(app: &mut App, key: crossterm::event::KeyEvent, picker_tx
             } else {
                 // Cycle on Enter too
                 cycle_value(app, cur, 1);
+                let _ = app.settings.save();
             }
         }
         // [o] — browse for file (text fields that are paths)
@@ -841,10 +1010,12 @@ fn handle_settings_key(app: &mut App, key: crossterm::event::KeyEvent, picker_tx
                 open_file_picker(tx).await;
             });
         }
-        // [s] — save settings
+        // [s] — explicit save (still works; also shows confirmation)
         KeyCode::Char('s') => {
             if let Err(e) = app.settings.save() {
                 app.status_msg = Some((format!("✖  Settings save failed: {}", e), std::time::Instant::now()));
+            } else {
+                app.status_msg = Some(("  Settings saved".to_string(), std::time::Instant::now()));
             }
         }
         // [r] — reset to defaults (confirm not needed; user can [s] to persist or quit)
@@ -894,8 +1065,7 @@ fn normalize_url(url: &str) -> String {
     }
 
     // youtu.be/ID?... → expand to youtube.com/watch?v=ID so yt-dlp never has to
-    // follow the HTTP redirect (which YouTube appends &feature=youtu.be to, breaking
-    // some yt-dlp extractor versions with "Unsupported URL").
+    // follow the HTTP redirect.
     if let Some(path_and_query) = url
         .strip_prefix("https://youtu.be/")
         .or_else(|| url.strip_prefix("http://youtu.be/"))
@@ -1008,6 +1178,8 @@ fn handle_click(app: &mut App, target: app::ClickTarget, dl_tx: mpsc::Sender<(us
         }
         ClickTarget::LogoClick => {
             app.logo_scheme = app.logo_scheme.next();
+            app.settings.logo_scheme = app.logo_scheme;
+            let _ = app.settings.save();
             app.logo_burst = 100;
         }
         ClickTarget::HistoryOpenPopup(idx) => {
@@ -1054,7 +1226,10 @@ fn confirm_preview_download(app: &mut App, dl_tx: mpsc::Sender<(usize, SlotEvent
     if let Some(slot) = app.slot_mut(id) {
         slot.task_spawned = true;
     }
-    spawn_download(id, url, fmt, s, dl_tx);
+    let handle = spawn_download(id, url, fmt, s, dl_tx);
+    if let Some(slot) = app.slot_mut(id) {
+        slot.cancel = Some(handle);
+    }
 
     app.preview_state = PreviewState::Hidden;
     app.preview_thumbnail = None;

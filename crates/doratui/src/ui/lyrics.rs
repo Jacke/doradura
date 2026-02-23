@@ -7,7 +7,6 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::app::App;
-use crate::theme;
 
 const SPINNER: &[&str] = &[
     "\u{28fe}", "\u{28fd}", "\u{28fb}", "\u{287f}", "\u{28bf}", "\u{289f}", "\u{28af}", "\u{28f7}",
@@ -26,7 +25,7 @@ pub fn render_lyrics(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_search_bar(f: &mut Frame, area: Rect, app: &App) {
     // Blinking cursor
-    let cursor = if app.spinner_frame % 60 < 30 { "│" } else { " " };
+    let cursor = if app.blink_on { "│" } else { " " };
 
     let prompt = format!(" 🎵 Search ❯ {}{}   [Enter to search]", app.lyrics_query, cursor);
 
@@ -36,9 +35,9 @@ fn render_search_bar(f: &mut Frame, area: Rect, app: &App) {
                 .title(" Lyrics Search ")
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(theme::LAVENDER)),
+                .border_style(Style::default().fg(app.theme.lavender)),
         )
-        .style(Style::default().fg(theme::TEXT));
+        .style(Style::default().fg(app.theme.text));
 
     f.render_widget(bar, area);
 }
@@ -53,14 +52,14 @@ fn render_lyrics_content(f: &mut Frame, area: Rect, app: &App) {
         .title(content_title)
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::SURFACE0))
-        .style(Style::default().bg(theme::BASE));
+        .border_style(Style::default().fg(app.theme.surface0))
+        .style(Style::default().bg(app.theme.base));
 
     if app.lyrics_loading {
         let spinner = SPINNER[app.spinner_frame as usize % SPINNER.len()];
         let loading = Paragraph::new(format!("\n  {} Searching for lyrics…", spinner))
             .block(block)
-            .style(Style::default().fg(theme::YELLOW));
+            .style(Style::default().fg(app.theme.yellow));
         f.render_widget(loading, area);
         return;
     }
@@ -77,12 +76,12 @@ fn render_lyrics_content(f: &mut Frame, area: Rect, app: &App) {
                 .title(format!(" {} — {}{}", result.artist, result.title, scroll_info))
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(theme::SURFACE0))
-                .style(Style::default().bg(theme::BASE));
+                .border_style(Style::default().fg(app.theme.surface0))
+                .style(Style::default().bg(app.theme.base));
 
             let p = Paragraph::new(result.lyrics.as_str())
                 .block(block)
-                .style(Style::default().fg(theme::TEXT))
+                .style(Style::default().fg(app.theme.text))
                 .wrap(Wrap { trim: false })
                 .scroll((app.lyrics_scroll, 0));
             f.render_widget(p, area);
@@ -94,12 +93,12 @@ fn render_lyrics_content(f: &mut Frame, area: Rect, app: &App) {
                     Line::from(""),
                     Line::from(Span::styled(
                         "  Type an artist + song title above, then press Enter.",
-                        Style::default().fg(theme::SUBTEXT),
+                        Style::default().fg(app.theme.subtext),
                     )),
                     Line::from(""),
                     Line::from(Span::styled(
                         "  Powered by LRCLIB",
-                        Style::default().fg(theme::SUBTEXT).add_modifier(Modifier::ITALIC),
+                        Style::default().fg(app.theme.subtext).add_modifier(Modifier::ITALIC),
                     )),
                 ]
             } else {
@@ -107,7 +106,7 @@ fn render_lyrics_content(f: &mut Frame, area: Rect, app: &App) {
                     Line::from(""),
                     Line::from(Span::styled(
                         "  No results found — try a different search.",
-                        Style::default().fg(theme::RED),
+                        Style::default().fg(app.theme.red),
                     )),
                 ]
             };

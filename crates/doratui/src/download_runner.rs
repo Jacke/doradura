@@ -37,16 +37,18 @@ pub enum SlotEvent {
 /// Spawn a background download for the given slot ID and return immediately.
 ///
 /// Progress events are sent on `tx` as `(slot_id, SlotEvent)`.
+/// Returns an [`AbortHandle`] that can be used to cancel the download task.
 pub fn spawn_download(
     slot_id: usize,
     url: String,
     format: DownloadFormat,
     settings: DoraSettings,
     tx: mpsc::Sender<(usize, SlotEvent)>,
-) {
+) -> tokio::task::AbortHandle {
     tokio::spawn(async move {
         run_download(slot_id, url, format, settings, tx).await;
-    });
+    })
+    .abort_handle()
 }
 
 // ── Internal implementation ───────────────────────────────────────────────────

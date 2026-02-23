@@ -4,12 +4,15 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::theme::{CatppuccinFlavour, LogoScheme};
+
 // ── Cycle-able option lists (shared with ui/settings.rs) ─────────────────────
 
 pub const AUDIO_BITRATES: &[&str] = &["320k", "256k", "192k", "128k"];
 pub const VIDEO_QUALITIES: &[&str] = &["1080p", "720p", "480p", "360p", "best"];
 pub const RATE_LIMITS: &[&str] = &["off", "2M", "5M", "10M"];
 pub const FORMATS: &[&str] = &["MP3", "MP4"];
+pub const THEME_FLAVOURS: &[&str] = &["Mocha", "Macchiato", "Frappe", "Latte"];
 
 /// All user-configurable settings for the dora TUI.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +44,14 @@ pub struct DoraSettings {
     pub default_mp3_bitrate: String,
     /// Default MP4 quality for conversions.
     pub default_mp4_quality: String,
+
+    // ── Theme ─────────────────────────────────────────────────────────────────
+    /// Active Catppuccin flavour; cycled in Settings → Appearance.
+    #[serde(default)]
+    pub theme_flavour: CatppuccinFlavour,
+    /// Active logo colour scheme; cycles on logo click.
+    #[serde(default)]
+    pub logo_scheme: LogoScheme,
 }
 
 impl Default for DoraSettings {
@@ -57,6 +68,8 @@ impl Default for DoraSettings {
             default_format: "MP3".to_string(),
             default_mp3_bitrate: "320k".to_string(),
             default_mp4_quality: "1080p".to_string(),
+            theme_flavour: CatppuccinFlavour::Mocha,
+            logo_scheme: LogoScheme::default(),
         }
     }
 }

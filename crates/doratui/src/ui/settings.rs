@@ -7,8 +7,8 @@ use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use ratatui::Frame;
 
 use crate::app::{App, ClickTarget};
-use crate::settings::{AUDIO_BITRATES, FORMATS, RATE_LIMITS, VIDEO_QUALITIES};
-use crate::theme;
+use crate::settings::{AUDIO_BITRATES, FORMATS, RATE_LIMITS, THEME_FLAVOURS, VIDEO_QUALITIES};
+use crate::theme::{palette, CatppuccinFlavour, ThemeColors};
 
 // ── Settings item descriptors ─────────────────────────────────────────────────
 
@@ -28,7 +28,7 @@ pub struct SettingsItem {
     pub choices: &'static [&'static str],
 }
 
-/// All 11 editable items (no section headers — those are rendered separately).
+/// All 12 editable items (no section headers — those are rendered separately).
 pub const ITEMS: &[SettingsItem] = &[
     // ── yt-dlp (indices 0-5) ──────────────────────────────────────────────
     SettingsItem {
@@ -88,12 +88,23 @@ pub const ITEMS: &[SettingsItem] = &[
         kind: ItemKind::Cycle,
         choices: VIDEO_QUALITIES,
     },
+    // ── Appearance (index 11) ─────────────────────────────────────────────
+    SettingsItem {
+        label: "Theme",
+        kind: ItemKind::Cycle,
+        choices: THEME_FLAVOURS,
+    },
 ];
 
 // ── Section layout ────────────────────────────────────────────────────────────
 
 /// (section_label, first_item_index, item_count)
-const SECTIONS: &[(&str, usize, usize)] = &[("yt-dlp", 0, 6), ("Instagram", 6, 2), ("Conversion", 8, 3)];
+const SECTIONS: &[(&str, usize, usize)] = &[
+    ("yt-dlp", 0, 6),
+    ("Instagram", 6, 2),
+    ("Conversion", 8, 3),
+    ("Appearance", 11, 1),
+];
 
 // ── Public renderer ───────────────────────────────────────────────────────────
 
@@ -102,8 +113,8 @@ pub fn render_settings(f: &mut Frame, area: Rect, app: &mut App) {
         .title(" ⚙  Settings ")
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::SURFACE0))
-        .style(Style::default().bg(theme::BASE));
+        .border_style(Style::default().fg(app.theme.surface0))
+        .style(Style::default().bg(app.theme.base));
 
     let inner = block.inner(area);
     f.render_widget(block, area);
@@ -115,7 +126,7 @@ pub fn render_settings(f: &mut Frame, area: Rect, app: &mut App) {
         .split(inner);
 
     render_items(f, rows[0], app);
-    render_hint_bar(f, rows[1]);
+    render_hint_bar(f, rows[1], &app.theme);
 }
 
 // ── Items list ────────────────────────────────────────────────────────────────
@@ -123,7 +134,7 @@ pub fn render_settings(f: &mut Frame, area: Rect, app: &mut App) {
 fn render_items(f: &mut Frame, area: Rect, app: &mut App) {
     let cursor = app.settings_cursor;
     let editing = app.settings_editing;
-    let blink = if app.spinner_frame % 60 < 30 { "│" } else { " " };
+    let blink = if app.blink_on { "│" } else { " " };
 
     let mut lines: Vec<Line> = vec![Line::from("")];
     // row_y tracks actual terminal y for each rendered line (for click map)
@@ -138,7 +149,7 @@ fn render_items(f: &mut Frame, area: Rect, app: &mut App) {
         // Section header line
         lines.push(Line::from(Span::styled(
             format!("  {}", section_label),
-            Style::default().fg(theme::LAVENDER).add_modifier(Modifier::BOLD),
+            Style::default().fg(app.theme.lavender).add_modifier(Modifier::BOLD),
         )));
         row_y += 1;
 
@@ -168,25 +179,25 @@ fn render_items(f: &mut Frame, area: Rect, app: &mut App) {
             // Selector arrow
             let arrow = if is_selected { "  ▶ " } else { "    " };
             let arrow_style = if is_selected {
-                Style::default().fg(theme::PEACH).add_modifier(Modifier::BOLD)
+                Style::default().fg(app.theme.peach).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(theme::SUBTEXT)
+                Style::default().fg(app.theme.subtext)
             };
 
             // Label style
             let label_style = if is_selected {
-                Style::default().fg(theme::TEXT).add_modifier(Modifier::BOLD)
+                Style::default().fg(app.theme.text).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(theme::TEXT)
+                Style::default().fg(app.theme.text)
             };
 
             // Value style
             let value_style = if is_selected && editing {
-                Style::default().fg(theme::YELLOW)
+                Style::default().fg(app.theme.yellow)
             } else if is_selected {
-                Style::default().fg(theme::LAVENDER).add_modifier(Modifier::BOLD)
+                Style::default().fg(app.theme.lavender).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(theme::SUBTEXT)
+                Style::default().fg(app.theme.subtext)
             };
 
             // Pad label to fixed width
@@ -232,9 +243,9 @@ fn render_items(f: &mut Frame, area: Rect, app: &mut App) {
     f.render_widget(Paragraph::new(lines), area);
 }
 
-fn render_hint_bar(f: &mut Frame, area: Rect) {
-    let k = |s: &'static str| Span::styled(s, Style::default().fg(theme::PEACH).add_modifier(Modifier::BOLD));
-    let d = |s: &'static str| Span::styled(s, Style::default().fg(theme::SUBTEXT));
+fn render_hint_bar(f: &mut Frame, area: Rect, theme: &ThemeColors) {
+    let k = |s: &'static str| Span::styled(s, Style::default().fg(theme.peach).add_modifier(Modifier::BOLD));
+    let d = |s: &'static str| Span::styled(s, Style::default().fg(theme.subtext));
     let sep = || Span::styled("  ", Style::default());
 
     let hints = Line::from(vec![
@@ -279,25 +290,31 @@ pub fn get_value(app: &App, idx: usize) -> String {
         8 => s.default_format.clone(),
         9 => s.default_mp3_bitrate.clone(),
         10 => s.default_mp4_quality.clone(),
+        11 => s.theme_flavour.label().to_string(),
         _ => String::new(),
     }
 }
 
 /// Set a string value for settings item `idx` into app.settings.
+/// For idx 11 (theme), also updates `app.theme` immediately.
 pub fn set_value(app: &mut App, idx: usize, value: String) {
-    let s = &mut app.settings;
     match idx {
-        0 => s.ytdlp_bin = value,
-        1 => s.output_folder = value,
-        2 => s.audio_bitrate = value,
-        3 => s.video_quality = value,
-        4 => s.rate_limit = value,
-        5 => s.ytdlp_cookies = value,
-        6 => s.instagram_cookies = value,
-        7 => s.instagram_doc_id = value,
-        8 => s.default_format = value,
-        9 => s.default_mp3_bitrate = value,
-        10 => s.default_mp4_quality = value,
+        0 => app.settings.ytdlp_bin = value,
+        1 => app.settings.output_folder = value,
+        2 => app.settings.audio_bitrate = value,
+        3 => app.settings.video_quality = value,
+        4 => app.settings.rate_limit = value,
+        5 => app.settings.ytdlp_cookies = value,
+        6 => app.settings.instagram_cookies = value,
+        7 => app.settings.instagram_doc_id = value,
+        8 => app.settings.default_format = value,
+        9 => app.settings.default_mp3_bitrate = value,
+        10 => app.settings.default_mp4_quality = value,
+        11 => {
+            let flavour = CatppuccinFlavour::from_label(&value);
+            app.settings.theme_flavour = flavour;
+            app.theme = palette(flavour);
+        }
         _ => {}
     }
 }

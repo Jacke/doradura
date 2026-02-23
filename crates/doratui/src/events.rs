@@ -10,6 +10,8 @@ pub enum InputEvent {
     Key(KeyEvent),
     /// A mouse event (click, scroll, etc.).
     Mouse(MouseEvent),
+    /// A bracketed paste event (multi-char string).
+    Paste(String),
     /// The poll timeout elapsed with no input.
     Tick,
     /// The user requested a clean exit (Ctrl+C).
@@ -27,6 +29,7 @@ pub fn next_event(tick_rate: Duration) -> std::io::Result<InputEvent> {
                 Ok(InputEvent::Key(key))
             }
             Event::Mouse(m) => Ok(InputEvent::Mouse(m)),
+            Event::Paste(s) => Ok(InputEvent::Paste(s)),
             _ => Ok(InputEvent::Tick),
         }
     } else {

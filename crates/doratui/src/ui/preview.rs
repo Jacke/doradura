@@ -7,7 +7,7 @@ use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap};
 use ratatui::Frame;
 
 use crate::app::{App, ClickTarget, DownloadFormat, PreviewState};
-use crate::theme;
+use crate::theme::ThemeColors;
 use crate::video_info::{fmt_count, fmt_duration, fmt_size, ThumbnailArt, VideoInfo, THUMB_H, THUMB_W};
 
 const SPINNER: &[&str] = &[
@@ -17,7 +17,6 @@ const SPINNER: &[&str] = &[
 // ── Public entry point ────────────────────────────────────────────────────────
 
 pub fn render_preview_popup(f: &mut Frame, area: Rect, app: &mut App) {
-    // Minimum viable size
     if area.width < 80 || area.height < 20 {
         return;
     }
@@ -32,13 +31,14 @@ pub fn render_preview_popup(f: &mut Frame, area: Rect, app: &mut App) {
         .title(" 🎬 Video Preview ")
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::LAVENDER))
-        .style(Style::default().bg(theme::BASE));
+        .border_style(Style::default().fg(app.theme.lavender))
+        .style(Style::default().bg(app.theme.base));
 
     let inner = block.inner(popup_area);
     f.render_widget(Clear, popup_area);
     f.render_widget(block, popup_area);
 
+    let theme = app.theme;
     match &app.preview_state {
         PreviewState::Hidden => {}
         PreviewState::Loading => render_loading(f, inner, app),
@@ -57,12 +57,13 @@ pub fn render_preview_popup(f: &mut Frame, area: Rect, app: &mut App) {
                 &video_url,
                 channel_url.as_deref(),
                 &mut cm,
+                &theme,
             );
             app.click_map = cm;
         }
         PreviewState::Failed(msg) => {
             let msg = msg.clone();
-            render_failed(f, inner, &msg);
+            render_failed(f, inner, &msg, &theme);
         }
     }
 }
@@ -75,10 +76,10 @@ fn render_loading(f: &mut Frame, area: Rect, app: &App) {
         Line::from(""),
         Line::from(""),
         Line::from(vec![
-            Span::styled(format!("  {}  ", spinner), Style::default().fg(theme::YELLOW)),
+            Span::styled(format!("  {}  ", spinner), Style::default().fg(app.theme.yellow)),
             Span::styled(
                 "Fetching video info…",
-                Style::default().fg(theme::TEXT).add_modifier(Modifier::BOLD),
+                Style::default().fg(app.theme.text).add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::from(""),
@@ -87,10 +88,10 @@ fn render_loading(f: &mut Frame, area: Rect, app: &App) {
                 "  {}",
                 truncate_url(&app.preview_url, area.width.saturating_sub(4) as usize)
             ),
-            Style::default().fg(theme::SUBTEXT),
+            Style::default().fg(app.theme.subtext),
         )),
         Line::from(""),
-        Line::from(Span::styled("  [Esc] Cancel", Style::default().fg(theme::SUBTEXT))),
+        Line::from(Span::styled("  [Esc] Cancel", Style::default().fg(app.theme.subtext))),
     ];
     f.render_widget(Paragraph::new(lines), area);
 }
@@ -107,16 +108,15 @@ fn render_ready(
     video_url: &str,
     channel_url: Option<&str>,
     click_map: &mut Vec<(Rect, ClickTarget)>,
+    theme: &ThemeColors,
 ) {
     let thumb_col_w = THUMB_W as u16 + 2;
 
-    // ── Horizontal split: thumbnail | right pane ──────────────────────────────
     let h_split = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Length(thumb_col_w), Constraint::Min(1)])
         .split(area);
 
-    // ── Right pane vertical split: metadata | gap | quality | hints ───────────
     let v_split = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -127,15 +127,15 @@ fn render_ready(
         ])
         .split(h_split[1]);
 
-    render_thumbnail(f, h_split[0], thumb);
-    render_metadata(f, v_split[0], info, video_url, channel_url, click_map);
+    render_thumbnail(f, h_split[0], thumb, theme);
+    render_metadata(f, v_split[0], info, video_url, channel_url, click_map, theme);
     render_quality_row(f, v_split[2], info, app, click_map);
     render_hint_bar(f, v_split[3], app, click_map);
 }
 
 // ── Thumbnail ─────────────────────────────────────────────────────────────────
 
-fn render_thumbnail(f: &mut Frame, area: Rect, thumb: Option<&ThumbnailArt>) {
+fn render_thumbnail(f: &mut Frame, area: Rect, thumb: Option<&ThumbnailArt>, theme: &ThemeColors) {
     let inner_x = area.x + 1;
     let avail_h = area.height as usize;
 
@@ -160,15 +160,13 @@ fn render_thumbnail(f: &mut Frame, area: Rect, thumb: Option<&ThumbnailArt>) {
             f.render_widget(Paragraph::new(vec![Line::from(spans)]), row_area);
         }
     } else {
-        // Stylized placeholder: dark panel with film-strip borders
         let w = area.width.saturating_sub(2) as usize;
         let content_h = avail_h.saturating_sub(2);
         let center_row = content_h / 2;
 
-        // Top border
         let border_line = "─".repeat(w);
         f.render_widget(
-            Paragraph::new(border_line.clone()).style(Style::default().fg(theme::SURFACE0)),
+            Paragraph::new(border_line.clone()).style(Style::default().fg(theme.surface0)),
             Rect::new(inner_x, area.y, area.width.saturating_sub(2), 1),
         );
 
@@ -180,9 +178,9 @@ fn render_thumbnail(f: &mut Frame, area: Rect, thumb: Option<&ThumbnailArt>) {
                 " ".repeat(w)
             };
             let style = if row == center_row {
-                Style::default().fg(theme::LAVENDER).bg(theme::SURFACE0)
+                Style::default().fg(theme.lavender).bg(theme.surface0)
             } else {
-                Style::default().bg(theme::SURFACE0)
+                Style::default().bg(theme.surface0)
             };
             f.render_widget(
                 Paragraph::new(content).style(style),
@@ -190,9 +188,8 @@ fn render_thumbnail(f: &mut Frame, area: Rect, thumb: Option<&ThumbnailArt>) {
             );
         }
 
-        // Bottom border
         f.render_widget(
-            Paragraph::new(border_line).style(Style::default().fg(theme::SURFACE0)),
+            Paragraph::new(border_line).style(Style::default().fg(theme.surface0)),
             Rect::new(
                 inner_x,
                 area.y + avail_h.saturating_sub(1) as u16,
@@ -213,28 +210,28 @@ fn render_metadata(
     video_url: &str,
     channel_url: Option<&str>,
     click_map: &mut Vec<(Rect, ClickTarget)>,
+    theme: &ThemeColors,
 ) {
     let col_w = area.width.saturating_sub(2) as usize;
 
     let label = |icon: &str, text: String| -> Line {
         Line::from(vec![
-            Span::styled(format!(" {icon}  "), Style::default().fg(theme::LAVENDER)),
-            Span::styled(text, Style::default().fg(theme::TEXT)),
+            Span::styled(format!(" {icon}  "), Style::default().fg(theme.lavender)),
+            Span::styled(text, Style::default().fg(theme.text)),
         ])
     };
 
-    // Title (may be long — truncate)
     let title_truncated = truncate_str(&info.title, col_w.saturating_sub(2));
     let separator = "─".repeat(title_truncated.chars().count().max(12));
 
     let mut lines: Vec<Line> = vec![
         Line::from(Span::styled(
             format!(" {}", title_truncated),
-            Style::default().fg(theme::LAVENDER).add_modifier(Modifier::BOLD),
+            Style::default().fg(theme.lavender).add_modifier(Modifier::BOLD),
         )),
         Line::from(Span::styled(
             format!(" {}", separator),
-            Style::default().fg(theme::SURFACE0),
+            Style::default().fg(theme.surface0),
         )),
         label("👤", info.uploader.clone()),
         label("⏱ ", fmt_duration(info.duration_secs)),
@@ -250,12 +247,10 @@ fn render_metadata(
         lines.push(label("💾", format!("~{}", fmt_size(s))));
     }
 
-    // Title line (row 0 of the metadata area) → open video in browser
     click_map.push((
         Rect::new(area.x, area.y, area.width, 1),
         ClickTarget::OpenInBrowser(video_url.to_string()),
     ));
-    // Uploader line (row 2, after title + separator) → open channel in browser
     if let Some(curl) = channel_url {
         click_map.push((
             Rect::new(area.x, area.y + 2, area.width, 1),
@@ -278,40 +273,35 @@ fn render_quality_row(
     let fmt = app.preview_format;
     let cursor = app.preview_quality_cursor;
 
-    // Format toggle label
     let fmt_label_text = format!(" Format: {} ", fmt.label());
     let fmt_label_w = fmt_label_text.chars().count() as u16;
     let fmt_span = Span::styled(
         fmt_label_text,
-        Style::default().fg(theme::PEACH).add_modifier(Modifier::BOLD),
+        Style::default().fg(app.theme.peach).add_modifier(Modifier::BOLD),
     );
 
-    // Register format toggle click area
     click_map.push((
         Rect::new(area.x, area.y, fmt_label_w, 1),
         ClickTarget::PreviewToggleFormat,
     ));
 
     if fmt == DownloadFormat::Mp3 {
-        // MP3: just show format, no quality selector
         f.render_widget(
             Paragraph::new(Line::from(vec![
                 fmt_span,
-                Span::styled("  [Tab] switch to MP4 →", Style::default().fg(theme::SUBTEXT)),
+                Span::styled("  [Tab] switch to MP4 →", Style::default().fg(app.theme.subtext)),
             ])),
             Rect::new(area.x, area.y, area.width, 1),
         );
         return;
     }
 
-    // MP4: quality selector
     let heights = quality_list(info);
 
-    // Register each quality label click area
     let quality_prefix_w = fmt_label_w + "  Quality: ".len() as u16;
     let mut x = area.x + quality_prefix_w;
     for (i, label) in heights.iter().enumerate() {
-        let w = (2 + label.len() + 1) as u16; // "▶ " + label + " "
+        let w = (2 + label.len() + 1) as u16;
         click_map.push((Rect::new(x, area.y, w, 1), ClickTarget::PreviewQuality(i)));
         x += w;
     }
@@ -321,9 +311,9 @@ fn render_quality_row(
         let is_sel = i == cursor;
         let (pre, suf) = if is_sel { ("▶ ", " ") } else { ("  ", " ") };
         let style = if is_sel {
-            Style::default().fg(theme::LAVENDER).add_modifier(Modifier::BOLD)
+            Style::default().fg(app.theme.lavender).add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(theme::SUBTEXT)
+            Style::default().fg(app.theme.subtext)
         };
         spans.push(Span::styled(format!("{}{}{}", pre, label, suf), style));
     }
@@ -347,10 +337,10 @@ fn render_hint_bar(f: &mut Frame, area: Rect, app: &App, click_map: &mut Vec<(Re
     let k = |s: &str| {
         Span::styled(
             s.to_string(),
-            Style::default().fg(theme::PEACH).add_modifier(Modifier::BOLD),
+            Style::default().fg(app.theme.peach).add_modifier(Modifier::BOLD),
         )
     };
-    let d = |s: &str| Span::styled(s.to_string(), Style::default().fg(theme::SUBTEXT));
+    let d = |s: &str| Span::styled(s.to_string(), Style::default().fg(app.theme.subtext));
     let sep = || Span::raw("  ");
 
     let mp4_hints = app.preview_format == DownloadFormat::Mp4;
@@ -369,16 +359,13 @@ fn render_hint_bar(f: &mut Frame, area: Rect, app: &App, click_map: &mut Vec<(Re
         d(" Cancel"),
     ]);
 
-    // Register the whole hint bar area as a Download click target
     click_map.push((area, ClickTarget::PreviewDownload));
-
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 // ── Failed state ──────────────────────────────────────────────────────────────
 
-fn render_failed(f: &mut Frame, area: Rect, msg: &str) {
-    // Split area: top for error text, bottom 2 lines for action hint
+fn render_failed(f: &mut Frame, area: Rect, msg: &str, theme: &ThemeColors) {
     let chunks = ratatui::layout::Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -390,19 +377,19 @@ fn render_failed(f: &mut Frame, area: Rect, msg: &str) {
     let k = |s: &str| {
         Span::styled(
             s.to_string(),
-            Style::default().fg(theme::PEACH).add_modifier(Modifier::BOLD),
+            Style::default().fg(theme.peach).add_modifier(Modifier::BOLD),
         )
     };
-    let d = |s: &str| Span::styled(s.to_string(), Style::default().fg(theme::SUBTEXT));
+    let d = |s: &str| Span::styled(s.to_string(), Style::default().fg(theme.subtext));
 
     let error_lines = vec![
         Line::from(""),
         Line::from(Span::styled(
             "  ✖  Could not fetch video info",
-            Style::default().fg(theme::RED).add_modifier(Modifier::BOLD),
+            Style::default().fg(theme.red).add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
-        Line::from(Span::styled(format!("  {}", msg), Style::default().fg(theme::SUBTEXT))),
+        Line::from(Span::styled(format!("  {}", msg), Style::default().fg(theme.subtext))),
     ];
 
     f.render_widget(Paragraph::new(error_lines).wrap(Wrap { trim: false }), chunks[0]);
@@ -425,7 +412,6 @@ fn truncate_str(s: &str, max: usize) -> String {
     let mut chars = s.chars();
     let out: String = chars.by_ref().take(max).collect();
     if chars.next().is_some() {
-        // Take max-1 chars (safe, char-boundary-aware), then append ellipsis
         let shorter: String = out.chars().take(max.saturating_sub(1)).collect();
         format!("{}…", shorter)
     } else {
