@@ -124,7 +124,7 @@ pub type DbConnection = PooledConnection<SqliteConnectionManager>;
 /// # Example
 ///
 /// ```no_run
-/// use doradura_core::storage::db;
+/// use doracore::storage::db;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let pool = db::create_pool("database.sqlite")?;
@@ -184,7 +184,7 @@ pub fn create_pool(database_path: &str) -> Result<DbPool, r2d2::Error> {
 /// # Example
 ///
 /// ```no_run
-/// use doradura_core::storage::db;
+/// use doracore::storage::db;
 ///
 /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
 /// let pool = db::create_pool("database.sqlite")?;

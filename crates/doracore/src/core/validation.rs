@@ -43,7 +43,7 @@ pub enum ValidationError {
 ///
 /// # Examples
 /// ```
-/// use doradura_core::core::validation::validate_youtube_url;
+/// use doracore::core::validation::validate_youtube_url;
 ///
 /// // Valid URLs
 /// assert!(validate_youtube_url("https://youtube.com/watch?v=dQw4w9WgXcQ").is_ok());
@@ -107,7 +107,7 @@ pub fn validate_youtube_url(url: &str) -> Result<(), ValidationError> {
 ///
 /// # Examples
 /// ```
-/// use doradura_core::core::validation::sanitize_path;
+/// use doracore::core::validation::sanitize_path;
 ///
 /// // Valid paths
 /// assert_eq!(sanitize_path("video.mp4").unwrap(), "video.mp4");
@@ -166,7 +166,7 @@ pub fn sanitize_path(path: &str) -> Result<String, ValidationError> {
 ///
 /// # Examples
 /// ```
-/// use doradura_core::core::validation::sanitize_filename;
+/// use doracore::core::validation::sanitize_filename;
 ///
 /// assert_eq!(sanitize_filename("video.mp4"), "video.mp4");
 /// assert_eq!(sanitize_filename("video:file.mp4"), "videofile.mp4");

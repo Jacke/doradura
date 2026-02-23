@@ -10,7 +10,7 @@ use thiserror::Error;
 /// # Example
 ///
 /// ```no_run
-/// use doradura_core::core::error::AppError;
+/// use doracore::core::error::AppError;
 ///
 /// fn handle_error(err: AppError) {
 ///     eprintln!("Error: {}", err);
@@ -118,8 +118,8 @@ impl AppError {
     /// # Example
     ///
     /// ```no_run
-    /// use doradura_core::core::error::AppError;
-    /// use doradura_core::download::error::DownloadError;
+    /// use doracore::core::error::AppError;
+    /// use doracore::download::error::DownloadError;
     ///
     /// fn process_download() -> Result<(), AppError> {
     ///     // ... download logic ...
@@ -158,7 +158,7 @@ impl AppError {
     /// # Example
     ///
     /// ```no_run
-    /// use doradura_core::core::error::AppError;
+    /// use doracore::core::error::AppError;
     ///
     /// fn process() -> Result<(), AppError> {
     ///     some_operation().map_err(|e| e.track_and_return())?;

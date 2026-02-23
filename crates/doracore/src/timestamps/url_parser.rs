@@ -26,7 +26,7 @@ static TIME_FORMAT_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^(?:(\d+)h)?(?
 ///
 /// ```
 /// use url::Url;
-/// use doradura_core::timestamps::parse_url_timestamp;
+/// use doracore::timestamps::parse_url_timestamp;
 ///
 /// let url = Url::parse("https://youtube.com/watch?v=abc&t=90").unwrap();
 /// assert_eq!(parse_url_timestamp(&url), Some(90));

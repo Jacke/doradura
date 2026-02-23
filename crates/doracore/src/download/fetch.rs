@@ -26,7 +26,7 @@ use select::predicate::Name;
 /// # Example
 ///
 /// ```no_run
-/// use doradura_core::download::fetch::fetch_song_metadata;
+/// use doracore::download::fetch::fetch_song_metadata;
 ///
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
 /// let (title, artist) = fetch_song_metadata("https://youtube.com/watch?v=...").await?;

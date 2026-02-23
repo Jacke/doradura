@@ -143,7 +143,7 @@ pub fn truncate_for_telegram(text: &str) -> String {
 /// # Example
 ///
 /// ```
-/// use doradura_core::core::utils::escape_filename;
+/// use doracore::core::utils::escape_filename;
 ///
 /// // Special characters -> underscore
 /// assert_eq!(escape_filename("song/name*.mp3"), "song_name.mp3");
@@ -169,7 +169,7 @@ pub fn truncate_for_telegram(text: &str) -> String {
 /// # Example
 ///
 /// ```
-/// use doradura_core::core::utils::sanitize_filename;
+/// use doracore::core::utils::sanitize_filename;
 ///
 /// assert_eq!(sanitize_filename("song name.mp3"), "song_name.mp3");
 /// assert_eq!(sanitize_filename("Artist - Title.mp4"), "Artist_-_Title.mp4");
@@ -333,7 +333,7 @@ pub fn escape_filename(filename: &str) -> String {
 /// # Example
 ///
 /// ```
-/// use doradura_core::core::utils::escape_markdown_v2;
+/// use doracore::core::utils::escape_markdown_v2;
 ///
 /// let escaped = escape_markdown_v2("Hello. World!");
 /// assert_eq!(escaped, "Hello\\. World\\!");
@@ -388,7 +388,7 @@ pub fn escape_markdown_v2(text: &str) -> String {
 /// # Example
 ///
 /// ```
-/// use doradura_core::core::utils::format_media_caption;
+/// use doracore::core::utils::format_media_caption;
 ///
 /// let caption = format_media_caption("Song Name", "Artist");
 /// // Result: *Artist* — _Song Name_
@@ -424,7 +424,7 @@ pub fn format_media_caption(title: &str, artist: &str) -> String {
 /// # Example
 ///
 /// ```
-/// use doradura_core::core::utils::pluralize_seconds;
+/// use doracore::core::utils::pluralize_seconds;
 ///
 /// assert_eq!(pluralize_seconds(1), "секунду");
 /// assert_eq!(pluralize_seconds(5), "секунд");

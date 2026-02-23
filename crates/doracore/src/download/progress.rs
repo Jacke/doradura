@@ -266,7 +266,7 @@ impl DownloadStatus {
     /// # Example
     ///
     /// ```
-    /// use doradura_core::download::progress::{DownloadStatus, ProgressBarStyle};
+    /// use doracore::download::progress::{DownloadStatus, ProgressBarStyle};
     ///
     /// let status = DownloadStatus::Downloading {
     ///     title: "Test Song".to_string(),
