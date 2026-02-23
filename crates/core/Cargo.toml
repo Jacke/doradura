@@ -1,0 +1,59 @@
+[package]
+name = "doradura-core"
+version = "0.13.0"
+edition = "2021"
+authors = ["Stan <iamjacke@gmail.com>"]
+description = "Core library for Doradura — download engine, storage, i18n, lyrics (no Telegram)"
+license = "MIT"
+
+[dependencies]
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rusqlite = { workspace = true }
+r2d2 = { workspace = true }
+r2d2_sqlite = { workspace = true }
+refinery = { workspace = true }
+reqwest = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+chrono = { workspace = true }
+url = { workspace = true }
+regex = { workspace = true }
+once_cell = { workspace = true }
+uuid = { workspace = true }
+rand = { workspace = true }
+base64 = { workspace = true }
+async-trait = { workspace = true }
+fluent-templates = { workspace = true }
+unic-langid = { workspace = true }
+tonic = { workspace = true }
+prost = { workspace = true }
+bytes = { workspace = true }
+http = { workspace = true }
+futures-util = { workspace = true }
+prometheus = { workspace = true }
+clap = { workspace = true }
+
+# Non-workspace deps
+simplelog = "0.11"
+pretty_env_logger = "0.5"
+shellexpand = "3.1.0"
+shell-escape = "0.1.5"
+select = "0.6.1"
+tokio-retry = "0.3"
+dotenvy = "0.15"
+urlencoding = "2.1"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["fs", "cors"] }
+axum = "0.7"
+
+[build-dependencies]
+tonic-build = "0.10"
+
+[dev-dependencies]
+tempfile = "3.8"

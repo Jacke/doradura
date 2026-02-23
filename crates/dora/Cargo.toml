@@ -1,0 +1,36 @@
+[package]
+name = "dora"
+version = "0.2.0"
+edition = "2021"
+authors = ["Stan <iamjacke@gmail.com>"]
+description = "dora — beautiful TUI for media downloading (yt-dlp + ffmpeg)"
+license = "MIT"
+
+[[bin]]
+name = "dora"
+path = "src/main.rs"
+
+[dependencies]
+doradura-core = { path = "../core" }
+
+tokio = { workspace = true }
+serde = { workspace = true }
+reqwest = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+log = { workspace = true }
+chrono = { workspace = true }
+url = { workspace = true }
+once_cell = { workspace = true }
+uuid = { workspace = true }
+rusqlite = { workspace = true }
+r2d2 = { workspace = true }
+r2d2_sqlite = { workspace = true }
+
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+
+# Non-workspace
+dotenvy = "0.15"
+simplelog = "0.12"
+image = { version = "0.25", default-features = false, features = ["jpeg", "webp"] }

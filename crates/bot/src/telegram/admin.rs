@@ -1,0 +1,3646 @@
+//! Admin functionality for the Telegram bot
+//!
+//! This module contains all admin-related commands and utilities:
+//! - User management (/users, /setplan, /admin)
+//! - Database backup operations
+//! - Markdown escaping utilities
+
+use crate::core::types::Plan;
+use crate::core::{BOT_API_RESPONSE_REGEX, BOT_API_START_SIMPLE_REGEX};
+// Re-export escape_markdown for backward compatibility (other modules import from here)
+pub use crate::core::escape_markdown;
+use crate::downsub::DownsubGateway;
+use crate::telegram::Bot;
+use anyhow::Result;
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use std::sync::{Arc, Mutex};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use teloxide::prelude::*;
+use teloxide::types::{
+    InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode, Seconds, TransactionPartner,
+    TransactionPartnerUserKind,
+};
+
+use crate::core::config;
+use crate::download::cookies;
+use crate::download::ytdlp;
+
+use crate::core::config::admin::{ADMIN_IDS, ADMIN_USER_ID};
+use crate::storage::backup::{create_backup, list_backups};
+use crate::storage::db::{get_all_users, get_connection, update_user_plan, update_user_plan_with_expiry, DbPool};
+use std::path::PathBuf;
+use std::time::Duration;
+use tokio::net::TcpStream;
+use tokio::process::Command as TokioCommand;
+use tokio::time::timeout;
+use url::Url;
+
+// truncate_for_telegram is imported from crate::core
+const DEFAULT_BOT_API_LOG_PATH: &str = "bot-api-data/logs/telegram-bot-api.log";
+const DEFAULT_BOT_API_LOG_TAIL_BYTES: u64 = 2 * 1024 * 1024;
+
+/// Maximum message length for Telegram (with margin) - for backward compatibility
+pub const MAX_MESSAGE_LENGTH: usize = crate::core::TELEGRAM_MESSAGE_LIMIT;
+
+/// Cooldown period for cookie refresh notifications (6 hours)
+const COOKIE_NOTIFICATION_COOLDOWN: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// Timestamp of the last cookie refresh notification sent to admin
+static LAST_COOKIE_NOTIFICATION: Lazy<Mutex<Option<Instant>>> = Lazy::new(|| Mutex::new(None));
+
+/// Truncate message for Telegram - for backward compatibility with original behavior
+fn truncate_message(text: &str) -> String {
+    if text.len() <= MAX_MESSAGE_LENGTH {
+        return text.to_string();
+    }
+    // Original behavior: trim to MAX_MESSAGE_LENGTH - 20 and add "\n... (truncated)"
+    let mut trimmed = text.chars().take(MAX_MESSAGE_LENGTH - 20).collect::<String>();
+    trimmed.push_str("\n... (truncated)");
+    trimmed
+}
+
+#[derive(Default)]
+struct QueryData {
+    start_time: Option<f64>,
+    size_bytes: Option<u64>,
+    method: Option<String>,
+    response_time: Option<f64>,
+}
+
+/// Check if user is admin
+pub fn is_admin(user_id: i64) -> bool {
+    if !ADMIN_IDS.is_empty() {
+        return ADMIN_IDS.contains(&user_id);
+    }
+    if *ADMIN_USER_ID != 0 {
+        return *ADMIN_USER_ID == user_id;
+    }
+    false
+}
+
+// escape_markdown is imported from crate::core (as alias for escape_markdown_v2)
+
+fn indent_lines(text: &str, indent: &str) -> String {
+    text.lines()
+        .map(|line| format!("{}{}", indent, line))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+async fn get_ytdlp_version() -> Option<String> {
+    let ytdl_bin = &*config::YTDL_BIN;
+    let output = TokioCommand::new(ytdl_bin).arg("--version").output().await.ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if version.is_empty() {
+        None
+    } else {
+        Some(version)
+    }
+}
+
+/// Check WARP SOCKS5 proxy connectivity
+async fn check_warp_status() -> (bool, String, Option<String>) {
+    let warp_proxy = match &*crate::core::config::proxy::WARP_PROXY {
+        Some(url) => url.clone(),
+        None => return (false, "Not configured".to_string(), None),
+    };
+
+    // Parse proxy URL to get host:port
+    let url = match Url::parse(&warp_proxy) {
+        Ok(u) => u,
+        Err(_) => return (false, "Invalid URL".to_string(), Some(warp_proxy)),
+    };
+
+    let host = url.host_str().unwrap_or("127.0.0.1");
+    let port = url.port().unwrap_or(1080);
+    let addr = format!("{}:{}", host, port);
+
+    match timeout(Duration::from_secs(3), TcpStream::connect(&addr)).await {
+        Ok(Ok(_)) => (true, "Connected".to_string(), Some(warp_proxy)),
+        Ok(Err(e)) => (false, format!("Error: {}", e), Some(warp_proxy)),
+        Err(_) => (false, "Timeout".to_string(), Some(warp_proxy)),
+    }
+}
+
+/// Check PO Token server (bgutil) on port 4416
+async fn check_pot_server_status() -> (bool, String) {
+    let client = match reqwest::Client::builder().timeout(Duration::from_secs(3)).build() {
+        Ok(c) => c,
+        Err(_) => return (false, "Client error".to_string()),
+    };
+
+    match client.get("http://127.0.0.1:4416").send().await {
+        Ok(resp) => {
+            // 404 is OK - server is running but no route at /
+            if resp.status().is_success() || resp.status().as_u16() == 404 {
+                (true, "Running".to_string())
+            } else {
+                (false, format!("HTTP {}", resp.status()))
+            }
+        }
+        Err(e) => {
+            if e.is_connect() {
+                (false, "Not running".to_string())
+            } else {
+                (false, format!("{}", e))
+            }
+        }
+    }
+}
+
+/// Check YouTube cookies file and required cookies presence
+async fn check_cookies_status() -> (bool, String, Vec<(&'static str, bool)>) {
+    const REQUIRED_COOKIES: &[&str] = &["APISID", "SAPISID", "HSID", "SID", "SSID"];
+
+    let cookies_path = match crate::core::config::YTDL_COOKIES_FILE.as_ref() {
+        Some(path) => path,
+        None => return (false, "Path not configured".to_string(), vec![]),
+    };
+
+    let path = std::path::Path::new(cookies_path);
+    if !path.exists() {
+        return (false, "File not found".to_string(), vec![]);
+    }
+
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return (false, "Read error".to_string(), vec![]),
+    };
+
+    let mut found_cookies = Vec::new();
+    for &cookie_name in REQUIRED_COOKIES {
+        let found = content
+            .lines()
+            .any(|line| !line.starts_with('#') && line.contains(cookie_name));
+        found_cookies.push((cookie_name, found));
+    }
+
+    let all_found = found_cookies.iter().all(|(_, found)| *found);
+    let status = if all_found { "Found" } else { "Incomplete" };
+
+    (all_found, status.to_string(), found_cookies)
+}
+
+/// Handles the /version command (admin only)
+///
+/// Shows system diagnostics: yt-dlp version, WARP proxy status, PO Token server, and cookies.
+pub async fn handle_version_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> Result<()> {
+    log::info!(
+        "📦 /version command received from user_id={}, chat_id={}",
+        user_id,
+        chat_id
+    );
+
+    if !is_admin(user_id) {
+        log::warn!("❌ Non-admin user {} attempted to use /version", user_id);
+        bot.send_message(chat_id, "❌ This command is only available to administrators.")
+            .await?;
+        return Ok(());
+    }
+
+    // Collect all statuses in parallel
+    let (ytdlp_version, warp_status, pot_status, cookies_status) = tokio::join!(
+        get_ytdlp_version(),
+        check_warp_status(),
+        check_pot_server_status(),
+        check_cookies_status()
+    );
+
+    let ytdlp_ver = ytdlp_version.unwrap_or_else(|| "unavailable".to_string());
+    let ytdl_bin = &*config::YTDL_BIN;
+
+    let (warp_ok, warp_msg, warp_url) = warp_status;
+    let (pot_ok, pot_msg) = pot_status;
+    let (cookies_ok, cookies_msg, cookies_list) = cookies_status;
+
+    // Format cookies list
+    let cookies_detail = cookies_list
+        .iter()
+        .map(|(name, found)| format!("{} {}", name, if *found { "✓" } else { "✗" }))
+        .collect::<Vec<_>>()
+        .join("  ");
+
+    let cookies_path = crate::core::config::YTDL_COOKIES_FILE
+        .as_ref()
+        .map(|s| s.as_str())
+        .unwrap_or("not set");
+
+    let text = format!(
+        "📦 *Version and System Status*\n\n\
+        🔧 *yt\\-dlp*\n\
+        ├ Version: `{}`\n\
+        └ Binary: `{}`\n\n\
+        🌐 *WARP Proxy*\n\
+        ├ Status: {} {}\n\
+        └ Address: `{}`\n\n\
+        🎫 *PO Token Server*\n\
+        ├ Status: {} {}\n\
+        └ Port: `4416`\n\n\
+        🍪 *YouTube Cookies*\n\
+        ├ Status: {} {}\n\
+        ├ File: `{}`\n\
+        └ {}",
+        escape_markdown(&ytdlp_ver),
+        escape_markdown(ytdl_bin),
+        if warp_ok { "✅" } else { "❌" },
+        escape_markdown(&warp_msg),
+        escape_markdown(warp_url.as_deref().unwrap_or("not set")),
+        if pot_ok { "✅" } else { "❌" },
+        escape_markdown(&pot_msg),
+        if cookies_ok { "✅" } else { "❌" },
+        escape_markdown(&cookies_msg),
+        escape_markdown(cookies_path),
+        escape_markdown(&cookies_detail)
+    );
+
+    let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
+        "🔄 Update yt-dlp".to_string(),
+        "admin:update_ytdlp".to_string(),
+    )]]);
+
+    bot.send_message(chat_id, text)
+        .parse_mode(ParseMode::MarkdownV2)
+        .reply_markup(keyboard)
+        .await?;
+
+    Ok(())
+}
+
+/// Handles the callback for updating yt-dlp from /version command
+pub async fn handle_update_ytdlp_callback(bot: &Bot, chat_id: ChatId, message_id: MessageId) -> Result<()> {
+    let before = get_ytdlp_version().await.unwrap_or_else(|| "unknown".to_string());
+
+    // Update message to show progress
+    bot.edit_message_text(chat_id, message_id, "⏳ Updating yt-dlp...")
+        .await?;
+
+    match ytdlp::force_update_ytdlp().await {
+        Ok(_) => {
+            let after = get_ytdlp_version().await.unwrap_or_else(|| "unknown".to_string());
+            let (status, emoji) = if before == after {
+                ("yt\\-dlp is already up to date", "✅")
+            } else {
+                ("yt\\-dlp updated", "🎉")
+            };
+            let text = format!(
+                "{} *{}*\n\n\
+                Version before: `{}`\n\
+                Version after: `{}`",
+                emoji,
+                status,
+                escape_markdown(&before),
+                escape_markdown(&after)
+            );
+
+            // Add button to check again
+            let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
+                "🔄 Check again".to_string(),
+                "admin:check_ytdlp_version".to_string(),
+            )]]);
+
+            bot.edit_message_text(chat_id, message_id, text)
+                .parse_mode(ParseMode::MarkdownV2)
+                .reply_markup(keyboard)
+                .await?;
+        }
+        Err(e) => {
+            let text = format!(
+                "❌ *Failed to update yt\\-dlp*\n\n\
+                Error: `{}`",
+                escape_markdown(&e.to_string())
+            );
+            bot.edit_message_text(chat_id, message_id, text)
+                .parse_mode(ParseMode::MarkdownV2)
+                .await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Handles the callback for checking yt-dlp version
+pub async fn handle_check_ytdlp_version_callback(bot: &Bot, chat_id: ChatId, message_id: MessageId) -> Result<()> {
+    let version = get_ytdlp_version()
+        .await
+        .unwrap_or_else(|| "failed to retrieve".to_string());
+
+    let ytdl_bin = &*config::YTDL_BIN;
+
+    let text = format!(
+        "📦 *yt\\-dlp version*\n\n\
+        Version: `{}`\n\
+        Binary: `{}`",
+        escape_markdown(&version),
+        escape_markdown(ytdl_bin)
+    );
+
+    let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
+        "🔄 Update yt-dlp".to_string(),
+        "admin:update_ytdlp".to_string(),
+    )]]);
+
+    bot.edit_message_text(chat_id, message_id, text)
+        .parse_mode(ParseMode::MarkdownV2)
+        .reply_markup(keyboard)
+        .await?;
+
+    Ok(())
+}
+
+/// Handles the admin:test_cookies callback - tests cookies with yt-dlp
+pub async fn handle_test_cookies_callback(bot: &Bot, chat_id: ChatId, message_id: MessageId) -> Result<()> {
+    // Update message to show testing in progress
+    bot.edit_message_text(chat_id, message_id, "⏳ Testing cookies with yt\\-dlp\\.\\.\\.")
+        .parse_mode(ParseMode::MarkdownV2)
+        .await?;
+
+    // Run validation
+    let result = cookies::validate_cookies().await;
+
+    let text = match result {
+        Ok(()) => "✅ *Cookies are working\\!*\n\n\
+            Download test passed successfully\\.\n\
+            Cookies are valid and can be used for downloading\\."
+            .to_string(),
+        Err(reason) => {
+            format!(
+                "❌ *Cookies are not working*\n\n\
+                *Error:* {}\n\n\
+                *Possible reasons:*\n\
+                • YouTube blocked the IP address\n\
+                • Cookies expired or were rotated\n\
+                • Account requires confirmation\n\n\
+                Use /update\\_cookies to upload new ones\\.",
+                escape_markdown(&reason)
+            )
+        }
+    };
+
+    bot.edit_message_text(chat_id, message_id, text)
+        .parse_mode(ParseMode::MarkdownV2)
+        .await?;
+
+    Ok(())
+}
+
+fn format_subscription_period_for_log(period: &Seconds) -> String {
+    let seconds = period.seconds();
+    let days = seconds as f64 / 86_400.0;
+    let months = days / 30.0;
+    format!("{seconds} seconds (~{days:.2} days, ~{months:.2} months)")
+}
+
+fn read_log_tail(path: &PathBuf, max_bytes: u64) -> Result<String, std::io::Error> {
+    let mut file = File::open(path)?;
+    let len = file.metadata()?.len();
+    if len > max_bytes {
+        file.seek(SeekFrom::End(-(max_bytes as i64)))?;
+    } else {
+        file.seek(SeekFrom::Start(0))?;
+    }
+
+    let mut buf = String::new();
+    file.read_to_string(&mut buf)?;
+    Ok(buf)
+}
+
+// is_local_bot_api is now in crate::core::config::bot_api::is_local_url
+
+struct BotApiUploadStat {
+    method: String,
+    size_bytes: u64,
+    duration_secs: f64,
+    response_time: f64,
+}
+
+struct BotApiUploadPending {
+    method: String,
+    size_bytes: u64,
+    start_time: f64,
+}
+
+/// Handle /botapi_speed command - show upload speed stats from local Bot API logs (admin only)
+pub async fn handle_botapi_speed_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> Result<()> {
+    if !is_admin(user_id) {
+        bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
+            .await?;
+        return Ok(());
+    }
+
+    let bot_api_url = match std::env::var("BOT_API_URL") {
+        Ok(url) => url,
+        Err(_) => {
+            bot.send_message(chat_id, "⚠️ BOT_API_URL is not set. Local Bot API is not in use.")
+                .await?;
+            return Ok(());
+        }
+    };
+
+    if !config::bot_api::is_local_url(&bot_api_url) {
+        bot.send_message(chat_id, "⚠️ Using the official Bot API. Local logs are not available.")
+            .await?;
+        return Ok(());
+    }
+
+    let log_path = std::env::var("BOT_API_LOG_PATH").unwrap_or_else(|_| DEFAULT_BOT_API_LOG_PATH.to_string());
+    let log_path = PathBuf::from(log_path);
+
+    let tail_bytes = std::env::var("BOT_API_LOG_TAIL_BYTES")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_BOT_API_LOG_TAIL_BYTES);
+
+    let content = match read_log_tail(&log_path, tail_bytes) {
+        Ok(data) => data,
+        Err(e) => {
+            bot.send_message(
+                chat_id,
+                format!("❌ Failed to read Bot API log: {} ({})", log_path.display(), e),
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    // Use pre-compiled lazy regexes from crate::core
+    let start_re = &*BOT_API_START_SIMPLE_REGEX;
+    let response_re = &*BOT_API_RESPONSE_REGEX;
+
+    let mut queries: HashMap<String, QueryData> = HashMap::new();
+
+    for line in content.lines() {
+        if let Some(caps) = start_re.captures(line) {
+            let time = caps.get(1).and_then(|v| v.as_str().parse::<f64>().ok());
+            let query_id = caps.get(2).map(|v| v.as_str().to_string());
+            let method = caps.get(3).map(|v| v.as_str().to_string());
+            let size = caps.get(4).and_then(|v| v.as_str().parse::<u64>().ok());
+
+            if let (Some(time), Some(query_id), Some(method), Some(size)) = (time, query_id, method, size) {
+                let entry = queries.entry(query_id).or_default();
+                entry.start_time = Some(time);
+                entry.size_bytes = Some(size);
+                entry.method = Some(method);
+            }
+        }
+
+        if let Some(caps) = response_re.captures(line) {
+            let time = caps.get(1).and_then(|v| v.as_str().parse::<f64>().ok());
+            let query_id = caps.get(2).map(|v| v.as_str().to_string());
+
+            if let (Some(time), Some(query_id)) = (time, query_id) {
+                let entry = queries.entry(query_id).or_default();
+                entry.response_time = Some(time);
+            }
+        }
+    }
+
+    let mut completed = Vec::new();
+    let mut pending = Vec::new();
+    for (_id, entry) in queries {
+        match (entry.start_time, entry.size_bytes, entry.method, entry.response_time) {
+            (Some(start_time), Some(size_bytes), Some(method), Some(response_time)) => {
+                let duration = response_time - start_time;
+                if duration > 0.0 {
+                    completed.push(BotApiUploadStat {
+                        method,
+                        size_bytes,
+                        duration_secs: duration,
+                        response_time,
+                    });
+                }
+            }
+            (Some(start_time), Some(size_bytes), Some(method), None) => {
+                pending.push(BotApiUploadPending {
+                    method,
+                    size_bytes,
+                    start_time,
+                });
+            }
+            _ => {}
+        }
+    }
+
+    completed.sort_by(|a, b| {
+        b.response_time
+            .partial_cmp(&a.response_time)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    pending.sort_by(|a, b| {
+        b.start_time
+            .partial_cmp(&a.start_time)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    let mut text = String::new();
+    text.push_str("📡 *Bot API upload speed*");
+    text.push_str(&format!("\nURL: `{}`", escape_markdown(&bot_api_url)));
+    text.push_str(&format!(
+        "\nLog: `{}`\n",
+        escape_markdown(&log_path.display().to_string())
+    ));
+
+    if completed.is_empty() && pending.is_empty() {
+        text.push_str("\nNo send* entries found in the latest log.");
+        bot.send_message(chat_id, text)
+            .parse_mode(ParseMode::MarkdownV2)
+            .await?;
+        return Ok(());
+    }
+
+    if !completed.is_empty() {
+        text.push_str("\n\n✅ *Latest completed:*");
+        for stat in completed.iter().take(5) {
+            let size_mb = stat.size_bytes as f64 / (1024.0 * 1024.0);
+            let speed_mbs = size_mb / stat.duration_secs;
+            text.push_str(&format!(
+                "\n• {}: {:.1} MB in {:.1} s \\(~{:.2} MB/s\\)",
+                escape_markdown(&stat.method),
+                size_mb,
+                stat.duration_secs,
+                speed_mbs
+            ));
+        }
+    }
+
+    if !pending.is_empty() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+        text.push_str("\n\n⏳ *In progress:*");
+        for stat in pending.iter().take(3) {
+            let size_mb = stat.size_bytes as f64 / (1024.0 * 1024.0);
+            let elapsed = (now - stat.start_time).max(0.0);
+            text.push_str(&format!(
+                "\n• {}: {:.1} MB, elapsed {:.0} s",
+                escape_markdown(&stat.method),
+                size_mb,
+                elapsed
+            ));
+        }
+    }
+
+    bot.send_message(chat_id, text)
+        .parse_mode(ParseMode::MarkdownV2)
+        .await?;
+    Ok(())
+}
+
+fn format_transaction_partner_for_log(partner: &TransactionPartner) -> String {
+    match partner {
+        TransactionPartner::User(user_partner) => {
+            let user = &user_partner.user;
+            let mut lines = Vec::new();
+            lines.push("Type: User payment".to_string());
+            lines.push(format!("User ID: {}", user.id.0));
+
+            let name = match (&user.first_name, &user.last_name) {
+                (first, Some(last)) => format!("{} {}", first, last),
+                (first, None) => first.to_string(),
+            };
+            lines.push(format!("Name: {}", escape_markdown(&name)));
+
+            if let Some(username) = &user.username {
+                lines.push(format!("Username: @{}", escape_markdown(username)));
+            }
+            if let Some(lang) = &user.language_code {
+                lines.push(format!("Language: {}", escape_markdown(lang)));
+            }
+
+            lines.push(format!("Is premium: {}", user.is_premium));
+            lines.push(format!("Is bot: {}", user.is_bot));
+
+            lines.push("Payment details:".to_string());
+            match &user_partner.kind {
+                TransactionPartnerUserKind::InvoicePayment(invoice) => {
+                    lines.push("  Payment type: Invoice payment".to_string());
+                    if let Some(payload) = &invoice.invoice_payload {
+                        lines.push(format!("  Invoice payload: {}", escape_markdown(payload)));
+                    }
+                    if let Some(period) = &invoice.subscription_period {
+                        lines.push(format!(
+                            "  Subscription period: {}",
+                            format_subscription_period_for_log(period)
+                        ));
+                    }
+                    if let Some(affiliate) = &invoice.affiliate {
+                        lines.push(format!("  Affiliate: {}", escape_markdown(&format!("{:?}", affiliate))));
+                    }
+                }
+                TransactionPartnerUserKind::PaidMediaPayment(media) => {
+                    lines.push("  Payment type: Paid media payment".to_string());
+                    lines.push(format!("  Media: {}", escape_markdown(&format!("{:?}", media))));
+                }
+                TransactionPartnerUserKind::GiftPurchase(gift) => {
+                    lines.push("  Payment type: Gift purchase".to_string());
+                    lines.push(format!("  Gift: {}", escape_markdown(&format!("{:?}", gift))));
+                }
+                TransactionPartnerUserKind::PremiumPurchase(premium) => {
+                    lines.push("  Payment type: Premium purchase".to_string());
+                    lines.push(format!("  Premium: {}", escape_markdown(&format!("{:?}", premium))));
+                }
+                TransactionPartnerUserKind::BusinessAccountTransfer => {
+                    lines.push("  Payment type: Business account transfer".to_string());
+                }
+            }
+
+            lines.join("\n")
+        }
+        TransactionPartner::Fragment(fragment) => {
+            format!(
+                "Type: Fragment withdrawal\nDetails: {}",
+                escape_markdown(&format!("{:?}", fragment))
+            )
+        }
+        TransactionPartner::TelegramAds => "Type: Telegram Ads payment".to_string(),
+        TransactionPartner::TelegramApi(_) => "Type: Telegram API service".to_string(),
+        TransactionPartner::Chat(chat) => {
+            format!(
+                "Type: Chat transaction\nDetails: {}",
+                escape_markdown(&format!("{:?}", chat))
+            )
+        }
+        TransactionPartner::AffiliateProgram(program) => {
+            format!(
+                "Type: Affiliate program\nDetails: {}",
+                escape_markdown(&format!("{:?}", program))
+            )
+        }
+        TransactionPartner::Other => "Type: Other".to_string(),
+    }
+}
+
+/// Handle /transactions command - list recent Telegram Stars transactions (admin only)
+pub async fn handle_transactions_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> Result<()> {
+    if !is_admin(user_id) {
+        bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
+            .await?;
+        return Ok(());
+    }
+
+    bot.send_message(chat_id, "⏳ Fetching transactions list...").await?;
+
+    match bot.get_star_transactions().await {
+        Ok(star_transactions) => {
+            if star_transactions.transactions.is_empty() {
+                bot.send_message(chat_id, "📭 No transactions found.").await?;
+                return Ok(());
+            }
+
+            let mut text = String::new();
+            text.push_str("💫 *Latest Stars Transactions*\n\n");
+
+            for (idx, tx) in star_transactions.transactions.iter().take(20).enumerate() {
+                let date = tx.date.format("%Y-%m-%d %H:%M:%S UTC");
+                let amount = tx.amount;
+                let id = tx.id.0.clone();
+
+                text.push_str(&format!(
+                    "{}\\. ID: `{}`\n• Date: {}\n• Amount: {}⭐\n",
+                    idx + 1,
+                    escape_markdown(&id),
+                    escape_markdown(&date.to_string()),
+                    amount
+                ));
+
+                if let Some(nanostar) = tx.nanostar_amount {
+                    text.push_str(&format!("• Nanostar amount: {}\n", nanostar));
+                }
+
+                if let Some(source) = &tx.source {
+                    let formatted = format_transaction_partner_for_log(source);
+                    text.push_str("• Source:\n");
+                    text.push_str(&indent_lines(&escape_markdown(&formatted), "  "));
+                    text.push('\n');
+                } else {
+                    text.push_str("• Source: —\n");
+                }
+                if let Some(receiver) = &tx.receiver {
+                    let formatted = format_transaction_partner_for_log(receiver);
+                    text.push_str("• Receiver:\n");
+                    text.push_str(&indent_lines(&escape_markdown(&formatted), "  "));
+                    text.push('\n');
+                } else {
+                    text.push_str("• Receiver: —\n");
+                }
+
+                text.push('\n');
+
+                if text.len() > 3500 {
+                    text.push('…');
+                    break;
+                }
+            }
+
+            bot.send_message(chat_id, text)
+                .parse_mode(ParseMode::MarkdownV2)
+                .await?;
+        }
+        Err(e) => {
+            log::error!("❌ Failed to fetch star transactions: {:?}", e);
+            bot.send_message(chat_id, format!("❌ Failed to fetch transactions: {:?}", e))
+                .await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle /backup command - create database backup
+///
+/// # Arguments
+/// * `bot` - Bot instance
+/// * `chat_id` - Chat ID where to send response
+/// * `user_id` - Telegram user ID of the requester
+pub async fn handle_backup_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> Result<()> {
+    if !is_admin(user_id) {
+        bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
+            .await?;
+        return Ok(());
+    }
+
+    match create_backup(&config::DATABASE_PATH) {
+        Ok(backup_path) => {
+            let backups = list_backups().unwrap_or_default();
+            bot.send_message(
+                chat_id,
+                format!(
+                    "✅ Backup created successfully!\n\n📁 Path: {}\n📊 Total backups: {}",
+                    backup_path.display(),
+                    backups.len()
+                ),
+            )
+            .await?;
+        }
+        Err(e) => {
+            bot.send_message(chat_id, format!("❌ Error creating backup: {}", e))
+                .await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle /users command - show list of all users
+///
+/// # Arguments
+/// * `bot` - Bot instance
+/// * `chat_id` - Chat ID where to send response
+/// * `username` - Username of the requester (for logs)
+/// * `user_id` - Telegram user ID of the requester
+/// * `db_pool` - Database connection pool
+pub async fn handle_users_command(
+    bot: &Bot,
+    chat_id: ChatId,
+    username: Option<&str>,
+    user_id: i64,
+    db_pool: Arc<DbPool>,
+) -> Result<()> {
+    log::debug!("Users command: username={:?}, is_admin={}", username, is_admin(user_id));
+
+    if !is_admin(user_id) {
+        log::warn!("User {:?} tried to access /users command without permission", username);
+        bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
+            .await?;
+        return Ok(());
+    }
+
+    let conn = get_connection(&db_pool)?;
+    let users = get_all_users(&conn)?;
+
+    log::debug!("Found {} users in database", users.len());
+
+    if users.is_empty() {
+        bot.send_message(chat_id, "👥 *User List*\n\nNo users in the database yet\\.")
+            .parse_mode(ParseMode::MarkdownV2)
+            .await?;
+        return Ok(());
+    }
+
+    // Calculate statistics
+    let free_count = users.iter().filter(|u| u.plan == Plan::Free).count();
+    let premium_count = users.iter().filter(|u| u.plan == Plan::Premium).count();
+    let vip_count = users.iter().filter(|u| u.plan == Plan::Vip).count();
+    let with_subscription = users.iter().filter(|u| u.telegram_charge_id.is_some()).count();
+    let recurring_count = users.iter().filter(|u| u.is_recurring).count();
+
+    let total_users = escape_markdown(&users.len().to_string());
+    let free_escaped = escape_markdown(&free_count.to_string());
+    let premium_escaped = escape_markdown(&premium_count.to_string());
+    let vip_escaped = escape_markdown(&vip_count.to_string());
+    let subs_escaped = escape_markdown(&with_subscription.to_string());
+    let recurring_escaped = escape_markdown(&recurring_count.to_string());
+
+    let mut text = format!(
+        "👥 *User List* \\(total\\: {}\\)\n\n\
+        📊 Statistics:\n\
+        • 🌟 Free: {}\n\
+        • ⭐ Premium: {}\n\
+        • 👑 VIP: {}\n\
+        • 💫 Active subscriptions: {}\n\
+        • 🔄 With auto-renewal: {}\n\n\
+        ━━━━━━━━━━━━━━━━━━━━\n\n",
+        total_users, free_escaped, premium_escaped, vip_escaped, subs_escaped, recurring_escaped
+    );
+
+    let mut users_added = 0;
+
+    for (idx, user) in users.iter().enumerate() {
+        let username_str = user
+            .username
+            .as_ref()
+            .map(|u| {
+                let escaped = escape_markdown(u);
+                format!("@{}", escaped)
+            })
+            .unwrap_or_else(|| {
+                let id_escaped = escape_markdown(&user.telegram_id.to_string());
+                format!("ID\\: {}", id_escaped)
+            });
+
+        let plan_emoji = user.plan.emoji();
+
+        // Show subscription status
+        let subscription_status = if user.telegram_charge_id.is_some() {
+            let recurring_icon = if user.is_recurring { "🔄" } else { "" };
+            let expires_info = if let Some(ref expires_at) = user.subscription_expires_at {
+                // Show only date without time for compactness
+                let date_part = expires_at.split(' ').next().unwrap_or(expires_at);
+                escape_markdown(date_part)
+            } else {
+                "unlimited".to_string()
+            };
+            format!(" 💫{} until {}", recurring_icon, expires_info)
+        } else if user.subscription_expires_at.is_some() {
+            // Subscription existed but expired
+            " ⏰".to_string()
+        } else {
+            "".to_string()
+        };
+
+        let plan_escaped = escape_markdown(user.plan.as_str());
+        let idx_escaped = escape_markdown(&(idx + 1).to_string());
+        let user_line = format!(
+            "{}\\. {} {} {}{}\n",
+            idx_escaped, username_str, plan_emoji, plan_escaped, subscription_status
+        );
+
+        // Check if adding this line would exceed the limit
+        if text.len() + user_line.len() > MAX_MESSAGE_LENGTH {
+            let remaining = escape_markdown(&(users.len() - users_added).to_string());
+            text.push_str(&format!("\n\\.\\.\\. and {} more users", remaining));
+            break;
+        }
+
+        text.push_str(&user_line);
+        users_added += 1;
+    }
+
+    log::debug!(
+        "Sending users list with {} users (text length: {})",
+        users_added,
+        text.len()
+    );
+
+    match bot.send_message(chat_id, &text).parse_mode(ParseMode::MarkdownV2).await {
+        Ok(_) => {
+            log::debug!("Successfully sent users list");
+        }
+        Err(e) => {
+            log::error!("Failed to send users list: {:?}", e);
+            // Try sending without Markdown if there was a formatting error
+            let text_plain = text.replace("\\", "").replace("*", "");
+            bot.send_message(
+                chat_id,
+                format!(
+                    "❌ Error sending the list. Trying without formatting:\n\n{}",
+                    text_plain
+                ),
+            )
+            .await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle /setplan command - change user's subscription plan
+///
+/// # Arguments
+/// * `bot` - Bot instance
+/// * `chat_id` - Chat ID where to send response
+/// * `user_id` - Telegram user ID of the requester
+/// * `message_text` - Full message text with command arguments
+/// * `db_pool` - Database connection pool
+pub async fn handle_setplan_command(
+    bot: &Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    message_text: &str,
+    db_pool: Arc<DbPool>,
+) -> Result<()> {
+    if !is_admin(user_id) {
+        bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
+            .await?;
+        return Ok(());
+    }
+
+    // Parse command: /setplan <user_id> <plan> [days]
+    let parts: Vec<&str> = message_text.split_whitespace().collect();
+    if parts.len() < 3 {
+        bot.send_message(
+            chat_id,
+            "❌ *Invalid command format*\n\n\
+            *Usage:*\n\
+            `/setplan <user_id> <plan> [days]`\n\n\
+            *Parameters:*\n\
+            • `user_id` \\- Telegram user ID\n\
+            • `plan` \\- Plan: free, premium or vip\n\
+            • `days` \\- \\(optional\\) Number of days the subscription is valid\n\n\
+            *Examples:*\n\
+            `/setplan 123456789 premium` \\- set unlimited premium\n\
+            `/setplan 123456789 premium 30` \\- premium for 30 days\n\
+            `/setplan 123456789 free` \\- reset to free plan",
+        )
+        .parse_mode(ParseMode::MarkdownV2)
+        .await?;
+        return Ok(());
+    }
+
+    let user_id = match parts[1].parse::<i64>() {
+        Ok(id) => id,
+        Err(_) => {
+            bot.send_message(chat_id, "❌ Invalid user_id format. Use a numeric ID.")
+                .await?;
+            return Ok(());
+        }
+    };
+
+    let plan = parts[2];
+    if !["free", "premium", "vip"].contains(&plan) {
+        bot.send_message(chat_id, "❌ Invalid plan. Use: free, premium or vip")
+            .await?;
+        return Ok(());
+    }
+
+    // Parse optional days parameter
+    let days = if parts.len() >= 4 {
+        match parts[3].parse::<i32>() {
+            Ok(d) if d > 0 => Some(d),
+            Ok(_) => {
+                bot.send_message(chat_id, "❌ Number of days must be a positive integer")
+                    .await?;
+                return Ok(());
+            }
+            Err(_) => {
+                bot.send_message(chat_id, "❌ Invalid number of days format. Use a number.")
+                    .await?;
+                return Ok(());
+            }
+        }
+    } else {
+        None
+    };
+
+    let conn = get_connection(&db_pool)?;
+
+    // Update plan with optional expiry date
+    if let Some(days_count) = days {
+        update_user_plan_with_expiry(&conn, user_id, plan, Some(days_count))?;
+    } else {
+        // For free plan, clear expiry; for paid plans without days, set as unlimited
+        if plan == "free" {
+            update_user_plan_with_expiry(&conn, user_id, plan, None)?;
+        } else {
+            update_user_plan(&conn, user_id, plan)?;
+        }
+    }
+
+    let (plan_emoji, plan_name) = match plan {
+        "premium" => ("⭐", "Premium"),
+        "vip" => ("👑", "VIP"),
+        _ => ("🌟", "Free"),
+    };
+
+    // Prepare expiry info for messages
+    let expiry_info = if let Some(days_count) = days {
+        let expiry_date = chrono::Utc::now() + chrono::Duration::days(days_count as i64);
+        let formatted_date = expiry_date.format("%Y-%m-%d").to_string();
+        format!("\n📅 Valid until: {}", formatted_date)
+    } else if plan == "free" {
+        String::new()
+    } else {
+        "\n♾️ Unlimited subscription".to_string()
+    };
+
+    let expiry_info_escaped = expiry_info.replace("-", "\\-");
+
+    // Send message to admin
+    bot.send_message(
+        chat_id,
+        format!(
+            "✅ User {} plan changed to {} {}{}",
+            user_id, plan_emoji, plan, expiry_info
+        ),
+    )
+    .await?;
+
+    // Send notification to the user whose plan was changed
+    let user_chat_id = ChatId(user_id);
+    bot.send_message(
+        user_chat_id,
+        format!(
+            "💳 *Subscription Plan Change*\n\n\
+            Your plan has been changed by an administrator\\.\n\n\
+            *New plan:* {} {}{}\n\n\
+            Changes take effect immediately\\! 🎉",
+            plan_emoji, plan_name, expiry_info_escaped
+        ),
+    )
+    .parse_mode(ParseMode::MarkdownV2)
+    .await?;
+
+    Ok(())
+}
+
+/// Handle /admin command - show admin control panel
+///
+/// # Arguments
+/// * `bot` - Bot instance
+/// * `chat_id` - Chat ID where to send response
+/// * `user_id` - Telegram user ID of the requester
+/// * `db_pool` - Database connection pool
+pub async fn handle_admin_command(bot: &Bot, chat_id: ChatId, user_id: i64, db_pool: Arc<DbPool>) -> Result<()> {
+    if !is_admin(user_id) {
+        bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
+            .await?;
+        return Ok(());
+    }
+
+    let conn = get_connection(&db_pool)?;
+    let users = get_all_users(&conn)?;
+
+    // Create inline keyboard with users (2 per row)
+    let mut keyboard_rows = Vec::new();
+    let mut current_row = Vec::new();
+
+    for user in users.iter().take(20) {
+        // Show first 20 users
+        let username_display = user
+            .username
+            .as_ref()
+            .map(|u| format!("@{}", u))
+            .unwrap_or_else(|| format!("ID:{}", user.telegram_id));
+
+        let plan_emoji = user.plan.emoji();
+
+        let button_text = format!("{} {}", plan_emoji, username_display);
+        let callback_data = format!("admin:user:{}", user.telegram_id);
+
+        current_row.push(crate::telegram::cb(button_text, callback_data));
+
+        // Every 2 buttons create a new row
+        if current_row.len() == 2 {
+            keyboard_rows.push(current_row.clone());
+            current_row.clear();
+        }
+    }
+
+    // Add remaining buttons if any
+    if !current_row.is_empty() {
+        keyboard_rows.push(current_row);
+    }
+
+    let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
+
+    bot.send_message(
+        chat_id,
+        format!(
+            "🔧 *User Management Panel*\n\n\
+            Select a user to manage:\n\n\
+            Showing: {} of {}\n\n\
+            💡 To manage a specific user use:\n\
+            `/setplan <user_id> <plan>`",
+            users.len().min(20),
+            users.len()
+        ),
+    )
+    .parse_mode(ParseMode::MarkdownV2)
+    .reply_markup(keyboard)
+    .await?;
+
+    Ok(())
+}
+
+/// Handle /downsub_health command - check Downsub gRPC server health via gRPC
+pub async fn handle_downsub_health_command(
+    bot: &Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    downsub_gateway: Arc<DownsubGateway>,
+) -> Result<()> {
+    if !is_admin(user_id) {
+        bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
+            .await?;
+        return Ok(());
+    }
+
+    let response_text = match downsub_gateway.check_health().await {
+        Ok(result) => {
+            let mut text = format!(
+                "✅ Downsub health ok\nstatus: {}\nversion: {}",
+                result.status, result.version
+            );
+            if let Some(message) = result.message {
+                text.push_str("\nmessage: ");
+                text.push_str(&message);
+            }
+            if let Some(uptime) = result.uptime {
+                text.push_str("\nuptime: ");
+                text.push_str(&uptime);
+            }
+            text
+        }
+        Err(err) => format!("❌ Downsub health failed: {}", err),
+    };
+
+    bot.send_message(chat_id, truncate_message(&response_text)).await?;
+    Ok(())
+}
+
+/// Handle /charges command - view all payment charges
+///
+/// # Arguments
+/// * `bot` - Bot instance
+/// * `chat_id` - Chat ID where to send response
+/// * `user_id` - Telegram user ID of the requester
+/// * `db_pool` - Database pool
+/// * `args` - Optional arguments: "stats", "premium", "vip", or user_id
+pub async fn handle_charges_command(
+    bot: &Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    db_pool: std::sync::Arc<crate::storage::db::DbPool>,
+    args: &str,
+) -> Result<()> {
+    if !is_admin(user_id) {
+        bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
+            .await?;
+        return Ok(());
+    }
+
+    let conn = match crate::storage::db::get_connection(&db_pool) {
+        Ok(c) => c,
+        Err(e) => {
+            bot.send_message(chat_id, format!("❌ DB connection error: {}", e))
+                .await?;
+            return Ok(());
+        }
+    };
+
+    let args_trimmed = args.trim();
+
+    // Handle stats request
+    if args_trimmed == "stats" {
+        match crate::storage::db::get_charges_stats(&conn) {
+            Ok((total_charges, total_amount, premium_count, vip_count, recurring_count)) => {
+                let text = format!(
+                    "📊 *Payment Statistics*\n\n\
+                    💰 Total payments: {}\n\
+                    ⭐ Total amount: {} Stars\n\
+                    🌟 Premium subscriptions: {}\n\
+                    💎 VIP subscriptions: {}\n\
+                    🔄 Recurring: {}",
+                    total_charges, total_amount, premium_count, vip_count, recurring_count
+                );
+                bot.send_message(chat_id, text)
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .await?;
+            }
+            Err(e) => {
+                bot.send_message(chat_id, format!("❌ Error fetching statistics: {}", e))
+                    .await?;
+            }
+        }
+        return Ok(());
+    }
+
+    // Parse user_id if provided
+    let (plan_filter, user_filter) = if args_trimmed == "premium" {
+        (Some("premium"), None)
+    } else if args_trimmed == "vip" {
+        (Some("vip"), None)
+    } else if let Ok(user_id) = args_trimmed.parse::<i64>() {
+        (None, Some(user_id))
+    } else if args_trimmed.is_empty() {
+        (None, None)
+    } else {
+        bot.send_message(
+            chat_id,
+            "❌ Usage: /charges [stats|premium|vip|user_id]\n\n\
+            Examples:\n\
+            • /charges - all payments (last 20)\n\
+            • /charges stats - statistics\n\
+            • /charges premium - Premium only\n\
+            • /charges vip - VIP only\n\
+            • /charges 123456789 - user payments",
+        )
+        .await?;
+        return Ok(());
+    };
+
+    // Get charges
+    let charges = if let Some(user_id) = user_filter {
+        crate::storage::db::get_user_charges(&conn, user_id)
+    } else {
+        crate::storage::db::get_all_charges(&conn, plan_filter, Some(20), 0)
+    };
+
+    match charges {
+        Ok(charges) => {
+            if charges.is_empty() {
+                bot.send_message(chat_id, "📭 No payments found.").await?;
+                return Ok(());
+            }
+
+            let mut text = String::new();
+            text.push_str("💳 *Payments*\n\n");
+
+            for (idx, charge) in charges.iter().enumerate() {
+                let plan_emoji = if charge.plan == Plan::Premium { "⭐" } else { "💎" };
+                let recurring_mark = if charge.is_recurring { " 🔄" } else { "" };
+                let first_mark = if charge.is_first_recurring { " (first)" } else { "" };
+
+                text.push_str(&format!(
+                    "{}\\. {} *{}*{}{}\n\
+                    • User ID: `{}`\n\
+                    • Amount: {} {}\n\
+                    • Charge ID: `{}`\n\
+                    • Date: {}\n",
+                    idx + 1,
+                    plan_emoji,
+                    escape_markdown(&charge.plan.as_str().to_uppercase()),
+                    recurring_mark,
+                    first_mark,
+                    charge.user_id,
+                    charge.total_amount,
+                    escape_markdown(&charge.currency),
+                    escape_markdown(&charge.telegram_charge_id),
+                    escape_markdown(&charge.payment_date),
+                ));
+
+                if let Some(ref exp_date) = charge.subscription_expiration_date {
+                    text.push_str(&format!("• Expires: {}\n", escape_markdown(exp_date)));
+                }
+
+                text.push('\n');
+
+                // Split into multiple messages if too long
+                if text.len() > 3500 {
+                    bot.send_message(chat_id, text.clone())
+                        .parse_mode(ParseMode::MarkdownV2)
+                        .await?;
+                    text.clear();
+                    text.push_str("💳 *Payments \\(continued\\)*\n\n");
+                }
+            }
+
+            if !text.trim().is_empty() {
+                bot.send_message(chat_id, text)
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .await?;
+            }
+        }
+        Err(e) => {
+            bot.send_message(chat_id, format!("❌ Error fetching payments: {}", e))
+                .await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Downloads a file from Telegram by file_id and saves it locally
+///
+/// # Arguments
+/// * `bot` - Telegram bot instance
+/// * `file_id` - Telegram file_id to download
+/// * `destination_path` - Optional custom path to save the file. If None, saves to ./downloads/
+///
+/// # Returns
+/// * `Ok(PathBuf)` - Path to the downloaded file
+/// * `Err(anyhow::Error)` - If download fails
+///
+/// # Example
+/// ```ignore
+/// # use doradura::telegram::{Bot, download_file_from_telegram};
+/// # async fn run() -> anyhow::Result<()> {
+/// let teloxide_bot = teloxide::Bot::new("BOT_TOKEN");
+/// let bot = Bot::new(teloxide_bot);
+/// let path = download_file_from_telegram(&bot, "BQACAgIAAxkBAAIBCGXxxx...", None).await?;
+/// println!("File saved to: {:?}", path);
+/// # Ok(())
+/// # }
+/// ```
+pub async fn download_file_from_telegram(
+    bot: &Bot,
+    file_id: &str,
+    destination_path: Option<PathBuf>,
+) -> Result<PathBuf> {
+    log::info!("📥 Starting download for file_id: {}", file_id);
+
+    // Get file info from Telegram
+    use teloxide::types::FileId;
+    let file = bot.get_file(FileId(file_id.to_string())).await?;
+    log::info!(
+        "✅ File info retrieved: path = '{}', size = {} bytes",
+        file.path,
+        file.size
+    );
+    log::debug!("📋 Raw file.path from Bot API: {:?}", file.path);
+
+    // Determine destination path
+    let dest_path = if let Some(custom_path) = destination_path {
+        custom_path
+    } else {
+        // Create downloads directory if it doesn't exist
+        let downloads_dir = PathBuf::from("./downloads");
+        std::fs::create_dir_all(&downloads_dir)?;
+
+        // Generate filename from file_id or use original filename from Telegram path
+        // Telegram path format: "documents/file_123.pdf" or "photos/file_456.jpg"
+        let filename = PathBuf::from(&file.path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("file_{}.bin", &file_id[..20.min(file_id.len())]));
+
+        downloads_dir.join(filename)
+    };
+
+    log::info!("📂 Destination path: {:?}", dest_path);
+
+    let (bot_api_url, bot_api_is_local) = std::env::var("BOT_API_URL")
+        .ok()
+        .map(|u| {
+            let is_local = !u.contains("api.telegram.org");
+            (Some(u), is_local)
+        })
+        .unwrap_or((None, false));
+
+    let base_url_str = bot_api_url.as_deref().unwrap_or("https://api.telegram.org");
+
+    // For local Bot API with BOT_API_DATA_DIR, copy file directly from mounted volume
+    if bot_api_is_local {
+        if let Ok(data_dir) = std::env::var("BOT_API_DATA_DIR") {
+            log::info!("🔍 BOT_API_DATA_DIR: {}", data_dir);
+            log::info!("🔍 file.path from Bot API: {}", file.path);
+
+            // file.path can be:
+            // - Old format: /telegram-bot-api/8224275354:.../videos/file_1.mp4
+            // - New format: /data/8224275354:.../videos/file_1.mp4
+            // Try both prefixes
+            let prefixes = ["/data/", "/telegram-bot-api/"];
+            let mut matched_prefix = None;
+            let mut relative_path_str = String::new();
+
+            for prefix in &prefixes {
+                if let Some(rel_path) = file.path.strip_prefix(prefix) {
+                    matched_prefix = Some(*prefix);
+                    relative_path_str = rel_path.to_string();
+                    log::info!("✅ Matched prefix '{}', relative path: {}", prefix, rel_path);
+                    break;
+                }
+            }
+
+            if let Some(_prefix) = matched_prefix {
+                let source_path = std::path::Path::new(&data_dir).join(&relative_path_str);
+                log::info!("📂 Local Bot API: attempting direct file copy from {:?}", source_path);
+
+                let max_attempts = 6;
+                let mut last_size: Option<u64> = None;
+                let mut stable_count = 0;
+
+                for attempt in 1..=max_attempts {
+                    log::info!(
+                        "🔍 Checking source file (attempt {}/{}): {:?}",
+                        attempt,
+                        max_attempts,
+                        source_path
+                    );
+                    if let Ok(metadata) = tokio::fs::metadata(&source_path).await {
+                        let size = metadata.len();
+                        log::info!("📏 File size: {} bytes", size);
+                        if size > 0 {
+                            if Some(size) == last_size {
+                                stable_count += 1;
+                                log::info!("✅ File size stable (count={})", stable_count);
+                            } else {
+                                stable_count = 0;
+                                log::info!(
+                                    "⏳ File size changed: {} -> {} bytes (still writing...)",
+                                    last_size.unwrap_or(0),
+                                    size
+                                );
+                            }
+                            last_size = Some(size);
+
+                            if stable_count >= 1 {
+                                log::info!(
+                                    "✅ File exists locally and stable (size={} bytes), copying directly...",
+                                    size
+                                );
+                                // Ensure parent directory exists
+                                if let Some(parent) = dest_path.parent() {
+                                    log::info!("📁 Creating parent directory: {:?}", parent);
+                                    if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                                        log::error!("❌ Failed to create parent directory {:?}: {}", parent, e);
+                                        return Err(anyhow::anyhow!("Failed to create directory: {}", e));
+                                    }
+                                    log::info!("✅ Parent directory ready");
+                                }
+
+                                // Check source file permissions
+                                match tokio::fs::metadata(&source_path).await {
+                                    Ok(meta) => {
+                                        log::info!(
+                                            "📋 Source file permissions: readonly={}, len={}",
+                                            meta.permissions().readonly(),
+                                            meta.len()
+                                        );
+                                    }
+                                    Err(e) => {
+                                        log::error!("❌ Cannot read source file metadata: {}", e);
+                                    }
+                                }
+
+                                // Remove destination if it exists (might be from failed previous attempt)
+                                if dest_path.exists() {
+                                    log::warn!("⚠️ Destination file already exists, removing: {:?}", dest_path);
+                                    if let Err(e) = tokio::fs::remove_file(&dest_path).await {
+                                        log::error!("❌ Failed to remove existing destination: {}", e);
+                                    }
+                                }
+
+                                log::info!("📥 Copying {} -> {}", source_path.display(), dest_path.display());
+                                if let Err(e) = tokio::fs::copy(&source_path, &dest_path).await {
+                                    log::error!(
+                                        "❌ Copy failed: {} (source={:?}, dest={:?})",
+                                        e,
+                                        source_path,
+                                        dest_path
+                                    );
+                                    return Err(anyhow::anyhow!("Copy failed: {}", e));
+                                }
+                                log::info!("✅ File copied successfully to: {:?}", dest_path);
+                                log::info!(
+                                    "📊 Final file size: {} bytes ({:.2} MB)",
+                                    file.size,
+                                    file.size as f64 / (1024.0 * 1024.0)
+                                );
+                                return Ok(dest_path);
+                            }
+                        } else {
+                            log::warn!("⚠️ File exists but size is 0 bytes");
+                        }
+                    } else {
+                        log::warn!("⚠️ File not found yet at {:?}", source_path);
+                        // Try to check if parent directory exists and is accessible
+                        if let Some(parent) = source_path.parent() {
+                            match tokio::fs::metadata(parent).await {
+                                Ok(_) => log::info!("✅ Parent directory exists: {:?}", parent),
+                                Err(e) => log::error!("❌ Cannot access parent directory {:?}: {}", parent, e),
+                            }
+                        }
+                    }
+
+                    if attempt < max_attempts {
+                        log::info!(
+                            "⏳ Waiting for local file to finish writing (attempt {}/{})",
+                            attempt,
+                            max_attempts
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                    }
+                }
+
+                if let Some(size) = last_size {
+                    log::warn!(
+                        "⚠️ Local file not ready for copy after {} attempts (last size={} bytes)",
+                        max_attempts,
+                        size
+                    );
+                } else {
+                    log::warn!("⚠️ Local file not found at {:?}", source_path);
+                }
+            } else {
+                log::warn!(
+                    "⚠️ File path doesn't start with any expected prefix (['/data/', '/telegram-bot-api/']), got: {}",
+                    file.path
+                );
+                log::info!("🔄 Trying to use file.path directly as relative path");
+
+                // Try treating file.path as already relative or absolute path that needs BOT_API_DATA_DIR
+                let source_path = if file.path.starts_with('/') {
+                    // It's absolute path, maybe already pointing to /data
+                    std::path::PathBuf::from(&file.path)
+                } else {
+                    // It's relative path
+                    std::path::Path::new(&data_dir).join(&file.path)
+                };
+
+                log::info!("📂 Trying direct path: {:?}", source_path);
+
+                if let Ok(metadata) = tokio::fs::metadata(&source_path).await {
+                    let size = metadata.len();
+                    log::info!("✅ Found file at direct path! Size: {} bytes", size);
+                    if size > 0 {
+                        tokio::fs::copy(&source_path, &dest_path).await?;
+                        log::info!("✅ File copied successfully to: {:?}", dest_path);
+                        return Ok(dest_path);
+                    }
+                } else {
+                    log::warn!("❌ File not found at direct path either: {:?}", source_path);
+                }
+            }
+        } else {
+            log::warn!("⚠️ BOT_API_DATA_DIR not set, will try HTTP fallback (will likely fail)");
+        }
+    }
+
+    // Skip pre-check for local Bot API - just try to download directly
+    // If it fails with 404, we'll fallback to api.telegram.org in the download logic below
+    log::info!("📥 Attempting to download from: {}", base_url_str);
+
+    let base_url =
+        Url::parse(base_url_str).map_err(|e| anyhow::anyhow!("Invalid Bot API base URL for file download: {}", e))?;
+
+    let file_url = build_file_url(&base_url, bot.token(), &file.path)?;
+    log::info!("🌐 Telegram Bot API GET request URL: {}", file_url);
+    log::debug!(
+        "🔍 URL building details: base={}, token_len={}, file_path={}",
+        base_url_str,
+        bot.token().len(),
+        file.path
+    );
+
+    // Download via HTTP (teloxide::Bot::download_file uses api.telegram.org internally)
+    use tokio::io::AsyncWriteExt;
+    let client = reqwest::Client::builder()
+        .timeout(crate::config::network::timeout())
+        .build()?;
+
+    let tmp_path = dest_path.with_file_name(format!(
+        "{}.part",
+        dest_path.file_name().and_then(|n| n.to_str()).unwrap_or("download")
+    ));
+
+    let mut resp = client.get(file_url.clone()).send().await?;
+    let status = resp.status();
+
+    // If local Bot API returns 404, retry with official api.telegram.org
+    if status == reqwest::StatusCode::NOT_FOUND && bot_api_is_local && base_url_str != "https://api.telegram.org" {
+        log::warn!(
+            "⚠️ File not found on local Bot API ({}), retrying with api.telegram.org",
+            file.path
+        );
+
+        // Create a temporary bot instance pointed at official API to get correct file path
+        // IMPORTANT: Must explicitly set API URL to avoid using BOT_API_URL env var
+        let official_bot = teloxide::Bot::new(bot.token().to_string())
+            .set_api_url(reqwest::Url::parse("https://api.telegram.org").expect("Failed to parse official API URL"));
+
+        // Re-fetch file info from official API to get the correct path
+        use teloxide::types::FileId;
+        let official_file = official_bot
+            .get_file(FileId(file_id.to_string()))
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to get file info from official API: {}", e))?;
+
+        log::info!("📥 Official API file path: {}", official_file.path);
+
+        let fallback_base =
+            Url::parse("https://api.telegram.org").map_err(|e| anyhow::anyhow!("Invalid fallback URL: {}", e))?;
+        let fallback_url = build_file_url(&fallback_base, bot.token(), &official_file.path)?;
+
+        resp = client.get(fallback_url).send().await?;
+        let fallback_status = resp.status();
+
+        if !fallback_status.is_success() && fallback_status != reqwest::StatusCode::PARTIAL_CONTENT {
+            let body = resp.text().await.unwrap_or_default();
+            tokio::fs::remove_file(&tmp_path).await.ok();
+            return Err(anyhow::anyhow!(
+                "Telegram file download failed on both local Bot API and api.telegram.org (path={}, local_status={}, fallback_status={}): {}",
+                file.path,
+                status,
+                fallback_status,
+                body
+            ));
+        }
+
+        log::info!("✅ File downloaded successfully from api.telegram.org (fallback)");
+    } else if !status.is_success() && status != reqwest::StatusCode::PARTIAL_CONTENT {
+        let body = resp.text().await.unwrap_or_default();
+        tokio::fs::remove_file(&tmp_path).await.ok();
+        return Err(anyhow::anyhow!(
+            "Telegram file download failed (base={}, path={}, status={}): {}",
+            base_url_str,
+            file.path,
+            status,
+            body
+        ));
+    }
+
+    let mut dst = tokio::fs::File::create(&tmp_path).await?;
+    while let Some(chunk) = resp.chunk().await? {
+        dst.write_all(&chunk).await?;
+    }
+    dst.flush().await.ok();
+    tokio::fs::rename(&tmp_path, &dest_path).await?;
+
+    log::info!("✅ File downloaded successfully to: {:?}", dest_path);
+    log::info!(
+        "📊 File size: {} bytes ({:.2} MB)",
+        file.size,
+        file.size as f64 / (1024.0 * 1024.0)
+    );
+
+    Ok(dest_path)
+}
+
+/// Downloads a file from Telegram with fallback chain:
+/// 1. Local Bot API server (if BOT_API_DATA_DIR is set)
+/// 2. Bot API HTTP download (local or official)
+/// 3. MTProto direct download (using message_id to get fresh file_reference)
+///
+/// # Arguments
+/// * `bot` - Telegram bot instance
+/// * `file_id` - Telegram file_id
+/// * `message_id` - Optional message_id for MTProto fallback
+/// * `chat_id` - Optional chat_id for MTProto fallback
+/// * `destination_path` - Where to save the file
+///
+/// # Returns
+/// Path to the downloaded file or an error
+pub async fn download_file_with_fallback(
+    bot: &Bot,
+    file_id: &str,
+    message_id: Option<i32>,
+    chat_id: Option<i64>,
+    destination_path: Option<PathBuf>,
+) -> Result<PathBuf> {
+    log::info!(
+        "📥 Starting download with fallback chain: file_id={}, message_id={:?}",
+        &file_id[..20.min(file_id.len())],
+        message_id
+    );
+
+    // Try standard Bot API download first
+    match download_file_from_telegram(bot, file_id, destination_path.clone()).await {
+        Ok(path) => {
+            log::info!("✅ Downloaded via Bot API: {:?}", path);
+            Ok(path)
+        }
+        Err(e) => {
+            log::warn!("⚠️ Bot API download failed: {}", e);
+
+            // Check if we have message_id for MTProto fallback
+            if let (Some(msg_id), Some(_chat)) = (message_id, chat_id) {
+                log::info!("🔄 Attempting MTProto fallback with message_id={}", msg_id);
+
+                match download_via_mtproto(msg_id, destination_path).await {
+                    Ok(path) => {
+                        log::info!("✅ Downloaded via MTProto: {:?}", path);
+                        Ok(path)
+                    }
+                    Err(mtproto_err) => {
+                        log::error!("❌ MTProto fallback also failed: {}", mtproto_err);
+                        Err(anyhow::anyhow!(
+                            "File download failed. Bot API error: {}. MTProto error: {}",
+                            e,
+                            mtproto_err
+                        ))
+                    }
+                }
+            } else {
+                log::warn!("⚠️ No message_id available for MTProto fallback");
+                Err(anyhow::anyhow!(
+                    "File download failed and no message_id available for MTProto fallback: {}",
+                    e
+                ))
+            }
+        }
+    }
+}
+
+/// Downloads a file via MTProto using message_id to get fresh file_reference
+async fn download_via_mtproto(message_id: i32, destination_path: Option<PathBuf>) -> Result<PathBuf> {
+    use crate::experimental::mtproto::{MtProtoClient, MtProtoDownloader};
+
+    // Load MTProto credentials from environment
+    let api_id: i32 = std::env::var("TELEGRAM_API_ID")
+        .map_err(|_| anyhow::anyhow!("TELEGRAM_API_ID not set"))?
+        .parse()
+        .map_err(|e| anyhow::anyhow!("Invalid TELEGRAM_API_ID: {}", e))?;
+
+    let api_hash = std::env::var("TELEGRAM_API_HASH").map_err(|_| anyhow::anyhow!("TELEGRAM_API_HASH not set"))?;
+
+    let bot_token = std::env::var("BOT_TOKEN")
+        .or_else(|_| std::env::var("TELOXIDE_TOKEN"))
+        .map_err(|_| anyhow::anyhow!("BOT_TOKEN or TELOXIDE_TOKEN not set"))?;
+
+    let session_path = std::env::var("MTPROTO_SESSION_PATH").unwrap_or_else(|_| "mtproto_session.bin".to_string());
+
+    log::info!("🔌 Initializing MTProto client for fallback download...");
+
+    let client = MtProtoClient::new_bot(api_id, &api_hash, &bot_token, std::path::Path::new(&session_path))
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to initialize MTProto client: {}", e))?;
+
+    let downloader = MtProtoDownloader::with_bot_token(client, bot_token);
+
+    // Get message with fresh media info
+    log::info!("📨 Fetching message {} for fresh file_reference...", message_id);
+    let messages = downloader
+        .get_bot_messages(&[message_id])
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to get message via MTProto: {}", e))?;
+
+    let message = messages
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("Message {} not found via MTProto", message_id))?;
+
+    let media = message
+        .media
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Message {} has no media", message_id))?;
+
+    // Determine output path
+    let output_path = destination_path.unwrap_or_else(|| {
+        let filename = media
+            .filename
+            .clone()
+            .unwrap_or_else(|| format!("mtproto_download_{}.bin", message_id));
+        PathBuf::from("./downloads").join(filename)
+    });
+
+    // Ensure parent directory exists
+    if let Some(parent) = output_path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+
+    log::info!("📥 Downloading via MTProto: {} bytes to {:?}", media.size, output_path);
+
+    downloader
+        .download_media(media, &output_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("MTProto download failed: {}", e))?;
+
+    Ok(output_path)
+}
+
+fn build_file_url(base: &Url, token: &str, file_path: &str) -> Result<Url> {
+    let mut url = base.clone();
+
+    // For local Bot API in --local mode, file_path is absolute filesystem path like:
+    // Old format: "/telegram-bot-api/<token>/videos/file_1.mp4"
+    // New format: "/data/<token>/videos/file_1.mp4"
+    // We need to extract only the relative part after the token directory
+    let normalized_path = if !base.as_str().contains("api.telegram.org") {
+        let mut stripped = file_path.trim_start_matches('/');
+
+        // Remove "data/" prefix if present (new format)
+        if let Some(rest) = stripped.strip_prefix("data/") {
+            stripped = rest;
+        }
+
+        // Remove "telegram-bot-api/" prefix if present (old format)
+        if let Some(rest) = stripped.strip_prefix("telegram-bot-api/") {
+            stripped = rest;
+        }
+
+        // Remove token directory (e.g., "6310079371:AAH5...wpUw/")
+        // The token in path doesn't have "bot" prefix
+        if let Some(rest) = stripped.strip_prefix(token) {
+            stripped = rest.trim_start_matches('/');
+        }
+
+        log::debug!(
+            "🔧 Normalized path for local Bot API: '{}' -> '{}'",
+            file_path,
+            stripped
+        );
+        stripped
+    } else {
+        // Official API: use file_path as-is
+        file_path
+    };
+
+    {
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|_| anyhow::anyhow!("BOT_API_URL cannot be a base URL"))?;
+        segments.push("file");
+        segments.push(&format!("bot{token}"));
+        for seg in normalized_path.split('/') {
+            if !seg.is_empty() {
+                segments.push(seg);
+            }
+        }
+    }
+    Ok(url)
+}
+
+/// Handles the /download_tg command (admin only)
+///
+/// # Arguments
+/// * `bot` - Telegram bot instance
+/// * `chat_id` - Chat ID where the command was sent
+/// * `user_id` - Telegram user ID of the requester
+/// * `username` - Username of the requester (for logs)
+/// * `message_text` - Full message text (e.g., "/download_tg BQACAgIAAxkBAAIBCGXxxx...")
+///
+/// # Behavior
+/// - Checks if user is admin
+/// - Parses file_id from command arguments
+/// - Downloads file from Telegram
+/// - Sends confirmation message with file info
+///
+/// # Example
+/// User sends: `/download_tg BQACAgIAAxkBAAIBCGXxxx...`
+/// Bot responds: `✅ File downloaded: ./downloads/file_123.pdf (1.5 MB)`
+pub async fn handle_download_tg_command(
+    bot: &Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    username: Option<&str>,
+    message_text: &str,
+) -> Result<()> {
+    // Check admin permissions
+    if !is_admin(user_id) {
+        bot.send_message(chat_id, "❌ This command is only available to administrators.")
+            .await?;
+        return Ok(());
+    }
+
+    // Parse file_id from command
+    let parts: Vec<&str> = message_text.split_whitespace().collect();
+    if parts.len() < 2 {
+        bot.send_message(
+            chat_id,
+            "❌ Usage: /download_tg <file_id>\n\n\
+            Example:\n\
+            /download_tg BQACAgIAAxkBAAIBCGXxxx...\n\n\
+            To get a file_id:\n\
+            1. Send the bot a file\n\
+            2. Use Telegram Bot API methods to get the file_id\n\
+            3. Or use the /getfile command (if implemented)",
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let file_id = parts[1];
+    log::info!(
+        "📥 Admin {} requested download of file_id: {}",
+        username.unwrap_or("unknown"),
+        file_id
+    );
+
+    // Send "processing" message
+    let processing_msg = bot
+        .send_message(chat_id, "⏳ Downloading file from Telegram...")
+        .await?;
+
+    // Download the file
+    match download_file_from_telegram(bot, file_id, None).await {
+        Ok(path) => {
+            // Get file metadata
+            let metadata = tokio::fs::metadata(&path).await?;
+            let size_mb = metadata.len() as f64 / (1024.0 * 1024.0);
+            let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
+
+            let success_message = format!(
+                "✅ *File downloaded successfully\\!*\n\n\
+                📁 Path: `{}`\n\
+                📄 Name: `{}`\n\
+                📊 Size: {:.2} MB\n\
+                🆔 File ID: `{}`",
+                escape_markdown(&path.display().to_string()),
+                escape_markdown(filename),
+                size_mb,
+                escape_markdown(file_id),
+            );
+
+            // Delete processing message
+            let _ = bot.delete_message(chat_id, processing_msg.id).await;
+
+            // Send success message
+            bot.send_message(chat_id, success_message)
+                .parse_mode(ParseMode::MarkdownV2)
+                .await?;
+
+            log::info!("✅ Successfully downloaded file_id {} to {:?}", file_id, path);
+        }
+        Err(e) => {
+            log::error!("❌ Failed to download file_id {}: {}", file_id, e);
+
+            // Delete processing message
+            let _ = bot.delete_message(chat_id, processing_msg.id).await;
+
+            // Send error message
+            let error_message = format!(
+                "❌ Error downloading file:\n\n{}\n\n\
+                Possible reasons:\n\
+                • Invalid file_id\n\
+                • File was deleted from Telegram\n\
+                • File is too old (>1 hour for non-documents)\n\
+                • No access rights to the file",
+                escape_markdown(&e.to_string())
+            );
+
+            bot.send_message(chat_id, error_message)
+                .parse_mode(ParseMode::MarkdownV2)
+                .await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Handles the /sent_files command (admin only)
+///
+/// # Arguments
+/// * `bot` - Telegram bot instance
+/// * `chat_id` - Chat ID where the command was sent
+/// * `user_id` - Telegram user ID of the requester
+/// * `username` - Username of the requester (for logs)
+/// * `db_pool` - Database connection pool
+/// * `message_text` - Full message text (e.g., "/sent_files" or "/sent_files 100")
+///
+/// # Behavior
+/// - Checks if user is admin
+/// - Retrieves files with file_id from database
+/// - Displays paginated list of files with copy-able file_id
+///
+/// # Example
+/// User sends: `/sent_files`
+/// Bot responds with list of files and their file_id
+pub async fn handle_sent_files_command(
+    bot: &Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    username: Option<&str>,
+    db_pool: std::sync::Arc<DbPool>,
+    message_text: &str,
+) -> Result<()> {
+    use crate::storage::db::{get_connection, get_sent_files};
+
+    // Check admin permissions
+    if !is_admin(user_id) {
+        bot.send_message(chat_id, "❌ This command is only available to administrators.")
+            .await?;
+        return Ok(());
+    }
+
+    // Parse limit from command arguments
+    let parts: Vec<&str> = message_text.split_whitespace().collect();
+    let limit = if parts.len() >= 2 {
+        parts[1].parse::<i32>().ok()
+    } else {
+        Some(50)
+    };
+
+    log::info!(
+        "📋 Admin {} requested sent files list (limit: {:?})",
+        username.unwrap_or("unknown"),
+        limit
+    );
+
+    // Get connection from pool
+    let conn = get_connection(&db_pool)?;
+
+    // Retrieve sent files
+    match get_sent_files(&conn, limit) {
+        Ok(files) => {
+            if files.is_empty() {
+                bot.send_message(
+                    chat_id,
+                    "📭 *No sent files*\n\n\
+                    Files with file\\_id will appear here after successfully sending to users\\.",
+                )
+                .parse_mode(ParseMode::MarkdownV2)
+                .await?;
+                return Ok(());
+            }
+
+            // Build response message
+            let mut response = format!("📋 *Sent Files* \\({} items\\)\n\n", files.len());
+
+            for (idx, file) in files.iter().enumerate() {
+                let user_display = if let Some(ref uname) = file.username {
+                    format!("@{}", escape_markdown(uname))
+                } else {
+                    format!("ID: {}", file.user_id)
+                };
+
+                // Truncate title if too long
+                let title = if file.title.len() > 40 {
+                    format!("{}...", &file.title[..37])
+                } else {
+                    file.title.clone()
+                };
+
+                response.push_str(&format!(
+                    "{}\\. *{}*\n\
+                    👤 {}\n\
+                    📄 Format: `{}`\n\
+                    🆔 File ID:\n`{}`\n\
+                    📅 {}\n\n",
+                    idx + 1,
+                    escape_markdown(&title),
+                    user_display,
+                    escape_markdown(&file.format),
+                    escape_markdown(&file.file_id),
+                    escape_markdown(&file.downloaded_at[..16]), // Show only date and time
+                ));
+            }
+
+            response.push_str(
+                "\n💡 *Usage:*\n\
+                `/download_tg <file_id>` \\- download a file\n\n\
+                For more files: `/sent_files <limit>`",
+            );
+
+            // Send response with MarkdownV2
+            bot.send_message(chat_id, response)
+                .parse_mode(ParseMode::MarkdownV2)
+                .await?;
+
+            log::info!(
+                "✅ Sent files list delivered to admin {}",
+                username.unwrap_or("unknown")
+            );
+        }
+        Err(e) => {
+            log::error!("❌ Failed to retrieve sent files: {}", e);
+            bot.send_message(
+                chat_id,
+                format!("❌ Error fetching file list:\n\n{}", escape_markdown(&e.to_string())),
+            )
+            .parse_mode(ParseMode::MarkdownV2)
+            .await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Handles the /diagnose_cookies command (admin only)
+///
+/// Shows detailed diagnostic information about the current cookies file
+pub async fn handle_diagnose_cookies_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> Result<()> {
+    if !is_admin(user_id) {
+        bot.send_message(chat_id, "❌ This command is for administrators only.")
+            .await?;
+        return Ok(());
+    }
+
+    let processing_msg = bot.send_message(chat_id, "⏳ Analysing cookies...").await?;
+
+    // Get diagnostic
+    let diagnostic = cookies::diagnose_cookies_file().await;
+    let report = diagnostic.format_report();
+
+    // Delete processing message
+    let _ = bot.delete_message(chat_id, processing_msg.id).await;
+
+    // Send report
+    let message = format!("🍪 *YouTube Cookies Diagnostics*\n\n{}", escape_markdown(&report));
+
+    bot.send_message(chat_id, message)
+        .parse_mode(ParseMode::MarkdownV2)
+        .await?;
+
+    // If cookies look valid structurally, offer to test with yt-dlp
+    if diagnostic.is_valid {
+        let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
+            "🧪 Test with yt-dlp",
+            "admin:test_cookies",
+        )]]);
+
+        bot.send_message(chat_id, "Do you want to test cookies with yt\\-dlp?")
+            .parse_mode(ParseMode::MarkdownV2)
+            .reply_markup(keyboard)
+            .await?;
+    }
+
+    Ok(())
+}
+
+/// Handles the /update_cookies command (admin only)
+///
+/// Starts a session to receive a cookies file and updates the YTDL_COOKIES_FILE
+///
+/// # Arguments
+/// * `bot` - Telegram bot instance
+/// * `chat_id` - Chat ID where the command was sent
+/// * `user_id` - Telegram user ID of the requester
+/// * `message_text` - Full message text (e.g., "/update_cookies")
+///
+/// # Behavior
+/// - Checks if user is admin
+/// - Creates a short-lived upload session
+/// - Receives a cookies file from the admin
+/// - Validates new cookies work
+/// - Sends confirmation message
+///
+/// # Example
+/// User sends: `/update_cookies`
+/// Bot responds: `📤 Send your cookies file`
+pub async fn handle_update_cookies_command(
+    db_pool: Arc<crate::storage::db::DbPool>,
+    bot: &Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    _message_text: &str,
+) -> Result<()> {
+    log::info!(
+        "🔐 /update_cookies command received from user_id={}, chat_id={}",
+        user_id,
+        chat_id
+    );
+
+    // Check admin permissions
+    if !is_admin(user_id) {
+        log::warn!("❌ Non-admin user {} attempted to use /update_cookies", user_id);
+        bot.send_message(chat_id, "❌ This command is only available to administrators.")
+            .await?;
+        return Ok(());
+    }
+
+    log::info!("✅ Admin authentication passed for user_id={}", user_id);
+
+    // Create cookies upload session
+
+    let conn = crate::storage::db::get_connection(&db_pool)?;
+
+    let session = crate::storage::db::CookiesUploadSession {
+        id: uuid::Uuid::new_v4().to_string(),
+        user_id,
+        created_at: chrono::Utc::now(),
+        expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+    };
+
+    crate::storage::db::upsert_cookies_upload_session(&conn, &session)?;
+
+    log::info!("✅ Created cookies upload session for admin {}", user_id);
+
+    bot.send_message(
+        chat_id,
+        "📤 *Send your cookies file*\n\n\
+        Send a txt file with cookies in Netscape HTTP Cookie File format\\.\n\n\
+        *How to get cookies:*\n\
+        1\\. Install a cookies export extension\n\
+        2\\. Export cookies for youtube\\.com\n\
+        3\\. Send the file here\n\n\
+        ⏱ Session expires in 10 minutes\\.",
+    )
+    .parse_mode(ParseMode::MarkdownV2)
+    .await?;
+
+    log::info!("🏁 /update_cookies command handler finished for admin {}", user_id);
+    Ok(())
+}
+
+/// Handles the /update_ytdlp command (admin only)
+///
+/// Triggers yt-dlp update and reports before/after version.
+pub async fn handle_update_ytdlp_command(bot: &Bot, chat_id: ChatId, user_id: i64, _message_text: &str) -> Result<()> {
+    log::info!(
+        "🔧 /update_ytdlp command received from user_id={}, chat_id={}",
+        user_id,
+        chat_id
+    );
+
+    if !is_admin(user_id) {
+        log::warn!("❌ Non-admin user {} attempted to use /update_ytdlp", user_id);
+        bot.send_message(chat_id, "❌ This command is only available to administrators.")
+            .await?;
+        return Ok(());
+    }
+
+    let before = get_ytdlp_version().await.unwrap_or_else(|| "unknown".to_string());
+    let processing_msg = bot.send_message(chat_id, "⏳ Updating yt-dlp...").await?;
+
+    match ytdlp::check_and_update_ytdlp().await {
+        Ok(_) => {
+            let after = get_ytdlp_version().await.unwrap_or_else(|| "unknown".to_string());
+            let status = if before == after {
+                "yt-dlp is already up to date"
+            } else {
+                "yt-dlp updated"
+            };
+            let text = format!("✅ {}\nVersion before: {}\nVersion after: {}", status, before, after);
+            bot.edit_message_text(chat_id, processing_msg.id, text).await?;
+        }
+        Err(e) => {
+            let text = format!("❌ Failed to update yt-dlp: {}", e);
+            bot.edit_message_text(chat_id, processing_msg.id, text).await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Sends a notification to admin about cookies needing refresh
+///
+/// # Arguments
+/// * `bot` - Telegram bot instance
+/// * `admin_id` - Admin's Telegram user ID
+/// * `reason` - Reason why cookies need refresh (e.g., "validation failed", "file missing")
+pub async fn notify_admin_cookies_refresh(bot: &Bot, admin_id: i64, reason: &str) -> Result<()> {
+    // Check cooldown period - don't spam admin with repeated notifications
+    {
+        let mut last_notification = LAST_COOKIE_NOTIFICATION.lock().unwrap();
+        if let Some(last_time) = *last_notification {
+            let elapsed = last_time.elapsed();
+            if elapsed < COOKIE_NOTIFICATION_COOLDOWN {
+                let remaining = COOKIE_NOTIFICATION_COOLDOWN - elapsed;
+                log::info!(
+                    "⏸️  Skipping cookie refresh notification (cooldown active, {:.1} hours remaining)",
+                    remaining.as_secs_f64() / 3600.0
+                );
+                return Ok(());
+            }
+        }
+        // Update timestamp before sending to prevent race conditions
+        *last_notification = Some(Instant::now());
+    }
+
+    // Try to get detailed cookie info from cookie manager
+    let cookie_detail = match cookie_manager_request("GET", "/api/status").await {
+        Ok(data) => {
+            let cookie_count = data.get("cookie_count").and_then(|v| v.as_u64()).unwrap_or(0);
+            let required_found: Vec<String> = data
+                .get("required_found")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            let required_missing: Vec<String> = data
+                .get("required_missing")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+
+            let found_str = if required_found.is_empty() {
+                "none".to_string()
+            } else {
+                required_found.join(", ")
+            };
+            let missing_str = if required_missing.is_empty() {
+                "none".to_string()
+            } else {
+                required_missing.join(", ")
+            };
+
+            format!(
+                "\n\n*Cookies status \\({} items\\):*\n\
+                 ✅ Found: {}\n\
+                 ❌ Missing: {}",
+                cookie_count,
+                escape_markdown(&found_str),
+                escape_markdown(&missing_str)
+            )
+        }
+        Err(_) => String::new(),
+    };
+
+    let message = format!(
+        "🔴 *YouTube cookies update required*\n\n\
+        Reason: _{}_\
+        {}\n\n\
+        To update:\n\
+        • /browser\\_login — log in via browser \\(recommended\\)\n\
+        • /update\\_cookies — upload cookies file manually\n\
+        • /browser\\_status — check cookie manager status\n\n\
+        Without valid cookies YouTube video downloads may not work\\.",
+        escape_markdown(reason),
+        cookie_detail
+    );
+
+    match bot
+        .send_message(ChatId(admin_id), message)
+        .parse_mode(ParseMode::MarkdownV2)
+        .await
+    {
+        Ok(_) => {
+            log::info!("✅ Sent cookies refresh notification to admin {}", admin_id);
+            Ok(())
+        }
+        Err(e) => {
+            log::error!(
+                "❌ Failed to send cookies refresh notification to admin {}: {}",
+                admin_id,
+                e
+            );
+            Err(e.into())
+        }
+    }
+}
+
+pub async fn handle_cookies_file_upload(
+    db_pool: Arc<crate::storage::db::DbPool>,
+    bot: &Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    document: &teloxide::types::Document,
+) -> Result<()> {
+    log::info!(
+        "📤 Cookies file received from user_id={}, chat_id={}, file_id={}",
+        user_id,
+        chat_id,
+        document.file.id
+    );
+
+    // Check if there's an active cookies upload session
+
+    let conn = crate::storage::db::get_connection(&db_pool)?;
+
+    let session = crate::storage::db::get_active_cookies_upload_session(&conn, user_id)?;
+    if session.is_none() {
+        log::warn!("❌ No active cookies upload session for user {}", user_id);
+        return Ok(()); // Silently ignore if no session
+    }
+
+    log::info!("✅ Active cookies upload session found for user {}", user_id);
+
+    // Send processing message
+    let processing_msg = bot.send_message(chat_id, "⏳ Processing cookies file...").await?;
+
+    // Download file
+    let _file = bot.get_file(document.file.id.clone()).await?;
+    let file_path = std::path::PathBuf::from(format!("/tmp/cookies_upload_{}.txt", user_id));
+
+    match download_file_from_telegram(bot, &document.file.id.0, Some(file_path.clone())).await {
+        Ok(_) => {
+            log::info!("✅ Cookies file downloaded to: {:?}", file_path);
+
+            // Read file content
+            match tokio::fs::read_to_string(&file_path).await {
+                Ok(content) => {
+                    log::info!("✅ Cookies file read successfully, {} bytes", content.len());
+
+                    // Update cookies file
+                    // First run diagnostic on the content before saving
+                    let diagnostic = cookies::diagnose_cookies_content(&content);
+                    log::info!(
+                        "🍪 Cookies diagnostic: {} total, {} youtube, valid={}",
+                        diagnostic.total_cookies,
+                        diagnostic.youtube_cookies,
+                        diagnostic.is_valid
+                    );
+
+                    match cookies::update_cookies_from_content(&content).await {
+                        Ok(path) => {
+                            log::info!("✅ Cookies file successfully written to: {:?}", path);
+
+                            // Delete temp file
+                            let _ = tokio::fs::remove_file(&file_path).await;
+
+                            // Delete session
+                            crate::storage::db::delete_cookies_upload_session_by_user(&conn, user_id)?;
+
+                            // Delete processing message
+                            let _ = bot.delete_message(chat_id, processing_msg.id).await;
+
+                            // Build detailed diagnostic report
+                            let diagnostic_report = diagnostic.format_report();
+
+                            if diagnostic.is_valid {
+                                // Cookies look good structurally, now test with yt-dlp
+                                let test_msg = bot.send_message(chat_id, "⏳ Testing cookies with YouTube...").await?;
+
+                                let validation_result = cookies::validate_cookies().await;
+                                let _ = bot.delete_message(chat_id, test_msg.id).await;
+
+                                match validation_result {
+                                    Ok(()) => {
+                                        let success_message = format!(
+                                            "✅ *Cookies updated and verified successfully\\!*\n\n\
+                                            📁 Path: `{}`\n\n\
+                                            {}\n\n\
+                                            ✓ YouTube download test passed successfully\\!\n\n\
+                                            The bot now uses the new cookies for video downloads\\.",
+                                            escape_markdown(&path.display().to_string()),
+                                            escape_markdown(&diagnostic_report)
+                                        );
+
+                                        bot.send_message(chat_id, success_message)
+                                            .parse_mode(ParseMode::MarkdownV2)
+                                            .await?;
+
+                                        log::info!("✅ Cookies update completed successfully for admin {}", user_id);
+                                    }
+                                    Err(reason) => {
+                                        let warning_message = format!(
+                                            "⚠️ *Cookies updated, but YouTube test failed*\n\n\
+                                            📁 Path: `{}`\n\n\
+                                            {}\n\n\
+                                            *⚠️ yt\\-dlp error:* {}\n\n\
+                                            *Possible reasons:*\n\
+                                            • YouTube blocked the IP address \\(need a different proxy\\)\n\
+                                            • Cookies were rotated after export\n\
+                                            • Account requires confirmation \\(captcha/SMS\\)\n\n\
+                                            Try:\n\
+                                            1\\. Open YouTube in the browser\n\
+                                            2\\. Watch any video to the end\n\
+                                            3\\. Export cookies again",
+                                            escape_markdown(&path.display().to_string()),
+                                            escape_markdown(&diagnostic_report),
+                                            escape_markdown(&reason)
+                                        );
+
+                                        bot.send_message(chat_id, warning_message)
+                                            .parse_mode(ParseMode::MarkdownV2)
+                                            .await?;
+
+                                        log::warn!(
+                                            "⚠️ Cookies update: file valid but yt-dlp test failed for admin {}",
+                                            user_id
+                                        );
+                                    }
+                                }
+                            } else {
+                                // Cookies have structural issues - report them without testing
+                                let warning_message = format!(
+                                    "⚠️ *Cookies updated, but issues were found*\n\n\
+                                    📁 Path: `{}`\n\n\
+                                    {}\n\n\
+                                    *How to fix:*\n\
+                                    1\\. Log in to YouTube in the browser\n\
+                                    2\\. Make sure you use the correct export extension\n\
+                                    3\\. Export cookies again \\(\"Get cookies\\.txt LOCALLY\"\\)",
+                                    escape_markdown(&path.display().to_string()),
+                                    escape_markdown(&diagnostic_report)
+                                );
+
+                                bot.send_message(chat_id, warning_message)
+                                    .parse_mode(ParseMode::MarkdownV2)
+                                    .await?;
+
+                                log::warn!(
+                                    "⚠️ Cookies update: structural issues found for admin {}: {:?}",
+                                    user_id,
+                                    diagnostic.issues
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("❌ Failed to update cookies file: {}", e);
+                            let _ = tokio::fs::remove_file(&file_path).await;
+                            let _ = bot.delete_message(chat_id, processing_msg.id).await;
+                            crate::storage::db::delete_cookies_upload_session_by_user(&conn, user_id)?;
+
+                            let error_message = format!(
+                                "❌ *Error updating cookies:*\n\n{}\n\n\
+                                Possible reasons:\n\
+                                • Invalid cookies file format\n\
+                                • YTDL\\_COOKIES\\_FILE variable is not set\n\
+                                • File write permission issues",
+                                escape_markdown(&e.to_string())
+                            );
+
+                            bot.send_message(chat_id, error_message)
+                                .parse_mode(ParseMode::MarkdownV2)
+                                .await?;
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::error!("❌ Failed to read cookies file: {}", e);
+                    let _ = tokio::fs::remove_file(&file_path).await;
+                    let _ = bot.delete_message(chat_id, processing_msg.id).await;
+                    crate::storage::db::delete_cookies_upload_session_by_user(&conn, user_id)?;
+
+                    bot.send_message(
+                        chat_id,
+                        format!("❌ *File read error:*\n\n{}", escape_markdown(&e.to_string())),
+                    )
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .await?;
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("❌ Failed to download cookies file: {}", e);
+            let _ = bot.delete_message(chat_id, processing_msg.id).await;
+            crate::storage::db::delete_cookies_upload_session_by_user(&conn, user_id)?;
+
+            bot.send_message(
+                chat_id,
+                format!("❌ *File download error:*\n\n{}", escape_markdown(&e.to_string())),
+            )
+            .parse_mode(ParseMode::MarkdownV2)
+            .await?;
+        }
+    }
+
+    Ok(())
+}
+
+// ==================== Instagram Cookies Commands ====================
+
+/// Handles the /update_ig_cookies admin command
+///
+/// Creates a short-lived upload session for Instagram cookies file.
+pub async fn handle_update_ig_cookies_command(
+    db_pool: Arc<crate::storage::db::DbPool>,
+    bot: &Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    _message_text: &str,
+) -> Result<()> {
+    log::info!(
+        "🔐 /update_ig_cookies command received from user_id={}, chat_id={}",
+        user_id,
+        chat_id
+    );
+
+    if !is_admin(user_id) {
+        log::warn!("❌ Non-admin user {} attempted to use /update_ig_cookies", user_id);
+        bot.send_message(chat_id, "❌ This command is only available to administrators.")
+            .await?;
+        return Ok(());
+    }
+
+    let conn = crate::storage::db::get_connection(&db_pool)?;
+
+    let session = crate::storage::db::CookiesUploadSession {
+        id: uuid::Uuid::new_v4().to_string(),
+        user_id,
+        created_at: chrono::Utc::now(),
+        expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+    };
+
+    crate::storage::db::upsert_ig_cookies_upload_session(&conn, &session)?;
+
+    log::info!("✅ Created IG cookies upload session for admin {}", user_id);
+
+    bot.send_message(
+        chat_id,
+        "📤 *Send your Instagram cookies file*\n\n\
+        Send a txt file with cookies in Netscape HTTP Cookie File format\\.\n\n\
+        *How to get cookies:*\n\
+        1\\. Install a cookies export extension \\(Get cookies\\.txt LOCALLY\\)\n\
+        2\\. Log in to Instagram in the browser\n\
+        3\\. Export cookies for instagram\\.com\n\
+        4\\. Send the file here\n\n\
+        *Key cookies:* `sessionid`, `csrftoken`, `ds_user_id`\n\n\
+        ⏱ Session expires in 10 minutes\\.",
+    )
+    .parse_mode(ParseMode::MarkdownV2)
+    .await?;
+
+    Ok(())
+}
+
+/// Handles Instagram cookies file upload after /update_ig_cookies command
+pub async fn handle_ig_cookies_file_upload(
+    db_pool: Arc<crate::storage::db::DbPool>,
+    bot: &Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    document: &teloxide::types::Document,
+) -> Result<()> {
+    log::info!(
+        "📤 IG Cookies file received from user_id={}, chat_id={}, file_id={}",
+        user_id,
+        chat_id,
+        document.file.id
+    );
+
+    let conn = crate::storage::db::get_connection(&db_pool)?;
+
+    let session = crate::storage::db::get_active_ig_cookies_upload_session(&conn, user_id)?;
+    if session.is_none() {
+        log::warn!("❌ No active IG cookies upload session for user {}", user_id);
+        return Ok(());
+    }
+
+    let processing_msg = bot
+        .send_message(chat_id, "⏳ Processing Instagram cookies file...")
+        .await?;
+
+    let _file = bot.get_file(document.file.id.clone()).await?;
+    let file_path = std::path::PathBuf::from(format!("/tmp/ig_cookies_upload_{}.txt", user_id));
+
+    match download_file_from_telegram(bot, &document.file.id.0, Some(file_path.clone())).await {
+        Ok(_) => match tokio::fs::read_to_string(&file_path).await {
+            Ok(content) => {
+                let diagnostic = cookies::diagnose_ig_cookies_content(&content);
+                log::info!(
+                    "🍪 IG Cookies diagnostic: {} total, {} instagram, valid={}",
+                    diagnostic.total_cookies,
+                    diagnostic.youtube_cookies,
+                    diagnostic.is_valid
+                );
+
+                match cookies::update_ig_cookies_from_content(&content).await {
+                    Ok(path) => {
+                        let _ = tokio::fs::remove_file(&file_path).await;
+                        crate::storage::db::delete_ig_cookies_upload_session_by_user(&conn, user_id)?;
+                        let _ = bot.delete_message(chat_id, processing_msg.id).await;
+
+                        let diagnostic_report = diagnostic.format_report();
+
+                        if diagnostic.is_valid {
+                            let test_msg = bot.send_message(chat_id, "⏳ Testing Instagram cookies...").await?;
+
+                            let validation_result = cookies::validate_ig_cookies().await;
+                            let _ = bot.delete_message(chat_id, test_msg.id).await;
+
+                            match validation_result {
+                                Ok(()) => {
+                                    let success_message = format!(
+                                        "✅ *Instagram cookies updated successfully\\!*\n\n\
+                                            📁 Path: `{}`\n\n\
+                                            {}\n\n\
+                                            The bot now uses Instagram cookies to access private content\\.",
+                                        escape_markdown(&path.display().to_string()),
+                                        escape_markdown(&diagnostic_report)
+                                    );
+
+                                    bot.send_message(chat_id, success_message)
+                                        .parse_mode(ParseMode::MarkdownV2)
+                                        .await?;
+                                }
+                                Err(reason) => {
+                                    let warning_message = format!(
+                                        "⚠️ *Instagram cookies updated, but test failed*\n\n\
+                                            📁 Path: `{}`\n\n\
+                                            {}\n\n\
+                                            *⚠️ Error:* {}\n\n\
+                                            Cookies saved and will be used for GraphQL requests\\.",
+                                        escape_markdown(&path.display().to_string()),
+                                        escape_markdown(&diagnostic_report),
+                                        escape_markdown(&reason)
+                                    );
+
+                                    bot.send_message(chat_id, warning_message)
+                                        .parse_mode(ParseMode::MarkdownV2)
+                                        .await?;
+                                }
+                            }
+                        } else {
+                            let warning_message = format!(
+                                "⚠️ *Instagram cookies updated, but issues were found*\n\n\
+                                    📁 Path: `{}`\n\n\
+                                    {}\n\n\
+                                    *How to fix:*\n\
+                                    1\\. Log in to Instagram in the browser\n\
+                                    2\\. Export cookies again",
+                                escape_markdown(&path.display().to_string()),
+                                escape_markdown(&diagnostic_report)
+                            );
+
+                            bot.send_message(chat_id, warning_message)
+                                .parse_mode(ParseMode::MarkdownV2)
+                                .await?;
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("❌ Failed to update IG cookies file: {}", e);
+                        let _ = tokio::fs::remove_file(&file_path).await;
+                        let _ = bot.delete_message(chat_id, processing_msg.id).await;
+                        crate::storage::db::delete_ig_cookies_upload_session_by_user(&conn, user_id)?;
+
+                        let error_message = format!(
+                            "❌ *Error updating Instagram cookies:*\n\n{}\n\n\
+                                Possible causes:\n\
+                                • Invalid cookies file format\n\
+                                • Missing INSTAGRAM\\_COOKIES\\_FILE variable",
+                            escape_markdown(&e.to_string())
+                        );
+
+                        bot.send_message(chat_id, error_message)
+                            .parse_mode(ParseMode::MarkdownV2)
+                            .await?;
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("❌ Failed to read IG cookies file: {}", e);
+                let _ = tokio::fs::remove_file(&file_path).await;
+                let _ = bot.delete_message(chat_id, processing_msg.id).await;
+                crate::storage::db::delete_ig_cookies_upload_session_by_user(&conn, user_id)?;
+
+                bot.send_message(
+                    chat_id,
+                    format!("❌ *File read error:*\n\n{}", escape_markdown(&e.to_string())),
+                )
+                .parse_mode(ParseMode::MarkdownV2)
+                .await?;
+            }
+        },
+        Err(e) => {
+            log::error!("❌ Failed to download IG cookies file: {}", e);
+            let _ = bot.delete_message(chat_id, processing_msg.id).await;
+            crate::storage::db::delete_ig_cookies_upload_session_by_user(&conn, user_id)?;
+
+            bot.send_message(
+                chat_id,
+                format!("❌ *File download error:*\n\n{}", escape_markdown(&e.to_string())),
+            )
+            .parse_mode(ParseMode::MarkdownV2)
+            .await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Shows proxy statistics and health status
+///
+/// Admin command to view current proxy configuration and health metrics
+pub async fn handle_proxy_stats_command(bot: &Bot, chat_id: ChatId, _user_id: i64) -> Result<()> {
+    use crate::core::config;
+    use crate::download::proxy::ProxyListManager;
+
+    // Check if proxies are configured
+    if config::proxy::WARP_PROXY.is_none() && config::proxy::PROXY_FILE.is_none() {
+        bot.send_message(
+            chat_id,
+            "❌ *No proxies configured*\n\nSet WARP_PROXY or PROXY_FILE environment variables.",
+        )
+        .parse_mode(ParseMode::MarkdownV2)
+        .await?;
+        return Ok(());
+    }
+
+    let manager = ProxyListManager::new(config::proxy::get_selection_strategy());
+    let stats = manager.all_stats().await;
+
+    if stats.is_empty() {
+        bot.send_message(chat_id, "ℹ️ *Proxy system configured but no proxies loaded yet*")
+            .parse_mode(ParseMode::MarkdownV2)
+            .await?;
+        return Ok(());
+    }
+
+    let mut message = "🔄 *Proxy Statistics*\n\n".to_string();
+    message.push_str(&format!("Strategy: `{}`\n", config::proxy::PROXY_STRATEGY.as_str()));
+    message.push_str(&format!("Min Health: `{:.1}%`\n", *config::proxy::MIN_HEALTH * 100.0));
+    message.push_str(&format!("Total Proxies: `{}`\n\n", stats.len()));
+
+    message.push_str("*Proxy Health:*\n");
+    for (proxy_url, stat) in stats.iter().take(10) {
+        let total = stat.successes + stat.failures;
+        let success_rate = if total > 0 {
+            stat.successes as f64 / total as f64
+        } else {
+            0.0
+        };
+
+        let health_emoji = if success_rate >= 0.9 {
+            "✅"
+        } else if success_rate >= 0.7 {
+            "⚠️ "
+        } else {
+            "❌"
+        };
+
+        message.push_str(&format!(
+            "{} `{:.0}%` \\| {} ok\\, {} err\n",
+            health_emoji,
+            success_rate * 100.0,
+            stat.successes,
+            stat.failures
+        ));
+        if proxy_url.len() > 40 {
+            message.push_str(&format!("`{}...`\n", &proxy_url[..37]));
+        } else {
+            message.push_str(&format!("`{}`\n", proxy_url));
+        }
+    }
+
+    if stats.len() > 10 {
+        message.push_str(&format!("\n_... and {} more proxies_", stats.len() - 10));
+    }
+
+    bot.send_message(chat_id, message)
+        .parse_mode(ParseMode::MarkdownV2)
+        .await?;
+
+    Ok(())
+}
+
+/// Resets proxy health statistics
+///
+/// Admin command to reset all proxy health counters
+pub async fn handle_proxy_reset_command(bot: &Bot, chat_id: ChatId, _user_id: i64) -> Result<()> {
+    use crate::core::config;
+    use crate::download::proxy::ProxyListManager;
+
+    if config::proxy::WARP_PROXY.is_none() && config::proxy::PROXY_FILE.is_none() {
+        bot.send_message(chat_id, "❌ *No proxies configured*")
+            .parse_mode(ParseMode::MarkdownV2)
+            .await?;
+        return Ok(());
+    }
+
+    let manager = ProxyListManager::new(config::proxy::get_selection_strategy());
+    manager.reset_stats().await;
+
+    bot.send_message(
+        chat_id,
+        "✅ *Proxy statistics reset*\n\nAll health counters have been cleared.",
+    )
+    .parse_mode(ParseMode::MarkdownV2)
+    .await?;
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Cookie Manager (Playwright browser automation) integration
+// ---------------------------------------------------------------------------
+
+/// Default cookie manager API URL
+const COOKIE_MANAGER_URL: &str = "http://127.0.0.1:9876";
+
+/// Send an HTTP request to the cookie_manager.py API
+async fn cookie_manager_request(method: &str, path: &str) -> Result<serde_json::Value, String> {
+    let url = format!("{}{}", COOKIE_MANAGER_URL, path);
+    // login_start launches Xvfb + Chromium + VNC — needs more time
+    let timeout_secs = if path.contains("login_start") { 90 } else { 30 };
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|e| format!("HTTP client error: {}", e))?;
+
+    let response = match method {
+        "POST" => client.post(&url).send().await,
+        _ => client.get(&url).send().await,
+    };
+
+    let resp = response.map_err(|e| format!("Request failed: {}", e))?;
+    let status = resp.status();
+    let body = resp
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
+
+    if !status.is_success() {
+        return Err(format!("HTTP {}: {}", status, body));
+    }
+
+    serde_json::from_str(&body).map_err(|e| format!("JSON parse error: {} (body: {})", e, body))
+}
+
+/// Handles the /browser_login command (admin only)
+///
+/// Starts a visual login session via noVNC so the admin can log in to YouTube.
+pub async fn handle_browser_login_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> Result<()> {
+    if !is_admin(user_id) {
+        bot.send_message(chat_id, "❌ Only admins can use this command.")
+            .await?;
+        return Ok(());
+    }
+
+    log::info!("Admin {} starting browser login session", user_id);
+
+    let msg = bot
+        .send_message(chat_id, "🔄 Starting browser login session...")
+        .await?;
+
+    match cookie_manager_request("POST", "/api/login_start").await {
+        Ok(data) => {
+            if let Some(error) = data.get("error").and_then(|v| v.as_str()) {
+                bot.edit_message_text(chat_id, msg.id, format!("❌ {}", error)).await?;
+                return Ok(());
+            }
+
+            let novnc_url = data.get("novnc_url").and_then(|v| v.as_str()).unwrap_or("unknown");
+
+            let escaped_url = escape_markdown(novnc_url);
+
+            // Build keyboard: only add URL button if it's a valid public URL
+            // (Telegram rejects http://localhost URLs in inline buttons)
+            let is_public_url = novnc_url.starts_with("https://")
+                || (novnc_url.starts_with("http://")
+                    && !novnc_url.contains("localhost")
+                    && !novnc_url.contains("127.0.0.1"));
+
+            let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
+            if is_public_url {
+                if let Ok(url) = novnc_url.parse() {
+                    rows.push(vec![InlineKeyboardButton::url("🌐 Open noVNC", url)]);
+                }
+            }
+            rows.push(vec![
+                crate::telegram::cb("✅ Done — export cookies", "admin:browser_login_done".to_string()),
+                crate::telegram::cb("❌ Cancel", "admin:browser_login_cancel".to_string()),
+            ]);
+            let keyboard = InlineKeyboardMarkup::new(rows);
+
+            bot.edit_message_text(
+                chat_id,
+                msg.id,
+                format!(
+                    "🌐 *Browser login session started*\n\n\
+                     Open the link below to log in to YouTube:\n\
+                     `{}`\n\n\
+                     After logging in, press *Done* to export cookies\\.",
+                    escaped_url
+                ),
+            )
+            .parse_mode(ParseMode::MarkdownV2)
+            .reply_markup(keyboard)
+            .await?;
+        }
+        Err(e) => {
+            bot.edit_message_text(chat_id, msg.id, format!("❌ Failed to start login session: {}", e))
+                .await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Handles the /browser_status command (admin only)
+///
+/// Shows the current cookie manager status.
+pub async fn handle_browser_status_command(bot: &Bot, chat_id: ChatId, user_id: i64) -> Result<()> {
+    if !is_admin(user_id) {
+        bot.send_message(chat_id, "❌ Only admins can use this command.")
+            .await?;
+        return Ok(());
+    }
+
+    match cookie_manager_request("GET", "/api/status").await {
+        Ok(data) => {
+            let login_active = data.get("login_active").and_then(|v| v.as_bool()).unwrap_or(false);
+            let needs_relogin = data.get("needs_relogin").and_then(|v| v.as_bool()).unwrap_or(false);
+            let profile_exists = data.get("profile_exists").and_then(|v| v.as_bool()).unwrap_or(false);
+            let cookies_exist = data.get("cookies_exist").and_then(|v| v.as_bool()).unwrap_or(false);
+            let cookie_count = data.get("cookie_count").and_then(|v| v.as_u64()).unwrap_or(0);
+            let last_refresh = data.get("last_refresh").and_then(|v| v.as_str()).unwrap_or("never");
+            let last_success = data.get("last_refresh_success").and_then(|v| v.as_bool());
+            let last_error = data.get("last_error").and_then(|v| v.as_str());
+
+            // Persistent browser status
+            let browser_running = data.get("browser_running").and_then(|v| v.as_bool()).unwrap_or(false);
+            let browser_restarts = data.get("browser_restarts").and_then(|v| v.as_u64()).unwrap_or(0);
+            let browser_memory_mb = data.get("browser_memory_mb").and_then(|v| v.as_u64());
+
+            // Get detailed cookie analysis
+            let required_found: Vec<String> = data
+                .get("required_found")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            let required_missing: Vec<String> = data
+                .get("required_missing")
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+                .unwrap_or_default();
+            let invalid_reason = data.get("invalid_reason").and_then(|v| v.as_str());
+
+            let status_icon = if needs_relogin {
+                "🔴"
+            } else if cookies_exist && cookie_count > 0 {
+                "🟢"
+            } else {
+                "🟡"
+            };
+
+            let browser_status = if browser_running {
+                let mem_info = browser_memory_mb.map(|m| format!(" \\({}MB\\)", m)).unwrap_or_default();
+                format!("🟢 Running{}", mem_info)
+            } else {
+                "🔴 Not running".to_string()
+            };
+
+            let login_status = if login_active {
+                "🌐 Active login session"
+            } else {
+                "— No active session"
+            };
+
+            let refresh_icon = match last_success {
+                Some(true) => "✅",
+                Some(false) => "❌",
+                None => "—",
+            };
+
+            let escaped_refresh = escape_markdown(last_refresh);
+            let error_line = if let Some(err) = last_error {
+                // Inside backticks, MarkdownV2 only needs ` and \ escaped
+                let escaped_err = err.replace('\\', "\\\\").replace('`', "\\`");
+                format!("\n⚠️ Last error: `{}`", escaped_err)
+            } else {
+                String::new()
+            };
+
+            // Build session cookies detail
+            let session_detail = if needs_relogin {
+                let missing_str = if required_missing.is_empty() {
+                    "none".to_string()
+                } else {
+                    escape_markdown(&required_missing.join(", "))
+                };
+                let found_str = if required_found.is_empty() {
+                    "none".to_string()
+                } else {
+                    escape_markdown(&required_found.join(", "))
+                };
+                let reason_str = if let Some(reason) = invalid_reason {
+                    format!("\n❗ _{}_", escape_markdown(reason))
+                } else {
+                    String::new()
+                };
+                format!(
+                    "\n\n*Session cookies:*\n✅ Found: {}\n❌ Missing: {}{}",
+                    found_str, missing_str, reason_str
+                )
+            } else {
+                let found_str = if required_found.is_empty() {
+                    "checking\\.\\.\\.".to_string()
+                } else {
+                    escape_markdown(&required_found.join(", "))
+                };
+                format!("\n\n*Session cookies:* ✅ {}", found_str)
+            };
+
+            let mut buttons = vec![];
+            if needs_relogin || !profile_exists {
+                buttons.push(vec![crate::telegram::cb(
+                    "🌐 Start login",
+                    "admin:browser_login_start".to_string(),
+                )]);
+            }
+            buttons.push(vec![
+                crate::telegram::cb("🔄 Refresh", "admin:browser_force_refresh".to_string()),
+                crate::telegram::cb("🔃 Restart browser", "admin:browser_restart".to_string()),
+            ]);
+
+            let keyboard = InlineKeyboardMarkup::new(buttons);
+
+            let restarts_info = if browser_restarts > 0 {
+                format!(" \\({} restarts\\)", browser_restarts)
+            } else {
+                String::new()
+            };
+
+            bot.send_message(
+                chat_id,
+                format!(
+                    "{} *Cookie Manager Status*\n\n\
+                     🌐 Browser: {}{}\n\
+                     Profile: {}\n\
+                     Cookies: {} \\({} cookies\\)\n\
+                     Login: {}\n\
+                     Last refresh: {} {}\
+                     {}{}\n\n\
+                     _Needs re\\-login: {}_",
+                    status_icon,
+                    browser_status,
+                    restarts_info,
+                    if profile_exists { "✅ exists" } else { "❌ missing" },
+                    if cookies_exist { "✅" } else { "❌" },
+                    cookie_count,
+                    login_status,
+                    refresh_icon,
+                    escaped_refresh,
+                    error_line,
+                    session_detail,
+                    if needs_relogin { "yes" } else { "no" },
+                ),
+            )
+            .parse_mode(ParseMode::MarkdownV2)
+            .reply_markup(keyboard)
+            .await?;
+        }
+        Err(e) => {
+            bot.send_message(
+                chat_id,
+                format!(
+                    "❌ Cookie manager is not reachable: {}\n\nMake sure it's running on {}",
+                    e, COOKIE_MANAGER_URL
+                ),
+            )
+            .await?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Handles admin:browser_* callback queries
+pub async fn handle_browser_callback(
+    bot: &Bot,
+    _callback_id: String,
+    chat_id: ChatId,
+    message_id: MessageId,
+    data: &str,
+) -> Result<()> {
+    match data {
+        "admin:browser_login_done" => {
+            bot.edit_message_text(chat_id, message_id, "🔄 Exporting cookies...")
+                .await?;
+
+            match cookie_manager_request("POST", "/api/login_stop").await {
+                Ok(resp) => {
+                    let exported = resp.get("cookies_exported").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let count = resp.get("cookie_count").and_then(|v| v.as_u64()).unwrap_or(0);
+
+                    if exported && count > 0 {
+                        bot.edit_message_text(
+                            chat_id,
+                            message_id,
+                            format!("✅ Login complete! Exported {} cookies.", count),
+                        )
+                        .await?;
+                    } else {
+                        bot.edit_message_text(
+                            chat_id,
+                            message_id,
+                            format!(
+                                "⚠️ Login stopped. Cookies exported: {}, count: {}.\n\
+                                 Try /browser_login again if cookies seem insufficient.",
+                                exported, count
+                            ),
+                        )
+                        .await?;
+                    }
+                }
+                Err(e) => {
+                    // Request failed (likely timeout), but cookies might have been exported
+                    // Check status to verify
+                    if let Ok(status) = cookie_manager_request("GET", "/api/status").await {
+                        let cookie_count = status.get("cookie_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                        if cookie_count > 0 {
+                            // Cookies were exported successfully despite timeout
+                            bot.edit_message_text(
+                                chat_id,
+                                message_id,
+                                format!("✅ Login complete! Exported {} cookies.\n(Response was slow but operation succeeded)", cookie_count),
+                            )
+                            .await?;
+                            return Ok(());
+                        }
+                    }
+                    // If status check also failed or no cookies, show error
+                    bot.edit_message_text(chat_id, message_id, format!("❌ Failed to export cookies: {}", e))
+                        .await?;
+                }
+            }
+        }
+
+        "admin:browser_login_cancel" => {
+            // Stop the login session without exporting
+            let _ = cookie_manager_request("POST", "/api/login_stop").await;
+            bot.edit_message_text(chat_id, message_id, "❌ Login session cancelled.")
+                .await?;
+        }
+
+        "admin:browser_login_start" => {
+            // Start login from status page button
+            bot.edit_message_text(chat_id, message_id, "🔄 Starting login session...")
+                .await?;
+
+            match cookie_manager_request("POST", "/api/login_start").await {
+                Ok(data) => {
+                    if let Some(error) = data.get("error").and_then(|v| v.as_str()) {
+                        bot.edit_message_text(chat_id, message_id, format!("❌ {}", error))
+                            .await?;
+                        return Ok(());
+                    }
+
+                    let novnc_url = data.get("novnc_url").and_then(|v| v.as_str()).unwrap_or("unknown");
+
+                    let escaped_url = escape_markdown(novnc_url);
+
+                    let keyboard = InlineKeyboardMarkup::new(vec![
+                        vec![InlineKeyboardButton::url(
+                            "🌐 Open noVNC",
+                            novnc_url
+                                .parse()
+                                .unwrap_or_else(|_| "https://example.com".parse().unwrap()),
+                        )],
+                        vec![
+                            crate::telegram::cb("✅ Done — export cookies", "admin:browser_login_done".to_string()),
+                            crate::telegram::cb("❌ Cancel", "admin:browser_login_cancel".to_string()),
+                        ],
+                    ]);
+
+                    bot.edit_message_text(
+                        chat_id,
+                        message_id,
+                        format!(
+                            "🌐 *Browser login session started*\n\n\
+                             Open the link below to log in to YouTube:\n\
+                             `{}`\n\n\
+                             After logging in, press *Done* to export cookies\\.",
+                            escaped_url
+                        ),
+                    )
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .reply_markup(keyboard)
+                    .await?;
+                }
+                Err(e) => {
+                    bot.edit_message_text(chat_id, message_id, format!("❌ Failed to start login session: {}", e))
+                        .await?;
+                }
+            }
+        }
+
+        "admin:browser_force_refresh" => {
+            bot.edit_message_text(chat_id, message_id, "🔄 Force refreshing cookies...")
+                .await?;
+
+            match cookie_manager_request("POST", "/api/export_cookies").await {
+                Ok(resp) => {
+                    let success = resp.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+                    let count = resp.get("cookie_count").and_then(|v| v.as_u64()).unwrap_or(0);
+
+                    if success {
+                        bot.edit_message_text(
+                            chat_id,
+                            message_id,
+                            format!("✅ Cookies refreshed! {} cookies exported.", count),
+                        )
+                        .await?;
+                    } else {
+                        let error = resp.get("error").and_then(|v| v.as_str()).unwrap_or("unknown error");
+                        bot.edit_message_text(chat_id, message_id, format!("❌ Refresh failed: {}", error))
+                            .await?;
+                    }
+                }
+                Err(e) => {
+                    bot.edit_message_text(chat_id, message_id, format!("❌ Failed to refresh cookies: {}", e))
+                        .await?;
+                }
+            }
+        }
+
+        "admin:browser_restart" => {
+            bot.edit_message_text(chat_id, message_id, "🔃 Restarting browser...")
+                .await?;
+
+            match cookie_manager_request("POST", "/api/restart_browser").await {
+                Ok(resp) => {
+                    let success = resp.get("success").and_then(|v| v.as_bool()).unwrap_or(false);
+
+                    if success {
+                        bot.edit_message_text(
+                            chat_id,
+                            message_id,
+                            "✅ Browser restarted successfully.\n\nUse /browser_status to check current state.",
+                        )
+                        .await?;
+                    } else {
+                        let error = resp.get("error").and_then(|v| v.as_str()).unwrap_or("unknown error");
+                        bot.edit_message_text(chat_id, message_id, format!("❌ Restart failed: {}", error))
+                            .await?;
+                    }
+                }
+                Err(e) => {
+                    bot.edit_message_text(chat_id, message_id, format!("❌ Failed to restart browser: {}", e))
+                        .await?;
+                }
+            }
+        }
+
+        _ => {
+            log::warn!("Unknown browser callback: {}", data);
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle /send command - send a message to a specific user on behalf of the bot
+///
+/// Format: `/send <telegram_id> <message text>`
+pub async fn handle_send_command(
+    bot: &Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    message_text: &str,
+    db_pool: Arc<DbPool>,
+) -> Result<()> {
+    if !is_admin(user_id) {
+        bot.send_message(chat_id, "Access denied.").await?;
+        return Ok(());
+    }
+
+    let parts: Vec<&str> = message_text.splitn(3, char::is_whitespace).collect();
+    if parts.len() < 3 || parts[2].trim().is_empty() {
+        bot.send_message(
+            chat_id,
+            "Usage: /send <telegram_id> <message>\n\nExample: /send 123456789 Hello!",
+        )
+        .await?;
+        return Ok(());
+    }
+
+    let target_id = match parts[1].parse::<i64>() {
+        Ok(id) => id,
+        Err(_) => {
+            bot.send_message(chat_id, "Invalid telegram_id. Must be a number.")
+                .await?;
+            return Ok(());
+        }
+    };
+
+    let text = parts[2].trim();
+
+    // Check that user exists in DB
+    let conn = get_connection(&db_pool)?;
+    if crate::storage::db::get_user(&conn, target_id)?.is_none() {
+        bot.send_message(chat_id, format!("User {} not found in database.", target_id))
+            .await?;
+        return Ok(());
+    }
+
+    match bot.send_message(ChatId(target_id), text).await {
+        Ok(_) => {
+            bot.send_message(chat_id, format!("Message sent to {}.", target_id))
+                .await?;
+        }
+        Err(e) => {
+            let err_str = e.to_string();
+            if err_str.contains("Forbidden") || err_str.contains("bot was blocked") {
+                bot.send_message(chat_id, format!("User {} has blocked the bot.", target_id))
+                    .await?;
+            } else {
+                bot.send_message(chat_id, format!("Failed to send: {}", e)).await?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle /broadcast command - send a message to all users
+///
+/// Format: `/broadcast <message text>`
+/// Rate-limited to ~28 msg/sec to stay under Telegram's 30/sec limit.
+pub async fn handle_broadcast_command(
+    bot: &Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    message_text: &str,
+    db_pool: Arc<DbPool>,
+) -> Result<()> {
+    if !is_admin(user_id) {
+        bot.send_message(chat_id, "Access denied.").await?;
+        return Ok(());
+    }
+
+    let text = match message_text.strip_prefix("/broadcast") {
+        Some(t) if !t.trim().is_empty() => t.trim(),
+        _ => {
+            bot.send_message(
+                chat_id,
+                "Usage: /broadcast <message>\n\nExample: /broadcast New feature available!",
+            )
+            .await?;
+            return Ok(());
+        }
+    };
+
+    let conn = get_connection(&db_pool)?;
+    let users = get_all_users(&conn)?;
+    let total = users.len();
+
+    bot.send_message(chat_id, format!("Broadcasting to {} users...", total))
+        .await?;
+
+    let mut sent: u32 = 0;
+    let mut blocked: u32 = 0;
+    let mut failed: u32 = 0;
+
+    for user in &users {
+        let tid = user.telegram_id();
+        // Skip admin — they already see the message
+        if tid == user_id {
+            continue;
+        }
+
+        match bot.send_message(ChatId(tid), text).await {
+            Ok(_) => sent += 1,
+            Err(e) => {
+                let err_str = e.to_string();
+                if err_str.contains("Forbidden")
+                    || err_str.contains("bot was blocked")
+                    || err_str.contains("chat not found")
+                {
+                    blocked += 1;
+                } else {
+                    failed += 1;
+                    log::warn!("Broadcast failed for user {}: {}", tid, e);
+                }
+            }
+        }
+
+        // Rate limit: ~28 msg/sec (under Telegram's 30/sec cap)
+        tokio::time::sleep(Duration::from_millis(35)).await;
+    }
+
+    bot.send_message(
+        chat_id,
+        format!(
+            "Broadcast complete.\nSent: {}\nBlocked/unavailable: {}\nFailed: {}",
+            sent, blocked, failed
+        ),
+    )
+    .await?;
+
+    Ok(())
+}
+
+mod tests {
+    #[test]
+    fn test_escape_markdown_basic() {
+        assert_eq!(super::escape_markdown("hello"), "hello");
+        assert_eq!(super::escape_markdown("hello_world"), "hello\\_world");
+        assert_eq!(super::escape_markdown("hello*world"), "hello\\*world");
+    }
+
+    #[test]
+    fn test_escape_markdown_complex() {
+        let input = "Test: [link](url) *bold* _italic_ `code`";
+        let expected = "Test: \\[link\\]\\(url\\) \\*bold\\* \\_italic\\_ \\`code\\`";
+        assert_eq!(super::escape_markdown(input), expected);
+    }
+
+    #[test]
+    fn test_escape_markdown_all_special_chars() {
+        let input = r"\*[]()~`>#+-=|{}.!";
+        let expected = r"\\\*\[\]\(\)\~\`\>\#\+\-\=\|\{\}\.\!";
+        assert_eq!(super::escape_markdown(input), expected);
+    }
+
+    #[test]
+    fn test_is_admin() {
+        if !super::ADMIN_IDS.is_empty() {
+            let admin_id = super::ADMIN_IDS[0];
+            let non_admin_id = super::ADMIN_IDS.iter().max().copied().unwrap_or(0) + 1;
+            assert!(super::is_admin(admin_id));
+            assert!(!super::is_admin(non_admin_id));
+        } else if *super::ADMIN_USER_ID != 0 {
+            let admin_id = *super::ADMIN_USER_ID;
+            assert!(super::is_admin(admin_id));
+            assert!(!super::is_admin(admin_id + 1));
+        } else {
+            assert!(!super::is_admin(0));
+        }
+    }
+
+    // ==================== truncate_message Tests ====================
+
+    #[test]
+    fn test_truncate_message_short() {
+        let text = "Hello, World!";
+        assert_eq!(super::truncate_message(text), text);
+    }
+
+    #[test]
+    fn test_truncate_message_at_limit() {
+        let text = "a".repeat(super::MAX_MESSAGE_LENGTH);
+        assert_eq!(super::truncate_message(&text), text);
+    }
+
+    #[test]
+    fn test_truncate_message_over_limit() {
+        let text = "a".repeat(super::MAX_MESSAGE_LENGTH + 100);
+        let result = super::truncate_message(&text);
+        assert!(result.len() < super::MAX_MESSAGE_LENGTH);
+        assert!(result.ends_with("... (truncated)"));
+    }
+
+    #[test]
+    fn test_truncate_message_empty() {
+        assert_eq!(super::truncate_message(""), "");
+    }
+
+    // ==================== indent_lines Tests ====================
+
+    #[test]
+    fn test_indent_lines_single_line() {
+        assert_eq!(super::indent_lines("hello", "  "), "  hello");
+    }
+
+    #[test]
+    fn test_indent_lines_multiple_lines() {
+        let input = "line1\nline2\nline3";
+        let expected = "  line1\n  line2\n  line3";
+        assert_eq!(super::indent_lines(input, "  "), expected);
+    }
+
+    #[test]
+    fn test_indent_lines_empty() {
+        // Empty input results in empty output
+        assert_eq!(super::indent_lines("", "  "), "");
+    }
+
+    #[test]
+    fn test_indent_lines_with_tabs() {
+        assert_eq!(super::indent_lines("hello", "\t"), "\thello");
+    }
+
+    // ==================== format_subscription_period_for_log Tests ====================
+
+    #[test]
+    fn test_format_subscription_period_for_log_one_day() {
+        use teloxide::types::Seconds;
+        let period = Seconds::from_seconds(86400);
+        let result = super::format_subscription_period_for_log(&period);
+        assert!(result.contains("86400 seconds"));
+        assert!(result.contains("~1.00 days"));
+    }
+
+    #[test]
+    fn test_format_subscription_period_for_log_one_month() {
+        use teloxide::types::Seconds;
+        let period = Seconds::from_seconds(86400 * 30);
+        let result = super::format_subscription_period_for_log(&period);
+        assert!(result.contains("~30.00 days"));
+        assert!(result.contains("~1.00 months"));
+    }
+
+    #[test]
+    fn test_format_subscription_period_for_log_zero() {
+        use teloxide::types::Seconds;
+        let period = Seconds::from_seconds(0);
+        let result = super::format_subscription_period_for_log(&period);
+        assert!(result.contains("0 seconds"));
+    }
+
+    // ==================== is_local_bot_api Tests ====================
+    // Note: is_local_bot_api is now in crate::core::config::bot_api::is_local_url
+
+    #[test]
+    fn test_is_local_bot_api_official() {
+        assert!(!crate::core::config::bot_api::is_local_url(
+            "https://api.telegram.org/bot12345"
+        ));
+    }
+
+    #[test]
+    fn test_is_local_bot_api_local() {
+        assert!(crate::core::config::bot_api::is_local_url(
+            "http://localhost:8081/bot12345"
+        ));
+        assert!(crate::core::config::bot_api::is_local_url(
+            "http://127.0.0.1:8081/bot12345"
+        ));
+        assert!(crate::core::config::bot_api::is_local_url(
+            "http://my-bot-api.local/bot12345"
+        ));
+    }
+
+    // ==================== read_log_tail Tests ====================
+
+    #[test]
+    fn test_read_log_tail_nonexistent() {
+        let result = super::read_log_tail(&std::path::PathBuf::from("/nonexistent/file.log"), 1024);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_read_log_tail_small_file() {
+        use std::io::Write;
+        let temp_dir = std::env::temp_dir();
+        let temp_file = temp_dir.join(format!("admin_test_log_{}.txt", std::process::id()));
+
+        let mut file = std::fs::File::create(&temp_file).unwrap();
+        writeln!(file, "Line 1").unwrap();
+        writeln!(file, "Line 2").unwrap();
+        drop(file);
+
+        let result = super::read_log_tail(&temp_file, 1024).unwrap();
+        let _ = std::fs::remove_file(&temp_file);
+
+        assert!(result.contains("Line 1"));
+        assert!(result.contains("Line 2"));
+    }
+
+    // ==================== MAX_MESSAGE_LENGTH constant test ====================
+
+    #[test]
+    fn test_max_message_length_value() {
+        // Telegram limit is 4096, we use 4000 to have margin
+        assert_eq!(super::MAX_MESSAGE_LENGTH, 4000);
+    }
+}

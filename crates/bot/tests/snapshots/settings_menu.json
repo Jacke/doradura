@@ -1,0 +1,118 @@
+{
+  "name": "settings_menu",
+  "version": "1.0",
+  "recorded_at": "2026-01-04T14:35:00Z",
+  "interactions": [
+    [
+      {
+        "method": "POST",
+        "path": "/sendMessage",
+        "body": {
+          "chat_id": 123456789,
+          "text": "⚙️ *Download Settings*\n\n📹 *Video quality:* 1080p\n🎵 *Audio bitrate:* 192 kbps\n📱 *Default format:* Audio\n\nSelect a parameter to change:",
+          "parse_mode": "MarkdownV2",
+          "reply_markup": {
+            "inline_keyboard": [
+              [
+                {
+                  "text": "📹 Video quality",
+                  "callback_data": "settings:video_quality"
+                }
+              ],
+              [
+                {
+                  "text": "🎵 Audio bitrate",
+                  "callback_data": "settings:audio_bitrate"
+                }
+              ],
+              [
+                {
+                  "text": "📱 Default format",
+                  "callback_data": "settings:default_format"
+                }
+              ],
+              [
+                {
+                  "text": "🌐 Language",
+                  "callback_data": "settings:language"
+                }
+              ],
+              [
+                {
+                  "text": "◀️ Back",
+                  "callback_data": "menu:main"
+                }
+              ]
+            ]
+          }
+        },
+        "timestamp": 1736001300
+      },
+      {
+        "status": 200,
+        "body": {
+          "ok": true,
+          "result": {
+            "message_id": 44,
+            "from": {
+              "id": 987654321,
+              "is_bot": true,
+              "first_name": "DoraDura",
+              "username": "doradura_bot"
+            },
+            "chat": {
+              "id": 123456789,
+              "first_name": "Test",
+              "username": "testuser",
+              "type": "private"
+            },
+            "date": 1736001300,
+            "text": "⚙️ Settings\n\n📹 Video quality: 1080p\n🎵 Audio bitrate: 192 kbps\n📱 Default format: Audio\n\nSelect a parameter to change:",
+            "reply_markup": {
+              "inline_keyboard": [
+                [
+                  {
+                    "text": "📹 Video quality",
+                    "callback_data": "settings:video_quality"
+                  }
+                ],
+                [
+                  {
+                    "text": "🎵 Audio bitrate",
+                    "callback_data": "settings:audio_bitrate"
+                  }
+                ],
+                [
+                  {
+                    "text": "📱 Default format",
+                    "callback_data": "settings:default_format"
+                  }
+                ],
+                [
+                  {
+                    "text": "🌐 Language",
+                    "callback_data": "settings:language"
+                  }
+                ],
+                [
+                  {
+                    "text": "◀️ Back",
+                    "callback_data": "menu:main"
+                  }
+                ]
+              ]
+            }
+          }
+        },
+        "headers": {
+          "content-type": "application/json"
+        }
+      }
+    ]
+  ],
+  "metadata": {
+    "description": "User opens settings menu and sees current preferences",
+    "command": "/settings",
+    "user_id": "123456789"
+  }
+}
