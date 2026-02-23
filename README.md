@@ -1,181 +1,416 @@
 <div align="center">
 
-# Doradura
+<img src="logo.webp" width="52%" alt="Doradura Logo">
 
-<img src="logo.webp" width="55%" height="350" alt="Doradura Logo">
+# doradura
 
-### High-performance Telegram bot for downloading and converting media
+**Two ways to download the internet. One codebase. Pure Rust.**
 
-[![Rust](https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Telegram](https://img.shields.io/badge/Telegram-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/DoraDuraDoraDuraBot?start)
-
-**Download media from multiple sources and convert between formats**
+[![Rust](https://img.shields.io/badge/Rust-1.83+-000000?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![Telegram Bot](https://img.shields.io/badge/Telegram_Bot-v0.13-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/DoraDuraDoraDuraBot?start)
+[![TUI](https://img.shields.io/badge/TUI-dora_v0.3-A6E3A1?style=for-the-badge&logo=gnometerminal&logoColor=black)](https://github.com/Jacke/doradura)
+[![License: MIT](https://img.shields.io/badge/License-MIT-CBA6F7?style=for-the-badge)](LICENSE)
 
 </div>
 
 ---
 
-## Features
-
-- **Multi-source downloads** — [pluggable backend architecture](docs/EXTENDING_SOURCES.md) via `DownloadSource` trait. Built-in support for 1000+ sites (YouTube, SoundCloud, TikTok, Instagram, VK, Twitch, Spotify, Bandcamp, and more) plus direct file URLs
-- **Format conversion** — convert documents (DOCX to PDF), video (circles, GIF, compression), audio (effects, ringtones, cuts), and images (resize, format change) directly from sent files
-- **Audio processing** — pitch, tempo, bass boost effects; ringtone creation; segment cutting with speed control
-- **High performance** — built with Rust and async Tokio runtime for maximum throughput
-- **Download pipeline** — source-agnostic pipeline with progress tracking, retry logic, and automatic cleanup
-- **Queue system** — handle multiple concurrent downloads with per-user rate limiting and priority tiers
-- **Subscription system** — Free / Premium / VIP tiers with Telegram Stars payments and auto-renewal
-- **Multi-language** — Russian, English, French, German with per-user language selection
-- **Database & history** — SQLite-backed download history, user stats, and export (TXT/CSV/JSON)
-
-## Architecture
-
 ```
-DownloadSource trait          SourceRegistry (URL routing)
-  ├── YtDlpSource  ───────►  ┌──────────────────────┐
-  │   (1000+ sites)           │  resolve(url) → src  │
-  ├── HttpSource   ───────►  │  register(source)     │
-  │   (direct files)          └──────────────────────┘
-  └── (your backend)                    │
-                                        ▼
-                              Pipeline (download_phase / execute)
-                                        │
-                              ┌─────────┴─────────┐
-                              │  audio.rs  video.rs │
-                              └───────────────────┘
-
-conversion/
-  ├── video.rs    (circles, GIF, compression)
-  ├── image.rs    (resize, format conversion)
-  └── document.rs (DOCX → PDF via LibreOffice)
+╔══════════════════════════════════════════════════════════════════════════╗
+║  doradura  =  dora TUI  +  doradura Telegram Bot                        ║
+║  1000+ platforms  ·  async Rust  ·  Catppuccin Mocha  ·  production     ║
+╚══════════════════════════════════════════════════════════════════════════╝
 ```
 
-New download backends are added by implementing the `DownloadSource` trait and registering them in `SourceRegistry::default_registry()`.
+**doradura** is a media-download ecosystem built entirely in Rust. It ships two distinct products that share one high-performance core: **dora** — a gorgeous Catppuccin-themed terminal UI for your desktop — and **doradura** — an enterprise-grade Telegram bot for your users, friends, or yourself.
+
+---
+
+## Products at a glance
+
+| | dora TUI | doradura Bot |
+|---|---|---|
+| **Interface** | Terminal (ratatui, full mouse) | Telegram |
+| **Version** | 0.3.0 | 0.13.0 |
+| **Use case** | Personal power-user desktop client | Shared / team / public bot |
+| **Platforms** | macOS, Linux | Any (deployed on Railway) |
+| **Formats** | MP3, MP4 | MP3, MP4, GIF, WAV, FLAC, OGG, SRT, M4A, M4R |
+| **Lyrics** | LRCLIB + Genius search | — |
+| **Subscriptions** | — | Free / Premium / VIP |
+| **Audio FX** | — | Pitch · Tempo · Bass · Lofi · Wide · Morph |
+
+---
+
+## dora — Beautiful TUI Media Downloader
+
+```
+ ╭──────────────────────────────────────────────────────────────────╮
+ │   ██████╗  ██████╗ ██████╗  █████╗                               │
+ │   ██╔══██╗██╔═══██╗██╔══██╗██╔══██╗                              │
+ │   ██║  ██║██║   ██║██████╔╝███████║                              │
+ │   ██║  ██║██║   ██║██╔══██╗██╔══██║                              │
+ │   ██████╔╝╚██████╔╝██║  ██║██║  ██║                              │
+ │   ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝                             │
+ │                                                                  │
+ │  [1] ⬇  Downloads   [2] 🎵 Lyrics   [3] ⚙  Settings             │
+ ╰──────────────────────────────────────────────────────────────────╯
+```
+
+A pixel-perfect TUI built with **ratatui** and the **Catppuccin Mocha** colour palette — 7 cycleable logo themes, full mouse support, 60 fps rendering.
+
+### Interface
+
+| Tab | What lives here |
+|-----|----------------|
+| **[1] Downloads** | URL input · live download queue · full scrollable history with pop-up details |
+| **[2] Lyrics** | Artist + title search via LRCLIB/Genius with full scrollable lyrics |
+| **[3] Settings** | yt-dlp path, output folder, quality, bitrate, rate-limit, cookies — persisted to `~/.config/dora/settings.json` |
+
+### Download Flow
+
+1. Paste a URL → **Enter** — a rich preview popup appears with thumbnail ASCII art, title, channel and available qualities
+2. Toggle `Tab` to switch MP3 ↔ MP4; use `←/→` to pick resolution
+3. Press **Enter** — download starts in the queue with real-time speed + ETA
+4. On completion the entry moves to History; press **r** or click the ASCII art panel to **Reveal in Finder / Files**
+
+### Quality & Format Options
+
+| Audio | Video |
+|-------|-------|
+| MP3 — 128k / 192k / 256k / 320k | MP4 — 360p / 480p / 720p / 1080p / best |
+
+### Settings
+
+```
+yt-dlp ─────────────────────────────────────────────────────────────
+  Binary path        yt-dlp
+  Output folder      ~/Downloads
+  Audio bitrate   ←  320k  →
+  Video quality   ←  1080p →
+  Rate limit      ←  off   →
+  Cookies file       (none)
+
+Instagram ──────────────────────────────────────────────────────────
+  Cookies file       (none)
+  GraphQL Doc ID     (none)
+
+Conversion ─────────────────────────────────────────────────────────
+  Default format  ←  MP3   →
+  MP3 bitrate     ←  320k  →
+```
+
+### Keyboard Reference
+
+```
+Global                Downloads               History popup
+──────────────────    ──────────────────────  ──────────────────────
+1 / 2 / 3  Tabs       Enter  Start / preview  r / Enter  Reveal
+?          Help        r      Reveal latest    b          Open in browser
+Esc        Close       d      Remove slot      d          Delete entry
+Ctrl+C     Quit        c      Cookies file     Esc        Close
+                       ↑ / ↓  Scroll history
+
+Preview popup         Lyrics                  Settings
+──────────────────    ──────────────────────  ──────────────────────
+Tab    MP3 ↔ MP4      Enter  Search           ↑ / ↓  Navigate
+← / →  Quality        ↑ / ↓  Scroll           ← / →  Cycle value
+Enter  Download        Esc    Clear            Enter  Edit text field
+Esc    Cancel                                  s      Save · r  Reset
+```
+
+### yt-dlp integration
+
+- **Startup check** — missing binary shows an install-or-quit dialog
+- **Auto-update** — `yt-dlp -U` runs in the background on launch; a progress strip fades in and out when done
+- **Cookies dialog** — drag-and-drop or browse cookies.txt for authenticated downloads
+
+### Logo themes
+
+Click the logo to cycle through 7 themes — each click fires a burst animation:
+`Catppuccin` · `Fire` · `Ice` · `Matrix` · `Sunset` · `Neon` · `Gold`
+
+### Run dora
+
+```bash
+# Install
+cargo install --path crates/dora
+
+# Run
+dora
+
+# Demo mode (pre-populated with sample data)
+dora --demo
+```
+
+---
+
+## doradura — Enterprise Telegram Bot
+
+A production-grade Telegram bot deployed on Railway, serving **1000+ platforms**, real-time audio processing, subscription tiers, and a Prometheus-monitored download pipeline.
+
+### Supported Platforms
+
+YouTube · SoundCloud · TikTok · Instagram · VK · Twitch · Spotify · Bandcamp · Twitter/X · Dailymotion · Vimeo · Reddit · Facebook · and 1000+ more via yt-dlp
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Main menu |
+| `/download <url>` | Download directly |
+| `/info <url>` | Show metadata + available formats |
+| `/history` | Your download history |
+| `/stats` | Your usage statistics |
+| `/plan` | Subscription info |
+| `/settings` | Preferences (quality, bitrate, language, format) |
+| `/feedback` | Send feedback to the admin |
+
+### Download Formats
+
+| Format | Quality |
+|--------|---------|
+| **MP3** | 128k · 192k · 256k · 320k |
+| **MP4** | 360p · 480p · 720p · 1080p · best |
+| **Video Note** | Auto-split circles (up to 6 × 60s) |
+| **GIF** | Converted from video |
+| **Audio** | WAV · FLAC · OGG · M4A · Opus · AAC |
+| **Subtitles** | SRT · TXT (via Downsub gRPC) |
+| **Ringtones** | iPhone `.m4r` (≤30s) · Android `.mp3` (≤40s) |
+
+### Audio Effects Engine
+
+Available on Premium+, applied on-the-fly with FFmpeg:
+
+```
+Pitch        −12 to +12 semitones
+Tempo        0.5× to 2.0× (pitch-preserved)
+Bass Boost   −12 to +12 dB
+
+Morph profiles:
+  Soft        Vocal-optimised low-cut
+  Aggressive  Compressed · crushed · echoed
+  Lofi        22 kHz downsampling + vinyl grain
+  Wide        Stereo enhancement · extra-stereo
+```
+
+### Subscription Tiers
+
+| Feature | Free | Premium | VIP |
+|---------|:----:|:-------:|:---:|
+| Rate limit between downloads | 30 s | 10 s | 5 s |
+| Daily download limit | 5 | ∞ | ∞ |
+| Max file size | 49 MB | 100 MB | 200 MB |
+| Quality & bitrate selection | ✗ | ✓ | ✓ |
+| Audio effects | ✗ | ✓ | ✓ |
+| Ringtone creator | ✗ | ✓ | ✓ |
+| Queue priority | Normal | High | Highest |
+| Subtitles & subtitles burn-in | ✗ | ✓ | ✓ |
+
+Subscriptions are paid via **Telegram Stars** and auto-tracked in SQLite with hourly expiry checks.
+
+### Multi-language
+
+**English** · **Русский** · **Français** · **Deutsch** — per-user language preference stored in the database, powered by Fluent localisation.
+
+### Infrastructure
+
+```
+Telegram ──► teloxide long-poll / webhook
+               │
+               ▼
+         Download Pipeline (crates/core)
+          ├─ SourceRegistry (URL routing)
+          │    ├─ YtDlpSource   (1000+ sites · Deno JS runtime · PO token fallback)
+          │    └─ HttpSource    (direct URLs · chunked · resumable)
+          ├─ Audio Pipeline    (FFmpeg · effects · cutting · ringtones)
+          ├─ Video Pipeline    (circles · GIF · burn-in · splitting)
+          └─ Subtitle Cache    (disk-permanent · Downsub gRPC)
+               │
+               ▼
+         SQLite (r2d2 pool)
+          ├─ Users + subscriptions + language prefs
+          ├─ Download history + task queue
+          ├─ Audio effect sessions  (24h TTL)
+          ├─ Cut sessions           (10 min TTL)
+          └─ Bot asset cache        (Telegram file_id)
+               │
+               ▼
+         Prometheus metrics  /  Admin alert system
+```
+
+### YouTube Download Strategy
+
+Railway IPs are flagged by YouTube bot detection — doradura uses a battle-tested fallback chain:
+
+```
+1. android_vr + web_safari client — no cookies required
+2. Cookies + PO token (bgutil HTTP server, Deno-based)
+3. WARP / Tailscale proxy (mandatory on Railway)
+```
+
+### Deploy on Railway
+
+```bash
+# 1. Fork and connect repo to Railway
+# 2. Set environment variables (see below)
+# 3. Push → automatic Docker build + deploy
+
+railway up
+```
+
+#### Required environment variables
+
+```env
+TELOXIDE_TOKEN=your_telegram_bot_token
+TELEGRAM_API_ID=your_api_id
+TELEGRAM_API_HASH=your_api_hash
+ADMIN_USERNAME=your_username           # without @
+DATABASE_URL=/data/database.sqlite
+WARP_PROXY=socks5://...               # CRITICAL for YouTube on Railway
+```
+
+#### Optional
+
+```env
+BOT_API_URL=http://localhost:8081     # local Bot API — files up to 2 GB
+DOWNSUB_GRPC_ENDPOINT=http://...:50051
+WEB_BASE_URL=https://your.domain      # share page hosting
+YTDL_BIN=yt-dlp
+```
+
+---
+
+## Architecture — shared core
+
+```
+doradura/
+├── crates/
+│   ├── core/          # Shared library
+│   │   ├── download/  # Pipeline: sources, progress, retry, cleanup
+│   │   │   ├── source/ytdlp.rs   YtDlpSource (v5 fallback chain)
+│   │   │   ├── source/http.rs    HttpSource (chunked + resume)
+│   │   │   ├── pipeline.rs       execute() / download_phase()
+│   │   │   └── builder.rs        DownloadRequest builder
+│   │   ├── conversion/           FFmpeg wrappers (audio, video, image, doc)
+│   │   ├── storage/              SQLite, file management, backup
+│   │   ├── lyrics/               LRCLIB + Genius
+│   │   ├── odesli/               Streaming link aggregation
+│   │   └── metrics/              Prometheus integration
+│   │
+│   ├── bot/           # Telegram bot (doradura v0.13.0)
+│   │   ├── telegram/  Bot handlers, menus, callbacks
+│   │   ├── audio.rs   Thin wrapper → pipeline::execute()
+│   │   └── video.rs   Video pipeline + splitting + burn-in
+│   │
+│   └── dora/          # Terminal UI (dora v0.3.0)
+│       ├── app.rs     Application state machine
+│       ├── main.rs    Event loop, key/mouse handlers
+│       ├── settings.rs Persistent settings (JSON)
+│       └── ui/        Ratatui renderers (tabs, popups, overlays)
+│
+├── locales/           Fluent i18n strings (en, ru, fr, de)
+├── migrations/        SQLite schema migrations
+└── Dockerfile         Multi-stage build (cargo-chef + runtime)
+```
+
+---
 
 ## Quick Start
 
-### Prerequisites
+### dora TUI
 
 ```bash
-# Install FFmpeg (media processing)
-brew install ffmpeg  # macOS
+# Prerequisites
+brew install yt-dlp ffmpeg      # macOS
 # or
-sudo apt install ffmpeg  # Ubuntu/Debian
+pip install yt-dlp && sudo apt install ffmpeg   # Linux
 
-# Install yt-dlp (for platform downloads)
-brew install yt-dlp  # macOS
-# or
-pip install yt-dlp  # Python alternative
-```
-
-### Installation
-
-1. Clone the repository:
-
-```bash
-git clone https://github.com/yourusername/doradura.git
+# Build & run
+git clone https://github.com/Jacke/doradura.git
 cd doradura
+cargo run -p dora
+
+# Or install globally
+cargo install --path crates/dora
+dora
 ```
 
-2. Create a `.env` file:
+### doradura Bot (local)
 
 ```bash
 cp .env.example .env
-# Edit .env and add your Telegram bot token
+# Edit .env → add TELOXIDE_TOKEN, TELEGRAM_API_ID/HASH, ADMIN_USERNAME
+
+cargo run -p doradura -- run
 ```
 
-3. Build and run:
+### Docker
 
 ```bash
-cargo build --release
-
-# Run the bot (default mode)
-./target/release/doradura run
-
-# Or use cargo
-cargo run -- run
+docker build -t doradura .
+docker run -e TELOXIDE_TOKEN=... -e TELEGRAM_API_ID=... \
+           -e TELEGRAM_API_HASH=... -e ADMIN_USERNAME=... \
+           -v doradura-data:/data doradura
 ```
 
-> **Note:** The bot supports CLI commands. See [CLI_USAGE.md](CLI_USAGE.md) for all available commands including `run-staging`, `run-with-cookies`, and `refresh-metadata`.
+---
 
-### Environment Variables
+## Tech Stack
 
-Create a `.env` file in the project root:
+| Layer | Technology |
+|-------|-----------|
+| Language | Rust 1.83+ |
+| TUI | ratatui 0.29 · crossterm 0.28 |
+| Telegram | teloxide 0.17 · local Bot API |
+| Async | Tokio (full features) |
+| Database | SQLite · rusqlite · r2d2 |
+| HTTP | reqwest · SOCKS5 proxy support |
+| Media | FFmpeg · yt-dlp (nightly) · Deno |
+| i18n | Fluent-templates |
+| Metrics | Prometheus |
+| Web | Axum · Tower |
+| Deploy | Railway · Docker · s6-overlay |
+| Theme | Catppuccin Mocha |
 
-```env
-TELOXIDE_TOKEN=your_telegram_bot_token_here
-ADMIN_USERNAME=your_telegram_username  # Admin user (without @)
-YTDL_BIN=yt-dlp  # Optional: override default
-BOT_API_URL=http://localhost:8081  # Optional: local Bot API server (files up to 2GB)
-DOWNSUB_GRPC_ENDPOINT=http://localhost:50051  # Optional: Downsub gRPC for summarization/subtitles
-```
+---
 
-### Local Bot API Server (Optional)
+## Documentation
 
-For sending files larger than 50 MB (up to 2 GB):
+| Doc | Contents |
+|-----|----------|
+| [QUICKSTART.md](docs/QUICKSTART.md) | End-to-end setup guide |
+| [EXTENDING_SOURCES.md](docs/EXTENDING_SOURCES.md) | Add custom download backends |
+| [BOT_FLOWS.md](docs/BOT_FLOWS.md) | Bot conversation state diagrams |
+| [LOCAL_BOT_API_SETUP.md](docs/LOCAL_BOT_API_SETUP.md) | Files up to 2 GB via local Bot API |
+| [YOUTUBE_COOKIES.md](docs/YOUTUBE_COOKIES.md) | Cookie authentication setup |
+| [SUBSCRIPTIONS.md](docs/SUBSCRIPTIONS.md) | Subscription tier management |
+| [TESTING.md](docs/TESTING.md) | Test suite & smoke tests |
 
-```bash
-./scripts/start_local_bot_api.sh
-```
-
-See [LOCAL_BOT_API_SETUP.md](docs/LOCAL_BOT_API_SETUP.md) for details.
-
-## Usage
-
-Interact with the bot on Telegram:
-
-- **Send a link** — downloads audio/video from supported platforms
-- **Send a file** — offers conversion options
-- `/start` — main menu
-- `/settings` — download and conversion settings
-- `/info <URL>` — show available formats for a URL
-- `/downsub summary <URL>` — get a summary via Downsub
-- `/downsub subtitles <URL>` — fetch subtitles via Downsub
+---
 
 ## Testing
 
 ```bash
-# Run all tests
+# All tests
 cargo test
 
-# Run with integration tests
+# Specific crate
+cargo test -p doradura
+cargo test -p dora
+
+# With integration tests
 cargo test -- --ignored
 
-# Clippy
-cargo clippy
+# Lint
+cargo clippy --workspace
 ```
-
-## Dependencies
-
-Key technologies:
-
-- **[teloxide](https://github.com/teloxide/teloxide)** — Telegram bot framework
-- **[tokio](https://tokio.rs/)** — async runtime
-- **[rusqlite](https://github.com/rusqlite/rusqlite)** — SQLite database
-- **[reqwest](https://github.com/seanmonstar/reqwest)** — HTTP client
-- **[fluent-templates](https://github.com/XAMPPRocky/fluent-templates)** — i18n
-
-## Documentation
-
-- [QUICKSTART.md](docs/QUICKSTART.md)
-- [EXTENDING_SOURCES.md](docs/EXTENDING_SOURCES.md) — how to add custom download backends
-- [BOT_FLOWS.md](docs/BOT_FLOWS.md)
-- [LOCAL_BOT_API_SETUP.md](docs/LOCAL_BOT_API_SETUP.md)
-- [YOUTUBE_COOKIES.md](docs/YOUTUBE_COOKIES.md)
-- [SUBSCRIPTIONS.md](docs/SUBSCRIPTIONS.md)
-- [TESTING.md](docs/TESTING.md)
-
-## License
-
-MIT License - see LICENSE file for details.
-
-## Disclaimer
-
-This bot is for personal use only. Please respect copyright laws and terms of service of the platforms you download from.
 
 ---
 
 <div align="center">
 
-Made with Rust by Dora
+MIT License · Made with Rust · [Jacke/doradura](https://github.com/Jacke/doradura)
+
+*Download anything. From anywhere. Beautifully.*
 
 </div>
