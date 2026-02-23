@@ -62,14 +62,18 @@ pub fn render(f: &mut Frame, app: &mut App) {
     }
     if let Some(idx) = app.history_popup {
         if let Some(entry) = app.history.iter().rev().nth(idx).cloned() {
-            render_history_popup(f, size, &entry);
+            render_history_popup(f, size, &entry, app);
         }
     }
 
     // yt-dlp startup popups render on top of everything (highest z-order).
     match &app.ytdlp_startup.clone() {
         YtdlpStartup::Missing => render_ytdlp_missing_popup(f, size),
-        YtdlpStartup::Updating { msg } => render_ytdlp_updating_popup(f, size, msg),
+        YtdlpStartup::Updating { msg } => render_ytdlp_updating_popup(f, size, msg, 1.0),
+        YtdlpStartup::FadingOut { ticks } => {
+            let alpha = *ticks as f32 / 90.0;
+            render_ytdlp_updating_popup(f, size, "  ✓  Up to date", alpha);
+        }
         YtdlpStartup::Done => {}
     }
 }
@@ -516,18 +520,21 @@ fn render_ytdlp_missing_popup(f: &mut Frame, area: Rect) {
     f.render_widget(Paragraph::new(text), inner);
 }
 
-fn render_ytdlp_updating_popup(f: &mut Frame, area: Rect, msg: &str) {
+fn render_ytdlp_updating_popup(f: &mut Frame, area: Rect, msg: &str, alpha: f32) {
     let popup_w = 58_u16.min(area.width.saturating_sub(4));
     let popup_h = 6_u16.min(area.height.saturating_sub(4));
     let popup_x = area.x + (area.width.saturating_sub(popup_w)) / 2;
     let popup_y = area.y + area.height.saturating_sub(popup_h + 2); // bottom of screen
     let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
 
+    // Lerp BLUE → BASE as alpha goes 1.0 → 0.0 (fade to invisible against background).
+    let color = lerp_color((137, 180, 250), (30, 30, 46), alpha);
+
     let block = Block::default()
         .title(" ↑  yt-dlp ")
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(theme::BLUE))
+        .border_style(Style::default().fg(color))
         .style(Style::default().bg(theme::BASE));
     let inner = block.inner(popup_area);
 
@@ -537,7 +544,7 @@ fn render_ytdlp_updating_popup(f: &mut Frame, area: Rect, msg: &str) {
 
     let text: Vec<Line> = vec![
         Line::from(""),
-        Line::from(Span::styled(format!("  {}", display), Style::default().fg(theme::BLUE))),
+        Line::from(Span::styled(format!("  {}", display), Style::default().fg(color))),
     ];
 
     f.render_widget(Clear, popup_area);
@@ -545,7 +552,17 @@ fn render_ytdlp_updating_popup(f: &mut Frame, area: Rect, msg: &str) {
     f.render_widget(Paragraph::new(text), inner);
 }
 
-fn render_history_popup(f: &mut Frame, area: Rect, entry: &HistoryEntry) {
+/// Linearly interpolate between two RGB colours.
+/// `t = 1.0` → `from`, `t = 0.0` → `to`.
+fn lerp_color(from: (u8, u8, u8), to: (u8, u8, u8), t: f32) -> ratatui::style::Color {
+    let t = t.clamp(0.0, 1.0);
+    let r = (from.0 as f32 * t + to.0 as f32 * (1.0 - t)) as u8;
+    let g = (from.1 as f32 * t + to.1 as f32 * (1.0 - t)) as u8;
+    let b = (from.2 as f32 * t + to.2 as f32 * (1.0 - t)) as u8;
+    ratatui::style::Color::Rgb(r, g, b)
+}
+
+fn render_history_popup(f: &mut Frame, area: Rect, entry: &HistoryEntry, app: &mut App) {
     let popup_w = 74_u16.min(area.width.saturating_sub(4));
     let popup_h = 20_u16.min(area.height.saturating_sub(4));
     let popup_x = area.x + (area.width.saturating_sub(popup_w)) / 2;
@@ -625,6 +642,12 @@ fn render_history_popup(f: &mut Frame, area: Rect, entry: &HistoryEntry) {
         ]
     };
     f.render_widget(Paragraph::new(art_lines), chunks[0]);
+
+    // Clicking anywhere on the ASCII art column triggers "reveal in Finder".
+    if !entry.path.is_empty() {
+        app.click_map
+            .push((chunks[0], ClickTarget::HistoryReveal(entry.path.clone())));
+    }
 
     // ── Right: info + actions ─────────────────────────────────────────────────
     let right = Layout::default()

@@ -70,6 +70,8 @@ pub enum YtdlpStartup {
     Missing,
     /// Binary found, running `yt-dlp -U` in the background.
     Updating { msg: String },
+    /// Update finished — popup fades out over `ticks` frames (0 → Done).
+    FadingOut { ticks: u8 },
 }
 
 /// Logo colour scheme, cycled on logo click.
@@ -134,6 +136,8 @@ pub enum ClickTarget {
     LogoClick,
     /// Open the history detail popup for a specific display-index entry.
     HistoryOpenPopup(usize),
+    /// Click on the ASCII art panel of the history popup — reveal the file.
+    HistoryReveal(String),
 }
 
 /// State of a single download slot.
@@ -457,6 +461,15 @@ impl App {
         // Decay burst animation counter.
         if self.logo_burst > 0 {
             self.logo_burst -= 1;
+        }
+
+        // Tick down the yt-dlp update fade-out animation.
+        if let YtdlpStartup::FadingOut { ref mut ticks } = self.ytdlp_startup {
+            if *ticks == 0 {
+                self.ytdlp_startup = YtdlpStartup::Done;
+            } else {
+                *ticks -= 1;
+            }
         }
 
         // In demo mode, animate the downloading slot

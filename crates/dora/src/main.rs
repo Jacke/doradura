@@ -178,7 +178,7 @@ async fn run_loop(
         // ── Drain yt-dlp startup update lines ────────────────────────────────
         while let Ok(msg) = ytdlp_rx.try_recv() {
             if msg == "__done__" {
-                app.ytdlp_startup = YtdlpStartup::Done;
+                app.ytdlp_startup = YtdlpStartup::FadingOut { ticks: 90 };
             } else if msg == "__missing__" {
                 app.ytdlp_startup = YtdlpStartup::Missing;
                 app.ytdlp_available = false;
@@ -1015,6 +1015,10 @@ fn handle_click(app: &mut App, target: app::ClickTarget, dl_tx: mpsc::Sender<(us
             let clamped = idx.min(max);
             app.history_scroll = clamped as u16;
             app.history_popup = Some(clamped);
+        }
+        ClickTarget::HistoryReveal(path) => {
+            app.history_popup = None;
+            reveal_file(app, path);
         }
     }
 }
