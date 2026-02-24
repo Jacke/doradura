@@ -303,10 +303,11 @@ jobs:
       - name: Import GPG signing key
         run: |
           echo "${{ secrets.APT_SIGNING_KEY }}" | gpg --batch --import
-          KEY_ID=$(gpg --list-secret-keys --with-colons | grep '^sec' | cut -d: -f5 | tail -1)
+          KEY_ID=$(gpg --list-secret-keys --with-colons | awk -F: '/^sec/{print $5; exit}')
+          KEY_FPR=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr/{print $10; exit}')
           echo "KEY_ID=$KEY_ID" >> "$GITHUB_ENV"
-          # Trust the key
-          echo "${KEY_ID}:6:" | gpg --import-ownertrust
+          # Trust the key (import-ownertrust requires full fingerprint)
+          echo "${KEY_FPR}:6:" | gpg --import-ownertrust
 
       - name: Extract version
         id: ver
@@ -345,9 +346,11 @@ jobs:
           apt-ftparchive release dists/stable >> dists/stable/Release
 
           # Sign
-          gpg --batch --yes --default-key $KEY_ID \
+          gpg --batch --yes --no-tty --pinentry-mode loopback \
+            --default-key $KEY_ID \
             -abs -o dists/stable/Release.gpg dists/stable/Release
-          gpg --batch --yes --default-key $KEY_ID \
+          gpg --batch --yes --no-tty --pinentry-mode loopback \
+            --default-key $KEY_ID \
             --clearsign -o dists/stable/InRelease dists/stable/Release
 
       - name: Commit and push apt repo
