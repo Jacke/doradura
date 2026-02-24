@@ -325,14 +325,16 @@ jobs:
           # Export public key
           gpg --armor --export $KEY_ID > $PAGES/KEY.gpg
 
+          # Work inside gh-pages so dpkg-scanpackages produces correct Filename paths
+          cd $PAGES
+
           # Scan all packages (accumulates across versions)
-          mkdir -p $PAGES/dists/stable/main/binary-amd64
-          dpkg-scanpackages --multiversion $PAGES/pool/main \
-            > $PAGES/dists/stable/main/binary-amd64/Packages
-          gzip -9 -k -f $PAGES/dists/stable/main/binary-amd64/Packages
+          mkdir -p dists/stable/main/binary-amd64
+          dpkg-scanpackages --multiversion pool/main \
+            > dists/stable/main/binary-amd64/Packages
+          gzip -9 -k -f dists/stable/main/binary-amd64/Packages
 
           # Build Release file
-          cd $PAGES
           {
             echo "Origin: dora"
             echo "Label: dora"
