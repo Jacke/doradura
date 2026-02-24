@@ -5,21 +5,21 @@ Codename: stable
 Architectures: amd64
 Components: main
 Description: dora TUI media downloader
-Date: Tue, 24 Feb 2026 17:39:04 UTC
-Date: Tue, 24 Feb 2026 17:39:04 +0000
+Date: Tue, 24 Feb 2026 19:45:51 UTC
+Date: Tue, 24 Feb 2026 19:45:51 +0000
 MD5Sum:
- 1eb1b7df984e72567f24b681e120475c              207 Release
- 2993ce31cb1b1c47274e7eb0f20c149b             1120 main/binary-amd64/Packages
- 99cbe9cb96d00160b0e8787427d6a85d              532 main/binary-amd64/Packages.gz
+ 810bbda1f1620ff5c403661100fc4a1e              207 Release
+ 4f070fccfaeb7afceecbb54cbd16134f             1102 main/binary-amd64/Packages
+ e557bbefe9bc7a27dfa29382b64ddf03              526 main/binary-amd64/Packages.gz
 SHA1:
- 1050edbe57c26109621c7a891f8a3b11ab769253              207 Release
- 3017a2b609e04bdb466e37fac3c5a0713997f25f             1120 main/binary-amd64/Packages
- 54550c4eeebf84c903dc72ec9f5cf19782158b34              532 main/binary-amd64/Packages.gz
+ 143a7f09afb2f9df459e5e0b01b50f9ac8ce710c              207 Release
+ 014d19b4af54903e9f8b4d35a70aec54f48afa11             1102 main/binary-amd64/Packages
+ 895a325c95d57e129175159a84fa26d5d8b6721c              526 main/binary-amd64/Packages.gz
 SHA256:
- a6197cc9c975ee5a0a3efb8b93171bbc01fe8b94f0fbf0ef3dc7d25e9e39ea0b              207 Release
- fe925ac3b10531a5943bb5f7479638c59dadab45cc924102e30cdd3d919689e6             1120 main/binary-amd64/Packages
- b5a12f3f13a8bbc4750f1a4b7f08948586da3aa30a8aa850be17107e3dcaa1d8              532 main/binary-amd64/Packages.gz
+ 635a3cad7b692dc8b3fd6735e14fb1521ae64aeae8a26ad78dce38f25eabe54e              207 Release
+ afda65aceda00ae5b272fac99f31da4da8bb5da881d9e170640cc2c8a763e1dd             1102 main/binary-amd64/Packages
+ abff4423d5d2058c26059aa7b9e82a41c648a9cf2a0face00a3d9af69efe2d55              526 main/binary-amd64/Packages.gz
 SHA512:
- 17b4f39a958e5c499a818e9e94fcd469739fdc89430d852b9f1a3e30f5c5e3f827fddde7186a982853dbd9a41ab6cd305f74dcd2f39f4a2518c9ddf8cd0a046a              207 Release
- c68395b890c5f50a6709092d26cca120a9f76f72af08401366fda9800894fa7d5cc9d51febf47265b95dd80d48267db01c558749b8ba6d74062e63ea1105492a             1120 main/binary-amd64/Packages
- 6b3785f5d5f679a20a9dbf60aad90b7e39442881a66d91a650d2c5923785e672ccad5ad7f3caa566443fd9f46102f3cfaf3ebbcd78361c1d2b3546c2f2987d3f              532 main/binary-amd64/Packages.gz
+ 64ed1c484b26e69831b3de7a8993983bc82213fc59677df48573ba7432de3f28afc5240f279870f3cb05a5f57938ef490859252fa037e6a3832bac321dcf81b0              207 Release
+ 6427186d9dd1f0a0ffdad68cc51e17262a88b630f662c586f5552ea6ab85fe6b1ecf36525659c7400a9e009bb3f948cdbd53e7bf89ffd317022a5a0f156faf03             1102 main/binary-amd64/Packages
+ d79f3da42c0aae753e0555aafbbf748ca26ccee016b1b9a9992aeaf11ec2b5b14a599d04d420c3b3e902e1cc24f34bba327e673cb0620bb7c4428a3a024000f1              526 main/binary-amd64/Packages.gz

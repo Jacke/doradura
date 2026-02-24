@@ -3,7 +3,7 @@ Version: 0.6.1
 Architecture: amd64
 Maintainer: Stan <iamjacke@gmail.com>
 Depends: yt-dlp, ffmpeg
-Filename: gh-pages/pool/main/dora_0.6.1_amd64.deb
+Filename: pool/main/dora_0.6.1_amd64.deb
 Size: 2783766
 MD5sum: 5aa90482ebf29789ab6adc37025eae58
 SHA1: 1aa0e0350fc94e789e6027546baf6868bf5ae001
@@ -19,7 +19,7 @@ Version: 0.6.3
 Architecture: amd64
 Maintainer: Stan <iamjacke@gmail.com>
 Depends: yt-dlp, ffmpeg
-Filename: gh-pages/pool/main/dora_0.6.3_amd64.deb
+Filename: pool/main/dora_0.6.3_amd64.deb
 Size: 2783396
 MD5sum: 0c469e6fcc6d7120c55208c0a8eba665
 SHA1: d45bcb0be11b811a89226a3d8700d3edeaeaefa6
