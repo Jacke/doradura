@@ -156,7 +156,14 @@ jobs:
             brew install dora
             ```
 
-            **Ubuntu / Debian:**
+            **Ubuntu / Debian (apt):**
+            ```bash
+            curl -fsSL https://iamjacke.com/doradura/KEY.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/dora.gpg
+            echo "deb [signed-by=/etc/apt/keyrings/dora.gpg] https://iamjacke.com/doradura stable main" | sudo tee /etc/apt/sources.list.d/dora.list
+            sudo apt update && sudo apt install dora
+            ```
+
+            **Ubuntu / Debian (прямой .deb):**
             ```bash
             curl -LO https://github.com/Jacke/doradura/releases/download/${{ github.ref_name }}/dora_${{ steps.version.outputs.version }}_amd64.deb
             sudo dpkg -i dora_${{ steps.version.outputs.version }}_amd64.deb
@@ -268,3 +275,86 @@ jobs:
           git add Formula/dora.rb
           git commit -m "dora ${{ steps.meta.outputs.version }}"
           git push
+
+  # ── Update apt repository (GitHub Pages) ─────────────────────────────────
+  apt-repo:
+    name: Update apt Repository
+    needs: release
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    if: ${{ !contains(github.ref_name, '-rc') && !contains(github.ref_name, '-beta') }}
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout gh-pages
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          path: gh-pages
+
+      - name: Download .deb artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: dora-deb
+          path: deb/
+          merge-multiple: true
+
+      - name: Import GPG signing key
+        run: |
+          echo "${{ secrets.APT_SIGNING_KEY }}" | gpg --batch --import
+          KEY_ID=$(gpg --list-secret-keys --with-colons | grep '^sec' | cut -d: -f5 | tail -1)
+          echo "KEY_ID=$KEY_ID" >> "$GITHUB_ENV"
+          # Trust the key
+          echo "${KEY_ID}:6:" | gpg --import-ownertrust
+
+      - name: Extract version
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#tui-v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build apt repository
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          PAGES=gh-pages
+
+          # Copy new .deb into pool
+          mkdir -p $PAGES/pool/main
+          cp deb/dora_${VERSION}_amd64.deb $PAGES/pool/main/
+
+          # Export public key
+          gpg --armor --export $KEY_ID > $PAGES/KEY.gpg
+
+          # Scan all packages (accumulates across versions)
+          mkdir -p $PAGES/dists/stable/main/binary-amd64
+          dpkg-scanpackages --multiversion $PAGES/pool/main \
+            > $PAGES/dists/stable/main/binary-amd64/Packages
+          gzip -9 -k -f $PAGES/dists/stable/main/binary-amd64/Packages
+
+          # Build Release file
+          cd $PAGES
+          {
+            echo "Origin: dora"
+            echo "Label: dora"
+            echo "Suite: stable"
+            echo "Codename: stable"
+            echo "Architectures: amd64"
+            echo "Components: main"
+            echo "Description: dora TUI media downloader"
+            echo "Date: $(date -u '+%a, %d %b %Y %H:%M:%S UTC')"
+          } > dists/stable/Release
+          apt-ftparchive release dists/stable >> dists/stable/Release
+
+          # Sign
+          gpg --batch --yes --default-key $KEY_ID \
+            -abs -o dists/stable/Release.gpg dists/stable/Release
+          gpg --batch --yes --default-key $KEY_ID \
+            --clearsign -o dists/stable/InRelease dists/stable/Release
+
+      - name: Commit and push apt repo
+        run: |
+          cd gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "apt repo: dora ${{ steps.ver.outputs.version }}"
+          git push origin gh-pages
