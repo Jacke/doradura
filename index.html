@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html>
+<head><title>dora apt repository</title></head>
+<body>
+<h1>dora apt repository</h1>
+<pre>
+# Add to your system:
+curl -fsSL https://jacke.github.io/doradura/KEY.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/dora.gpg
+echo "deb [signed-by=/etc/apt/keyrings/dora.gpg] https://jacke.github.io/doradura stable main" | sudo tee /etc/apt/sources.list.d/dora.list
+sudo apt update && sudo apt install dora
+</pre>
+</body>
+</html>

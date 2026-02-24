@@ -1,0 +1,17 @@
+Origin: dora
+Label: dora
+Suite: stable
+Codename: stable
+Architectures: amd64
+Components: main
+Description: dora TUI media downloader
+Date: Tue, 24 Feb 2026 16:26:26 UTC
+MD5Sum:
+ a3687e519db3ad92e5fd8b5e5c7ff557 551 main/binary-amd64/Packages
+ fd895577ad280bb5c6196710a852305b 414 main/binary-amd64/Packages.gz
+SHA1:
+ 67fa8a9adc9c8f0491e2e30a4756174710bb030a 551 main/binary-amd64/Packages
+ 4af1ce522a78c4c8d3458d8699cc5149e07c6208 414 main/binary-amd64/Packages.gz
+SHA256:
+ 00f3eaf036f7c6d5702ab6e2b75fede64f380bc95c9d8ebe68e73effcf44ca85 551 main/binary-amd64/Packages
+ cec0049bc4842307085785fa9de366ade4a52b714cb8a61b094b69dce15ca31a 414 main/binary-amd64/Packages.gz
