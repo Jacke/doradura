@@ -363,3 +363,97 @@ jobs:
           git add .
           git commit -m "apt repo: dora ${{ steps.ver.outputs.version }}"
           git push origin gh-pages
+
+  # ── Update AUR package ────────────────────────────────────────────────────
+  aur:
+    name: Update AUR Package
+    needs: release
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    if: ${{ !contains(github.ref_name, '-rc') && !contains(github.ref_name, '-beta') }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Linux archive
+        uses: actions/download-artifact@v4
+        with:
+          name: dora-x86_64-unknown-linux-gnu.tar.gz
+          path: dist/
+          merge-multiple: true
+
+      - name: Extract version and sha256
+        id: meta
+        run: |
+          VERSION="${GITHUB_REF_NAME#tui-v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          SHA=$(awk '{print $1}' dist/dora-x86_64-unknown-linux-gnu.tar.gz.sha256)
+          echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up SSH for AUR
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.AUR_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -t ed25519 aur.archlinux.org >> ~/.ssh/known_hosts
+
+      - name: Clone AUR repo
+        run: git clone ssh://aur@aur.archlinux.org/dora-bin.git /tmp/dora-bin
+
+      - name: Update PKGBUILD and .SRCINFO
+        run: |
+          VERSION="${{ steps.meta.outputs.version }}"
+          SHA="${{ steps.meta.outputs.sha256 }}"
+          cd /tmp/dora-bin
+
+          cat > PKGBUILD << EOF
+          # Maintainer: Stan <iamjacke@gmail.com>
+          pkgname=dora-bin
+          pkgver=${VERSION}
+          pkgrel=1
+          pkgdesc="Beautiful TUI for media downloading (yt-dlp + ffmpeg)"
+          arch=('x86_64')
+          url="https://github.com/Jacke/doradura"
+          license=('MIT')
+          depends=('yt-dlp' 'ffmpeg')
+          provides=('dora')
+          conflicts=('dora')
+          source=("\${pkgname}-\${pkgver}.tar.gz::https://github.com/Jacke/doradura/releases/download/tui-v\${pkgver}/dora-x86_64-unknown-linux-gnu.tar.gz")
+          sha256sums=('${SHA}')
+
+          package() {
+              local srcdir_inner="dora-\${pkgver}-x86_64-unknown-linux-gnu"
+              install -Dm755 "\${srcdir_inner}/dora" "\${pkgdir}/usr/bin/dora"
+              if [[ -f "\${srcdir_inner}/LICENSE" ]]; then
+                  install -Dm644 "\${srcdir_inner}/LICENSE" "\${pkgdir}/usr/share/licenses/\${pkgname}/LICENSE"
+              fi
+          }
+          EOF
+
+          cat > .SRCINFO << EOF
+          pkgbase = dora-bin
+          	pkgdesc = Beautiful TUI for media downloading (yt-dlp + ffmpeg)
+          	pkgver = ${VERSION}
+          	pkgrel = 1
+          	url = https://github.com/Jacke/doradura
+          	arch = x86_64
+          	license = MIT
+          	depends = yt-dlp
+          	depends = ffmpeg
+          	provides = dora
+          	conflicts = dora
+          	source = dora-bin-${VERSION}.tar.gz::https://github.com/Jacke/doradura/releases/download/tui-v${VERSION}/dora-x86_64-unknown-linux-gnu.tar.gz
+          	sha256sums = ${SHA}
+
+          pkgname = dora-bin
+          EOF
+
+      - name: Commit and push to AUR
+        run: |
+          cd /tmp/dora-bin
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add PKGBUILD .SRCINFO
+          git commit -m "Update to ${{ steps.meta.outputs.version }}"
+          git push origin master
