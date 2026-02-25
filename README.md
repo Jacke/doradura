@@ -31,7 +31,7 @@
 | | dora TUI | doradura Bot |
 |---|---|---|
 | **Interface** | Terminal (ratatui, full mouse) | Telegram |
-| **Version** | 0.6.4 | 0.13.0 |
+| **Version** | 0.6.5 | 0.13.0 |
 | **Use case** | Personal power-user desktop client | Shared / team / public bot |
 | **Platforms** | macOS, Linux | Any (deployed on Railway) |
 | **Formats** | MP3, MP4 | MP3, MP4, GIF, WAV, FLAC, OGG, SRT, M4A, M4R |
@@ -306,7 +306,7 @@ doradura/
 │   │   ├── audio.rs   Thin wrapper → pipeline::execute()
 │   │   └── video.rs   Video pipeline + splitting + burn-in
 │   │
-│   └── doratui/       # Terminal UI (dora v0.6.4)
+│   └── doratui/       # Terminal UI (dora v0.6.5)
 │       ├── app.rs     Application state machine
 │       ├── main.rs    Event loop, key/mouse handlers
 │       ├── settings.rs Persistent settings (JSON)
