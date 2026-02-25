@@ -403,51 +403,53 @@ jobs:
 
       - name: Update PKGBUILD and .SRCINFO
         run: |
-          VERSION="${{ steps.meta.outputs.version }}"
+          V="${{ steps.meta.outputs.version }}"
           SHA="${{ steps.meta.outputs.sha256 }}"
           cd /tmp/dora-bin
 
-          cat > PKGBUILD << EOF
-          # Maintainer: Stan <iamjacke@gmail.com>
-          pkgname=dora-bin
-          pkgver=${VERSION}
-          pkgrel=1
-          pkgdesc="Beautiful TUI for media downloading (yt-dlp + ffmpeg)"
-          arch=('x86_64')
-          url="https://github.com/Jacke/doradura"
-          license=('MIT')
-          depends=('yt-dlp' 'ffmpeg')
-          provides=('dora')
-          conflicts=('dora')
-          source=("\${pkgname}-\${pkgver}.tar.gz::https://github.com/Jacke/doradura/releases/download/tui-v\${pkgver}/dora-x86_64-unknown-linux-gnu.tar.gz")
-          sha256sums=('${SHA}')
+          # Write PKGBUILD (use printf to avoid heredoc indentation issues)
+          printf '%s\n' \
+            '# Maintainer: Stan <iamjacke@gmail.com>' \
+            'pkgname=dora-bin' \
+            "pkgver=${V}" \
+            'pkgrel=1' \
+            'pkgdesc="Beautiful TUI for media downloading (yt-dlp + ffmpeg)"' \
+            "arch=('x86_64')" \
+            'url="https://github.com/Jacke/doradura"' \
+            "license=('MIT')" \
+            "depends=('yt-dlp' 'ffmpeg')" \
+            "provides=('dora')" \
+            "conflicts=('dora')" \
+            'source=("${pkgname}-${pkgver}.tar.gz::https://github.com/Jacke/doradura/releases/download/tui-v${pkgver}/dora-x86_64-unknown-linux-gnu.tar.gz")' \
+            "sha256sums=('${SHA}')" \
+            '' \
+            'package() {' \
+            '    local srcdir_inner="dora-${pkgver}-x86_64-unknown-linux-gnu"' \
+            '    install -Dm755 "${srcdir_inner}/dora" "${pkgdir}/usr/bin/dora"' \
+            '    if [[ -f "${srcdir_inner}/LICENSE" ]]; then' \
+            '        install -Dm644 "${srcdir_inner}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"' \
+            '    fi' \
+            '}' \
+            > PKGBUILD
 
-          package() {
-              local srcdir_inner="dora-\${pkgver}-x86_64-unknown-linux-gnu"
-              install -Dm755 "\${srcdir_inner}/dora" "\${pkgdir}/usr/bin/dora"
-              if [[ -f "\${srcdir_inner}/LICENSE" ]]; then
-                  install -Dm644 "\${srcdir_inner}/LICENSE" "\${pkgdir}/usr/share/licenses/\${pkgname}/LICENSE"
-              fi
-          }
-          EOF
+          # Write .SRCINFO (tabs are required by AUR format)
+          printf 'pkgbase = dora-bin\n' > .SRCINFO
+          printf '\tpkgdesc = Beautiful TUI for media downloading (yt-dlp + ffmpeg)\n' >> .SRCINFO
+          printf '\tpkgver = %s\n' "${V}"  >> .SRCINFO
+          printf '\tpkgrel = 1\n'           >> .SRCINFO
+          printf '\turl = https://github.com/Jacke/doradura\n' >> .SRCINFO
+          printf '\tarch = x86_64\n'        >> .SRCINFO
+          printf '\tlicense = MIT\n'        >> .SRCINFO
+          printf '\tdepends = yt-dlp\n'     >> .SRCINFO
+          printf '\tdepends = ffmpeg\n'     >> .SRCINFO
+          printf '\tprovides = dora\n'      >> .SRCINFO
+          printf '\tconflicts = dora\n'     >> .SRCINFO
+          printf '\tsource = dora-bin-%s.tar.gz::https://github.com/Jacke/doradura/releases/download/tui-v%s/dora-x86_64-unknown-linux-gnu.tar.gz\n' "${V}" "${V}" >> .SRCINFO
+          printf '\tsha256sums = %s\n' "${SHA}" >> .SRCINFO
+          printf '\npkgname = dora-bin\n'   >> .SRCINFO
 
-          cat > .SRCINFO << EOF
-          pkgbase = dora-bin
-          	pkgdesc = Beautiful TUI for media downloading (yt-dlp + ffmpeg)
-          	pkgver = ${VERSION}
-          	pkgrel = 1
-          	url = https://github.com/Jacke/doradura
-          	arch = x86_64
-          	license = MIT
-          	depends = yt-dlp
-          	depends = ffmpeg
-          	provides = dora
-          	conflicts = dora
-          	source = dora-bin-${VERSION}.tar.gz::https://github.com/Jacke/doradura/releases/download/tui-v${VERSION}/dora-x86_64-unknown-linux-gnu.tar.gz
-          	sha256sums = ${SHA}
-
-          pkgname = dora-bin
-          EOF
+          echo "=== PKGBUILD ===" && cat PKGBUILD
+          echo "=== .SRCINFO ===" && cat .SRCINFO
 
       - name: Commit and push to AUR
         run: |
