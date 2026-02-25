@@ -8,7 +8,7 @@
 
 [![Rust](https://img.shields.io/badge/Rust-1.83+-000000?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Telegram Bot](https://img.shields.io/badge/Telegram_Bot-v0.13-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/DoraDuraDoraDuraBot?start)
-[![TUI](https://img.shields.io/badge/TUI-dora_v0.3-A6E3A1?style=for-the-badge&logo=gnometerminal&logoColor=black)](https://github.com/Jacke/doradura)
+[![TUI](https://img.shields.io/badge/TUI-dora_v0.6-A6E3A1?style=for-the-badge&logo=gnometerminal&logoColor=black)](https://github.com/Jacke/doradura)
 [![License: MIT](https://img.shields.io/badge/License-MIT-CBA6F7?style=for-the-badge)](LICENSE)
 
 </div>
@@ -31,7 +31,7 @@
 | | dora TUI | doradura Bot |
 |---|---|---|
 | **Interface** | Terminal (ratatui, full mouse) | Telegram |
-| **Version** | 0.3.0 | 0.13.0 |
+| **Version** | 0.6.4 | 0.13.0 |
 | **Use case** | Personal power-user desktop client | Shared / team / public bot |
 | **Platforms** | macOS, Linux | Any (deployed on Railway) |
 | **Formats** | MP3, MP4 | MP3, MP4, GIF, WAV, FLAC, OGG, SRT, M4A, M4R |
@@ -129,13 +129,42 @@ Esc    Cancel                                  s      Save · r  Reset
 Click the logo to cycle through 7 themes — each click fires a burst animation:
 `Catppuccin` · `Fire` · `Ice` · `Matrix` · `Sunset` · `Neon` · `Gold`
 
-### Run dora
+### Install dora
+
+**macOS — Homebrew:**
+```bash
+brew tap Jacke/dora
+brew install dora
+```
+
+**Ubuntu / Debian — apt:**
+```bash
+curl -fsSL https://iamjacke.com/doradura/KEY.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/dora.gpg
+echo "deb [signed-by=/etc/apt/keyrings/dora.gpg] https://iamjacke.com/doradura stable main" | sudo tee /etc/apt/sources.list.d/dora.list
+sudo apt update && sudo apt install dora
+```
+
+**Arch Linux — AUR:**
+```bash
+yay -S dora-bin
+# or: paru -S dora-bin
+```
+
+**Linux / macOS — shell installer:**
+```bash
+curl -sSfL https://github.com/Jacke/doradura/releases/latest/download/dora-installer.sh | sh
+```
+
+**Build from source:**
+```bash
+cargo install --path crates/doratui
+```
+
+**Runtime dependencies:** [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) · [`ffmpeg`](https://ffmpeg.org)
+
+### Run
 
 ```bash
-# Install
-cargo install --path crates/doratui
-
-# Run
 dora
 
 # Demo mode (pre-populated with sample data)
@@ -272,12 +301,12 @@ doradura/
 │   │   ├── odesli/               Streaming link aggregation
 │   │   └── metrics/              Prometheus integration
 │   │
-│   ├── bot/           # Telegram bot (doradura v0.13.0)
+│   ├── dorabot/       # Telegram bot (doradura v0.13.0)
 │   │   ├── telegram/  Bot handlers, menus, callbacks
 │   │   ├── audio.rs   Thin wrapper → pipeline::execute()
 │   │   └── video.rs   Video pipeline + splitting + burn-in
 │   │
-│   └── dora/          # Terminal UI (dora v0.3.0)
+│   └── doratui/       # Terminal UI (dora v0.6.4)
 │       ├── app.rs     Application state machine
 │       ├── main.rs    Event loop, key/mouse handlers
 │       ├── settings.rs Persistent settings (JSON)
@@ -295,19 +324,21 @@ doradura/
 ### dora TUI
 
 ```bash
-# Prerequisites
-brew install yt-dlp ffmpeg      # macOS
-# or
-pip install yt-dlp && sudo apt install ffmpeg   # Linux
+# macOS
+brew tap Jacke/dora && brew install dora
 
-# Build & run
+# Ubuntu / Debian
+curl -fsSL https://iamjacke.com/doradura/KEY.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/dora.gpg
+echo "deb [signed-by=/etc/apt/keyrings/dora.gpg] https://iamjacke.com/doradura stable main" | sudo tee /etc/apt/sources.list.d/dora.list
+sudo apt update && sudo apt install dora
+
+# Arch Linux
+yay -S dora-bin
+
+# Build from source
 git clone https://github.com/Jacke/doradura.git
 cd doradura
-cargo run -p doratui
-
-# Or install globally
 cargo install --path crates/doratui
-dora
 ```
 
 ### doradura Bot (local)
@@ -316,7 +347,7 @@ dora
 cp .env.example .env
 # Edit .env → add TELOXIDE_TOKEN, TELEGRAM_API_ID/HASH, ADMIN_USERNAME
 
-cargo run -p doratuidura -- run
+cargo run -p dorabot -- run
 ```
 
 ### Docker
@@ -370,7 +401,7 @@ docker run -e TELOXIDE_TOKEN=... -e TELEGRAM_API_ID=... \
 cargo test
 
 # Specific crate
-cargo test -p doratuidura
+cargo test -p dorabot
 cargo test -p doratui
 
 # With integration tests
