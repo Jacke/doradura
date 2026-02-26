@@ -57,5 +57,5 @@ clap = { version = "4.5", features = ["derive", "cargo"] }
 teloxide = { version = "0.17", features = ["macros"] }
 
 # TUI
-ratatui = "0.29"
+ratatui = "0.30"
 crossterm = "0.28"
