@@ -25,6 +25,7 @@ bot-api-data/
 backups/
 cursor/
 .cursor/
+bot_data.db
 # IDE
 .idea/
 .vscode/
