@@ -351,6 +351,11 @@ video_circle =
     .creating_with_speed = ⭕️ Creating video note: {$segments}… (speed {$speed}x)
     .truncated_warning = ⚠️ Requested duration {$requested} seconds exceeds Telegram limit for video notes (60 sec)\\.\n\n✂️ Will use first {$actual} seconds\\.
     .invalid_intervals = ❌ Invalid intervals\\.\n\nSend in format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nYou can send multiple separated by commas\\.\nExample: `00:10-00:25, 01:00-01:10`\n\nOr commands: `full`, `first30`, `last30`, `middle30`\\.\n\n💡 You can add speed: `first30 2x`, `full 1\\.5x`\\.\n\nOr type `cancel`\\.\n\n💡 If duration exceeds 60 seconds \\(Telegram limit for video notes\\), video will be automatically trimmed\\.
+    .subtitles_button = 🔤 Subtitles
+    .subtitles_button_active = 🔤 Subs: {$lang} ✓
+    .subtitles_select_lang = Select subtitle language:
+    .subtitles_none = ❌ No subs
+    .burn_subs_status = 🔤 Burning {$lang} subtitles…
 
 ext_ytdlp =
     .name = Media Downloader

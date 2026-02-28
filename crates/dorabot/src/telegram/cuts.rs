@@ -496,6 +496,7 @@ This may take a few minutes\\.",
                     output_kind: "cut".to_string(),
                     created_at: chrono::Utc::now(),
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                    subtitle_lang: None,
                 };
                 db::upsert_video_clip_session(&conn, &session).map_err(|e| {
                     teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
@@ -546,6 +547,7 @@ This may take a few minutes\\.",
                     output_kind: "video_note".to_string(),
                     created_at: chrono::Utc::now(),
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                    subtitle_lang: None,
                 };
                 db::upsert_video_clip_session(&conn, &session).map_err(|e| {
                     teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
@@ -646,6 +648,7 @@ This may take a few minutes\\.",
                     output_kind: "video_note".to_string(),
                     created_at: chrono::Utc::now(),
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                    subtitle_lang: None,
                 };
 
                 // Delete any existing session first

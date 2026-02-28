@@ -189,6 +189,7 @@ pub async fn start_ringtone_session(
         output_kind: platform.output_kind().to_string(),
         created_at: chrono::Utc::now(),
         expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+        subtitle_lang: None,
     };
 
     db::upsert_video_clip_session(&conn, &session)

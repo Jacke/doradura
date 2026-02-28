@@ -130,6 +130,11 @@ video_circle =
     .creating_with_speed = ⭕️ Création de la note vidéo: {$segments}… (vitesse {$speed}x)
     .truncated_warning = ⚠️ La durée demandée de {$requested} secondes dépasse la limite Telegram pour les notes vidéo (60 sec)\\.\n\n✂️ Utilisation des {$actual} premières secondes\\.
     .invalid_intervals = ❌ Intervalles invalides\\.\n\nEnvoie au format `mm:ss-mm:ss` ou `hh:mm:ss-hh:mm:ss`\\.\nTu peux en envoyer plusieurs séparés par des virgules\\.\nExemple: `00:10-00:25, 01:00-01:10`\n\nOu commandes: `full`, `first30`, `last30`, `middle30`\\.\n\n💡 Tu peux ajouter la vitesse: `first30 2x`, `full 1\\.5x`\\.\n\nOu tape `cancel`\\.\n\n💡 Si la durée dépasse 60 secondes \\(limite Telegram\\), la vidéo sera automatiquement coupée\\.
+    .subtitles_button = 🔤 Sous-titres
+    .subtitles_button_active = 🔤 ST: {$lang} ✓
+    .subtitles_select_lang = Choisir la langue des sous-titres:
+    .subtitles_none = ❌ Pas de sous-titres
+    .burn_subs_status = 🔤 Incrustation des sous-titres {$lang}…
 
 preview =
     .time_range_detected = ✂️ Téléchargement partiel: {$start} — {$end}

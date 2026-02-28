@@ -1450,6 +1450,25 @@ pub async fn process_video_clip(
     }
     let _ = download_result.map_err(AppError::from)?;
 
+    // --- Subtitle burning (if requested for circle) ---
+    let actual_input_path = if is_video_note {
+        if let Some(ref sub_lang) = session.subtitle_lang {
+            burn_circle_subtitles(
+                &session.original_url,
+                sub_lang,
+                &input_path,
+                &temp_dir,
+                chat_id.0,
+                session.source_id,
+            )
+            .await
+        } else {
+            input_path.clone()
+        }
+    } else {
+        input_path.clone()
+    };
+
     // Probe file for video stream
     let probe_output = Command::new("ffprobe")
         .args([
@@ -1462,7 +1481,7 @@ pub async fn process_video_clip(
             "-of",
             "default=noprint_wrappers=1:nokey=1",
         ])
-        .arg(&input_path)
+        .arg(&actual_input_path)
         .output()
         .await
         .map_err(AppError::from)?;
@@ -1473,7 +1492,7 @@ pub async fn process_video_clip(
         bot.send_message(chat_id, i18n::t(&lang, "commands.video_note_requires_video"))
             .await
             .ok();
-        tokio::fs::remove_file(&input_path).await.ok();
+        tokio::fs::remove_file(&actual_input_path).await.ok();
         return Ok(());
     }
 
@@ -1627,7 +1646,7 @@ pub async fn process_video_clip(
     };
 
     log::info!("🎬 Starting ffmpeg with filter: {}", filter_av);
-    log::info!("🎬 Input: {:?}, Output: {:?}", input_path, output_path);
+    log::info!("🎬 Input: {:?}, Output: {:?}", actual_input_path, output_path);
 
     let mut cmd = Command::new("ffmpeg");
     cmd.arg("-hide_banner").arg("-loglevel").arg("info");
@@ -1637,7 +1656,7 @@ pub async fn process_video_clip(
         cmd.arg("-ss").arg(format!("{}", seek_offset));
     }
 
-    cmd.arg("-i").arg(&input_path);
+    cmd.arg("-i").arg(&actual_input_path);
 
     if is_iphone_ringtone {
         // For iPhone ringtone: AAC in MPEG-4 container (.m4r)
@@ -1702,7 +1721,7 @@ pub async fn process_video_clip(
         }
         let retry_output = retry_cmd
             .arg("-i")
-            .arg(&input_path)
+            .arg(&actual_input_path)
             .arg("-filter_complex")
             .arg(&filter_v)
             .arg("-map")
@@ -1730,7 +1749,7 @@ pub async fn process_video_clip(
             bot.send_message(chat_id, i18n::t_args(&lang, "commands.ffmpeg_error_dual", &args))
                 .await
                 .ok();
-            tokio::fs::remove_file(&input_path).await.ok();
+            tokio::fs::remove_file(&actual_input_path).await.ok();
             tokio::fs::remove_file(&output_path).await.ok();
             return Ok(());
         }
@@ -1781,7 +1800,7 @@ pub async fn process_video_clip(
         bot.send_message(chat_id, i18n::t(&lang, "commands.output_file_missing"))
             .await
             .ok();
-        tokio::fs::remove_file(&input_path).await.ok();
+        tokio::fs::remove_file(&actual_input_path).await.ok();
         return Ok(());
     }
 
@@ -1849,7 +1868,7 @@ pub async fn process_video_clip(
                             for path in &circle_paths {
                                 tokio::fs::remove_file(path).await.ok();
                             }
-                            tokio::fs::remove_file(&input_path).await.ok();
+                            tokio::fs::remove_file(&actual_input_path).await.ok();
                             tokio::fs::remove_file(&output_path).await.ok();
                             return Ok(());
                         }
@@ -1868,7 +1887,7 @@ pub async fn process_video_clip(
                 bot.send_message(chat_id, &clip_title).await.ok();
 
                 // Clean up
-                tokio::fs::remove_file(&input_path).await.ok();
+                tokio::fs::remove_file(&actual_input_path).await.ok();
                 tokio::fs::remove_file(&output_path).await.ok();
 
                 // Skip the rest of the function since we handled everything
@@ -1883,7 +1902,7 @@ pub async fn process_video_clip(
                 bot.send_message(chat_id, i18n::t_args(&lang, "commands.video_note_split_failed", &args))
                     .await
                     .ok();
-                tokio::fs::remove_file(&input_path).await.ok();
+                tokio::fs::remove_file(&actual_input_path).await.ok();
                 tokio::fs::remove_file(&output_path).await.ok();
                 return Ok(());
             }
@@ -1908,7 +1927,7 @@ pub async fn process_video_clip(
                     i18n::t_args(&lang, "commands.video_note_send_failed", &args)
                 };
                 bot.send_message(chat_id, msg).await.ok();
-                tokio::fs::remove_file(&input_path).await.ok();
+                tokio::fs::remove_file(&actual_input_path).await.ok();
                 tokio::fs::remove_file(&output_path).await.ok();
                 return Ok(());
             }
@@ -1929,7 +1948,7 @@ pub async fn process_video_clip(
                 bot.send_message(chat_id, i18n::t_args(&lang, "commands.ringtone_send_failed", &args))
                     .await
                     .ok();
-                tokio::fs::remove_file(&input_path).await.ok();
+                tokio::fs::remove_file(&actual_input_path).await.ok();
                 tokio::fs::remove_file(&output_path).await.ok();
                 return Ok(());
             }
@@ -1947,7 +1966,7 @@ pub async fn process_video_clip(
         }
         // Clean up files and return early (don't fall through to clip_title logic below)
         bot.delete_message(chat_id, status.id).await.ok();
-        tokio::fs::remove_file(&input_path).await.ok();
+        tokio::fs::remove_file(&actual_input_path).await.ok();
         tokio::fs::remove_file(&output_path).await.ok();
         return Ok(());
     } else if has_video {
@@ -1964,7 +1983,7 @@ pub async fn process_video_clip(
                 bot.send_message(chat_id, i18n::t_args(&lang, "commands.clip_send_failed", &args))
                     .await
                     .ok();
-                tokio::fs::remove_file(&input_path).await.ok();
+                tokio::fs::remove_file(&actual_input_path).await.ok();
                 tokio::fs::remove_file(&output_path).await.ok();
                 return Ok(());
             }
@@ -1983,7 +2002,7 @@ pub async fn process_video_clip(
                 bot.send_message(chat_id, i18n::t_args(&lang, "commands.audio_send_failed", &args))
                     .await
                     .ok();
-                tokio::fs::remove_file(&input_path).await.ok();
+                tokio::fs::remove_file(&actual_input_path).await.ok();
                 tokio::fs::remove_file(&output_path).await.ok();
                 return Ok(());
             }
@@ -2029,10 +2048,108 @@ pub async fn process_video_clip(
         );
     }
 
-    tokio::fs::remove_file(&input_path).await.ok();
+    tokio::fs::remove_file(&actual_input_path).await.ok();
     tokio::fs::remove_file(&output_path).await.ok();
 
     Ok(())
+}
+
+/// Download SRT subtitles via yt-dlp and burn them into the source video.
+/// Returns the path to the video with burned subtitles, or the original path on failure.
+pub async fn burn_circle_subtitles(
+    url: &str,
+    lang: &str,
+    input_path: &std::path::Path,
+    temp_dir: &std::path::Path,
+    chat_id: i64,
+    source_id: i64,
+) -> std::path::PathBuf {
+    use tokio::process::Command as TokioCommand;
+
+    let srt_base = temp_dir.join(format!("subs_{}_{}", chat_id, source_id));
+    let srt_base_str = srt_base.to_string_lossy().to_string();
+
+    // Download subtitles via yt-dlp
+    let ytdl_bin = &*config::YTDL_BIN;
+    let mut cmd = TokioCommand::new(ytdl_bin);
+    let mut args: Vec<&str> = vec![
+        "--write-subs",
+        "--write-auto-subs",
+        "--sub-lang",
+        lang,
+        "--sub-format",
+        "srt",
+        "--convert-subs",
+        "srt",
+        "--skip-download",
+        "--output",
+        &srt_base_str,
+        "--no-playlist",
+    ];
+    crate::download::metadata::add_cookies_args(&mut args);
+    args.push(url);
+    cmd.args(&args);
+
+    let sub_result = crate::core::process::run_with_timeout(&mut cmd, config::download::ytdlp_timeout()).await;
+
+    match sub_result {
+        Ok(output) if output.status.success() => {
+            // Find actual SRT file (yt-dlp adds lang suffix like "subs.en.srt")
+            let srt_dir = temp_dir.to_string_lossy().to_string();
+            let srt_stem = format!("subs_{}_{}", chat_id, source_id);
+            let srt_file = std::fs::read_dir(&srt_dir).ok().and_then(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .find(|entry| {
+                        let name = entry.file_name();
+                        let name_str = name.to_string_lossy();
+                        name_str.contains(&srt_stem) && name_str.ends_with(".srt")
+                    })
+                    .map(|entry| entry.path())
+            });
+
+            if let Some(sub_path) = srt_file {
+                log::info!("🔤 Downloaded subtitles for circle: {:?}", sub_path);
+
+                let output_with_subs = temp_dir.join(format!("input_subs_{}_{}.mp4", chat_id, source_id));
+                match crate::download::downloader::burn_subtitles_into_video(
+                    input_path.to_str().unwrap_or_default(),
+                    sub_path.to_str().unwrap_or_default(),
+                    output_with_subs.to_str().unwrap_or_default(),
+                )
+                .await
+                {
+                    Ok(()) => {
+                        log::info!("🔥 Burned subtitles into circle source");
+                        tokio::fs::remove_file(input_path).await.ok();
+                        tokio::fs::remove_file(&sub_path).await.ok();
+                        return output_with_subs;
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Failed to burn subs into circle source: {}. Continuing without subs.",
+                            e
+                        );
+                        tokio::fs::remove_file(&sub_path).await.ok();
+                        tokio::fs::remove_file(&output_with_subs).await.ok();
+                    }
+                }
+            } else {
+                log::warn!("Subtitle file not found after yt-dlp download for circle");
+            }
+        }
+        Ok(output) => {
+            log::warn!(
+                "yt-dlp subtitle download failed for circle: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        Err(e) => {
+            log::warn!("Failed to execute yt-dlp for circle subtitles: {}", e);
+        }
+    }
+
+    input_path.to_path_buf()
 }
 
 async fn process_audio_cut(

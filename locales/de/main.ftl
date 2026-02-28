@@ -130,6 +130,11 @@ video_circle =
     .creating_with_speed = ⭕️ Erstelle Videonachricht: {$segments}… (Geschwindigkeit {$speed}x)
     .truncated_warning = ⚠️ Angeforderte Dauer {$requested} Sekunden überschreitet Telegram-Limit für Videonachrichten (60 Sek)\\.\n\n✂️ Verwende erste {$actual} Sekunden\\.
     .invalid_intervals = ❌ Ungültige Intervalle\\.\n\nSende im Format `mm:ss-mm:ss` oder `hh:mm:ss-hh:mm:ss`\\.\nDu kannst mehrere durch Kommas trennen\\.\nBeispiel: `00:10-00:25, 01:00-01:10`\n\nOder Befehle: `full`, `first30`, `last30`, `middle30`\\.\n\n💡 Du kannst Geschwindigkeit hinzufügen: `first30 2x`, `full 1\\.5x`\\.\n\nOder tippe `cancel`\\.\n\n💡 Wenn die Dauer 60 Sekunden überschreitet \\(Telegram-Limit\\), wird das Video automatisch gekürzt\\.
+    .subtitles_button = 🔤 Untertitel
+    .subtitles_button_active = 🔤 UT: {$lang} ✓
+    .subtitles_select_lang = Untertitelsprache wählen:
+    .subtitles_none = ❌ Keine Untertitel
+    .burn_subs_status = 🔤 Brenne {$lang} Untertitel ein…
 
 preview =
     .time_range_detected = ✂️ Teilweiser Download: {$start} — {$end}

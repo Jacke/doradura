@@ -2284,14 +2284,15 @@ pub struct VideoClipSession {
     pub output_kind: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub expires_at: chrono::DateTime<chrono::Utc>,
+    pub subtitle_lang: Option<String>,
 }
 
 pub fn upsert_video_clip_session(conn: &DbConnection, session: &VideoClipSession) -> Result<()> {
     conn.execute("DELETE FROM video_clip_sessions WHERE user_id = ?1", [session.user_id])?;
     conn.execute(
         "INSERT INTO video_clip_sessions (
-            id, user_id, source_download_id, source_kind, source_id, original_url, output_kind, created_at, expires_at
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            id, user_id, source_download_id, source_kind, source_id, original_url, output_kind, created_at, expires_at, subtitle_lang
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
         rusqlite::params![
             session.id,
             session.user_id,
@@ -2302,6 +2303,7 @@ pub fn upsert_video_clip_session(conn: &DbConnection, session: &VideoClipSession
             session.output_kind,
             session.created_at.to_rfc3339(),
             session.expires_at.to_rfc3339(),
+            session.subtitle_lang,
         ],
     )?;
     Ok(())
@@ -2310,7 +2312,7 @@ pub fn upsert_video_clip_session(conn: &DbConnection, session: &VideoClipSession
 pub fn get_active_video_clip_session(conn: &DbConnection, user_id: i64) -> Result<Option<VideoClipSession>> {
     let now = chrono::Utc::now().to_rfc3339();
     let mut stmt = conn.prepare(
-        "SELECT id, user_id, source_download_id, source_kind, source_id, original_url, output_kind, created_at, expires_at
+        "SELECT id, user_id, source_download_id, source_kind, source_id, original_url, output_kind, created_at, expires_at, subtitle_lang
          FROM video_clip_sessions
          WHERE user_id = ?1 AND expires_at > ?2
          ORDER BY created_at DESC
@@ -2343,6 +2345,7 @@ pub fn get_active_video_clip_session(conn: &DbConnection, user_id: i64) -> Resul
             expires_at: chrono::DateTime::parse_from_rfc3339(&expires_at)
                 .map(|dt| dt.with_timezone(&chrono::Utc))
                 .unwrap_or_else(|_| chrono::Utc::now() + chrono::Duration::minutes(10)),
+            subtitle_lang: row.get(9)?,
         }))
     } else {
         Ok(None)
@@ -4464,6 +4467,7 @@ mod tests {
             output_kind: "cut".to_string(),
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
+            subtitle_lang: None,
         };
 
         upsert_video_clip_session(&conn, &session).unwrap();

@@ -592,6 +592,12 @@ pub async fn handle_downloads_callback(
                             "📝 Subtitles".to_string(),
                             format!("downloads:subtitles:{}", download_id),
                         )]);
+                        if download.format == "mp4" {
+                            options.push(vec![crate::telegram::cb(
+                                "🔤 Burn subtitles".to_string(),
+                                format!("downloads:burn_subs:{}", download_id),
+                            )]);
+                        }
                     }
 
                     // Category button
@@ -879,6 +885,7 @@ pub async fn handle_downloads_callback(
                     output_kind: "cut".to_string(),
                     created_at: chrono::Utc::now(),
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                    subtitle_lang: None,
                 };
                 crate::storage::db::upsert_video_clip_session(&conn, &session).map_err(|e| {
                     teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
@@ -933,6 +940,7 @@ pub async fn handle_downloads_callback(
                     output_kind: "cut".to_string(),
                     created_at: chrono::Utc::now(),
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                    subtitle_lang: None,
                 };
                 crate::storage::db::upsert_video_clip_session(&conn, &session).map_err(|e| {
                     teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
@@ -980,6 +988,7 @@ pub async fn handle_downloads_callback(
                     output_kind: "video_note".to_string(),
                     created_at: chrono::Utc::now(),
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                    subtitle_lang: None,
                 };
                 crate::storage::db::upsert_video_clip_session(&conn, &session).map_err(|e| {
                     teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
@@ -992,9 +1001,15 @@ pub async fn handle_downloads_callback(
                 let timestamps = db::get_video_timestamps(&conn, download_id).unwrap_or_default();
                 let (ts_buttons, ts_text) = build_timestamp_ui(&timestamps, "circle", download_id);
 
-                // Build keyboard: duration buttons + timestamp buttons + cancel button
+                // Build keyboard: duration buttons + subtitle button + timestamp buttons + cancel button
                 let mut keyboard_rows = build_duration_buttons(download_id, &lang);
                 keyboard_rows.extend(ts_buttons);
+                // Subtitle button
+                let subs_label = crate::i18n::t(&lang, "video_circle.subtitles_button");
+                keyboard_rows.push(vec![crate::telegram::cb(
+                    subs_label,
+                    format!("downloads:circle_subs:{}", download_id),
+                )]);
                 keyboard_rows.push(vec![crate::telegram::cb(
                     crate::i18n::t(&lang, "common.cancel"),
                     "downloads:clip_cancel".to_string(),
@@ -1038,6 +1053,7 @@ pub async fn handle_downloads_callback(
                     output_kind: "video_note".to_string(),
                     created_at: chrono::Utc::now(),
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                    subtitle_lang: None,
                 };
                 crate::storage::db::upsert_video_clip_session(&conn, &session).map_err(|e| {
                     teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
@@ -1056,6 +1072,109 @@ pub async fn handle_downloads_callback(
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
             crate::storage::db::delete_video_clip_session_by_user(&conn, chat_id.0).ok();
             bot.delete_message(chat_id, message_id).await.ok();
+        }
+        // Show subtitle language picker for circle creation
+        // Callback format: downloads:circle_subs:{download_id}
+        "circle_subs" => {
+            if parts.len() < 3 {
+                return Ok(());
+            }
+            let download_id = parts[2].parse::<i64>().unwrap_or(0);
+            let conn = db::get_connection(&db_pool)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+            let lang = crate::i18n::user_lang(&conn, chat_id.0);
+
+            // Build language picker keyboard (2 rows of 5 languages + "No subs" row)
+            const SUBTITLE_LANGS: [&str; 10] = ["en", "ru", "uk", "es", "pt", "ar", "fa", "fr", "de", "hi"];
+            let row1: Vec<InlineKeyboardButton> = SUBTITLE_LANGS[..5]
+                .iter()
+                .map(|&l| {
+                    crate::telegram::cb(
+                        l.to_string(),
+                        format!("downloads:circle_sub_lang:{}:{}", l, download_id),
+                    )
+                })
+                .collect();
+            let row2: Vec<InlineKeyboardButton> = SUBTITLE_LANGS[5..]
+                .iter()
+                .map(|&l| {
+                    crate::telegram::cb(
+                        l.to_string(),
+                        format!("downloads:circle_sub_lang:{}:{}", l, download_id),
+                    )
+                })
+                .collect();
+            let no_subs_row = vec![crate::telegram::cb(
+                crate::i18n::t(&lang, "video_circle.subtitles_none"),
+                format!("downloads:circle_sub_lang:none:{}", download_id),
+            )];
+
+            let keyboard = InlineKeyboardMarkup::new(vec![row1, row2, no_subs_row]);
+            let text = crate::i18n::t(&lang, "video_circle.subtitles_select_lang");
+            bot.edit_message_text(chat_id, message_id, text)
+                .reply_markup(keyboard)
+                .await
+                .ok();
+        }
+        // Handle subtitle language selection for circle
+        // Callback format: downloads:circle_sub_lang:{lang}:{download_id}
+        "circle_sub_lang" => {
+            if parts.len() < 4 {
+                return Ok(());
+            }
+            let sub_lang = parts[2];
+            let download_id = parts[3].parse::<i64>().unwrap_or(0);
+
+            let conn = db::get_connection(&db_pool)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+
+            // Update session subtitle_lang
+            if let Some(mut session) = db::get_active_video_clip_session(&conn, chat_id.0)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+            {
+                session.subtitle_lang = if sub_lang == "none" {
+                    None
+                } else {
+                    Some(sub_lang.to_string())
+                };
+                db::upsert_video_clip_session(&conn, &session).map_err(|e| {
+                    teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+                })?;
+
+                // Rebuild circle menu with updated subtitle state
+                let lang = crate::i18n::user_lang(&conn, chat_id.0);
+                let timestamps = db::get_video_timestamps(&conn, download_id).unwrap_or_default();
+                let (ts_buttons, ts_text) = build_timestamp_ui(&timestamps, "circle", download_id);
+
+                let mut keyboard_rows = build_duration_buttons(download_id, &lang);
+                keyboard_rows.extend(ts_buttons);
+                // Subtitle button with current state
+                let subs_label = match &session.subtitle_lang {
+                    Some(sl) => {
+                        let mut args = fluent_templates::fluent_bundle::FluentArgs::new();
+                        args.set("lang", sl.as_str());
+                        crate::i18n::t_args(&lang, "video_circle.subtitles_button_active", &args)
+                    }
+                    None => crate::i18n::t(&lang, "video_circle.subtitles_button"),
+                };
+                keyboard_rows.push(vec![crate::telegram::cb(
+                    subs_label,
+                    format!("downloads:circle_subs:{}", download_id),
+                )]);
+                keyboard_rows.push(vec![crate::telegram::cb(
+                    crate::i18n::t(&lang, "common.cancel"),
+                    "downloads:clip_cancel".to_string(),
+                )]);
+                let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
+
+                let base_message = crate::i18n::t(&lang, "video_circle.select_part");
+                let message = format!("{}{}", base_message, ts_text);
+                bot.edit_message_text(chat_id, message_id, message)
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .reply_markup(keyboard)
+                    .await
+                    .ok();
+            }
         }
         // Handle timestamp button clicks: downloads:ts:{output_kind}:{download_id}:{time_seconds}
         "ts" => {
@@ -1103,6 +1222,7 @@ pub async fn handle_downloads_callback(
                     },
                     created_at: chrono::Utc::now(),
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                    subtitle_lang: None,
                 };
 
                 // Delete any existing session first
@@ -1194,6 +1314,7 @@ pub async fn handle_downloads_callback(
                     output_kind: "video_note".to_string(),
                     created_at: chrono::Utc::now(),
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                    subtitle_lang: None,
                 };
 
                 // Delete any existing session first
@@ -1523,6 +1644,224 @@ pub async fn handle_downloads_callback(
                 }
             }
         }
+        // Show language picker for burning subtitles into video
+        "burn_subs" => {
+            if parts.len() < 3 {
+                return Ok(());
+            }
+            let download_id = parts[2].parse::<i64>().unwrap_or(0);
+            let conn = db::get_connection(&db_pool)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+
+            if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+            {
+                let lang_options = vec![
+                    vec![
+                        crate::telegram::cb("en".to_string(), format!("downloads:burn_subs_lang:en:{}", download_id)),
+                        crate::telegram::cb("ru".to_string(), format!("downloads:burn_subs_lang:ru:{}", download_id)),
+                        crate::telegram::cb("uk".to_string(), format!("downloads:burn_subs_lang:uk:{}", download_id)),
+                        crate::telegram::cb("es".to_string(), format!("downloads:burn_subs_lang:es:{}", download_id)),
+                        crate::telegram::cb("pt".to_string(), format!("downloads:burn_subs_lang:pt:{}", download_id)),
+                    ],
+                    vec![
+                        crate::telegram::cb("ar".to_string(), format!("downloads:burn_subs_lang:ar:{}", download_id)),
+                        crate::telegram::cb("fa".to_string(), format!("downloads:burn_subs_lang:fa:{}", download_id)),
+                        crate::telegram::cb("fr".to_string(), format!("downloads:burn_subs_lang:fr:{}", download_id)),
+                        crate::telegram::cb("de".to_string(), format!("downloads:burn_subs_lang:de:{}", download_id)),
+                        crate::telegram::cb("hi".to_string(), format!("downloads:burn_subs_lang:hi:{}", download_id)),
+                    ],
+                    vec![crate::telegram::cb(
+                        "❌ Cancel".to_string(),
+                        "downloads:cancel".to_string(),
+                    )],
+                ];
+                let keyboard = InlineKeyboardMarkup::new(lang_options);
+                bot.send_message(
+                    chat_id,
+                    format!("🔤 Choose subtitle language for *{}*", escape_markdown(&download.title)),
+                )
+                .parse_mode(ParseMode::MarkdownV2)
+                .reply_markup(keyboard)
+                .await?;
+                bot.delete_message(chat_id, message_id).await.ok();
+            }
+        }
+        // Process: download video from Telegram, burn subtitles, send back
+        "burn_subs_lang" => {
+            if parts.len() < 4 {
+                return Ok(());
+            }
+            let lang_code = parts[2].to_string();
+            let download_id = parts[3].parse::<i64>().unwrap_or(0);
+            let conn = db::get_connection(&db_pool)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+
+            if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id)
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+            {
+                if let Some(file_id) = download.file_id.clone() {
+                    bot.delete_message(chat_id, message_id).await.ok();
+
+                    let user_lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
+                    let mut args = fluent_templates::fluent_bundle::FluentArgs::new();
+                    args.set("lang", lang_code.as_str());
+                    let status_text = crate::i18n::t_args(&user_lang, "video_circle.burn_subs_status", &args);
+                    let processing_msg = bot.send_message(chat_id, status_text).await?;
+
+                    // Get message_id for MTProto fallback
+                    let message_info = db::get_download_message_info(&conn, download_id).ok().flatten();
+                    let (fallback_message_id, fallback_chat_id) = message_info.unzip();
+
+                    let bot = bot.clone();
+                    let url = download.url.clone();
+                    let title = download.title.clone();
+                    let db_pool = Arc::clone(&db_pool);
+                    let username = username.clone();
+
+                    tokio::spawn(async move {
+                        let temp_dir = std::path::PathBuf::from(crate::core::config::TEMP_FILES_DIR.as_str())
+                            .join("doradura_burn_subs");
+                        if let Err(e) = tokio::fs::create_dir_all(&temp_dir).await {
+                            log::error!("Failed to create burn_subs temp dir: {}", e);
+                            bot.edit_message_text(chat_id, processing_msg.id, "❌ Internal error")
+                                .await
+                                .ok();
+                            return;
+                        }
+
+                        let input_path = temp_dir.join(format!("input_{}_{}.mp4", chat_id.0, uuid::Uuid::new_v4()));
+
+                        // Download video from Telegram
+                        let download_result = crate::telegram::download_file_with_fallback(
+                            &bot,
+                            &file_id,
+                            fallback_message_id,
+                            fallback_chat_id,
+                            Some(input_path.clone()),
+                        )
+                        .await;
+
+                        if let Err(e) = download_result {
+                            log::error!("Failed to download video for burn_subs: {}", e);
+                            bot.edit_message_text(
+                                chat_id,
+                                processing_msg.id,
+                                "❌ Failed to download video from Telegram",
+                            )
+                            .await
+                            .ok();
+                            return;
+                        }
+
+                        // Burn subtitles using existing function from commands.rs
+                        let actual_path = crate::telegram::commands::burn_circle_subtitles(
+                            &url,
+                            &lang_code,
+                            &input_path,
+                            &temp_dir,
+                            chat_id.0,
+                            download_id,
+                        )
+                        .await;
+
+                        // Check if subtitles were actually burned (path changed from input)
+                        if actual_path == input_path {
+                            bot.edit_message_text(
+                                chat_id,
+                                processing_msg.id,
+                                format!("❌ No {} subtitles found for this video", lang_code),
+                            )
+                            .await
+                            .ok();
+                            tokio::fs::remove_file(&input_path).await.ok();
+                            return;
+                        }
+
+                        // Send the video with burned subtitles
+                        let caption = format!("{} [{} subs]", title, lang_code);
+                        let send_result = bot
+                            .send_video(chat_id, InputFile::file(&actual_path))
+                            .caption(&caption)
+                            .await;
+
+                        match send_result {
+                            Ok(sent_message) => {
+                                bot.delete_message(chat_id, processing_msg.id).await.ok();
+
+                                // Save to download history
+                                if let Ok(conn) = db::get_connection(&db_pool) {
+                                    let new_file_id = sent_message
+                                        .video()
+                                        .map(|v| v.file.id.0.clone())
+                                        .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
+                                    let file_size = tokio::fs::metadata(&actual_path)
+                                        .await
+                                        .map(|m| m.len() as i64)
+                                        .unwrap_or(0);
+                                    if let Some(fid) = new_file_id {
+                                        let new_title = format!("{} [{} subs]", title, lang_code);
+                                        if let Ok(db_id) = db::save_download_history(
+                                            &conn,
+                                            chat_id.0,
+                                            &url,
+                                            &new_title,
+                                            "mp4",
+                                            Some(&fid),
+                                            None,
+                                            Some(file_size),
+                                            None,
+                                            None,
+                                            None,
+                                            None,
+                                            None,
+                                        ) {
+                                            let _ = db::update_download_message_id(
+                                                &conn,
+                                                db_id,
+                                                sent_message.id.0,
+                                                chat_id.0,
+                                            );
+                                        }
+                                    }
+                                }
+
+                                // Add video cut button
+                                if let Err(e) =
+                                    add_video_cut_button_from_history(&bot, chat_id, sent_message.id, download_id).await
+                                {
+                                    log::warn!("Failed to add video cut button after burn_subs: {}", e);
+                                }
+                            }
+                            Err(e) => {
+                                log::error!("Failed to send video with burned subs: {}", e);
+                                bot.edit_message_text(
+                                    chat_id,
+                                    processing_msg.id,
+                                    "❌ Failed to send video. The administrator has been notified.",
+                                )
+                                .await
+                                .ok();
+                                crate::telegram::notifications::notify_admin_video_error(
+                                    &bot,
+                                    chat_id.0,
+                                    username.as_deref(),
+                                    &e.to_string(),
+                                    &format!("burn_subs: {} on '{}'", lang_code, title),
+                                )
+                                .await;
+                            }
+                        }
+
+                        // Cleanup temp files
+                        tokio::fs::remove_file(&actual_path).await.ok();
+                        if actual_path != input_path {
+                            tokio::fs::remove_file(&input_path).await.ok();
+                        }
+                    });
+                }
+            }
+        }
         // Show category picker for a download
         "setcat" => {
             if parts.len() < 3 {
@@ -1632,6 +1971,12 @@ pub async fn handle_downloads_callback(
                         "📝 Subtitles".to_string(),
                         format!("downloads:subtitles:{}", download_id),
                     )]);
+                    if download.format == "mp4" {
+                        options.push(vec![crate::telegram::cb(
+                            "🔤 Burn subtitles".to_string(),
+                            format!("downloads:burn_subs:{}", download_id),
+                        )]);
+                    }
                 }
                 let cat_label = match &download.category {
                     Some(c) => format!("🏷 {}", c),
