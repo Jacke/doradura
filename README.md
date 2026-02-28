@@ -22,7 +22,12 @@
 ╚══════════════════════════════════════════════════════════════════════════╝
 ```
 
-**doradura** is a media-download ecosystem built entirely in Rust. It ships two distinct products that share one high-performance core: **dora** — a gorgeous Catppuccin-themed terminal UI for your desktop — and **doradura** — an enterprise-grade Telegram bot for your users, friends, or yourself.
+**doradura** is a media-download ecosystem built entirely in Rust. It ships two production products that share one high-performance core:
+
+- **dora TUI** — a Catppuccin-themed terminal client for your desktop (macOS / Linux)
+- **doradura Telegram Bot** — an enterprise-grade bot with subscriptions, audio FX, 9+ output formats, and 1000+ supported platforms
+
+<img src="dora-tui.png" width="100%" alt="dora TUI — terminal media downloader">
 
 ---
 
@@ -55,8 +60,6 @@
  │  [1] ⬇  Downloads   [2] 🎵 Lyrics   [3] ⚙  Settings             │
  ╰──────────────────────────────────────────────────────────────────╯
 ```
-
-<img src="dora-tui.png" width="100%" alt="dora TUI screenshot">
 
 A pixel-perfect TUI built with **ratatui** and the **Catppuccin Mocha** colour palette — 7 cycleable logo themes, full mouse support, 60 fps rendering.
 
