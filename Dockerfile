@@ -145,7 +145,7 @@ RUN chmod 755 /app/doradura && \
 COPY --from=rust-builder --chown=1000:2000 /app/migrations /app/migrations
 
 # Copy test_ytdlp.py for testing yt-dlp with production parameters
-COPY --chown=1000:2000 test_ytdlp.py /app/
+COPY --chown=1000:2000 tools/test_ytdlp.py /app/
 RUN chmod +x /app/test_ytdlp.py
 
 # Set environment variables
