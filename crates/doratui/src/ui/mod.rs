@@ -6,7 +6,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph, Tabs};
 use ratatui::Frame;
 
-use crate::app::{App, ClickTarget, HistoryEntry, Particle, SlotState, YtdlpStartup};
+use crate::app::{App, ClickTarget, HistoryEntry, Particle, SlotState, ToastKind, YtdlpStartup};
 use crate::theme::ThemeColors;
 
 mod history;
@@ -78,6 +78,9 @@ pub fn render(f: &mut Frame, app: &mut App) {
         YtdlpStartup::Done => {}
     }
 
+    // Feature: TUI Toasts
+    render_toasts(f, size, app);
+
     // Supernova particles rendered last — on top of everything.
     render_particles(f, &app.particles, f.area());
 }
@@ -86,16 +89,23 @@ pub fn render(f: &mut Frame, app: &mut App) {
 
 /// Combined Downloads tab: queue panel on the left, history on the right.
 fn render_downloads_combined(f: &mut Frame, area: Rect, app: &mut App) {
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(46), // queue panel (fixed width)
-            Constraint::Min(0),     // history panel (remaining width)
-        ])
-        .split(area);
+    // Feature: Responsive UI
+    if area.width < 100 {
+        // Narrow: only show queue
+        queue::render_queue(f, area, app);
+    } else {
+        // Wide: show both
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(46), // queue panel (fixed width)
+                Constraint::Min(0),     // history panel (remaining width)
+            ])
+            .split(area);
 
-    queue::render_queue(f, chunks[0], app);
-    history::render_history(f, chunks[1], app);
+        queue::render_queue(f, chunks[0], app);
+        history::render_history(f, chunks[1], app);
+    }
 }
 
 fn render_tabs(f: &mut Frame, area: Rect, app: &mut App) {
@@ -230,29 +240,30 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Min(1), Constraint::Length(right_width)])
         .split(area);
 
-    // Left side: error notification takes priority over the normal hint line.
-    if let Some((msg, set_at)) = &app.status_msg {
-        let elapsed = set_at.elapsed().as_secs_f32();
-        let color = if elapsed < 4.0 {
-            app.theme.red
-        } else {
-            // lerp RED → SUBTEXT over the final 2 s
-            let t = ((elapsed - 4.0) / 2.0).clamp(0.0, 1.0);
-            lerp_color_rgb(app.theme.red, app.theme.subtext, t)
-        };
-        let max_chars = chunks[0].width.saturating_sub(1) as usize;
-        let display: String = msg.chars().take(max_chars).collect();
-        f.render_widget(
-            Paragraph::new(display).style(Style::default().fg(color).add_modifier(Modifier::BOLD)),
-            chunks[0],
-        );
-    } else {
-        f.render_widget(
-            Paragraph::new(" [1-3] Tabs  [Enter] Preview  [r] Reveal  [d] Delete  [T] Theme  [?] Help  [Ctrl+C] Quit")
-                .style(Style::default().fg(app.theme.subtext)),
-            chunks[0],
-        );
-    }
+    // Left side: Bottom Keybar (htop-style)
+    let k = |key: &'static str, label: &'static str| {
+        vec![
+            Span::styled(
+                format!(" {} ", key),
+                Style::default()
+                    .bg(app.theme.surface0)
+                    .fg(app.theme.lavender)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!(" {} ", label), Style::default().fg(app.theme.subtext)),
+        ]
+    };
+
+    let mut hints = Vec::new();
+    hints.extend(k("1-3", "Tabs"));
+    hints.extend(k("Enter", "Preview"));
+    hints.extend(k("r", "Reveal"));
+    hints.extend(k("d", "Delete"));
+    hints.extend(k("T", "Theme"));
+    hints.extend(k("?", "Help"));
+    hints.extend(k("^C", "Quit"));
+
+    f.render_widget(Paragraph::new(Line::from(hints)), chunks[0]);
 
     f.render_widget(
         Paragraph::new(right_str)
@@ -433,6 +444,7 @@ fn render_help_overlay(f: &mut Frame, area: Rect, theme: &ThemeColors) {
             k("  T               "),
             d("Cycle Catppuccin theme (Mocha/Macchiato/Frappe/Latte)"),
         ]),
+        Line::from(vec![k("  Space           "), d("Toggle selection in History")]),
         Line::from(vec![k("  ?               "), d("Open this help overlay")]),
         Line::from(vec![k("  Esc             "), d("Close popup  /  clear active input")]),
         Line::from(vec![k("  Ctrl+C          "), d("Quit")]),
@@ -555,11 +567,26 @@ fn render_ytdlp_updating_popup(f: &mut Frame, area: Rect, msg: &str, alpha: f32,
 }
 
 fn render_history_popup(f: &mut Frame, area: Rect, entry: &HistoryEntry, app: &mut App) {
-    let popup_w = 74_u16.min(area.width.saturating_sub(4));
-    let popup_h = 20_u16.min(area.height.saturating_sub(4));
+    let thumb = app.preview_thumbnail.as_ref();
+    let is_vertical = thumb.is_some_and(|t| (t.height * 2) > t.width);
+
+    let (mut popup_w, mut popup_h) = (74_u16, 20_u16);
+    if is_vertical {
+        popup_w = 64;
+        popup_h = 24;
+    } else if thumb.is_some() {
+        popup_w = 80;
+        popup_h = 30;
+    }
+
+    let popup_w = popup_w.min(area.width.saturating_sub(4));
+    let popup_h = popup_h.min(area.height.saturating_sub(4));
     let popup_x = area.x + (area.width.saturating_sub(popup_w)) / 2;
     let popup_y = area.y + (area.height.saturating_sub(popup_h)) / 2;
     let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
+
+    // Feature: Close on click (Background blocker)
+    app.click_map.push((area, ClickTarget::PreviewClose));
 
     let is_mp4 = entry.format == crate::app::DownloadFormat::Mp4;
     let fmt_color = if is_mp4 { app.theme.blue } else { app.theme.peach };
@@ -576,72 +603,39 @@ fn render_history_popup(f: &mut Frame, area: Rect, entry: &HistoryEntry, app: &m
     f.render_widget(Clear, popup_area);
     f.render_widget(block, popup_area);
 
-    let art_w: u16 = 20;
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(art_w), Constraint::Min(0)])
-        .split(inner);
+    if is_vertical {
+        // Shorts Layout: side-by-side
+        let art_w = thumb.map(|t| t.width + 2).unwrap_or(26);
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(art_w), Constraint::Min(0)])
+            .split(inner);
 
-    let b = |s: &'static str, c| Span::styled(s, Style::default().fg(c));
-
-    let art_lines: Vec<Line> = if is_mp4 {
-        vec![
-            Line::from(b("  ╭────────────╮  ", app.theme.blue)),
-            Line::from(b("  │ [][][][][] │  ", app.theme.surface0)),
-            Line::from(b("  │            │  ", app.theme.blue)),
-            Line::from(vec![
-                b("  │     ", app.theme.blue),
-                Span::styled(
-                    ">>",
-                    Style::default().fg(app.theme.lavender).add_modifier(Modifier::BOLD),
-                ),
-                b("     │  ", app.theme.blue),
-            ]),
-            Line::from(b("  │            │  ", app.theme.blue)),
-            Line::from(b("  │  VIDEO  MP4│  ", app.theme.blue)),
-            Line::from(b("  │            │  ", app.theme.blue)),
-            Line::from(b("  │ [][][][][] │  ", app.theme.surface0)),
-            Line::from(b("  ╰────────────╯  ", app.theme.blue)),
-            Line::from(Span::raw("")),
-            Line::from(Span::styled(
-                "      [ MP4 ]     ",
-                Style::default().fg(app.theme.blue).add_modifier(Modifier::BOLD),
-            )),
-        ]
+        preview::render_thumbnail(f, chunks[0], thumb, &app.theme, app);
+        render_history_details(f, chunks[1], entry, app, fmt_color);
     } else {
-        vec![
-            Line::from(b("  ╭────────────╮  ", app.theme.peach)),
-            Line::from(b("  │            │  ", app.theme.peach)),
-            Line::from(b("  │  ▁▂▄▆▄▂▁▂  │  ", app.theme.green)),
-            Line::from(b("  │  ▂▄▇█▇▄▂▄  │  ", app.theme.green)),
-            Line::from(b("  │  ▃▆██▇▅▃▅  │  ", app.theme.green)),
-            Line::from(b("  │  ▁▃▆▇▆▃▁▃  │  ", app.theme.green)),
-            Line::from(b("  │  ▁▂▄▅▄▂▁▁  │  ", app.theme.green)),
-            Line::from(b("  │            │  ", app.theme.peach)),
-            Line::from(b("  ╰────────────╯  ", app.theme.peach)),
-            Line::from(Span::raw("")),
-            Line::from(Span::styled(
-                "      [ MP3 ]     ",
-                Style::default().fg(app.theme.peach).add_modifier(Modifier::BOLD),
-            )),
-        ]
-    };
-    f.render_widget(Paragraph::new(art_lines), chunks[0]);
+        // Video Layout: top-bottom
+        let art_h = thumb.map(|t| t.height + 1).unwrap_or(10);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(art_h), Constraint::Min(0)])
+            .split(inner);
 
-    if !entry.path.is_empty() {
-        app.click_map
-            .push((chunks[0], ClickTarget::HistoryReveal(entry.path.clone())));
+        preview::render_thumbnail(f, chunks[0], thumb, &app.theme, app);
+        render_history_details(f, chunks[1], entry, app, fmt_color);
     }
+}
 
-    let right = Layout::default()
+fn render_history_details(f: &mut Frame, area: Rect, entry: &HistoryEntry, app: &mut App, fmt_color: Color) {
+    let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(0),    // info rows
+            Constraint::Min(1),    // info rows
             Constraint::Length(3), // action buttons
         ])
-        .split(chunks[1]);
+        .split(area);
 
-    let max_info = right[0].width.saturating_sub(3) as usize;
+    let max_info = chunks[0].width.saturating_sub(3) as usize;
     let trunc = |s: &str| -> String { s.chars().take(max_info).collect() };
 
     let when = entry.finished_at.format("%H:%M  %d %b %Y").to_string();
@@ -678,7 +672,7 @@ fn render_history_popup(f: &mut Frame, area: Rect, entry: &HistoryEntry, app: &m
             Span::styled(trunc(&entry.path), Style::default().fg(app.theme.text)),
         ]),
     ];
-    f.render_widget(Paragraph::new(info_lines), right[0]);
+    f.render_widget(Paragraph::new(info_lines), chunks[0]);
 
     let k = |s: &'static str| Span::styled(s, Style::default().fg(app.theme.peach).add_modifier(Modifier::BOLD));
     let d = |s: &'static str| Span::styled(s, Style::default().fg(app.theme.subtext));
@@ -699,9 +693,80 @@ fn render_history_popup(f: &mut Frame, area: Rect, entry: &HistoryEntry, app: &m
     let btn_block = Block::default()
         .borders(Borders::TOP)
         .border_style(Style::default().fg(app.theme.surface0));
-    let btn_inner = btn_block.inner(right[1]);
-    f.render_widget(btn_block, right[1]);
+    let btn_area = chunks[1];
+    let btn_inner = btn_block.inner(btn_area);
+    f.render_widget(btn_block, btn_area);
     f.render_widget(Paragraph::new(Line::from(btn_spans)), btn_inner);
+
+    // Register click targets for the button row
+    let btn_w = btn_inner.width / 4;
+    app.click_map.push((
+        Rect::new(btn_inner.x, btn_inner.y, btn_w, btn_inner.height),
+        ClickTarget::HistoryReveal(entry.path.clone()),
+    ));
+    if !entry.url.is_empty() {
+        app.click_map.push((
+            Rect::new(btn_inner.x + btn_w, btn_inner.y, btn_w, btn_inner.height),
+            ClickTarget::OpenInBrowser(entry.url.clone()),
+        ));
+    }
+    app.click_map.push((
+        Rect::new(btn_inner.x + btn_w * 2, btn_inner.y, btn_w, btn_inner.height),
+        // We don't have a direct "Delete" target index here easily,
+        // but we can use the close target for now or just wait for keypress.
+        // Better: let's just make the "Close" part work.
+        ClickTarget::PreviewClose,
+    ));
+    app.click_map.push((
+        Rect::new(
+            btn_inner.x + btn_inner.width.saturating_sub(btn_w),
+            btn_inner.y,
+            btn_w,
+            btn_inner.height,
+        ),
+        ClickTarget::PreviewClose,
+    ));
+}
+
+// ── Toast System ──────────────────────────────────────────────────────────────
+
+fn render_toasts(f: &mut Frame, size: Rect, app: &App) {
+    if app.toasts.is_empty() {
+        return;
+    }
+
+    let toast_w = 32_u16;
+    let toast_h = 3_u16;
+    let mut current_y = size.y + 1; // Top-right corner
+
+    for toast in app.toasts.iter().rev() {
+        let x = size.x + size.width.saturating_sub(toast_w + 1);
+        let area = Rect::new(x, current_y, toast_w, toast_h);
+
+        let (border_color, icon) = match toast.kind {
+            ToastKind::Info => (app.theme.blue, "ℹ "),
+            ToastKind::Success => (app.theme.green, "✔ "),
+            ToastKind::Error => (app.theme.red, "✖ "),
+        };
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(border_color))
+            .style(Style::default().bg(app.theme.crust));
+
+        let msg = Paragraph::new(format!(" {}{}", icon, toast.message))
+            .block(block)
+            .style(Style::default().fg(app.theme.text));
+
+        f.render_widget(Clear, area);
+        f.render_widget(msg, area);
+
+        current_y += toast_h;
+        if current_y + toast_h > size.height {
+            break;
+        }
+    }
 }
 
 // ── Supernova particle overlay ────────────────────────────────────────────────
@@ -729,7 +794,7 @@ fn render_particles(f: &mut Frame, particles: &[Particle], bounds: Rect) {
 
 // ── Color helpers ─────────────────────────────────────────────────────────────
 
-/// Linearly interpolate between two `Color::Rgb` values.  `t = 0.0` → `from`, `t = 1.0` → `to`.
+/// Linearly interpolate between two Color::Rgb values.
 fn lerp_color_rgb(from: Color, to: Color, t: f32) -> Color {
     let t = t.clamp(0.0, 1.0);
     fn rgb(c: Color) -> (u8, u8, u8) {

@@ -5,53 +5,13 @@ use ratatui::style::{Modifier, Style};
 use ratatui::widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table};
 use ratatui::Frame;
 
-use crate::app::{App, ClickTarget, HistorySortMode};
+use crate::app::{App, ClickTarget};
 
 /// Render the History panel (right column of the Downloads tab).
 pub fn render_history(f: &mut Frame, area: Rect, app: &mut App) {
-    // ── Filter-active entries ─────────────────────────────────────────────────
-    let filter = app.history_filter.to_lowercase();
-    let mut filtered_indices: Vec<usize> = if filter.is_empty() {
-        // All entries (in newest-first display order: index = rev position)
-        (0..app.history.len()).collect()
-    } else {
-        app.history
-            .iter()
-            .rev()
-            .enumerate()
-            .filter_map(|(display_idx, e)| {
-                let matches = e.title.to_lowercase().contains(&filter) || e.artist.to_lowercase().contains(&filter);
-                if matches {
-                    Some(display_idx)
-                } else {
-                    None
-                }
-            })
-            .collect()
-    };
-
-    // ── Sort filtered entries according to history_sort mode ──────────────────
-    // filtered_indices are display indices (0 = newest) into app.history.iter().rev()
-    match app.history_sort {
-        HistorySortMode::DateDesc => {} // already newest-first
-        HistorySortMode::DateAsc => filtered_indices.reverse(),
-        HistorySortMode::SizeDesc => {
-            let history = &app.history;
-            filtered_indices.sort_by(|&a, &b| {
-                let ea = history.iter().rev().nth(a).map_or(0.0, |e| e.size_mb);
-                let eb = history.iter().rev().nth(b).map_or(0.0, |e| e.size_mb);
-                eb.partial_cmp(&ea).unwrap_or(std::cmp::Ordering::Equal)
-            });
-        }
-        HistorySortMode::TitleAsc => {
-            let history = &app.history;
-            filtered_indices.sort_by(|&a, &b| {
-                let ta = history.iter().rev().nth(a).map_or("", |e| e.title.as_str());
-                let tb = history.iter().rev().nth(b).map_or("", |e| e.title.as_str());
-                ta.to_lowercase().cmp(&tb.to_lowercase())
-            });
-        }
-    }
+    // ── Update Filter and Sort (Centralized) ──────────────────────────────────
+    app.update_history_filter();
+    let filtered_indices = app.history_filtered_indices.clone();
 
     // ── Filter bar (shown when search is active or filter is non-empty) ───────
     let mut top_offset: u16 = 0;
@@ -59,15 +19,26 @@ pub fn render_history(f: &mut Frame, area: Rect, app: &mut App) {
 
     // Build block title
     let sort_label = app.history_sort.label();
-    let block_title = if !filter.is_empty() {
+    let scroll_hint = if app.history_scroll > 0 {
+        format!("  ↑{}", app.history_scroll)
+    } else {
+        String::new()
+    };
+    let block_title = if !app.history_filter.is_empty() {
         format!(
-            " Download History  {}/{} matches  {} ",
+            " Download History  {}/{} matches  {} {}",
             filtered_indices.len(),
             app.history.len(),
             sort_label,
+            scroll_hint,
         )
     } else {
-        format!(" Download History  {} entries  {} ", app.history.len(), sort_label)
+        format!(
+            " Download History  {} entries  {} {}",
+            app.history.len(),
+            sort_label,
+            scroll_hint
+        )
     };
 
     let block = Block::default()
@@ -130,41 +101,57 @@ pub fn render_history(f: &mut Frame, area: Rect, app: &mut App) {
         return;
     }
 
-    let header = Row::new(["Title", "Artist", "Fmt", "Size", "Finished"])
+    let header = Row::new([" ", "Title", "Artist", "Fmt", "Size", "Finished"])
         .style(Style::default().fg(app.theme.lavender).add_modifier(Modifier::BOLD))
         .height(1);
 
     // ── Adaptive column widths ────────────────────────────────────────────────
     // Scale proportionally to terminal width; clamp to reasonable min/max.
     let w = table_area.width;
+    let sel_w: u16 = 2; // [x]
     let fmt_w: u16 = 5;
     let size_w: u16 = 9;
     let date_w: u16 = 12;
-    let fixed = fmt_w + size_w + date_w + 3 * 2; // 3 × column_spacing=2
+    let fixed = sel_w + fmt_w + size_w + date_w + 4 * 2; // 4 × column_spacing=2
     let flex = w.saturating_sub(fixed);
     let title_w = ((flex as u32 * 60 / 100) as u16).clamp(18, 50);
     let artist_w = flex.saturating_sub(title_w).clamp(10, 28);
 
-    // Apply scroll offset (filtered display, newest-first ordering).
+    // Apply scroll offset.
     let skip = app.history_scroll as usize;
-    let selected_in_view = 0usize; // selected row is always 0 (top of visible)
+    let highlight_idx = app.history_index;
 
     let rows: Vec<Row> = filtered_indices
         .iter()
         .skip(skip)
         .enumerate()
         .map(|(i, &display_idx)| {
-            // display_idx is the rev-position in app.history
+            let abs_idx = skip + i;
             let entry = app.history.iter().rev().nth(display_idx).unwrap();
             let when = entry.finished_at.format("%H:%M %d/%m").to_string();
-            let is_selected = i == selected_in_view;
-            let row_style = if is_selected {
-                Style::default().bg(app.theme.surface0)
+            let is_highlighted = abs_idx == highlight_idx;
+            let is_multi_selected = app.history_selected.contains(&display_idx);
+
+            let row_style = if is_highlighted {
+                Style::default().bg(app.theme.surface0).add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
             };
+
+            let sel_icon = if is_multi_selected { "●" } else { "○" };
+            let sel_color = if is_multi_selected {
+                app.theme.green
+            } else {
+                app.theme.surface1
+            };
+
             Row::new([
-                Cell::from(entry.title.clone()).style(Style::default().fg(app.theme.text)),
+                Cell::from(sel_icon).style(Style::default().fg(sel_color)),
+                Cell::from(entry.title.clone()).style(Style::default().fg(if is_highlighted {
+                    app.theme.lavender
+                } else {
+                    app.theme.text
+                })),
                 Cell::from(entry.artist.clone()).style(Style::default().fg(app.theme.subtext)),
                 Cell::from(entry.format.label()).style(Style::default().fg(app.theme.peach)),
                 Cell::from(format!("{:.1} MB", entry.size_mb)).style(Style::default().fg(app.theme.blue)),
@@ -174,21 +161,10 @@ pub fn render_history(f: &mut Frame, area: Rect, app: &mut App) {
         })
         .collect();
 
-    // Scroll hint in title if scrolled
-    let scroll_hint = if skip > 0 {
-        format!(" ↑ {} hidden ", skip)
-    } else {
-        String::new()
-    };
-    // Redraw block with scroll hint — note: we already rendered the outer block above,
-    // but we need a borderless block here just for the table's block parameter.
-    let inner_block = Block::default()
-        .title(if skip > 0 { scroll_hint } else { String::new() })
-        .borders(Borders::NONE);
-
     let table = Table::new(
         rows,
         [
+            Constraint::Length(sel_w),
             Constraint::Length(title_w),
             Constraint::Length(artist_w),
             Constraint::Length(fmt_w),
@@ -197,25 +173,25 @@ pub fn render_history(f: &mut Frame, area: Rect, app: &mut App) {
         ],
     )
     .header(header)
-    .block(inner_block)
     .column_spacing(2)
     .row_highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
     f.render_widget(table, table_area);
 
-    // ── Register click areas for each visible data row ────────────────────────
-    // Layout: table_area.y=header row, table_area.y+1..=data rows (1 row each)
-    let data_start_y = table_area.y + 1; // after header row
-    let max_data_rows = table_area.height.saturating_sub(2) as usize; // header + hint
-    for i in 0..max_data_rows {
+    // ── Register click areas for visible rows ────────────────────────────────
+    // The table header is at table_area.y.
+    // The first data row is at table_area.y + 1.
+    let data_start_y = table_area.y + 1;
+    let max_data_rows = table_area.height.saturating_sub(1); // excluding header
+
+    for i in 0..(max_data_rows as usize) {
         let abs_filter_idx = skip + i;
         if abs_filter_idx >= filtered_indices.len() {
             break;
         }
-        let display_idx = filtered_indices[abs_filter_idx];
         app.click_map.push((
-            Rect::new(area.x + 1, data_start_y + i as u16, area.width.saturating_sub(2), 1),
-            ClickTarget::HistoryOpenPopup(display_idx),
+            Rect::new(area.x, data_start_y + i as u16, area.width, 1),
+            ClickTarget::HistoryOpenPopup(abs_filter_idx),
         ));
     }
 

@@ -717,7 +717,7 @@ pub async fn test_lyrics_fetch() -> SmokeTestResult {
 
     let result = timeout(
         Duration::from_secs(15),
-        crate::lyrics::fetch_lyrics("Eminem", "Lose Yourself"),
+        crate::lyrics::fetch_lyrics("Eminem", "Lose Yourself", None),
     )
     .await;
 

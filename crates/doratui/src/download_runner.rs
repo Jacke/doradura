@@ -111,6 +111,12 @@ async fn run_download(
         args.push(cf);
     }
 
+    // Modern yt-dlp args for YouTube age-restriction / bot detection bypass
+    args.push("--extractor-args".to_string());
+    args.push("youtube:player_client=android_vr,web_safari;formats=missing_pot".to_string());
+    args.push("--js-runtimes".to_string());
+    args.push("deno".to_string());
+
     match format {
         DownloadFormat::Mp3 => {
             let bitrate = if settings.audio_bitrate.is_empty() {

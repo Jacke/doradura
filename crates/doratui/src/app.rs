@@ -127,6 +127,8 @@ pub enum ClickTarget {
     PreviewToggleFormat,
     /// Confirm the preview download (same as pressing Enter in the popup).
     PreviewDownload,
+    /// Close the preview popup.
+    PreviewClose,
     /// Select (focus) a settings item by index.
     SettingsSelectItem(usize),
     /// Cycle a settings item left (←).
@@ -135,10 +137,18 @@ pub enum ClickTarget {
     SettingsCycleRight(usize),
     /// Click on the logo — cycle colour scheme + trigger burst animation.
     LogoClick,
-    /// Open the history detail popup for a specific display-index entry.
+    /// Open the history detail popup. Contains the absolute position in the filtered list.
     HistoryOpenPopup(usize),
     /// Click on the ASCII art panel of the history popup — reveal the file.
     HistoryReveal(String),
+    /// Click on the artist name in lyrics to see their other songs. (ID, Name).
+    ArtistClick(Option<u64>, String),
+    /// Click on a song in the artist's song list to fetch its lyrics.
+    ArtistSongClick(String, String),
+    /// Open Genius API clients page in browser.
+    GetGeniusToken,
+    /// Load more results in lyrics grid.
+    LyricsLoadMore,
 }
 
 /// State of a single download slot.
@@ -189,6 +199,7 @@ pub struct DownloadSlot {
     pub url: String,
     pub title: Option<String>,
     pub artist: Option<String>,
+    pub thumbnail_url: Option<String>,
     pub format: DownloadFormat,
     pub state: SlotState,
     #[allow(dead_code)]
@@ -210,17 +221,32 @@ pub struct HistoryEntry {
     pub size_mb: f64,
     pub path: String,
     pub finished_at: chrono::DateTime<chrono::Local>,
-    /// Original source URL (empty for entries saved before this field was added).
+    /// Original source URL.
     #[serde(default)]
     pub url: String,
+    /// Thumbnail URL for image preview.
+    #[serde(default)]
+    pub thumbnail_url: Option<String>,
 }
 
 /// A lyrics search result.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct LyricsResult {
-    pub title: String,
     pub artist: String,
+    pub artist_id: Option<u64>,
+    pub title: String,
+    pub album: Option<String>,
+    pub release_date: Option<String>,
+    pub thumbnail_url: Option<String>,
     pub lyrics: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LyricsViewMode {
+    #[default]
+    Lyrics,
+    ArtistSongs,
 }
 
 /// A single supernova particle ejected when a download completes.
@@ -235,15 +261,36 @@ pub struct Particle {
     pub max_age: f32,
 }
 
+/// A single TUI toast notification.
+#[derive(Debug, Clone)]
+pub struct Toast {
+    pub message: String,
+    pub kind: ToastKind,
+    pub added_at: Instant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToastKind {
+    Info,
+    Success,
+    Error,
+}
+
 /// Central application state.
 pub struct App {
     pub active_tab: Tab,
     pub slots: Vec<DownloadSlot>,
     pub history: Vec<HistoryEntry>,
+    /// Scroll offset (first visible row).
     pub history_scroll: u16,
+    /// Currently highlighted entry index (absolute position in filtered list).
+    pub history_index: usize,
     /// Display-index (0 = newest) of the history entry currently shown in the detail popup.
     pub history_popup: Option<usize>,
     pub url_input: String,
+
+    /// Live notifications (toasts) displayed in the corner.
+    pub toasts: Vec<Toast>,
 
     // ── History search / sort ──────────────────────────────────────────────────
     /// When true, keyboard input goes to the history filter bar.
@@ -252,12 +299,22 @@ pub struct App {
     pub history_filter: String,
     /// Current sort order for the history panel.
     pub history_sort: HistorySortMode,
+    /// Indices of selected history entries (multi-selection).
+    pub history_selected: std::collections::HashSet<usize>,
+    /// Cached indices of history entries matching the current filter.
+    pub history_filtered_indices: Vec<usize>,
 
     // ── Lyrics tab ────────────────────────────────────────────────────────────
     pub lyrics_query: String,
     pub lyrics_result: Option<LyricsResult>,
     pub lyrics_loading: bool,
     pub lyrics_scroll: u16,
+    pub lyrics_view_mode: LyricsViewMode,
+    pub artist_songs: Vec<doracore::lyrics::ArtistSong>,
+    pub artist_songs_cursor: usize,
+    pub artist_songs_page: u32,
+    pub last_artist_id: Option<u64>,
+    pub last_lyrics_query: String,
 
     // ── Overlays ──────────────────────────────────────────────────────────────
     pub help_visible: bool,
@@ -282,6 +339,8 @@ pub struct App {
     pub preview_quality_cursor: usize,
     /// Thumbnail ASCII art (loaded asynchronously after info arrives).
     pub preview_thumbnail: Option<ThumbnailArt>,
+    /// High-quality image protocol (Kitty/Sixel) cached for rendering.
+    pub preview_image_protocol: Option<ratatui_image::protocol::Protocol>,
     /// True when the run loop should spawn the video-info fetch task.
     pub preview_fetch_needed: bool,
     /// URL waiting for debounce before the preview fetch is dispatched.
@@ -292,6 +351,9 @@ pub struct App {
     pub preview_cache: HashMap<String, VideoInfo>,
     /// Clickable regions rebuilt each frame. Used by the mouse handler.
     pub click_map: Vec<(Rect, ClickTarget)>,
+
+    /// Image protocol picker (Kitty, Sixel, etc.).
+    pub image_picker: Option<ratatui_image::picker::Picker>,
 
     // ── Settings tab ──────────────────────────────────────────────────────────
     pub settings: DoraSettings,
@@ -327,10 +389,6 @@ pub struct App {
     /// State of the yt-dlp startup check popup.
     pub ytdlp_startup: YtdlpStartup,
 
-    // ── Status bar notification ───────────────────────────────────────────────
-    /// Transient message shown in the status bar. Cleared automatically after 10 seconds.
-    pub status_msg: Option<(String, Instant)>,
-
     // ── Session stats ─────────────────────────────────────────────────────────
     /// When the app was started (for uptime display in the stats footer).
     pub session_start: Instant,
@@ -360,20 +418,30 @@ impl App {
         let now = Instant::now();
         let theme = palette(settings.theme_flavour);
         let logo_scheme = settings.logo_scheme; // Copy before settings is moved into Self
-        Self {
+        let mut app = Self {
             active_tab: Tab::Downloads,
             slots: Vec::new(),
             history: history_load(),
             history_scroll: 0,
+            history_index: 0,
             history_popup: None,
             url_input: String::new(),
+            toasts: Vec::new(),
             history_search_mode: false,
             history_filter: String::new(),
             history_sort: HistorySortMode::default(),
+            history_selected: std::collections::HashSet::new(),
+            history_filtered_indices: Vec::new(),
             lyrics_query: String::new(),
             lyrics_result: None,
             lyrics_loading: false,
             lyrics_scroll: 0,
+            lyrics_view_mode: LyricsViewMode::Lyrics,
+            artist_songs: Vec::new(),
+            artist_songs_cursor: 0,
+            artist_songs_page: 1,
+            last_artist_id: None,
+            last_lyrics_query: String::new(),
             help_visible: false,
             show_cookies_input: false,
             cookies_input: String::new(),
@@ -385,14 +453,16 @@ impl App {
             reveal_popup: None,
             preview_state: PreviewState::Hidden,
             preview_url: String::new(),
-            preview_format: DownloadFormat::Mp3,
+            preview_format: DownloadFormat::Mp4,
             preview_quality_cursor: 0,
             preview_thumbnail: None,
+            preview_image_protocol: None,
             preview_fetch_needed: false,
             preview_pending_url: None,
             preview_debounce: now,
             preview_cache: HashMap::new(),
             click_map: Vec::new(),
+            image_picker: ratatui_image::picker::Picker::from_query_stdio().ok(),
             settings,
             settings_cursor: 0,
             settings_editing: false,
@@ -414,19 +484,21 @@ impl App {
             } else {
                 YtdlpStartup::Missing
             },
-            status_msg: None,
             session_start: now,
             theme,
             particles: Vec::new(),
             slot_screen_rects: HashMap::new(),
             next_slot_id: 0,
-        }
+        };
+        app.update_history_filter();
+        app
     }
 
     /// Create an app pre-populated with fake data for visual testing (`--demo`).
     pub fn new_demo() -> Self {
         let mut app = Self::new();
         app.demo_mode = true;
+        app.image_picker = ratatui_image::picker::Picker::from_query_stdio().ok();
         app.history.clear(); // Replace loaded history with demo data below
 
         let now = Local::now();
@@ -436,6 +508,7 @@ impl App {
                 url: "https://youtu.be/dQw4w9WgXcQ".to_string(),
                 title: Some("Never Gonna Give You Up".to_string()),
                 artist: Some("Rick Astley".to_string()),
+                thumbnail_url: None,
                 format: DownloadFormat::Mp3,
                 state: SlotState::Downloading {
                     percent: 42,
@@ -459,6 +532,7 @@ impl App {
                 url: "https://youtu.be/L_jWHffIx5E".to_string(),
                 title: Some("Smells Like Teen Spirit".to_string()),
                 artist: Some("Nirvana".to_string()),
+                thumbnail_url: None,
                 format: DownloadFormat::Mp4,
                 state: SlotState::Fetching,
                 started: Instant::now(),
@@ -471,6 +545,7 @@ impl App {
                 url: "https://soundcloud.com/artist/some-long-track-name-here".to_string(),
                 title: None,
                 artist: None,
+                thumbnail_url: None,
                 format: DownloadFormat::Mp3,
                 state: SlotState::Pending,
                 started: Instant::now(),
@@ -483,6 +558,7 @@ impl App {
                 url: "https://youtu.be/example".to_string(),
                 title: Some("Sweet Child O' Mine".to_string()),
                 artist: Some("Guns N' Roses".to_string()),
+                thumbnail_url: None,
                 format: DownloadFormat::Mp3,
                 state: SlotState::Done {
                     path: "~/Downloads/Sweet_Child_O_Mine.mp3".to_string(),
@@ -497,6 +573,7 @@ impl App {
                 url: "https://youtu.be/bad-video".to_string(),
                 title: Some("Unavailable Video".to_string()),
                 artist: None,
+                thumbnail_url: None,
                 format: DownloadFormat::Mp4,
                 state: SlotState::Failed {
                     reason: "Video is geo-restricted".to_string(),
@@ -518,6 +595,7 @@ impl App {
                 path: "~/Downloads/Bohemian_Rhapsody.mp3".to_string(),
                 finished_at: now - chrono::Duration::seconds(3600),
                 url: "https://www.youtube.com/watch?v=fJ9rUzIMcZQ".to_string(),
+                thumbnail_url: None,
             },
             HistoryEntry {
                 title: "Hotel California".to_string(),
@@ -527,6 +605,7 @@ impl App {
                 path: "~/Downloads/Hotel_California.mp3".to_string(),
                 finished_at: now - chrono::Duration::seconds(10800),
                 url: "https://www.youtube.com/watch?v=BciS5krYL80".to_string(),
+                thumbnail_url: None,
             },
             HistoryEntry {
                 title: "Comfortably Numb".to_string(),
@@ -536,6 +615,7 @@ impl App {
                 path: "~/Downloads/Comfortably_Numb.mp4".to_string(),
                 finished_at: now - chrono::Duration::seconds(18000),
                 url: "https://www.youtube.com/watch?v=_FrOQC-zEog".to_string(),
+                thumbnail_url: None,
             },
             HistoryEntry {
                 title: "Stairway to Heaven".to_string(),
@@ -545,9 +625,11 @@ impl App {
                 path: "~/Downloads/Stairway_to_Heaven.mp3".to_string(),
                 finished_at: now - chrono::Duration::seconds(86400),
                 url: "https://www.youtube.com/watch?v=QkF3oxziUI4".to_string(),
+                thumbnail_url: None,
             },
         ];
 
+        app.update_history_filter();
         app
     }
 
@@ -563,16 +645,12 @@ impl App {
             self.last_blink = Instant::now();
         }
 
+        // Feature: TUI Toasts decay
+        self.toasts.retain(|t| t.added_at.elapsed() < Duration::from_secs(5));
+
         // Decay burst animation counter.
         if self.logo_burst > 0 {
             self.logo_burst -= 1;
-        }
-
-        // Auto-expire status bar messages after 6 seconds.
-        if let Some((_, set_at)) = &self.status_msg {
-            if set_at.elapsed() >= Duration::from_secs(6) {
-                self.status_msg = None;
-            }
         }
 
         // Tick down the yt-dlp update fade-out animation.
@@ -671,6 +749,18 @@ impl App {
             || (self.active_tab == Tab::Lyrics && !self.lyrics_query.is_empty())
     }
 
+    pub fn add_toast(&mut self, message: &str, kind: ToastKind) {
+        self.toasts.push(Toast {
+            message: message.to_string(),
+            kind,
+            added_at: Instant::now(),
+        });
+        // Limit to 5 active toasts to avoid clutter
+        if self.toasts.len() > 5 {
+            self.toasts.remove(0);
+        }
+    }
+
     /// Add a new download slot. Returns the slot's stable ID.
     pub fn add_download(&mut self, url: String, format: DownloadFormat) -> usize {
         let id = self.next_slot_id;
@@ -680,6 +770,7 @@ impl App {
             url,
             title: None,
             artist: None,
+            thumbnail_url: None,
             format,
             state: SlotState::Pending,
             started: Instant::now(),
@@ -711,12 +802,72 @@ impl App {
     pub fn history_save(&self) {
         history_save(&self.history);
     }
+
+    pub fn update_history_filter(&mut self) {
+        let filter = self.history_filter.to_lowercase();
+        let mut indices: Vec<usize> = if filter.is_empty() {
+            (0..self.history.len()).collect()
+        } else {
+            self.history
+                .iter()
+                .rev()
+                .enumerate()
+                .filter_map(|(display_idx, e)| {
+                    let haystack = format!("{} {}", e.title, e.artist).to_lowercase();
+                    if fuzzy_match(&filter, &haystack) {
+                        Some(display_idx)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        };
+
+        match self.history_sort {
+            HistorySortMode::DateDesc => {}
+            HistorySortMode::DateAsc => indices.reverse(),
+            HistorySortMode::SizeDesc => {
+                let history = &self.history;
+                indices.sort_by(|&a, &b| {
+                    let ea = history.iter().rev().nth(a).map_or(0.0, |e| e.size_mb);
+                    let eb = history.iter().rev().nth(b).map_or(0.0, |e| e.size_mb);
+                    eb.partial_cmp(&ea).unwrap_or(std::cmp::Ordering::Equal)
+                });
+            }
+            HistorySortMode::TitleAsc => {
+                let history = &self.history;
+                indices.sort_by(|&a, &b| {
+                    let ta = history.iter().rev().nth(a).map_or("", |e| e.title.as_str());
+                    let tb = history.iter().rev().nth(b).map_or("", |e| e.title.as_str());
+                    ta.to_lowercase().cmp(&tb.to_lowercase())
+                });
+            }
+        }
+        self.history_filtered_indices = indices;
+
+        // Clamp index to new bounds
+        let max = self.history_filtered_indices.len().saturating_sub(1);
+        if self.history_index > max {
+            self.history_index = max;
+        }
+    }
 }
 
 impl Default for App {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn fuzzy_match(query: &str, haystack: &str) -> bool {
+    let mut haystack_chars = haystack.chars();
+    for q_char in query.chars() {
+        match haystack_chars.find(|&h_char| h_char == q_char) {
+            Some(_) => (),
+            None => return false,
+        }
+    }
+    true
 }
 
 // ── Supernova particle burst ──────────────────────────────────────────────────

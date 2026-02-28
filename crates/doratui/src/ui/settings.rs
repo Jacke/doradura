@@ -94,6 +94,12 @@ pub const ITEMS: &[SettingsItem] = &[
         kind: ItemKind::Cycle,
         choices: THEME_FLAVOURS,
     },
+    // ── Lyrics (index 12) ──────────────────────────────────────────────────
+    SettingsItem {
+        label: "Genius access token",
+        kind: ItemKind::Text,
+        choices: &[],
+    },
 ];
 
 // ── Section layout ────────────────────────────────────────────────────────────
@@ -104,6 +110,7 @@ const SECTIONS: &[(&str, usize, usize)] = &[
     ("Instagram", 6, 2),
     ("Conversion", 8, 3),
     ("Appearance", 11, 1),
+    ("Lyrics", 12, 1),
 ];
 
 // ── Public renderer ───────────────────────────────────────────────────────────
@@ -158,6 +165,13 @@ fn render_items(f: &mut Frame, area: Rect, app: &mut App) {
             let item = &ITEMS[idx];
             let is_selected = idx == cursor;
 
+            // ── Register click areas for this row (Lowest priority) ──────────
+            // Clicking anywhere on the row selects it
+            app.click_map.push((
+                Rect::new(area.x, row_y, area.width, 1),
+                ClickTarget::SettingsSelectItem(idx),
+            ));
+
             // Current value string
             let value_str = get_value(app, idx);
             let value_char_len = value_str.chars().count();
@@ -171,10 +185,12 @@ fn render_items(f: &mut Frame, area: Rect, app: &mut App) {
                 let display = if value_str.is_empty() {
                     "(none)".to_string()
                 } else {
-                    value_str
+                    value_str.clone()
                 };
                 format!("  {}  ", display)
             };
+
+            let val_disp_len = value_display.chars().count() as u16;
 
             // Selector arrow
             let arrow = if is_selected { "  ▶ " } else { "    " };
@@ -203,19 +219,35 @@ fn render_items(f: &mut Frame, area: Rect, app: &mut App) {
             // Pad label to fixed width
             let label_padded = format!("{:<20}", item.label);
 
-            let line = Line::from(vec![
+            let mut line_spans = vec![
                 Span::styled(arrow, arrow_style),
                 Span::styled(label_padded, label_style),
                 Span::styled(value_display, value_style),
-            ]);
-            lines.push(line);
+            ];
 
-            // ── Register click areas for this row ────────────────────────────
-            // Clicking anywhere on the row selects it
-            app.click_map.push((
-                Rect::new(area.x, row_y, area.width, 1),
-                ClickTarget::SettingsSelectItem(idx),
-            ));
+            // Feature: [Get Token] button for Genius field
+            if idx == 12 {
+                line_spans.push(Span::raw("  "));
+                let btn_text = " [Get Token] ";
+                let btn_style = if is_selected {
+                    Style::default()
+                        .bg(app.theme.surface0)
+                        .fg(app.theme.peach)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(app.theme.subtext)
+                };
+                line_spans.push(Span::styled(btn_text, btn_style));
+
+                // Register click for button (Highest priority for this row)
+                let btn_x = area.x + ARROW_W + LABEL_W + val_disp_len + 2;
+                app.click_map
+                    .push((Rect::new(btn_x, row_y, 13, 1), ClickTarget::GetGeniusToken));
+            }
+
+            lines.push(Line::from(line_spans));
+
+            // For Cycle items: register ← and → separately.
 
             // For Cycle items: register ← and → separately.
             // value_display = "← VALUE →", rendered immediately after label.
@@ -261,6 +293,9 @@ fn render_hint_bar(f: &mut Frame, area: Rect, theme: &ThemeColors) {
         k("[o]"),
         d(" Browse"),
         sep(),
+        k("[g]"),
+        d(" Get Token"),
+        sep(),
         k("[s]"),
         d(" Save"),
         sep(),
@@ -291,6 +326,7 @@ pub fn get_value(app: &App, idx: usize) -> String {
         9 => s.default_mp3_bitrate.clone(),
         10 => s.default_mp4_quality.clone(),
         11 => s.theme_flavour.label().to_string(),
+        12 => s.genius_token.clone(),
         _ => String::new(),
     }
 }
@@ -315,6 +351,7 @@ pub fn set_value(app: &mut App, idx: usize, value: String) {
             app.settings.theme_flavour = flavour;
             app.theme = palette(flavour);
         }
+        12 => app.settings.genius_token = value,
         _ => {}
     }
 }

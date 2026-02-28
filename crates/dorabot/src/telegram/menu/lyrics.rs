@@ -68,7 +68,7 @@ async fn handle_fetch_lyrics(
         }
     };
 
-    match lyrics::fetch_lyrics(&artist, &song_title).await {
+    match lyrics::fetch_lyrics(&artist, &song_title, None).await {
         None => {
             let display = format!("{} – {}", artist, song_title);
             bot.send_message(chat_id, format!("❌ Lyrics not found for *{}*", escape_md(&display)))
@@ -76,6 +76,10 @@ async fn handle_fetch_lyrics(
                 .await?;
         }
         Some(lyr) => {
+            // Use potentially more accurate metadata from source
+            let artist = lyr.artist.clone();
+            let song_title = lyr.title.clone();
+
             if !lyr.has_structure || lyr.sections.len() <= 1 {
                 // No structure detected — send the full text directly
                 let text = lyr.all_text();
@@ -185,6 +189,12 @@ async fn handle_show_section(bot: &Bot, chat_id: ChatId, rest: &str, db_pool: &A
 
     if idx_str == "all" {
         let lyr = lyrics::LyricsResult {
+            artist: artist.clone(),
+            artist_id: None,
+            title: title.clone(),
+            album: None,
+            release_date: None,
+            thumbnail_url: None,
             sections,
             has_structure,
         };

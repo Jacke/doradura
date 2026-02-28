@@ -6,10 +6,10 @@ use serde_json::Value;
 
 // ── Thumbnail constants ───────────────────────────────────────────────────────
 
-/// Width of the thumbnail area in characters (each character = one `▀` = 1px wide).
-pub const THUMB_W: usize = 64;
-/// Height in half-block rows (each row = 2 pixel rows, rendered as `▀`).
-pub const THUMB_H: usize = 18;
+/// Width of the thumbnail area in characters.
+pub const THUMB_W: usize = 80;
+/// Height in half-block rows (each row = 2 pixel rows).
+pub const THUMB_H: usize = 22;
 
 // ── Data types ────────────────────────────────────────────────────────────────
 
@@ -39,6 +39,12 @@ pub struct VideoInfo {
 #[derive(Debug, Clone)]
 pub struct ThumbnailArt {
     pub rows: Vec<Vec<([u8; 3], [u8; 3])>>,
+    /// Actual width in characters.
+    pub width: u16,
+    /// Actual height in rows.
+    pub height: u16,
+    /// Original image bytes for high-quality TUI image protocols (Kitty/Sixel).
+    pub raw_bytes: Vec<u8>,
 }
 
 /// Result type sent from the background preview task.
@@ -48,10 +54,26 @@ pub type PreviewResult = Result<(VideoInfo, Option<ThumbnailArt>), String>;
 
 /// Fetch full video metadata by running `yt-dlp -J`.
 /// Returns an error string if yt-dlp fails or JSON is unparseable.
-pub async fn fetch_video_info(url: &str, ytdlp_bin: &str) -> Result<VideoInfo, String> {
+pub async fn fetch_video_info(url: &str, ytdlp_bin: &str, cookies_file: Option<String>) -> Result<VideoInfo, String> {
     log::info!("fetch_video_info: {} (bin={})", url, ytdlp_bin);
+    let mut args = vec!["-J".to_string(), "--no-playlist".to_string()];
+
+    if let Some(cf) = cookies_file {
+        args.push("--cookies".to_string());
+        args.push(cf);
+    }
+
+    // Modern yt-dlp args for YouTube age-restriction / bot detection bypass
+    args.push("--extractor-args".to_string());
+    args.push("youtube:player_client=android_vr,web_safari;formats=missing_pot".to_string());
+    args.push("--js-runtimes".to_string());
+    args.push("deno".to_string());
+    args.push("--no-check-certificate".to_string());
+
+    args.push(url.to_string());
+
     let output = tokio::process::Command::new(ytdlp_bin)
-        .args(["-J", "--no-playlist", url])
+        .args(&args)
         .output()
         .await
         .map_err(|e| format!("Cannot run yt-dlp: {e}"))?;
@@ -141,31 +163,40 @@ fn parse_video_info(json: &Value) -> anyhow::Result<VideoInfo> {
 }
 
 fn process_thumbnail(bytes: Vec<u8>) -> Option<ThumbnailArt> {
+    let raw_bytes = bytes.clone();
     let img = image::load_from_memory(&bytes).ok()?;
 
-    // Resize to THUMB_W × (THUMB_H * 2) — half-block uses 2 pixel rows per char row
-    let img = img.resize_exact(
-        THUMB_W as u32,
-        (THUMB_H * 2) as u32,
-        image::imageops::FilterType::Lanczos3,
-    );
+    // Resize to fit within THUMB_W × (THUMB_H * 2) while preserving aspect ratio.
+    let img = img.thumbnail(THUMB_W as u32, (THUMB_H * 2) as u32);
     let rgb = img.to_rgb8();
+    let (w, h) = rgb.dimensions();
+    let char_w = w as u16;
+    let char_h = (h / 2) as u16;
 
-    let rows: Vec<Vec<([u8; 3], [u8; 3])>> = (0..THUMB_H)
+    let rows: Vec<Vec<([u8; 3], [u8; 3])>> = (0..char_h)
         .map(|row| {
             let y_top = (row * 2) as u32;
             let y_bot = y_top + 1;
-            (0..THUMB_W as u32)
+            (0..w)
                 .map(|x| {
                     let t = rgb.get_pixel(x, y_top);
-                    let b = rgb.get_pixel(x, y_bot);
+                    let b = if y_bot < h {
+                        rgb.get_pixel(x, y_bot)
+                    } else {
+                        &image::Rgb([0, 0, 0])
+                    };
                     ([t[0], t[1], t[2]], [b[0], b[1], b[2]])
                 })
                 .collect()
         })
         .collect();
 
-    Some(ThumbnailArt { rows })
+    Some(ThumbnailArt {
+        rows,
+        width: char_w,
+        height: char_h,
+        raw_bytes,
+    })
 }
 
 // ── Quality helpers ───────────────────────────────────────────────────────────

@@ -8,7 +8,7 @@ use ratatui::Frame;
 
 use crate::app::{App, ClickTarget, DownloadFormat, PreviewState};
 use crate::theme::ThemeColors;
-use crate::video_info::{fmt_count, fmt_duration, fmt_size, ThumbnailArt, VideoInfo, THUMB_H, THUMB_W};
+use crate::video_info::{fmt_count, fmt_duration, fmt_size, ThumbnailArt, VideoInfo, THUMB_H};
 
 const SPINNER: &[&str] = &[
     "\u{28fe}", "\u{28fd}", "\u{28fb}", "\u{287f}", "\u{28bf}", "\u{289f}", "\u{28af}", "\u{28f7}",
@@ -17,15 +17,35 @@ const SPINNER: &[&str] = &[
 // ── Public entry point ────────────────────────────────────────────────────────
 
 pub fn render_preview_popup(f: &mut Frame, area: Rect, app: &mut App) {
-    if area.width < 80 || area.height < 20 {
+    if area.width < 60 || area.height < 15 {
         return;
     }
 
-    let popup_w = (THUMB_W as u16 + 52).min(area.width.saturating_sub(4));
-    let popup_h = (THUMB_H as u16 + 8).min(area.height.saturating_sub(4));
+    let (mut popup_w, mut popup_h) = (80_u16, 22_u16);
+
+    if let PreviewState::Ready { .. } = &app.preview_state {
+        let thumb = app.preview_thumbnail.as_ref();
+        let is_vertical = thumb.is_some_and(|t| (t.height as f32 * 2.2) > t.width as f32);
+
+        if is_vertical {
+            popup_w = 74;
+            popup_h = 26;
+        } else {
+            let thumb_w = thumb.map(|t| t.width + 4).unwrap_or(72);
+            popup_w = thumb_w.max(80).min(area.width.saturating_sub(4));
+            popup_h = 30; // Increased to prevent cutting
+        }
+    }
+
+    let popup_w = popup_w.min(area.width.saturating_sub(2));
+    let popup_h = popup_h.min(area.height.saturating_sub(2));
     let popup_x = area.x + (area.width.saturating_sub(popup_w)) / 2;
     let popup_y = area.y + (area.height.saturating_sub(popup_h)) / 2;
     let popup_area = Rect::new(popup_x, popup_y, popup_w, popup_h);
+
+    // Feature: Close on click (Background blocker)
+    // Add this after the main UI but before popup elements to intercept clicks.
+    app.click_map.push((area, ClickTarget::PreviewClose));
 
     let block = Block::default()
         .title(" 🎬 Video Preview ")
@@ -110,36 +130,73 @@ fn render_ready(
     click_map: &mut Vec<(Rect, ClickTarget)>,
     theme: &ThemeColors,
 ) {
-    let thumb_col_w = THUMB_W as u16 + 2;
+    // Decide layout based on the actual thumbnail we have.
+    // If thumbnail is wider than high (including character aspect ratio correction), use horizontal layout.
+    let is_vertical = thumb.is_some_and(|t| (t.height as f32 * 2.2) > t.width as f32);
 
-    let h_split = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(thumb_col_w), Constraint::Min(1)])
-        .split(area);
+    if is_vertical {
+        // Feature: Shorts Layout (Vertical media)
+        let thumb_w = thumb.map(|t| t.width + 2).unwrap_or(26);
+        let h_split = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(thumb_w.min(area.width / 2)), Constraint::Min(30)])
+            .split(area);
 
-    let v_split = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(1),    // metadata
-            Constraint::Length(1), // gap
-            Constraint::Length(2), // quality/format selector
-            Constraint::Length(1), // hint bar
-        ])
-        .split(h_split[1]);
+        render_thumbnail(f, h_split[0], thumb, theme, app);
 
-    render_thumbnail(f, h_split[0], thumb, theme);
-    render_metadata(f, v_split[0], info, video_url, channel_url, click_map, theme);
-    render_quality_row(f, v_split[2], info, app, click_map);
-    render_hint_bar(f, v_split[3], app, click_map);
+        let right_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(1),    // metadata
+                Constraint::Length(2), // quality/format
+                Constraint::Length(1), // hint
+            ])
+            .split(h_split[1]);
+
+        render_metadata(f, right_chunks[0], info, video_url, channel_url, click_map, theme);
+        render_quality_row(f, right_chunks[1], info, app, click_map);
+        render_hint_bar(f, right_chunks[2], app, click_map);
+    } else {
+        // Feature: Video Layout (Horizontal media)
+        let thumb_h = thumb.map(|t| t.height).unwrap_or(THUMB_H as u16);
+        let v_split = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(thumb_h),
+                Constraint::Min(6),    // metadata
+                Constraint::Length(2), // quality/format
+                Constraint::Length(1), // hint
+            ])
+            .split(area);
+
+        render_thumbnail(f, v_split[0], thumb, theme, app);
+        render_metadata(f, v_split[1], info, video_url, channel_url, click_map, theme);
+        render_quality_row(f, v_split[2], info, app, click_map);
+        render_hint_bar(f, v_split[3], app, click_map);
+    }
 }
 
 // ── Thumbnail ─────────────────────────────────────────────────────────────────
 
-fn render_thumbnail(f: &mut Frame, area: Rect, thumb: Option<&ThumbnailArt>, theme: &ThemeColors) {
-    let inner_x = area.x + 1;
+pub fn render_thumbnail(f: &mut Frame, area: Rect, thumb: Option<&ThumbnailArt>, theme: &ThemeColors, app: &App) {
     let avail_h = area.height as usize;
 
     if let Some(art) = thumb {
+        // Calculate centered x offset
+        let thumb_w = art.width;
+        let x_offset = area.width.saturating_sub(thumb_w) / 2;
+        let centered_area = Rect::new(area.x + x_offset, area.y, thumb_w.min(area.width), area.height);
+
+        // Feature: High-quality Image Preview (Kitty/Sixel/iTerm2)
+        if let Some(protocol) = &app.preview_image_protocol {
+            let image_widget = ratatui_image::Image::new(protocol);
+            // We still use the full area for the widget but it should ideally be centered.
+            // Some protocols handle centering better if given the precise area.
+            f.render_widget(image_widget, centered_area);
+            return;
+        }
+
+        // Fallback: ASCII half-block rendering
         for (row_idx, row) in art.rows.iter().enumerate() {
             if row_idx >= avail_h {
                 break;
@@ -156,10 +213,11 @@ fn render_thumbnail(f: &mut Frame, area: Rect, thumb: Option<&ThumbnailArt>, the
                     )
                 })
                 .collect();
-            let row_area = Rect::new(inner_x, y, area.width.saturating_sub(2), 1);
+            let row_area = Rect::new(area.x + x_offset, y, thumb_w.min(area.width), 1);
             f.render_widget(Paragraph::new(vec![Line::from(spans)]), row_area);
         }
     } else {
+        let inner_x = area.x + 1;
         let w = area.width.saturating_sub(2) as usize;
         let content_h = avail_h.saturating_sub(2);
         let center_row = content_h / 2;

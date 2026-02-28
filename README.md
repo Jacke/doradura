@@ -8,7 +8,7 @@
 
 [![Rust](https://img.shields.io/badge/Rust-1.83+-000000?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![Telegram Bot](https://img.shields.io/badge/Telegram_Bot-v0.13-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/DoraDuraDoraDuraBot?start)
-[![TUI](https://img.shields.io/badge/TUI-dora_v0.6.5-A6E3A1?style=for-the-badge&logo=gnometerminal&logoColor=black)](https://github.com/Jacke/doradura)
+[![TUI](https://img.shields.io/badge/TUI-dora_v0.6.6-A6E3A1?style=for-the-badge&logo=gnometerminal&logoColor=black)](https://github.com/Jacke/doradura)
 [![License: MIT](https://img.shields.io/badge/License-MIT-CBA6F7?style=for-the-badge)](LICENSE)
 
 </div>
@@ -31,7 +31,7 @@
 | | dora TUI | doradura Bot |
 |---|---|---|
 | **Interface** | Terminal (ratatui, full mouse) | Telegram |
-| **Version** | 0.6.5 | 0.13.0 |
+| **Version** | 0.6.6 | 0.13.0 |
 | **Use case** | Personal power-user desktop client | Shared / team / public bot |
 | **Platforms** | macOS, Linux | Any (deployed on Railway) |
 | **Formats** | MP3, MP4 | MP3, MP4, GIF, WAV, FLAC, OGG, SRT, M4A, M4R |
@@ -306,7 +306,7 @@ doradura/
 │   │   ├── audio.rs   Thin wrapper → pipeline::execute()
 │   │   └── video.rs   Video pipeline + splitting + burn-in
 │   │
-│   └── doratui/       # Terminal UI (dora v0.6.5)
+│   └── doratui/       # Terminal UI (dora v0.6.6)
 │       ├── app.rs     Application state machine
 │       ├── main.rs    Event loop, key/mouse handlers
 │       ├── settings.rs Persistent settings (JSON)

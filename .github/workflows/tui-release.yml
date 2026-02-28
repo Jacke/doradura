@@ -28,6 +28,10 @@ jobs:
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             archive: dora-x86_64-unknown-linux-gnu.tar.gz
+          - os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            archive: dora-aarch64-unknown-linux-gnu.tar.gz
+            cross: true
 
     steps:
       - name: Checkout
@@ -49,25 +53,39 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-${{ matrix.target }}-cargo-
 
-      - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }} -p doratui
+      - name: Install cross
+        if: matrix.cross
+        run: cargo install cross --locked
 
-      - name: Strip binary (Linux)
-        if: matrix.os == 'ubuntu-latest'
+      - name: Build release binary
+        run: |
+          if [ "${{ matrix.cross }}" = "true" ]; then
+            cross build --release --target ${{ matrix.target }} -p doratui
+          else
+            cargo build --release --target ${{ matrix.target }} -p doratui
+          fi
+
+      - name: Strip binary (Linux x86_64)
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: strip target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}
 
       - name: Build .deb package
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        if: contains(matrix.target, 'linux-gnu')
         shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#tui-v}"
-          PKG="dora_${VERSION}_amd64"
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            DEB_ARCH="arm64"
+          else
+            DEB_ARCH="amd64"
+          fi
+          PKG="dora_${VERSION}_${DEB_ARCH}"
           mkdir -p "${PKG}/usr/bin" "${PKG}/DEBIAN"
           cp "target/${{ matrix.target }}/release/${{ env.BINARY_NAME }}" "${PKG}/usr/bin/"
           {
             echo "Package: dora"
             echo "Version: ${VERSION}"
-            echo "Architecture: amd64"
+            echo "Architecture: ${DEB_ARCH}"
             echo "Maintainer: Stan <iamjacke@gmail.com>"
             echo "Depends: yt-dlp, ffmpeg"
             echo "Section: utils"
@@ -80,10 +98,10 @@ jobs:
           sha256sum "${PKG}.deb" > "${PKG}.deb.sha256"
 
       - name: Upload .deb artifact
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        if: contains(matrix.target, 'linux-gnu')
         uses: actions/upload-artifact@v4
         with:
-          name: dora-deb
+          name: dora-deb-${{ matrix.target }}
           path: |
             dora_*.deb
             dora_*.deb.sha256
@@ -156,6 +174,11 @@ jobs:
             brew install dora
             ```
 
+            **Arch Linux (AUR):**
+            ```bash
+            yay -S dora-bin
+            ```
+
             **Ubuntu / Debian (apt):**
             ```bash
             curl -fsSL https://iamjacke.com/doradura/KEY.gpg | sudo gpg --dearmor -o /etc/apt/keyrings/dora.gpg
@@ -163,18 +186,25 @@ jobs:
             sudo apt update && sudo apt install dora
             ```
 
-            **Ubuntu / Debian (прямой .deb):**
+            **Ubuntu / Debian (.deb):**
             ```bash
+            # x86_64
             curl -LO https://github.com/Jacke/doradura/releases/download/${{ github.ref_name }}/dora_${{ steps.version.outputs.version }}_amd64.deb
             sudo dpkg -i dora_${{ steps.version.outputs.version }}_amd64.deb
-            ```
-
-            **Linux / macOS (shell installer):**
-            ```bash
-            curl -sSfL https://github.com/Jacke/doradura/releases/download/${{ github.ref_name }}/dora-installer.sh | sh
+            # ARM64
+            curl -LO https://github.com/Jacke/doradura/releases/download/${{ github.ref_name }}/dora_${{ steps.version.outputs.version }}_arm64.deb
+            sudo dpkg -i dora_${{ steps.version.outputs.version }}_arm64.deb
             ```
 
             **Manual download:** grab the archive for your platform below, extract, and put `dora` in your PATH.
+
+            ### Platforms
+            | Platform | Architecture | File |
+            |----------|-------------|------|
+            | macOS | Apple Silicon | `dora-aarch64-apple-darwin.tar.gz` |
+            | macOS | Intel | `dora-x86_64-apple-darwin.tar.gz` |
+            | Linux | x86_64 | `dora-x86_64-unknown-linux-gnu.tar.gz` / `.deb` |
+            | Linux | ARM64 | `dora-aarch64-unknown-linux-gnu.tar.gz` / `.deb` |
 
             ### Runtime dependencies
             - [`yt-dlp`](https://github.com/yt-dlp/yt-dlp) — media extraction
@@ -293,10 +323,10 @@ jobs:
           ref: gh-pages
           path: gh-pages
 
-      - name: Download .deb artifact
+      - name: Download .deb artifacts
         uses: actions/download-artifact@v4
         with:
-          name: dora-deb
+          pattern: dora-deb-*
           path: deb/
           merge-multiple: true
 
@@ -318,9 +348,10 @@ jobs:
           VERSION="${{ steps.ver.outputs.version }}"
           PAGES=gh-pages
 
-          # Copy new .deb into pool
+          # Copy new .debs into pool
           mkdir -p $PAGES/pool/main
           cp deb/dora_${VERSION}_amd64.deb $PAGES/pool/main/
+          cp deb/dora_${VERSION}_arm64.deb $PAGES/pool/main/
 
           # Export public key
           gpg --armor --export $KEY_ID > $PAGES/KEY.gpg
@@ -328,11 +359,17 @@ jobs:
           # Work inside gh-pages so dpkg-scanpackages produces correct Filename paths
           cd $PAGES
 
-          # Scan all packages (accumulates across versions)
+          # Scan packages for amd64
           mkdir -p dists/stable/main/binary-amd64
-          dpkg-scanpackages --multiversion pool/main \
+          dpkg-scanpackages --multiversion --arch amd64 pool/main \
             > dists/stable/main/binary-amd64/Packages
           gzip -9 -k -f dists/stable/main/binary-amd64/Packages
+
+          # Scan packages for arm64
+          mkdir -p dists/stable/main/binary-arm64
+          dpkg-scanpackages --multiversion --arch arm64 pool/main \
+            > dists/stable/main/binary-arm64/Packages
+          gzip -9 -k -f dists/stable/main/binary-arm64/Packages
 
           # Build Release file
           {
@@ -340,7 +377,7 @@ jobs:
             echo "Label: dora"
             echo "Suite: stable"
             echo "Codename: stable"
-            echo "Architectures: amd64"
+            echo "Architectures: amd64 arm64"
             echo "Components: main"
             echo "Description: dora TUI media downloader"
             echo "Date: $(date -u '+%a, %d %b %Y %H:%M:%S UTC')"
@@ -376,10 +413,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download Linux archive
+      - name: Download Linux archives
         uses: actions/download-artifact@v4
         with:
-          name: dora-x86_64-unknown-linux-gnu.tar.gz
+          pattern: dora-*-unknown-linux-gnu.tar.gz
           path: dist/
           merge-multiple: true
 
@@ -388,8 +425,10 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#tui-v}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          SHA=$(awk '{print $1}' dist/dora-x86_64-unknown-linux-gnu.tar.gz.sha256)
-          echo "sha256=${SHA}" >> "$GITHUB_OUTPUT"
+          SHA_X86=$(awk '{print $1}' dist/dora-x86_64-unknown-linux-gnu.tar.gz.sha256)
+          SHA_ARM=$(awk '{print $1}' dist/dora-aarch64-unknown-linux-gnu.tar.gz.sha256)
+          echo "sha256_x86=${SHA_X86}" >> "$GITHUB_OUTPUT"
+          echo "sha256_arm=${SHA_ARM}" >> "$GITHUB_OUTPUT"
 
       - name: Set up SSH for AUR
         run: |
@@ -404,7 +443,8 @@ jobs:
       - name: Update PKGBUILD and .SRCINFO
         run: |
           V="${{ steps.meta.outputs.version }}"
-          SHA="${{ steps.meta.outputs.sha256 }}"
+          SHA_X86="${{ steps.meta.outputs.sha256_x86 }}"
+          SHA_ARM="${{ steps.meta.outputs.sha256_arm }}"
           cd /tmp/dora-bin
 
           # Write PKGBUILD (use printf to avoid heredoc indentation issues)
@@ -414,17 +454,19 @@ jobs:
             "pkgver=${V}" \
             'pkgrel=1' \
             'pkgdesc="Beautiful TUI for media downloading (yt-dlp + ffmpeg)"' \
-            "arch=('x86_64')" \
+            "arch=('x86_64' 'aarch64')" \
             'url="https://github.com/Jacke/doradura"' \
             "license=('MIT')" \
             "depends=('yt-dlp' 'ffmpeg')" \
             "provides=('dora')" \
             "conflicts=('dora')" \
-            'source=("${pkgname}-${pkgver}.tar.gz::https://github.com/Jacke/doradura/releases/download/tui-v${pkgver}/dora-x86_64-unknown-linux-gnu.tar.gz")' \
-            "sha256sums=('${SHA}')" \
+            'source_x86_64=("${pkgname}-${pkgver}-x86_64.tar.gz::https://github.com/Jacke/doradura/releases/download/tui-v${pkgver}/dora-x86_64-unknown-linux-gnu.tar.gz")' \
+            'source_aarch64=("${pkgname}-${pkgver}-aarch64.tar.gz::https://github.com/Jacke/doradura/releases/download/tui-v${pkgver}/dora-aarch64-unknown-linux-gnu.tar.gz")' \
+            "sha256sums_x86_64=('${SHA_X86}')" \
+            "sha256sums_aarch64=('${SHA_ARM}')" \
             '' \
             'package() {' \
-            '    local srcdir_inner="dora-${pkgver}-x86_64-unknown-linux-gnu"' \
+            '    local srcdir_inner="dora-${pkgver}-${CARCH}-unknown-linux-gnu"' \
             '    install -Dm755 "${srcdir_inner}/dora" "${pkgdir}/usr/bin/dora"' \
             '    if [[ -f "${srcdir_inner}/LICENSE" ]]; then' \
             '        install -Dm644 "${srcdir_inner}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"' \
@@ -439,13 +481,16 @@ jobs:
           printf '\tpkgrel = 1\n'           >> .SRCINFO
           printf '\turl = https://github.com/Jacke/doradura\n' >> .SRCINFO
           printf '\tarch = x86_64\n'        >> .SRCINFO
+          printf '\tarch = aarch64\n'       >> .SRCINFO
           printf '\tlicense = MIT\n'        >> .SRCINFO
           printf '\tdepends = yt-dlp\n'     >> .SRCINFO
           printf '\tdepends = ffmpeg\n'     >> .SRCINFO
           printf '\tprovides = dora\n'      >> .SRCINFO
           printf '\tconflicts = dora\n'     >> .SRCINFO
-          printf '\tsource = dora-bin-%s.tar.gz::https://github.com/Jacke/doradura/releases/download/tui-v%s/dora-x86_64-unknown-linux-gnu.tar.gz\n' "${V}" "${V}" >> .SRCINFO
-          printf '\tsha256sums = %s\n' "${SHA}" >> .SRCINFO
+          printf '\tsource_x86_64 = dora-bin-%s-x86_64.tar.gz::https://github.com/Jacke/doradura/releases/download/tui-v%s/dora-x86_64-unknown-linux-gnu.tar.gz\n' "${V}" "${V}" >> .SRCINFO
+          printf '\tsha256sums_x86_64 = %s\n' "${SHA_X86}" >> .SRCINFO
+          printf '\tsource_aarch64 = dora-bin-%s-aarch64.tar.gz::https://github.com/Jacke/doradura/releases/download/tui-v%s/dora-aarch64-unknown-linux-gnu.tar.gz\n' "${V}" "${V}" >> .SRCINFO
+          printf '\tsha256sums_aarch64 = %s\n' "${SHA_ARM}" >> .SRCINFO
           printf '\npkgname = dora-bin\n'   >> .SRCINFO
 
           echo "=== PKGBUILD ===" && cat PKGBUILD

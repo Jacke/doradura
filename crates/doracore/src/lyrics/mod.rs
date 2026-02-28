@@ -21,6 +21,15 @@ static SECTION_RE: Lazy<Regex> = Lazy::new(|| {
 
 static HTML_TAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"<[^>]+>").expect("html tag regex"));
 
+/// A single song entry in the artist's list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtistSong {
+    pub id: u64,
+    pub title: String,
+    pub artist: String,
+    pub thumbnail_url: Option<String>,
+}
+
 /// A single labeled section of a song (e.g. Verse 1, Chorus, Bridge).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LyricsSection {
@@ -37,6 +46,12 @@ impl LyricsSection {
 /// Parsed lyrics result, with or without detected section structure.
 #[derive(Debug, Clone)]
 pub struct LyricsResult {
+    pub artist: String,
+    pub artist_id: Option<u64>,
+    pub title: String,
+    pub album: Option<String>,
+    pub release_date: Option<String>,
+    pub thumbnail_url: Option<String>,
     pub sections: Vec<LyricsSection>,
     /// True when [Verse]/[Chorus] markers were found and parsed.
     pub has_structure: bool,
@@ -175,8 +190,18 @@ fn build_http_client() -> Option<reqwest::Client> {
         .ok()
 }
 
+type FullMetadata = (
+    String,
+    Option<u64>,
+    String,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    String,
+);
+
 /// Fetch plain lyrics from LRCLIB (primary free source, no auth required).
-async fn fetch_from_lrclib(artist: &str, title: &str) -> Option<String> {
+async fn fetch_from_lrclib(artist: &str, title: &str) -> Option<FullMetadata> {
     let client = build_http_client()?;
     let url = if artist.is_empty() {
         format!("https://lrclib.net/api/search?q={}", urlencoding::encode(title))
@@ -190,16 +215,22 @@ async fn fetch_from_lrclib(artist: &str, title: &str) -> Option<String> {
 
     let resp: serde_json::Value = client.get(&url).send().await.ok()?.json().await.ok()?;
     let arr = resp.as_array()?;
-    arr.first()?["plainLyrics"]
+    let first = arr.first()?;
+
+    let artist = first["artistName"].as_str().unwrap_or("Unknown Artist").to_string();
+    let title = first["trackName"].as_str().unwrap_or("Unknown Title").to_string();
+    let album = first["albumName"].as_str().map(String::from);
+    let lyrics = first["plainLyrics"]
         .as_str()
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.to_string())
+        .filter(|s| !s.trim().is_empty())?
+        .to_string();
+
+    Some((artist, None, title, album, None, None, lyrics))
 }
 
-/// Fetch structured lyrics from Genius (requires GENIUS_CLIENT_TOKEN env var).
-/// Returns raw text with [Verse 1], [Chorus] markers preserved.
-async fn fetch_from_genius(artist: &str, title: &str) -> Option<String> {
-    let token = crate::core::config::GENIUS_CLIENT_TOKEN.as_ref()?;
+/// Fetch structured lyrics from Genius (requires Genius access token).
+/// Returns (artist, artist_id, title, album, release_date, thumb, raw_text)
+async fn fetch_from_genius(artist: &str, title: &str, token: &str) -> Option<FullMetadata> {
     let client = build_http_client()?;
 
     let query = if artist.is_empty() {
@@ -220,9 +251,18 @@ async fn fetch_from_genius(artist: &str, title: &str) -> Option<String> {
         .await
         .ok()?;
 
-    let song_url = resp["response"]["hits"].as_array()?.first()?["result"]["url"]
-        .as_str()?
+    let first_hit = resp["response"]["hits"].as_array()?.first()?;
+    let result = &first_hit["result"];
+
+    let song_url = result["url"].as_str()?.to_string();
+    let found_artist = result["primary_artist"]["name"]
+        .as_str()
+        .unwrap_or("Unknown Artist")
         .to_string();
+    let found_artist_id = result["primary_artist"]["id"].as_u64();
+    let found_title = result["title"].as_str().unwrap_or("Unknown Title").to_string();
+    let thumbnail_url = result["header_image_thumbnail_url"].as_str().map(String::from);
+    let release_date = result["release_date_for_display"].as_str().map(String::from);
 
     log::info!("Lyrics: Genius scraping {}", song_url);
 
@@ -236,7 +276,124 @@ async fn fetch_from_genius(artist: &str, title: &str) -> Option<String> {
         .await
         .ok()?;
 
-    parse_genius_html(&html)
+    let lyrics = parse_genius_html(&html)?;
+    Some((
+        found_artist,
+        found_artist_id,
+        found_title,
+        None,
+        release_date,
+        thumbnail_url,
+        lyrics,
+    ))
+}
+
+/// Fetch list of songs by artist ID from Genius.
+pub async fn fetch_artist_songs(artist_id: u64, token: &str, page: u32) -> Option<Vec<ArtistSong>> {
+    let client = build_http_client()?;
+
+    let url = format!(
+        "https://api.genius.com/artists/{}/songs?sort=popularity&per_page=20&page={}",
+        artist_id, page
+    );
+
+    let resp: serde_json::Value = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+
+    let songs = resp["response"]["songs"].as_array()?;
+    let mut results = Vec::new();
+
+    for s in songs {
+        results.push(ArtistSong {
+            id: s["id"].as_u64()?,
+            title: s["title"].as_str()?.to_string(),
+            artist: s["primary_artist"]["name"].as_str()?.to_string(),
+            thumbnail_url: s["header_image_thumbnail_url"].as_str().map(String::from),
+        });
+    }
+
+    Some(results)
+}
+
+/// Search for songs/artists and return a list of matches.
+pub async fn fetch_search_results(query: &str, token: &str, page: u32) -> Option<Vec<ArtistSong>> {
+    let client = build_http_client()?;
+    let url = format!(
+        "https://api.genius.com/search?q={}&per_page=20&page={}",
+        urlencoding::encode(query),
+        page
+    );
+
+    let resp: serde_json::Value = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+
+    let hits = resp["response"]["hits"].as_array()?;
+    let mut results = Vec::new();
+
+    for h in hits {
+        let result = &h["result"];
+        results.push(ArtistSong {
+            id: result["id"].as_u64()?,
+            title: result["title"].as_str()?.to_string(),
+            artist: result["primary_artist"]["name"].as_str()?.to_string(),
+            thumbnail_url: result["header_image_thumbnail_url"].as_str().map(String::from),
+        });
+    }
+
+    Some(results)
+}
+
+/// Search for an artist ID by name using Genius search.
+pub async fn fetch_artist_id(artist_name: &str, token: &str) -> Option<u64> {
+    let client = build_http_client()?;
+
+    // Try a direct search first
+    let url = format!("https://api.genius.com/search?q={}", urlencoding::encode(artist_name));
+    let resp: serde_json::Value = client
+        .get(&url)
+        .header("Authorization", format!("Bearer {}", token))
+        .send()
+        .await
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+
+    let hits = resp["response"]["hits"].as_array()?;
+
+    // 1. Look for a strong match in hits
+    for hit in hits {
+        let result = &hit["result"];
+        let found_name = result["primary_artist"]["name"]
+            .as_str()
+            .unwrap_or_default()
+            .to_lowercase();
+        let target = artist_name.to_lowercase();
+        if found_name == target || found_name.contains(&target) || target.contains(&found_name) {
+            return result["primary_artist"]["id"].as_u64();
+        }
+    }
+
+    // 2. Fallback to the first hit if any
+    if let Some(first) = hits.first() {
+        return first["result"]["primary_artist"]["id"].as_u64();
+    }
+
+    None
 }
 
 fn parse_genius_html(html: &str) -> Option<String> {
@@ -290,19 +447,29 @@ fn decode_html_entities(s: &str) -> String {
 /// Fetch lyrics for artist + title.
 ///
 /// Strategy:
-/// 1. Genius (if `GENIUS_CLIENT_TOKEN` is set) — best structure for rap/pop
+/// 1. Genius (if token provided or `GENIUS_CLIENT_TOKEN` is set) — best structure for rap/pop
 /// 2. LRCLIB — free, no auth, good coverage
 ///
 /// Returns `None` if no source has lyrics for this track.
-pub async fn fetch_lyrics(artist: &str, title: &str) -> Option<LyricsResult> {
+pub async fn fetch_lyrics(artist: &str, title: &str, token: Option<&str>) -> Option<LyricsResult> {
+    let genius_token = token
+        .map(|s| s.to_string())
+        .or_else(|| crate::core::config::GENIUS_CLIENT_TOKEN.as_ref().cloned());
+
     // Try Genius first when token is configured
-    if crate::core::config::GENIUS_CLIENT_TOKEN.is_some() {
-        match fetch_from_genius(artist, title).await {
-            Some(text) => {
+    if let Some(t) = genius_token {
+        match fetch_from_genius(artist, title, &t).await {
+            Some((found_artist, found_artist_id, found_title, found_album, release_date, thumbnail_url, text)) => {
                 let (sections, has_structure) = parse_sections(&text);
                 if !sections.is_empty() {
-                    log::info!("Lyrics: Genius → '{} - {}'", artist, title);
+                    log::info!("Lyrics: Genius → '{} - {}'", found_artist, found_title);
                     return Some(LyricsResult {
+                        artist: found_artist,
+                        artist_id: found_artist_id,
+                        title: found_title,
+                        album: found_album,
+                        release_date,
+                        thumbnail_url,
                         sections,
                         has_structure,
                     });
@@ -320,16 +487,26 @@ pub async fn fetch_lyrics(artist: &str, title: &str) -> Option<LyricsResult> {
 
     // LRCLIB fallback
     match fetch_from_lrclib(artist, title).await {
-        Some(text) => {
+        Some((found_artist, found_artist_id, found_title, found_album, release_date, thumbnail_url, text)) => {
             let (sections, has_structure) = parse_sections(&text);
             if !sections.is_empty() {
-                log::info!("Lyrics: LRCLIB → '{} - {}'", artist, title);
+                log::info!("Lyrics: LRCLIB → '{} - {}'", found_artist, found_title);
                 return Some(LyricsResult {
+                    artist: found_artist,
+                    artist_id: found_artist_id,
+                    title: found_title,
+                    album: found_album,
+                    release_date,
+                    thumbnail_url,
                     sections,
                     has_structure,
                 });
             }
-            log::warn!("Lyrics: LRCLIB returned empty text for '{} - {}'", artist, title);
+            log::warn!(
+                "Lyrics: LRCLIB returned empty text for '{} - {}'",
+                found_artist,
+                found_title
+            );
         }
         None => {
             log::warn!("Lyrics: LRCLIB no results for '{} - {}'", artist, title);
@@ -407,6 +584,12 @@ mod tests {
     #[test]
     fn test_all_text_with_structure() {
         let result = LyricsResult {
+            artist: "Artist".to_string(),
+            artist_id: None,
+            title: "Title".to_string(),
+            album: None,
+            release_date: None,
+            thumbnail_url: None,
             sections: vec![
                 LyricsSection {
                     name: "Verse 1".to_string(),

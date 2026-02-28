@@ -52,6 +52,11 @@ pub struct DoraSettings {
     /// Active logo colour scheme; cycles on logo click.
     #[serde(default)]
     pub logo_scheme: LogoScheme,
+
+    // ── Lyrics ───────────────────────────────────────────────────────────────
+    /// Genius API client access token.
+    #[serde(default)]
+    pub genius_token: String,
 }
 
 impl Default for DoraSettings {
@@ -70,6 +75,7 @@ impl Default for DoraSettings {
             default_mp4_quality: "1080p".to_string(),
             theme_flavour: CatppuccinFlavour::Mocha,
             logo_scheme: LogoScheme::default(),
+            genius_token: String::new(),
         }
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "doratui"
-version = "0.6.5"
+version = "0.6.6"
 edition = "2021"
 authors = ["Stan <iamjacke@gmail.com>"]
 description = "dora — beautiful TUI for media downloading (yt-dlp + ffmpeg)"
@@ -42,3 +42,4 @@ crossterm = { workspace = true }
 dotenvy = "0.15"
 simplelog = "0.12"
 image = { version = "0.25", default-features = false, features = ["jpeg", "webp"] }
+ratatui-image = { version = "10", default-features = false, features = ["crossterm", "image-defaults"] }

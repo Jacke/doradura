@@ -42,7 +42,10 @@ mod theme;
 mod ui;
 mod video_info;
 
-use app::{App, DownloadFormat, HistoryEntry, LyricsResult, PreviewState, SlotState, Tab, YtdlpStartup};
+use app::{
+    App, DownloadFormat, HistoryEntry, LyricsResult, LyricsViewMode, PreviewState, SlotState, Tab, ToastKind,
+    YtdlpStartup,
+};
 use download_runner::{spawn_download, SlotEvent};
 use events::{next_event, InputEvent};
 use settings::DoraSettings;
@@ -91,6 +94,8 @@ async fn main() -> anyhow::Result<()> {
     let (dl_tx, dl_rx) = mpsc::channel::<(usize, SlotEvent)>(256);
     // Channel: background lyrics fetch → main loop (None = not found)
     let (lyrics_tx, lyrics_rx) = mpsc::channel::<Option<LyricsResult>>(4);
+    // Channel: background artist songs fetch → main loop (Option<artist_id>, Option<songs>)
+    let (artist_tx, artist_rx) = mpsc::channel::<(Option<u64>, Option<Vec<doracore::lyrics::ArtistSong>>)>(4);
     // Channel: native file-picker result → main loop
     let (picker_tx, picker_rx) = mpsc::channel::<String>(4);
     // Channel: background video-info fetch → main loop
@@ -116,6 +121,8 @@ async fn main() -> anyhow::Result<()> {
         dl_rx,
         lyrics_tx,
         lyrics_rx,
+        artist_tx,
+        artist_rx,
         picker_tx,
         picker_rx,
         preview_tx,
@@ -147,6 +154,8 @@ async fn run_loop(
     mut dl_rx: mpsc::Receiver<(usize, SlotEvent)>,
     lyrics_tx: mpsc::Sender<Option<LyricsResult>>,
     mut lyrics_rx: mpsc::Receiver<Option<LyricsResult>>,
+    artist_tx: mpsc::Sender<(Option<u64>, Option<Vec<doracore::lyrics::ArtistSong>>)>,
+    mut artist_rx: mpsc::Receiver<(Option<u64>, Option<Vec<doracore::lyrics::ArtistSong>>)>,
     picker_tx: mpsc::Sender<String>,
     mut picker_rx: mpsc::Receiver<String>,
     preview_tx: mpsc::Sender<PreviewResult>,
@@ -164,14 +173,30 @@ async fn run_loop(
             handle_slot_event(app, slot_id, event);
         }
 
+        // ── Drain artist songs events (non-blocking) ──────────────────────────
+        while let Ok((id_opt, result)) = artist_rx.try_recv() {
+            app.lyrics_loading = false;
+            if let Some(id) = id_opt {
+                app.last_artist_id = Some(id);
+            }
+            if let Some(songs) = result {
+                if app.artist_songs_page == 1 {
+                    app.artist_songs = songs;
+                    app.artist_songs_cursor = 0;
+                } else {
+                    app.artist_songs.extend(songs);
+                }
+                app.lyrics_view_mode = LyricsViewMode::ArtistSongs;
+            } else {
+                app.add_toast("Artist songs not found", ToastKind::Error);
+            }
+        }
+
         // ── Drain lyrics events (non-blocking) ────────────────────────────────
         while let Ok(result) = lyrics_rx.try_recv() {
             app.lyrics_loading = false;
             if result.is_none() && !app.lyrics_query.is_empty() {
-                app.status_msg = Some((
-                    "✖  No lyrics found — try a different search".to_string(),
-                    std::time::Instant::now(),
-                ));
+                app.add_toast("No lyrics found", ToastKind::Error);
             }
             app.lyrics_result = result;
         }
@@ -190,8 +215,16 @@ async fn run_loop(
             }
         }
 
-        // ── Drain thumbnail art results ───────────────────────────────────────
         while let Ok(art) = thumb_rx.try_recv() {
+            // Feature: Fix lag by pre-processing protocol in the background
+            if let Some(picker) = &app.image_picker {
+                if let Ok(img) = image::load_from_memory(&art.raw_bytes) {
+                    let size = terminal.size().unwrap_or_default();
+                    if let Ok(protocol) = picker.new_protocol(img, size.into(), ratatui_image::Resize::Fit(None)) {
+                        app.preview_image_protocol = Some(protocol);
+                    }
+                }
+            }
             app.preview_thumbnail = Some(art);
         }
 
@@ -237,10 +270,11 @@ async fn run_loop(
                     } else {
                         app.settings.ytdlp_bin.clone()
                     };
+                    let cookies = app.settings.cookies_opt();
                     let p_tx = preview_tx.clone();
                     let t_tx = thumb_tx.clone();
                     tokio::spawn(async move {
-                        match fetch_video_info(&url, &ytdlp_bin).await {
+                        match fetch_video_info(&url, &ytdlp_bin, cookies).await {
                             Ok(info) => {
                                 let thumb_url = info.thumbnail_url.clone();
                                 let _ = p_tx.send(Ok((info, None))).await;
@@ -268,10 +302,11 @@ async fn run_loop(
             } else {
                 app.settings.ytdlp_bin.clone()
             };
+            let cookies = app.settings.cookies_opt();
             let p_tx = preview_tx.clone();
             let t_tx = thumb_tx.clone();
             tokio::spawn(async move {
-                match fetch_video_info(&url, &ytdlp_bin).await {
+                match fetch_video_info(&url, &ytdlp_bin, cookies).await {
                     Ok(info) => {
                         let thumb_url = info.thumbnail_url.clone();
                         let _ = p_tx.send(Ok((info, None))).await;
@@ -324,7 +359,14 @@ async fn run_loop(
             }
 
             InputEvent::Paste(text) => {
-                if app.active_tab == Tab::Downloads && !app.preview_state.is_visible() {
+                let clean = text.trim().to_string();
+                if app.show_cookies_input {
+                    app.cookies_input.push_str(&clean);
+                } else if app.settings_editing {
+                    app.settings_edit_buf.push_str(&clean);
+                } else if app.active_tab == Tab::Lyrics {
+                    app.lyrics_query.push_str(&clean);
+                } else if app.active_tab == Tab::Downloads && !app.preview_state.is_visible() {
                     let urls: Vec<String> = text
                         .split('\n')
                         .map(str::trim)
@@ -334,14 +376,16 @@ async fn run_loop(
                     match urls.len() {
                         0 => {
                             // No valid URLs — append raw text to url_input
-                            app.url_input.push_str(text.trim());
+                            app.url_input.push_str(&clean);
                         }
                         1 => {
                             // Single URL: open preview like pressing Enter
                             let url = urls.into_iter().next().unwrap();
                             app.preview_url = url.clone();
+                            app.preview_format = DownloadFormat::Mp4;
                             app.preview_quality_cursor = 0;
                             app.preview_thumbnail = None;
+                            app.preview_image_protocol = None;
                             app.preview_state = PreviewState::Loading;
                             app.preview_pending_url = Some(url);
                             app.preview_debounce = std::time::Instant::now();
@@ -357,7 +401,8 @@ async fn run_loop(
                             for url in urls {
                                 app.add_download(url, fmt);
                             }
-                            app.status_msg = Some((format!("  Queued {} downloads", count), std::time::Instant::now()));
+                            app.preview_image_protocol = None;
+                            app.add_toast(&format!("Queued {} downloads", count), ToastKind::Success);
                         }
                     }
                 }
@@ -379,16 +424,27 @@ async fn run_loop(
                         for (rect, target) in targets.into_iter().rev() {
                             if col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
                             {
-                                handle_click(app, target, dl_tx.clone());
+                                handle_click(
+                                    app,
+                                    target,
+                                    dl_tx.clone(),
+                                    thumb_tx.clone(),
+                                    lyrics_tx.clone(),
+                                    artist_tx.clone(),
+                                );
                                 break;
                             }
                         }
                     }
                     MouseEventKind::ScrollDown => match app.active_tab {
                         Tab::Downloads => {
-                            let max = app.history.len().saturating_sub(1) as u16;
-                            if app.history_scroll < max {
+                            let max = app.history_filtered_indices.len().saturating_sub(1);
+                            if (app.history_scroll as usize) < max {
                                 app.history_scroll += 1;
+                                // Keep index in sync or move it if it's out of view
+                                if app.history_index < app.history_scroll as usize {
+                                    app.history_index = app.history_scroll as usize;
+                                }
                             }
                         }
                         Tab::Lyrics => {
@@ -399,6 +455,10 @@ async fn run_loop(
                     MouseEventKind::ScrollUp => match app.active_tab {
                         Tab::Downloads => {
                             app.history_scroll = app.history_scroll.saturating_sub(1);
+                            let visible_rows = 15;
+                            if app.history_index >= (app.history_scroll + visible_rows) as usize {
+                                app.history_index = (app.history_scroll + visible_rows - 1) as usize;
+                            }
                         }
                         Tab::Lyrics => {
                             app.lyrics_scroll = app.lyrics_scroll.saturating_sub(3);
@@ -442,6 +502,7 @@ async fn run_loop(
                         app.url_input = url;
                         app.preview_state = PreviewState::Hidden;
                         app.preview_thumbnail = None;
+                        app.preview_image_protocol = None;
                         app.preview_pending_url = None;
                     } else if app.settings_editing {
                         app.settings_editing = false;
@@ -510,6 +571,7 @@ async fn run_loop(
                             if app.history_filter.is_empty() {
                                 app.history_search_mode = false;
                             }
+                            app.update_history_filter();
                         }
                         KeyCode::Enter => {
                             // Lock in the filter; search mode stays active but Enter stops editing
@@ -517,6 +579,7 @@ async fn run_loop(
                         }
                         KeyCode::Char(c) => {
                             app.history_filter.push(c);
+                            app.update_history_filter();
                         }
                         _ => {}
                     }
@@ -530,6 +593,8 @@ async fn run_loop(
                             if let Some(entry) = app.history.iter().rev().nth(idx) {
                                 let path = entry.path.clone();
                                 app.history_popup = None;
+                                app.preview_thumbnail = None;
+                                app.preview_image_protocol = None;
                                 reveal_file(app, path);
                             }
                         }
@@ -549,10 +614,14 @@ async fn run_loop(
                                 app.history_save();
                             }
                             app.history_popup = None;
+                            app.preview_thumbnail = None;
+                            app.preview_image_protocol = None;
                             app.clamp_history_scroll();
                         }
                         KeyCode::Esc => {
                             app.history_popup = None;
+                            app.preview_thumbnail = None;
+                            app.preview_image_protocol = None;
                         }
                         _ => {}
                     }
@@ -567,7 +636,7 @@ async fn run_loop(
 
                 // ── Preview popup intercepts all keys ─────────────────────────
                 if app.preview_state.is_visible() {
-                    handle_preview_key(app, key, dl_tx.clone());
+                    handle_preview_key(app, key, dl_tx.clone(), thumb_tx.clone());
                     continue;
                 }
 
@@ -577,10 +646,22 @@ async fn run_loop(
                     continue;
                 }
 
+                // ── 'T' cycles Catppuccin theme ──────────────────────────────
+                if key.code == KeyCode::Char('T') {
+                    app.settings.theme_flavour = app.settings.theme_flavour.next();
+                    app.theme = crate::theme::palette(app.settings.theme_flavour);
+                    let _ = app.settings.save();
+                    app.add_toast(
+                        &format!("Theme: {}", app.settings.theme_flavour.label()),
+                        ToastKind::Info,
+                    );
+                    continue;
+                }
+
                 // ── '?' opens help (only when not typing in a text input) ────
                 if key.code == KeyCode::Char('?') {
-                    let typing = (app.active_tab == Tab::Downloads && !app.url_input.is_empty())
-                        || (app.active_tab == Tab::Lyrics && !app.lyrics_query.is_empty());
+                    let typing = (app.active_tab == Tab::Downloads && !app.url_input.trim().is_empty())
+                        || (app.active_tab == Tab::Lyrics && !app.lyrics_query.trim().is_empty());
                     if !typing {
                         app.help_visible = true;
                         continue;
@@ -588,14 +669,16 @@ async fn run_loop(
                 }
 
                 // ── '/' in Downloads tab — activate history search ────────────
-                if app.active_tab == Tab::Downloads && app.url_input.is_empty() && key.code == KeyCode::Char('/') {
+                if app.active_tab == Tab::Downloads && app.url_input.trim().is_empty() && key.code == KeyCode::Char('/')
+                {
                     app.history_search_mode = true;
                     app.history_filter.clear();
                     continue;
                 }
 
                 // ── 'c' opens cookies popup (Downloads tab, only when not typing) ───
-                if app.active_tab == Tab::Downloads && app.url_input.is_empty() && key.code == KeyCode::Char('c') {
+                if app.active_tab == Tab::Downloads && app.url_input.trim().is_empty() && key.code == KeyCode::Char('c')
+                {
                     app.show_cookies_input = true;
                     app.cookies_input = app.cookies_file.clone().unwrap_or_default();
                     continue;
@@ -603,14 +686,14 @@ async fn run_loop(
 
                 // ── Tab-specific handling ─────────────────────────────────────
                 match app.active_tab {
-                    Tab::Downloads => handle_downloads_key(app, key),
-                    Tab::Lyrics => handle_lyrics_key(app, key, lyrics_tx.clone()),
+                    Tab::Downloads => handle_downloads_key(app, key, dl_tx.clone(), thumb_tx.clone()),
+                    Tab::Lyrics => handle_lyrics_key(app, key, lyrics_tx.clone(), artist_tx.clone()),
                     Tab::Settings => handle_settings_key(app, key, picker_tx.clone()),
                 }
 
                 // ── Global tab-switching (suppressed while typing in a text input) ──
-                let typing_in_input = (app.active_tab == Tab::Downloads && !app.url_input.is_empty())
-                    || (app.active_tab == Tab::Lyrics && !app.lyrics_query.is_empty());
+                let typing_in_input = (app.active_tab == Tab::Downloads && !app.url_input.trim().is_empty())
+                    || (app.active_tab == Tab::Lyrics && !app.lyrics_query.trim().is_empty());
                 if !typing_in_input {
                     match key.code {
                         KeyCode::Char('1') => app.active_tab = Tab::Downloads,
@@ -678,7 +761,19 @@ fn handle_slot_event(app: &mut App, slot_id: usize, event: SlotEvent) {
                 };
                 slot.cancel = None; // task is done, handle is no longer valid
             }
+
+            // Feature: TUI Toasts (Done notification)
+            if let Some((title, _, _, _)) = &info {
+                let name = title.as_deref().unwrap_or("Media");
+                app.add_toast(&format!("Done: {}", name), ToastKind::Success);
+            }
+
             if let Some((title, artist, format, url)) = info {
+                let thumb_url = app
+                    .slots
+                    .iter()
+                    .find(|s| s.id == slot_id)
+                    .and_then(|s| s.thumbnail_url.clone());
                 app.push_history(HistoryEntry {
                     title: title.unwrap_or_else(|| "Unknown".to_string()),
                     artist: artist.unwrap_or_default(),
@@ -687,12 +782,13 @@ fn handle_slot_event(app: &mut App, slot_id: usize, event: SlotEvent) {
                     path,
                     finished_at: chrono::Local::now(),
                     url,
+                    thumbnail_url: thumb_url,
                 });
             }
         }
         SlotEvent::Failed { reason } => {
             let short: String = reason.chars().take(80).collect();
-            app.status_msg = Some((format!("✖  Download failed: {}", short), std::time::Instant::now()));
+            app.add_toast(&format!("Download failed: {}", short), ToastKind::Error);
             if let Some(slot) = app.slot_mut(slot_id) {
                 slot.state = SlotState::Failed { reason };
                 slot.cancel = None;
@@ -704,42 +800,32 @@ fn handle_slot_event(app: &mut App, slot_id: usize, event: SlotEvent) {
 // ── Per-tab key handlers ──────────────────────────────────────────────────────
 
 /// Combined Downloads tab handler — URL queue + history navigation.
-fn handle_downloads_key(app: &mut App, key: crossterm::event::KeyEvent) {
-    // ↑/↓ scroll history when the URL input is empty
-    if app.url_input.is_empty() {
+fn handle_downloads_key(
+    app: &mut App,
+    key: crossterm::event::KeyEvent,
+    dl_tx: mpsc::Sender<(usize, SlotEvent)>,
+    thumb_tx: mpsc::Sender<video_info::ThumbnailArt>,
+) {
+    // History interaction takes priority when URL bar is empty
+    if app.url_input.trim().is_empty() && !app.history.is_empty() {
         match key.code {
-            KeyCode::Up => {
-                app.history_scroll = app.history_scroll.saturating_sub(1);
-                app.clamp_history_scroll();
-                return;
-            }
-            KeyCode::Down => {
-                let max = app.history.len().saturating_sub(1) as u16;
-                if app.history_scroll < max {
-                    app.history_scroll += 1;
-                }
-                return;
-            }
-            // [r] or [Enter] on an empty input → reveal selected history entry
-            KeyCode::Char('r') | KeyCode::Enter if app.url_input.is_empty() && !app.history.is_empty() => {
-                let idx = app.history_scroll as usize;
-                if let Some(path) = app.history.iter().rev().nth(idx).map(|e| e.path.clone()) {
-                    reveal_file(app, path);
-                }
+            KeyCode::Up | KeyCode::Down | KeyCode::Char(' ') | KeyCode::Char('r') | KeyCode::Enter => {
+                handle_history_key(app, key, dl_tx, thumb_tx);
                 return;
             }
             // [s] — cycle history sort order
-            KeyCode::Char('s') if app.url_input.is_empty() => {
+            KeyCode::Char('s') => {
                 app.history_sort = app.history_sort.next();
+                app.update_history_filter();
                 return;
             }
             _ => {}
         }
     }
-    handle_queue_key(app, key);
+    handle_queue_key(app, key, dl_tx);
 }
 
-fn handle_queue_key(app: &mut App, key: crossterm::event::KeyEvent) {
+fn handle_queue_key(app: &mut App, key: crossterm::event::KeyEvent, _dl_tx: mpsc::Sender<(usize, SlotEvent)>) {
     match key.code {
         KeyCode::Char(c) => {
             // '1'-'3' switch tabs only when the URL bar is empty (handled globally).
@@ -776,8 +862,10 @@ fn handle_queue_key(app: &mut App, key: crossterm::event::KeyEvent) {
             if !url.is_empty() {
                 // Set up debounced preview fetch (300ms).
                 app.preview_url = url.clone();
+                app.preview_format = DownloadFormat::Mp4;
                 app.preview_quality_cursor = 0;
                 app.preview_thumbnail = None;
+                app.preview_image_protocol = None;
                 app.preview_state = PreviewState::Loading;
                 app.preview_pending_url = Some(url);
                 app.preview_debounce = std::time::Instant::now();
@@ -817,33 +905,134 @@ fn remove_or_cancel_slot(app: &mut App) {
     }
 }
 
-#[allow(dead_code)]
-fn handle_history_key(app: &mut App, key: crossterm::event::KeyEvent) {
+fn handle_history_key(
+    app: &mut App,
+    key: crossterm::event::KeyEvent,
+    dl_tx: mpsc::Sender<(usize, SlotEvent)>,
+    thumb_tx: mpsc::Sender<video_info::ThumbnailArt>,
+) {
+    let num_entries = app.history_filtered_indices.len();
+    if num_entries == 0 {
+        return;
+    }
+
     match key.code {
         KeyCode::Up => {
-            app.history_scroll = app.history_scroll.saturating_sub(1);
+            if app.history_index > 0 {
+                app.history_index -= 1;
+            }
         }
         KeyCode::Down => {
-            let max = app.history.len().saturating_sub(1) as u16;
-            if app.history_scroll < max {
-                app.history_scroll += 1;
+            if app.history_index + 1 < num_entries {
+                app.history_index += 1;
             }
         }
-        // [r] or [Enter] — reveal the selected history entry
-        KeyCode::Char('r') | KeyCode::Enter => {
-            let idx = app.history_scroll as usize;
-            // History is displayed newest-first, so row 0 = last entry
-            let path = app.history.iter().rev().nth(idx).map(|e| e.path.clone());
-            if let Some(path) = path {
-                reveal_file(app, path);
+        KeyCode::Char(' ') => {
+            let filtered_pos = app.history_index;
+            if let Some(&display_idx) = app.history_filtered_indices.get(filtered_pos) {
+                if app.history_selected.contains(&display_idx) {
+                    app.history_selected.remove(&display_idx);
+                } else {
+                    app.history_selected.insert(display_idx);
+                }
             }
+            return;
+        }
+        KeyCode::Char('r') | KeyCode::Enter => {
+            let filtered_pos = app.history_index;
+            handle_click_internal(
+                app,
+                app::ClickTarget::HistoryOpenPopup(filtered_pos),
+                dl_tx,
+                thumb_tx,
+                mpsc::channel(1).0,
+                mpsc::channel(1).0,
+            );
+            return;
         }
         _ => {}
     }
-    app.clamp_history_scroll();
+
+    // Auto-scroll: keep history_index in view
+    let scroll = app.history_scroll as usize;
+    let view_h = 15;
+    if app.history_index < scroll {
+        app.history_scroll = app.history_index as u16;
+    } else if app.history_index >= scroll + view_h {
+        app.history_scroll = (app.history_index + 1 - view_h) as u16;
+    }
 }
 
-fn handle_lyrics_key(app: &mut App, key: crossterm::event::KeyEvent, lyrics_tx: mpsc::Sender<Option<LyricsResult>>) {
+fn handle_lyrics_key(
+    app: &mut App,
+    key: crossterm::event::KeyEvent,
+    lyrics_tx: mpsc::Sender<Option<LyricsResult>>,
+    artist_tx: mpsc::Sender<(Option<u64>, Option<Vec<doracore::lyrics::ArtistSong>>)>,
+) {
+    if app.lyrics_view_mode == app::LyricsViewMode::ArtistSongs {
+        let card_w = 30usize;
+        let cols = (80 / card_w).max(1);
+
+        match key.code {
+            KeyCode::Esc => {
+                app.lyrics_view_mode = app::LyricsViewMode::Lyrics;
+            }
+            KeyCode::Up => {
+                if app.artist_songs_cursor >= cols {
+                    app.artist_songs_cursor -= cols;
+                }
+            }
+            KeyCode::Down => {
+                if app.artist_songs_cursor + cols < app.artist_songs.len() {
+                    app.artist_songs_cursor += cols;
+                }
+            }
+            KeyCode::Left => {
+                if app.artist_songs_cursor > 0 {
+                    app.artist_songs_cursor -= 1;
+                }
+            }
+            KeyCode::Right => {
+                if app.artist_songs_cursor < app.artist_songs.len() {
+                    app.artist_songs_cursor += 1;
+                }
+            }
+            KeyCode::Char('m') => {
+                handle_click_internal(
+                    app,
+                    app::ClickTarget::LyricsLoadMore,
+                    mpsc::channel(1).0,
+                    mpsc::channel(1).0,
+                    lyrics_tx.clone(),
+                    artist_tx.clone(),
+                );
+            }
+            KeyCode::Enter => {
+                if app.artist_songs_cursor == app.artist_songs.len() {
+                    handle_click_internal(
+                        app,
+                        app::ClickTarget::LyricsLoadMore,
+                        mpsc::channel(1).0,
+                        mpsc::channel(1).0,
+                        lyrics_tx.clone(),
+                        artist_tx.clone(),
+                    );
+                } else if let Some(song) = app.artist_songs.get(app.artist_songs_cursor).cloned() {
+                    handle_click_internal(
+                        app,
+                        app::ClickTarget::ArtistSongClick(song.artist, song.title),
+                        mpsc::channel(1).0,
+                        mpsc::channel(1).0,
+                        lyrics_tx.clone(),
+                        mpsc::channel(1).0,
+                    );
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         KeyCode::Char(c) => {
             // Digits switch tabs only when the query is empty.
@@ -862,30 +1051,31 @@ fn handle_lyrics_key(app: &mut App, key: crossterm::event::KeyEvent, lyrics_tx: 
             app.lyrics_scroll = app.lyrics_scroll.saturating_add(1);
         }
         KeyCode::Enter => {
-            if app.lyrics_loading || app.lyrics_query.is_empty() {
+            if app.lyrics_loading || app.lyrics_query.trim().is_empty() {
                 return;
             }
             let query = app.lyrics_query.clone();
+            let g_token = app.settings.genius_token.clone();
+
+            if g_token.is_empty() && doracore::core::config::GENIUS_CLIENT_TOKEN.is_none() {
+                app.add_toast("Genius token missing in Settings", ToastKind::Error);
+                return;
+            }
+
             app.lyrics_loading = true;
-            app.lyrics_result = None;
-            app.lyrics_scroll = 0;
+            app.artist_songs_page = 1;
+            app.last_lyrics_query = query.clone();
+            app.last_artist_id = None;
 
-            // Parse "Artist - Title" or treat entire query as title
-            let (artist, title) = if let Some(pos) = query.find(" - ") {
-                (query[..pos].trim().to_string(), query[pos + 3..].trim().to_string())
-            } else {
-                (String::new(), query.clone())
-            };
-
-            // Spawn background task — never blocks the render loop
+            let a_tx = artist_tx.clone();
             tokio::spawn(async move {
-                let result = doracore::lyrics::fetch_lyrics(&artist, &title).await;
-                let event = result.map(|r| LyricsResult {
-                    artist,
-                    title,
-                    lyrics: r.all_text(),
-                });
-                let _ = lyrics_tx.send(event).await;
+                let token = if g_token.is_empty() {
+                    doracore::core::config::GENIUS_CLIENT_TOKEN.as_ref().unwrap().clone()
+                } else {
+                    g_token
+                };
+                let result = doracore::lyrics::fetch_search_results(&query, &token, 1).await;
+                let _ = a_tx.send((None, result)).await;
             });
         }
         _ => {}
@@ -894,7 +1084,12 @@ fn handle_lyrics_key(app: &mut App, key: crossterm::event::KeyEvent, lyrics_tx: 
 
 // ── Preview popup key handler ─────────────────────────────────────────────────
 
-fn handle_preview_key(app: &mut App, key: crossterm::event::KeyEvent, dl_tx: mpsc::Sender<(usize, SlotEvent)>) {
+fn handle_preview_key(
+    app: &mut App,
+    key: crossterm::event::KeyEvent,
+    dl_tx: mpsc::Sender<(usize, SlotEvent)>,
+    _thumb_tx: mpsc::Sender<video_info::ThumbnailArt>,
+) {
     // While loading: only Esc (handled globally before this fn is called)
     if matches!(app.preview_state, PreviewState::Loading) {
         return;
@@ -964,7 +1159,7 @@ fn handle_settings_key(app: &mut App, key: crossterm::event::KeyEvent, picker_tx
                 app.settings_edit_buf.clear();
                 // Auto-save after confirming a text edit.
                 let _ = app.settings.save();
-                app.status_msg = Some(("  Settings saved".to_string(), std::time::Instant::now()));
+                app.add_toast("Settings saved", ToastKind::Success);
             }
             KeyCode::Backspace => {
                 app.settings_edit_buf.pop();
@@ -1018,12 +1213,16 @@ fn handle_settings_key(app: &mut App, key: crossterm::event::KeyEvent, picker_tx
                 open_file_picker(tx).await;
             });
         }
+        // [g] — get Genius token (only for Genius field)
+        KeyCode::Char('g') if cur == 12 => {
+            open_in_browser("https://genius.com/api-clients");
+        }
         // [s] — explicit save (still works; also shows confirmation)
         KeyCode::Char('s') => {
             if let Err(e) = app.settings.save() {
-                app.status_msg = Some((format!("✖  Settings save failed: {}", e), std::time::Instant::now()));
+                app.add_toast(&format!("Save failed: {}", e), ToastKind::Error);
             } else {
-                app.status_msg = Some(("  Settings saved".to_string(), std::time::Instant::now()));
+                app.add_toast("Settings saved", ToastKind::Success);
             }
         }
         // [r] — reset to defaults (confirm not needed; user can [s] to persist or quit)
@@ -1147,7 +1346,27 @@ async fn ytdlp_startup_check(ytdlp_bin: String, tx: mpsc::Sender<String>) {
 
 // ── Mouse click handler ───────────────────────────────────────────────────────
 
-fn handle_click(app: &mut App, target: app::ClickTarget, dl_tx: mpsc::Sender<(usize, SlotEvent)>) {
+#[allow(clippy::too_many_arguments)]
+fn handle_click(
+    app: &mut App,
+    target: app::ClickTarget,
+    dl_tx: mpsc::Sender<(usize, SlotEvent)>,
+    thumb_tx: mpsc::Sender<video_info::ThumbnailArt>,
+    lyrics_tx: mpsc::Sender<Option<LyricsResult>>,
+    artist_tx: mpsc::Sender<(Option<u64>, Option<Vec<doracore::lyrics::ArtistSong>>)>,
+) {
+    handle_click_internal(app, target, dl_tx, thumb_tx, lyrics_tx, artist_tx);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_click_internal(
+    app: &mut App,
+    target: app::ClickTarget,
+    dl_tx: mpsc::Sender<(usize, SlotEvent)>,
+    thumb_tx: mpsc::Sender<video_info::ThumbnailArt>,
+    lyrics_tx: mpsc::Sender<Option<LyricsResult>>,
+    artist_tx: mpsc::Sender<(Option<u64>, Option<Vec<doracore::lyrics::ArtistSong>>)>,
+) {
     use app::ClickTarget;
     match target {
         ClickTarget::SwitchTab(tab) => {
@@ -1171,6 +1390,13 @@ fn handle_click(app: &mut App, target: app::ClickTarget, dl_tx: mpsc::Sender<(us
         ClickTarget::PreviewDownload => {
             confirm_preview_download(app, dl_tx);
         }
+        ClickTarget::PreviewClose => {
+            app.preview_state = app::PreviewState::Hidden;
+            app.history_popup = None;
+            app.preview_thumbnail = None;
+            app.preview_image_protocol = None;
+            app.preview_pending_url = None;
+        }
         ClickTarget::SettingsSelectItem(idx) => {
             app.settings_cursor = idx;
         }
@@ -1190,15 +1416,131 @@ fn handle_click(app: &mut App, target: app::ClickTarget, dl_tx: mpsc::Sender<(us
             let _ = app.settings.save();
             app.logo_burst = 100;
         }
-        ClickTarget::HistoryOpenPopup(idx) => {
-            let max = app.history.len().saturating_sub(1);
-            let clamped = idx.min(max);
-            app.history_scroll = clamped as u16;
-            app.history_popup = Some(clamped);
+        ClickTarget::HistoryOpenPopup(filtered_pos) => {
+            if app.history_index == filtered_pos {
+                // Second click on already-selected row — open popup
+                if let Some(&raw_idx) = app.history_filtered_indices.get(filtered_pos) {
+                    app.history_popup = Some(raw_idx);
+
+                    // Feature: Real History Preview
+                    if let Some(entry) = app.history.iter().rev().nth(raw_idx) {
+                        if let Some(turl) = &entry.thumbnail_url {
+                            app.preview_thumbnail = None;
+                            app.preview_image_protocol = None;
+                            let turl = turl.clone();
+                            let t_tx = thumb_tx.clone();
+                            tokio::spawn(async move {
+                                if let Some(art) = fetch_thumbnail_art(&turl).await {
+                                    let _ = t_tx.send(art).await;
+                                }
+                            });
+                        }
+                    }
+                }
+            } else {
+                // First click — just select the row
+                app.history_index = filtered_pos;
+            }
         }
         ClickTarget::HistoryReveal(path) => {
             app.history_popup = None;
+            app.preview_thumbnail = None;
+            app.preview_image_protocol = None;
             reveal_file(app, path);
+        }
+        ClickTarget::ArtistClick(id_opt, name) => {
+            let g_token = app.settings.genius_token.clone();
+            if g_token.is_empty() && doracore::core::config::GENIUS_CLIENT_TOKEN.is_none() {
+                app.add_toast("Genius token missing in Settings", ToastKind::Error);
+                return;
+            }
+            app.lyrics_loading = true;
+            app.artist_songs_page = 1;
+            app.last_lyrics_query.clear();
+
+            let a_tx = artist_tx.clone();
+            tokio::spawn(async move {
+                let token = if g_token.is_empty() {
+                    doracore::core::config::GENIUS_CLIENT_TOKEN.as_ref().unwrap().clone()
+                } else {
+                    g_token
+                };
+                let artist_id = match id_opt {
+                    Some(id) => Some(id),
+                    None => doracore::lyrics::fetch_artist_id(&name, &token).await,
+                };
+                if let Some(id) = artist_id {
+                    let result = doracore::lyrics::fetch_artist_songs(id, &token, 1).await;
+                    let _ = a_tx.send((Some(id), result)).await;
+                } else {
+                    let _ = a_tx.send((None, None)).await;
+                }
+            });
+        }
+        ClickTarget::ArtistSongClick(artist, title) => {
+            app.lyrics_query = format!("{} - {}", artist, title);
+            app.lyrics_loading = true;
+            app.lyrics_result = None;
+            app.lyrics_scroll = 0;
+            app.lyrics_view_mode = app::LyricsViewMode::Lyrics;
+            let l_tx = lyrics_tx.clone();
+            let g_token = if app.settings.genius_token.is_empty() {
+                None
+            } else {
+                Some(app.settings.genius_token.clone())
+            };
+            tokio::spawn(async move {
+                let result = doracore::lyrics::fetch_lyrics(&artist, &title, g_token.as_deref()).await;
+                let event = result.map(|r| {
+                    let lyrics = r.all_text();
+                    app::LyricsResult {
+                        artist: r.artist,
+                        artist_id: r.artist_id,
+                        title: r.title,
+                        album: r.album,
+                        release_date: r.release_date,
+                        thumbnail_url: r.thumbnail_url,
+                        lyrics,
+                    }
+                });
+                let _ = l_tx.send(event).await;
+            });
+        }
+        ClickTarget::GetGeniusToken => {
+            open_in_browser("https://genius.com/api-clients");
+        }
+        ClickTarget::LyricsLoadMore => {
+            if app.lyrics_loading {
+                return;
+            }
+
+            let g_token = app.settings.genius_token.clone();
+            if g_token.is_empty() && doracore::core::config::GENIUS_CLIENT_TOKEN.is_none() {
+                app.add_toast("Genius token missing", ToastKind::Error);
+                return;
+            }
+
+            app.lyrics_loading = true;
+            app.artist_songs_page += 1;
+            let page = app.artist_songs_page;
+            let a_id = app.last_artist_id;
+            let query = app.last_lyrics_query.clone();
+
+            let a_tx = artist_tx.clone();
+            tokio::spawn(async move {
+                let token = if g_token.is_empty() {
+                    doracore::core::config::GENIUS_CLIENT_TOKEN.as_ref().unwrap().clone()
+                } else {
+                    g_token
+                };
+
+                let result = if let Some(id) = a_id {
+                    doracore::lyrics::fetch_artist_songs(id, &token, page).await
+                } else {
+                    doracore::lyrics::fetch_search_results(&query, &token, page).await
+                };
+                let _ = a_tx.send((a_id, result)).await;
+            });
         }
     }
 }
@@ -1230,9 +1572,15 @@ fn confirm_preview_download(app: &mut App, dl_tx: mpsc::Sender<(usize, SlotEvent
         s.ytdlp_cookies = c.clone();
     }
 
+    let mut thumb_url = None;
+    if let PreviewState::Ready { info, .. } = &app.preview_state {
+        thumb_url = info.thumbnail_url.clone();
+    }
+
     let id = app.add_download(url.clone(), fmt);
     if let Some(slot) = app.slot_mut(id) {
         slot.task_spawned = true;
+        slot.thumbnail_url = thumb_url;
     }
     let handle = spawn_download(id, url, fmt, s, dl_tx);
     if let Some(slot) = app.slot_mut(id) {
@@ -1241,6 +1589,7 @@ fn confirm_preview_download(app: &mut App, dl_tx: mpsc::Sender<(usize, SlotEvent
 
     app.preview_state = PreviewState::Hidden;
     app.preview_thumbnail = None;
+    app.preview_image_protocol = None;
 }
 
 fn open_in_browser(url: &str) {
@@ -1258,7 +1607,7 @@ fn open_in_browser(url: &str) {
 
 fn reveal_file(app: &mut App, path: String) {
     if !std::path::Path::new(&path).exists() {
-        app.status_msg = Some((format!("✖  File not found: {}", path), std::time::Instant::now()));
+        app.add_toast("File not found", ToastKind::Error);
         return;
     }
     #[cfg(target_os = "macos")]

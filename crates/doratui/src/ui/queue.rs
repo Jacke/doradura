@@ -253,13 +253,20 @@ fn render_waveform(
     let filled_cols = (width * percent as usize / 100).min(width);
     let bar_color = speed_bar_color(speed_mbs, theme);
 
-    // Build animated waveform spans.
+    // Build animated waveform spans with a slight gradient effect for the filled part
     let spans: Vec<Span> = (0..width)
         .map(|col| {
             let wave_idx = (col * 3 + frame * 2) % WAVE.len();
             let ch = WAVE[wave_idx].to_string();
             if col < filled_cols {
-                Span::styled(ch, Style::default().fg(bar_color))
+                // Feature: Advanced Progress Bar (Gradient-like effect)
+                let intensity = if col + 5 > filled_cols { 0.8 } else { 1.0 };
+                let color = if intensity < 1.0 {
+                    lerp_color(bar_color, theme.surface0, 0.2)
+                } else {
+                    bar_color
+                };
+                Span::styled(ch, Style::default().fg(color))
             } else {
                 Span::styled(ch, Style::default().fg(theme.surface0))
             }
@@ -270,10 +277,11 @@ fn render_waveform(
     // Overlay text label: "  42%  8.3 MB/s  ~14:05 "
     let eta_time = chrono::Local::now() + chrono::Duration::seconds(eta_secs as i64);
     let eta_str = eta_time.format("%H:%M").to_string();
-    let label = format!(" {:3}%  {}  ~{} ", percent, format_speed(speed_mbs), eta_str);
+    let label = format!(" {:3}% │ {:>8} │ ETA {} ", percent, format_speed(speed_mbs), eta_str);
     let label_len = label.chars().count() as u16;
     if label_len < area.width {
         let label_x = area.x + (area.width - label_len) / 2;
+        // Use a semi-transparent background feel by not clearing, just drawing on top
         f.render_widget(
             Paragraph::new(label).style(Style::default().fg(theme.text).add_modifier(Modifier::BOLD)),
             Rect::new(label_x, area.y, label_len, 1),
