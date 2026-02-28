@@ -261,22 +261,36 @@ pub async fn download_and_send_video(
                                     first_part_db_id = Some(id);
                                 }
 
-                                // Add "Cut Video" button for single-part videos (not for time_range clips)
+                                // Add post-download buttons for single-part videos (not for time_range clips)
                                 if total_parts == 1 && format.time_range().is_none() {
                                     let bot_for_button = bot_clone.clone();
                                     let msg_id = sent_message.id;
+                                    let url_str = url.as_str().to_string();
                                     tokio::spawn(async move {
                                         use teloxide::types::InlineKeyboardMarkup;
-                                        let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
+                                        let mut rows = vec![vec![crate::telegram::cb(
                                             "✂️ Cut Video",
                                             format!("downloads:clip:{}", id),
-                                        )]]);
+                                        )]];
+                                        // Add "Burn subtitles" for YouTube videos
+                                        let is_yt = url_str.contains("://youtube.com/")
+                                            || url_str.contains("://www.youtube.com/")
+                                            || url_str.contains("://m.youtube.com/")
+                                            || url_str.contains("://music.youtube.com/")
+                                            || url_str.contains("://youtu.be/");
+                                        if is_yt {
+                                            rows.push(vec![crate::telegram::cb(
+                                                "🔤 Burn subtitles",
+                                                format!("downloads:burn_subs:{}", id),
+                                            )]);
+                                        }
+                                        let keyboard = InlineKeyboardMarkup::new(rows);
                                         if let Err(e) = bot_for_button
                                             .edit_message_reply_markup(chat_id, msg_id)
                                             .reply_markup(keyboard)
                                             .await
                                         {
-                                            log::warn!("Failed to add cut button: {}", e);
+                                            log::warn!("Failed to add post-download buttons: {}", e);
                                         }
                                     });
                                 }
