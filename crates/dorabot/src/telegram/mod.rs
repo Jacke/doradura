@@ -54,6 +54,7 @@ pub mod cuts;
 pub mod downloads;
 pub mod feedback;
 pub mod handlers;
+pub mod inline_query;
 pub mod instagram;
 pub mod markdown;
 pub mod menu;

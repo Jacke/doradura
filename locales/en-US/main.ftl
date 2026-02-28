@@ -368,6 +368,21 @@ ext_audio_effects =
     .name = Audio Effects
     .description = Pitch, tempo, bass, morph presets
 
+ext_vlipsy =
+    .name = Reactions
+    .description = Video reactions and memes from movies \& TV shows
+
+vlipsy =
+    .search_prompt = 🎬 *Vlipsy Reactions*\n\nSend me a search query to find video reactions\!
+    .searching = 🔍 Searching reactions\.\.\.
+    .no_results = 😔 No reactions found\. Try a different query\!
+    .result_title = 🎬 *Reactions: {$query}*
+    .page_info = Page {$page} of {$total_pages}
+    .prev_page = ◀ Prev
+    .next_page = Next ▶
+    .sending = 📤 Sending reaction\.\.\.
+    .unavailable = ❌ Vlipsy is not available\. API key is not configured\.
+
 extensions =
     .header = 🧩 *Dora's Extensions*
     .category_download = 📥 *Downloads*

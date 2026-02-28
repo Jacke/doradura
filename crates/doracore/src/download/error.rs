@@ -24,6 +24,8 @@ pub enum DownloadError {
     Process(String),
     /// Instagram API specific failures (GraphQL errors, doc_id expiry, private accounts)
     Instagram(String),
+    /// Vlipsy API failures (search, clip fetch, download)
+    Vlipsy(String),
     /// Catch-all for uncategorized errors
     Other(String),
 }
@@ -40,6 +42,7 @@ impl fmt::Display for DownloadError {
             DownloadError::SendFailed(msg) => write!(f, "{}", msg),
             DownloadError::Process(msg) => write!(f, "{}", msg),
             DownloadError::Instagram(msg) => write!(f, "{}", msg),
+            DownloadError::Vlipsy(msg) => write!(f, "{}", msg),
             DownloadError::Other(msg) => write!(f, "{}", msg),
         }
     }
@@ -60,6 +63,7 @@ impl DownloadError {
             DownloadError::SendFailed(_) => "send_failed",
             DownloadError::Process(_) => "process",
             DownloadError::Instagram(_) => "instagram",
+            DownloadError::Vlipsy(_) => "vlipsy",
             DownloadError::Other(_) => "other",
         }
     }
@@ -76,6 +80,7 @@ impl DownloadError {
             | DownloadError::SendFailed(msg)
             | DownloadError::Process(msg)
             | DownloadError::Instagram(msg)
+            | DownloadError::Vlipsy(msg)
             | DownloadError::Other(msg) => msg,
         }
     }

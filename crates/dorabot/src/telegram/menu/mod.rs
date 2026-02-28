@@ -6,6 +6,7 @@ mod main_menu;
 pub mod ringtone;
 mod services;
 mod settings;
+pub mod vlipsy;
 
 // Re-export all previously-public functions
 pub use callback_router::handle_menu_callback;

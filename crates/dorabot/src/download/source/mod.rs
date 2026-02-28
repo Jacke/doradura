@@ -10,6 +10,7 @@
 
 pub mod http;
 pub mod instagram;
+pub mod vlipsy;
 pub mod ytdlp;
 
 use crate::core::error::AppError;
@@ -148,6 +149,8 @@ impl SourceRegistry {
     /// Add new sources by implementing `DownloadSource` and calling `register()`.
     pub fn default_registry() -> Self {
         let mut registry = Self::new();
+        // Vlipsy before yt-dlp so vlipsy.com URLs use native scraping
+        registry.register(Arc::new(vlipsy::VlipsySource::new()));
         registry.register(Arc::new(instagram::InstagramSource::new()));
         registry.register(Arc::new(ytdlp::YtDlpSource::new()));
         registry.register(Arc::new(http::HttpSource::new()));

@@ -369,6 +369,21 @@ ext_audio_effects =
     .name = Аудио эффекты
     .description = Питч, темп, бас, морф\-пресеты
 
+ext_vlipsy =
+    .name = Реакции
+    .description = Видео\-реакции и мемы из фильмов и сериалов
+
+vlipsy =
+    .search_prompt = 🎬 *Vlipsy Реакции*\n\nОтправь поисковый запрос, чтобы найти видео\-реакции\!
+    .searching = 🔍 Ищу реакции\.\.\.
+    .no_results = 😔 Реакции не найдены\. Попробуй другой запрос\!
+    .result_title = 🎬 *Реакции: {$query}*
+    .page_info = Стр\. {$page} из {$total_pages}
+    .prev_page = ◀ Назад
+    .next_page = Далее ▶
+    .sending = 📤 Отправляю реакцию\.\.\.
+    .unavailable = ❌ Vlipsy недоступен\. API ключ не настроен\.
+
 extensions =
     .header = 🧩 *Расширения Доры*
     .category_download = 📥 *Загрузка*

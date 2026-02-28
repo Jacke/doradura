@@ -1,6 +1,6 @@
 [package]
 name = "doradura"
-version = "0.13.0"
+version = "0.14.0"
 edition = "2021"
 authors = ["Stan <iamjacke@gmail.com>"]
 description = "High-performance Telegram bot for downloading and converting media from multiple sources"
@@ -62,6 +62,7 @@ axum = "0.7"
 pretty_env_logger = "0.5"
 simplelog = "0.11"
 reqwest = { workspace = true }
+mime = "0.3"
 
 # MTProto support via grammers
 grammers-client = "0.6"

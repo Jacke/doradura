@@ -1233,6 +1233,21 @@ pub async fn handle_menu_callback(
                     .parse_mode(ParseMode::MarkdownV2)
                     .reply_markup(keyboard)
                     .await?;
+            } else if data.starts_with("vl:") {
+                use crate::telegram::menu::vlipsy::handle_vlipsy_callback;
+                if let Err(e) = handle_vlipsy_callback(
+                    &bot,
+                    callback_id.clone(),
+                    chat_id,
+                    message_id,
+                    &data,
+                    Arc::clone(&db_pool),
+                )
+                .await
+                {
+                    log::error!("Vlipsy callback error: {}", e);
+                }
+                return Ok(());
             } else if data.starts_with("ringtone:") {
                 use crate::telegram::menu::ringtone::handle_ringtone_callback;
                 if let Err(e) = handle_ringtone_callback(

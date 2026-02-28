@@ -1070,8 +1070,8 @@ async fn test_show_services_menu_renders_extension_cards() {
 
     assert_eq!(
         ext_buttons.len(),
-        4,
-        "Should have 4 extension detail buttons, got {:?}",
+        5,
+        "Should have 5 extension detail buttons, got {:?}",
         ext_buttons
     );
     assert!(

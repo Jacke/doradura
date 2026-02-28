@@ -6,6 +6,7 @@
 pub mod audio_effects;
 pub mod converter;
 pub mod http_downloader;
+pub mod vlipsy_downloader;
 pub mod ytdlp_downloader;
 
 use unic_langid::LanguageIdentifier;
@@ -69,6 +70,7 @@ impl ExtensionRegistry {
             Box::new(http_downloader::HttpExtension),
             Box::new(converter::ConverterExtension),
             Box::new(audio_effects::AudioEffectsExtension),
+            Box::new(vlipsy_downloader::VlipsyExtension),
         ];
         Self { extensions }
     }
@@ -102,7 +104,7 @@ mod tests {
     #[test]
     fn test_default_registry_has_all_extensions() {
         let reg = ExtensionRegistry::default_registry();
-        assert_eq!(reg.all().len(), 4);
+        assert_eq!(reg.all().len(), 5);
     }
 
     #[test]
@@ -112,6 +114,7 @@ mod tests {
         assert!(reg.get("http").is_some());
         assert!(reg.get("converter").is_some());
         assert!(reg.get("audio_effects").is_some());
+        assert!(reg.get("vlipsy").is_some());
         assert!(reg.get("nonexistent").is_none());
         assert!(reg.get("").is_none());
     }
@@ -120,10 +123,11 @@ mod tests {
     fn test_registry_by_category_downloaders() {
         let reg = ExtensionRegistry::default_registry();
         let downloaders = reg.by_category(ExtensionCategory::Downloader);
-        assert_eq!(downloaders.len(), 2);
+        assert_eq!(downloaders.len(), 3);
         let ids: Vec<&str> = downloaders.iter().map(|e| e.id()).collect();
         assert!(ids.contains(&"ytdlp"));
         assert!(ids.contains(&"http"));
+        assert!(ids.contains(&"vlipsy"));
     }
 
     #[test]
@@ -172,6 +176,10 @@ mod tests {
     fn test_all_extensions_available() {
         let reg = ExtensionRegistry::default_registry();
         for ext in reg.all() {
+            // Vlipsy requires VLIPSY_API_KEY — skip availability check in tests
+            if ext.id() == "vlipsy" {
+                continue;
+            }
             assert!(ext.is_available(), "Extension '{}' should be available", ext.id());
         }
     }
@@ -250,6 +258,18 @@ mod tests {
         assert_eq!(ext.locale_key(), "ext_audio_effects");
         assert_eq!(ext.category(), ExtensionCategory::AudioProcessor);
         assert!(ext.is_available());
+        assert_eq!(ext.capabilities().len(), 4);
+    }
+
+    // ── Vlipsy extension specifics ──
+
+    #[test]
+    fn test_vlipsy_extension_metadata() {
+        let ext = vlipsy_downloader::VlipsyExtension;
+        assert_eq!(ext.id(), "vlipsy");
+        assert_eq!(ext.locale_key(), "ext_vlipsy");
+        assert_eq!(ext.icon(), "\u{1F3AC}");
+        assert_eq!(ext.category(), ExtensionCategory::Downloader);
         assert_eq!(ext.capabilities().len(), 4);
     }
 

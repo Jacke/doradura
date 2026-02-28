@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use teloxide::dispatching::{UpdateFilterExt, UpdateHandler};
 use teloxide::prelude::*;
-use teloxide::types::Message;
+use teloxide::types::{InlineQuery, Message};
 
 use super::commands::{
     handle_cuts_command, handle_downloads_command, handle_start_command, handle_style_command, handle_uploads_command,
@@ -42,6 +42,7 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
     let deps_browser_status = deps.clone();
     let deps_send = deps.clone();
     let deps_broadcast = deps.clone();
+    let deps_inline = deps.clone();
 
     dptree::entry()
         // Successful payment handler must be first
@@ -65,6 +66,8 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
         .branch(pre_checkout_handler(deps_precheckout))
         // Callback query handler
         .branch(callback_handler(deps_callback))
+        // Inline query handler (Vlipsy search)
+        .branch(inline_query_handler(deps_inline))
 }
 
 /// Handler for successful Telegram payments
@@ -587,6 +590,18 @@ fn pre_checkout_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
             }
             Ok(())
         }
+    })
+}
+
+/// Handler for inline queries (Vlipsy video search in any chat)
+fn inline_query_handler(_deps: HandlerDeps) -> UpdateHandler<HandlerError> {
+    use crate::telegram::inline_query::handle_inline_query;
+
+    Update::filter_inline_query().endpoint(move |bot: Bot, query: InlineQuery| async move {
+        if let Err(e) = handle_inline_query(bot, query).await {
+            log::error!("Inline query handler error: {:?}", e);
+        }
+        Ok(())
     })
 }
 

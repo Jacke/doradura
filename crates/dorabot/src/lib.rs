@@ -21,6 +21,7 @@ pub mod download;
 pub mod experimental;
 pub mod metadata_refresh;
 pub mod telegram;
+pub mod vlipsy;
 pub mod watcher;
 
 // ── Shared modules — re-exported from doracore ───────────────────────────────

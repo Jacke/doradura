@@ -351,6 +351,12 @@ pub async fn handle_message(
             return Ok(None);
         }
 
+        // Check if user is waiting for Vlipsy search
+        if crate::telegram::menu::vlipsy::is_waiting_for_vlipsy_search(msg.chat.id.0).await {
+            crate::telegram::menu::vlipsy::handle_search_text(&bot, msg.chat.id, text, &lang, db_pool.clone()).await;
+            return Ok(None);
+        }
+
         // Use cached regex for better performance - find all URLs
         let urls: Vec<&str> = URL_REGEX.find_iter(text).map(|m| m.as_str()).collect();
 
