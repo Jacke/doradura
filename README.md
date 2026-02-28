@@ -56,6 +56,8 @@
  ╰──────────────────────────────────────────────────────────────────╯
 ```
 
+<img src="dora-tui.png" width="100%" alt="dora TUI screenshot">
+
 A pixel-perfect TUI built with **ratatui** and the **Catppuccin Mocha** colour palette — 7 cycleable logo themes, full mouse support, 60 fps rendering.
 
 ### Interface
@@ -366,7 +368,7 @@ docker run -e TELOXIDE_TOKEN=... -e TELEGRAM_API_ID=... \
 | Layer | Technology |
 |-------|-----------|
 | Language | Rust 1.83+ |
-| TUI | ratatui 0.29 · crossterm 0.28 |
+| TUI | ratatui 0.30 · crossterm 0.28 |
 | Telegram | teloxide 0.17 · local Bot API |
 | Async | Tokio (full features) |
 | Database | SQLite · rusqlite · r2d2 |
