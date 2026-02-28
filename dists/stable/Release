@@ -2,24 +2,32 @@ Origin: dora
 Label: dora
 Suite: stable
 Codename: stable
-Architectures: amd64
+Architectures: amd64 arm64
 Components: main
 Description: dora TUI media downloader
-Date: Wed, 25 Feb 2026 14:08:27 UTC
-Date: Wed, 25 Feb 2026 14:08:27 +0000
+Date: Sat, 28 Feb 2026 17:48:22 UTC
+Date: Sat, 28 Feb 2026 17:48:22 +0000
 MD5Sum:
- 5b89408452be825db80f1492ff421a2d              207 Release
- de8b7ec399ec928dcd1b37b83fdfb727             2204 main/binary-amd64/Packages
- 3e6cda45a4f53eecadf1cb500681f084              741 main/binary-amd64/Packages.gz
+ 0e7f61c1e5f3dd89110b719fe60211c4              213 Release
+ 7140f14fae850b2595f1bfe4c606c949             2755 main/binary-amd64/Packages
+ 3b3fa0c89607a15743426d154332450d              846 main/binary-amd64/Packages.gz
+ dbaa16d52bb612cf9e98d9119082ddc6              551 main/binary-arm64/Packages
+ 96319b1efd6096a03f0f189fe15c2d6e              412 main/binary-arm64/Packages.gz
 SHA1:
- cec415a0720f87bceb534a6acd9edf02b78cdce5              207 Release
- a6111bd662f7e0a11776c7adf864b69c5b15271c             2204 main/binary-amd64/Packages
- 0378088f3d46051714c3998fac97912efc485064              741 main/binary-amd64/Packages.gz
+ 67e002554547c89c70052e471df3a5a2ee9af17d              213 Release
+ 09d362c99e58181589e0b816cc1d0f371c24e1e0             2755 main/binary-amd64/Packages
+ acb66334377fcdfbec34f22c7f3d545d87c66b65              846 main/binary-amd64/Packages.gz
+ a2c0e7a715729635d7258ce3d66e936e849ac32a              551 main/binary-arm64/Packages
+ 42e9912b3b75c464580d33d4c0deb4f035f75683              412 main/binary-arm64/Packages.gz
 SHA256:
- 010efb26c4a2890c8ba60a83de65c6e3e13f683d479e759029026e0820a5d64a              207 Release
- d98ea6a8b5089c19564ba195de7c3082bb0006599b5a52e23ee228f39a8c2921             2204 main/binary-amd64/Packages
- fcde04a95850ccf931a2f0c03fc11414364bc94367e4d5272eba1daaa60c02c3              741 main/binary-amd64/Packages.gz
+ 69b75306778c3225f9bab0bf3005643d548b9e49b0d423cfcfb11e971d7cf0c6              213 Release
+ 2c67fac4dbbcd413163864a6f58974a632086e38fd4aa485bf8ebac4a1fb2fc6             2755 main/binary-amd64/Packages
+ e7aa89c5ffd9aab4ae8bc064688fbf05c79f14175658e61fbfaa2da63200ab74              846 main/binary-amd64/Packages.gz
+ 7a9d8435deb2f2a1f798434b0f4737dee2a1e4bd693015fead0b300f400bb6a1              551 main/binary-arm64/Packages
+ 45617a227e9a0decb12da4e79df7c7650580c42b02063b630e60e3b5c045e59c              412 main/binary-arm64/Packages.gz
 SHA512:
- c2d6ae80d88aa90928b9120a826f564707839eea4bd5097b3369e49f2ae29bfca496d91e890eb464e99ae9803d86d3b47ed8684cf7e027f262df9d3a873b034d              207 Release
- c93a7f167bd56378301109a6f1fd1e6fd4c5baf54dfba5c852bec21ba30fdf5cdcfe65fb5962a01f9458741053f670c8276d55f416d6af04faa1e3e9f3fbae06             2204 main/binary-amd64/Packages
- e95d76f0bb608ee183cb3f4f8004315529646393169a7860fa4bffd5982cfa756d57637d9f6c7ee25b3374b406405042c23cd2d1e2b7dbb24bc47662ba41aa4b              741 main/binary-amd64/Packages.gz
+ e7ace8842c5eee7d05eb1208f8cb5a54995bad5209b11da1340a8b58f72b84444c510e60e4822d6eb245a9d9cff0f89df850da75c33d8680343609bb9e312239              213 Release
+ 0981c8726c9a88bce63d0873b81aa2543c7e2f97f21b7d114fe5f8e2d02742141a655750bd0096185a0d4b0af4b47b00f9fcce1d1a1201b14d5d55d20ec360fc             2755 main/binary-amd64/Packages
+ bd447e9cb90856117812c4b03ca8b7f1769f422c8a027f5bc5bd5ad64282cb56cb39b1ffe4a2ef84c3471a87b239e671a3eea125d0aa000155aa01fa35d890bb              846 main/binary-amd64/Packages.gz
+ 66c8b33fe4e0ceb1c3192bc42685677b2883639093404d1c8ed9c070330150b2abea0b5e122d9295e5403aea87f1e361fdf3a6a0d3d5ebfac8bdb99feb46d5d2              551 main/binary-arm64/Packages
+ e03f2f8527b54fe48fe384a931f1eeb54d927aff7d22b0e7891934d5afe327421cacabf5efdc4879bbc1bf4894a651d13997143c9609f9bf6a4b6ddb39ea0e57              412 main/binary-arm64/Packages.gz

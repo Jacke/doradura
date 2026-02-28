@@ -1,0 +1,16 @@
+Package: dora
+Version: 0.6.6
+Architecture: arm64
+Maintainer: Stan <iamjacke@gmail.com>
+Depends: yt-dlp, ffmpeg
+Filename: pool/main/dora_0.6.6_arm64.deb
+Size: 4979786
+MD5sum: 4e682c237ae74a76bb3af45fc4fa47ab
+SHA1: 1cb5bca8287ba0b2b548c4e6311b780ea903a001
+SHA256: d1acc136a4d48c7dec1c81bd49107fa075edb0b0718e3ee0c71b7c13139f9b71
+Section: utils
+Priority: optional
+Homepage: https://github.com/Jacke/doradura
+Description: Beautiful TUI for media downloading (yt-dlp + ffmpeg)
+ dora is a terminal UI for downloading audio and video via yt-dlp and ffmpeg.
+
