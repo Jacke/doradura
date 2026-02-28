@@ -46,7 +46,7 @@ use app::{
     App, DownloadFormat, HistoryEntry, LyricsResult, LyricsViewMode, PreviewState, SlotState, Tab, ToastKind,
     YtdlpStartup,
 };
-use download_runner::{spawn_download, SlotEvent};
+use download_runner::{spawn_download, SlotEvent, SubtitleOptions};
 use events::{next_event, InputEvent};
 use settings::DoraSettings;
 use video_info::{fetch_thumbnail_art, fetch_video_info, PreviewResult};
@@ -334,7 +334,7 @@ async fn run_loop(
                 if let Some(ref c) = cookies_override {
                     s.ytdlp_cookies = c.clone();
                 }
-                let handle = spawn_download(slot.id, slot.url.clone(), slot.format, s, dl_tx.clone());
+                let handle = spawn_download(slot.id, slot.url.clone(), slot.format, s, dl_tx.clone(), None);
                 slot.cancel = Some(handle);
             }
         }
@@ -496,6 +496,11 @@ async fn run_loop(
                         app.history_popup = None;
                     } else if app.reveal_popup.is_some() {
                         app.reveal_popup = None;
+                    } else if app.preview_subs_editing {
+                        app.preview_subs_editing = false;
+                        app.preview_subs_edit_buf.clear();
+                    } else if app.preview_subs_menu {
+                        app.preview_subs_menu = false;
                     } else if app.preview_state.is_visible() {
                         // Cancel preview — restore URL input
                         let url = std::mem::take(&mut app.preview_url);
@@ -504,6 +509,12 @@ async fn run_loop(
                         app.preview_thumbnail = None;
                         app.preview_image_protocol = None;
                         app.preview_pending_url = None;
+                        app.preview_subs_menu = false;
+                        app.preview_subs_enabled = false;
+                        app.preview_subs_lang_cursor = 0;
+                        app.preview_subs_custom_lang = None;
+                        app.preview_subs_editing = false;
+                        app.preview_subs_edit_buf.clear();
                     } else if app.settings_editing {
                         app.settings_editing = false;
                         app.settings_edit_buf.clear();
@@ -745,6 +756,16 @@ fn handle_slot_event(app: &mut App, slot_id: usize, event: SlotEvent) {
                     slot.speed_history.pop_front();
                 }
             }
+        }
+        SlotEvent::BurningSubtitles => {
+            if let Some(slot) = app.slot_mut(slot_id) {
+                slot.state = SlotState::Downloading {
+                    percent: 99,
+                    speed_mbs: 0.0,
+                    eta_secs: 0,
+                };
+            }
+            app.add_toast("Burning subtitles...", ToastKind::Info);
         }
         SlotEvent::Done { path, size_mb } => {
             let info = app
@@ -1095,6 +1116,71 @@ fn handle_preview_key(
         return;
     }
 
+    // Custom language text input mode
+    if app.preview_subs_editing {
+        match key.code {
+            KeyCode::Enter => {
+                let lang = app.preview_subs_edit_buf.trim().to_string();
+                if !lang.is_empty() {
+                    app.preview_subs_custom_lang = Some(lang);
+                    app.preview_subs_enabled = true;
+                }
+                app.preview_subs_editing = false;
+                app.preview_subs_edit_buf.clear();
+            }
+            KeyCode::Esc => {
+                app.preview_subs_editing = false;
+                app.preview_subs_edit_buf.clear();
+            }
+            KeyCode::Backspace => {
+                app.preview_subs_edit_buf.pop();
+            }
+            KeyCode::Char(c) => {
+                if app.preview_subs_edit_buf.len() < 10 {
+                    app.preview_subs_edit_buf.push(c);
+                }
+            }
+            _ => {}
+        }
+        return;
+    }
+
+    // Subtitle sub-menu keys
+    if app.preview_subs_menu {
+        match key.code {
+            KeyCode::Left => {
+                if let PreviewState::Ready { ref info } = app.preview_state {
+                    if !info.subtitle_langs.is_empty() {
+                        app.preview_subs_custom_lang = None;
+                        let total = info.subtitle_langs.len();
+                        app.preview_subs_lang_cursor = (app.preview_subs_lang_cursor + total - 1) % total;
+                    }
+                }
+            }
+            KeyCode::Right => {
+                if let PreviewState::Ready { ref info } = app.preview_state {
+                    if !info.subtitle_langs.is_empty() {
+                        app.preview_subs_custom_lang = None;
+                        let total = info.subtitle_langs.len();
+                        app.preview_subs_lang_cursor = (app.preview_subs_lang_cursor + 1) % total;
+                    }
+                }
+            }
+            KeyCode::Char(' ') => {
+                app.preview_subs_enabled = !app.preview_subs_enabled;
+            }
+            KeyCode::Char('c') => {
+                app.preview_subs_editing = true;
+                app.preview_subs_edit_buf.clear();
+            }
+            KeyCode::Esc | KeyCode::Enter => {
+                app.preview_subs_menu = false;
+            }
+            _ => {}
+        }
+        return;
+    }
+
     match key.code {
         // ← → ↑ ↓ — cycle quality for MP4
         KeyCode::Left | KeyCode::Up => {
@@ -1125,6 +1211,13 @@ fn handle_preview_key(
                 DownloadFormat::Mp4 => DownloadFormat::Mp3,
             };
             app.preview_quality_cursor = 0;
+        }
+
+        // S — open subtitle menu (MP4 only)
+        KeyCode::Char('s') | KeyCode::Char('S') => {
+            if app.preview_format == DownloadFormat::Mp4 {
+                app.preview_subs_menu = true;
+            }
         }
 
         // Enter — confirm download with selected quality
@@ -1396,6 +1489,19 @@ fn handle_click_internal(
             app.preview_thumbnail = None;
             app.preview_image_protocol = None;
             app.preview_pending_url = None;
+            app.preview_subs_menu = false;
+            app.preview_subs_editing = false;
+        }
+        ClickTarget::PreviewToggleSubsMenu => {
+            app.preview_subs_menu = !app.preview_subs_menu;
+        }
+        ClickTarget::PreviewToggleSubsEnabled => {
+            app.preview_subs_enabled = !app.preview_subs_enabled;
+        }
+        ClickTarget::PreviewSubsLang(idx) => {
+            app.preview_subs_lang_cursor = idx;
+            app.preview_subs_custom_lang = None;
+            app.preview_subs_enabled = true;
         }
         ClickTarget::SettingsSelectItem(idx) => {
             app.settings_cursor = idx;
@@ -1564,6 +1670,23 @@ fn confirm_preview_download(app: &mut App, dl_tx: mpsc::Sender<(usize, SlotEvent
         String::new()
     };
 
+    // Build subtitle options if enabled and format is MP4
+    let subtitle_opts = if app.preview_subs_enabled && fmt == DownloadFormat::Mp4 {
+        let lang = if let Some(ref custom) = app.preview_subs_custom_lang {
+            custom.clone()
+        } else if let PreviewState::Ready { ref info } = app.preview_state {
+            info.subtitle_langs
+                .get(app.preview_subs_lang_cursor)
+                .cloned()
+                .unwrap_or_else(|| "en".to_string())
+        } else {
+            "en".to_string()
+        };
+        Some(SubtitleOptions { lang })
+    } else {
+        None
+    };
+
     let mut s = app.settings.clone();
     if !quality_str.is_empty() {
         s.video_quality = quality_str;
@@ -1582,14 +1705,21 @@ fn confirm_preview_download(app: &mut App, dl_tx: mpsc::Sender<(usize, SlotEvent
         slot.task_spawned = true;
         slot.thumbnail_url = thumb_url;
     }
-    let handle = spawn_download(id, url, fmt, s, dl_tx);
+    let handle = spawn_download(id, url, fmt, s, dl_tx, subtitle_opts);
     if let Some(slot) = app.slot_mut(id) {
         slot.cancel = Some(handle);
     }
 
+    // Reset preview + subtitle state
     app.preview_state = PreviewState::Hidden;
     app.preview_thumbnail = None;
     app.preview_image_protocol = None;
+    app.preview_subs_menu = false;
+    app.preview_subs_enabled = false;
+    app.preview_subs_lang_cursor = 0;
+    app.preview_subs_custom_lang = None;
+    app.preview_subs_editing = false;
+    app.preview_subs_edit_buf.clear();
 }
 
 fn open_in_browser(url: &str) {

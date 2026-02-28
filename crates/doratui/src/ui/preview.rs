@@ -328,6 +328,12 @@ fn render_quality_row(
     app: &App,
     click_map: &mut Vec<(Rect, ClickTarget)>,
 ) {
+    // When subtitle menu is open, render it instead of quality row
+    if app.preview_subs_menu {
+        render_subs_menu(f, area, info, app, click_map);
+        return;
+    }
+
     let fmt = app.preview_format;
     let cursor = app.preview_quality_cursor;
 
@@ -376,10 +382,160 @@ fn render_quality_row(
         spans.push(Span::styled(format!("{}{}{}", pre, label, suf), style));
     }
 
+    // [SRT] / [SRT ✓] button — greyed out when no subtitles available
+    if info.subtitle_langs.is_empty() {
+        spans.push(Span::styled(" [SRT] ", Style::default().fg(app.theme.surface0)));
+    } else {
+        let srt_label = if app.preview_subs_enabled {
+            " [SRT ✓] "
+        } else {
+            " [SRT] "
+        };
+        let srt_style = if app.preview_subs_enabled {
+            Style::default().fg(app.theme.green).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(app.theme.subtext)
+        };
+        let srt_w = srt_label.len() as u16;
+        click_map.push((Rect::new(x, area.y, srt_w, 1), ClickTarget::PreviewToggleSubsMenu));
+        spans.push(Span::styled(srt_label.to_string(), srt_style));
+    }
+
     f.render_widget(
         Paragraph::new(Line::from(spans)),
         Rect::new(area.x, area.y, area.width, 1),
     );
+}
+
+// ── Subtitle menu ─────────────────────────────────────────────────────────────
+
+fn render_subs_menu(f: &mut Frame, area: Rect, info: &VideoInfo, app: &App, click_map: &mut Vec<(Rect, ClickTarget)>) {
+    let theme = &app.theme;
+
+    if app.preview_subs_editing {
+        // Custom language input mode
+        let mut spans = vec![
+            Span::styled(" Language: ", Style::default().fg(theme.lavender)),
+            Span::styled(
+                &app.preview_subs_edit_buf,
+                Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
+            ),
+        ];
+        if app.blink_on {
+            spans.push(Span::styled("▌", Style::default().fg(theme.lavender)));
+        }
+        spans.push(Span::styled(
+            "  [Enter] Confirm  [Esc] Cancel",
+            Style::default().fg(theme.subtext),
+        ));
+        f.render_widget(
+            Paragraph::new(Line::from(spans)),
+            Rect::new(area.x, area.y, area.width, 1),
+        );
+        return;
+    }
+
+    // Line 1: Toggle + language list
+    let mut spans: Vec<Span> = vec![Span::styled(" Subtitles: ", Style::default().fg(theme.lavender))];
+
+    // ON / OFF toggle
+    let (on_style, off_style) = if app.preview_subs_enabled {
+        (
+            Style::default().fg(theme.green).add_modifier(Modifier::BOLD),
+            Style::default().fg(theme.subtext),
+        )
+    } else {
+        (
+            Style::default().fg(theme.subtext),
+            Style::default().fg(theme.red).add_modifier(Modifier::BOLD),
+        )
+    };
+    let on_label = if app.preview_subs_enabled { "● ON " } else { "○ ON " };
+    let off_label = if app.preview_subs_enabled { "○ OFF" } else { "● OFF" };
+
+    let toggle_x = area.x + " Subtitles: ".len() as u16;
+    click_map.push((
+        Rect::new(toggle_x, area.y, 10, 1),
+        ClickTarget::PreviewToggleSubsEnabled,
+    ));
+
+    spans.push(Span::styled(on_label, on_style));
+    spans.push(Span::styled(off_label, off_style));
+    spans.push(Span::raw("  "));
+
+    // Language list (show up to ~8 languages that fit)
+    if app.preview_subs_enabled {
+        spans.push(Span::styled("Lang: ", Style::default().fg(theme.lavender)));
+        let max_langs = 10.min(info.subtitle_langs.len());
+        let lang_x_start = area.x + spans.iter().map(|s| s.width()).sum::<usize>() as u16;
+        let mut lx = lang_x_start;
+
+        // Determine selected lang: custom overrides cursor
+        let selected_idx = if app.preview_subs_custom_lang.is_some() {
+            None // custom lang selected, no index highlighted
+        } else {
+            Some(app.preview_subs_lang_cursor)
+        };
+
+        for (i, lang) in info.subtitle_langs.iter().take(max_langs).enumerate() {
+            let is_sel = selected_idx == Some(i);
+            let style = if is_sel {
+                Style::default().fg(theme.lavender).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.subtext)
+            };
+            let pre = if is_sel { "▶" } else { " " };
+            let label = format!("{}{} ", pre, lang);
+            let w = label.len() as u16;
+            click_map.push((Rect::new(lx, area.y, w, 1), ClickTarget::PreviewSubsLang(i)));
+            spans.push(Span::styled(label, style));
+            lx += w;
+        }
+
+        // [custom] button
+        if let Some(ref custom) = app.preview_subs_custom_lang {
+            spans.push(Span::styled(
+                format!(" [{}]", custom),
+                Style::default().fg(theme.yellow).add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            spans.push(Span::styled(" [custom]", Style::default().fg(theme.subtext)));
+        }
+    }
+
+    f.render_widget(
+        Paragraph::new(Line::from(spans)),
+        Rect::new(area.x, area.y, area.width, 1),
+    );
+
+    // Line 2: hint bar for subtitle menu
+    if area.height > 1 {
+        let k = |s: &str| {
+            Span::styled(
+                s.to_string(),
+                Style::default().fg(theme.peach).add_modifier(Modifier::BOLD),
+            )
+        };
+        let d = |s: &str| Span::styled(s.to_string(), Style::default().fg(theme.subtext));
+        let sep = || Span::raw("  ");
+        let hints = vec![
+            k(" [←→]"),
+            d(" Language"),
+            sep(),
+            k("[Space]"),
+            d(" Toggle"),
+            sep(),
+            k("[c]"),
+            d(" Custom"),
+            sep(),
+            k("[Esc]"),
+            d(" Back"),
+        ];
+        f.render_widget(
+            Paragraph::new(Line::from(hints)),
+            Rect::new(area.x, area.y + 1, area.width, 1),
+        );
+    }
 }
 
 /// Build the quality option labels from the VideoInfo.
@@ -392,6 +548,11 @@ pub fn quality_list(info: &VideoInfo) -> Vec<String> {
 // ── Hint bar ──────────────────────────────────────────────────────────────────
 
 fn render_hint_bar(f: &mut Frame, area: Rect, app: &App, click_map: &mut Vec<(Rect, ClickTarget)>) {
+    // When subtitle menu is open, its own hint bar is rendered by render_subs_menu
+    if app.preview_subs_menu {
+        return;
+    }
+
     let k = |s: &str| {
         Span::styled(
             s.to_string(),
@@ -406,16 +567,11 @@ fn render_hint_bar(f: &mut Frame, area: Rect, app: &App, click_map: &mut Vec<(Re
     if mp4_hints {
         spans.extend([k(" [←→]"), d(" Quality"), sep()]);
     }
-    spans.extend([
-        k("[Tab]"),
-        d(" Toggle MP3/MP4"),
-        sep(),
-        k("[Enter]"),
-        d(" Download"),
-        sep(),
-        k("[Esc]"),
-        d(" Cancel"),
-    ]);
+    spans.extend([k("[Tab]"), d(" Toggle MP3/MP4"), sep()]);
+    if mp4_hints {
+        spans.extend([k("[S]"), d(" Subs"), sep()]);
+    }
+    spans.extend([k("[Enter]"), d(" Download"), sep(), k("[Esc]"), d(" Cancel")]);
 
     click_map.push((area, ClickTarget::PreviewDownload));
     f.render_widget(Paragraph::new(Line::from(spans)), area);

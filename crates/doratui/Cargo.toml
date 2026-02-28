@@ -43,3 +43,6 @@ dotenvy = "0.15"
 simplelog = "0.12"
 image = { version = "0.25", default-features = false, features = ["jpeg", "webp"] }
 ratatui-image = { version = "10", default-features = false, features = ["crossterm", "image-defaults"] }
+
+[dev-dependencies]
+tempfile = "3"

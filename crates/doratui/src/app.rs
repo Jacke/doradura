@@ -149,6 +149,12 @@ pub enum ClickTarget {
     GetGeniusToken,
     /// Load more results in lyrics grid.
     LyricsLoadMore,
+    /// Toggle subtitle menu visibility in preview popup.
+    PreviewToggleSubsMenu,
+    /// Toggle subtitle burn on/off.
+    PreviewToggleSubsEnabled,
+    /// Select subtitle language by index.
+    PreviewSubsLang(usize),
 }
 
 /// State of a single download slot.
@@ -341,6 +347,20 @@ pub struct App {
     pub preview_thumbnail: Option<ThumbnailArt>,
     /// High-quality image protocol (Kitty/Sixel) cached for rendering.
     pub preview_image_protocol: Option<ratatui_image::protocol::Protocol>,
+    // ── Subtitle sub-menu in preview ───────────────────────────────────────────
+    /// Whether the subtitle sub-menu is currently showing.
+    pub preview_subs_menu: bool,
+    /// Whether burned subtitles are enabled for current preview.
+    pub preview_subs_enabled: bool,
+    /// Selected subtitle language index in the available list.
+    pub preview_subs_lang_cursor: usize,
+    /// Custom subtitle language code (typed by user).
+    pub preview_subs_custom_lang: Option<String>,
+    /// Whether user is typing a custom language code.
+    pub preview_subs_editing: bool,
+    /// Text buffer for custom language input.
+    pub preview_subs_edit_buf: String,
+
     /// True when the run loop should spawn the video-info fetch task.
     pub preview_fetch_needed: bool,
     /// URL waiting for debounce before the preview fetch is dispatched.
@@ -457,6 +477,12 @@ impl App {
             preview_quality_cursor: 0,
             preview_thumbnail: None,
             preview_image_protocol: None,
+            preview_subs_menu: false,
+            preview_subs_enabled: false,
+            preview_subs_lang_cursor: 0,
+            preview_subs_custom_lang: None,
+            preview_subs_editing: false,
+            preview_subs_edit_buf: String::new(),
             preview_fetch_needed: false,
             preview_pending_url: None,
             preview_debounce: now,
@@ -746,6 +772,7 @@ impl App {
             || self.settings_editing
             || self.show_cookies_input
             || self.history_search_mode
+            || self.preview_subs_editing
             || (self.active_tab == Tab::Lyrics && !self.lyrics_query.is_empty())
     }
 

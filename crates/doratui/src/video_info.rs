@@ -4,6 +4,12 @@ use std::collections::BTreeSet;
 
 use serde_json::Value;
 
+/// Top 10 subtitle languages by Telegram user base popularity.
+const PRIORITY_LANGS: &[&str] = &["ru", "en", "uk", "es", "pt", "ar", "fa", "fr", "de", "hi"];
+
+/// Maximum number of subtitle languages shown in the selector.
+const MAX_SUBTITLE_LANGS: usize = 10;
+
 // ── Thumbnail constants ───────────────────────────────────────────────────────
 
 /// Width of the thumbnail area in characters.
@@ -31,6 +37,8 @@ pub struct VideoInfo {
     pub available_heights: Vec<u32>,
     /// URL of the uploader's channel page (if provided by yt-dlp).
     pub channel_url: Option<String>,
+    /// Available subtitle language codes (manual + auto, sorted with common langs first).
+    pub subtitle_langs: Vec<String>,
 }
 
 /// Pre-rendered thumbnail as half-block `▀` pixel pairs.
@@ -149,6 +157,34 @@ fn parse_video_info(json: &Value) -> anyhow::Result<VideoInfo> {
         .or_else(|| json["channel_url"].as_str())
         .map(str::to_string);
 
+    // Collect subtitle languages from both manual and auto-generated captions
+    let mut sub_langs: BTreeSet<String> = BTreeSet::new();
+    for key in ["subtitles", "automatic_captions"] {
+        if let Some(obj) = json[key].as_object() {
+            for lang in obj.keys() {
+                if lang != "live_chat" {
+                    sub_langs.insert(lang.clone());
+                }
+            }
+        }
+    }
+    // Priority sort: common languages first, then alphabetical; cap at 10
+    let mut subtitle_langs: Vec<String> = Vec::new();
+    for p in PRIORITY_LANGS {
+        if sub_langs.remove(*p) {
+            subtitle_langs.push(p.to_string());
+            if subtitle_langs.len() >= MAX_SUBTITLE_LANGS {
+                break;
+            }
+        }
+    }
+    for lang in sub_langs {
+        if subtitle_langs.len() >= MAX_SUBTITLE_LANGS {
+            break;
+        }
+        subtitle_langs.push(lang);
+    }
+
     Ok(VideoInfo {
         title,
         uploader,
@@ -159,6 +195,7 @@ fn parse_video_info(json: &Value) -> anyhow::Result<VideoInfo> {
         thumbnail_url,
         available_heights,
         channel_url,
+        subtitle_langs,
     })
 }
 
@@ -244,5 +281,132 @@ pub fn fmt_size(bytes: u64) -> String {
         format!("{:.1} KB", bytes as f64 / 1_024.0)
     } else {
         format!("{} B", bytes)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn make_json(subtitles: serde_json::Value, auto_captions: serde_json::Value) -> serde_json::Value {
+        json!({
+            "title": "Test Video",
+            "uploader": "Test Channel",
+            "duration": 120.0,
+            "view_count": 1000,
+            "like_count": 50,
+            "formats": [
+                {"height": 720, "vcodec": "avc1", "acodec": "mp4a"},
+                {"height": 1080, "vcodec": "avc1", "acodec": "mp4a"},
+                {"height": 480, "vcodec": "avc1", "acodec": "mp4a"},
+            ],
+            "subtitles": subtitles,
+            "automatic_captions": auto_captions,
+        })
+    }
+
+    #[test]
+    fn parse_manual_subtitles() {
+        let json = make_json(json!({"en": [{"ext": "srt"}], "fr": [{"ext": "vtt"}]}), json!({}));
+        let info = parse_video_info(&json).unwrap();
+        assert!(info.subtitle_langs.contains(&"en".to_string()));
+        assert!(info.subtitle_langs.contains(&"fr".to_string()));
+    }
+
+    #[test]
+    fn parse_auto_generated_subtitles() {
+        let json = make_json(
+            json!({}),
+            json!({"en": [{"ext": "srv3"}], "ru": [{"ext": "srv3"}], "de": [{"ext": "json3"}]}),
+        );
+        let info = parse_video_info(&json).unwrap();
+        assert!(info.subtitle_langs.contains(&"en".to_string()));
+        assert!(info.subtitle_langs.contains(&"ru".to_string()));
+        assert!(info.subtitle_langs.contains(&"de".to_string()));
+    }
+
+    #[test]
+    fn parse_mixed_manual_and_auto_subtitles() {
+        let json = make_json(
+            json!({"en": [{"ext": "srt"}]}),
+            json!({"en": [{"ext": "srv3"}], "ja": [{"ext": "srv3"}]}),
+        );
+        let info = parse_video_info(&json).unwrap();
+        // "en" should appear only once (deduped via BTreeSet)
+        let en_count = info.subtitle_langs.iter().filter(|l| *l == "en").count();
+        assert_eq!(en_count, 1);
+        assert!(info.subtitle_langs.contains(&"ja".to_string()));
+    }
+
+    #[test]
+    fn live_chat_excluded() {
+        let json = make_json(
+            json!({"en": [{"ext": "srt"}], "live_chat": [{"ext": "json"}]}),
+            json!({}),
+        );
+        let info = parse_video_info(&json).unwrap();
+        assert!(!info.subtitle_langs.contains(&"live_chat".to_string()));
+        assert!(info.subtitle_langs.contains(&"en".to_string()));
+    }
+
+    #[test]
+    fn priority_languages_sorted_first() {
+        let json = make_json(json!({"zz": [], "aa": [], "en": [], "fr": [], "ru": []}), json!({}));
+        let info = parse_video_info(&json).unwrap();
+        // Priority order: ru, en, fr come before non-priority aa, zz
+        let ru_pos = info.subtitle_langs.iter().position(|l| l == "ru").unwrap();
+        let en_pos = info.subtitle_langs.iter().position(|l| l == "en").unwrap();
+        let fr_pos = info.subtitle_langs.iter().position(|l| l == "fr").unwrap();
+        let aa_pos = info.subtitle_langs.iter().position(|l| l == "aa").unwrap();
+        assert!(ru_pos < en_pos, "ru should be before en (first priority)");
+        assert!(en_pos < fr_pos, "en should be before fr");
+        assert!(fr_pos < aa_pos, "fr should be before aa");
+    }
+
+    #[test]
+    fn capped_at_10_languages() {
+        // 15 languages — should be truncated to 10
+        let json = make_json(
+            json!({
+                "en": [], "ru": [], "uk": [], "es": [], "pt": [],
+                "ar": [], "fa": [], "fr": [], "de": [], "hi": [],
+                "ja": [], "ko": [], "it": [], "nl": [], "sv": []
+            }),
+            json!({}),
+        );
+        let info = parse_video_info(&json).unwrap();
+        assert_eq!(info.subtitle_langs.len(), 10);
+        // All 10 priority langs should be present
+        assert!(info.subtitle_langs.contains(&"ru".to_string()));
+        assert!(info.subtitle_langs.contains(&"en".to_string()));
+        assert!(info.subtitle_langs.contains(&"hi".to_string()));
+        // Non-priority langs (ja, ko, etc.) should be cut off
+        assert!(!info.subtitle_langs.contains(&"ja".to_string()));
+    }
+
+    #[test]
+    fn no_subtitles_returns_empty_vec() {
+        let json = make_json(json!({}), json!({}));
+        let info = parse_video_info(&json).unwrap();
+        assert!(info.subtitle_langs.is_empty());
+    }
+
+    #[test]
+    fn no_subtitle_keys_in_json() {
+        let json = json!({
+            "title": "No Subs Video",
+            "duration": 60.0,
+            "formats": [],
+        });
+        let info = parse_video_info(&json).unwrap();
+        assert!(info.subtitle_langs.is_empty());
+    }
+
+    #[test]
+    fn heights_sorted_descending() {
+        let json = make_json(json!({}), json!({}));
+        let info = parse_video_info(&json).unwrap();
+        assert_eq!(info.available_heights, vec![1080, 720, 480]);
     }
 }
