@@ -49,6 +49,7 @@ impl Tab {
 
 /// State of the video preview popup.
 #[derive(Debug, Clone, Default)]
+#[allow(clippy::large_enum_variant)]
 pub enum PreviewState {
     #[default]
     Hidden,

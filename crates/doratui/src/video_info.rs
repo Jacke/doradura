@@ -39,6 +39,9 @@ pub struct VideoInfo {
     pub channel_url: Option<String>,
     /// Available subtitle language codes (manual + auto, sorted with common langs first).
     pub subtitle_langs: Vec<String>,
+    /// Set of language codes that have manual (human-written) subtitles.
+    /// Languages NOT in this set are auto-generated only.
+    pub manual_sub_langs: std::collections::HashSet<String>,
 }
 
 /// Pre-rendered thumbnail as half-block `▀` pixel pairs.
@@ -157,17 +160,27 @@ fn parse_video_info(json: &Value) -> anyhow::Result<VideoInfo> {
         .or_else(|| json["channel_url"].as_str())
         .map(str::to_string);
 
-    // Collect subtitle languages from both manual and auto-generated captions
-    let mut sub_langs: BTreeSet<String> = BTreeSet::new();
-    for key in ["subtitles", "automatic_captions"] {
-        if let Some(obj) = json[key].as_object() {
-            for lang in obj.keys() {
-                if lang != "live_chat" {
-                    sub_langs.insert(lang.clone());
-                }
+    // Collect manual subtitle languages
+    let mut manual_sub_langs = std::collections::HashSet::new();
+    if let Some(obj) = json["subtitles"].as_object() {
+        for lang in obj.keys() {
+            if lang != "live_chat" {
+                manual_sub_langs.insert(lang.clone());
             }
         }
     }
+
+    // Collect all subtitle languages (manual + auto-generated), deduped
+    let mut sub_langs: BTreeSet<String> = BTreeSet::new();
+    sub_langs.extend(manual_sub_langs.iter().cloned());
+    if let Some(obj) = json["automatic_captions"].as_object() {
+        for lang in obj.keys() {
+            if lang != "live_chat" {
+                sub_langs.insert(lang.clone());
+            }
+        }
+    }
+
     // Priority sort: common languages first, then alphabetical; cap at 10
     let mut subtitle_langs: Vec<String> = Vec::new();
     for p in PRIORITY_LANGS {
@@ -196,6 +209,7 @@ fn parse_video_info(json: &Value) -> anyhow::Result<VideoInfo> {
         available_heights,
         channel_url,
         subtitle_langs,
+        manual_sub_langs,
     })
 }
 
@@ -386,10 +400,23 @@ mod tests {
     }
 
     #[test]
+    fn manual_vs_auto_distinction() {
+        let json = make_json(
+            json!({"en": [{"ext": "srt"}]}),                           // manual
+            json!({"en": [{"ext": "srv3"}], "ru": [{"ext": "srv3"}]}), // auto
+        );
+        let info = parse_video_info(&json).unwrap();
+        // "en" has manual subs, "ru" is auto-only
+        assert!(info.manual_sub_langs.contains("en"));
+        assert!(!info.manual_sub_langs.contains("ru"));
+    }
+
+    #[test]
     fn no_subtitles_returns_empty_vec() {
         let json = make_json(json!({}), json!({}));
         let info = parse_video_info(&json).unwrap();
         assert!(info.subtitle_langs.is_empty());
+        assert!(info.manual_sub_langs.is_empty());
     }
 
     #[test]

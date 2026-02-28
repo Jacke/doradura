@@ -463,44 +463,45 @@ fn render_subs_menu(f: &mut Frame, area: Rect, info: &VideoInfo, app: &App, clic
     spans.push(Span::styled(off_label, off_style));
     spans.push(Span::raw("  "));
 
-    // Language list (show up to ~8 languages that fit)
-    if app.preview_subs_enabled {
-        spans.push(Span::styled("Lang: ", Style::default().fg(theme.lavender)));
-        let max_langs = 10.min(info.subtitle_langs.len());
-        let lang_x_start = area.x + spans.iter().map(|s| s.width()).sum::<usize>() as u16;
-        let mut lx = lang_x_start;
+    // Language list (always visible so user can browse before enabling)
+    spans.push(Span::styled("Lang: ", Style::default().fg(theme.lavender)));
+    let max_langs = 10.min(info.subtitle_langs.len());
+    let lang_x_start = area.x + spans.iter().map(|s| s.width()).sum::<usize>() as u16;
+    let mut lx = lang_x_start;
 
-        // Determine selected lang: custom overrides cursor
-        let selected_idx = if app.preview_subs_custom_lang.is_some() {
-            None // custom lang selected, no index highlighted
+    // Determine selected lang: custom overrides cursor
+    let selected_idx = if app.preview_subs_custom_lang.is_some() {
+        None // custom lang selected, no index highlighted
+    } else {
+        Some(app.preview_subs_lang_cursor)
+    };
+
+    for (i, lang) in info.subtitle_langs.iter().take(max_langs).enumerate() {
+        let is_sel = selected_idx == Some(i);
+        let is_auto = !info.manual_sub_langs.contains(lang);
+        let style = if is_sel {
+            Style::default().fg(theme.lavender).add_modifier(Modifier::BOLD)
         } else {
-            Some(app.preview_subs_lang_cursor)
+            Style::default().fg(theme.subtext)
         };
+        let pre = if is_sel { "▶" } else { " " };
+        // Mark auto-generated languages with a dim suffix
+        let suffix = if is_auto { "°" } else { "" };
+        let label = format!("{}{}{} ", pre, lang, suffix);
+        let w = label.len() as u16;
+        click_map.push((Rect::new(lx, area.y, w, 1), ClickTarget::PreviewSubsLang(i)));
+        spans.push(Span::styled(label, style));
+        lx += w;
+    }
 
-        for (i, lang) in info.subtitle_langs.iter().take(max_langs).enumerate() {
-            let is_sel = selected_idx == Some(i);
-            let style = if is_sel {
-                Style::default().fg(theme.lavender).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(theme.subtext)
-            };
-            let pre = if is_sel { "▶" } else { " " };
-            let label = format!("{}{} ", pre, lang);
-            let w = label.len() as u16;
-            click_map.push((Rect::new(lx, area.y, w, 1), ClickTarget::PreviewSubsLang(i)));
-            spans.push(Span::styled(label, style));
-            lx += w;
-        }
-
-        // [custom] button
-        if let Some(ref custom) = app.preview_subs_custom_lang {
-            spans.push(Span::styled(
-                format!(" [{}]", custom),
-                Style::default().fg(theme.yellow).add_modifier(Modifier::BOLD),
-            ));
-        } else {
-            spans.push(Span::styled(" [custom]", Style::default().fg(theme.subtext)));
-        }
+    // [custom] button
+    if let Some(ref custom) = app.preview_subs_custom_lang {
+        spans.push(Span::styled(
+            format!(" [{}]", custom),
+            Style::default().fg(theme.yellow).add_modifier(Modifier::BOLD),
+        ));
+    } else {
+        spans.push(Span::styled(" [custom]", Style::default().fg(theme.subtext)));
     }
 
     f.render_widget(
@@ -518,7 +519,8 @@ fn render_subs_menu(f: &mut Frame, area: Rect, info: &VideoInfo, app: &App, clic
         };
         let d = |s: &str| Span::styled(s.to_string(), Style::default().fg(theme.subtext));
         let sep = || Span::raw("  ");
-        let hints = vec![
+        let has_auto = info.subtitle_langs.iter().any(|l| !info.manual_sub_langs.contains(l));
+        let mut hints = vec![
             k(" [←→]"),
             d(" Language"),
             sep(),
@@ -531,6 +533,9 @@ fn render_subs_menu(f: &mut Frame, area: Rect, info: &VideoInfo, app: &App, clic
             k("[Esc]"),
             d(" Back"),
         ];
+        if has_auto {
+            hints.extend([sep(), d("(° = auto)")]);
+        }
         f.render_widget(
             Paragraph::new(Line::from(hints)),
             Rect::new(area.x, area.y + 1, area.width, 1),

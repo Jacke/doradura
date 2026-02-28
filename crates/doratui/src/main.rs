@@ -1152,6 +1152,7 @@ fn handle_preview_key(
                 if let PreviewState::Ready { ref info } = app.preview_state {
                     if !info.subtitle_langs.is_empty() {
                         app.preview_subs_custom_lang = None;
+                        app.preview_subs_enabled = true;
                         let total = info.subtitle_langs.len();
                         app.preview_subs_lang_cursor = (app.preview_subs_lang_cursor + total - 1) % total;
                     }
@@ -1161,6 +1162,7 @@ fn handle_preview_key(
                 if let PreviewState::Ready { ref info } = app.preview_state {
                     if !info.subtitle_langs.is_empty() {
                         app.preview_subs_custom_lang = None;
+                        app.preview_subs_enabled = true;
                         let total = info.subtitle_langs.len();
                         app.preview_subs_lang_cursor = (app.preview_subs_lang_cursor + 1) % total;
                     }
@@ -1213,10 +1215,11 @@ fn handle_preview_key(
             app.preview_quality_cursor = 0;
         }
 
-        // S — open subtitle menu (MP4 only)
+        // S — open subtitle menu (MP4 only); auto-enables subs
         KeyCode::Char('s') | KeyCode::Char('S') => {
             if app.preview_format == DownloadFormat::Mp4 {
                 app.preview_subs_menu = true;
+                app.preview_subs_enabled = true;
             }
         }
 
