@@ -17,7 +17,7 @@ r2d2_sqlite = "0.25"
 refinery = { version = "0.8", features = ["rusqlite"] }
 
 # HTTP
-reqwest = { version = "0.12", features = ["json", "socks", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "socks", "stream", "rustls-tls"] }
 
 # Error handling
 thiserror = "1.0"
