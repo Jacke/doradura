@@ -20,6 +20,7 @@ pub fn create_fallback_keyboard(
     default_quality: Option<&str>,
     url_id: &str,
     audio_bitrate: Option<&str>,
+    is_youtube: bool,
 ) -> InlineKeyboardMarkup {
     log::debug!(
         "Creating fallback preview keyboard (format={}, quality={:?}, url_id={})",
@@ -66,6 +67,13 @@ pub fn create_fallback_keyboard(
         )]);
     }
 
+    if is_youtube && (default_format == "mp4" || default_format == "mp4+mp3") {
+        rows.push(vec![crate::telegram::cb(
+            "🔤 Burn subtitles".to_string(),
+            format!("pv:burn_subs:{}", url_id),
+        )]);
+    }
+
     rows.push(vec![crate::telegram::cb(
         "⚙️ Settings".to_string(),
         format!("pv:set:{}", url_id),
@@ -91,6 +99,7 @@ pub fn create_video_format_keyboard(
     send_as_document: i32,
     default_format: &str,
     audio_bitrate: Option<&str>,
+    is_youtube: bool,
 ) -> InlineKeyboardMarkup {
     log::debug!(
         "Creating video format keyboard (formats={}, default_quality={:?}, url_id={}, send_as_document={}, format={})",
@@ -228,6 +237,14 @@ pub fn create_video_format_keyboard(
         .to_string(),
         format!("video_send_type:toggle:{}", url_id),
     )]);
+
+    // Burn subtitles button for YouTube videos
+    if is_youtube {
+        buttons.push(vec![crate::telegram::cb(
+            "🔤 Burn subtitles".to_string(),
+            format!("pv:burn_subs:{}", url_id),
+        )]);
+    }
 
     // Settings button
     buttons.push(vec![crate::telegram::cb(

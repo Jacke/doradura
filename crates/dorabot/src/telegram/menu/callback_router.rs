@@ -1128,6 +1128,249 @@ pub async fn handle_menu_callback(
                                 .await?;
                             }
                         }
+                        "burn_subs" => {
+                            let _ = bot.answer_callback_query(callback_id.clone()).await;
+                            let url_id = parts[2];
+                            // Show language picker, then download+burn+send
+                            let lang_options = vec![
+                                vec![
+                                    crate::telegram::cb("en".to_string(), format!("pv:burn_subs_dl:en:{}", url_id)),
+                                    crate::telegram::cb("ru".to_string(), format!("pv:burn_subs_dl:ru:{}", url_id)),
+                                    crate::telegram::cb("uk".to_string(), format!("pv:burn_subs_dl:uk:{}", url_id)),
+                                    crate::telegram::cb("es".to_string(), format!("pv:burn_subs_dl:es:{}", url_id)),
+                                    crate::telegram::cb("pt".to_string(), format!("pv:burn_subs_dl:pt:{}", url_id)),
+                                ],
+                                vec![
+                                    crate::telegram::cb("ar".to_string(), format!("pv:burn_subs_dl:ar:{}", url_id)),
+                                    crate::telegram::cb("fa".to_string(), format!("pv:burn_subs_dl:fa:{}", url_id)),
+                                    crate::telegram::cb("fr".to_string(), format!("pv:burn_subs_dl:fr:{}", url_id)),
+                                    crate::telegram::cb("de".to_string(), format!("pv:burn_subs_dl:de:{}", url_id)),
+                                    crate::telegram::cb("hi".to_string(), format!("pv:burn_subs_dl:hi:{}", url_id)),
+                                ],
+                                vec![crate::telegram::cb(
+                                    "❌ Cancel".to_string(),
+                                    format!("pv:cancel:{}", url_id),
+                                )],
+                            ];
+                            let keyboard = teloxide::types::InlineKeyboardMarkup::new(lang_options);
+                            bot.send_message(chat_id, "🔤 Choose subtitle language:")
+                                .reply_markup(keyboard)
+                                .await?;
+                            bot.delete_message(chat_id, message_id).await.ok();
+                        }
+                        // pv:burn_subs_dl — parts[2] = "lang:url_id"
+                        "burn_subs_dl" => {
+                            let _ = bot.answer_callback_query(callback_id.clone()).await;
+                            let rest = parts[2]; // "en:abc123"
+                            let (lang_code, url_id) = match rest.split_once(':') {
+                                Some((l, u)) => (l.to_string(), u.to_string()),
+                                None => return Ok(()),
+                            };
+                            bot.delete_message(chat_id, message_id).await.ok();
+
+                            let url_str = match cache::get_url(&db_pool, &url_id).await {
+                                Some(u) => u,
+                                None => {
+                                    bot.send_message(chat_id, "❌ Link expired, please send the URL again")
+                                        .await?;
+                                    return Ok(());
+                                }
+                            };
+
+                            let user_lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
+                            let mut fl_args = fluent_templates::fluent_bundle::FluentArgs::new();
+                            fl_args.set("lang", lang_code.as_str());
+                            let status_text =
+                                crate::i18n::t_args(&user_lang, "video_circle.burn_subs_status", &fl_args);
+                            let processing_msg = bot.send_message(chat_id, status_text).await?;
+
+                            // Get user quality preference
+                            let video_quality = crate::storage::db::get_connection(&db_pool)
+                                .ok()
+                                .map(|conn| {
+                                    crate::storage::db::get_user_video_quality(&conn, chat_id.0)
+                                        .unwrap_or_else(|_| "best".to_string())
+                                })
+                                .unwrap_or_else(|| "best".to_string());
+
+                            let bot_clone = bot.clone();
+                            let db_pool_clone = Arc::clone(&db_pool);
+                            let username_clone = q.from.username.clone();
+
+                            tokio::spawn(async move {
+                                use crate::core::config;
+                                use crate::storage::db;
+
+                                let temp_dir = std::path::PathBuf::from(config::TEMP_FILES_DIR.as_str())
+                                    .join("doradura_burn_subs");
+                                if let Err(e) = tokio::fs::create_dir_all(&temp_dir).await {
+                                    log::error!("Failed to create burn_subs temp dir: {}", e);
+                                    bot_clone
+                                        .edit_message_text(chat_id, processing_msg.id, "❌ Internal error")
+                                        .await
+                                        .ok();
+                                    return;
+                                }
+
+                                let unique_id = uuid::Uuid::new_v4();
+                                let input_path = temp_dir.join(format!("input_{}_{}.mp4", chat_id.0, unique_id));
+
+                                // Download video via yt-dlp
+                                let ytdl_bin = &*config::YTDL_BIN;
+                                let quality_arg = format!(
+                                    "bestvideo[height<={}]+bestaudio/best[height<={}]/best",
+                                    video_quality.replace("p", ""),
+                                    video_quality.replace("p", ""),
+                                );
+                                let mut args: Vec<&str> = vec![
+                                    "-f",
+                                    &quality_arg,
+                                    "--merge-output-format",
+                                    "mp4",
+                                    "-o",
+                                    input_path.to_str().unwrap_or_default(),
+                                    "--no-playlist",
+                                ];
+                                crate::download::metadata::add_cookies_args(&mut args);
+                                args.push(&url_str);
+
+                                let mut cmd = tokio::process::Command::new(ytdl_bin);
+                                cmd.args(&args);
+                                let dl_result =
+                                    crate::core::process::run_with_timeout(&mut cmd, config::download::ytdlp_timeout())
+                                        .await;
+
+                                match dl_result {
+                                    Ok(output) if output.status.success() => {}
+                                    Ok(output) => {
+                                        let stderr = String::from_utf8_lossy(&output.stderr);
+                                        log::error!("yt-dlp download failed for burn_subs: {}", stderr);
+                                        bot_clone
+                                            .edit_message_text(
+                                                chat_id,
+                                                processing_msg.id,
+                                                "❌ Failed to download video",
+                                            )
+                                            .await
+                                            .ok();
+                                        return;
+                                    }
+                                    Err(e) => {
+                                        log::error!("yt-dlp command failed: {}", e);
+                                        bot_clone
+                                            .edit_message_text(
+                                                chat_id,
+                                                processing_msg.id,
+                                                "❌ Failed to download video",
+                                            )
+                                            .await
+                                            .ok();
+                                        return;
+                                    }
+                                }
+
+                                // Find the actual downloaded file (yt-dlp may adjust the name)
+                                let actual_input = crate::download::metadata::find_actual_downloaded_file(
+                                    input_path.to_str().unwrap_or_default(),
+                                )
+                                .map(std::path::PathBuf::from)
+                                .unwrap_or_else(|_| input_path.clone());
+
+                                // Burn subtitles
+                                let actual_path = crate::telegram::commands::burn_circle_subtitles(
+                                    &url_str,
+                                    &lang_code,
+                                    &actual_input,
+                                    &temp_dir,
+                                    chat_id.0,
+                                    unique_id.as_u128() as i64,
+                                )
+                                .await;
+
+                                if actual_path == actual_input {
+                                    bot_clone
+                                        .edit_message_text(
+                                            chat_id,
+                                            processing_msg.id,
+                                            format!("❌ No {} subtitles found for this video", lang_code),
+                                        )
+                                        .await
+                                        .ok();
+                                    tokio::fs::remove_file(&actual_input).await.ok();
+                                    return;
+                                }
+
+                                // Send the video
+                                let send_result = bot_clone
+                                    .send_video(chat_id, teloxide::types::InputFile::file(&actual_path))
+                                    .caption(format!("[{} subs]", lang_code))
+                                    .await;
+
+                                match send_result {
+                                    Ok(sent_message) => {
+                                        bot_clone.delete_message(chat_id, processing_msg.id).await.ok();
+
+                                        // Save to history
+                                        if let Ok(conn) = db::get_connection(&db_pool_clone) {
+                                            let new_file_id = sent_message
+                                                .video()
+                                                .map(|v| v.file.id.0.clone())
+                                                .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
+                                            let file_size = tokio::fs::metadata(&actual_path)
+                                                .await
+                                                .map(|m| m.len() as i64)
+                                                .unwrap_or(0);
+                                            if let Some(fid) = new_file_id {
+                                                let title = format!("[{} subs]", lang_code);
+                                                if let Ok(db_id) = db::save_download_history(
+                                                    &conn,
+                                                    chat_id.0,
+                                                    &url_str,
+                                                    &title,
+                                                    "mp4",
+                                                    Some(&fid),
+                                                    None,
+                                                    Some(file_size),
+                                                    None,
+                                                    None,
+                                                    None,
+                                                    None,
+                                                    None,
+                                                ) {
+                                                    let _ = db::update_download_message_id(
+                                                        &conn,
+                                                        db_id,
+                                                        sent_message.id.0,
+                                                        chat_id.0,
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        log::error!("Failed to send video with burned subs: {}", e);
+                                        bot_clone
+                                            .edit_message_text(chat_id, processing_msg.id, "❌ Failed to send video")
+                                            .await
+                                            .ok();
+                                        crate::telegram::notifications::notify_admin_video_error(
+                                            &bot_clone,
+                                            chat_id.0,
+                                            username_clone.as_deref(),
+                                            &e.to_string(),
+                                            &format!("pv:burn_subs_dl: {} on '{}'", lang_code, url_str),
+                                        )
+                                        .await;
+                                    }
+                                }
+
+                                // Cleanup
+                                tokio::fs::remove_file(&actual_path).await.ok();
+                                if actual_path != actual_input {
+                                    tokio::fs::remove_file(&actual_input).await.ok();
+                                }
+                            });
+                        }
                         _ => {
                             bot.answer_callback_query(callback_id.clone())
                                 .text("Unknown action")

@@ -190,6 +190,15 @@ pub async fn send_preview(
     let url_id = cache::store_url(&db_pool, url.as_str()).await;
     log::debug!("Stored URL {} with ID: {}", url.as_str(), url_id);
 
+    let is_youtube = {
+        let u = url.as_str();
+        u.contains("://youtube.com/")
+            || u.contains("://www.youtube.com/")
+            || u.contains("://m.youtube.com/")
+            || u.contains("://music.youtube.com/")
+            || u.contains("://youtu.be/")
+    };
+
     let (send_as_document, audio_bitrate) = match crate::storage::db::get_connection(&db_pool) {
         Ok(conn) => {
             let send_as_document = if has_video_formats {
@@ -224,7 +233,13 @@ pub async fn send_preview(
                     default_format
                 );
                 // If the formats list is empty, create a standard button
-                create_fallback_keyboard(default_format, default_quality, &url_id, Some(audio_bitrate.as_str()))
+                create_fallback_keyboard(
+                    default_format,
+                    default_quality,
+                    &url_id,
+                    Some(audio_bitrate.as_str()),
+                    is_youtube,
+                )
             } else {
                 // Default to mp4+mp3 so that quality buttons queue both video and MP3
                 let format_for_keyboard = if default_format == "mp4" || default_format == "mp4+mp3" {
@@ -246,11 +261,18 @@ pub async fn send_preview(
                     send_as_document,
                     format_for_keyboard,
                     Some(audio_bitrate.as_str()),
+                    is_youtube,
                 )
             }
         } else {
             // If video_formats is None — create a standard button
-            create_fallback_keyboard(default_format, default_quality, &url_id, Some(audio_bitrate.as_str()))
+            create_fallback_keyboard(
+                default_format,
+                default_quality,
+                &url_id,
+                Some(audio_bitrate.as_str()),
+                is_youtube,
+            )
         }
     } else {
         // For other formats or if video_formats is None — standard buttons
@@ -259,7 +281,13 @@ pub async fn send_preview(
             default_format,
             metadata.video_formats.is_some()
         );
-        create_fallback_keyboard(default_format, default_quality, &url_id, Some(audio_bitrate.as_str()))
+        create_fallback_keyboard(
+            default_format,
+            default_quality,
+            &url_id,
+            Some(audio_bitrate.as_str()),
+            is_youtube,
+        )
     };
 
     // Instagram links don't need the settings button — remove it
@@ -465,6 +493,15 @@ pub async fn update_preview_message(
     // Store URL in cache and get a short ID
     let url_id = cache::store_url(&db_pool, url.as_str()).await;
 
+    let is_youtube = {
+        let u = url.as_str();
+        u.contains("://youtube.com/")
+            || u.contains("://www.youtube.com/")
+            || u.contains("://m.youtube.com/")
+            || u.contains("://music.youtube.com/")
+            || u.contains("://youtu.be/")
+    };
+
     let mut resolved_quality = default_quality.map(|q| q.to_string());
     let mut audio_bitrate = "320k".to_string();
     let mut send_as_document = 0;
@@ -493,7 +530,13 @@ pub async fn update_preview_message(
     } else if has_video_formats {
         let formats = filtered_formats.as_deref().unwrap_or(&[]);
         if formats.is_empty() {
-            create_fallback_keyboard(default_format, default_quality, &url_id, Some(audio_bitrate.as_str()))
+            create_fallback_keyboard(
+                default_format,
+                default_quality,
+                &url_id,
+                Some(audio_bitrate.as_str()),
+                is_youtube,
+            )
         } else {
             create_video_format_keyboard(
                 formats,
@@ -502,10 +545,17 @@ pub async fn update_preview_message(
                 send_as_document,
                 "mp4+mp3",
                 Some(audio_bitrate.as_str()),
+                is_youtube,
             )
         }
     } else {
-        create_fallback_keyboard(default_format, default_quality, &url_id, Some(audio_bitrate.as_str()))
+        create_fallback_keyboard(
+            default_format,
+            default_quality,
+            &url_id,
+            Some(audio_bitrate.as_str()),
+            is_youtube,
+        )
     };
 
     // Instagram links don't need the settings button — remove it
