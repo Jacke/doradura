@@ -205,6 +205,16 @@ impl DownloadSource for VlipsySource {
 
         let total_size = response.content_length();
 
+        // Ensure parent directory exists (DOWNLOAD_FOLDER may not exist yet)
+        if let Some(parent) = std::path::Path::new(&request.output_path).parent() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                AppError::Download(DownloadError::Vlipsy(format!(
+                    "Failed to create directory: {}",
+                    e
+                )))
+            })?;
+        }
+
         let mut file = std::fs::File::create(&request.output_path)
             .map_err(|e| AppError::Download(DownloadError::Vlipsy(format!("Failed to create file: {}", e))))?;
 
