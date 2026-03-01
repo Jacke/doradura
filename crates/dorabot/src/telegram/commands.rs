@@ -387,6 +387,16 @@ pub async fn handle_message(
                 }
             };
 
+            // Force mp4 for video-only sources (Vlipsy clips are always video)
+            let format = if urls.iter().all(|u| {
+                let host = Url::parse(u).ok().and_then(|p| p.host_str().map(String::from));
+                matches!(host.as_deref(), Some("vlipsy.com" | "www.vlipsy.com"))
+            }) {
+                "mp4".to_string()
+            } else {
+                format
+            };
+
             // Check rate limit before processing URLs
             let plan = user_info.as_ref().map(|u| u.plan.as_str()).unwrap_or("free");
             let plan_string = plan.to_string();
