@@ -780,14 +780,19 @@ pub async fn burn_subtitles_into_video(
 
     // ffmpeg command for burning subtitles into video
     // Use the subtitles filter to overlay subtitles on the video
+    // force_style ensures visible rendering: white text, black outline, DejaVu Sans font
     // -c:v libx264 — use H.264 codec for video
     // -c:a copy — copy audio without re-encoding
     // -preset fast — faster encoding speed
+    let vf_filter = format!(
+        "subtitles='{}':force_style='FontName=DejaVu Sans,FontSize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1'",
+        escaped_subtitle_path
+    );
     let mut cmd = TokioCommand::new("ffmpeg");
     cmd.arg("-i")
         .arg(video_path)
         .arg("-vf")
-        .arg(format!("subtitles='{}'", escaped_subtitle_path))
+        .arg(&vf_filter)
         .arg("-c:v")
         .arg("libx264")
         .arg("-c:a")
@@ -800,9 +805,9 @@ pub async fn burn_subtitles_into_video(
         .stderr(Stdio::piped());
 
     log::info!(
-        "🎬 Running ffmpeg command: ffmpeg -i {} -vf subtitles='{}' -c:v libx264 -c:a copy -preset fast -y {}",
+        "🎬 Running ffmpeg command: ffmpeg -i {} -vf '{}' -c:v libx264 -c:a copy -preset fast -y {}",
         video_path,
-        escaped_subtitle_path,
+        vf_filter,
         output_path
     );
 

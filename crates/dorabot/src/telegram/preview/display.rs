@@ -245,8 +245,10 @@ pub async fn send_preview(
                     burn_sub_lang.as_deref(),
                 )
             } else {
-                // Default to mp4+mp3 so that quality buttons queue both video and MP3
-                let format_for_keyboard = if default_format == "mp4" || default_format == "mp4+mp3" {
+                // When burn subs is active, use mp4 only (no MP3 alongside)
+                let format_for_keyboard = if burn_sub_lang.is_some() {
+                    "mp4"
+                } else if default_format == "mp4" || default_format == "mp4+mp3" {
                     "mp4+mp3"
                 } else {
                     "mp4"
@@ -549,12 +551,14 @@ pub async fn update_preview_message(
                 burn_sub_lang.as_deref(),
             )
         } else {
+            // When burn subs is active, use mp4 only (no MP3 alongside)
+            let format_for_keyboard = if burn_sub_lang.is_some() { "mp4" } else { "mp4+mp3" };
             create_video_format_keyboard(
                 formats,
                 resolved_quality.as_deref(),
                 &url_id,
                 send_as_document,
-                "mp4+mp3",
+                format_for_keyboard,
                 Some(audio_bitrate.as_str()),
                 is_youtube,
                 burn_sub_lang.as_deref(),

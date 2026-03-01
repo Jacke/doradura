@@ -531,7 +531,8 @@ async fn maybe_burn_subtitles(file_path: &str, url: &Url, db_pool: &Option<Arc<D
         .unwrap_or("video");
 
     let download_folder = shellexpand::tilde(&*config::DOWNLOAD_FOLDER).into_owned();
-    let subtitle_path = format!("{}/{}_subs.srt", download_folder, safe_base);
+    // Don't add .srt extension — yt-dlp adds .{lang}.srt automatically
+    let subtitle_path = format!("{}/{}_subs", download_folder, safe_base);
 
     let ytdl_bin = &*config::YTDL_BIN;
     let mut subtitle_args: Vec<&str> = vec![

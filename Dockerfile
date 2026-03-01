@@ -85,7 +85,10 @@ RUN apk add --no-cache \
   pango-dev \
   jpeg-dev \
   giflib-dev \
-  pixman-dev && \
+  pixman-dev \
+  ttf-dejavu \
+  fontconfig && \
+  fc-cache -f && \
   node --version && echo "Node.js available for yt-dlp --js-runtimes node"
 
 # Install curl-impersonate for Instagram TLS fingerprint spoofing
