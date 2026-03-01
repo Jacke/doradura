@@ -190,6 +190,9 @@ pub async fn send_preview(
     let url_id = cache::store_url(&db_pool, url.as_str()).await;
     log::debug!("Stored URL {} with ID: {}", url.as_str(), url_id);
 
+    // Look up per-URL burn subtitle language from cache
+    let burn_sub_lang = crate::telegram::cache::get_burn_sub_lang(url.as_str()).await;
+
     let is_youtube = {
         let u = url.as_str();
         u.contains("://youtube.com/")
@@ -239,6 +242,7 @@ pub async fn send_preview(
                     &url_id,
                     Some(audio_bitrate.as_str()),
                     is_youtube,
+                    burn_sub_lang.as_deref(),
                 )
             } else {
                 // Default to mp4+mp3 so that quality buttons queue both video and MP3
@@ -262,6 +266,7 @@ pub async fn send_preview(
                     format_for_keyboard,
                     Some(audio_bitrate.as_str()),
                     is_youtube,
+                    burn_sub_lang.as_deref(),
                 )
             }
         } else {
@@ -272,6 +277,7 @@ pub async fn send_preview(
                 &url_id,
                 Some(audio_bitrate.as_str()),
                 is_youtube,
+                burn_sub_lang.as_deref(),
             )
         }
     } else {
@@ -287,6 +293,7 @@ pub async fn send_preview(
             &url_id,
             Some(audio_bitrate.as_str()),
             is_youtube,
+            burn_sub_lang.as_deref(),
         )
     };
 
@@ -493,6 +500,9 @@ pub async fn update_preview_message(
     // Store URL in cache and get a short ID
     let url_id = cache::store_url(&db_pool, url.as_str()).await;
 
+    // Look up per-URL burn subtitle language from cache
+    let burn_sub_lang = crate::telegram::cache::get_burn_sub_lang(url.as_str()).await;
+
     let is_youtube = {
         let u = url.as_str();
         u.contains("://youtube.com/")
@@ -536,6 +546,7 @@ pub async fn update_preview_message(
                 &url_id,
                 Some(audio_bitrate.as_str()),
                 is_youtube,
+                burn_sub_lang.as_deref(),
             )
         } else {
             create_video_format_keyboard(
@@ -546,6 +557,7 @@ pub async fn update_preview_message(
                 "mp4+mp3",
                 Some(audio_bitrate.as_str()),
                 is_youtube,
+                burn_sub_lang.as_deref(),
             )
         }
     } else {
@@ -555,6 +567,7 @@ pub async fn update_preview_message(
             &url_id,
             Some(audio_bitrate.as_str()),
             is_youtube,
+            burn_sub_lang.as_deref(),
         )
     };
 

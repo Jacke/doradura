@@ -21,6 +21,7 @@ pub fn create_fallback_keyboard(
     url_id: &str,
     audio_bitrate: Option<&str>,
     is_youtube: bool,
+    burn_sub_lang: Option<&str>,
 ) -> InlineKeyboardMarkup {
     log::debug!(
         "Creating fallback preview keyboard (format={}, quality={:?}, url_id={})",
@@ -67,11 +68,12 @@ pub fn create_fallback_keyboard(
         )]);
     }
 
-    if is_youtube && (default_format == "mp4" || default_format == "mp4+mp3") {
-        rows.push(vec![crate::telegram::cb(
-            "🔤 Burn subtitles".to_string(),
-            format!("pv:burn_subs:{}", url_id),
-        )]);
+    if (default_format == "mp4" || default_format == "mp4+mp3") && (is_youtube || burn_sub_lang.is_some()) {
+        let label = match burn_sub_lang {
+            Some(lang) => format!("🔤 Subs: {} ✓", lang),
+            None => "🔤 Burn subtitles".to_string(),
+        };
+        rows.push(vec![crate::telegram::cb(label, format!("pv:burn_subs:{}", url_id))]);
     }
 
     rows.push(vec![crate::telegram::cb(
@@ -100,6 +102,7 @@ pub fn create_video_format_keyboard(
     default_format: &str,
     audio_bitrate: Option<&str>,
     is_youtube: bool,
+    burn_sub_lang: Option<&str>,
 ) -> InlineKeyboardMarkup {
     log::debug!(
         "Creating video format keyboard (formats={}, default_quality={:?}, url_id={}, send_as_document={}, format={})",
@@ -238,12 +241,13 @@ pub fn create_video_format_keyboard(
         format!("video_send_type:toggle:{}", url_id),
     )]);
 
-    // Burn subtitles button for YouTube videos
-    if is_youtube {
-        buttons.push(vec![crate::telegram::cb(
-            "🔤 Burn subtitles".to_string(),
-            format!("pv:burn_subs:{}", url_id),
-        )]);
+    // Burn subtitles button for YouTube videos (or when a language is already selected)
+    if is_youtube || burn_sub_lang.is_some() {
+        let label = match burn_sub_lang {
+            Some(lang) => format!("🔤 Subs: {} ✓", lang),
+            None => "🔤 Burn subtitles".to_string(),
+        };
+        buttons.push(vec![crate::telegram::cb(label, format!("pv:burn_subs:{}", url_id))]);
     }
 
     // Settings button
@@ -363,5 +367,115 @@ mod tests {
             ],
         ]);
         assert_eq!(keyboard_stats(&keyboard), (3, 6));
+    }
+
+    // ==================== burn_sub_lang button tests ====================
+
+    /// Helper: find a button by label substring in the keyboard
+    fn find_button_text(keyboard: &InlineKeyboardMarkup, needle: &str) -> Option<String> {
+        for row in &keyboard.inline_keyboard {
+            for btn in row {
+                if btn.text.contains(needle) {
+                    return Some(btn.text.clone());
+                }
+            }
+        }
+        None
+    }
+
+    /// Helper: check if any button's callback data contains the given substring
+    fn has_callback_containing(keyboard: &InlineKeyboardMarkup, needle: &str) -> bool {
+        keyboard.inline_keyboard.iter().any(|row| {
+            row.iter().any(|btn| {
+                matches!(
+                    &btn.kind,
+                    teloxide::types::InlineKeyboardButtonKind::CallbackData(d) if d.contains(needle)
+                )
+            })
+        })
+    }
+
+    #[test]
+    fn test_fallback_keyboard_youtube_no_lang_shows_burn_subs() {
+        let kb = create_fallback_keyboard("mp4", Some("1080p"), "test_id", Some("320k"), true, None);
+        assert_eq!(
+            find_button_text(&kb, "Burn subtitles"),
+            Some("🔤 Burn subtitles".to_string())
+        );
+    }
+
+    #[test]
+    fn test_fallback_keyboard_youtube_with_lang_shows_subs_lang() {
+        let kb = create_fallback_keyboard("mp4", Some("1080p"), "test_id", Some("320k"), true, Some("en"));
+        assert_eq!(find_button_text(&kb, "Subs:"), Some("🔤 Subs: en ✓".to_string()));
+        // Should NOT also show "Burn subtitles"
+        assert_eq!(find_button_text(&kb, "Burn subtitles"), None);
+    }
+
+    #[test]
+    fn test_fallback_keyboard_not_youtube_no_burn_subs_button() {
+        let kb = create_fallback_keyboard("mp4", Some("1080p"), "test_id", Some("320k"), false, None);
+        assert_eq!(find_button_text(&kb, "Burn subtitles"), None);
+        assert_eq!(find_button_text(&kb, "Subs:"), None);
+    }
+
+    #[test]
+    fn test_fallback_keyboard_mp3_no_burn_subs_button() {
+        // Burn subs only makes sense for video formats
+        let kb = create_fallback_keyboard("mp3", None, "test_id", Some("320k"), true, None);
+        assert_eq!(find_button_text(&kb, "Burn subtitles"), None);
+    }
+
+    #[test]
+    fn test_video_format_keyboard_youtube_no_lang_shows_burn_subs() {
+        let formats = vec![VideoFormatInfo {
+            quality: "1080p".to_string(),
+            size_bytes: Some(100_000_000),
+            resolution: Some("1920x1080".to_string()),
+        }];
+        let kb = create_video_format_keyboard(&formats, Some("1080p"), "test_id", 0, "mp4", Some("320k"), true, None);
+        assert_eq!(
+            find_button_text(&kb, "Burn subtitles"),
+            Some("🔤 Burn subtitles".to_string())
+        );
+    }
+
+    #[test]
+    fn test_video_format_keyboard_youtube_with_lang_shows_subs_lang() {
+        let formats = vec![VideoFormatInfo {
+            quality: "1080p".to_string(),
+            size_bytes: Some(100_000_000),
+            resolution: Some("1920x1080".to_string()),
+        }];
+        let kb = create_video_format_keyboard(
+            &formats,
+            Some("1080p"),
+            "test_id",
+            0,
+            "mp4",
+            Some("320k"),
+            true,
+            Some("ru"),
+        );
+        assert_eq!(find_button_text(&kb, "Subs:"), Some("🔤 Subs: ru ✓".to_string()));
+        assert_eq!(find_button_text(&kb, "Burn subtitles"), None);
+    }
+
+    #[test]
+    fn test_video_format_keyboard_not_youtube_no_burn_subs() {
+        let formats = vec![VideoFormatInfo {
+            quality: "720p".to_string(),
+            size_bytes: Some(50_000_000),
+            resolution: Some("1280x720".to_string()),
+        }];
+        let kb = create_video_format_keyboard(&formats, Some("720p"), "test_id", 0, "mp4", Some("320k"), false, None);
+        assert_eq!(find_button_text(&kb, "Burn subtitles"), None);
+        assert_eq!(find_button_text(&kb, "Subs:"), None);
+    }
+
+    #[test]
+    fn test_burn_subs_callback_data_format() {
+        let kb = create_fallback_keyboard("mp4", Some("1080p"), "abc123", Some("320k"), true, Some("de"));
+        assert!(has_callback_containing(&kb, "pv:burn_subs:abc123"));
     }
 }

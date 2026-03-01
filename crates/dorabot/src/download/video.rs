@@ -491,25 +491,39 @@ async fn get_thumbnail_url(url: &Url) -> Option<String> {
     }
 }
 
-/// Burn subtitles into video if user has the setting enabled.
+/// Burn subtitles into video if requested.
+///
+/// Checks (in order):
+/// 1. Per-URL cached language from the preview "Burn subtitles" button
+/// 2. User DB settings (download_subtitles + burn_subtitles flags with "en,ru")
 ///
 /// Returns the final file path (with or without burned subtitles).
 async fn maybe_burn_subtitles(file_path: &str, url: &Url, db_pool: &Option<Arc<DbPool>>, chat_id: ChatId) -> String {
-    let Some(ref pool) = db_pool else {
-        return file_path.to_string();
+    // Check for per-URL burn subtitle language (from preview button)
+    let cached_lang = crate::telegram::cache::get_burn_sub_lang(url.as_str()).await;
+
+    let sub_lang = if let Some(lang) = cached_lang {
+        log::info!("Using cached burn subtitle language '{}' for {}", lang, url.as_str());
+        lang
+    } else {
+        // Fall through to existing DB settings check
+        let Some(ref pool) = db_pool else {
+            return file_path.to_string();
+        };
+        let Ok(conn) = db::get_connection(pool) else {
+            return file_path.to_string();
+        };
+
+        let download_subs = db::get_user_download_subtitles(&conn, chat_id.0).unwrap_or(false);
+        let burn_subs = db::get_user_burn_subtitles(&conn, chat_id.0).unwrap_or(false);
+
+        if !(download_subs && burn_subs) {
+            return file_path.to_string();
+        }
+
+        log::info!("User DB settings request burned subtitles (en,ru)");
+        "en,ru".to_string()
     };
-    let Ok(conn) = db::get_connection(pool) else {
-        return file_path.to_string();
-    };
-
-    let download_subs = db::get_user_download_subtitles(&conn, chat_id.0).unwrap_or(false);
-    let burn_subs = db::get_user_burn_subtitles(&conn, chat_id.0).unwrap_or(false);
-
-    if !(download_subs && burn_subs) {
-        return file_path.to_string();
-    }
-
-    log::info!("User requested burned subtitles — downloading and burning");
 
     let safe_base = std::path::Path::new(file_path)
         .file_stem()
@@ -524,7 +538,7 @@ async fn maybe_burn_subtitles(file_path: &str, url: &Url, db_pool: &Option<Arc<D
         "--write-subs",
         "--write-auto-subs",
         "--sub-lang",
-        "en,ru",
+        &sub_lang,
         "--sub-format",
         "srt",
         "--convert-subs",
