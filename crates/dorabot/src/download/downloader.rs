@@ -18,6 +18,7 @@ use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
+use std::time::Duration;
 use teloxide::prelude::*;
 use teloxide::types::InputFile;
 use tokio::process::Command as TokioCommand;
@@ -798,20 +799,24 @@ pub async fn burn_subtitles_into_video(
         .arg("-c:a")
         .arg("copy")
         .arg("-preset")
-        .arg("fast")
+        .arg("ultrafast")
         .arg("-y") // Overwrite output file if it exists
         .arg(output_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
+    // 10 minutes — re-encoding a full video with libx264 is much slower than
+    // stream-copy operations (splitting, thumbnails) that use FFMPEG_TIMEOUT (120s).
+    const BURN_TIMEOUT: Duration = Duration::from_secs(600);
+
     log::info!(
-        "🎬 Running ffmpeg command: ffmpeg -i {} -vf '{}' -c:v libx264 -c:a copy -preset fast -y {}",
+        "🎬 Running ffmpeg command: ffmpeg -i {} -vf '{}' -c:v libx264 -c:a copy -preset ultrafast -y {}",
         video_path,
         vf_filter,
         output_path
     );
 
-    let output = run_with_timeout(&mut cmd, FFMPEG_TIMEOUT).await?;
+    let output = run_with_timeout(&mut cmd, BURN_TIMEOUT).await?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

@@ -1463,7 +1463,7 @@ pub async fn process_video_clip(
     // --- Subtitle burning (if requested for circle) ---
     let actual_input_path = if is_video_note {
         if let Some(ref sub_lang) = session.subtitle_lang {
-            burn_circle_subtitles(
+            match burn_circle_subtitles(
                 &session.original_url,
                 sub_lang,
                 &input_path,
@@ -1472,6 +1472,10 @@ pub async fn process_video_clip(
                 session.source_id,
             )
             .await
+            {
+                BurnSubsResult::Burned(path) => path,
+                BurnSubsResult::NotFound | BurnSubsResult::Failed(_) => input_path.clone(),
+            }
         } else {
             input_path.clone()
         }
@@ -2066,6 +2070,16 @@ pub async fn process_video_clip(
 
 /// Download SRT subtitles via yt-dlp and burn them into the source video.
 /// Returns the path to the video with burned subtitles, or the original path on failure.
+/// Result of a subtitle burn attempt.
+pub enum BurnSubsResult {
+    /// Subtitles were burned successfully; contains the new video path.
+    Burned(std::path::PathBuf),
+    /// No subtitles available for the requested language.
+    NotFound,
+    /// Subtitles exist but download/burn failed (rate-limit, network, ffmpeg error, etc.).
+    Failed(String),
+}
+
 pub async fn burn_circle_subtitles(
     url: &str,
     lang: &str,
@@ -2073,7 +2087,7 @@ pub async fn burn_circle_subtitles(
     temp_dir: &std::path::Path,
     chat_id: i64,
     source_id: i64,
-) -> std::path::PathBuf {
+) -> BurnSubsResult {
     use tokio::process::Command as TokioCommand;
 
     let srt_base = temp_dir.join(format!("subs_{}_{}", chat_id, source_id));
@@ -2133,7 +2147,7 @@ pub async fn burn_circle_subtitles(
                         log::info!("🔥 Burned subtitles into circle source");
                         tokio::fs::remove_file(input_path).await.ok();
                         tokio::fs::remove_file(&sub_path).await.ok();
-                        return output_with_subs;
+                        BurnSubsResult::Burned(output_with_subs)
                     }
                     Err(e) => {
                         log::warn!(
@@ -2142,24 +2156,28 @@ pub async fn burn_circle_subtitles(
                         );
                         tokio::fs::remove_file(&sub_path).await.ok();
                         tokio::fs::remove_file(&output_with_subs).await.ok();
+                        BurnSubsResult::Failed(format!("ffmpeg error: {e}"))
                     }
                 }
             } else {
                 log::warn!("Subtitle file not found after yt-dlp download for circle");
+                BurnSubsResult::NotFound
             }
         }
         Ok(output) => {
-            log::warn!(
-                "yt-dlp subtitle download failed for circle: {}",
-                String::from_utf8_lossy(&output.stderr)
-            );
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            log::warn!("yt-dlp subtitle download failed for circle: {}", stderr);
+            // Distinguish "no subs" from download errors (429, network, etc.)
+            if stderr.contains("has no subtitles") || stderr.contains("no subtitles") {
+                return BurnSubsResult::NotFound;
+            }
+            BurnSubsResult::Failed(stderr)
         }
         Err(e) => {
             log::warn!("Failed to execute yt-dlp for circle subtitles: {}", e);
+            BurnSubsResult::Failed(format!("{e}"))
         }
     }
-
-    input_path.to_path_buf()
 }
 
 async fn process_audio_cut(

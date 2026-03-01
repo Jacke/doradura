@@ -1755,7 +1755,8 @@ pub async fn handle_downloads_callback(
                         }
 
                         // Burn subtitles using existing function from commands.rs
-                        let actual_path = crate::telegram::commands::burn_circle_subtitles(
+                        use crate::telegram::commands::BurnSubsResult;
+                        let burn_result = crate::telegram::commands::burn_circle_subtitles(
                             &url,
                             &lang_code,
                             &input_path,
@@ -1765,18 +1766,41 @@ pub async fn handle_downloads_callback(
                         )
                         .await;
 
-                        // Check if subtitles were actually burned (path changed from input)
-                        if actual_path == input_path {
-                            bot.edit_message_text(
-                                chat_id,
-                                processing_msg.id,
-                                format!("❌ No {} subtitles found for this video", lang_code),
-                            )
-                            .await
-                            .ok();
-                            tokio::fs::remove_file(&input_path).await.ok();
-                            return;
-                        }
+                        let actual_path = match burn_result {
+                            BurnSubsResult::Burned(path) => path,
+                            BurnSubsResult::NotFound => {
+                                bot.edit_message_text(
+                                    chat_id,
+                                    processing_msg.id,
+                                    format!("❌ No {} subtitles found for this video", lang_code),
+                                )
+                                .await
+                                .ok();
+                                tokio::fs::remove_file(&input_path).await.ok();
+                                return;
+                            }
+                            BurnSubsResult::Failed(reason) => {
+                                log::error!("❌ Subtitle burn failed: {}", reason);
+                                // Truncate reason for Telegram (keep last meaningful line)
+                                let short_reason = reason
+                                    .lines()
+                                    .rev()
+                                    .find(|l| l.starts_with("ERROR:") || l.contains("Error"))
+                                    .unwrap_or(&reason)
+                                    .chars()
+                                    .take(200)
+                                    .collect::<String>();
+                                bot.edit_message_text(
+                                    chat_id,
+                                    processing_msg.id,
+                                    format!("❌ Failed to burn {} subtitles: {}", lang_code, short_reason),
+                                )
+                                .await
+                                .ok();
+                                tokio::fs::remove_file(&input_path).await.ok();
+                                return;
+                            }
+                        };
 
                         // Send the video with burned subtitles
                         let caption = format!("{} [{} subs]", title, lang_code);
