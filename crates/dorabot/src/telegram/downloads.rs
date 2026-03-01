@@ -621,7 +621,6 @@ pub async fn handle_downloads_callback(
                         .parse_mode(ParseMode::MarkdownV2)
                         .reply_markup(keyboard)
                         .await?;
-                    bot.send_message(chat_id, download.url.clone()).await.ok();
                 }
             }
         }
@@ -684,7 +683,6 @@ pub async fn handle_downloads_callback(
                         .parse_mode(ParseMode::MarkdownV2)
                         .reply_markup(keyboard)
                         .await?;
-                    bot.send_message(chat_id, cut.original_url.clone()).await.ok();
                 }
             }
         }
@@ -909,7 +907,7 @@ pub async fn handle_downloads_callback(
                     .parse_mode(ParseMode::MarkdownV2)
                     .reply_markup(keyboard)
                     .await?;
-                bot.send_message(chat_id, download.url.clone()).await.ok();
+
                 bot.delete_message(chat_id, message_id).await.ok();
             }
         }
@@ -950,7 +948,7 @@ pub async fn handle_downloads_callback(
                     "downloads:clip_cancel".to_string(),
                 )]]);
                 bot.send_message(chat_id, "✂️ Send the intervals to clip in the format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nMultiple ranges separated by commas\\.\n\nExample: `00:10-00:25, 01:00-01:10`").parse_mode(ParseMode::MarkdownV2).reply_markup(keyboard).await?;
-                bot.send_message(chat_id, cut.original_url.clone()).await.ok();
+
                 bot.delete_message(chat_id, message_id).await.ok();
             }
         }
@@ -1022,7 +1020,6 @@ pub async fn handle_downloads_callback(
                     .parse_mode(ParseMode::MarkdownV2)
                     .reply_markup(keyboard)
                     .await?;
-                bot.send_message(chat_id, download.url.clone()).await.ok();
                 bot.delete_message(chat_id, message_id).await.ok();
             }
         }
@@ -1063,7 +1060,6 @@ pub async fn handle_downloads_callback(
                     "downloads:clip_cancel".to_string(),
                 )]]);
                 bot.send_message(chat_id, "⭕️ Send the intervals for the circle in the format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nMultiple ranges separated by commas\\.\n\nExample: `00:10-00:25` or `first30 2x`").parse_mode(ParseMode::MarkdownV2).reply_markup(keyboard).await?;
-                bot.send_message(chat_id, cut.original_url.clone()).await.ok();
                 bot.delete_message(chat_id, message_id).await.ok();
             }
         }
@@ -1384,7 +1380,7 @@ pub async fn handle_downloads_callback(
                 .parse_mode(ParseMode::MarkdownV2)
                 .reply_markup(keyboard)
                 .await?;
-                bot.send_message(chat_id, download.url.clone()).await.ok();
+
                 bot.delete_message(chat_id, message_id).await.ok();
             }
         }
@@ -1428,7 +1424,7 @@ pub async fn handle_downloads_callback(
                 .parse_mode(ParseMode::MarkdownV2)
                 .reply_markup(keyboard)
                 .await?;
-                bot.send_message(chat_id, cut.original_url.clone()).await.ok();
+
                 bot.delete_message(chat_id, message_id).await.ok();
             }
         }
@@ -1459,7 +1455,7 @@ pub async fn handle_downloads_callback(
                     match change_video_speed(bot, chat_id, &file_id, speed, &download.title).await {
                         Ok((sent_message, file_size)) => {
                             bot.delete_message(chat_id, processing_msg.id).await.ok();
-                            bot.send_message(chat_id, download.url.clone()).await.ok();
+
                             let new_title = format!("{} [speed {}x]", download.title, speed_str);
                             let new_duration = download.duration.map(|d| ((d as f32) / speed).round().max(1.0) as i64);
                             let new_file_id = sent_message
@@ -1537,7 +1533,7 @@ pub async fn handle_downloads_callback(
                     match change_video_speed(bot, chat_id, &file_id, speed, &cut.title).await {
                         Ok((sent_message, file_size)) => {
                             bot.delete_message(chat_id, processing_msg.id).await.ok();
-                            bot.send_message(chat_id, cut.original_url.clone()).await.ok();
+
                             // Note: Speed change of a cut produces a new cut?
                             // For simplicity, we could save it to download_history or as a new cut.
                             // Existing change_video_speed logic for downloads saves to download_history.
