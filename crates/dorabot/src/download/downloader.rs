@@ -739,6 +739,92 @@ pub async fn split_video_into_parts(path: &str, target_part_size_bytes: u64) -> 
     Ok(parts)
 }
 
+/// Cleans overlapping timestamps in SRT subtitles (common with YouTube auto-captions).
+///
+/// YouTube auto-generated captions produce overlapping entries where each new line
+/// starts before the previous one ends, causing ffmpeg/libass to stack them on screen.
+/// This function:
+/// 1. Removes consecutive entries with identical text (YouTube "builds up" captions)
+/// 2. Trims end times so entry N-1 ends when entry N starts (no overlap)
+/// 3. Re-numbers entries sequentially
+fn clean_srt_overlaps(path: &str) {
+    let content = match fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            log::warn!("Could not read SRT for cleanup: {e}");
+            return;
+        }
+    };
+
+    let mut entries: Vec<(String, String, String)> = Vec::new(); // (start, end, text)
+
+    // Parse SRT blocks separated by blank lines
+    for block in content.split("\n\n") {
+        let block = block.trim();
+        if block.is_empty() {
+            continue;
+        }
+        let lines: Vec<&str> = block.lines().collect();
+        // SRT format: index, timestamp line, text lines
+        if lines.len() < 3 {
+            continue;
+        }
+        // Find the timestamp line (contains " --> ")
+        let ts_idx = match lines.iter().position(|l| l.contains(" --> ")) {
+            Some(i) => i,
+            None => continue,
+        };
+        let ts_parts: Vec<&str> = lines[ts_idx].split(" --> ").collect();
+        if ts_parts.len() != 2 {
+            continue;
+        }
+        let start = ts_parts[0].trim().to_string();
+        let end = ts_parts[1].trim().to_string();
+        let text: String = lines[ts_idx + 1..].join("\n");
+        entries.push((start, end, text));
+    }
+
+    if entries.is_empty() {
+        return;
+    }
+
+    // Step 1: Remove consecutive entries with identical text
+    let mut deduped: Vec<(String, String, String)> = Vec::with_capacity(entries.len());
+    for entry in entries {
+        if let Some(last) = deduped.last() {
+            if last.2.trim() == entry.2.trim() {
+                continue; // skip duplicate text
+            }
+        }
+        deduped.push(entry);
+    }
+
+    // Step 2: Trim overlapping end times — if entry N starts before N-1 ends,
+    // set N-1's end to N's start
+    for i in 1..deduped.len() {
+        let next_start = deduped[i].0.clone();
+        let prev_end = &deduped[i - 1].1;
+        if prev_end > &next_start {
+            deduped[i - 1].1 = next_start;
+        }
+    }
+
+    // Step 3: Write back as SRT
+    let mut out = String::new();
+    for (i, (start, end, text)) in deduped.iter().enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        out.push_str(&format!("{}\n{} --> {}\n{}\n", i + 1, start, end, text));
+    }
+
+    if let Err(e) = fs::write(path, &out) {
+        log::warn!("Could not write cleaned SRT: {e}");
+    } else {
+        log::info!("🧹 Cleaned SRT overlaps: {path}");
+    }
+}
+
 /// # use doradura::core::error::AppError;
 /// # use doradura::download::downloader::burn_subtitles_into_video;
 /// # async fn run() -> Result<(), AppError> {
@@ -771,6 +857,9 @@ pub async fn burn_subtitles_into_video(
             subtitle_path
         ))));
     }
+
+    // Clean overlapping timestamps from YouTube auto-captions
+    clean_srt_overlaps(subtitle_path);
 
     // Escape subtitle path for ffmpeg filter
     // Important: ffmpeg requires escaping special characters in the path
