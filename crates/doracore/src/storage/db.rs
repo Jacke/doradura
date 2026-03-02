@@ -743,6 +743,142 @@ pub fn set_user_burn_subtitles(conn: &DbConnection, telegram_id: i64, enabled: b
     Ok(())
 }
 
+// ==================== Subtitle Style Settings ====================
+
+/// User's subtitle style preferences for burned subtitles.
+#[derive(Debug, Clone)]
+pub struct SubtitleStyle {
+    pub font_size: String,
+    pub text_color: String,
+    pub outline_color: String,
+    pub outline_width: i32,
+    pub shadow: i32,
+    pub position: String,
+}
+
+impl Default for SubtitleStyle {
+    fn default() -> Self {
+        Self {
+            font_size: "medium".to_string(),
+            text_color: "white".to_string(),
+            outline_color: "black".to_string(),
+            outline_width: 2,
+            shadow: 1,
+            position: "bottom".to_string(),
+        }
+    }
+}
+
+impl SubtitleStyle {
+    /// Builds the ffmpeg force_style string from subtitle settings.
+    pub fn to_force_style(&self) -> String {
+        let font_size = match self.font_size.as_str() {
+            "small" => 16,
+            "medium" => 24,
+            "large" => 32,
+            "xlarge" => 40,
+            _ => 24,
+        };
+
+        let primary_colour = match self.text_color.as_str() {
+            "white" => "&H00FFFFFF",
+            "yellow" => "&H0000FFFF",
+            "cyan" => "&H00FFFF00",
+            "green" => "&H0000FF00",
+            _ => "&H00FFFFFF",
+        };
+
+        let outline_colour = match self.outline_color.as_str() {
+            "black" => "&H00000000",
+            "dark_gray" => "&H00404040",
+            "none" => "&HFF000000",
+            _ => "&H00000000",
+        };
+
+        // ASS Alignment: bottom-center=2, top-center=8
+        let alignment = match self.position.as_str() {
+            "top" => 8,
+            _ => 2,
+        };
+
+        format!(
+            "FontName=DejaVu Sans,FontSize={},PrimaryColour={},OutlineColour={},Outline={},Shadow={},Alignment={}",
+            font_size, primary_colour, outline_colour, self.outline_width, self.shadow, alignment
+        )
+    }
+}
+
+/// Gets the subtitle style settings for a user.
+pub fn get_user_subtitle_style(conn: &DbConnection, telegram_id: i64) -> Result<SubtitleStyle> {
+    let mut stmt = conn.prepare(
+        "SELECT subtitle_font_size, subtitle_text_color, subtitle_outline_color, \
+         subtitle_outline_width, subtitle_shadow, subtitle_position \
+         FROM users WHERE telegram_id = ?",
+    )?;
+    let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
+
+    if let Some(row) = rows.next()? {
+        Ok(SubtitleStyle {
+            font_size: row.get(0).unwrap_or_else(|_| "medium".to_string()),
+            text_color: row.get(1).unwrap_or_else(|_| "white".to_string()),
+            outline_color: row.get(2).unwrap_or_else(|_| "black".to_string()),
+            outline_width: row.get(3).unwrap_or(2),
+            shadow: row.get(4).unwrap_or(1),
+            position: row.get(5).unwrap_or_else(|_| "bottom".to_string()),
+        })
+    } else {
+        Ok(SubtitleStyle::default())
+    }
+}
+
+pub fn set_user_subtitle_font_size(conn: &DbConnection, telegram_id: i64, value: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE users SET subtitle_font_size = ?1 WHERE telegram_id = ?2",
+        [&value as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
+    )?;
+    Ok(())
+}
+
+pub fn set_user_subtitle_text_color(conn: &DbConnection, telegram_id: i64, value: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE users SET subtitle_text_color = ?1 WHERE telegram_id = ?2",
+        [&value as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
+    )?;
+    Ok(())
+}
+
+pub fn set_user_subtitle_outline_color(conn: &DbConnection, telegram_id: i64, value: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE users SET subtitle_outline_color = ?1 WHERE telegram_id = ?2",
+        [&value as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
+    )?;
+    Ok(())
+}
+
+pub fn set_user_subtitle_outline_width(conn: &DbConnection, telegram_id: i64, value: i32) -> Result<()> {
+    conn.execute(
+        "UPDATE users SET subtitle_outline_width = ?1 WHERE telegram_id = ?2",
+        [&value as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
+    )?;
+    Ok(())
+}
+
+pub fn set_user_subtitle_shadow(conn: &DbConnection, telegram_id: i64, value: i32) -> Result<()> {
+    conn.execute(
+        "UPDATE users SET subtitle_shadow = ?1 WHERE telegram_id = ?2",
+        [&value as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
+    )?;
+    Ok(())
+}
+
+pub fn set_user_subtitle_position(conn: &DbConnection, telegram_id: i64, value: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE users SET subtitle_position = ?1 WHERE telegram_id = ?2",
+        [&value as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
+    )?;
+    Ok(())
+}
+
 /// Gets the progress bar style of the user.
 pub fn get_user_progress_bar_style(conn: &DbConnection, telegram_id: i64) -> Result<String> {
     let mut stmt = conn.prepare("SELECT progress_bar_style FROM users WHERE telegram_id = ?")?;

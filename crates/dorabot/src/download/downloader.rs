@@ -652,7 +652,8 @@ pub async fn download_and_send_subtitles(
 /// ```no_run
 /// # use doradura::download::downloader::burn_subtitles_into_video;
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// burn_subtitles_into_video("input.mp4", "subtitles.srt", "output.mp4").await?;
+/// let style = db::SubtitleStyle::default();
+/// burn_subtitles_into_video("input.mp4", "subtitles.srt", "output.mp4", &style).await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -828,7 +829,8 @@ fn clean_srt_overlaps(path: &str) {
 /// # use doradura::core::error::AppError;
 /// # use doradura::download::downloader::burn_subtitles_into_video;
 /// # async fn run() -> Result<(), AppError> {
-/// burn_subtitles_into_video("video.mp4", "subtitles.srt", "video_with_subs.mp4").await?;
+/// let style = db::SubtitleStyle::default();
+/// burn_subtitles_into_video("video.mp4", "subtitles.srt", "video_with_subs.mp4", &style).await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -836,6 +838,7 @@ pub async fn burn_subtitles_into_video(
     video_path: &str,
     subtitle_path: &str,
     output_path: &str,
+    style: &db::SubtitleStyle,
 ) -> Result<(), AppError> {
     log::info!(
         "🔥 Burning subtitles into video: {} + {} -> {}",
@@ -868,16 +871,8 @@ pub async fn burn_subtitles_into_video(
         .replace(":", "\\:")
         .replace("'", "\\'");
 
-    // ffmpeg command for burning subtitles into video
-    // Use the subtitles filter to overlay subtitles on the video
-    // force_style ensures visible rendering: white text, black outline, DejaVu Sans font
-    // -c:v libx264 — use H.264 codec for video
-    // -c:a copy — copy audio without re-encoding
-    // -preset fast — faster encoding speed
-    let vf_filter = format!(
-        "subtitles='{}':force_style='FontName=DejaVu Sans,FontSize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2,Shadow=1'",
-        escaped_subtitle_path
-    );
+    let force_style = style.to_force_style();
+    let vf_filter = format!("subtitles='{}':force_style='{}'", escaped_subtitle_path, force_style);
     let mut cmd = TokioCommand::new("ffmpeg");
     cmd.arg("-i")
         .arg(video_path)

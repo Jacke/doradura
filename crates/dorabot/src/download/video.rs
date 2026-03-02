@@ -525,6 +525,13 @@ async fn maybe_burn_subtitles(file_path: &str, url: &Url, db_pool: &Option<Arc<D
         "en,ru".to_string()
     };
 
+    // Fetch subtitle style from DB (use default if no pool or error)
+    let subtitle_style = db_pool
+        .as_ref()
+        .and_then(|pool| db::get_connection(pool).ok())
+        .and_then(|conn| db::get_user_subtitle_style(&conn, chat_id.0).ok())
+        .unwrap_or_default();
+
     let safe_base = std::path::Path::new(file_path)
         .file_stem()
         .and_then(|s| s.to_str())
@@ -575,7 +582,7 @@ async fn maybe_burn_subtitles(file_path: &str, url: &Url, db_pool: &Option<Arc<D
 
                 let output_with_subs = format!("{}_with_subs.mp4", file_path.trim_end_matches(".mp4"));
 
-                match burn_subtitles_into_video(file_path, &sub_file, &output_with_subs).await {
+                match burn_subtitles_into_video(file_path, &sub_file, &output_with_subs, &subtitle_style).await {
                     Ok(_) => {
                         log::info!("Successfully burned subtitles into video");
                         let _ = std::fs::remove_file(file_path);

@@ -651,7 +651,8 @@ pub async fn download_and_send_subtitles(
 /// ```no_run
 /// # use doradura::download::downloader::burn_subtitles_into_video;
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// burn_subtitles_into_video("input.mp4", "subtitles.srt", "output.mp4").await?;
+/// let style = db::SubtitleStyle::default();
+/// burn_subtitles_into_video("input.mp4", "subtitles.srt", "output.mp4", &style).await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -741,7 +742,8 @@ pub async fn split_video_into_parts(path: &str, target_part_size_bytes: u64) -> 
 /// # use doradura::core::error::AppError;
 /// # use doradura::download::downloader::burn_subtitles_into_video;
 /// # async fn run() -> Result<(), AppError> {
-/// burn_subtitles_into_video("video.mp4", "subtitles.srt", "video_with_subs.mp4").await?;
+/// let style = db::SubtitleStyle::default();
+/// burn_subtitles_into_video("video.mp4", "subtitles.srt", "video_with_subs.mp4", &style).await?;
 /// # Ok(())
 /// # }
 /// ```
@@ -749,6 +751,7 @@ pub async fn burn_subtitles_into_video(
     video_path: &str,
     subtitle_path: &str,
     output_path: &str,
+    style: &db::SubtitleStyle,
 ) -> Result<(), AppError> {
     log::info!(
         "🔥 Burning subtitles into video: {} + {} -> {}",
@@ -778,16 +781,16 @@ pub async fn burn_subtitles_into_video(
         .replace(":", "\\:")
         .replace("'", "\\'");
 
-    // ffmpeg command for burning subtitles into video
-    // Use the subtitles filter to overlay subtitles on the video
-    // -c:v libx264 — use H.264 codec for video
-    // -c:a copy — copy audio without re-encoding
-    // -preset fast — faster encoding speed
+    let force_style = style.to_force_style();
+    let vf_filter = format!(
+        "subtitles='{}':force_style='{}'",
+        escaped_subtitle_path, force_style
+    );
     let mut cmd = TokioCommand::new("ffmpeg");
     cmd.arg("-i")
         .arg(video_path)
         .arg("-vf")
-        .arg(format!("subtitles='{}'", escaped_subtitle_path))
+        .arg(&vf_filter)
         .arg("-c:v")
         .arg("libx264")
         .arg("-c:a")
@@ -800,9 +803,9 @@ pub async fn burn_subtitles_into_video(
         .stderr(Stdio::piped());
 
     log::info!(
-        "🎬 Running ffmpeg command: ffmpeg -i {} -vf subtitles='{}' -c:v libx264 -c:a copy -preset fast -y {}",
+        "🎬 Running ffmpeg command: ffmpeg -i {} -vf '{}' -c:v libx264 -c:a copy -preset fast -y {}",
         video_path,
-        escaped_subtitle_path,
+        vf_filter,
         output_path
     );
 

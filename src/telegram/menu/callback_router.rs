@@ -29,7 +29,7 @@ use super::main_menu::{
 use super::services::{show_extension_detail, show_services_menu};
 use super::settings::{
     show_audio_bitrate_menu, show_download_type_menu, show_language_menu, show_progress_bar_style_menu,
-    show_video_quality_menu,
+    show_subtitle_style_menu, show_video_quality_menu,
 };
 
 /// Handles callback queries from the menu inline keyboards.
@@ -142,6 +142,9 @@ pub async fn handle_menu_callback(
                     }
                     "language" => {
                         show_language_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), url_id).await?;
+                    }
+                    "subtitle_style" => {
+                        show_subtitle_style_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
                     }
                     "subscription" => {
                         // Delete the old message and show subscription info
@@ -533,6 +536,74 @@ pub async fn handle_menu_callback(
 
                 // Refresh the menu
                 show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
+            } else if let Some(setting) = data.strip_prefix("subtitle:") {
+                let _ = bot.answer_callback_query(callback_id.clone()).await;
+                let conn = db::get_connection(&db_pool)
+                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+                let style = db::get_user_subtitle_style(&conn, chat_id.0).unwrap_or_default();
+
+                match setting {
+                    "font_size" => {
+                        let next = match style.font_size.as_str() {
+                            "small" => "medium",
+                            "medium" => "large",
+                            "large" => "xlarge",
+                            _ => "small",
+                        };
+                        db::set_user_subtitle_font_size(&conn, chat_id.0, next)
+                            .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+                    }
+                    "text_color" => {
+                        let next = match style.text_color.as_str() {
+                            "white" => "yellow",
+                            "yellow" => "cyan",
+                            "cyan" => "green",
+                            _ => "white",
+                        };
+                        db::set_user_subtitle_text_color(&conn, chat_id.0, next)
+                            .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+                    }
+                    "outline_color" => {
+                        let next = match style.outline_color.as_str() {
+                            "black" => "dark_gray",
+                            "dark_gray" => "none",
+                            _ => "black",
+                        };
+                        db::set_user_subtitle_outline_color(&conn, chat_id.0, next)
+                            .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+                    }
+                    "outline_width" => {
+                        let next = match style.outline_width {
+                            0 => 1,
+                            1 => 2,
+                            2 => 3,
+                            3 => 4,
+                            _ => 0,
+                        };
+                        db::set_user_subtitle_outline_width(&conn, chat_id.0, next)
+                            .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+                    }
+                    "shadow" => {
+                        let next = match style.shadow {
+                            0 => 1,
+                            1 => 2,
+                            _ => 0,
+                        };
+                        db::set_user_subtitle_shadow(&conn, chat_id.0, next)
+                            .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+                    }
+                    "position" => {
+                        let next = match style.position.as_str() {
+                            "bottom" => "top",
+                            _ => "bottom",
+                        };
+                        db::set_user_subtitle_position(&conn, chat_id.0, next)
+                            .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+                    }
+                    _ => {}
+                }
+
+                show_subtitle_style_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
             } else if let Some(bitrate) = data.strip_prefix("bitrate:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
                 // Remove "bitrate:" prefix

@@ -54,6 +54,10 @@ pub async fn show_main_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) ->
             "mode:audio_bitrate",
         )],
         vec![crate::telegram::cb(
+            i18n::t(&lang, "menu.subtitle_style_button"),
+            "mode:subtitle_style",
+        )],
+        vec![crate::telegram::cb(
             i18n::t(&lang, "menu.services_button"),
             "mode:services",
         )],
@@ -163,6 +167,10 @@ pub(crate) async fn edit_main_menu(
             mode_callback("audio_bitrate"),
         )],
         vec![crate::telegram::cb(
+            i18n::t(&lang, "menu.subtitle_style_button"),
+            mode_callback("subtitle_style"),
+        )],
+        vec![crate::telegram::cb(
             i18n::t(&lang, "menu.services_button"),
             mode_callback("services"),
         )],
@@ -249,6 +257,10 @@ pub async fn send_main_menu_as_new(
         vec![crate::telegram::cb(
             i18n::t_args(&lang, "menu.audio_bitrate_button", &bitrate_args),
             mode_callback("audio_bitrate"),
+        )],
+        vec![crate::telegram::cb(
+            i18n::t(&lang, "menu.subtitle_style_button"),
+            mode_callback("subtitle_style"),
         )],
         vec![crate::telegram::cb(
             i18n::t(&lang, "menu.services_button"),
