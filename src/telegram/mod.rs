@@ -48,6 +48,8 @@ pub mod admin;
 pub mod analytics;
 pub mod bot;
 pub mod bot_api_logger;
+pub mod draft;
+pub mod styled;
 pub mod cache;
 pub mod commands;
 pub mod cuts;

@@ -292,7 +292,7 @@ pub async fn send_preview(
         send_as_document
     );
 
-    // Send preview with thumbnail if available
+    // Send preview with thumbnail if available, using styled buttons
     if let Some(thumb_url) = &metadata.thumbnail_url {
         // Try to send a photo with the thumbnail
         match reqwest::get(thumb_url).await {
@@ -300,13 +300,34 @@ pub async fn send_preview(
                 if response.status().is_success() {
                     match response.bytes().await {
                         Ok(bytes) => {
-                            // Send the photo with caption
                             let bytes_vec = bytes.to_vec();
                             log::info!(
-                                "Sending preview photo ({} bytes) for url_id={}",
+                                "Sending styled preview photo ({} bytes) for url_id={}",
                                 bytes_vec.len(),
                                 url_id
                             );
+                            match crate::telegram::styled::send_photo_styled(
+                                bot,
+                                chat_id,
+                                bytes_vec.clone(),
+                                &text,
+                                &keyboard,
+                                Some(teloxide::types::ParseMode::MarkdownV2),
+                            )
+                            .await
+                            {
+                                Ok(Some(message)) => {
+                                    log::info!("Styled preview photo sent: message_id={}", message.id);
+                                    return Ok(message);
+                                }
+                                Ok(None) => {
+                                    log::warn!("Styled send returned no message, falling back");
+                                }
+                                Err(e) => {
+                                    log::warn!("Styled photo send failed: {}, falling back", e);
+                                }
+                            }
+                            // Fallback: standard teloxide send
                             let send_result = bot
                                 .send_photo(chat_id, InputFile::memory(bytes_vec))
                                 .caption(text)
@@ -314,13 +335,12 @@ pub async fn send_preview(
                                 .reply_markup(keyboard)
                                 .await;
                             if let Ok(ref message) = send_result {
-                                log::info!("Preview photo sent: message_id={}", message.id);
+                                log::info!("Preview photo sent (fallback): message_id={}", message.id);
                             }
                             return send_result;
                         }
                         Err(e) => {
                             log::warn!("Failed to get thumbnail bytes: {}", e);
-                            // Do not continue — will send text message below
                         }
                     }
                 } else {
@@ -334,16 +354,33 @@ pub async fn send_preview(
     }
 
     // If thumbnail is unavailable or an error occurred, send a text message
-    log::info!("Sending preview text message for url_id={}", url_id);
-    let send_result = bot
-        .send_message(chat_id, text)
-        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-        .reply_markup(keyboard)
-        .await;
-    if let Ok(ref message) = send_result {
-        log::info!("Preview text sent: message_id={}", message.id);
+    log::info!("Sending styled preview text message for url_id={}", url_id);
+    match crate::telegram::styled::send_message_styled(
+        bot,
+        chat_id,
+        &text,
+        &keyboard,
+        Some(teloxide::types::ParseMode::MarkdownV2),
+    )
+    .await
+    {
+        Ok(Some(message)) => {
+            log::info!("Styled preview text sent: message_id={}", message.id);
+            Ok(message)
+        }
+        Ok(None) | Err(_) => {
+            // Fallback to standard teloxide
+            let send_result = bot
+                .send_message(chat_id, text)
+                .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                .reply_markup(keyboard)
+                .await;
+            if let Ok(ref message) = send_result {
+                log::info!("Preview text sent (fallback): message_id={}", message.id);
+            }
+            send_result
+        }
     }
-    send_result
 }
 
 /// Updates an existing preview message (edits the text/caption and keyboard)
@@ -538,22 +575,42 @@ pub async fn update_preview_message(
         send_as_document
     );
 
-    // Try to edit the caption (if this is a photo/video)
-    let caption_req = bot
-        .edit_message_caption(chat_id, message_id)
-        .caption(text.clone())
-        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-        .reply_markup(keyboard.clone());
-
-    match caption_req.await {
-        Ok(_) => Ok(()),
+    // Try to edit the caption (if this is a photo/video), using styled buttons
+    match crate::telegram::styled::edit_message_caption_styled(
+        bot,
+        chat_id,
+        message_id,
+        &text,
+        &keyboard,
+        Some(teloxide::types::ParseMode::MarkdownV2),
+    )
+    .await
+    {
+        Ok(()) => return Ok(()),
         Err(e) => {
             log::debug!(
-                "Failed to edit preview caption for message_id={}, falling back to text: {:?}",
+                "Styled edit caption failed for message_id={}, trying text: {}",
                 message_id,
                 e
             );
-            // If that failed (e.g. it's a text message), edit the text instead
+        }
+    }
+
+    // If caption edit failed (e.g. it's a text message), edit the text instead
+    match crate::telegram::styled::edit_message_text_styled(
+        bot,
+        chat_id,
+        message_id,
+        &text,
+        &keyboard,
+        Some(teloxide::types::ParseMode::MarkdownV2),
+    )
+    .await
+    {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            log::debug!("Styled edit text also failed for message_id={}: {}", message_id, e);
+            // Final fallback: standard teloxide
             bot.edit_message_text(chat_id, message_id, text)
                 .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                 .reply_markup(keyboard)
