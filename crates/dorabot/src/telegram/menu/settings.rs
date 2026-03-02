@@ -540,6 +540,101 @@ pub async fn show_language_selection_menu(bot: &Bot, chat_id: ChatId) -> Respons
         .await
 }
 
+/// Shows the subtitle style settings menu.
+///
+/// Displays cycle-through buttons for font size, text color, outline, shadow, and position.
+pub async fn show_subtitle_style_menu(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    db_pool: Arc<DbPool>,
+) -> ResponseResult<()> {
+    let conn = db::get_connection(&db_pool)
+        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+    let style = db::get_user_subtitle_style(&conn, chat_id.0).unwrap_or_default();
+    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+
+    let size_label = match style.font_size.as_str() {
+        "small" => i18n::t(&lang, "menu.subtitle_size_small"),
+        "medium" => i18n::t(&lang, "menu.subtitle_size_medium"),
+        "large" => i18n::t(&lang, "menu.subtitle_size_large"),
+        "xlarge" => i18n::t(&lang, "menu.subtitle_size_xlarge"),
+        _ => i18n::t(&lang, "menu.subtitle_size_medium"),
+    };
+
+    let color_label = match style.text_color.as_str() {
+        "white" => i18n::t(&lang, "menu.subtitle_color_white"),
+        "yellow" => i18n::t(&lang, "menu.subtitle_color_yellow"),
+        "cyan" => i18n::t(&lang, "menu.subtitle_color_cyan"),
+        "green" => i18n::t(&lang, "menu.subtitle_color_green"),
+        _ => i18n::t(&lang, "menu.subtitle_color_white"),
+    };
+
+    let outline_label = match style.outline_color.as_str() {
+        "black" => i18n::t(&lang, "menu.subtitle_outline_black"),
+        "dark_gray" => i18n::t(&lang, "menu.subtitle_outline_dark_gray"),
+        "none" => i18n::t(&lang, "menu.subtitle_outline_none"),
+        _ => i18n::t(&lang, "menu.subtitle_outline_black"),
+    };
+
+    let position_label = match style.position.as_str() {
+        "bottom" => i18n::t(&lang, "menu.subtitle_pos_bottom"),
+        "top" => i18n::t(&lang, "menu.subtitle_pos_top"),
+        _ => i18n::t(&lang, "menu.subtitle_pos_bottom"),
+    };
+
+    let mut size_args = FluentArgs::new();
+    size_args.set("value", size_label);
+    let mut color_args = FluentArgs::new();
+    color_args.set("value", color_label);
+    let mut outline_args = FluentArgs::new();
+    outline_args.set("value", outline_label);
+    let mut width_args = FluentArgs::new();
+    width_args.set("value", format!("{}", style.outline_width));
+    let mut shadow_args = FluentArgs::new();
+    shadow_args.set("value", format!("{}", style.shadow));
+    let mut pos_args = FluentArgs::new();
+    pos_args.set("value", position_label);
+
+    let keyboard = InlineKeyboardMarkup::new(vec![
+        vec![crate::telegram::cb(
+            i18n::t_args(&lang, "menu.subtitle_font_size", &size_args),
+            "subtitle:font_size",
+        )],
+        vec![crate::telegram::cb(
+            i18n::t_args(&lang, "menu.subtitle_text_color", &color_args),
+            "subtitle:text_color",
+        )],
+        vec![crate::telegram::cb(
+            i18n::t_args(&lang, "menu.subtitle_outline_color", &outline_args),
+            "subtitle:outline_color",
+        )],
+        vec![crate::telegram::cb(
+            i18n::t_args(&lang, "menu.subtitle_outline_width", &width_args),
+            "subtitle:outline_width",
+        )],
+        vec![crate::telegram::cb(
+            i18n::t_args(&lang, "menu.subtitle_shadow", &shadow_args),
+            "subtitle:shadow",
+        )],
+        vec![crate::telegram::cb(
+            i18n::t_args(&lang, "menu.subtitle_position", &pos_args),
+            "subtitle:position",
+        )],
+        vec![crate::telegram::cb(i18n::t(&lang, "common.back"), "back:main")],
+    ]);
+
+    edit_caption_or_text(
+        bot,
+        chat_id,
+        message_id,
+        i18n::t(&lang, "menu.subtitle_style_title"),
+        Some(keyboard),
+    )
+    .await?;
+    Ok(())
+}
+
 /// Shows the progress bar style selection menu.
 ///
 /// Displays 8 progress bar styles with previews and marks the current selection.

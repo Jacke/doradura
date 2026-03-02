@@ -35,6 +35,7 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
     let deps_ytdlp = deps.clone();
     let deps_commands = deps.clone();
     let deps_media_upload = deps.clone();
+    let deps_voice = deps.clone();
     let deps_messages = deps.clone();
     let deps_precheckout = deps.clone();
     let deps_callback = deps.clone();
@@ -60,6 +61,8 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
         .branch(command_handler(deps_commands))
         // Media upload handler for premium/vip users
         .branch(media_upload_handler(deps_media_upload))
+        // Voice message effects handler
+        .branch(voice_message_handler(deps_voice))
         // Message handler for URLs and text
         .branch(message_handler(deps_messages))
         // Pre-checkout query handler
@@ -460,6 +463,23 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
             }
         },
     ))
+}
+
+/// Handler for voice messages — shows effects menu
+fn voice_message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
+    use crate::telegram::voice_effects::handle_voice_message;
+
+    Update::filter_message()
+        .filter(|msg: Message| msg.voice().is_some())
+        .endpoint(move |bot: Bot, msg: Message| {
+            let deps = deps.clone();
+            async move {
+                if let Err(e) = handle_voice_message(bot, msg, deps.db_pool).await {
+                    log::error!("Voice effects handler error: {:?}", e);
+                }
+                Ok(())
+            }
+        })
 }
 
 /// Handler for regular messages (URLs, text)

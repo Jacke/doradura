@@ -62,6 +62,10 @@ pub async fn show_main_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) ->
             "mode:subscription",
         )],
         vec![crate::telegram::cb(
+            i18n::t(&lang, "menu.subtitle_style_button"),
+            "mode:subtitle_style",
+        )],
+        vec![crate::telegram::cb(
             i18n::t(&lang, "menu.language_button"),
             "mode:language",
         )],
@@ -171,6 +175,10 @@ pub(crate) async fn edit_main_menu(
             mode_callback("subscription"),
         )],
         vec![crate::telegram::cb(
+            i18n::t(&lang, "menu.subtitle_style_button"),
+            mode_callback("subtitle_style"),
+        )],
+        vec![crate::telegram::cb(
             i18n::t(&lang, "menu.language_button"),
             mode_callback("language"),
         )],
@@ -257,6 +265,10 @@ pub async fn send_main_menu_as_new(
         vec![crate::telegram::cb(
             i18n::t(&lang, "menu.subscription_button"),
             mode_callback("subscription"),
+        )],
+        vec![crate::telegram::cb(
+            i18n::t(&lang, "menu.subtitle_style_button"),
+            mode_callback("subtitle_style"),
         )],
         vec![crate::telegram::cb(
             i18n::t(&lang, "menu.language_button"),

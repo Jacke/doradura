@@ -66,6 +66,7 @@ pub mod subscriptions;
 pub mod types;
 pub mod videos;
 pub mod voice;
+pub mod voice_effects;
 
 // Re-exports for convenience
 pub use admin::{
