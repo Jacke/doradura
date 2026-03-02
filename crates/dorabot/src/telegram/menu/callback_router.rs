@@ -562,8 +562,7 @@ pub async fn handle_menu_callback(
                 show_audio_bitrate_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
             } else if let Some(setting) = data.strip_prefix("subtitle:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
-                let conn = db::get_connection(&db_pool)
-                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+                let conn = db::get_connection(&db_pool).map_err(db_err)?;
                 let style = db::get_user_subtitle_style(&conn, chat_id.0).unwrap_or_default();
 
                 match setting {
@@ -574,9 +573,7 @@ pub async fn handle_menu_callback(
                             "large" => "xlarge",
                             _ => "small",
                         };
-                        db::set_user_subtitle_font_size(&conn, chat_id.0, next).map_err(|e| {
-                            RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                        })?;
+                        db::set_user_subtitle_font_size(&conn, chat_id.0, next).map_err(db_err)?;
                     }
                     "text_color" => {
                         let next = match style.text_color.as_str() {
@@ -585,9 +582,7 @@ pub async fn handle_menu_callback(
                             "cyan" => "green",
                             _ => "white",
                         };
-                        db::set_user_subtitle_text_color(&conn, chat_id.0, next).map_err(|e| {
-                            RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                        })?;
+                        db::set_user_subtitle_text_color(&conn, chat_id.0, next).map_err(db_err)?;
                     }
                     "outline_color" => {
                         let next = match style.outline_color.as_str() {
@@ -595,9 +590,7 @@ pub async fn handle_menu_callback(
                             "dark_gray" => "none",
                             _ => "black",
                         };
-                        db::set_user_subtitle_outline_color(&conn, chat_id.0, next).map_err(|e| {
-                            RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                        })?;
+                        db::set_user_subtitle_outline_color(&conn, chat_id.0, next).map_err(db_err)?;
                     }
                     "outline_width" => {
                         let next = match style.outline_width {
@@ -607,9 +600,7 @@ pub async fn handle_menu_callback(
                             3 => 4,
                             _ => 0,
                         };
-                        db::set_user_subtitle_outline_width(&conn, chat_id.0, next).map_err(|e| {
-                            RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                        })?;
+                        db::set_user_subtitle_outline_width(&conn, chat_id.0, next).map_err(db_err)?;
                     }
                     "shadow" => {
                         let next = match style.shadow {
@@ -617,18 +608,14 @@ pub async fn handle_menu_callback(
                             1 => 2,
                             _ => 0,
                         };
-                        db::set_user_subtitle_shadow(&conn, chat_id.0, next).map_err(|e| {
-                            RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                        })?;
+                        db::set_user_subtitle_shadow(&conn, chat_id.0, next).map_err(db_err)?;
                     }
                     "position" => {
                         let next = match style.position.as_str() {
                             "bottom" => "top",
                             _ => "bottom",
                         };
-                        db::set_user_subtitle_position(&conn, chat_id.0, next).map_err(|e| {
-                            RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                        })?;
+                        db::set_user_subtitle_position(&conn, chat_id.0, next).map_err(db_err)?;
                     }
                     _ => {}
                 }
@@ -1768,4 +1755,8 @@ pub async fn handle_menu_callback(
     }
 
     Ok(())
+}
+
+fn db_err(e: impl std::fmt::Display) -> RequestError {
+    RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
 }

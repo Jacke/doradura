@@ -10,11 +10,10 @@ use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{ChatId, InlineKeyboardMarkup, InputFile, Message, MessageId};
 
-use crate::download::metadata::probe_duration_seconds;
 use crate::storage::cache;
 use crate::storage::db::DbPool;
-use crate::telegram::admin::download_file_from_telegram;
 use crate::telegram::cb;
+use crate::telegram::download_file_from_telegram;
 use crate::telegram::Bot;
 
 /// Handle an incoming voice message: cache the file_id and show the effects keyboard.
@@ -26,8 +25,9 @@ pub async fn handle_voice_message(bot: Bot, msg: Message, db_pool: Arc<DbPool>) 
 
     let file_id = &voice.file.id.0;
     let file_hash = cache::store_url(&db_pool, file_id).await;
+    let duration = voice.duration.seconds();
 
-    let keyboard = build_voice_effects_keyboard(&file_hash);
+    let keyboard = build_voice_effects_keyboard(&file_hash, duration);
 
     bot.send_message(msg.chat.id, "Choose an effect:")
         .reply_markup(keyboard)
@@ -36,11 +36,11 @@ pub async fn handle_voice_message(bot: Bot, msg: Message, db_pool: Arc<DbPool>) 
     Ok(())
 }
 
-fn build_voice_effects_keyboard(file_hash: &str) -> InlineKeyboardMarkup {
+fn build_voice_effects_keyboard(file_hash: &str, duration: u32) -> InlineKeyboardMarkup {
     InlineKeyboardMarkup::new(vec![
         vec![
-            cb("⏪ Backwards", format!("vfx:rev:{file_hash}")),
-            cb("🌀 Tear", format!("vfx:tear:{file_hash}")),
+            cb("⏪ Backwards", format!("vfx:rev:{file_hash}:{duration}")),
+            cb("🌀 Tear", format!("vfx:tear:{file_hash}:{duration}")),
         ],
         vec![cb("❌ Cancel", "vfx:cancel")],
     ])
@@ -60,14 +60,15 @@ pub async fn handle_voice_effect_callback(
         return Ok(());
     }
 
-    // vfx:{effect}:{file_hash}
-    let parts: Vec<&str> = data.splitn(3, ':').collect();
-    if parts.len() != 3 {
+    // vfx:{effect}:{file_hash}:{duration}
+    let parts: Vec<&str> = data.splitn(4, ':').collect();
+    if parts.len() != 4 {
         log::warn!("Invalid vfx callback data: {}", data);
         return Ok(());
     }
     let effect = parts[1];
     let file_hash = parts[2];
+    let duration: u32 = parts[3].parse().unwrap_or(0);
 
     let file_id = match cache::get_url(db_pool, file_hash).await {
         Some(id) => id,
@@ -84,8 +85,8 @@ pub async fn handle_voice_effect_callback(
     let _ = bot.edit_message_text(chat_id, message_id, "⏳ Processing...").await;
 
     // Download voice file
-    let input_path = PathBuf::from(format!("/tmp/vfx_{file_hash}_input.ogg"));
-    let output_path = PathBuf::from(format!("/tmp/vfx_{file_hash}_{effect}_output.ogg"));
+    let input_path = PathBuf::from(format!("/tmp/vfx_{file_hash}_{}_input.ogg", chat_id.0));
+    let output_path = PathBuf::from(format!("/tmp/vfx_{file_hash}_{}_output.ogg", chat_id.0));
 
     if let Err(e) = download_file_from_telegram(bot, &file_id, Some(input_path.clone())).await {
         log::error!("Failed to download voice file: {}", e);
@@ -150,13 +151,10 @@ pub async fn handle_voice_effect_callback(
         }
     }
 
-    // Get duration
-    let duration = probe_duration_seconds(&output_str);
-
-    // Send processed voice
+    // Send processed voice with original duration
     let mut req = bot.send_voice(chat_id, InputFile::file(&output_path));
-    if let Some(dur) = duration {
-        req = req.duration(dur);
+    if duration > 0 {
+        req = req.duration(duration);
     }
 
     match req.await {
