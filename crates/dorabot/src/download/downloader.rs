@@ -651,8 +651,9 @@ pub async fn download_and_send_subtitles(
 ///
 /// ```no_run
 /// # use doradura::download::downloader::burn_subtitles_into_video;
+/// # use doradura::storage::db::SubtitleStyle;
 /// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
-/// let style = db::SubtitleStyle::default();
+/// let style = SubtitleStyle::default();
 /// burn_subtitles_into_video("input.mp4", "subtitles.srt", "output.mp4", &style).await?;
 /// # Ok(())
 /// # }
