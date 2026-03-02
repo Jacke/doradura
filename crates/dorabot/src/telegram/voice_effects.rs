@@ -100,7 +100,20 @@ pub async fn handle_voice_effect_callback(
     // Build ffmpeg filter
     let filter = match effect {
         "rev" => "areverse".to_string(),
-        "tear" => "aphaser=type=t:speed=0.4:decay=0.6,aecho=0.8:0.9:40|60:0.4|0.3,flanger=delay=3:depth=4:speed=0.3:shape=triangular".to_string(),
+        // BioShock Infinite tear: voice through a dimensional rift
+        // chorus  — layered copies (multiple realities bleeding through)
+        // vibrato — pitch wobble (unstable spacetime)
+        // aecho   — long reverb taps (dimensional echo)
+        // tremolo — pulsating volume (portal breathing)
+        // flanger — phase sweep (the rift shimmer)
+        "tear" => concat!(
+            "chorus=0.7:0.9:55|40:0.4|0.32:0.25|0.4:2|2.3,",
+            "vibrato=f=5.5:d=0.6,",
+            "aecho=0.8:0.88:80|150:0.35|0.2,",
+            "tremolo=f=3:d=0.4,",
+            "flanger=delay=8:depth=6:speed=0.4:shape=sinusoidal",
+        )
+        .to_string(),
         _ => {
             log::warn!("Unknown voice effect: {}", effect);
             cleanup(&[&input_path]);
