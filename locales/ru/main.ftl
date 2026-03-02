@@ -19,6 +19,7 @@ menu =
     .burn_subtitles_on = ВКЛ
     .burn_subtitles_off = ВЫКЛ
     .subtitle_style_button = 🔤 Стиль субтитров
+    .progress_bar_style_button = 🎨 Стиль прогресс-бара
     .subtitle_style_title = 🔤 *Настройки стиля субтитров*\n\nНажмите на параметр, чтобы изменить\.
     .subtitle_font_size = 🔤 Размер: {$value}
     .subtitle_text_color = 🎨 Цвет текста: {$value}

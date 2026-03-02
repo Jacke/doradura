@@ -19,6 +19,7 @@ menu =
     .burn_subtitles_on = ON
     .burn_subtitles_off = OFF
     .subtitle_style_button = 🔤 Style des sous\-titres
+    .progress_bar_style_button = 🎨 Style de la barre
     .subtitle_style_title = 🔤 *Réglages du style des sous\-titres*\n\nAppuie sur un réglage pour le modifier\.
     .subtitle_font_size = 🔤 Taille : {$value}
     .subtitle_text_color = 🎨 Couleur du texte : {$value}

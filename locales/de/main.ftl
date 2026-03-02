@@ -19,6 +19,7 @@ menu =
     .burn_subtitles_on = EIN
     .burn_subtitles_off = AUS
     .subtitle_style_button = 🔤 Untertitel\-Stil
+    .progress_bar_style_button = 🎨 Fortschrittsbalken-Stil
     .subtitle_style_title = 🔤 *Untertitel\-Stil Einstellungen*\n\nTippe auf eine Einstellung, um sie zu ändern\.
     .subtitle_font_size = 🔤 Größe: {$value}
     .subtitle_text_color = 🎨 Textfarbe: {$value}

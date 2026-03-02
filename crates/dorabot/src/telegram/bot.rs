@@ -73,8 +73,6 @@ pub enum Command {
     Version,
     #[command(description = "my content subscriptions")]
     Subscriptions,
-    #[command(description = "choose progress bar style")]
-    Style,
 }
 
 const BOT_COMMAND_DEFINITIONS: &[(&str, &str)] = &[
@@ -93,7 +91,6 @@ const BOT_COMMAND_DEFINITIONS: &[(&str, &str)] = &[
     //("backup", "bot_commands.backup"),
     ("plan", "bot_commands.plan"),
     ("subscriptions", "bot_commands.subscriptions"),
-    ("style", "bot_commands.style"),
     //("users", "bot_commands.users"),
     //("setplan", "bot_commands.setplan"),
     //("transactions", "bot_commands.transactions"),

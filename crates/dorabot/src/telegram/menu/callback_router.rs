@@ -146,6 +146,9 @@ pub async fn handle_menu_callback(
                     "subtitle_style" => {
                         show_subtitle_style_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
                     }
+                    "progress_bar_style" => {
+                        show_progress_bar_style_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
+                    }
                     "subscription" => {
                         // Delete the old message and show subscription info
                         let _ = bot.delete_message(chat_id, message_id).await;
