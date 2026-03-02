@@ -100,7 +100,7 @@ pub async fn handle_voice_effect_callback(
     // Build ffmpeg filter
     let filter = match effect {
         "rev" => "areverse".to_string(),
-        "tear" => "aphaser=type=t:speed=0.4:decay=0.6,aecho=0.8:0.9:40|60:0.4|0.3,flanger=delay=3:depth=4:speed=0.3:type=triangular".to_string(),
+        "tear" => "aphaser=type=t:speed=0.4:decay=0.6,aecho=0.8:0.9:40|60:0.4|0.3,flanger=delay=3:depth=4:speed=0.3:shape=triangular".to_string(),
         _ => {
             log::warn!("Unknown voice effect: {}", effect);
             cleanup(&[&input_path]);
@@ -134,10 +134,14 @@ pub async fn handle_voice_effect_callback(
         Ok(output) if output.status.success() => {}
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            log::error!("ffmpeg failed: {}", stderr);
-            let _ = bot
-                .edit_message_text(chat_id, message_id, "ffmpeg processing failed.")
-                .await;
+            log::error!("ffmpeg voice effect '{}' failed: {}", effect, stderr);
+            // Extract the meaningful error line for the user
+            let user_msg = stderr
+                .lines()
+                .find(|l| l.starts_with("Error"))
+                .map(|l| format!("ffmpeg error: {}", l))
+                .unwrap_or_else(|| "ffmpeg processing failed.".into());
+            let _ = bot.edit_message_text(chat_id, message_id, user_msg).await;
             cleanup(&[&input_path, &output_path]);
             return Ok(());
         }
