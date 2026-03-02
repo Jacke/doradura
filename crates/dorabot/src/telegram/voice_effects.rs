@@ -97,23 +97,66 @@ pub async fn handle_voice_effect_callback(
         return Ok(());
     }
 
-    // Build ffmpeg filter
-    let filter = match effect {
-        "rev" => "areverse".to_string(),
-        // BioShock Infinite tear: voice through a dimensional rift
-        // chorus  — layered copies (multiple realities bleeding through)
-        // vibrato — pitch wobble (unstable spacetime)
-        // aecho   — long reverb taps (dimensional echo)
-        // tremolo — pulsating volume (portal breathing)
-        // flanger — phase sweep (the rift shimmer)
-        "tear" => concat!(
-            "chorus=0.7:0.9:55|40:0.4|0.32:0.25|0.4:2|2.3,",
-            "vibrato=f=5.5:d=0.6,",
-            "aecho=0.8:0.88:80|150:0.35|0.2,",
-            "tremolo=f=3:d=0.4,",
-            "flanger=delay=8:depth=6:speed=0.4:shape=sinusoidal",
-        )
-        .to_string(),
+    let input_str = input_path.to_string_lossy().to_string();
+    let output_str = output_path.to_string_lossy().to_string();
+
+    // Build ffmpeg args — "tear" needs filter_complex for reverse reverb,
+    // other effects use a simple -af chain.
+    let ffmpeg_args: Vec<String> = match effect {
+        "rev" => vec![
+            "-i".into(),
+            input_str,
+            "-af".into(),
+            "areverse".into(),
+            "-c:a".into(),
+            "libopus".into(),
+            "-b:a".into(),
+            "64k".into(),
+            "-application".into(),
+            "voip".into(),
+            "-y".into(),
+            output_str,
+        ],
+        // BioShock Infinite tear: voice through a dimensional rift.
+        //
+        // Key technique: **reverse reverb** — the echo arrives BEFORE the
+        // sound, as if bleeding through from another timeline.
+        //
+        // Pipeline (filter_complex):
+        //   1. Split input into [dry] and [wet]
+        //   2. [wet]: reverse → heavy echo → reverse back  (= reverse reverb)
+        //   3. Mix dry (60%) + reverse-reverbed (50%)
+        //   4. Frequency-shift down 100 Hz (dimensional detuning)
+        //   5. Chorus (multiple realities bleeding through)
+        //   6. Subtle vibrato (unstable spacetime)
+        //   7. Gentle tremolo (portal breathing)
+        "tear" => {
+            let fc = concat!(
+                "[0:a]asplit=2[dry][wet];",
+                "[wet]areverse,aecho=0.8:0.88:100|200:0.3|0.15,areverse[rev];",
+                "[dry][rev]amix=inputs=2:weights=0.6 0.5[mixed];",
+                "[mixed]afreqshift=shift=-100,",
+                "chorus=0.6:0.9:55|40:0.4|0.32:0.25|0.4:2|2.3,",
+                "vibrato=f=4:d=0.3,",
+                "tremolo=f=2:d=0.3[out]",
+            );
+            vec![
+                "-i".into(),
+                input_str,
+                "-filter_complex".into(),
+                fc.into(),
+                "-map".into(),
+                "[out]".into(),
+                "-c:a".into(),
+                "libopus".into(),
+                "-b:a".into(),
+                "64k".into(),
+                "-application".into(),
+                "voip".into(),
+                "-y".into(),
+                output_str,
+            ]
+        }
         _ => {
             log::warn!("Unknown voice effect: {}", effect);
             cleanup(&[&input_path]);
@@ -122,26 +165,7 @@ pub async fn handle_voice_effect_callback(
     };
 
     // Run ffmpeg
-    let input_str = input_path.to_string_lossy().to_string();
-    let output_str = output_path.to_string_lossy().to_string();
-
-    let ffmpeg_result = tokio::process::Command::new("ffmpeg")
-        .args([
-            "-i",
-            &input_str,
-            "-af",
-            &filter,
-            "-c:a",
-            "libopus",
-            "-b:a",
-            "64k",
-            "-application",
-            "voip",
-            "-y",
-            &output_str,
-        ])
-        .output()
-        .await;
+    let ffmpeg_result = tokio::process::Command::new("ffmpeg").args(&ffmpeg_args).output().await;
 
     match ffmpeg_result {
         Ok(output) if output.status.success() => {}
