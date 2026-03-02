@@ -2,6 +2,7 @@ mod display;
 mod formats;
 mod keyboard;
 mod metadata;
+pub mod vlipsy;
 
 pub use display::{send_preview, update_preview_message};
 pub use formats::{extract_video_formats_from_json, filter_video_formats_by_size, get_video_formats_list};

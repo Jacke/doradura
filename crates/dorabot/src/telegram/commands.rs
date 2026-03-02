@@ -704,6 +704,35 @@ pub async fn handle_message(
                     return Ok(user_info);
                 }
 
+                // Vlipsy URLs: custom preview (skip yt-dlp)
+                if url
+                    .host_str()
+                    .is_some_and(|h| h == "vlipsy.com" || h == "www.vlipsy.com")
+                {
+                    let processing_msg = bot
+                        .send_message(msg.chat.id, i18n::t(&lang, "commands.processing"))
+                        .await?;
+                    let url_id = crate::storage::cache::store_url(&db_pool, url.as_str()).await;
+                    match crate::telegram::preview::vlipsy::send_vlipsy_preview(
+                        &bot,
+                        msg.chat.id,
+                        &url,
+                        &url_id,
+                        processing_msg.id,
+                    )
+                    .await
+                    {
+                        Ok(_) => log::info!("Vlipsy preview sent for chat {}", msg.chat.id),
+                        Err(e) => {
+                            log::error!("Vlipsy preview failed: {:?}", e);
+                            let _ = bot
+                                .send_message(msg.chat.id, i18n::t(&lang, "commands.preview_failed"))
+                                .await;
+                        }
+                    }
+                    return Ok(user_info);
+                }
+
                 // Parse time range from text following the URL (e.g. "00:01:00-00:02:30")
                 let time_range = parse_download_time_range(text, url_text);
                 if let Some(ref tr) = time_range {
@@ -2136,10 +2165,12 @@ pub async fn burn_circle_subtitles(
                 log::info!("🔤 Downloaded subtitles for circle: {:?}", sub_path);
 
                 let output_with_subs = temp_dir.join(format!("input_subs_{}_{}.mp4", chat_id, source_id));
+                let default_style = db::SubtitleStyle::default();
                 match crate::download::downloader::burn_subtitles_into_video(
                     input_path.to_str().unwrap_or_default(),
                     sub_path.to_str().unwrap_or_default(),
                     output_with_subs.to_str().unwrap_or_default(),
+                    &default_style,
                 )
                 .await
                 {

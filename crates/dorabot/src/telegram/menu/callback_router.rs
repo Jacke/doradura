@@ -1352,6 +1352,15 @@ pub async fn handle_menu_callback(
                     .parse_mode(ParseMode::MarkdownV2)
                     .reply_markup(keyboard)
                     .await?;
+            } else if data.starts_with("vp:") {
+                let _ = bot.answer_callback_query(callback_id.clone()).await;
+                if let Err(e) =
+                    crate::telegram::preview::vlipsy::handle_vlipsy_callback(&bot, chat_id, message_id, &data, &db_pool)
+                        .await
+                {
+                    log::error!("Vlipsy preview callback error: {}", e);
+                }
+                return Ok(());
             } else if data.starts_with("vl:") {
                 use crate::telegram::menu::vlipsy::handle_vlipsy_callback;
                 if let Err(e) = handle_vlipsy_callback(

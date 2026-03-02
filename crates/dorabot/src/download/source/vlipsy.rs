@@ -50,10 +50,11 @@ fn extract_clip_slug(url: &Url) -> Option<String> {
 }
 
 /// Metadata scraped from a Vlipsy clip HTML page.
-struct ScrapedClipInfo {
-    title: String,
-    mp4_url: String,
-    duration_secs: Option<u32>,
+pub struct ScrapedClipInfo {
+    pub title: String,
+    pub mp4_url: String,
+    pub duration_secs: Option<u32>,
+    pub thumbnail_url: Option<String>,
 }
 
 /// Extract a meta tag content by property or name attribute.
@@ -113,7 +114,7 @@ fn extract_duration(html: &str) -> Option<u32> {
 }
 
 /// Scrape clip info from a Vlipsy HTML page.
-async fn scrape_clip_page(http: &Client, page_url: &Url) -> Result<ScrapedClipInfo, AppError> {
+pub async fn scrape_clip_page(http: &Client, page_url: &Url) -> Result<ScrapedClipInfo, AppError> {
     let resp = http
         .get(page_url.as_str())
         .send()
@@ -141,6 +142,7 @@ async fn scrape_clip_page(http: &Client, page_url: &Url) -> Result<ScrapedClipIn
         .to_string();
 
     let duration_secs = extract_duration(&html);
+    let thumbnail_url = extract_meta(&html, "og:image");
 
     // Try non-watermarked URL (480p.mp4 instead of 480p-watermark.mp4)
     let mp4_url = mp4_url.replace("480p-watermark.mp4", "480p.mp4");
@@ -149,6 +151,7 @@ async fn scrape_clip_page(http: &Client, page_url: &Url) -> Result<ScrapedClipIn
         title,
         mp4_url,
         duration_secs,
+        thumbnail_url,
     })
 }
 
