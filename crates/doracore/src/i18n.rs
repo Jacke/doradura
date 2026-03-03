@@ -26,7 +26,8 @@ pub static SUPPORTED_LANGS: &[(&str, &str)] = &[
 ];
 
 /// Default language identifier used as a fallback.
-static DEFAULT_LANG: Lazy<LanguageIdentifier> = Lazy::new(|| "ru".parse().unwrap());
+static DEFAULT_LANG: Lazy<LanguageIdentifier> =
+    Lazy::new(|| "ru".parse().expect("'ru' is a valid language identifier"));
 
 /// Normalizes a language code into a LanguageIdentifier (falls back to default).
 pub fn lang_from_code(code: &str) -> LanguageIdentifier {

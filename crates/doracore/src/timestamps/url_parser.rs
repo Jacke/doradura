@@ -12,7 +12,8 @@ use regex::Regex;
 use url::Url;
 
 /// Regex for parsing time values like "1h2m30s", "1m30s", "30s", "30"
-static TIME_FORMAT_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^(?:(\d+)h)?(?:(\d+)m)?(\d+)s?$").unwrap());
+static TIME_FORMAT_REGEX: Lazy<Regex> =
+    Lazy::new(|| Regex::new(r"^(?:(\d+)h)?(?:(\d+)m)?(\d+)s?$").expect("valid regex"));
 
 /// Extract timestamp from URL parameters
 ///

@@ -426,10 +426,14 @@ pub async fn show_downloads_page(
 
     let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
 
-    bot.send_message(chat_id, text)
-        .parse_mode(ParseMode::MarkdownV2)
-        .reply_markup(keyboard)
-        .await
+    crate::telegram::styled::send_message_styled_or_fallback(
+        bot,
+        chat_id,
+        &text,
+        &keyboard,
+        Some(ParseMode::MarkdownV2),
+    )
+    .await
 }
 
 /// Handle downloads callback queries
@@ -616,11 +620,16 @@ pub async fn handle_downloads_callback(
                     )]);
 
                     let keyboard = InlineKeyboardMarkup::new(options);
+                    let msg_text = format!("How to send *{}*?", escape_markdown(&download.title));
 
-                    bot.send_message(chat_id, format!("How to send *{}*?", escape_markdown(&download.title)))
-                        .parse_mode(ParseMode::MarkdownV2)
-                        .reply_markup(keyboard)
-                        .await?;
+                    crate::telegram::styled::send_message_styled_or_fallback(
+                        bot,
+                        chat_id,
+                        &msg_text,
+                        &keyboard,
+                        Some(ParseMode::MarkdownV2),
+                    )
+                    .await?;
                 }
             }
         }
@@ -678,11 +687,16 @@ pub async fn handle_downloads_callback(
                     )]);
 
                     let keyboard = InlineKeyboardMarkup::new(options);
+                    let msg_text = format!("How to send clip *{}*?", escape_markdown(&cut.title));
 
-                    bot.send_message(chat_id, format!("How to send clip *{}*?", escape_markdown(&cut.title)))
-                        .parse_mode(ParseMode::MarkdownV2)
-                        .reply_markup(keyboard)
-                        .await?;
+                    crate::telegram::styled::send_message_styled_or_fallback(
+                        bot,
+                        chat_id,
+                        &msg_text,
+                        &keyboard,
+                        Some(ParseMode::MarkdownV2),
+                    )
+                    .await?;
                 }
             }
         }

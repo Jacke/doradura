@@ -2,7 +2,7 @@
 # Script to replace admin command handlers in main.rs
 
 # Backup original file
-cp src/main.rs src/main.rs.backup
+cp crates/dorabot/src/main.rs crates/dorabot/src/main.rs.backup
 
 # Create temp file with the replacement for Command::Users
 cat > /tmp/users_replacement.txt << 'EOF'
@@ -31,4 +31,4 @@ EOF
 
 echo "Replacement files created"
 echo "Now you need to manually edit main.rs to replace these command handlers"
-echo "Backup saved as src/main.rs.backup"
+echo "Backup saved as crates/dorabot/src/main.rs.backup"

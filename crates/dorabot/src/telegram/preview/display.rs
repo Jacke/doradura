@@ -358,23 +358,25 @@ pub async fn send_preview(
                                     return Ok(message);
                                 }
                                 Ok(None) => {
-                                    log::warn!("Styled send returned no message, falling back");
+                                    // Telegram accepted the message but we couldn't parse the
+                                    // response. Do NOT re-send — the user already sees it.
+                                    log::warn!("Styled photo sent ok but response parse failed");
                                 }
                                 Err(e) => {
                                     log::warn!("Styled photo send failed: {}, falling back", e);
+                                    // Fallback: standard teloxide send
+                                    let send_result = bot
+                                        .send_photo(chat_id, InputFile::memory(bytes_vec))
+                                        .caption(text)
+                                        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                                        .reply_markup(keyboard)
+                                        .await;
+                                    if let Ok(ref message) = send_result {
+                                        log::info!("Preview photo sent (fallback): message_id={}", message.id);
+                                    }
+                                    return send_result;
                                 }
                             }
-                            // Fallback: standard teloxide send
-                            let send_result = bot
-                                .send_photo(chat_id, InputFile::memory(bytes_vec))
-                                .caption(text)
-                                .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-                                .reply_markup(keyboard)
-                                .await;
-                            if let Ok(ref message) = send_result {
-                                log::info!("Preview photo sent (fallback): message_id={}", message.id);
-                            }
-                            return send_result;
                         }
                         Err(e) => {
                             log::warn!("Failed to get thumbnail bytes: {}", e);
@@ -392,32 +394,18 @@ pub async fn send_preview(
 
     // If thumbnail is unavailable or an error occurred, send a text message
     log::info!("Sending styled preview text message for url_id={}", url_id);
-    match crate::telegram::styled::send_message_styled(
+    let result = crate::telegram::styled::send_message_styled_or_fallback(
         bot,
         chat_id,
         &text,
         &keyboard,
         Some(teloxide::types::ParseMode::MarkdownV2),
     )
-    .await
-    {
-        Ok(Some(message)) => {
-            log::info!("Styled preview text sent: message_id={}", message.id);
-            Ok(message)
-        }
-        Ok(None) | Err(_) => {
-            // Fallback to standard teloxide
-            let send_result = bot
-                .send_message(chat_id, text)
-                .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-                .reply_markup(keyboard)
-                .await;
-            if let Ok(ref message) = send_result {
-                log::info!("Preview text sent (fallback): message_id={}", message.id);
-            }
-            send_result
-        }
+    .await;
+    if let Ok(ref message) = result {
+        log::info!("Preview text sent: message_id={}", message.id);
     }
+    result
 }
 
 /// Updates an existing preview message (edits the text/caption and keyboard)

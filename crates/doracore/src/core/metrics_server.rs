@@ -71,14 +71,14 @@ async fn metrics_handler() -> Response {
                 .status(StatusCode::OK)
                 .header("Content-Type", encoder.format_type())
                 .body(buffer.into())
-                .unwrap()
+                .expect("valid HTTP response")
         }
         Err(e) => {
             log::error!("Failed to encode metrics: {}", e);
             Response::builder()
                 .status(StatusCode::INTERNAL_SERVER_ERROR)
                 .body(format!("Failed to encode metrics: {}", e).into())
-                .unwrap()
+                .expect("valid HTTP response")
         }
     }
 }

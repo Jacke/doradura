@@ -13,18 +13,40 @@ use super::Bot;
 
 // ── Style rules ──────────────────────────────────────────────────────
 
+/// Prefix → style mapping table. Checked in order; first match wins.
+const STYLE_RULES: &[(&str, &str)] = &[
+    // Green (success) — send / resend / download
+    ("dl:", "success"),
+    ("downloads:resend:", "success"),
+    ("downloads:resend_cut:", "success"),
+    ("downloads:send:", "success"),
+    ("downloads:send_cut:", "success"),
+    // Red (danger) — close
+    ("downloads:close", "danger"),
+    // Blue (primary) — filters / actions
+    ("downloads:filter:", "primary"),
+    ("downloads:catfilter:", "primary"),
+    ("downloads:clip:", "primary"),
+    ("downloads:clip_cut:", "primary"),
+    ("downloads:circle:", "primary"),
+    ("downloads:circle_cut:", "primary"),
+    ("downloads:speed:", "primary"),
+    ("downloads:speed_cut:", "primary"),
+    ("downloads:setcat:", "primary"),
+    ("downloads:dur:", "primary"),
+    ("ringtone:select:", "primary"),
+];
+
 /// Derive a button style from its callback data.
-///
-/// Returns `Some("success")` for download buttons, `Some("danger")` for
-/// cancel/reset buttons, or `None` for everything else.
 fn style_for_callback(cb_data: &str) -> Option<&'static str> {
-    if cb_data.starts_with("dl:") {
-        return Some("success"); // green
+    // Substring match for cancel variants (cancel, clip_cancel, etc.)
+    if cb_data.contains("cancel") {
+        return Some("danger");
     }
-    if cb_data.contains("cancel") || cb_data == "ct:all:0" {
-        return Some("danger"); // red
-    }
-    None
+    STYLE_RULES
+        .iter()
+        .find(|(prefix, _)| cb_data.starts_with(prefix))
+        .map(|(_, style)| *style)
 }
 
 /// Convert an `InlineKeyboardMarkup` to a JSON value, injecting
@@ -268,5 +290,39 @@ pub async fn edit_message_reply_markup_styled(
         Ok(())
     } else {
         Err(StyledError::Api(resp.description.unwrap_or_default()))
+    }
+}
+
+// ── Convenience: styled send with automatic fallback ────────────────
+
+/// Send a text message with styled buttons, falling back to standard
+/// teloxide on HTTP/API error. Does NOT double-send when styled
+/// succeeds but response parsing fails (`Ok(None)`).
+pub async fn send_message_styled_or_fallback(
+    bot: &Bot,
+    chat_id: ChatId,
+    text: &str,
+    keyboard: &InlineKeyboardMarkup,
+    parse_mode: Option<ParseMode>,
+) -> ResponseResult<teloxide::types::Message> {
+    match send_message_styled(bot, chat_id, text, keyboard, parse_mode).await {
+        Ok(Some(msg)) => Ok(msg),
+        Err(e) => {
+            log::debug!("Styled send failed ({}), falling back to teloxide", e);
+            let mut req = bot.send_message(chat_id, text).reply_markup(keyboard.clone());
+            if let Some(pm) = parse_mode {
+                req = req.parse_mode(pm);
+            }
+            req.await
+        }
+        // Ok(None): Telegram accepted the message (user sees it) but we
+        // couldn't parse the response. Fetch a minimal stand-in rather
+        // than sending a duplicate.
+        Ok(None) => {
+            log::warn!("Styled send ok but response parse failed; not re-sending");
+            Err(teloxide::RequestError::Api(teloxide::ApiError::Unknown(
+                "styled response parse failed".into(),
+            )))
+        }
     }
 }

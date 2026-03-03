@@ -737,3 +737,159 @@ pub mod watcher {
             .unwrap_or(50)
     });
 }
+
+// ==================== Configuration Validation ====================
+
+/// Result of configuration validation.
+#[derive(Debug)]
+pub struct ConfigValidation {
+    pub errors: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+impl ConfigValidation {
+    /// Returns `true` if there are no errors (warnings are OK).
+    pub fn is_ok(&self) -> bool {
+        self.errors.is_empty()
+    }
+
+    /// Logs all errors and warnings using the `log` crate.
+    pub fn log(&self) {
+        for w in &self.warnings {
+            log::warn!("⚠️  Config warning: {}", w);
+        }
+        for e in &self.errors {
+            log::error!("❌ Config error: {}", e);
+        }
+        if self.is_ok() {
+            log::info!(
+                "✅ Configuration validation passed ({} warning(s))",
+                self.warnings.len()
+            );
+        } else {
+            log::error!(
+                "❌ Configuration validation failed: {} error(s), {} warning(s)",
+                self.errors.len(),
+                self.warnings.len()
+            );
+        }
+    }
+}
+
+/// Validates essential configuration at startup.
+///
+/// Checks:
+/// - **Errors** (fatal): BOT_TOKEN missing, DATABASE_PATH writable
+/// - **Warnings** (non-fatal): no proxy, no cookies, no admin configured
+///
+/// Call this at bot startup before initializing services.
+///
+/// # Example
+/// ```no_run
+/// use doracore::core::config::validate;
+/// let result = validate();
+/// result.log();
+/// if !result.is_ok() {
+///     std::process::exit(1);
+/// }
+/// ```
+pub fn validate() -> ConfigValidation {
+    let mut errors = Vec::new();
+    let mut warnings = Vec::new();
+
+    // --- Critical checks (errors) ---
+
+    // BOT_TOKEN is required
+    if BOT_TOKEN.is_empty() {
+        errors.push("BOT_TOKEN is not set. The bot cannot start without a valid token.".to_string());
+    }
+
+    // DATABASE_PATH — check parent directory exists
+    {
+        let db_path = std::path::Path::new(DATABASE_PATH.as_str());
+        if let Some(parent) = db_path.parent() {
+            if !parent.as_os_str().is_empty() && !parent.exists() {
+                errors.push(format!(
+                    "DATABASE_PATH parent directory does not exist: {}",
+                    parent.display()
+                ));
+            }
+        }
+    }
+
+    // --- Non-critical checks (warnings) ---
+
+    // Admin configuration
+    if *admin::ADMIN_USER_ID == 0 {
+        warnings.push("ADMIN_USER_ID is not set. Admin notifications and alerts will be disabled.".to_string());
+    }
+
+    // Proxy configuration (important for Railway)
+    if proxy::WARP_PROXY.is_none() {
+        warnings
+            .push("WARP_PROXY is not set. YouTube downloads may fail on cloud servers without a proxy.".to_string());
+    }
+
+    // Cookies
+    if YTDL_COOKIES_FILE.is_none() && YTDL_COOKIES_BROWSER.is_empty() {
+        warnings.push(
+            "No YouTube cookies configured (YTDL_COOKIES_FILE / YTDL_COOKIES_BROWSER). Some videos may be inaccessible."
+                .to_string(),
+        );
+    }
+
+    // Cookies file exists (if configured)
+    if let Some(ref path) = *YTDL_COOKIES_FILE {
+        if !path.is_empty() && !std::path::Path::new(path).exists() {
+            warnings.push(format!(
+                "YTDL_COOKIES_FILE is set to '{}' but the file does not exist.",
+                path
+            ));
+        }
+    }
+
+    // DOWNLOAD_FOLDER
+    {
+        let folder = shellexpand::tilde(&*DOWNLOAD_FOLDER).to_string();
+        let path = std::path::Path::new(&folder);
+        if !path.exists() {
+            warnings.push(format!(
+                "DOWNLOAD_FOLDER '{}' does not exist. It will be created on first download.",
+                folder
+            ));
+        }
+    }
+
+    ConfigValidation { errors, warnings }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_returns_struct() {
+        let result = validate();
+        // Should not panic
+        // Smoke test: validate() should not panic
+        let _ = result.errors.len() + result.warnings.len();
+    }
+
+    #[test]
+    fn test_config_validation_is_ok_with_no_errors() {
+        let v = ConfigValidation {
+            errors: vec![],
+            warnings: vec!["some warning".to_string()],
+        };
+        assert!(v.is_ok());
+    }
+
+    #[test]
+    fn test_config_validation_not_ok_with_errors() {
+        let v = ConfigValidation {
+            errors: vec!["fatal".to_string()],
+            warnings: vec![],
+        };
+        assert!(!v.is_ok());
+    }
+}

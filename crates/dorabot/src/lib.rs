@@ -15,11 +15,15 @@
 #![allow(clippy::manual_flatten)]
 
 // ── Local modules ─────────────────────────────────────────────────────────────
+pub mod background_tasks;
 pub mod cli;
+pub mod cli_commands;
 pub mod core;
 pub mod download;
 pub mod experimental;
 pub mod metadata_refresh;
+pub mod queue_processor;
+pub mod startup;
 pub mod telegram;
 pub mod vlipsy;
 pub mod watcher;

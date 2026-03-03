@@ -294,9 +294,10 @@ impl DownsubGateway {
 
         let mut grpc_request = Request::new(request);
         if let Some(ref key) = self.api_key {
-            grpc_request
-                .metadata_mut()
-                .insert("authorization", format!("Bearer {}", key).parse().unwrap());
+            grpc_request.metadata_mut().insert(
+                "authorization",
+                format!("Bearer {}", key).parse().expect("valid Bearer header"),
+            );
         }
 
         let response = timeout(self.timeout, client.get_summary(grpc_request))
@@ -351,9 +352,10 @@ impl DownsubGateway {
 
         let mut grpc_request = Request::new(request);
         if let Some(ref key) = self.api_key {
-            grpc_request
-                .metadata_mut()
-                .insert("authorization", format!("Bearer {}", key).parse().unwrap());
+            grpc_request.metadata_mut().insert(
+                "authorization",
+                format!("Bearer {}", key).parse().expect("valid Bearer header"),
+            );
         }
 
         let response = timeout(self.timeout, client.get_subtitles(grpc_request))
