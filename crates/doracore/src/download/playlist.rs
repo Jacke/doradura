@@ -88,9 +88,23 @@ pub fn is_playlist_url(url: &Url) -> bool {
         }
     }
 
-    // SoundCloud sets/albums
-    if url_str.contains("soundcloud.com") && url_str.contains("/sets/") {
-        return true;
+    // SoundCloud sets/albums and artist profiles
+    if url_str.contains("soundcloud.com") {
+        if url_str.contains("/sets/") {
+            return true;
+        }
+        // Artist profiles and collection pages
+        if let Some(segments) = url.path_segments() {
+            let segs: Vec<&str> = segments.filter(|s| !s.is_empty()).collect();
+            // Artist profile: /artist-name (1 segment, no file extension)
+            if segs.len() == 1 && !segs[0].contains('.') {
+                return true;
+            }
+            // Collection pages: /artist/likes, /artist/tracks, etc.
+            if segs.len() == 2 && matches!(segs[1], "likes" | "tracks" | "albums" | "reposts" | "popular-tracks") {
+                return true;
+            }
+        }
     }
 
     // Spotify playlists/albums
@@ -212,6 +226,64 @@ pub async fn extract_playlist(url: &Url) -> Result<PlaylistInfo, String> {
     })
 }
 
+/// Extracts the latest (most recent) track URL and title from a channel/artist page.
+///
+/// Uses `yt-dlp --flat-playlist --playlist-items 1` to get just the first item
+/// (most recent) without downloading anything.
+pub async fn extract_latest_from_channel(url: &Url) -> Result<(String, String), String> {
+    let ytdl_bin = &*config::YTDL_BIN;
+
+    let mut args: Vec<&str> = vec![
+        "--flat-playlist",
+        "--playlist-items",
+        "1",
+        "--dump-json",
+        "--socket-timeout",
+        "30",
+    ];
+
+    // Add cookies if configured
+    add_cookies_args(&mut args);
+
+    args.push(url.as_str());
+
+    log::info!("Extracting latest track from channel/artist: {}", url);
+
+    let mut cmd = Command::new(ytdl_bin);
+    cmd.args(&args).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let output = run_with_timeout(&mut cmd, config::download::ytdlp_timeout())
+        .await
+        .map_err(|e| format!("Failed to run yt-dlp: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("yt-dlp failed: {}", stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Parse the first JSON line (the single entry)
+    for line in stdout.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+
+        if let Ok(entry) = serde_json::from_str::<YtdlpEntryJson>(line) {
+            let track_url = entry
+                .url
+                .or_else(|| entry.id.map(|id| format!("https://www.youtube.com/watch?v={}", id)));
+
+            if let Some(track_url) = track_url {
+                let title = entry.title.unwrap_or_else(|| "Unknown".to_string());
+                log::info!("Extracted latest track: {} - {}", title, track_url);
+                return Ok((track_url, title));
+            }
+        }
+    }
+
+    Err("No tracks found on this channel/profile".to_string())
+}
+
 /// Extracts only the video ID from a YouTube URL, removing playlist parameters
 pub fn clean_youtube_url(url: &Url) -> Option<Url> {
     if !url
@@ -300,6 +372,60 @@ mod tests {
         let url = Url::parse("https://youtu.be/abc").unwrap();
         let cleaned = clean_youtube_url(&url).unwrap();
         assert_eq!(cleaned.as_str(), "https://www.youtube.com/watch?v=abc");
+    }
+
+    #[test]
+    fn test_is_playlist_url_soundcloud_artist_profile() {
+        let url = Url::parse("https://soundcloud.com/kareful").unwrap();
+        assert!(is_playlist_url(&url));
+    }
+
+    #[test]
+    fn test_is_playlist_url_soundcloud_track() {
+        let url = Url::parse("https://soundcloud.com/kareful/track-name").unwrap();
+        assert!(!is_playlist_url(&url));
+    }
+
+    #[test]
+    fn test_is_playlist_url_soundcloud_likes() {
+        let url = Url::parse("https://soundcloud.com/kareful/likes").unwrap();
+        assert!(is_playlist_url(&url));
+    }
+
+    #[test]
+    fn test_is_playlist_url_soundcloud_tracks_page() {
+        let url = Url::parse("https://soundcloud.com/kareful/tracks").unwrap();
+        assert!(is_playlist_url(&url));
+    }
+
+    #[test]
+    fn test_is_playlist_url_soundcloud_albums_page() {
+        let url = Url::parse("https://soundcloud.com/kareful/albums").unwrap();
+        assert!(is_playlist_url(&url));
+    }
+
+    #[test]
+    fn test_is_playlist_url_soundcloud_reposts() {
+        let url = Url::parse("https://soundcloud.com/kareful/reposts").unwrap();
+        assert!(is_playlist_url(&url));
+    }
+
+    #[test]
+    fn test_is_playlist_url_soundcloud_popular() {
+        let url = Url::parse("https://soundcloud.com/kareful/popular-tracks").unwrap();
+        assert!(is_playlist_url(&url));
+    }
+
+    #[test]
+    fn test_is_playlist_url_youtube_user_page() {
+        let url = Url::parse("https://www.youtube.com/user/username").unwrap();
+        assert!(is_playlist_url(&url));
+    }
+
+    #[test]
+    fn test_is_playlist_url_youtube_c_page() {
+        let url = Url::parse("https://www.youtube.com/c/channelname").unwrap();
+        assert!(is_playlist_url(&url));
     }
 
     #[test]

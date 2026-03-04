@@ -936,6 +936,27 @@ mod tests {
     }
 
     #[test]
+    fn test_supports_url_soundcloud_artist() {
+        let source = YtDlpSource::new();
+        let url = Url::parse("https://soundcloud.com/artist").unwrap();
+        assert!(source.supports_url(&url));
+    }
+
+    #[test]
+    fn test_supports_url_soundcloud_track() {
+        let source = YtDlpSource::new();
+        let url = Url::parse("https://soundcloud.com/artist/track-name").unwrap();
+        assert!(source.supports_url(&url));
+    }
+
+    #[test]
+    fn test_supports_url_soundcloud_set() {
+        let source = YtDlpSource::new();
+        let url = Url::parse("https://soundcloud.com/artist/sets/album").unwrap();
+        assert!(source.supports_url(&url));
+    }
+
+    #[test]
     fn test_append_section_args_with_range() {
         let mut args = vec!["-o", "/tmp/test.mp4"];
         append_section_args(&mut args, Some("*00:01:00-00:02:30"));

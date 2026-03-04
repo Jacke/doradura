@@ -77,6 +77,7 @@ commands =
     .processing = ⏳ Je récupère les infos...
     .audio_too_large = ❌ Le fichier audio est trop volumineux (environ {$size} MB). Taille max : {$max} MB.
     .preview_failed = Je n'ai pas pu afficher l'aperçu 😢 Réessaie ou écris à l'admin.
+    .channel_extract_failed = Je n'ai pas pu extraire un titre de cette chaîne/profil 😢 Essaie d'envoyer un lien direct vers un titre.
     .preview_info_failed = Je n'ai pas pu récupérer les infos du titre 😢 Réessaie ou écris à l'admin.
     .audio_cut_cancelled = ✂️ Découpe audio annulée.
     .audio_session_expired = ❌ La session audio a expiré. Télécharge le titre à nouveau.

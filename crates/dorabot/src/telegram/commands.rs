@@ -476,6 +476,24 @@ pub async fn handle_message(
                         url.set_query(if new_query.is_empty() { None } else { Some(&new_query) });
                     }
 
+                    // Resolve channel/artist URLs to latest track
+                    if doracore::download::playlist::is_playlist_url(&url) {
+                        match doracore::download::playlist::extract_latest_from_channel(&url).await {
+                            Ok((track_url, track_title)) => {
+                                log::info!(
+                                    "Resolved channel/artist URL to latest track: {} ({})",
+                                    track_title,
+                                    track_url
+                                );
+                                url = Url::parse(&track_url).unwrap_or(url);
+                            }
+                            Err(e) => {
+                                log::warn!("Failed to extract track from channel URL: {}", e);
+                                continue;
+                            }
+                        }
+                    }
+
                     crate::telegram::cache::store_link_message_id(url.as_str(), msg.id.0).await;
                     valid_urls.push(url);
                 }
@@ -721,6 +739,26 @@ pub async fn handle_message(
                 }
 
                 crate::telegram::cache::store_link_message_id(url.as_str(), msg.id.0).await;
+
+                // Check if this is a channel/artist/playlist URL → extract latest track
+                if doracore::download::playlist::is_playlist_url(&url) {
+                    match doracore::download::playlist::extract_latest_from_channel(&url).await {
+                        Ok((track_url, track_title)) => {
+                            log::info!(
+                                "Resolved channel/artist URL to latest track: {} ({})",
+                                track_title,
+                                track_url
+                            );
+                            url = Url::parse(&track_url).unwrap_or(url);
+                        }
+                        Err(e) => {
+                            log::error!("Failed to extract latest track from channel: {}", e);
+                            bot.send_message(msg.chat.id, i18n::t(&lang, "commands.channel_extract_failed"))
+                                .await?;
+                            return Ok(user_info);
+                        }
+                    }
+                }
 
                 // Check if this is an Instagram profile URL → show profile card
                 if let Some(username) =
