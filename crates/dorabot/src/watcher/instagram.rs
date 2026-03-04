@@ -3,7 +3,7 @@
 //! Delegates to the existing `InstagramSource` for API calls (no code duplication).
 
 use crate::download::source::instagram::InstagramSource;
-use crate::watcher::traits::{CheckResult, ContentWatcher, WatchUpdate};
+use crate::watcher::traits::{CheckResult, ContentWatcher, MediaAttachment, WatchUpdate};
 use async_trait::async_trait;
 use serde_json::{json, Value as JsonValue};
 
@@ -81,8 +81,8 @@ impl ContentWatcher for InstagramWatcher {
                 Ok(profile) => {
                     if let Some(first_post) = profile.posts.first() {
                         if !is_first_check && first_post.shortcode != prev_shortcode && !prev_shortcode.is_empty() {
-                            // Find all new posts (those before the last-seen shortcode)
-                            for post in &profile.posts {
+                            // Find all new posts (those before the last-seen shortcode), cap at 5
+                            for post in profile.posts.iter().take(5) {
                                 if post.shortcode == prev_shortcode {
                                     break;
                                 }
@@ -94,6 +94,8 @@ impl ContentWatcher for InstagramWatcher {
                                         if post.is_video { "reel" } else { "post" },
                                         source_id
                                     ),
+                                    shortcode: Some(post.shortcode.clone()),
+                                    media: vec![],
                                 });
                             }
                         }
@@ -113,20 +115,33 @@ impl ContentWatcher for InstagramWatcher {
                 Ok(stories) => {
                     if let Some(latest) = stories.iter().filter_map(|s| s.taken_at).max() {
                         if !is_first_check && latest > prev_story_ts {
-                            let new_count = stories
+                            let new_stories: Vec<_> = stories
                                 .iter()
                                 .filter(|s| s.taken_at.unwrap_or(0) > prev_story_ts)
-                                .count();
-                            updates.push(WatchUpdate {
-                                content_type: "story".to_string(),
-                                url: format!("https://www.instagram.com/stories/{}/", source_id),
-                                description: format!(
-                                    "@{} posted {} new {}",
-                                    source_id,
-                                    new_count,
-                                    if new_count == 1 { "story" } else { "stories" }
-                                ),
-                            });
+                                .take(10) // Telegram media group max
+                                .collect();
+                            let new_count = new_stories.len();
+                            if new_count > 0 {
+                                updates.push(WatchUpdate {
+                                    content_type: "story".to_string(),
+                                    url: format!("https://www.instagram.com/stories/{}/", source_id),
+                                    description: format!(
+                                        "@{} posted {} new {}",
+                                        source_id,
+                                        new_count,
+                                        if new_count == 1 { "story" } else { "stories" }
+                                    ),
+                                    shortcode: None,
+                                    media: new_stories
+                                        .iter()
+                                        .map(|s| MediaAttachment {
+                                            media_url: s.media_url.clone(),
+                                            is_video: s.is_video,
+                                            duration_secs: s.duration_secs,
+                                        })
+                                        .collect(),
+                                });
+                            }
                         }
                         new_last_story_ts = latest;
                     }

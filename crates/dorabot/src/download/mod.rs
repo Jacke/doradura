@@ -23,8 +23,10 @@ pub mod audio; // Telegram audio download + send pipeline
 pub mod downloader; // Full download logic with Telegram upload
 pub mod metadata; // Metadata fetching with admin notifications
 pub mod pipeline; // Orchestration pipeline for bot flows
+pub mod playlist_import; // External playlist import (YouTube, Spotify)
 pub mod progress; // Telegram progress messages
 pub mod queue; // Download queue management
+pub mod search; // Music search engine (YouTube, SoundCloud)
 pub mod send; // Telegram send utilities
 pub mod source; // Source backends (bot-specific YtDlp/Instagram behaviour)
 pub mod video; // Telegram video download + send pipeline

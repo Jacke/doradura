@@ -7,6 +7,14 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+/// A media attachment resolved by the watcher (story CDN URL or post media).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaAttachment {
+    pub media_url: String,
+    pub is_video: bool,
+    pub duration_secs: Option<f64>,
+}
+
 /// A single new content item detected by a watcher.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WatchUpdate {
@@ -16,6 +24,10 @@ pub struct WatchUpdate {
     pub url: String,
     /// Short human-readable description
     pub description: String,
+    /// Post shortcode for deferred media resolution (posts only).
+    pub shortcode: Option<String>,
+    /// Pre-resolved media attachments (stories have CDN URLs immediately).
+    pub media: Vec<MediaAttachment>,
 }
 
 /// Result of a check operation.

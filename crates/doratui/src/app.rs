@@ -656,6 +656,16 @@ impl App {
             },
         ];
 
+        app.lyrics_result = Some(LyricsResult {
+            artist: "Dora Demo".to_string(),
+            artist_id: Some(123),
+            title: "Welcome to Dora TUI".to_string(),
+            album: Some("Alpha Release".to_string()),
+            release_date: Some("2026-03-04".to_string()),
+            thumbnail_url: None,
+            lyrics: "Hello and welcome to the demo!\n\n[Verse 1]\nYou are exploring the Lyrics tab.\nTry clicking on the artist name above!\nIt will show you a grid of cards.\n\n[Chorus]\nEverything is fast and fluid.\nNo real API calls are made here.\nJust smooth, local demo data.\n\n[Outro]\nEnjoy the beautiful TUI design!".to_string(),
+        });
+
         app.update_history_filter();
         app
     }

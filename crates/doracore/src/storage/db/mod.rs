@@ -20,7 +20,9 @@
 //! | **Error Log** | `ErrorLogEntry`…`cleanup_old_errors` | Error tracking |
 //! | **Lyrics Sessions** | `create_lyrics_session`…`delete_expired_lyrics_sessions` | Lyrics search sessions |
 
+mod playlists;
 mod sessions;
+pub use playlists::*;
 pub use sessions::*;
 
 use crate::core::types::Plan;

@@ -1438,6 +1438,56 @@ pub async fn handle_menu_callback(
                     log::error!("Vlipsy preview callback error: {}", e);
                 }
                 return Ok(());
+            } else if data.starts_with("sr:") {
+                // Music search callbacks
+                use crate::telegram::menu::search::handle_search_callback;
+                if let Err(e) = handle_search_callback(
+                    &bot,
+                    callback_id.clone(),
+                    chat_id,
+                    message_id,
+                    &data,
+                    Arc::clone(&db_pool),
+                    Arc::clone(&download_queue),
+                )
+                .await
+                {
+                    log::error!("Search callback error: {}", e);
+                }
+                return Ok(());
+            } else if data.starts_with("pw:") {
+                // Player mode callbacks
+                use crate::telegram::menu::player::handle_player_callback;
+                if let Err(e) = handle_player_callback(
+                    &bot,
+                    callback_id.clone(),
+                    chat_id,
+                    message_id,
+                    &data,
+                    Arc::clone(&db_pool),
+                    Arc::clone(&download_queue),
+                )
+                .await
+                {
+                    log::error!("Player callback error: {}", e);
+                }
+                return Ok(());
+            } else if data.starts_with("pl:") {
+                // Playlist management callbacks
+                use crate::telegram::menu::playlist::handle_playlist_callback;
+                if let Err(e) = handle_playlist_callback(
+                    &bot,
+                    callback_id.clone(),
+                    chat_id,
+                    message_id,
+                    &data,
+                    Arc::clone(&db_pool),
+                )
+                .await
+                {
+                    log::error!("Playlist callback error: {}", e);
+                }
+                return Ok(());
             } else if data.starts_with("vl:") {
                 use crate::telegram::menu::vlipsy::handle_vlipsy_callback;
                 if let Err(e) = handle_vlipsy_callback(

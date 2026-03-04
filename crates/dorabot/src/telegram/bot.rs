@@ -73,6 +73,10 @@ pub enum Command {
     Version,
     #[command(description = "my content subscriptions")]
     Subscriptions,
+    #[command(description = "music player")]
+    Player,
+    #[command(description = "my playlists")]
+    Playlists,
 }
 
 const BOT_COMMAND_DEFINITIONS: &[(&str, &str)] = &[
@@ -91,6 +95,8 @@ const BOT_COMMAND_DEFINITIONS: &[(&str, &str)] = &[
     //("backup", "bot_commands.backup"),
     ("plan", "bot_commands.plan"),
     ("subscriptions", "bot_commands.subscriptions"),
+    ("player", "bot_commands.player"),
+    ("playlists", "bot_commands.playlists"),
     //("users", "bot_commands.users"),
     //("setplan", "bot_commands.setplan"),
     //("transactions", "bot_commands.transactions"),

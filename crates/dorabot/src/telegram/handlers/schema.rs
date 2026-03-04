@@ -453,6 +453,13 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                         crate::telegram::subscriptions::handle_subscriptions_command(&bot, msg.chat.id, &deps.db_pool)
                             .await;
                     }
+                    Command::Player => {
+                        crate::telegram::menu::player::handle_player_command(&bot, msg.chat.id, &deps.db_pool).await;
+                    }
+                    Command::Playlists => {
+                        crate::telegram::menu::playlist::handle_playlists_command(&bot, msg.chat.id, &deps.db_pool)
+                            .await;
+                    }
                 }
                 Ok(())
             }

@@ -1076,6 +1076,46 @@ fn handle_lyrics_key(
                 return;
             }
             let query = app.lyrics_query.clone();
+
+            if app.demo_mode {
+                app.lyrics_loading = true;
+                app.artist_songs_page = 1;
+                app.last_lyrics_query = query.clone();
+                app.last_artist_id = None;
+                let a_tx = artist_tx.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    let mock_songs = vec![
+                        doracore::lyrics::ArtistSong {
+                            id: 1,
+                            title: format!("{} (Remix)", query),
+                            artist: "Dora Demo".to_string(),
+                            thumbnail_url: None,
+                        },
+                        doracore::lyrics::ArtistSong {
+                            id: 2,
+                            title: format!("{} - Live", query),
+                            artist: "Dora Demo".to_string(),
+                            thumbnail_url: None,
+                        },
+                        doracore::lyrics::ArtistSong {
+                            id: 3,
+                            title: "Bohemian Rhapsody".to_string(),
+                            artist: "Queen".to_string(),
+                            thumbnail_url: None,
+                        },
+                        doracore::lyrics::ArtistSong {
+                            id: 4,
+                            title: "Never Gonna Give You Up".to_string(),
+                            artist: "Rick Astley".to_string(),
+                            thumbnail_url: None,
+                        },
+                    ];
+                    let _ = a_tx.send((None, Some(mock_songs))).await;
+                });
+                return;
+            }
+
             let g_token = app.settings.genius_token.clone();
 
             if g_token.is_empty() && doracore::core::config::GENIUS_CLIENT_TOKEN.is_none() {
@@ -1558,6 +1598,27 @@ fn handle_click_internal(
             reveal_file(app, path);
         }
         ClickTarget::ArtistClick(id_opt, name) => {
+            if app.demo_mode {
+                app.lyrics_loading = true;
+                app.artist_songs_page = 1;
+                app.last_lyrics_query.clear();
+                app.last_artist_id = Some(123);
+                let a_tx = artist_tx.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    let mock_songs = (1..=10)
+                        .map(|i| doracore::lyrics::ArtistSong {
+                            id: i as u64,
+                            title: format!("Greatest Hit Vol. {}", i),
+                            artist: name.clone(),
+                            thumbnail_url: None,
+                        })
+                        .collect();
+                    let _ = a_tx.send((Some(123), Some(mock_songs))).await;
+                });
+                return;
+            }
+
             let g_token = app.settings.genius_token.clone();
             if g_token.is_empty() && doracore::core::config::GENIUS_CLIENT_TOKEN.is_none() {
                 app.add_toast("Genius token missing in Settings", ToastKind::Error);
@@ -1592,6 +1653,26 @@ fn handle_click_internal(
             app.lyrics_result = None;
             app.lyrics_scroll = 0;
             app.lyrics_view_mode = app::LyricsViewMode::Lyrics;
+
+            if app.demo_mode {
+                let l_tx = lyrics_tx.clone();
+                let artist_clone = artist.clone();
+                let title_clone = title.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    let _ = l_tx.send(Some(app::LyricsResult {
+                        artist: artist_clone,
+                        artist_id: Some(123),
+                        title: title_clone,
+                        album: Some("Demo Album".to_string()),
+                        release_date: Some("2026-03-04".to_string()),
+                        thumbnail_url: None,
+                        lyrics: "This is a demo lyrics text.\n\n[Verse 1]\nIt works without a token!\nIn demo mode you see this.\n\n[Chorus]\nCards are beautiful!\nGrid is responsive!\nLoad more is fun!\n\n[Outro]\nEnjoy dora-tui!".to_string(),
+                    })).await;
+                });
+                return;
+            }
+
             let l_tx = lyrics_tx.clone();
             let g_token = if app.settings.genius_token.is_empty() {
                 None
@@ -1620,6 +1701,27 @@ fn handle_click_internal(
         }
         ClickTarget::LyricsLoadMore => {
             if app.lyrics_loading {
+                return;
+            }
+
+            if app.demo_mode {
+                app.lyrics_loading = true;
+                app.artist_songs_page += 1;
+                let page = app.artist_songs_page;
+                let a_id = app.last_artist_id;
+                let a_tx = artist_tx.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    let mock_songs = (1..=10)
+                        .map(|i| doracore::lyrics::ArtistSong {
+                            id: (page as u64 * 100) + i as u64,
+                            title: format!("Bonus Track #{}", (page - 1) * 10 + i),
+                            artist: "Dora Demo".to_string(),
+                            thumbnail_url: None,
+                        })
+                        .collect();
+                    let _ = a_tx.send((a_id, Some(mock_songs))).await;
+                });
                 return;
             }
 

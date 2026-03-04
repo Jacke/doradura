@@ -57,8 +57,10 @@ const FB_ASBD_ID: &str = "129477";
 /// Maximum requests per hour (conservative, under Instagram's ~200 limit).
 const RATE_LIMIT_PER_HOUR: usize = 180;
 
-/// Sliding-window rate limiter for Instagram GraphQL API calls.
-/// Tracks timestamps of recent requests, global per-IP.
+/// Global sliding-window rate limiter for Instagram GraphQL API calls.
+/// Shared across all `InstagramSource` instances (watcher + dispatcher + downloads).
+static RATE_LIMITER: std::sync::LazyLock<RateLimiter> = std::sync::LazyLock::new(RateLimiter::new);
+
 struct RateLimiter {
     timestamps: Mutex<Vec<Instant>>,
 }
@@ -86,7 +88,6 @@ impl RateLimiter {
 /// Instagram download source using the internal GraphQL API.
 pub struct InstagramSource {
     client: reqwest::Client,
-    rate_limiter: RateLimiter,
 }
 
 impl Default for InstagramSource {
@@ -145,10 +146,7 @@ impl InstagramSource {
             .build()
             .expect("InstagramSource HTTP client build should succeed");
 
-        Self {
-            client,
-            rate_limiter: RateLimiter::new(),
-        }
+        Self { client }
     }
 
     /// Extract the shortcode from an Instagram URL.
@@ -322,8 +320,8 @@ impl InstagramSource {
     /// Fetch media data from Instagram's GraphQL API.
     ///
     /// Uses curl to bypass TLS fingerprinting that blocks reqwest on datacenter IPs.
-    async fn fetch_graphql_media(&self, shortcode: &str) -> Result<GraphQLMedia, AppError> {
-        if !self.rate_limiter.acquire() {
+    pub async fn fetch_graphql_media(&self, shortcode: &str) -> Result<GraphQLMedia, AppError> {
+        if !RATE_LIMITER.acquire() {
             log::warn!("InstagramSource: rate limited, falling back to yt-dlp");
             return Err(AppError::Download(DownloadError::Instagram("Rate limited".to_string())));
         }
@@ -415,7 +413,7 @@ impl InstagramSource {
                     let item_is_video = node.get("is_video").and_then(|v| v.as_bool()).unwrap_or(false);
                     let item_video_url = node.get("video_url").and_then(|v| v.as_str()).map(String::from);
                     let item_display_url = node.get("display_url").and_then(|v| v.as_str()).map(String::from);
-                    Some(MediaItem {
+                    Some(GraphQLMediaItem {
                         is_video: item_is_video,
                         video_url: item_video_url,
                         display_url: item_display_url,
@@ -424,7 +422,7 @@ impl InstagramSource {
                 .collect()
         } else {
             // Single item
-            vec![MediaItem {
+            vec![GraphQLMediaItem {
                 is_video,
                 video_url,
                 display_url,
@@ -566,7 +564,7 @@ impl InstagramSource {
     ///
     /// Returns profile info and recent posts for the profile browsing UI.
     pub async fn fetch_profile(&self, username: &str) -> Result<InstagramProfile, AppError> {
-        if !self.rate_limiter.acquire() {
+        if !RATE_LIMITER.acquire() {
             return Err(AppError::Download(DownloadError::Instagram("Rate limited".to_string())));
         }
 
@@ -749,7 +747,7 @@ impl InstagramSource {
     ///
     /// Requires authenticated session cookies.
     pub async fn fetch_highlights(&self, user_id: &str) -> Result<Vec<HighlightReel>, AppError> {
-        if !self.rate_limiter.acquire() {
+        if !RATE_LIMITER.acquire() {
             return Err(AppError::Download(DownloadError::Instagram("Rate limited".to_string())));
         }
 
@@ -816,7 +814,7 @@ impl InstagramSource {
     /// Uses `/api/v1/feed/reels_media/` which is the correct endpoint for highlights.
     /// For user stories, use `fetch_stories()` instead.
     pub async fn fetch_reel_media(&self, reel_id: &str) -> Result<Vec<StoryItem>, AppError> {
-        if !self.rate_limiter.acquire() {
+        if !RATE_LIMITER.acquire() {
             return Err(AppError::Download(DownloadError::Instagram("Rate limited".to_string())));
         }
 
@@ -931,7 +929,7 @@ impl InstagramSource {
     /// Uses `GET /api/v1/feed/user/{user_id}/story/` which returns `{ "reel": { "items": [...] } }`.
     /// This is the correct endpoint for user stories — `reels_media` is for highlights.
     pub async fn fetch_stories(&self, user_id: &str) -> Result<Vec<StoryItem>, AppError> {
-        if !self.rate_limiter.acquire() {
+        if !RATE_LIMITER.acquire() {
             return Err(AppError::Download(DownloadError::Instagram("Rate limited".to_string())));
         }
 
@@ -1132,19 +1130,19 @@ pub struct StoryItem {
 }
 
 /// Parsed media data from Instagram's GraphQL response.
-struct GraphQLMedia {
-    items: Vec<MediaItem>,
-    caption: String,
-    username: String,
-    thumbnail_url: Option<String>,
-    duration_secs: Option<f64>,
+pub struct GraphQLMedia {
+    pub items: Vec<GraphQLMediaItem>,
+    pub caption: String,
+    pub username: String,
+    pub thumbnail_url: Option<String>,
+    pub duration_secs: Option<f64>,
 }
 
 /// A single media item (video or photo) within a post.
-struct MediaItem {
-    is_video: bool,
-    video_url: Option<String>,
-    display_url: Option<String>,
+pub struct GraphQLMediaItem {
+    pub is_video: bool,
+    pub video_url: Option<String>,
+    pub display_url: Option<String>,
 }
 
 #[async_trait]
@@ -1235,7 +1233,7 @@ impl DownloadSource for InstagramSource {
                 let mask = request
                     .carousel_mask
                     .or_else(|| take_carousel_mask(request.url.as_str()));
-                let selected_items: Vec<(usize, &MediaItem)> = if let Some(m) = mask {
+                let selected_items: Vec<(usize, &GraphQLMediaItem)> = if let Some(m) = mask {
                     media
                         .items
                         .iter()

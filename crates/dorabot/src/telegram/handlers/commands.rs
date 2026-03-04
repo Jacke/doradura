@@ -14,6 +14,17 @@ pub(super) async fn handle_start_command(bot: &Bot, msg: &Message, deps: &Handle
         send_random_voice_message, setup_chat_bot_commands, show_enhanced_main_menu, show_language_selection_menu,
     };
 
+    // Check for deep link: /start pl_{token}
+    if let Some(text) = msg.text() {
+        if let Some(token) = text.strip_prefix("/start pl_") {
+            let token = token.trim();
+            if !token.is_empty() {
+                crate::telegram::menu::playlist::handle_clone_playlist(bot, msg.chat.id, token, &deps.db_pool).await;
+                return Ok(());
+            }
+        }
+    }
+
     // Check if user exists
     let user_exists = if let Ok(conn) = get_connection(&deps.db_pool) {
         let chat_id = msg.chat.id.0;

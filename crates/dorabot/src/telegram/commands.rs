@@ -351,6 +351,38 @@ pub async fn handle_message(
             return Ok(None);
         }
 
+        // Check if user is waiting for playlist name input
+        if crate::telegram::menu::playlist::is_waiting_for_playlist_name(msg.chat.id.0).await {
+            crate::telegram::menu::playlist::handle_playlist_name_input(&bot, msg.chat.id, text, db_pool.clone()).await;
+            return Ok(None);
+        }
+
+        // Check if user is waiting for import URL input
+        if let Some(pl_id) = crate::telegram::menu::playlist::get_import_playlist_id(msg.chat.id.0).await {
+            let text_lower = text.trim().to_lowercase();
+            if text_lower == "cancel" {
+                crate::telegram::menu::playlist::clear_import_url_session(msg.chat.id.0).await;
+                let _ = bot.send_message(msg.chat.id, "Cancelled.").await;
+                return Ok(None);
+            }
+            crate::telegram::menu::playlist::clear_import_url_session(msg.chat.id.0).await;
+            // Handle import in background
+            let bot_clone = bot.clone();
+            let db_pool_clone = db_pool.clone();
+            let url_text = text.trim().to_string();
+            tokio::spawn(async move {
+                crate::download::playlist_import::handle_import_url(
+                    &bot_clone,
+                    msg.chat.id,
+                    &url_text,
+                    pl_id,
+                    db_pool_clone,
+                )
+                .await;
+            });
+            return Ok(None);
+        }
+
         // Check if user is waiting for Vlipsy search
         if crate::telegram::menu::vlipsy::is_waiting_for_vlipsy_search(msg.chat.id.0).await {
             crate::telegram::menu::vlipsy::handle_search_text(&bot, msg.chat.id, text, &lang, db_pool.clone()).await;
@@ -879,13 +911,45 @@ pub async fn handle_message(
                 // Return user info for reuse in logging
                 return Ok(user_info);
             }
+        } else if !text.starts_with('/') {
+            // No URLs found — check for player/search context before showing "no links"
+
+            // Standalone search context: if user typed text while a search session with empty query exists
+            if let Some(session) = crate::telegram::menu::search::get_search_session(msg.chat.id.0).await {
+                if session.query.is_empty() {
+                    crate::telegram::menu::search::handle_standalone_search(
+                        &bot,
+                        msg.chat.id,
+                        text,
+                        db_pool.clone(),
+                        session.context.clone(),
+                    )
+                    .await;
+                    return Ok(None);
+                }
+            }
+
+            // Player mode: text → music search (only non-URL text)
+            if let Ok(conn) = crate::storage::db::get_connection(&db_pool) {
+                if let Ok(Some(session)) = crate::storage::db::get_player_session(&conn, msg.chat.id.0) {
+                    crate::telegram::menu::search::handle_player_search(
+                        &bot,
+                        msg.chat.id,
+                        text,
+                        db_pool.clone(),
+                        session.playlist_id,
+                    )
+                    .await;
+                    return Ok(None);
+                }
+            }
+
+            bot.send_message(msg.chat.id, i18n::t(&lang, "commands.no_links"))
+                .await?;
         } else {
             bot.send_message(msg.chat.id, i18n::t(&lang, "commands.no_links"))
                 .await?;
         }
-    } else {
-        bot.send_message(msg.chat.id, i18n::t(&lang, "commands.no_links"))
-            .await?;
     }
     Ok(None)
 }
@@ -1595,7 +1659,7 @@ pub async fn process_video_clip(
                 ),
                 "[vout]",
                 "[aout]",
-                "28",
+                "18",
             )
         } else {
             (
@@ -1603,7 +1667,7 @@ pub async fn process_video_clip(
                 format!("{base_filter_v};[v]{video_note_post}[vout]"),
                 "[vout]",
                 "[a]",
-                "28",
+                "18",
             )
         }
     } else if is_video_note && video_note_needs_split {
@@ -1736,17 +1800,27 @@ pub async fn process_video_clip(
         cmd.arg("-map").arg(map_a_label);
 
         if has_video {
+            let preset = if is_video_note { "medium" } else { "fast" };
             cmd.arg("-c:v")
                 .arg("libx264")
                 .arg("-preset")
-                .arg("fast")
+                .arg(preset)
                 .arg("-crf")
                 .arg(crf);
+            if is_video_note {
+                cmd.arg("-maxrate")
+                    .arg("1400k")
+                    .arg("-bufsize")
+                    .arg("2800k")
+                    .arg("-profile:v")
+                    .arg("high");
+            }
         }
+        let audio_bitrate = if is_video_note { "128k" } else { "192k" };
         cmd.arg("-c:a")
             .arg("aac")
             .arg("-b:a")
-            .arg("192k")
+            .arg(audio_bitrate)
             .arg("-movflags")
             .arg("+faststart");
     }

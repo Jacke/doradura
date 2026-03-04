@@ -23,6 +23,11 @@ pub fn set_bot_username(username: &str) {
     let _ = BOT_USERNAME.set(tag);
 }
 
+/// Get the raw bot username (without @). Returns None if not yet set.
+pub fn get_bot_username() -> Option<&'static str> {
+    BOT_USERNAME.get().map(|s| s.strip_prefix('@').unwrap_or(s.as_str()))
+}
+
 /// Get the bot tag for branding
 /// Priority: 1) Username from getMe(), 2) BOT_TAG env var, 3) Default
 fn get_bot_tag() -> String {

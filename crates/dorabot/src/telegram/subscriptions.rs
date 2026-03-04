@@ -3,6 +3,7 @@
 //! Handles `/subscriptions` command and `cw:` callback prefix.
 
 use crate::core::config;
+use crate::download::source::instagram::InstagramSource;
 use crate::storage::db::{self, DbPool};
 use crate::storage::get_connection;
 use crate::telegram::cb;
@@ -10,9 +11,13 @@ use crate::telegram::Bot;
 use crate::watcher::db as watcher_db;
 use crate::watcher::traits::WatchNotification;
 use crate::watcher::WatcherRegistry;
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{CallbackQueryId, ChatId, InlineKeyboardMarkup, MessageId};
+use teloxide::types::{
+    CallbackQueryId, ChatId, InlineKeyboardMarkup, InputFile, InputMedia, InputMediaPhoto, InputMediaVideo, MessageId,
+};
 use tokio::sync::mpsc;
 
 /// Max subscriptions by plan.
@@ -544,52 +549,330 @@ async fn handle_toggle_content_type(
 
 // ─── Notification dispatcher ───
 
+/// Download a media URL to a temp file. Returns None on failure.
+async fn download_media_to_temp(client: &reqwest::Client, url: &str, is_video: bool) -> Option<PathBuf> {
+    const MAX_SIZE: u64 = 50 * 1024 * 1024; // 50 MB Telegram limit
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+    let resp = match client.get(url).timeout(TIMEOUT).send().await {
+        Ok(r) => r,
+        Err(e) => {
+            log::warn!("Media download failed for {}: {}", url, e);
+            return None;
+        }
+    };
+
+    if !resp.status().is_success() {
+        log::warn!("Media download HTTP {}: {}", resp.status(), url);
+        return None;
+    }
+
+    // Check content-length if available
+    if let Some(len) = resp.content_length() {
+        if len > MAX_SIZE {
+            log::warn!("Media too large ({} bytes), skipping: {}", len, url);
+            return None;
+        }
+    }
+
+    let ext = if is_video { "mp4" } else { "jpg" };
+    let temp_path = std::env::temp_dir().join(format!("dora_sub_{}_{}.{}", std::process::id(), next_temp_id(), ext));
+
+    let bytes = match resp.bytes().await {
+        Ok(b) => b,
+        Err(e) => {
+            log::warn!("Media download read failed: {}", e);
+            return None;
+        }
+    };
+
+    if bytes.len() as u64 > MAX_SIZE {
+        log::warn!("Media too large ({} bytes), skipping", bytes.len());
+        return None;
+    }
+
+    if let Err(e) = tokio::fs::write(&temp_path, &bytes).await {
+        log::warn!("Failed to write temp media file: {}", e);
+        return None;
+    }
+
+    Some(temp_path)
+}
+
+static TEMP_FILE_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn next_temp_id() -> u64 {
+    TEMP_FILE_COUNTER.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Send a story notification with media (photos/videos from CDN).
+async fn send_story_notification(
+    bot: &Bot,
+    client: &reqwest::Client,
+    chat_id: ChatId,
+    notification: &WatchNotification,
+) -> Result<(), teloxide::RequestError> {
+    let media = &notification.update.media;
+    if media.is_empty() {
+        return send_text_notification(bot, chat_id, notification).await;
+    }
+
+    let unsub_keyboard = InlineKeyboardMarkup::new(vec![vec![cb(
+        "🔕 Unsubscribe",
+        format!("cw:unsub:{}", notification.subscription_id),
+    )]]);
+
+    let caption = format!("📱 {}", notification.update.description);
+
+    // Download all media in parallel
+    let futures: Vec<_> = media
+        .iter()
+        .map(|a| download_media_to_temp(client, &a.media_url, a.is_video))
+        .collect();
+    let results = futures_util::future::join_all(futures).await;
+    let downloaded: Vec<(PathBuf, bool)> = results
+        .into_iter()
+        .zip(media.iter())
+        .filter_map(|(path, a)| path.map(|p| (p, a.is_video)))
+        .collect();
+
+    if downloaded.is_empty() {
+        return send_text_notification(bot, chat_id, notification).await;
+    }
+
+    let result = if downloaded.len() == 1 {
+        // Single item: send with caption + unsub keyboard
+        let (path, is_video) = &downloaded[0];
+        if *is_video {
+            bot.send_video(chat_id, InputFile::file(path))
+                .caption(&caption)
+                .reply_markup(unsub_keyboard)
+                .await
+                .map(|_| ())
+        } else {
+            bot.send_photo(chat_id, InputFile::file(path))
+                .caption(&caption)
+                .reply_markup(unsub_keyboard)
+                .await
+                .map(|_| ())
+        }
+    } else {
+        // Multiple items: send as media group (caption on first), then separate unsub button
+        let media_group: Vec<InputMedia> = downloaded
+            .iter()
+            .enumerate()
+            .map(|(i, (path, is_video))| {
+                if *is_video {
+                    let mut v = InputMediaVideo::new(InputFile::file(path));
+                    if i == 0 {
+                        v = v.caption(&caption);
+                    }
+                    InputMedia::Video(v)
+                } else {
+                    let mut p = InputMediaPhoto::new(InputFile::file(path));
+                    if i == 0 {
+                        p = p.caption(&caption);
+                    }
+                    InputMedia::Photo(p)
+                }
+            })
+            .collect();
+
+        match bot.send_media_group(chat_id, media_group).await {
+            Ok(_) => {
+                let _ = bot
+                    .send_message(chat_id, notification.display_name.clone())
+                    .reply_markup(unsub_keyboard)
+                    .await;
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    };
+
+    // Clean up temp files
+    for (path, _) in &downloaded {
+        let _ = tokio::fs::remove_file(path).await;
+    }
+
+    if result.is_err() {
+        // Fallback to text on send failure
+        log::warn!("Story media send failed, falling back to text");
+        return send_text_notification(bot, chat_id, notification).await;
+    }
+
+    Ok(())
+}
+
+/// Send a post notification with media (resolved via GraphQL).
+async fn send_post_notification(
+    bot: &Bot,
+    client: &reqwest::Client,
+    ig_source: &InstagramSource,
+    chat_id: ChatId,
+    notification: &WatchNotification,
+) -> Result<(), teloxide::RequestError> {
+    let shortcode = match &notification.update.shortcode {
+        Some(sc) => sc.clone(),
+        None => return send_text_notification(bot, chat_id, notification).await,
+    };
+
+    // Resolve post media via GraphQL
+    let gql_media = match ig_source.fetch_graphql_media(&shortcode).await {
+        Ok(m) => m,
+        Err(e) => {
+            log::warn!("Failed to resolve post media for {}: {}", shortcode, e);
+            return send_text_notification(bot, chat_id, notification).await;
+        }
+    };
+
+    let unsub_keyboard = InlineKeyboardMarkup::new(vec![vec![cb(
+        "🔕 Unsubscribe",
+        format!("cw:unsub:{}", notification.subscription_id),
+    )]]);
+
+    let caption = format!(
+        "📸 New post by {}\n{}",
+        notification.display_name, notification.update.url
+    );
+
+    // Download media files in parallel
+    let futures: Vec<_> = gql_media
+        .items
+        .iter()
+        .filter_map(|item| {
+            let url = if item.is_video {
+                item.video_url.as_deref()
+            } else {
+                item.display_url.as_deref()
+            };
+            url.map(|u| {
+                let is_video = item.is_video;
+                async move { (download_media_to_temp(client, u, is_video).await, is_video) }
+            })
+        })
+        .collect();
+    let results = futures_util::future::join_all(futures).await;
+    let downloaded: Vec<(PathBuf, bool)> = results
+        .into_iter()
+        .filter_map(|(path, is_video)| path.map(|p| (p, is_video)))
+        .collect();
+
+    if downloaded.is_empty() {
+        return send_text_notification(bot, chat_id, notification).await;
+    }
+
+    let result = if downloaded.len() == 1 {
+        let (path, is_video) = &downloaded[0];
+        if *is_video {
+            bot.send_video(chat_id, InputFile::file(path))
+                .caption(&caption)
+                .reply_markup(unsub_keyboard)
+                .await
+                .map(|_| ())
+        } else {
+            bot.send_photo(chat_id, InputFile::file(path))
+                .caption(&caption)
+                .reply_markup(unsub_keyboard)
+                .await
+                .map(|_| ())
+        }
+    } else {
+        // Carousel: send as media group
+        let media_group: Vec<InputMedia> = downloaded
+            .iter()
+            .enumerate()
+            .map(|(i, (path, is_video))| {
+                if *is_video {
+                    let mut v = InputMediaVideo::new(InputFile::file(path));
+                    if i == 0 {
+                        v = v.caption(&caption);
+                    }
+                    InputMedia::Video(v)
+                } else {
+                    let mut p = InputMediaPhoto::new(InputFile::file(path));
+                    if i == 0 {
+                        p = p.caption(&caption);
+                    }
+                    InputMedia::Photo(p)
+                }
+            })
+            .collect();
+
+        match bot.send_media_group(chat_id, media_group).await {
+            Ok(_) => {
+                let _ = bot.send_message(chat_id, "👆").reply_markup(unsub_keyboard).await;
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    };
+
+    // Clean up temp files
+    for (path, _) in &downloaded {
+        let _ = tokio::fs::remove_file(path).await;
+    }
+
+    if result.is_err() {
+        log::warn!("Post media send failed, falling back to text");
+        return send_text_notification(bot, chat_id, notification).await;
+    }
+
+    Ok(())
+}
+
+/// Fallback: send a plain text notification (original behavior).
+async fn send_text_notification(
+    bot: &Bot,
+    chat_id: ChatId,
+    notification: &WatchNotification,
+) -> Result<(), teloxide::RequestError> {
+    let keyboard = InlineKeyboardMarkup::new(vec![vec![cb(
+        "🔕 Unsubscribe",
+        format!("cw:unsub:{}", notification.subscription_id),
+    )]]);
+
+    let text = match notification.update.content_type.as_str() {
+        "post" => format!(
+            "📸 New post by {}\n{}",
+            notification.display_name, notification.update.url
+        ),
+        "story" => format!("📱 {}", notification.update.description),
+        _ => notification.update.description.clone(),
+    };
+
+    bot.send_message(chat_id, &text)
+        .reply_markup(keyboard)
+        .await
+        .map(|_| ())
+}
+
 /// Start the notification dispatcher that receives WatchNotifications
-/// and sends formatted Telegram messages.
+/// and sends formatted Telegram messages with media.
 pub fn start_notification_dispatcher(
     bot: Bot,
     db_pool: Arc<DbPool>,
     mut rx: mpsc::UnboundedReceiver<WatchNotification>,
 ) {
     tokio::spawn(async move {
+        let http_client = reqwest::Client::new();
+        let ig_source = InstagramSource::new();
+
         while let Some(notification) = rx.recv().await {
             let chat_id = ChatId(notification.user_id);
 
-            match notification.update.content_type.as_str() {
-                "post" => {
-                    let text = format!(
-                        "📸 New post by {}\n{}",
-                        notification.display_name, notification.update.url,
-                    );
+            let result = match notification.update.content_type.as_str() {
+                "story" => send_story_notification(&bot, &http_client, chat_id, &notification).await,
+                "post" => send_post_notification(&bot, &http_client, &ig_source, chat_id, &notification).await,
+                _ => send_text_notification(&bot, chat_id, &notification).await,
+            };
 
-                    let keyboard = InlineKeyboardMarkup::new(vec![vec![cb(
-                        "🔕 Unsubscribe",
-                        format!("cw:unsub:{}", notification.subscription_id),
-                    )]]);
-
-                    if let Err(e) = bot.send_message(chat_id, &text).reply_markup(keyboard).await {
-                        handle_send_error(e, notification.user_id, &db_pool);
-                    }
-                }
-                "story" => {
-                    let text = format!("📱 {}\n", notification.update.description,);
-
-                    let keyboard = InlineKeyboardMarkup::new(vec![vec![cb(
-                        "🔕 Unsubscribe",
-                        format!("cw:unsub:{}", notification.subscription_id),
-                    )]]);
-
-                    if let Err(e) = bot.send_message(chat_id, &text).reply_markup(keyboard).await {
-                        handle_send_error(e, notification.user_id, &db_pool);
-                    }
-                }
-                _ => {
-                    log::warn!(
-                        "Unknown notification content type: {}",
-                        notification.update.content_type
-                    );
-                }
+            if let Err(e) = result {
+                handle_send_error(e, notification.user_id, &db_pool);
             }
+
+            // Flood control between notifications
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         }
         log::warn!("Notification dispatcher channel closed");
     });
