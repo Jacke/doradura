@@ -161,7 +161,10 @@ pub async fn download_phase(
         }
     };
 
-    let display_title: Arc<str> = if artist.trim().is_empty() {
+    // Sanitize metadata: strip "NA" placeholders and newlines from yt-dlp
+    let (title, artist) = sanitize_metadata(title, artist);
+
+    let display_title: Arc<str> = if artist.is_empty() {
         Arc::from(title.as_str())
     } else {
         Arc::from(format!("{} - {}", artist, title))
@@ -899,4 +902,94 @@ pub async fn handle_pipeline_error(
     tokio::task::spawn_blocking(move || {
         error_logger::log_error(err_type, &err_msg, &user_ctx, Some(&url_str), Some(&ctx_str));
     });
+}
+
+/// Sanitize metadata from yt-dlp: strip "NA" placeholders and newlines.
+///
+/// yt-dlp returns "NA" for missing fields (common with SoundCloud) and may include
+/// newlines in titles (e.g. playlist descriptions mixed into track names).
+fn sanitize_metadata(title: String, artist: String) -> (String, String) {
+    // Strip newlines and trim whitespace
+    let title = title.replace('\n', " ").replace('\r', "");
+    let title = title.trim().to_string();
+
+    let artist = artist.replace('\n', " ").replace('\r', "");
+    let artist = artist.trim().to_string();
+
+    // yt-dlp returns "NA" for unavailable fields
+    let artist = if artist == "NA" { String::new() } else { artist };
+
+    (title, artist)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_metadata;
+
+    #[test]
+    fn clean_metadata_passes_through() {
+        let (title, artist) = sanitize_metadata("Song Title".into(), "Artist Name".into());
+        assert_eq!(title, "Song Title");
+        assert_eq!(artist, "Artist Name");
+    }
+
+    #[test]
+    fn na_artist_becomes_empty() {
+        let (title, artist) = sanitize_metadata("Track".into(), "NA".into());
+        assert_eq!(title, "Track");
+        assert_eq!(artist, "");
+    }
+
+    #[test]
+    fn newlines_in_title_replaced_with_spaces() {
+        let (title, artist) = sanitize_metadata("Track1\nTrack2\nTrack3".into(), "Artist".into());
+        assert_eq!(title, "Track1 Track2 Track3");
+        assert_eq!(artist, "Artist");
+    }
+
+    #[test]
+    fn newlines_in_artist_replaced_with_spaces() {
+        let (_, artist) = sanitize_metadata("T".into(), "Art\nist".into());
+        assert_eq!(artist, "Art ist");
+    }
+
+    #[test]
+    fn na_artist_with_newlines() {
+        let (title, artist) = sanitize_metadata(
+            "pale fortress\nkareful - ready or not\nKAREFUL & MANNEQUIN".into(),
+            "NA\n".into(),
+        );
+        assert_eq!(title, "pale fortress kareful - ready or not KAREFUL & MANNEQUIN");
+        assert_eq!(artist, "");
+    }
+
+    #[test]
+    fn whitespace_trimmed() {
+        let (title, artist) = sanitize_metadata("  Song  ".into(), "  Artist  ".into());
+        assert_eq!(title, "Song");
+        assert_eq!(artist, "Artist");
+    }
+
+    #[test]
+    fn carriage_return_stripped() {
+        // \r\n → \n replaced with space, \r replaced with empty → "Song Title"
+        let (title, _) = sanitize_metadata("Song\r\nTitle".into(), "A".into());
+        assert_eq!(title, "Song Title");
+    }
+
+    #[test]
+    fn empty_artist_stays_empty() {
+        let (_, artist) = sanitize_metadata("T".into(), "".into());
+        assert_eq!(artist, "");
+    }
+
+    #[test]
+    fn na_is_case_sensitive() {
+        // Only exact "NA" is filtered, not "Na" or "na"
+        let (_, artist) = sanitize_metadata("T".into(), "Na".into());
+        assert_eq!(artist, "Na");
+
+        let (_, artist) = sanitize_metadata("T".into(), "na".into());
+        assert_eq!(artist, "na");
+    }
 }

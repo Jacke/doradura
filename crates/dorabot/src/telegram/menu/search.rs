@@ -96,9 +96,16 @@ pub async fn handle_standalone_search(
                 let _ = bot.delete_message(chat_id, msg.id).await;
             }
             if results.is_empty() {
-                let _ = bot
+                if let Ok(msg) = bot
                     .send_message(chat_id, "🔍 No results found. Try a different query!")
-                    .await;
+                    .await
+                {
+                    if matches!(context, SearchContext::PlayerMode { .. }) {
+                        if let Ok(conn) = db::get_connection(&db_pool) {
+                            let _ = db::add_player_message(&conn, chat_id.0, msg.id.0);
+                        }
+                    }
+                }
                 return;
             }
             let session = SearchSession {
@@ -109,7 +116,14 @@ pub async fn handle_standalone_search(
                 created_at: Instant::now(),
             };
             set_search_session(chat_id.0, session).await;
-            let _ = show_search_results(bot, chat_id, &results, text, source, 0, &context).await;
+            if let Ok(Some(msg_id)) = show_search_results(bot, chat_id, &results, text, source, 0, &context).await {
+                // Track search result messages in player mode for cleanup
+                if matches!(context, SearchContext::PlayerMode { .. }) {
+                    if let Ok(conn) = db::get_connection(&db_pool) {
+                        let _ = db::add_player_message(&conn, chat_id.0, msg_id.0);
+                    }
+                }
+            }
         }
         Err(e) => {
             if let Ok(msg) = &status_msg {
@@ -131,7 +145,7 @@ async fn show_search_results(
     source: SearchSource,
     page: usize,
     context: &SearchContext,
-) -> Result<(), teloxide::RequestError> {
+) -> Result<Option<MessageId>, teloxide::RequestError> {
     let start = page * RESULTS_PER_PAGE;
     let page_results = &results[start..results.len().min(start + RESULTS_PER_PAGE)];
 
@@ -211,9 +225,9 @@ async fn show_search_results(
 
     let keyboard = InlineKeyboardMarkup::new(rows);
 
-    bot.send_message(chat_id, text).reply_markup(keyboard).await?;
+    let msg = bot.send_message(chat_id, text).reply_markup(keyboard).await?;
 
-    Ok(())
+    Ok(Some(msg.id))
 }
 
 // ── Callback handler ──────────────────────────────────────────────────────
@@ -239,13 +253,38 @@ pub async fn handle_search_callback(
         }
     };
 
-    // sr:dl:{idx} — download
+    // sr:dl:{idx} — download (and add to playlist if in playlist context)
     if let Some(idx_str) = data.strip_prefix("sr:dl:") {
         if let Ok(idx) = idx_str.parse::<usize>() {
             if let Some(result) = session.results.get(idx) {
                 let _ = bot.delete_message(chat_id, message_id).await;
 
-                // Add to download queue as mp3
+                // If in playlist context, also add track to the playlist
+                match &session.context {
+                    SearchContext::PlayerMode { playlist_id } | SearchContext::AddToPlaylist { playlist_id } => {
+                        let pl_id = *playlist_id;
+                        if let Ok(conn) = db::get_connection(&db_pool) {
+                            match db::get_playlist(&conn, pl_id) {
+                                Ok(Some(pl)) if pl.user_id == chat_id.0 => {
+                                    let _ = db::add_playlist_item(
+                                        &conn,
+                                        pl_id,
+                                        &result.title,
+                                        Some(&result.artist),
+                                        &result.url,
+                                        result.duration_secs.map(|d| d as i32),
+                                        None,
+                                        session.source.source_name(),
+                                    );
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    SearchContext::Standalone => {}
+                }
+
+                // Add to download queue as mp3 (queue sends its own progress messages)
                 let task = crate::download::queue::DownloadTask::new(
                     result.url.clone(),
                     chat_id,
@@ -256,10 +295,6 @@ pub async fn handle_search_callback(
                     None,
                 );
                 download_queue.add_task(task, Some(db_pool.clone())).await;
-
-                let _ = bot
-                    .send_message(chat_id, format!("⬇ Downloading: {}", result.title))
-                    .await;
             }
         }
         return Ok(());
@@ -303,7 +338,7 @@ pub async fn handle_search_callback(
         if parts.len() == 2 {
             if let Ok(page) = parts[1].parse::<usize>() {
                 let _ = bot.delete_message(chat_id, message_id).await;
-                let _ = show_search_results(
+                if let Ok(Some(msg_id)) = show_search_results(
                     bot,
                     chat_id,
                     &session.results,
@@ -312,7 +347,14 @@ pub async fn handle_search_callback(
                     page,
                     &session.context,
                 )
-                .await;
+                .await
+                {
+                    if matches!(session.context, SearchContext::PlayerMode { .. }) {
+                        if let Ok(conn) = db::get_connection(&db_pool) {
+                            let _ = db::add_player_message(&conn, chat_id.0, msg_id.0);
+                        }
+                    }
+                }
             }
         }
         return Ok(());
@@ -342,9 +384,16 @@ pub async fn handle_search_callback(
                         created_at: Instant::now(),
                     };
                     set_search_session(chat_id.0, new_session).await;
-                    let _ =
+                    if let Ok(Some(msg_id)) =
                         show_search_results(bot, chat_id, &results, &session.query, new_source, 0, &session.context)
-                            .await;
+                            .await
+                    {
+                        if matches!(session.context, SearchContext::PlayerMode { .. }) {
+                            if let Ok(conn) = db::get_connection(&db_pool) {
+                                let _ = db::add_player_message(&conn, chat_id.0, msg_id.0);
+                            }
+                        }
+                    }
                 }
                 Err(e) => {
                     if let Ok(msg) = &status_msg {

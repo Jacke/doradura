@@ -1,24 +1,64 @@
-//! Player mode: Now Playing widget with playback controls.
+//! Player mode: real audio playback with track sending and UI cleanup.
 //!
 //! Callback data prefixes:
-//! - `pw:next` — next track
-//! - `pw:prev` — previous track
+//! - `pw:play:{pl_id}` — start playing a playlist (enter player mode)
+//! - `pw:play_all` — send all tracks from active playlist
 //! - `pw:shuf` — toggle shuffle
 //! - `pw:list` — show playlist tracks
-//! - `pw:stop` — stop player
+//! - `pw:stop` — stop player and cleanup UI
 //! - `pw:srch` — search in player context
-//! - `pw:play:{pl_id}` — start playing a playlist
+//! - `pw:add` — add track to playlist (search context)
 
+use crate::download::pipeline::{self, PipelineFormat};
+use crate::download::progress::ProgressMessage;
 use crate::download::search::format_duration;
+use crate::download::send::send_audio_with_retry;
+use crate::download::source::SourceRegistry;
 use crate::storage::db::{self, DbPool, PlaylistItem};
+use crate::telegram::notifications::notify_admin_text;
 use crate::telegram::Bot;
+use rand::seq::SliceRandom;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{CallbackQueryId, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, MessageId};
+use teloxide::types::{
+    BotCommand, BotCommandScope, CallbackQueryId, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile,
+    MessageId, Recipient,
+};
+use tokio::time::timeout;
+use url::Url;
+
+/// Dora 😌 sticker (headphones vibes) from doraduradoradura pack.
+const PLAYER_STICKER_ID: &str = "CAACAgIAAxUAAWj-ZomiM5Mt2aK1G3b8O7JK-shMAALPFQACWGhoSMeITTonc71ENgQ";
+
+/// Per-track download timeout (5 minutes).
+const TRACK_DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
+
+// ── Bot commands per-chat ─────────────────────────────────────────────────
+
+/// Set player-mode commands for this chat (replaces global commands).
+async fn set_player_commands(bot: &Bot, chat_id: ChatId) {
+    let commands = vec![
+        BotCommand::new("player", "open player menu"),
+        BotCommand::new("playlists", "manage playlists"),
+        BotCommand::new("exit", "exit player mode"),
+    ];
+    let scope = BotCommandScope::Chat {
+        chat_id: Recipient::Id(chat_id),
+    };
+    let _ = bot.set_my_commands(commands).scope(scope).await;
+}
+
+/// Remove per-chat commands override (restores global defaults).
+async fn restore_default_commands(bot: &Bot, chat_id: ChatId) {
+    let scope = BotCommandScope::Chat {
+        chat_id: Recipient::Id(chat_id),
+    };
+    let _ = bot.delete_my_commands().scope(scope).await;
+}
 
 // ── Player command ────────────────────────────────────────────────────────
 
-/// Handle /player command: show playlist selector or start playing.
+/// Handle /player command: show playlist selector.
 pub async fn handle_player_command(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbPool>) {
     let conn = match db::get_connection(db_pool) {
         Ok(c) => c,
@@ -28,28 +68,14 @@ pub async fn handle_player_command(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbP
         }
     };
 
-    // Check for existing session
+    // Check for existing session — show player menu
     if let Ok(Some(session)) = db::get_player_session(&conn, chat_id.0) {
-        // Resume existing session
-        if let Ok(Some(item)) = db::get_playlist_item_at_position(&conn, session.playlist_id, session.current_position)
-        {
-            let total = db::count_playlist_items(&conn, session.playlist_id).unwrap_or(0);
-            let pl_name = db::get_playlist(&conn, session.playlist_id)
-                .ok()
-                .flatten()
-                .map(|p| p.name)
-                .unwrap_or_default();
-            let _ = send_now_playing(
-                bot,
-                chat_id,
-                &item,
-                &pl_name,
-                session.current_position,
-                total as i32,
-                session.is_shuffle,
-                None,
-            )
-            .await;
+        if let Ok(Some(pl)) = db::get_playlist(&conn, session.playlist_id) {
+            let items = db::get_playlist_items(&conn, session.playlist_id).unwrap_or_default();
+            let msg = send_player_menu(bot, chat_id, &pl.name, &items, session.is_shuffle, None).await;
+            if let Some(msg_id) = msg {
+                track_message(db_pool, chat_id.0, msg_id.0);
+            }
             return;
         }
     }
@@ -87,128 +113,428 @@ pub async fn handle_player_command(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbP
         .await;
 }
 
-/// Stop the player and delete session.
+/// Stop the player: delete all tracked UI messages, unpin, cleanup DB, restore commands.
 pub async fn stop_player(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbPool>) {
     if let Ok(conn) = db::get_connection(db_pool) {
         if let Ok(Some(session)) = db::get_player_session(&conn, chat_id.0) {
-            // Try to delete the Now Playing message
-            if let Some(msg_id) = session.player_message_id {
-                let _ = bot.delete_message(chat_id, MessageId(msg_id)).await;
+            // Unpin the pinned message
+            if let Some(sticker_id) = session.sticker_message_id {
+                let _ = bot.unpin_chat_message(chat_id).message_id(MessageId(sticker_id)).await;
             }
+
+            // Delete all tracked UI messages (sticker, banner, menus, statuses)
+            if let Ok(msg_ids) = db::get_player_messages(&conn, chat_id.0) {
+                for msg_id in msg_ids {
+                    let _ = bot.delete_message(chat_id, MessageId(msg_id)).await;
+                }
+            }
+
+            // Cleanup DB
+            let _ = db::delete_player_messages(&conn, chat_id.0);
+            let _ = db::delete_player_session(&conn, chat_id.0);
         }
-        let _ = db::delete_player_session(&conn, chat_id.0);
     }
-    let _ = bot.send_message(chat_id, "⏹ Player stopped.").await;
+
+    // Restore default bot commands for this chat
+    restore_default_commands(bot, chat_id).await;
 }
 
-// ── Now Playing widget ────────────────────────────────────────────────────
+// ── Enter player mode ─────────────────────────────────────────────────────
 
-async fn send_now_playing(
+async fn enter_player_mode(
     bot: &Bot,
     chat_id: ChatId,
-    item: &PlaylistItem,
+    playlist_id: i64,
     playlist_name: &str,
-    position: i32,
-    total: i32,
+    items: &[PlaylistItem],
+    db_pool: &Arc<DbPool>,
+) {
+    // 1. Set player-mode bot commands
+    set_player_commands(bot, chat_id).await;
+
+    // 2. Send sticker (Dora 😌)
+    let sticker_msg_id = bot
+        .send_sticker(
+            chat_id,
+            InputFile::file_id(teloxide::types::FileId(PLAYER_STICKER_ID.to_string())),
+        )
+        .await
+        .ok()
+        .map(|msg| msg.id);
+
+    if let Some(sid) = sticker_msg_id {
+        track_message(db_pool, chat_id.0, sid.0);
+    }
+
+    // 3. Send banner "Music Player by Dora" and pin it
+    let banner_msg_id = bot
+        .send_message(chat_id, "🎧 Music Player by Dora")
+        .await
+        .ok()
+        .map(|msg| msg.id);
+
+    if let Some(bid) = banner_msg_id {
+        track_message(db_pool, chat_id.0, bid.0);
+        let _ = bot.pin_chat_message(chat_id, bid).disable_notification(true).await;
+    }
+
+    // 4. Create player session (sticker_message_id stores the PINNED message for unpin)
+    if let Ok(conn) = db::get_connection(db_pool) {
+        let _ = db::create_player_session(&conn, chat_id.0, playlist_id, None, banner_msg_id.map(|m| m.0));
+    }
+
+    // 5. Send player menu
+    let menu_msg = send_player_menu(bot, chat_id, playlist_name, items, false, None).await;
+    if let Some(msg_id) = menu_msg {
+        track_message(db_pool, chat_id.0, msg_id.0);
+    }
+}
+
+// ── Player menu ───────────────────────────────────────────────────────────
+
+fn build_menu_text(playlist_name: &str, items: &[PlaylistItem], is_shuffle: bool) -> String {
+    let total = items.len();
+    let cached = items.iter().filter(|i| i.file_id.is_some()).count();
+    let total_duration: u32 = items.iter().filter_map(|i| i.duration_secs.map(|d| d as u32)).sum();
+    let dur_str = format_duration(Some(total_duration));
+    let shuffle_icon = if is_shuffle { " · 🔀" } else { "" };
+
+    format!(
+        "🎵 {}\n━━━━━━━━━━━━━━━━━━━━\n📀 {} tracks · ⏱ {}{}\n💾 {} cached · {} to download",
+        playlist_name,
+        total,
+        dur_str,
+        shuffle_icon,
+        cached,
+        total - cached,
+    )
+}
+
+async fn send_player_menu(
+    bot: &Bot,
+    chat_id: ChatId,
+    playlist_name: &str,
+    items: &[PlaylistItem],
     is_shuffle: bool,
     old_message_id: Option<MessageId>,
-) -> Result<Option<MessageId>, teloxide::RequestError> {
-    let artist = item.artist.as_deref().unwrap_or("Unknown");
-    let dur = format_duration(item.duration_secs.map(|d| d as u32));
-
-    let text = format!(
-        "🎵 Now Playing\n━━━━━━━━━━━━━━\n{} - {}\n{}  ·  {} ({}/{})",
-        artist,
-        item.title,
-        dur,
-        playlist_name,
-        position + 1,
-        total,
-    );
-
+) -> Option<MessageId> {
     let shuffle_label = if is_shuffle { "🔀 On" } else { "🔀 Off" };
+    let text = build_menu_text(playlist_name, items, is_shuffle);
 
     let rows = vec![
         vec![
-            InlineKeyboardButton::callback("⏮", "pw:prev".to_string()),
-            InlineKeyboardButton::callback("⏭", "pw:next".to_string()),
+            InlineKeyboardButton::callback("🟢 Play All", "pw:play_all".to_string()),
             InlineKeyboardButton::callback(shuffle_label, "pw:shuf".to_string()),
         ],
         vec![
-            InlineKeyboardButton::callback("📋 Playlist", "pw:list".to_string()),
+            InlineKeyboardButton::callback("➕ Add", "pw:add".to_string()),
             InlineKeyboardButton::callback("🔍 Search", "pw:srch".to_string()),
-            InlineKeyboardButton::callback("⏹ Stop", "pw:stop".to_string()),
+            InlineKeyboardButton::callback("📋 Tracks", "pw:list".to_string()),
         ],
+        vec![InlineKeyboardButton::callback("🔴 Stop", "pw:stop".to_string())],
     ];
     let keyboard = InlineKeyboardMarkup::new(rows);
 
-    // Edit existing message or send new one
     if let Some(msg_id) = old_message_id {
         let _ = bot
             .edit_message_text(chat_id, msg_id, &text)
             .reply_markup(keyboard)
             .await;
-        Ok(Some(msg_id))
+        Some(msg_id)
     } else {
-        let msg = bot.send_message(chat_id, &text).reply_markup(keyboard).await?;
-        Ok(Some(msg.id))
+        bot.send_message(chat_id, &text)
+            .reply_markup(keyboard)
+            .await
+            .ok()
+            .map(|msg| msg.id)
     }
 }
 
-// ── Play a track ──────────────────────────────────────────────────────────
+// ── Play all tracks ───────────────────────────────────────────────────────
 
-async fn play_track(
+async fn play_all_tracks(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbPool>) {
+    let conn = match db::get_connection(db_pool) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let session = match db::get_player_session(&conn, chat_id.0) {
+        Ok(Some(s)) => s,
+        _ => return,
+    };
+
+    let mut items = db::get_playlist_items(&conn, session.playlist_id).unwrap_or_default();
+    if items.is_empty() {
+        let _ = send_tracked_message(bot, chat_id, "Playlist is empty.", db_pool).await;
+        return;
+    }
+
+    // Shuffle if enabled
+    if session.is_shuffle {
+        let mut rng = rand::thread_rng();
+        items.shuffle(&mut rng);
+    }
+
+    // Split into cached (have file_id) and uncached
+    let (cached, uncached): (Vec<_>, Vec<_>) = items.iter().partition(|item| item.file_id.is_some());
+
+    let total = items.len();
+    let cached_count = cached.len();
+    let uncached_count = uncached.len();
+
+    // Status message
+    let status_text = if uncached_count > 0 && cached_count > 0 {
+        format!(
+            "📨 Sending {} tracks ({} cached, {} to download)...",
+            total, cached_count, uncached_count
+        )
+    } else if uncached_count > 0 {
+        format!("📨 Downloading {} tracks...", uncached_count)
+    } else {
+        format!("📨 Sending {} cached tracks...", total)
+    };
+    let status_msg_id = send_tracked_message(bot, chat_id, &status_text, db_pool).await;
+
+    // Send cached tracks instantly
+    let mut send_errors = 0;
+    for item in &cached {
+        if let Some(ref file_id) = item.file_id {
+            match bot
+                .send_audio(chat_id, InputFile::file_id(teloxide::types::FileId(file_id.clone())))
+                .await
+            {
+                Ok(_) => {
+                    log::info!("Player: sent cached track '{}'", item.title);
+                }
+                Err(e) => {
+                    log::error!("Player: failed to send cached track '{}': {}", item.title, e);
+                    send_errors += 1;
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        }
+    }
+
+    // Download and send uncached tracks in background
+    if !uncached.is_empty() {
+        let bot_clone = bot.clone();
+        let db_pool_clone = Arc::clone(db_pool);
+        let uncached_items: Vec<PlaylistItem> = uncached.into_iter().cloned().collect();
+        let status_msg_id_clone = status_msg_id;
+
+        tokio::spawn(async move {
+            let mut sent_count = cached_count - send_errors;
+            for (i, item) in uncached_items.iter().enumerate() {
+                log::info!(
+                    "Player: downloading track {}/{} '{}' (url: {}) for chat {}",
+                    i + 1,
+                    uncached_items.len(),
+                    item.title,
+                    item.url,
+                    chat_id
+                );
+
+                let result = timeout(
+                    TRACK_DOWNLOAD_TIMEOUT,
+                    download_player_track(&bot_clone, chat_id, item, &db_pool_clone),
+                )
+                .await;
+
+                match result {
+                    Ok(Ok(_)) => {
+                        sent_count += 1;
+                        log::info!("Player: sent track '{}' ({}/{})", item.title, sent_count, total);
+                        if let Some(msg_id) = status_msg_id_clone {
+                            let remaining = uncached_items.len() - i - 1;
+                            let update_text = if remaining > 0 {
+                                format!("📨 Sent {}/{} tracks ({} downloading)...", sent_count, total, remaining)
+                            } else {
+                                format!("✅ Sent {}/{} tracks.", sent_count, total)
+                            };
+                            let _ = bot_clone.edit_message_text(chat_id, msg_id, update_text).await;
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        log::error!("Player: download failed for '{}': {}", item.title, e);
+                        let _ = bot_clone
+                            .send_message(chat_id, format!("⚠ Failed: {}", item.title))
+                            .await;
+                        notify_admin_text(
+                            &bot_clone,
+                            &format!(
+                                "⚠️ Player download failed\n\nUser: {}\nTrack: {}\nURL: {}\nError: {}",
+                                chat_id.0, item.title, item.url, e
+                            ),
+                        )
+                        .await;
+                    }
+                    Err(_) => {
+                        log::error!(
+                            "Player: download timed out for '{}' ({}s)",
+                            item.title,
+                            TRACK_DOWNLOAD_TIMEOUT.as_secs()
+                        );
+                        let _ = bot_clone
+                            .send_message(chat_id, format!("⏰ Timeout: {}", item.title))
+                            .await;
+                        notify_admin_text(
+                            &bot_clone,
+                            &format!(
+                                "⚠️ Player download timeout ({}s)\n\nUser: {}\nTrack: {}\nURL: {}",
+                                TRACK_DOWNLOAD_TIMEOUT.as_secs(),
+                                chat_id.0,
+                                item.title,
+                                item.url
+                            ),
+                        )
+                        .await;
+                    }
+                }
+
+                if i + 1 < uncached_items.len() {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                }
+            }
+            // Final status
+            if let Some(msg_id) = status_msg_id_clone {
+                let final_text = if sent_count == total {
+                    format!("✅ All {} tracks sent.", total)
+                } else {
+                    format!("✅ Done: {}/{} tracks sent.", sent_count, total)
+                };
+                let _ = bot_clone.edit_message_text(chat_id, msg_id, final_text).await;
+            }
+        });
+    } else {
+        // All cached — update status
+        if let Some(msg_id) = status_msg_id {
+            let text = if send_errors == 0 {
+                format!("✅ Sent all {} tracks.", total)
+            } else {
+                format!("✅ Sent {}/{} tracks.", total - send_errors, total)
+            };
+            let _ = bot.edit_message_text(chat_id, msg_id, text).await;
+        }
+    }
+}
+
+// ── Download and send a single track ──────────────────────────────────────
+
+async fn download_player_track(
     bot: &Bot,
     chat_id: ChatId,
     item: &PlaylistItem,
-    playlist_name: &str,
-    position: i32,
-    total: i32,
-    is_shuffle: bool,
     db_pool: &Arc<DbPool>,
-    download_queue: &Arc<crate::download::queue::DownloadQueue>,
-    old_now_playing_id: Option<MessageId>,
-) -> Option<MessageId> {
-    if let Some(ref file_id) = item.file_id {
-        // Cached — send via file_id
-        let _ = bot
-            .send_audio(chat_id, InputFile::file_id(teloxide::types::FileId(file_id.clone())))
-            .await;
-    } else {
-        // Not cached — add to download queue
-        let task = crate::download::queue::DownloadTask::new(
-            item.url.clone(),
-            chat_id,
-            None,
-            false,
-            "mp3".to_string(),
-            None,
-            None,
-        );
-        download_queue.add_task(task, Some(db_pool.clone())).await;
-    }
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let url = Url::parse(&item.url)?;
+    let registry = SourceRegistry::global();
+    let format = PipelineFormat::Audio {
+        bitrate: None,
+        time_range: None,
+    };
 
-    // Update Now Playing
-    match send_now_playing(
+    let lang = crate::i18n::user_lang_from_pool(db_pool, chat_id.0);
+    let mut progress_msg = ProgressMessage::new(chat_id, lang);
+
+    // Download phase
+    let phase_result =
+        match pipeline::download_phase(bot, chat_id, &url, &format, registry, &mut progress_msg, None).await {
+            Ok(r) => {
+                // Track progress message for cleanup if Stop is pressed mid-download
+                if let Some(msg_id) = progress_msg.message_id {
+                    track_message(db_pool, chat_id.0, msg_id.0);
+                }
+                r
+            }
+            Err(e) => {
+                // Track + delete progress message on error too
+                if let Some(msg_id) = progress_msg.message_id {
+                    track_message(db_pool, chat_id.0, msg_id.0);
+                    let _ = bot.delete_message(chat_id, msg_id).await;
+                }
+                return Err(format!("Download failed: {:?}", e).into());
+            }
+        };
+
+    // Send audio
+    let duration = phase_result.output.duration_secs.unwrap_or(0);
+    let caption = phase_result.caption.as_ref();
+    let artist = if phase_result.artist.is_empty() {
+        None
+    } else {
+        Some(phase_result.artist.clone())
+    };
+
+    let send_result = send_audio_with_retry(
         bot,
         chat_id,
-        item,
-        playlist_name,
-        position,
-        total,
-        is_shuffle,
-        old_now_playing_id,
+        &phase_result.output.file_path,
+        duration,
+        &mut progress_msg,
+        caption,
+        false,
+        None,
+        artist,
     )
-    .await
-    {
-        Ok(msg_id) => {
-            // Save player message id
-            if let Ok(conn) = db::get_connection(db_pool) {
-                let _ = db::update_player_position(&conn, chat_id.0, position, msg_id.map(|m| m.0));
+    .await;
+
+    // Delete progress message before handling result
+    if let Some(msg_id) = progress_msg.message_id {
+        let _ = bot.delete_message(chat_id, msg_id).await;
+    }
+
+    // Cleanup downloaded file
+    let _ = tokio::fs::remove_file(&phase_result.output.file_path).await;
+
+    match send_result {
+        Ok((sent_msg, _file_size)) => {
+            // Cache file_id for instant playback next time
+            if let Some(audio) = sent_msg.audio() {
+                let fid = &audio.file.id.0;
+                log::info!(
+                    "Player: cached file_id for item {} ('{}'): {}",
+                    item.id,
+                    item.title,
+                    fid
+                );
+                if let Ok(conn) = db::get_connection(db_pool) {
+                    let _ = db::update_item_file_id(&conn, item.id, fid);
+                }
+            } else if let Some(doc) = sent_msg.document() {
+                // Sent as document (large file fallback)
+                let fid = &doc.file.id.0;
+                log::info!(
+                    "Player: cached file_id (doc) for item {} ('{}'): {}",
+                    item.id,
+                    item.title,
+                    fid
+                );
+                if let Ok(conn) = db::get_connection(db_pool) {
+                    let _ = db::update_item_file_id(&conn, item.id, fid);
+                }
             }
-            msg_id
+            Ok(())
         }
-        Err(_) => None,
+        Err(e) => {
+            log::error!("Player: send failed for '{}': {}", item.title, e);
+            Err(format!("Send failed: {}", e).into())
+        }
+    }
+}
+
+// ── Message tracking helpers ──────────────────────────────────────────────
+
+/// Send a message and track it for cleanup on player exit.
+async fn send_tracked_message(bot: &Bot, chat_id: ChatId, text: &str, db_pool: &Arc<DbPool>) -> Option<MessageId> {
+    let msg = bot.send_message(chat_id, text).await.ok()?;
+    track_message(db_pool, chat_id.0, msg.id.0);
+    Some(msg.id)
+}
+
+/// Track an already-sent message for cleanup on player exit.
+fn track_message(db_pool: &Arc<DbPool>, user_id: i64, message_id: i32) {
+    if let Ok(conn) = db::get_connection(db_pool) {
+        let _ = db::add_player_message(&conn, user_id, message_id);
     }
 }
 
@@ -221,7 +547,7 @@ pub async fn handle_player_callback(
     message_id: MessageId,
     data: &str,
     db_pool: Arc<DbPool>,
-    download_queue: Arc<crate::download::queue::DownloadQueue>,
+    _download_queue: Arc<crate::download::queue::DownloadQueue>,
 ) -> Result<(), teloxide::RequestError> {
     let _ = bot.answer_callback_query(callback_id).await;
 
@@ -230,50 +556,26 @@ pub async fn handle_player_callback(
         Err(_) => return Ok(()),
     };
 
-    // pw:play:{pl_id} — start playing
+    // pw:play:{pl_id} — enter player mode
     if let Some(pl_id_str) = data.strip_prefix("pw:play:") {
         if let Ok(pl_id) = pl_id_str.parse::<i64>() {
-            // Verify ownership or public access
             match db::get_playlist(&conn, pl_id) {
-                Ok(Some(pl)) if pl.user_id == chat_id.0 || pl.is_public => {}
+                Ok(Some(pl)) if pl.user_id == chat_id.0 || pl.is_public => {
+                    let items = db::get_playlist_items(&conn, pl_id).unwrap_or_default();
+                    if items.is_empty() {
+                        let _ = bot.send_message(chat_id, "Playlist is empty.").await;
+                        return Ok(());
+                    }
+                    let _ = bot.delete_message(chat_id, message_id).await;
+                    enter_player_mode(bot, chat_id, pl_id, &pl.name, &items, &db_pool).await;
+                }
                 _ => return Ok(()),
-            }
-            let items_count = db::count_playlist_items(&conn, pl_id).unwrap_or(0);
-            if items_count == 0 {
-                let _ = bot.send_message(chat_id, "Playlist is empty.").await;
-                return Ok(());
-            }
-
-            // Create player session
-            let _ = db::create_player_session(&conn, chat_id.0, pl_id, None);
-
-            // Play first track
-            if let Ok(Some(item)) = db::get_playlist_item_at_position(&conn, pl_id, 0) {
-                let pl_name = db::get_playlist(&conn, pl_id)
-                    .ok()
-                    .flatten()
-                    .map(|p| p.name)
-                    .unwrap_or_default();
-                let _ = bot.delete_message(chat_id, message_id).await;
-                play_track(
-                    bot,
-                    chat_id,
-                    &item,
-                    &pl_name,
-                    0,
-                    items_count as i32,
-                    false,
-                    &db_pool,
-                    &download_queue,
-                    None,
-                )
-                .await;
             }
         }
         return Ok(());
     }
 
-    // Get current session
+    // Get current session for all other callbacks
     let session = match db::get_player_session(&conn, chat_id.0) {
         Ok(Some(s)) => s,
         _ => {
@@ -282,7 +584,7 @@ pub async fn handle_player_callback(
         }
     };
 
-    let total = db::count_playlist_items(&conn, session.playlist_id).unwrap_or(0) as i32;
+    let items = db::get_playlist_items(&conn, session.playlist_id).unwrap_or_default();
     let pl_name = db::get_playlist(&conn, session.playlist_id)
         .ok()
         .flatten()
@@ -290,102 +592,46 @@ pub async fn handle_player_callback(
         .unwrap_or_default();
 
     match data {
-        "pw:next" => {
-            let next_pos = if session.is_shuffle {
-                use rand::Rng;
-                rand::thread_rng().gen_range(0..total)
-            } else if session.current_position + 1 >= total {
-                0 // wrap around
-            } else {
-                session.current_position + 1
-            };
-            if let Ok(Some(item)) = db::get_playlist_item_at_position(&conn, session.playlist_id, next_pos) {
-                play_track(
-                    bot,
-                    chat_id,
-                    &item,
-                    &pl_name,
-                    next_pos,
-                    total,
-                    session.is_shuffle,
-                    &db_pool,
-                    &download_queue,
-                    Some(message_id),
-                )
-                .await;
-            }
-        }
-        "pw:prev" => {
-            let prev_pos = if session.current_position <= 0 {
-                (total - 1).max(0)
-            } else {
-                session.current_position - 1
-            };
-            if let Ok(Some(item)) = db::get_playlist_item_at_position(&conn, session.playlist_id, prev_pos) {
-                play_track(
-                    bot,
-                    chat_id,
-                    &item,
-                    &pl_name,
-                    prev_pos,
-                    total,
-                    session.is_shuffle,
-                    &db_pool,
-                    &download_queue,
-                    Some(message_id),
-                )
-                .await;
-            }
+        "pw:play_all" => {
+            play_all_tracks(bot, chat_id, &db_pool).await;
         }
         "pw:shuf" => {
             if let Ok(new_shuffle) = db::toggle_player_shuffle(&conn, chat_id.0) {
-                if let Ok(Some(item)) =
-                    db::get_playlist_item_at_position(&conn, session.playlist_id, session.current_position)
-                {
-                    let _ = send_now_playing(
-                        bot,
-                        chat_id,
-                        &item,
-                        &pl_name,
-                        session.current_position,
-                        total,
-                        new_shuffle,
-                        Some(message_id),
-                    )
-                    .await;
+                let _ = bot.delete_message(chat_id, message_id).await;
+                let new_msg = send_player_menu(bot, chat_id, &pl_name, &items, new_shuffle, None).await;
+                if let Some(msg_id) = new_msg {
+                    track_message(&db_pool, chat_id.0, msg_id.0);
                 }
             }
         }
         "pw:list" => {
-            // Show playlist items
-            let items = db::get_playlist_items_page(&conn, session.playlist_id, 0, 10).unwrap_or_default();
+            let page_items = db::get_playlist_items_page(&conn, session.playlist_id, 0, 20).unwrap_or_default();
+            let total = items.len();
             let mut text = format!("📋 {} ({} tracks)\n\n", pl_name, total);
-            for item in &items {
-                let marker = if item.position == session.current_position {
-                    "▶ "
-                } else {
-                    "  "
-                };
+            for item in &page_items {
                 let dur = format_duration(item.duration_secs.map(|d| d as u32));
                 let artist = item.artist.as_deref().unwrap_or("");
+                let cached = if item.file_id.is_some() { " ✓" } else { "" };
                 if artist.is_empty() {
-                    text.push_str(&format!("{}{}.  {} ({})\n", marker, item.position + 1, item.title, dur));
+                    text.push_str(&format!("{}.  {} ({}){}\n", item.position + 1, item.title, dur, cached));
                 } else {
                     text.push_str(&format!(
-                        "{}{}.  {} - {} ({})\n",
-                        marker,
+                        "{}.  {} - {} ({}){}\n",
                         item.position + 1,
                         artist,
                         item.title,
-                        dur
+                        dur,
+                        cached
                     ));
                 }
             }
-            let _ = bot.send_message(chat_id, text).await;
+            let _ = send_tracked_message(bot, chat_id, &text, &db_pool).await;
         }
         "pw:srch" => {
-            let _ = bot.send_message(chat_id, "🔍 Type your search query:").await;
-            // Player mode intercept in commands.rs will handle the text
+            let _ = send_tracked_message(bot, chat_id, "🔍 Type your search query:", &db_pool).await;
+        }
+        "pw:add" => {
+            let _ = send_tracked_message(bot, chat_id, "🔍 Search for a track to add:", &db_pool).await;
         }
         "pw:stop" => {
             stop_player(bot, chat_id, &db_pool).await;

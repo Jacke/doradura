@@ -42,6 +42,7 @@ pub struct PlayerSession {
     pub current_position: i32,
     pub is_shuffle: bool,
     pub player_message_id: Option<i32>,
+    pub sticker_message_id: Option<i32>,
     pub updated_at: String,
 }
 
@@ -375,11 +376,12 @@ pub fn create_player_session(
     user_id: i64,
     playlist_id: i64,
     player_message_id: Option<i32>,
+    sticker_message_id: Option<i32>,
 ) -> Result<()> {
     conn.execute(
-        "INSERT OR REPLACE INTO player_sessions (user_id, playlist_id, current_position, is_shuffle, player_message_id, updated_at)
-         VALUES (?1, ?2, 0, 0, ?3, datetime('now'))",
-        rusqlite::params![user_id, playlist_id, player_message_id],
+        "INSERT OR REPLACE INTO player_sessions (user_id, playlist_id, current_position, is_shuffle, player_message_id, sticker_message_id, updated_at)
+         VALUES (?1, ?2, 0, 0, ?3, ?4, datetime('now'))",
+        rusqlite::params![user_id, playlist_id, player_message_id, sticker_message_id],
     )?;
     Ok(())
 }
@@ -387,7 +389,7 @@ pub fn create_player_session(
 /// Get the player session for a user.
 pub fn get_player_session(conn: &DbConnection, user_id: i64) -> Result<Option<PlayerSession>> {
     let result = conn.query_row(
-        "SELECT user_id, playlist_id, current_position, is_shuffle, player_message_id, updated_at
+        "SELECT user_id, playlist_id, current_position, is_shuffle, player_message_id, sticker_message_id, updated_at
          FROM player_sessions WHERE user_id = ?1",
         [user_id],
         |row| {
@@ -397,7 +399,8 @@ pub fn get_player_session(conn: &DbConnection, user_id: i64) -> Result<Option<Pl
                 current_position: row.get(2)?,
                 is_shuffle: row.get::<_, i32>(3)? != 0,
                 player_message_id: row.get(4)?,
-                updated_at: row.get(5)?,
+                sticker_message_id: row.get(5)?,
+                updated_at: row.get(6)?,
             })
         },
     );
@@ -484,4 +487,37 @@ pub fn cleanup_search_cache(conn: &DbConnection, max_age_minutes: i64) -> Result
         rusqlite::params![max_age_minutes],
     )?;
     Ok(deleted)
+}
+
+// ==================== Player Messages (UI tracking for cleanup) ====================
+
+/// Track a bot UI message for cleanup when player exits.
+pub fn add_player_message(conn: &DbConnection, user_id: i64, message_id: i32) -> Result<()> {
+    conn.execute(
+        "INSERT OR IGNORE INTO player_messages (user_id, message_id) VALUES (?1, ?2)",
+        rusqlite::params![user_id, message_id],
+    )?;
+    Ok(())
+}
+
+/// Get all tracked UI message IDs for a user's player session.
+pub fn get_player_messages(conn: &DbConnection, user_id: i64) -> Result<Vec<i32>> {
+    let mut stmt = conn.prepare("SELECT message_id FROM player_messages WHERE user_id = ?1")?;
+    let rows = stmt.query_map([user_id], |row| row.get(0))?;
+    rows.collect()
+}
+
+/// Delete all tracked UI messages for a user (after cleanup).
+pub fn delete_player_messages(conn: &DbConnection, user_id: i64) -> Result<()> {
+    conn.execute("DELETE FROM player_messages WHERE user_id = ?1", [user_id])?;
+    Ok(())
+}
+
+/// Update the sticker message ID on a player session.
+pub fn update_player_sticker_id(conn: &DbConnection, user_id: i64, sticker_message_id: i32) -> Result<()> {
+    conn.execute(
+        "UPDATE player_sessions SET sticker_message_id = ?1, updated_at = datetime('now') WHERE user_id = ?2",
+        rusqlite::params![sticker_message_id, user_id],
+    )?;
+    Ok(())
 }

@@ -629,19 +629,19 @@ async fn send_share_message(
     if let Some(links) = streaming_links {
         if let Some(ref url) = links.spotify {
             if let Ok(u) = url.parse() {
-                row1.push(InlineKeyboardButton::url("Spotify", u));
+                row1.push(InlineKeyboardButton::url("💚 Spotify", u));
                 has_links = true;
             }
         }
         if let Some(ref url) = links.apple_music {
             if let Ok(u) = url.parse() {
-                row1.push(InlineKeyboardButton::url("Apple Music", u));
+                row1.push(InlineKeyboardButton::url("🍎 Apple", u));
                 has_links = true;
             }
         }
         if let Some(ref url) = links.youtube_music {
             if let Ok(u) = url.parse() {
-                row1.push(InlineKeyboardButton::url("YT Music", u));
+                row1.push(InlineKeyboardButton::url("🔴 YT Music", u));
                 has_links = true;
             }
         }
@@ -651,7 +651,7 @@ async fn send_share_message(
         log::warn!("Invalid share URL: {}", share_url);
         return;
     };
-    let row2 = vec![InlineKeyboardButton::url("All platforms →", share_parsed)];
+    let row2 = vec![InlineKeyboardButton::url("🔗 All platforms", share_parsed)];
 
     let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
     if !row1.is_empty() {
@@ -662,9 +662,9 @@ async fn send_share_message(
     let keyboard = InlineKeyboardMarkup::new(rows);
 
     let text = if has_links {
-        format!("Listen \"{}\" legally on streaming services:", title)
+        format!("🎧 \"{}\" — listen legally:", title)
     } else {
-        format!("Share page for \"{}\":", title)
+        format!("🔗 \"{}\":", title)
     };
 
     if let Err(e) = bot.send_message(chat_id, text).reply_markup(keyboard).await {
