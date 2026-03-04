@@ -91,12 +91,18 @@ const CACHE_TTL_MINUTES: i64 = 15;
 
 /// JSON structure from yt-dlp --flat-playlist --dump-json.
 /// Shared by search and playlist import.
+///
+/// Note: yt-dlp outputs BOTH `uploader` and `channel` fields simultaneously,
+/// so we cannot use `#[serde(alias)]` — serde treats both as duplicates and fails.
+/// Instead we read both and pick the best one via `artist()`.
 #[derive(Debug, Deserialize)]
 pub struct YtdlpFlatEntry {
     #[serde(default)]
     pub title: Option<String>,
-    #[serde(default, alias = "channel")]
+    #[serde(default)]
     pub uploader: Option<String>,
+    #[serde(default)]
+    pub channel: Option<String>,
     #[serde(default)]
     pub webpage_url: Option<String>,
     #[serde(default)]
@@ -105,6 +111,16 @@ pub struct YtdlpFlatEntry {
     pub duration: Option<f64>,
     #[serde(default)]
     pub thumbnail: Option<String>,
+}
+
+impl YtdlpFlatEntry {
+    /// Get artist name: prefer `uploader`, fall back to `channel`.
+    pub fn artist(&self) -> Option<&str> {
+        self.uploader
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .or_else(|| self.channel.as_deref().filter(|s| !s.is_empty()))
+    }
 }
 
 /// Run a music search via yt-dlp.
@@ -147,7 +163,13 @@ pub async fn search(
 
     args.push(search_query);
 
-    log::info!("Search: {} '{}' (limit={})", source.label(), query, limit);
+    log::info!(
+        "Search: {} '{}' (limit={}) args={:?}",
+        source.label(),
+        query,
+        limit,
+        args
+    );
 
     let output = timeout(
         Duration::from_secs(SEARCH_TIMEOUT_SECS),
@@ -167,11 +189,24 @@ pub async fn search(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    if !stderr.is_empty() {
+        log::debug!("yt-dlp search stderr: {}", stderr);
+    }
+
     let results: Vec<SearchResult> = stdout
         .lines()
         .filter(|line| !line.trim().is_empty())
         .filter_map(|line| {
-            let json: YtdlpFlatEntry = serde_json::from_str(line).ok()?;
+            let json: YtdlpFlatEntry = match serde_json::from_str(line) {
+                Ok(j) => j,
+                Err(e) => {
+                    log::warn!("Search JSON parse error: {} — line: {:.200}", e, line);
+                    return None;
+                }
+            };
+            let artist = json.artist().unwrap_or_default().to_string();
             let title = json.title.unwrap_or_default();
             if title.is_empty() {
                 return None;
@@ -182,13 +217,18 @@ pub async fn search(
             }
             Some(SearchResult {
                 title,
-                artist: json.uploader.unwrap_or_default(),
+                artist,
                 url,
                 duration_secs: json.duration.map(|d| d as u32),
                 thumbnail: json.thumbnail,
             })
         })
         .collect();
+
+    if results.is_empty() && !stdout.is_empty() {
+        log::warn!("Search parsed 0 results from {} bytes stdout", stdout.len());
+        log::debug!("Search raw stdout (first 500 chars): {:.500}", stdout);
+    }
 
     // Cache results and periodically clean up stale entries
     if let Some(pool) = db_pool {

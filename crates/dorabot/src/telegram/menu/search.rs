@@ -85,7 +85,7 @@ pub async fn handle_standalone_search(
     db_pool: Arc<DbPool>,
     context: SearchContext,
 ) {
-    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let _lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
     let source = SearchSource::YouTube;
 
     let status_msg = bot.send_message(chat_id, "Searching...").await;
@@ -96,7 +96,9 @@ pub async fn handle_standalone_search(
                 let _ = bot.delete_message(chat_id, msg.id).await;
             }
             if results.is_empty() {
-                let _ = bot.send_message(chat_id, i18n::t(&lang, "vlipsy.no_results")).await;
+                let _ = bot
+                    .send_message(chat_id, "🔍 No results found. Try a different query!")
+                    .await;
                 return;
             }
             let session = SearchSession {

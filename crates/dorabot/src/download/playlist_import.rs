@@ -105,7 +105,7 @@ pub async fn handle_import_url(bot: &Bot, chat_id: ChatId, url: &str, playlist_i
             &conn,
             playlist_id,
             title,
-            entry.uploader.as_deref(),
+            entry.artist(),
             url,
             entry.duration.map(|d| d as i32),
             None,

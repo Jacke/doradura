@@ -914,6 +914,20 @@ pub async fn handle_message(
         } else if !text.starts_with('/') {
             // No URLs found — check for player/search context before showing "no links"
 
+            // "exit" text stops player mode
+            if text.eq_ignore_ascii_case("exit") {
+                if let Ok(conn) = crate::storage::db::get_connection(&db_pool) {
+                    if crate::storage::db::get_player_session(&conn, msg.chat.id.0)
+                        .ok()
+                        .flatten()
+                        .is_some()
+                    {
+                        crate::telegram::menu::player::stop_player(&bot, msg.chat.id, &db_pool).await;
+                        return Ok(None);
+                    }
+                }
+            }
+
             // Standalone search context: if user typed text while a search session with empty query exists
             if let Some(session) = crate::telegram::menu::search::get_search_session(msg.chat.id.0).await {
                 if session.query.is_empty() {
@@ -944,6 +958,21 @@ pub async fn handle_message(
                 }
             }
 
+            bot.send_message(msg.chat.id, i18n::t(&lang, "commands.no_links"))
+                .await?;
+        } else if text.eq_ignore_ascii_case("/exit") {
+            // /exit command — stop player if active
+            if let Ok(conn) = crate::storage::db::get_connection(&db_pool) {
+                if crate::storage::db::get_player_session(&conn, msg.chat.id.0)
+                    .ok()
+                    .flatten()
+                    .is_some()
+                {
+                    crate::telegram::menu::player::stop_player(&bot, msg.chat.id, &db_pool).await;
+                    return Ok(None);
+                }
+            }
+            // No active player — treat as unknown command
             bot.send_message(msg.chat.id, i18n::t(&lang, "commands.no_links"))
                 .await?;
         } else {
