@@ -4,6 +4,7 @@
 
 use super::{get_user, DbConnection};
 use rusqlite::Result;
+use std::sync::Once;
 
 // ==================== Audio Effect Sessions ====================
 
@@ -13,27 +14,82 @@ pub fn is_premium_or_vip(conn: &DbConnection, user_id: i64) -> Result<bool> {
     Ok(user.map(|u| u.plan.is_paid()).unwrap_or(false))
 }
 
+static BASS_COLUMN_INIT: Once = Once::new();
+static MORPH_COLUMN_INIT: Once = Once::new();
+
 fn ensure_audio_effects_bass_column(conn: &DbConnection) {
-    let _ = conn.execute(
-        "ALTER TABLE audio_effect_sessions ADD COLUMN bass_gain_db INTEGER DEFAULT 0",
-        [],
-    );
+    BASS_COLUMN_INIT.call_once(|| {
+        let _ = conn.execute(
+            "ALTER TABLE audio_effect_sessions ADD COLUMN bass_gain_db INTEGER DEFAULT 0",
+            [],
+        );
+    });
 }
 
 fn ensure_audio_effects_morph_column(conn: &DbConnection) {
-    let _ = conn.execute(
-        "ALTER TABLE audio_effect_sessions ADD COLUMN morph_profile TEXT DEFAULT 'none'",
-        [],
-    );
+    MORPH_COLUMN_INIT.call_once(|| {
+        let _ = conn.execute(
+            "ALTER TABLE audio_effect_sessions ADD COLUMN morph_profile TEXT DEFAULT 'none'",
+            [],
+        );
+    });
 }
+
+fn ensure_audio_effects_columns(conn: &DbConnection) {
+    ensure_audio_effects_bass_column(conn);
+    ensure_audio_effects_morph_column(conn);
+}
+
+/// Parse an RFC3339 datetime string, falling back to `fallback` on error.
+fn parse_dt(s: &str, fallback: chrono::DateTime<chrono::Utc>) -> chrono::DateTime<chrono::Utc> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .map(|dt| dt.with_timezone(&chrono::Utc))
+        .unwrap_or(fallback)
+}
+
+/// Map a row from the audio_effect_sessions table to an `AudioEffectSession`.
+///
+/// Expects columns in SELECT order: id, user_id, original_file_path,
+/// current_file_path, telegram_file_id, original_message_id, title,
+/// duration, pitch_semitones, tempo_factor, bass_gain_db, morph_profile,
+/// version, processing, created_at, expires_at
+fn audio_effect_session_from_row(
+    row: &rusqlite::Row,
+) -> rusqlite::Result<crate::download::audio_effects::AudioEffectSession> {
+    Ok(crate::download::audio_effects::AudioEffectSession {
+        id: row.get(0)?,
+        user_id: row.get(1)?,
+        original_file_path: row.get(2)?,
+        current_file_path: row.get(3)?,
+        telegram_file_id: row.get(4)?,
+        original_message_id: row.get(5)?,
+        title: row.get(6)?,
+        duration: row.get(7)?,
+        pitch_semitones: row.get(8)?,
+        tempo_factor: row.get(9)?,
+        bass_gain_db: row.get(10)?,
+        morph_profile: crate::download::audio_effects::MorphProfile::parse(row.get::<_, String>(11)?.as_str()),
+        version: row.get(12)?,
+        processing: row.get::<_, i32>(13)? != 0,
+        created_at: parse_dt(&row.get::<_, String>(14)?, chrono::Utc::now()),
+        expires_at: parse_dt(
+            &row.get::<_, String>(15)?,
+            chrono::Utc::now() + chrono::Duration::hours(24),
+        ),
+    })
+}
+
+/// The SELECT column list for audio_effect_sessions (shared across queries).
+const AUDIO_SESSION_COLS: &str = "id, user_id, original_file_path, current_file_path, telegram_file_id, \
+     original_message_id, title, duration, pitch_semitones, tempo_factor, bass_gain_db, morph_profile, \
+     version, processing, created_at, expires_at";
 
 /// Create a new audio effect session
 pub fn create_audio_effect_session(
     conn: &DbConnection,
     session: &crate::download::audio_effects::AudioEffectSession,
 ) -> Result<()> {
-    ensure_audio_effects_bass_column(conn);
-    ensure_audio_effects_morph_column(conn);
+    ensure_audio_effects_columns(conn);
 
     conn.execute(
         "INSERT INTO audio_effect_sessions (
@@ -68,39 +124,11 @@ pub fn get_audio_effect_session(
     conn: &DbConnection,
     session_id: &str,
 ) -> Result<Option<crate::download::audio_effects::AudioEffectSession>> {
-    ensure_audio_effects_bass_column(conn);
-    ensure_audio_effects_morph_column(conn);
-    let mut stmt = conn.prepare(
-        "SELECT id, user_id, original_file_path, current_file_path, telegram_file_id,
-                original_message_id, title, duration, pitch_semitones, tempo_factor, bass_gain_db, morph_profile,
-                version, processing, created_at, expires_at
-         FROM audio_effect_sessions WHERE id = ?1",
-    )?;
+    ensure_audio_effects_columns(conn);
+    let sql = format!("SELECT {} FROM audio_effect_sessions WHERE id = ?1", AUDIO_SESSION_COLS);
+    let mut stmt = conn.prepare(&sql)?;
 
-    let result = stmt.query_row([session_id], |row| {
-        Ok(crate::download::audio_effects::AudioEffectSession {
-            id: row.get(0)?,
-            user_id: row.get(1)?,
-            original_file_path: row.get(2)?,
-            current_file_path: row.get(3)?,
-            telegram_file_id: row.get(4)?,
-            original_message_id: row.get(5)?,
-            title: row.get(6)?,
-            duration: row.get(7)?,
-            pitch_semitones: row.get(8)?,
-            tempo_factor: row.get(9)?,
-            bass_gain_db: row.get(10)?,
-            morph_profile: crate::download::audio_effects::MorphProfile::parse(row.get::<_, String>(11)?.as_str()),
-            version: row.get(12)?,
-            processing: row.get::<_, i32>(13)? != 0,
-            created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(14)?)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()),
-            expires_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(15)?)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now() + chrono::Duration::hours(24)),
-        })
-    });
+    let result = stmt.query_row([session_id], audio_effect_session_from_row);
 
     match result {
         Ok(session) => Ok(Some(session)),
@@ -115,39 +143,14 @@ pub fn get_audio_effect_session_by_message(
     user_id: i64,
     message_id: i32,
 ) -> Result<Option<crate::download::audio_effects::AudioEffectSession>> {
-    ensure_audio_effects_bass_column(conn);
-    ensure_audio_effects_morph_column(conn);
-    let mut stmt = conn.prepare(
-        "SELECT id, user_id, original_file_path, current_file_path, telegram_file_id,
-                original_message_id, title, duration, pitch_semitones, tempo_factor, bass_gain_db, morph_profile,
-                version, processing, created_at, expires_at
-         FROM audio_effect_sessions WHERE user_id = ?1 AND original_message_id = ?2",
-    )?;
+    ensure_audio_effects_columns(conn);
+    let sql = format!(
+        "SELECT {} FROM audio_effect_sessions WHERE user_id = ?1 AND original_message_id = ?2",
+        AUDIO_SESSION_COLS
+    );
+    let mut stmt = conn.prepare(&sql)?;
 
-    let result = stmt.query_row([user_id, message_id as i64], |row| {
-        Ok(crate::download::audio_effects::AudioEffectSession {
-            id: row.get(0)?,
-            user_id: row.get(1)?,
-            original_file_path: row.get(2)?,
-            current_file_path: row.get(3)?,
-            telegram_file_id: row.get(4)?,
-            original_message_id: row.get(5)?,
-            title: row.get(6)?,
-            duration: row.get(7)?,
-            pitch_semitones: row.get(8)?,
-            tempo_factor: row.get(9)?,
-            bass_gain_db: row.get(10)?,
-            morph_profile: crate::download::audio_effects::MorphProfile::parse(row.get::<_, String>(11)?.as_str()),
-            version: row.get(12)?,
-            processing: row.get::<_, i32>(13)? != 0,
-            created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(14)?)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()),
-            expires_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(15)?)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now() + chrono::Duration::hours(24)),
-        })
-    });
+    let result = stmt.query_row([user_id, message_id as i64], audio_effect_session_from_row);
 
     match result {
         Ok(session) => Ok(Some(session)),
@@ -167,8 +170,7 @@ pub fn update_audio_effect_session(
     current_file_path: &str,
     version: u32,
 ) -> Result<()> {
-    ensure_audio_effects_bass_column(conn);
-    ensure_audio_effects_morph_column(conn);
+    ensure_audio_effects_columns(conn);
     conn.execute(
         "UPDATE audio_effect_sessions
          SET pitch_semitones = ?1, tempo_factor = ?2, bass_gain_db = ?3, morph_profile = ?4, current_file_path = ?5, version = ?6
@@ -215,10 +217,11 @@ pub fn update_cut_message_id(conn: &DbConnection, cut_id: i64, message_id: i32, 
     Ok(())
 }
 
-/// Get message_id and chat_id for a download entry (for MTProto fallback)
-pub fn get_download_message_info(conn: &DbConnection, download_id: i64) -> Result<Option<(i32, i64)>> {
-    let mut stmt = conn.prepare("SELECT message_id, chat_id FROM download_history WHERE id = ?1")?;
-    let result = stmt.query_row([download_id], |row| {
+/// Get message_id and chat_id for a given table entry (shared helper).
+fn get_message_info(conn: &DbConnection, table: &str, entry_id: i64) -> Result<Option<(i32, i64)>> {
+    let sql = format!("SELECT message_id, chat_id FROM {} WHERE id = ?1", table);
+    let mut stmt = conn.prepare(&sql)?;
+    let result = stmt.query_row([entry_id], |row| {
         let msg_id: Option<i32> = row.get(0)?;
         let chat_id: Option<i64> = row.get(1)?;
         Ok((msg_id, chat_id))
@@ -232,21 +235,14 @@ pub fn get_download_message_info(conn: &DbConnection, download_id: i64) -> Resul
     }
 }
 
+/// Get message_id and chat_id for a download entry (for MTProto fallback)
+pub fn get_download_message_info(conn: &DbConnection, download_id: i64) -> Result<Option<(i32, i64)>> {
+    get_message_info(conn, "download_history", download_id)
+}
+
 /// Get message_id and chat_id for a cut entry (for MTProto fallback)
 pub fn get_cut_message_info(conn: &DbConnection, cut_id: i64) -> Result<Option<(i32, i64)>> {
-    let mut stmt = conn.prepare("SELECT message_id, chat_id FROM cuts WHERE id = ?1")?;
-    let result = stmt.query_row([cut_id], |row| {
-        let msg_id: Option<i32> = row.get(0)?;
-        let chat_id: Option<i64> = row.get(1)?;
-        Ok((msg_id, chat_id))
-    });
-
-    match result {
-        Ok((Some(msg_id), Some(chat_id))) => Ok(Some((msg_id, chat_id))),
-        Ok(_) => Ok(None),
-        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(e),
-    }
+    get_message_info(conn, "cuts", cut_id)
 }
 
 /// Set session processing flag
@@ -262,49 +258,21 @@ pub fn set_session_processing(conn: &DbConnection, session_id: &str, processing:
 pub fn delete_expired_audio_sessions(
     conn: &DbConnection,
 ) -> Result<Vec<crate::download::audio_effects::AudioEffectSession>> {
-    ensure_audio_effects_bass_column(conn);
-    ensure_audio_effects_morph_column(conn);
-    // Get expired sessions
-    let mut stmt = conn.prepare(
-        "SELECT id, user_id, original_file_path, current_file_path, telegram_file_id,
-                original_message_id, title, duration, pitch_semitones, tempo_factor, bass_gain_db, morph_profile,
-                version, processing, created_at, expires_at
-         FROM audio_effect_sessions WHERE expires_at < ?1",
-    )?;
-
+    ensure_audio_effects_columns(conn);
     let now = chrono::Utc::now().to_rfc3339();
+
+    // Get expired sessions
+    let sql = format!(
+        "SELECT {} FROM audio_effect_sessions WHERE expires_at < ?1",
+        AUDIO_SESSION_COLS
+    );
+    let mut stmt = conn.prepare(&sql)?;
     let sessions: Vec<crate::download::audio_effects::AudioEffectSession> = stmt
-        .query_map([now], |row| {
-            Ok(crate::download::audio_effects::AudioEffectSession {
-                id: row.get(0)?,
-                user_id: row.get(1)?,
-                original_file_path: row.get(2)?,
-                current_file_path: row.get(3)?,
-                telegram_file_id: row.get(4)?,
-                original_message_id: row.get(5)?,
-                title: row.get(6)?,
-                duration: row.get(7)?,
-                pitch_semitones: row.get(8)?,
-                tempo_factor: row.get(9)?,
-                bass_gain_db: row.get(10)?,
-                morph_profile: crate::download::audio_effects::MorphProfile::parse(row.get::<_, String>(11)?.as_str()),
-                version: row.get(12)?,
-                processing: row.get::<_, i32>(13)? != 0,
-                created_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(14)?)
-                    .map(|dt| dt.with_timezone(&chrono::Utc))
-                    .unwrap_or_else(|_| chrono::Utc::now()),
-                expires_at: chrono::DateTime::parse_from_rfc3339(&row.get::<_, String>(15)?)
-                    .map(|dt| dt.with_timezone(&chrono::Utc))
-                    .unwrap_or_else(|_| chrono::Utc::now() + chrono::Duration::hours(24)),
-            })
-        })?
+        .query_map([&now], audio_effect_session_from_row)?
         .collect::<Result<Vec<_>>>()?;
 
-    // Delete expired sessions
-    let session_ids: Vec<String> = sessions.iter().map(|s| s.id.clone()).collect();
-    for session_id in session_ids {
-        conn.execute("DELETE FROM audio_effect_sessions WHERE id = ?1", [&session_id])?;
-    }
+    // Batch delete all expired sessions in one statement
+    conn.execute("DELETE FROM audio_effect_sessions WHERE expires_at < ?1", [&now])?;
 
     Ok(sessions)
 }
@@ -354,18 +322,15 @@ pub fn get_active_audio_cut_session(conn: &DbConnection, user_id: i64) -> Result
     )?;
     let mut rows = stmt.query(rusqlite::params![user_id, now])?;
     if let Some(row) = rows.next()? {
-        let created_at: String = row.get(3)?;
-        let expires_at: String = row.get(4)?;
         Ok(Some(AudioCutSession {
             id: row.get(0)?,
             user_id: row.get(1)?,
             audio_session_id: row.get(2)?,
-            created_at: chrono::DateTime::parse_from_rfc3339(&created_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()),
-            expires_at: chrono::DateTime::parse_from_rfc3339(&expires_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now() + chrono::Duration::minutes(10)),
+            created_at: parse_dt(&row.get::<_, String>(3)?, chrono::Utc::now()),
+            expires_at: parse_dt(
+                &row.get::<_, String>(4)?,
+                chrono::Utc::now() + chrono::Duration::minutes(10),
+            ),
         }))
     } else {
         Ok(None)
@@ -431,8 +396,6 @@ pub fn get_active_video_clip_session(conn: &DbConnection, user_id: i64) -> Resul
         let source_id: Option<i64> = row.get(4)?;
         let original_url: Option<String> = row.get(5)?;
         let output_kind: Option<String> = row.get(6)?;
-        let created_at: String = row.get(7)?;
-        let expires_at: String = row.get(8)?;
         let resolved_source_kind = source_kind.unwrap_or_else(|| "download".to_string());
         let resolved_source_id = source_id.unwrap_or(source_download_id);
         let resolved_original_url = original_url.unwrap_or_default();
@@ -445,12 +408,11 @@ pub fn get_active_video_clip_session(conn: &DbConnection, user_id: i64) -> Resul
             source_id: resolved_source_id,
             original_url: resolved_original_url,
             output_kind: resolved_output_kind,
-            created_at: chrono::DateTime::parse_from_rfc3339(&created_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()),
-            expires_at: chrono::DateTime::parse_from_rfc3339(&expires_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now() + chrono::Duration::minutes(10)),
+            created_at: parse_dt(&row.get::<_, String>(7)?, chrono::Utc::now()),
+            expires_at: parse_dt(
+                &row.get::<_, String>(8)?,
+                chrono::Utc::now() + chrono::Duration::minutes(10),
+            ),
             subtitle_lang: row.get(9)?,
         }))
     } else {
@@ -503,17 +465,14 @@ pub fn get_active_cookies_upload_session(conn: &DbConnection, user_id: i64) -> R
     )?;
     let mut rows = stmt.query(rusqlite::params![user_id, now])?;
     if let Some(row) = rows.next()? {
-        let created_at: String = row.get(2)?;
-        let expires_at: String = row.get(3)?;
         Ok(Some(CookiesUploadSession {
             id: row.get(0)?,
             user_id: row.get(1)?,
-            created_at: chrono::DateTime::parse_from_rfc3339(&created_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()),
-            expires_at: chrono::DateTime::parse_from_rfc3339(&expires_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now() + chrono::Duration::minutes(10)),
+            created_at: parse_dt(&row.get::<_, String>(2)?, chrono::Utc::now()),
+            expires_at: parse_dt(
+                &row.get::<_, String>(3)?,
+                chrono::Utc::now() + chrono::Duration::minutes(10),
+            ),
         }))
     } else {
         Ok(None)
@@ -557,17 +516,14 @@ pub fn get_active_ig_cookies_upload_session(conn: &DbConnection, user_id: i64) -
     let mut rows = stmt.query(rusqlite::params![user_id, now])?;
 
     if let Some(row) = rows.next()? {
-        let created_str: String = row.get(2)?;
-        let expires_str: String = row.get(3)?;
         Ok(Some(CookiesUploadSession {
             id: row.get(0)?,
             user_id: row.get(1)?,
-            created_at: chrono::DateTime::parse_from_rfc3339(&created_str)
-                .unwrap_or_default()
-                .with_timezone(&chrono::Utc),
-            expires_at: chrono::DateTime::parse_from_rfc3339(&expires_str)
-                .unwrap_or_default()
-                .with_timezone(&chrono::Utc),
+            created_at: parse_dt(&row.get::<_, String>(2)?, chrono::Utc::now()),
+            expires_at: parse_dt(
+                &row.get::<_, String>(3)?,
+                chrono::Utc::now() + chrono::Duration::minutes(10),
+            ),
         }))
     } else {
         Ok(None)

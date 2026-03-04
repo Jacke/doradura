@@ -2056,7 +2056,7 @@ pub async fn process_video_clip(
         bot.send_message(chat_id, clip_title.clone()).await.ok();
     }
 
-    if !original_url.trim().is_empty() {
+    if !is_video_note && !original_url.trim().is_empty() {
         bot.send_message(chat_id, original_url.clone()).await.ok();
     }
     bot.delete_message(chat_id, status.id).await.ok();

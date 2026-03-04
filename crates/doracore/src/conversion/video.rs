@@ -110,12 +110,14 @@ pub async fn to_video_note<P: AsRef<Path>>(
     let mut cmd = Command::new("ffmpeg");
     cmd.arg("-hide_banner").arg("-loglevel").arg("error").arg("-y");
 
-    // Add start time if specified
+    cmd.arg("-i").arg(input);
+
+    // Add start time AFTER -i (output seeking) for frame-accurate seek.
+    // Input seeking (-ss before -i) jumps to the nearest keyframe which
+    // causes corrupted/artifact video when splitting already-processed clips.
     if let Some(ss) = options.start_time {
         cmd.arg("-ss").arg(format!("{}", ss));
     }
-
-    cmd.arg("-i").arg(input);
 
     // Add duration limit (max 60 seconds for video notes)
     let duration = options
@@ -150,16 +152,24 @@ pub async fn to_video_note<P: AsRef<Path>>(
         cmd.arg("-map").arg("0:a?");
     }
 
-    // Video codec settings optimized for video notes
+    // Video codec settings — max quality within Telegram's ~12 MB video note limit.
+    // CRF 18 = high quality at 640x640; maxrate caps bitrate so 60s clips stay under 12 MB.
+    // Budget: 12 MB / 60s ≈ 1.6 Mbps total. Audio 128k → ~1.4 Mbps for video.
     cmd.arg("-c:v")
         .arg("libx264")
         .arg("-preset")
-        .arg("fast")
+        .arg("medium")
         .arg("-crf")
-        .arg("28");
+        .arg("18")
+        .arg("-maxrate")
+        .arg("1400k")
+        .arg("-bufsize")
+        .arg("2800k")
+        .arg("-profile:v")
+        .arg("high");
 
     // Audio codec settings
-    cmd.arg("-c:a").arg("aac").arg("-b:a").arg("192k");
+    cmd.arg("-c:a").arg("aac").arg("-b:a").arg("128k");
 
     // Output format
     cmd.arg("-movflags").arg("+faststart");

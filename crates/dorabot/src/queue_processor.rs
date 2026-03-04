@@ -98,20 +98,28 @@ async fn process_single_task(
         semaphore.available_permits()
     );
 
-    // Enforce global delay between download starts
-    {
-        let mut last_start = last_download_start.lock().await;
+    // Enforce global delay between download starts.
+    // Read timestamp and drop lock BEFORE sleeping to avoid blocking other tasks.
+    let wait_time = {
+        let last_start = last_download_start.lock().await;
         let elapsed = last_start.elapsed();
         let inter_delay = config::queue::inter_download_delay();
         if elapsed < inter_delay {
-            let wait_time = inter_delay - elapsed;
-            log::info!(
-                "Waiting {:?} before starting task {} (rate limit protection)",
-                wait_time,
-                task.id
-            );
-            tokio::time::sleep(wait_time).await;
+            Some(inter_delay - elapsed)
+        } else {
+            None
         }
+    };
+    if let Some(wait) = wait_time {
+        log::info!(
+            "Waiting {:?} before starting task {} (rate limit protection)",
+            wait,
+            task.id
+        );
+        tokio::time::sleep(wait).await;
+    }
+    {
+        let mut last_start = last_download_start.lock().await;
         *last_start = std::time::Instant::now();
     }
 
@@ -164,33 +172,38 @@ async fn process_single_task(
         crate::telegram::try_set_reaction(&bot, task.chat_id, MessageId(msg_id), crate::telegram::emoji::EYES).await;
     }
 
-    // Prepare task metadata
-    let db_pool_clone = Arc::clone(&db_pool);
-    let video_quality = task.video_quality.clone();
-    let audio_bitrate = task.audio_bitrate.clone();
-    let time_range = task.time_range.clone();
-    let task_id = task.id.clone();
-    let task_url = task.url.clone();
-    let task_format = task.format.clone();
-    let task_chat_id = task.chat_id;
+    // Destructure task to avoid unnecessary clones
+    let queue::DownloadTask {
+        id: task_id,
+        url: task_url,
+        format: task_format,
+        chat_id: task_chat_id,
+        video_quality,
+        audio_bitrate,
+        time_range,
+        message_id: task_message_id,
+        created_timestamp,
+        carousel_mask,
+        ..
+    } = task;
 
     // Set carousel mask for Instagram carousel downloads
-    if let Some(mask) = task.carousel_mask {
-        crate::download::source::instagram::set_carousel_mask(&task.url, mask);
+    if let Some(mask) = carousel_mask {
+        crate::download::source::instagram::set_carousel_mask(&task_url, mask);
     }
 
     // Dispatch by format
-    let result = match task.format.as_str() {
+    let result = match task_format.as_str() {
         "mp4" => {
             download_and_send_video(
                 bot.clone(),
-                task.chat_id,
+                task_chat_id,
                 url,
                 rate_limiter.clone(),
-                task.created_timestamp,
-                Some(db_pool_clone.clone()),
+                created_timestamp,
+                Some(Arc::clone(&db_pool)),
                 video_quality,
-                task.message_id,
+                task_message_id,
                 alert_manager.clone(),
                 time_range.clone(),
             )
@@ -199,13 +212,13 @@ async fn process_single_task(
         "srt" | "txt" => {
             download_and_send_subtitles(
                 bot.clone(),
-                task.chat_id,
+                task_chat_id,
                 url,
                 rate_limiter.clone(),
-                task.created_timestamp,
-                task.format.clone(),
-                Some(db_pool_clone.clone()),
-                task.message_id,
+                created_timestamp,
+                task_format.clone(),
+                Some(Arc::clone(&db_pool)),
+                task_message_id,
                 alert_manager.clone(),
             )
             .await
@@ -214,13 +227,13 @@ async fn process_single_task(
             // Default to audio (mp3)
             download_and_send_audio(
                 bot.clone(),
-                task.chat_id,
+                task_chat_id,
                 url,
                 rate_limiter.clone(),
-                task.created_timestamp,
-                Some(db_pool_clone.clone()),
+                created_timestamp,
+                Some(Arc::clone(&db_pool)),
                 audio_bitrate,
-                task.message_id,
+                task_message_id,
                 alert_manager.clone(),
                 time_range.clone(),
             )
