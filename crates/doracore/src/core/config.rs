@@ -738,6 +738,42 @@ pub mod watcher {
     });
 }
 
+/// Spotify API configuration
+pub mod spotify {
+    use once_cell::sync::Lazy;
+    use std::env;
+
+    pub static CLIENT_ID: Lazy<Option<String>> = Lazy::new(|| {
+        env::var("SPOTIFY_CLIENT_ID")
+            .ok()
+            .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
+    });
+
+    pub static CLIENT_SECRET: Lazy<Option<String>> = Lazy::new(|| {
+        env::var("SPOTIFY_CLIENT_SECRET")
+            .ok()
+            .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
+    });
+}
+
+/// Yandex Music configuration
+pub mod yandex_music {
+    use once_cell::sync::Lazy;
+    use std::env;
+
+    pub static COOKIES_FILE: Lazy<Option<String>> = Lazy::new(|| {
+        env::var("YM_COOKIES_FILE")
+            .ok()
+            .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
+    });
+
+    pub static PROXY: Lazy<Option<String>> = Lazy::new(|| {
+        env::var("YM_PROXY")
+            .ok()
+            .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
+    });
+}
+
 // ==================== Configuration Validation ====================
 
 /// Result of configuration validation.

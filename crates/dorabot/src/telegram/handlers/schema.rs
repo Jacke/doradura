@@ -460,6 +460,14 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                         crate::telegram::menu::playlist::handle_playlists_command(&bot, msg.chat.id, &deps.db_pool)
                             .await;
                     }
+                    Command::PlaylistIntegrations => {
+                        crate::telegram::menu::playlist_integrations::handle_playlist_integrations_command(
+                            &bot,
+                            msg.chat.id,
+                            &deps.db_pool,
+                        )
+                        .await;
+                    }
                 }
                 Ok(())
             }

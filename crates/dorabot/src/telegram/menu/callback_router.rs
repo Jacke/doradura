@@ -1488,6 +1488,23 @@ pub async fn handle_menu_callback(
                     log::error!("Playlist callback error: {}", e);
                 }
                 return Ok(());
+            } else if data.starts_with("pi:") {
+                // Playlist integrations callbacks
+                use crate::telegram::menu::playlist_integrations::handle_playlist_integrations_callback;
+                if let Err(e) = handle_playlist_integrations_callback(
+                    &bot,
+                    callback_id.clone(),
+                    chat_id,
+                    message_id,
+                    &data,
+                    Arc::clone(&db_pool),
+                    Arc::clone(&download_queue),
+                )
+                .await
+                {
+                    log::error!("Playlist integrations callback error: {}", e);
+                }
+                return Ok(());
             } else if data.starts_with("vl:") {
                 use crate::telegram::menu::vlipsy::handle_vlipsy_callback;
                 if let Err(e) = handle_vlipsy_callback(

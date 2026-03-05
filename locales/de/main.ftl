@@ -145,6 +145,9 @@ bot_commands =
     .users = Alle Nutzer auflisten (nur Admin)
     .setplan = Nutzerplan ändern (nur Admin)
     .subscriptions = Meine Inhalts-Abonnements
+    .player = Musikplayer
+    .playlists = Meine Playlists
+    .playlist_integrations = Externe Playlists importieren
     .style = Fortschrittsbalken-Stil
 
 video_circle =

@@ -145,6 +145,9 @@ bot_commands =
     .users = Lister tous les utilisateurs (admin uniquement)
     .setplan = Changer le plan d'un utilisateur (admin uniquement)
     .subscriptions = Mes abonnements aux contenus
+    .player = Lecteur de musique
+    .playlists = Mes playlists
+    .playlist_integrations = Importer des playlists externes
     .style = Style de barre de progression
 
 video_circle =

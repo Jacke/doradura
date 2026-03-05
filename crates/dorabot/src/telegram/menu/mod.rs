@@ -5,6 +5,7 @@ pub(crate) mod lyrics;
 mod main_menu;
 pub mod player;
 pub mod playlist;
+pub mod playlist_integrations;
 pub mod ringtone;
 pub mod search;
 mod services;

@@ -77,6 +77,8 @@ pub enum Command {
     Player,
     #[command(description = "my playlists")]
     Playlists,
+    #[command(rename = "playlist_integrations", description = "import external playlists")]
+    PlaylistIntegrations,
 }
 
 const BOT_COMMAND_DEFINITIONS: &[(&str, &str)] = &[
@@ -97,6 +99,7 @@ const BOT_COMMAND_DEFINITIONS: &[(&str, &str)] = &[
     ("subscriptions", "bot_commands.subscriptions"),
     ("player", "bot_commands.player"),
     ("playlists", "bot_commands.playlists"),
+    ("playlist_integrations", "bot_commands.playlist_integrations"),
     //("users", "bot_commands.users"),
     //("setplan", "bot_commands.setplan"),
     //("transactions", "bot_commands.transactions"),

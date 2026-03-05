@@ -383,6 +383,23 @@ pub async fn handle_message(
             return Ok(None);
         }
 
+        // Check if user is waiting for playlist integrations import URL
+        if crate::telegram::menu::playlist_integrations::is_waiting_for_import_url(msg.chat.id.0).await {
+            let bot_clone = bot.clone();
+            let db_pool_clone = db_pool.clone();
+            let url_text = text.trim().to_string();
+            tokio::spawn(async move {
+                crate::telegram::menu::playlist_integrations::handle_import_url_input(
+                    &bot_clone,
+                    msg.chat.id,
+                    &url_text,
+                    db_pool_clone,
+                )
+                .await;
+            });
+            return Ok(None);
+        }
+
         // Check if user is waiting for Vlipsy search
         if crate::telegram::menu::vlipsy::is_waiting_for_vlipsy_search(msg.chat.id.0).await {
             crate::telegram::menu::vlipsy::handle_search_text(&bot, msg.chat.id, text, &lang, db_pool.clone()).await;

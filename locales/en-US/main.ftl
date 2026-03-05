@@ -170,6 +170,9 @@ bot_commands =
     .panel = User management panel (admin only)
     .charges = View all payments (admin only)
     .subscriptions = My content subscriptions
+    .player = Music player
+    .playlists = My playlists
+    .playlist_integrations = Import external playlists
     .style = Progress bar style
 
 admin =
