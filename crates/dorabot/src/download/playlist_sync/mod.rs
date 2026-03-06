@@ -78,7 +78,10 @@ mod youtube {
                 }
                 let entry: YtdlpFlatEntry = match serde_json::from_str(line) {
                     Ok(e) => e,
-                    Err(_) => continue,
+                    Err(e) => {
+                        log::warn!("yt-dlp playlist parse error: {}", e);
+                        continue;
+                    }
                 };
 
                 let artist = entry.artist().map(|s| s.to_string());
@@ -175,34 +178,51 @@ pub fn save_resolved_playlist(
         .filter(|t| t.status == resolver::TrackStatus::NotFound)
         .count() as i32;
 
-    let playlist_id = db::create_synced_playlist(
-        conn,
-        user_id,
-        &resolved.name,
-        resolved.description.as_deref(),
-        source_url,
-        resolved.platform.db_name(),
-        resolved.tracks.len() as i32,
-        matched,
-        not_found,
-    )
-    .map_err(|e| format!("Failed to save playlist: {}", e))?;
+    conn.execute_batch("BEGIN IMMEDIATE")
+        .map_err(|e| format!("Failed to begin transaction: {}", e))?;
 
-    for (i, track) in resolved.tracks.iter().enumerate() {
-        db::add_synced_track(
+    let result = (|| -> Result<i64, String> {
+        let playlist_id = db::create_synced_playlist(
             conn,
-            playlist_id,
-            i as i32,
-            &track.title,
-            track.artist.as_deref(),
-            track.duration_secs,
-            track.external_id.as_deref(),
-            track.source_url.as_deref(),
-            track.resolved_url.as_deref(),
-            track.status.as_str(),
+            user_id,
+            &resolved.name,
+            resolved.description.as_deref(),
+            source_url,
+            resolved.platform.db_name(),
+            resolved.tracks.len() as i32,
+            matched,
+            not_found,
         )
-        .map_err(|e| format!("Failed to save track: {}", e))?;
-    }
+        .map_err(|e| format!("Failed to save playlist: {}", e))?;
 
-    Ok(playlist_id)
+        for (i, track) in resolved.tracks.iter().enumerate() {
+            db::add_synced_track(
+                conn,
+                playlist_id,
+                i as i32,
+                &track.title,
+                track.artist.as_deref(),
+                track.duration_secs,
+                track.external_id.as_deref(),
+                track.source_url.as_deref(),
+                track.resolved_url.as_deref(),
+                track.status.as_str(),
+            )
+            .map_err(|e| format!("Failed to save track: {}", e))?;
+        }
+
+        Ok(playlist_id)
+    })();
+
+    match result {
+        Ok(id) => {
+            conn.execute_batch("COMMIT")
+                .map_err(|e| format!("Failed to commit: {}", e))?;
+            Ok(id)
+        }
+        Err(e) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(e)
+        }
+    }
 }

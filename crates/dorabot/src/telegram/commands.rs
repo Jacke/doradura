@@ -383,6 +383,17 @@ pub async fn handle_message(
             return Ok(None);
         }
 
+        // Check if user is waiting for vault setup
+        if crate::telegram::menu::vault::is_waiting_for_vault_setup(msg.chat.id.0).await {
+            let bot_clone = bot.clone();
+            let db_pool_clone = db_pool.clone();
+            let msg_clone = msg.clone();
+            tokio::spawn(async move {
+                crate::telegram::menu::vault::handle_vault_setup_input(&bot_clone, &msg_clone, &db_pool_clone).await;
+            });
+            return Ok(None);
+        }
+
         // Check if user is waiting for playlist integrations import URL
         if crate::telegram::menu::playlist_integrations::is_waiting_for_import_url(msg.chat.id.0).await {
             let bot_clone = bot.clone();

@@ -403,6 +403,41 @@ pub async fn execute(
     let start_time = std::time::Instant::now();
     let file_format_str = format.label().to_string();
 
+    // ── Vault cache lookup (audio only) ──
+    if matches!(format, PipelineFormat::Audio { .. }) {
+        if let Some(pool) = db_pool {
+            if let Some(cached_fid) = crate::download::vault::check_vault_cache(pool, chat_id.0, url.as_str()) {
+                log::info!("Pipeline: vault cache hit for {} (chat {})", url, chat_id);
+                let input = teloxide::types::InputFile::file_id(teloxide::types::FileId(cached_fid));
+                match bot.send_audio(chat_id, input).await {
+                    Ok(sent_message) => {
+                        let file_size = sent_message.audio().map(|a| a.file.size).unwrap_or(0) as u64;
+                        let duration = sent_message.audio().map(|a| a.duration.seconds()).unwrap_or(0);
+                        return Ok(PipelineResult {
+                            sent_message,
+                            file_size,
+                            duration,
+                            title: String::new(),
+                            artist: String::new(),
+                            display_title: Arc::from("(cached)"),
+                            download_path: String::new(),
+                            output: DownloadOutput {
+                                file_path: String::new(),
+                                file_size: 0,
+                                duration_secs: Some(duration),
+                                mime_hint: None,
+                                additional_files: None,
+                            },
+                        });
+                    }
+                    Err(e) => {
+                        log::warn!("Pipeline: vault cache send failed, falling through: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
     let phase = download_phase(bot, chat_id, url, format, registry, progress_msg, message_id).await?;
     let DownloadPhaseResult {
         output: download_output,
@@ -650,6 +685,29 @@ pub async fn execute(
                 Err(e) => {
                     log::warn!("Failed to save download history: {}", e);
                 }
+            }
+        }
+    }
+
+    // ── Step 10b: Send to vault (audio only, fire-and-forget) ──
+    if matches!(format, PipelineFormat::Audio { .. }) {
+        if let Some(pool) = db_pool {
+            let file_id_for_vault = sent_message
+                .audio()
+                .map(|a| a.file.id.0.clone())
+                .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
+            if let Some(fid) = file_id_for_vault {
+                crate::download::vault::send_to_vault_background(
+                    bot.clone(),
+                    Arc::clone(pool),
+                    chat_id.0,
+                    url.to_string(),
+                    fid,
+                    Some(title.clone()),
+                    if artist.is_empty() { None } else { Some(artist.clone()) },
+                    Some(duration as i32),
+                    Some(file_size as i64),
+                );
             }
         }
     }
@@ -908,6 +966,9 @@ pub async fn handle_pipeline_error(
 ///
 /// yt-dlp returns "NA" for missing fields (common with SoundCloud) and may include
 /// newlines in titles (e.g. playlist descriptions mixed into track names).
+///
+/// When artist is empty/NA and title contains " - ", tries to parse artist from title
+/// (common SoundCloud pattern: "Artist1, Artist2 - Track Name [tags]").
 fn sanitize_metadata(title: String, artist: String) -> (String, String) {
     // Strip newlines and trim whitespace
     let title = title.replace('\n', " ").replace('\r', "");
@@ -918,6 +979,17 @@ fn sanitize_metadata(title: String, artist: String) -> (String, String) {
 
     // yt-dlp returns "NA" for unavailable fields
     let artist = if artist == "NA" { String::new() } else { artist };
+
+    // If artist is still empty, try to parse "Artist - Title" from the title
+    if artist.is_empty() {
+        if let Some(pos) = title.find(" - ") {
+            let artist_part = title[..pos].trim();
+            let title_part = title[pos + 3..].trim();
+            if !artist_part.is_empty() && !title_part.is_empty() && artist_part.len() <= 80 {
+                return (title_part.to_string(), artist_part.to_string());
+            }
+        }
+    }
 
     (title, artist)
 }
@@ -959,8 +1031,27 @@ mod tests {
             "pale fortress\nkareful - ready or not\nKAREFUL & MANNEQUIN".into(),
             "NA\n".into(),
         );
-        assert_eq!(title, "pale fortress kareful - ready or not KAREFUL & MANNEQUIN");
-        assert_eq!(artist, "");
+        // After newline cleanup: "pale fortress kareful - ready or not KAREFUL & MANNEQUIN"
+        // Artist is NA → empty → parse "Artist - Title" from title
+        assert_eq!(artist, "pale fortress kareful");
+        assert_eq!(title, "ready or not KAREFUL & MANNEQUIN");
+    }
+
+    #[test]
+    fn soundcloud_artist_title_split() {
+        let (title, artist) = sanitize_metadata(
+            "pale fortress, kareful - ready or not jumpstyle - slowed".into(),
+            "NA".into(),
+        );
+        assert_eq!(artist, "pale fortress, kareful");
+        assert_eq!(title, "ready or not jumpstyle - slowed");
+    }
+
+    #[test]
+    fn no_split_when_artist_present() {
+        let (title, artist) = sanitize_metadata("pale fortress, kareful - ready or not".into(), "Real Artist".into());
+        assert_eq!(artist, "Real Artist");
+        assert_eq!(title, "pale fortress, kareful - ready or not");
     }
 
     #[test]

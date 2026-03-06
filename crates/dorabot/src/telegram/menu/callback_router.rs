@@ -1488,6 +1488,21 @@ pub async fn handle_menu_callback(
                     log::error!("Playlist callback error: {}", e);
                 }
                 return Ok(());
+            } else if data.starts_with("vault:") {
+                let _ = bot.answer_callback_query(callback_id.clone()).await;
+                if let Err(e) = crate::telegram::menu::vault::handle_vault_callback(
+                    &bot,
+                    callback_id.clone(),
+                    chat_id,
+                    message_id,
+                    &data,
+                    Arc::clone(&db_pool),
+                )
+                .await
+                {
+                    log::error!("Vault callback error: {}", e);
+                }
+                return Ok(());
             } else if data.starts_with("pi:") {
                 // Playlist integrations callbacks
                 use crate::telegram::menu::playlist_integrations::handle_playlist_integrations_callback;

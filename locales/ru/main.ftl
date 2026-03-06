@@ -432,3 +432,17 @@ instagram-rate-limited = ⏳ Слишком много запросов к Insta
 instagram-profile-error = ❌ Не удалось загрузить профиль @{ $username }
 instagram-profile-posts = 📸 { $posts } постов · 👥 { $followers } подписчиков
 instagram-more = Ещё >>>
+
+# Vault
+vault-title = Хранилище
+vault-instructions = Хранилище — это ваш приватный Telegram\-канал, где бот сохраняет загрузки\.
+vault-setup-steps = 1\. Создайте приватный Telegram\-канал\n2\. Добавьте бота администратором\n3\. Перешлите любое сообщение из канала сюда
+vault-connected = Хранилище подключено к "{ $channel }"
+vault-stats = { $count } треков, { $size } МБ в кэше
+vault-disconnected = Хранилище отключено\.
+vault-verify-failed = Не удалось отправить в канал\. Убедитесь, что бот — администратор\.
+vault-test-failed = Не удалось отправить тестовое сообщение в канал\.
+vault-cleared = Кэш очищен\.
+vault-disabled = Хранилище приостановлено\.
+vault-enabled = Хранилище активировано\.
+vault-cache-hit = Мгновенно из кэша хранилища

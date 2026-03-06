@@ -206,6 +206,20 @@ extensions =
     .footer = _Jede Erweiterung arbeitet unabhängig\. Sende einen Link oder eine Datei — Dora wählt die richtige\!_
     .detail_back = 🔙 Zurück zu Erweiterungen
 
+# Vault
+vault-title = Tresor
+vault-instructions = Dein Tresor ist ein privater Telegram\-Kanal, in dem der Bot deine Downloads speichert\.
+vault-setup-steps = 1\. Erstelle einen privaten Telegram\-Kanal\n2\. Füge den Bot als Admin hinzu\n3\. Leite eine Nachricht aus dem Kanal hierher weiter
+vault-connected = Tresor verbunden mit "{ $channel }"
+vault-stats = { $count } Tracks, { $size } MB im Cache
+vault-disconnected = Tresor getrennt\.
+vault-verify-failed = Kann nicht in den Kanal posten\. Stelle sicher, dass der Bot Admin ist\.
+vault-test-failed = Testnachricht an den Kanal fehlgeschlagen\.
+vault-cleared = Cache geleert\.
+vault-disabled = Tresor deaktiviert\.
+vault-enabled = Tresor aktiviert\.
+vault-cache-hit = Sofort aus dem Tresor\-Cache
+
 progress =
     .starting = Download wird gestartet...
     .downloading = Herunterladen

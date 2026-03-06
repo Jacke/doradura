@@ -431,3 +431,17 @@ instagram-rate-limited = ⏳ Too many Instagram requests, try again later
 instagram-profile-error = ❌ Failed to load profile @{ $username }
 instagram-profile-posts = 📸 { $posts } posts · 👥 { $followers } followers
 instagram-more = More >>>
+
+# Vault
+vault-title = Vault
+vault-instructions = Your vault is a private Telegram channel where the bot stores your downloads\.
+vault-setup-steps = 1\. Create a private Telegram channel\n2\. Add this bot as admin\n3\. Forward any message from that channel here
+vault-connected = Vault connected to "{ $channel }"
+vault-stats = { $count } tracks, { $size } MB cached
+vault-disconnected = Vault disconnected\.
+vault-verify-failed = Cannot post to channel\. Make sure the bot is admin\.
+vault-test-failed = Failed to send test message to channel\.
+vault-cleared = Cache cleared\.
+vault-disabled = Vault disabled\.
+vault-enabled = Vault enabled\.
+vault-cache-hit = Instant from vault cache

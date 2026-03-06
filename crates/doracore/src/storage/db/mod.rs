@@ -23,9 +23,11 @@
 mod playlists;
 mod sessions;
 mod synced_playlists;
+mod vault;
 pub use playlists::*;
 pub use sessions::*;
 pub use synced_playlists::*;
+pub use vault::*;
 
 use crate::core::types::Plan;
 use r2d2::{Pool, PooledConnection};

@@ -115,11 +115,12 @@ pub struct YtdlpFlatEntry {
 
 impl YtdlpFlatEntry {
     /// Get artist name: prefer `uploader`, fall back to `channel`.
+    /// Filters out yt-dlp "NA" placeholder values.
     pub fn artist(&self) -> Option<&str> {
         self.uploader
             .as_deref()
-            .filter(|s| !s.is_empty())
-            .or_else(|| self.channel.as_deref().filter(|s| !s.is_empty()))
+            .filter(|s| !s.is_empty() && *s != "NA")
+            .or_else(|| self.channel.as_deref().filter(|s| !s.is_empty() && *s != "NA"))
     }
 }
 

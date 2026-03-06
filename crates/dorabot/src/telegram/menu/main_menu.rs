@@ -109,8 +109,12 @@ pub(crate) fn build_enhanced_menu(
         ],
         vec![
             crate::telegram::cb(i18n::t(lang, "menu.language_button"), "mode:language"),
-            crate::telegram::cb(i18n::t(lang, "menu.button_feedback"), "main:feedback"),
+            crate::telegram::cb("\u{1f5c4} Vault", "vault:menu"),
         ],
+        vec![crate::telegram::cb(
+            i18n::t(lang, "menu.button_feedback"),
+            "main:feedback",
+        )],
     ]);
 
     (text, keyboard)

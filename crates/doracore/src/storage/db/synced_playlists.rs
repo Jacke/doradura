@@ -171,7 +171,18 @@ pub fn update_synced_playlist_counts(
 }
 
 pub fn delete_synced_playlist(conn: &DbConnection, playlist_id: i64) -> Result<()> {
+    // Delete tracks first (no CASCADE in schema)
+    delete_synced_tracks(conn, playlist_id)?;
     conn.execute("DELETE FROM synced_playlists WHERE id = ?1", [playlist_id])?;
+    Ok(())
+}
+
+/// Atomically increment matched_count and decrement not_found_count.
+pub fn increment_synced_playlist_matched(conn: &DbConnection, playlist_id: i64, delta: i32) -> Result<()> {
+    conn.execute(
+        "UPDATE synced_playlists SET matched_count = matched_count + ?1, not_found_count = not_found_count - ?1, updated_at = datetime('now') WHERE id = ?2",
+        rusqlite::params![delta, playlist_id],
+    )?;
     Ok(())
 }
 

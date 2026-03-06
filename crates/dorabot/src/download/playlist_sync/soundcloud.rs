@@ -73,13 +73,20 @@ impl PlaylistResolver for SoundCloudResolver {
             }
             let entry: YtdlpFlatEntry = match serde_json::from_str(line) {
                 Ok(e) => e,
-                Err(_) => continue,
+                Err(e) => {
+                    log::warn!("SoundCloud yt-dlp parse error: {}", e);
+                    continue;
+                }
             };
 
-            let artist = entry.artist().map(|s| s.to_string());
-            let title = entry.title.unwrap_or_else(|| format!("Track {}", i + 1));
+            let uploader = entry.artist().map(|s| s.to_string());
+            let raw_title = entry.title.unwrap_or_else(|| format!("Track {}", i + 1));
             let resolved_url = entry.webpage_url.or(entry.url);
             let duration = entry.duration.map(|d| d as i32);
+
+            // SoundCloud titles often contain artist: "Artist1, Artist2 - Track Name [tags]"
+            // Parse artist from title if uploader is missing or is just the account name
+            let (title, artist) = parse_soundcloud_title(&raw_title, uploader.as_deref());
 
             if let Some(ref cb) = progress {
                 cb(i + 1, 0, &title); // total unknown during streaming
@@ -110,6 +117,28 @@ impl PlaylistResolver for SoundCloudResolver {
             platform: Platform::SoundCloud,
         })
     }
+}
+
+/// Parse SoundCloud title into (title, artist).
+///
+/// SoundCloud titles often follow the pattern: "Artist1, Artist2 - Track Name [genre tags]"
+/// If a " - " separator is found, split into artist and title.
+/// Falls back to uploader name if no separator and uploader is available.
+fn parse_soundcloud_title(raw_title: &str, uploader: Option<&str>) -> (String, Option<String>) {
+    // Try to split on " - " (the most common artist/title separator)
+    if let Some(pos) = raw_title.find(" - ") {
+        let artist_part = raw_title[..pos].trim();
+        let title_part = raw_title[pos + 3..].trim();
+
+        // Only split if both parts are non-empty and the artist part looks reasonable
+        // (not too long — more than 80 chars is likely not an artist name)
+        if !artist_part.is_empty() && !title_part.is_empty() && artist_part.len() <= 80 {
+            return (title_part.to_string(), Some(artist_part.to_string()));
+        }
+    }
+
+    // No separator found — use uploader as artist
+    (raw_title.to_string(), uploader.map(|s| s.to_string()))
 }
 
 fn extract_playlist_name(url: &str) -> String {

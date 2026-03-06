@@ -10,6 +10,7 @@ pub mod ringtone;
 pub mod search;
 mod services;
 mod settings;
+pub mod vault;
 pub mod vlipsy;
 
 // Re-export all previously-public functions

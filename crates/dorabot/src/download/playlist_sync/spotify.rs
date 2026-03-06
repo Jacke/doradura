@@ -357,13 +357,23 @@ async fn spotify_get(client: &reqwest::Client, token: &str, url: &str) -> Result
         log::warn!("Spotify rate limited, waiting {}s", retry_after);
         tokio::time::sleep(Duration::from_secs(retry_after)).await;
         // Retry once
-        return client
+        let retry_resp = client
             .get(url)
             .bearer_auth(token)
             .timeout(Duration::from_secs(15))
             .send()
             .await
-            .map_err(|e| format!("Spotify API retry failed: {}", e));
+            .map_err(|e| format!("Spotify API retry failed: {}", e))?;
+
+        if retry_resp.status().as_u16() == 429 {
+            return Err("Spotify rate limited after retry".to_string());
+        }
+        if !retry_resp.status().is_success() {
+            let status = retry_resp.status();
+            let body = retry_resp.text().await.unwrap_or_default();
+            return Err(format!("Spotify API error after retry {}: {}", status, body));
+        }
+        return Ok(retry_resp);
     }
 
     if !resp.status().is_success() {

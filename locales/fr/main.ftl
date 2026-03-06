@@ -206,6 +206,20 @@ extensions =
     .footer = _Chaque extension fonctionne de manière indépendante\. Envoie un lien ou un fichier — Dora choisira la bonne\!_
     .detail_back = 🔙 Retour aux extensions
 
+# Vault
+vault-title = Coffre
+vault-instructions = Votre coffre est un canal Telegram privé où le bot stocke vos téléchargements\.
+vault-setup-steps = 1\. Créez un canal Telegram privé\n2\. Ajoutez le bot comme admin\n3\. Transférez un message du canal ici
+vault-connected = Coffre connecté à "{ $channel }"
+vault-stats = { $count } pistes, { $size } Mo en cache
+vault-disconnected = Coffre déconnecté\.
+vault-verify-failed = Impossible de poster dans le canal\. Vérifiez que le bot est admin\.
+vault-test-failed = Échec de l'envoi du message test au canal\.
+vault-cleared = Cache vidé\.
+vault-disabled = Coffre désactivé\.
+vault-enabled = Coffre activé\.
+vault-cache-hit = Instantané depuis le cache du coffre
+
 progress =
     .starting = Début du téléchargement...
     .downloading = Téléchargement

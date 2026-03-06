@@ -87,7 +87,10 @@ impl PlaylistResolver for YandexMusicResolver {
             }
             let entry: YtdlpFlatEntry = match serde_json::from_str(line) {
                 Ok(e) => e,
-                Err(_) => continue,
+                Err(e) => {
+                    log::warn!("Yandex Music yt-dlp parse error: {}", e);
+                    continue;
+                }
             };
 
             let artist = entry.artist().map(|s| s.to_string());

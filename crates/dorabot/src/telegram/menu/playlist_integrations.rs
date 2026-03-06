@@ -123,7 +123,7 @@ pub async fn handle_import_url_input(bot: &Bot, chat_id: ChatId, text: &str, db_
     let progress_fn: Option<playlist_sync::resolver::ProgressFn> = if platform == Platform::Spotify {
         let last_update = last_update.clone();
         Some(Arc::new(move |current: usize, total: usize, title: &str| {
-            let mut last = last_update.lock().unwrap();
+            let mut last = last_update.lock().unwrap_or_else(|e| e.into_inner());
             if last.elapsed().as_secs() < 3 && current > 1 && current < total {
                 return;
             }
@@ -404,7 +404,7 @@ async fn show_tracks_view(
     };
 
     let pl = match db::get_synced_playlist(&conn, playlist_id) {
-        Ok(Some(p)) => p,
+        Ok(Some(p)) if p.user_id == chat_id.0 => p,
         _ => return,
     };
 
@@ -521,7 +521,7 @@ async fn play_all(bot: &Bot, chat_id: ChatId, message_id: MessageId, playlist_id
     };
 
     let pl = match db::get_synced_playlist(&conn, playlist_id) {
-        Ok(Some(p)) => p,
+        Ok(Some(p)) if p.user_id == chat_id.0 => p,
         _ => return,
     };
 
@@ -560,7 +560,19 @@ async fn play_all(bot: &Bot, chat_id: ChatId, message_id: MessageId, playlist_id
                 )
                 .await;
 
-            // Try cached file_id first
+            // Try vault cache first
+            let track_url = track.resolved_url.as_deref().or(track.source_url.as_deref());
+            if let Some(url_str) = track_url {
+                if let Some(cached_fid) = crate::download::vault::check_vault_cache(&db_pool_clone, chat_id.0, url_str)
+                {
+                    let input = InputFile::file_id(FileId(cached_fid));
+                    if bot_clone.send_audio(chat_id, input).await.is_ok() {
+                        continue;
+                    }
+                }
+            }
+
+            // Try cached file_id
             if let Some(ref fid) = track.file_id {
                 let input = InputFile::file_id(FileId(fid.clone()));
                 let _ = bot_clone.send_audio(chat_id, input).await;
@@ -621,9 +633,26 @@ async fn play_all(bot: &Bot, chat_id: ChatId, message_id: MessageId, playlist_id
                     .await;
 
                     if let Ok((sent_msg, _)) = send_result {
-                        if let Some(audio) = sent_msg.audio() {
+                        let vault_fid = sent_msg
+                            .audio()
+                            .map(|a| a.file.id.0.clone())
+                            .or_else(|| sent_msg.document().map(|d| d.file.id.0.clone()));
+                        if let Some(ref fid) = vault_fid {
                             if let Ok(conn) = db::get_connection(&db_pool_clone) {
-                                let _ = db::update_synced_track_file_id(&conn, track.id, &audio.file.id.0);
+                                let _ = db::update_synced_track_file_id(&conn, track.id, fid);
+                            }
+                            if let Some(ref url_str) = track_url {
+                                crate::download::vault::send_to_vault_background(
+                                    bot_clone.clone(),
+                                    db_pool_clone.clone(),
+                                    chat_id.0,
+                                    url_str.to_string(),
+                                    fid.clone(),
+                                    Some(track.title.clone()),
+                                    track.artist.clone(),
+                                    track.duration_secs,
+                                    None,
+                                );
                             }
                         }
                     }
@@ -653,7 +682,7 @@ async fn resync_playlist(bot: &Bot, chat_id: ChatId, message_id: MessageId, play
     };
 
     let pl = match db::get_synced_playlist(&conn, playlist_id) {
-        Ok(Some(p)) => p,
+        Ok(Some(p)) if p.user_id == chat_id.0 => p,
         _ => return,
     };
 
@@ -670,8 +699,6 @@ async fn resync_playlist(bot: &Bot, chat_id: ChatId, message_id: MessageId, play
     match result {
         Ok(resolved) => {
             if let Ok(conn) = db::get_connection(&db_pool_clone) {
-                let _ = db::delete_synced_tracks(&conn, playlist_id);
-
                 let matched = resolved
                     .tracks
                     .iter()
@@ -683,28 +710,38 @@ async fn resync_playlist(bot: &Bot, chat_id: ChatId, message_id: MessageId, play
                     .filter(|t| t.status == playlist_sync::resolver::TrackStatus::NotFound)
                     .count() as i32;
 
-                for (i, track) in resolved.tracks.iter().enumerate() {
-                    let _ = db::add_synced_track(
+                // Wrap in transaction
+                let db_ok = (|| -> Result<(), rusqlite::Error> {
+                    conn.execute_batch("BEGIN IMMEDIATE")?;
+                    db::delete_synced_tracks(&conn, playlist_id)?;
+                    for (i, track) in resolved.tracks.iter().enumerate() {
+                        db::add_synced_track(
+                            &conn,
+                            playlist_id,
+                            i as i32,
+                            &track.title,
+                            track.artist.as_deref(),
+                            track.duration_secs,
+                            track.external_id.as_deref(),
+                            track.source_url.as_deref(),
+                            track.resolved_url.as_deref(),
+                            track.status.as_str(),
+                        )?;
+                    }
+                    db::update_synced_playlist_counts(
                         &conn,
                         playlist_id,
-                        i as i32,
-                        &track.title,
-                        track.artist.as_deref(),
-                        track.duration_secs,
-                        track.external_id.as_deref(),
-                        track.source_url.as_deref(),
-                        track.resolved_url.as_deref(),
-                        track.status.as_str(),
-                    );
+                        resolved.tracks.len() as i32,
+                        matched,
+                        not_found,
+                    )?;
+                    conn.execute_batch("COMMIT")?;
+                    Ok(())
+                })();
+                if let Err(e) = db_ok {
+                    log::error!("Resync transaction failed: {}", e);
+                    let _ = conn.execute_batch("ROLLBACK");
                 }
-
-                let _ = db::update_synced_playlist_counts(
-                    &conn,
-                    playlist_id,
-                    resolved.tracks.len() as i32,
-                    matched,
-                    not_found,
-                );
 
                 let summary = format!(
                     "✅ Re-synced \"{}\"\n📊 {} matched | ⚠️ {} not found",
@@ -743,7 +780,7 @@ async fn confirm_delete(bot: &Bot, chat_id: ChatId, message_id: MessageId, playl
     };
 
     let pl = match db::get_synced_playlist(&conn, playlist_id) {
-        Ok(Some(p)) => p,
+        Ok(Some(p)) if p.user_id == chat_id.0 => p,
         _ => return,
     };
 
@@ -766,32 +803,59 @@ async fn confirm_delete(bot: &Bot, chat_id: ChatId, message_id: MessageId, playl
 
 async fn execute_delete(bot: &Bot, chat_id: ChatId, message_id: MessageId, playlist_id: i64, db_pool: &Arc<DbPool>) {
     if let Ok(conn) = db::get_connection(db_pool) {
-        let _ = db::delete_synced_playlist(&conn, playlist_id);
+        // Auth check
+        match db::get_synced_playlist(&conn, playlist_id) {
+            Ok(Some(p)) if p.user_id == chat_id.0 => {}
+            _ => return,
+        }
+        if let Err(e) = db::delete_synced_tracks(&conn, playlist_id) {
+            log::error!("Failed to delete synced tracks for playlist {}: {}", playlist_id, e);
+        }
+        if let Err(e) = db::delete_synced_playlist(&conn, playlist_id) {
+            log::error!("Failed to delete synced playlist {}: {}", playlist_id, e);
+        }
     }
     show_playlist_list(bot, chat_id, 0, db_pool, Some(message_id)).await;
 }
 
 // ── Download single track ───────────────────────────────────────────────
 
-async fn download_single_track(bot: &Bot, chat_id: ChatId, _playlist_id: i64, track_id: i64, db_pool: &Arc<DbPool>) {
+async fn download_single_track(bot: &Bot, chat_id: ChatId, playlist_id: i64, track_id: i64, db_pool: &Arc<DbPool>) {
     let conn = match db::get_connection(db_pool) {
         Ok(c) => c,
         Err(_) => return,
     };
+
+    // Auth check: verify playlist belongs to user
+    match db::get_synced_playlist(&conn, playlist_id) {
+        Ok(Some(p)) if p.user_id == chat_id.0 => {}
+        _ => return,
+    }
 
     let track = match db::get_synced_track(&conn, track_id) {
         Ok(Some(t)) => t,
         _ => return,
     };
 
-    // Try cached file_id first
+    // Try vault cache first
+    let track_url_str = track.resolved_url.as_deref().or(track.source_url.as_deref());
+    if let Some(url_s) = track_url_str {
+        if let Some(cached_fid) = crate::download::vault::check_vault_cache(db_pool, chat_id.0, url_s) {
+            let input = InputFile::file_id(FileId(cached_fid));
+            if bot.send_audio(chat_id, input).await.is_ok() {
+                return;
+            }
+        }
+    }
+
+    // Try cached file_id
     if let Some(ref fid) = track.file_id {
         let input = InputFile::file_id(FileId(fid.clone()));
         let _ = bot.send_audio(chat_id, input).await;
         return;
     }
 
-    let url_str = match track.resolved_url.as_deref().or(track.source_url.as_deref()) {
+    let url_str = match track_url_str {
         Some(u) => u,
         None => {
             let _ = bot.send_message(chat_id, "No downloadable URL for this track").await;
@@ -851,10 +915,25 @@ async fn download_single_track(bot: &Bot, chat_id: ChatId, _playlist_id: i64, tr
 
             match send_result {
                 Ok((sent_msg, _)) => {
-                    if let Some(audio) = sent_msg.audio() {
+                    let vault_fid = sent_msg
+                        .audio()
+                        .map(|a| a.file.id.0.clone())
+                        .or_else(|| sent_msg.document().map(|d| d.file.id.0.clone()));
+                    if let Some(ref fid) = vault_fid {
                         if let Ok(conn) = db::get_connection(db_pool) {
-                            let _ = db::update_synced_track_file_id(&conn, track_id, &audio.file.id.0);
+                            let _ = db::update_synced_track_file_id(&conn, track_id, fid);
                         }
+                        crate::download::vault::send_to_vault_background(
+                            bot.clone(),
+                            db_pool.clone(),
+                            chat_id.0,
+                            url_str.to_string(),
+                            fid.clone(),
+                            Some(track.title.clone()),
+                            track.artist.clone(),
+                            track.duration_secs,
+                            None,
+                        );
                     }
                 }
                 Err(e) => {
@@ -879,6 +958,12 @@ async fn retry_not_found(bot: &Bot, chat_id: ChatId, message_id: MessageId, play
         Ok(c) => c,
         Err(_) => return,
     };
+
+    // Auth check
+    match db::get_synced_playlist(&conn, playlist_id) {
+        Ok(Some(p)) if p.user_id == chat_id.0 => {}
+        _ => return,
+    }
 
     let tracks = db::get_synced_tracks(&conn, playlist_id).unwrap_or_default();
     // Collect owned data for the spawn
@@ -939,13 +1024,10 @@ async fn retry_not_found(bot: &Bot, chat_id: ChatId, message_id: MessageId, play
             }
         }
 
-        // Update playlist counts
-        if let Ok(conn) = db::get_connection(&db_pool_clone) {
-            if let Ok(Some(pl)) = db::get_synced_playlist(&conn, playlist_id) {
-                let new_matched = pl.matched_count + found;
-                let new_not_found = pl.not_found_count - found;
-                let _ =
-                    db::update_synced_playlist_counts(&conn, playlist_id, pl.track_count, new_matched, new_not_found);
+        // Update playlist counts atomically
+        if found > 0 {
+            if let Ok(conn) = db::get_connection(&db_pool_clone) {
+                let _ = db::increment_synced_playlist_matched(&conn, playlist_id, found);
             }
         }
 

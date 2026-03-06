@@ -30,6 +30,7 @@ pub mod queue; // Download queue management
 pub mod search; // Music search engine (YouTube, SoundCloud)
 pub mod send; // Telegram send utilities
 pub mod source; // Source backends (bot-specific YtDlp/Instagram behaviour)
+pub mod vault; // Vault cache: private channel file storage
 pub mod video; // Telegram video download + send pipeline // External playlist sync (Spotify, SoundCloud, YM, YouTube)
 
 // ── Re-exports for convenience ────────────────────────────────────────────────

@@ -427,6 +427,16 @@ async fn download_player_track(
     db_pool: &Arc<DbPool>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let url = Url::parse(&item.url)?;
+
+    // Check vault cache first
+    if let Some(cached_fid) = crate::download::vault::check_vault_cache(db_pool, chat_id.0, &item.url) {
+        let input = teloxide::types::InputFile::file_id(teloxide::types::FileId(cached_fid));
+        if bot.send_audio(chat_id, input).await.is_ok() {
+            return Ok(());
+        }
+        // Fall through if send fails (expired file_id)
+    }
+
     let registry = SourceRegistry::global();
     let format = PipelineFormat::Audio {
         bitrate: None,
@@ -512,6 +522,24 @@ async fn download_player_track(
                 if let Ok(conn) = db::get_connection(db_pool) {
                     let _ = db::update_item_file_id(&conn, item.id, fid);
                 }
+            }
+            // Send to vault
+            let vault_fid = sent_msg
+                .audio()
+                .map(|a| a.file.id.0.clone())
+                .or_else(|| sent_msg.document().map(|d| d.file.id.0.clone()));
+            if let Some(fid) = vault_fid {
+                crate::download::vault::send_to_vault_background(
+                    bot.clone(),
+                    Arc::clone(db_pool),
+                    chat_id.0,
+                    item.url.clone(),
+                    fid,
+                    Some(item.title.clone()),
+                    None,
+                    None,
+                    None,
+                );
             }
             Ok(())
         }
