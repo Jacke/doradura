@@ -175,6 +175,13 @@ pub async fn handle_message(
         }
     }
 
+    // Ignore replies to bot's own messages (don't show "no links" for them)
+    if let Some(reply) = msg.reply_to_message() {
+        if reply.from.as_ref().is_some_and(|u| u.is_bot) {
+            return Ok(None);
+        }
+    }
+
     if let Some(text) = msg.text() {
         log::debug!("handle_message: {:?}", text);
         if text.starts_with("/start") || text.starts_with("/help") {
