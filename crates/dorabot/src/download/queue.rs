@@ -1,5 +1,5 @@
 use crate::core::metrics;
-use crate::storage::db::{save_task_to_queue, DbPool};
+use crate::storage::db::{save_task_to_queue, DbPool, TaskQueueEntry};
 
 /// Maximum number of tasks allowed in the queue to prevent unbounded memory growth.
 const MAX_QUEUE_SIZE: usize = 1000;
@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use log::info; // Using logging instead of println
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
+use std::time::Instant;
 use teloxide::types::ChatId;
 use tokio::sync::Mutex;
 
@@ -190,9 +191,10 @@ pub struct DownloadQueue {
     /// Set of active tasks (queued + being processed).
     /// Stores (URL, chat_id, format) tuples to prevent duplicates.
     active_tasks: Mutex<HashSet<(String, i64, String)>>,
-    /// Maps chat_id -> queue notification message ID.
+    /// Maps chat_id -> (message_id, inserted_at).
     /// Separate from the task so deletion works even when the task is already dequeued.
-    notification_msgs: Mutex<HashMap<i64, i32>>,
+    /// Entries older than 1 hour are cleaned up periodically.
+    notification_msgs: Mutex<HashMap<i64, (i32, Instant)>>,
 }
 
 impl Default for DownloadQueue {
@@ -269,22 +271,24 @@ impl DownloadQueue {
             return;
         }
 
-        // Add to the active tasks set
-        active_tasks.insert(task_key);
-        drop(active_tasks); // Release the lock early
+        // Hold active_tasks lock while checking queue size and inserting,
+        // to prevent race conditions where a task key is added but never queued.
+        let mut queue = self.queue.lock().await;
 
         // Check queue size limit to prevent unbounded memory growth
-        {
-            let queue = self.queue.lock().await;
-            if queue.len() >= MAX_QUEUE_SIZE {
-                log::warn!(
-                    "Queue is full ({} tasks), rejecting new task: {}",
-                    queue.len(),
-                    task.url
-                );
-                return;
-            }
+        if queue.len() >= MAX_QUEUE_SIZE {
+            log::warn!(
+                "Queue is full ({} tasks), rejecting new task: {}",
+                queue.len(),
+                task.url
+            );
+            // Don't insert into active_tasks — task is rejected
+            return;
         }
+
+        // Add to the active tasks set (only after confirming queue has space)
+        active_tasks.insert(task_key);
+        drop(active_tasks); // Release after both checks passed
 
         // Persist the task to the database to guarantee processing
         if let Some(ref pool) = db_pool {
@@ -307,8 +311,6 @@ impl DownloadQueue {
                 }
             }
         }
-
-        let mut queue = self.queue.lock().await;
 
         // Find the insertion position respecting priority order
         let insert_pos = queue
@@ -525,7 +527,10 @@ impl DownloadQueue {
     /// when the task has already been dequeued (race condition with fast queues).
     pub async fn set_queue_message_id(&self, chat_id: ChatId, msg_id: i32) {
         // Store in the dedicated map (race-condition-safe)
-        self.notification_msgs.lock().await.insert(chat_id.0, msg_id);
+        self.notification_msgs
+            .lock()
+            .await
+            .insert(chat_id.0, (msg_id, Instant::now()));
         // Also set on the task if it's still in the queue
         let mut queue = self.queue.lock().await;
         if let Some(task) = queue.iter_mut().rev().find(|t| t.chat_id == chat_id) {
@@ -538,7 +543,116 @@ impl DownloadQueue {
     /// Returns `Some(msg_id)` if a notification was stored, `None` otherwise.
     /// Calling this also clears the stored ID, so it won't be returned again.
     pub async fn take_notification_message(&self, chat_id: ChatId) -> Option<i32> {
-        self.notification_msgs.lock().await.remove(&chat_id.0)
+        self.notification_msgs
+            .lock()
+            .await
+            .remove(&chat_id.0)
+            .map(|(msg_id, _)| msg_id)
+    }
+
+    /// Removes notification_msgs entries older than 1 hour.
+    /// Called periodically to prevent unbounded growth from orphaned entries.
+    pub async fn cleanup_stale_notifications(&self) -> usize {
+        let mut msgs = self.notification_msgs.lock().await;
+        let before = msgs.len();
+        msgs.retain(|_, (_, inserted_at)| inserted_at.elapsed() < std::time::Duration::from_secs(3600));
+        before - msgs.len()
+    }
+
+    /// Recovers tasks from DB entries (pending + previously processing).
+    /// Called once at startup to restore tasks that survived a restart.
+    /// Returns the number of tasks recovered.
+    pub async fn recover_from_db(&self, entries: Vec<TaskQueueEntry>) -> usize {
+        let count = entries.len();
+        let mut queue = self.queue.lock().await;
+        let mut active_tasks = self.active_tasks.lock().await;
+
+        for entry in entries {
+            let priority = match entry.priority {
+                2 => TaskPriority::High,
+                1 => TaskPriority::Medium,
+                _ => TaskPriority::Low,
+            };
+
+            let task_key = (entry.url.clone(), entry.user_id, entry.format.clone());
+            if active_tasks.contains(&task_key) {
+                continue;
+            }
+            active_tasks.insert(task_key);
+
+            let task = DownloadTask {
+                id: entry.id,
+                url: entry.url,
+                chat_id: ChatId(entry.user_id),
+                message_id: None,
+                is_video: entry.is_video,
+                format: entry.format,
+                video_quality: entry.video_quality,
+                audio_bitrate: entry.audio_bitrate,
+                created_timestamp: chrono::Utc::now(),
+                priority,
+                time_range: None,
+                queue_message_id: None,
+                carousel_mask: None,
+            };
+
+            // Insert respecting priority order
+            let insert_pos = queue
+                .iter()
+                .position(|t| t.priority < task.priority)
+                .unwrap_or(queue.len());
+            queue.insert(insert_pos, task);
+        }
+
+        // Update metrics
+        let low_count = queue.iter().filter(|t| t.priority == TaskPriority::Low).count();
+        let medium_count = queue.iter().filter(|t| t.priority == TaskPriority::Medium).count();
+        let high_count = queue.iter().filter(|t| t.priority == TaskPriority::High).count();
+        metrics::update_queue_depth("low", low_count);
+        metrics::update_queue_depth("medium", medium_count);
+        metrics::update_queue_depth("high", high_count);
+        metrics::update_queue_depth_total(queue.len());
+
+        count
+    }
+
+    /// Saves all remaining in-memory tasks to the database on shutdown.
+    /// Tasks already saved (via add_task) get a no-op upsert; tasks that
+    /// were only in memory are persisted so they survive the restart.
+    /// Returns the number of tasks flushed.
+    pub async fn flush_to_db(&self, db_pool: &DbPool) -> usize {
+        let queue = self.queue.lock().await;
+        if queue.is_empty() {
+            return 0;
+        }
+
+        let conn = match crate::storage::db::get_connection(db_pool) {
+            Ok(c) => c,
+            Err(e) => {
+                log::error!("Graceful shutdown: failed to get DB connection: {}", e);
+                return 0;
+            }
+        };
+
+        let mut flushed = 0;
+        for task in queue.iter() {
+            if let Err(e) = save_task_to_queue(
+                &conn,
+                &task.id,
+                task.chat_id.0,
+                &task.url,
+                &task.format,
+                task.is_video,
+                task.video_quality.as_deref(),
+                task.audio_bitrate.as_deref(),
+                task.priority as i32,
+            ) {
+                log::error!("Graceful shutdown: failed to save task {}: {}", task.id, e);
+            } else {
+                flushed += 1;
+            }
+        }
+        flushed
     }
 }
 

@@ -124,6 +124,7 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
                         is_recurring: false,
                         burn_subtitles: 0,
                         progress_bar_style: "classic".to_string(),
+                        is_blocked: false,
                     }
                 })
         }
@@ -394,7 +395,7 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
         text.push_str("• Playlists up to 100 tracks\n");
         text.push_str("• Voice commands\n\n");
 
-        text.push_str("💫 *Subscription with auto-renewal*\n");
+        text.push_str("💫 *Subscription with auto\\-renewal*\n");
         text.push_str("Charged automatically every 30 days\\.\n");
         text.push_str("Can be cancelled at any time\\!\n");
     } else {
@@ -766,7 +767,7 @@ pub async fn handle_successful_payment(
 
             let renewal_info = if is_recurring {
                 format!(
-                    "🔄 Auto-renewal enabled\\.\nNext charge: {}",
+                    "🔄 Auto\\-renewal enabled\\.\nNext charge: {}",
                     subscription_expires_at.replace("-", "\\-").replace(":", "\\:")
                 )
             } else {

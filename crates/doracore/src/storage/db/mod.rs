@@ -37,8 +37,10 @@ use std::time::Duration;
 
 use crate::storage::migrations;
 
-/// Connection timeout for pool.get() calls - prevents indefinite blocking
-const CONNECTION_TIMEOUT_SECS: u64 = 1;
+/// Connection timeout for pool.get() calls - prevents indefinite blocking.
+/// 3s gives enough room for SQLite busy_timeout (5s PRAGMA) while still failing fast
+/// if the pool is genuinely exhausted.
+const CONNECTION_TIMEOUT_SECS: u64 = 3;
 
 /// Structure representing a user in the database.
 pub struct User {
@@ -72,6 +74,8 @@ pub struct User {
     pub burn_subtitles: i32,
     /// Progress bar style: "classic", "gradient", "emoji", "dots", "runner", "rpg", "fire", "moon"
     pub progress_bar_style: String,
+    /// Whether the user is blocked by admin
+    pub is_blocked: bool,
 }
 
 /// Structure containing user subscription data.
@@ -185,14 +189,29 @@ pub fn create_pool(database_path: &str) -> Result<DbPool, r2d2::Error> {
         }
     }
 
-    let manager = SqliteConnectionManager::file(database_path);
+    let manager = SqliteConnectionManager::file(database_path)
+        .with_init(|conn| conn.execute_batch("PRAGMA busy_timeout = 5000;"));
     let pool = Pool::builder()
-        .max_size(10) // Maximum 10 connections in the pool
+        .max_size(20) // Maximum 20 connections in the pool
         .connection_timeout(Duration::from_secs(CONNECTION_TIMEOUT_SECS)) // Prevent indefinite blocking
         .build(manager)?;
 
+    // Enable WAL mode for better concurrent read performance (~5x throughput).
+    // WAL is a persistent database-level setting — only needs to be set once,
+    // but re-setting is a no-op so it's safe to do on every startup.
+    match pool.get() {
+        Ok(conn) => {
+            if let Err(e) = conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;") {
+                log::warn!("Failed to enable WAL mode: {}", e);
+            } else {
+                log::info!("SQLite WAL mode enabled");
+            }
+        }
+        Err(e) => log::warn!("Failed to get connection for WAL setup: {}", e),
+    }
+
     log::info!(
-        "Database pool created: max_size=10, connection_timeout={}s",
+        "Database pool created: max_size=20, connection_timeout={}s",
         CONNECTION_TIMEOUT_SECS
     );
 
@@ -225,15 +244,19 @@ pub fn create_pool(database_path: &str) -> Result<DbPool, r2d2::Error> {
 /// # }
 /// ```
 pub fn get_connection(pool: &DbPool) -> Result<DbConnection, r2d2::Error> {
+    let state = pool.state();
+    let active = state.connections - state.idle_connections;
+    crate::core::metrics::DB_CONNECTIONS_ACTIVE.set(active as f64);
+    crate::core::metrics::DB_CONNECTIONS_IDLE.set(state.idle_connections as f64);
+
     match pool.get() {
         Ok(conn) => Ok(conn),
         Err(e) => {
-            // Track pool exhaustion for monitoring
             log::error!(
                 "DB pool exhaustion: {} (pool state: {} idle, {} in use)",
                 e,
-                pool.state().idle_connections,
-                pool.state().connections - pool.state().idle_connections
+                state.idle_connections,
+                active
             );
             crate::core::metrics::record_error("db_pool_timeout", "get_connection");
             Err(e)
@@ -443,7 +466,8 @@ pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
             s.telegram_charge_id as telegram_charge_id,
             COALESCE(s.is_recurring, 0) as is_recurring,
             COALESCE(u.burn_subtitles, 0) as burn_subtitles,
-            COALESCE(u.progress_bar_style, 'classic') as progress_bar_style
+            COALESCE(u.progress_bar_style, 'classic') as progress_bar_style,
+            COALESCE(u.is_blocked, 0) as is_blocked
         FROM users u
         LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
         WHERE u.telegram_id = ?",
@@ -466,6 +490,7 @@ pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
         let is_recurring: bool = row.get::<_, i32>(12).unwrap_or(0) != 0;
         let burn_subtitles: i32 = row.get(13).unwrap_or(0);
         let progress_bar_style: String = row.get(14).unwrap_or_else(|_| "classic".to_string());
+        let is_blocked: bool = row.get::<_, i32>(15).unwrap_or(0) != 0;
 
         Ok(Some(User {
             telegram_id,
@@ -483,6 +508,7 @@ pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
             is_recurring,
             burn_subtitles,
             progress_bar_style,
+            is_blocked,
         }))
     } else {
         Ok(None)
@@ -501,14 +527,28 @@ pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
 ///
 /// Returns `Ok(())` on success or a database error.
 pub fn update_user_plan(conn: &DbConnection, telegram_id: i64, plan: &str) -> Result<()> {
-    conn.execute(
-        "INSERT INTO subscriptions (user_id, plan)
-         VALUES (?1, ?2)
-         ON CONFLICT(user_id) DO UPDATE SET
-            plan = excluded.plan,
-            updated_at = CURRENT_TIMESTAMP",
-        [&telegram_id as &dyn rusqlite::ToSql, &plan as &dyn rusqlite::ToSql],
-    )?;
+    if plan == "free" {
+        conn.execute(
+            "INSERT INTO subscriptions (user_id, plan, expires_at, telegram_charge_id, is_recurring)
+             VALUES (?1, ?2, NULL, NULL, 0)
+             ON CONFLICT(user_id) DO UPDATE SET
+                plan = excluded.plan,
+                expires_at = NULL,
+                telegram_charge_id = NULL,
+                is_recurring = 0,
+                updated_at = CURRENT_TIMESTAMP",
+            [&telegram_id as &dyn rusqlite::ToSql, &plan as &dyn rusqlite::ToSql],
+        )?;
+    } else {
+        conn.execute(
+            "INSERT INTO subscriptions (user_id, plan)
+             VALUES (?1, ?2)
+             ON CONFLICT(user_id) DO UPDATE SET
+                plan = excluded.plan,
+                updated_at = CURRENT_TIMESTAMP",
+            [&telegram_id as &dyn rusqlite::ToSql, &plan as &dyn rusqlite::ToSql],
+        )?;
+    }
     conn.execute(
         "UPDATE users SET plan = ?1 WHERE telegram_id = ?2",
         [&plan as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
@@ -1124,6 +1164,206 @@ pub fn set_user_language(conn: &DbConnection, telegram_id: i64, language: &str) 
     Ok(())
 }
 
+/// Returns total user counts grouped by plan and blocked status.
+pub fn get_user_counts(conn: &DbConnection) -> Result<UserCounts> {
+    let mut counts = UserCounts::default();
+    let mut stmt = conn.prepare(
+        "SELECT COALESCE(s.plan, u.plan) as plan, COALESCE(u.is_blocked, 0) as is_blocked, COUNT(*)
+         FROM users u
+         LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
+         GROUP BY plan, is_blocked",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?, row.get::<_, usize>(2)?))
+    })?;
+    for row in rows {
+        let (plan, blocked, count) = row?;
+        counts.total += count;
+        if blocked != 0 {
+            counts.blocked += count;
+        }
+        match plan.as_str() {
+            "premium" => counts.premium += count,
+            "vip" => counts.vip += count,
+            _ => counts.free += count,
+        }
+    }
+    Ok(counts)
+}
+
+/// Aggregated user counts.
+#[derive(Debug, Default)]
+pub struct UserCounts {
+    pub total: usize,
+    pub free: usize,
+    pub premium: usize,
+    pub vip: usize,
+    pub blocked: usize,
+}
+
+/// Returns a paginated, filtered list of users.
+///
+/// `filter` values: `None` = all, `"free"`, `"premium"`, `"vip"`, `"blocked"`.
+pub fn get_users_paginated(
+    conn: &DbConnection,
+    filter: Option<&str>,
+    offset: usize,
+    limit: usize,
+) -> Result<(Vec<User>, usize)> {
+    // Build WHERE clause
+    let (where_clause, param): (&str, Option<&dyn rusqlite::ToSql>) = match filter {
+        Some("free") => ("WHERE COALESCE(s.plan, u.plan) = 'free'", None),
+        Some("premium") => ("WHERE COALESCE(s.plan, u.plan) = 'premium'", None),
+        Some("vip") => ("WHERE COALESCE(s.plan, u.plan) = 'vip'", None),
+        Some("blocked") => ("WHERE COALESCE(u.is_blocked, 0) = 1", None),
+        _ => ("", None),
+    };
+    let _ = param; // unused, filters are literals
+
+    // Count total matching
+    let count_sql = format!(
+        "SELECT COUNT(*) FROM users u LEFT JOIN subscriptions s ON s.user_id = u.telegram_id {}",
+        where_clause
+    );
+    let total: usize = conn.query_row(&count_sql, [], |row| row.get(0))?;
+
+    // Fetch page
+    let query_sql = format!(
+        "SELECT
+            u.telegram_id,
+            u.username,
+            COALESCE(s.plan, u.plan) as plan,
+            u.download_format,
+            u.download_subtitles,
+            u.video_quality,
+            u.audio_bitrate,
+            u.language,
+            u.send_as_document,
+            u.send_audio_as_document,
+            s.expires_at as subscription_expires_at,
+            s.telegram_charge_id as telegram_charge_id,
+            COALESCE(s.is_recurring, 0) as is_recurring,
+            COALESCE(u.burn_subtitles, 0) as burn_subtitles,
+            COALESCE(u.progress_bar_style, 'classic') as progress_bar_style,
+            COALESCE(u.is_blocked, 0) as is_blocked
+        FROM users u
+        LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
+        {}
+        ORDER BY u.telegram_id
+        LIMIT ?1 OFFSET ?2",
+        where_clause
+    );
+    let mut stmt = conn.prepare(&query_sql)?;
+    let rows = stmt.query_map(
+        [&limit as &dyn rusqlite::ToSql, &offset as &dyn rusqlite::ToSql],
+        |row| {
+            Ok(User {
+                telegram_id: row.get(0)?,
+                username: row.get(1)?,
+                plan: row.get(2)?,
+                download_format: row.get(3)?,
+                download_subtitles: row.get(4)?,
+                video_quality: row.get(5).unwrap_or_else(|_| "best".to_string()),
+                audio_bitrate: row.get(6).unwrap_or_else(|_| "320k".to_string()),
+                language: row.get(7).unwrap_or_else(|_| "ru".to_string()),
+                send_as_document: row.get(8).unwrap_or(0),
+                send_audio_as_document: row.get(9).unwrap_or(0),
+                subscription_expires_at: row.get(10)?,
+                telegram_charge_id: row.get(11)?,
+                is_recurring: row.get::<_, i32>(12).unwrap_or(0) != 0,
+                burn_subtitles: row.get(13).unwrap_or(0),
+                progress_bar_style: row.get(14).unwrap_or_else(|_| "classic".to_string()),
+                is_blocked: row.get::<_, i32>(15).unwrap_or(0) != 0,
+            })
+        },
+    )?;
+
+    let mut users = Vec::new();
+    for row in rows {
+        users.push(row?);
+    }
+    Ok((users, total))
+}
+
+/// Checks if a user is blocked.
+pub fn is_user_blocked(conn: &DbConnection, telegram_id: i64) -> Result<bool> {
+    let blocked: i32 = conn
+        .query_row(
+            "SELECT COALESCE(is_blocked, 0) FROM users WHERE telegram_id = ?",
+            [telegram_id],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+    Ok(blocked != 0)
+}
+
+/// Sets the blocked status of a user.
+pub fn set_user_blocked(conn: &DbConnection, telegram_id: i64, blocked: bool) -> Result<()> {
+    conn.execute(
+        "UPDATE users SET is_blocked = ?1 WHERE telegram_id = ?2",
+        [
+            &(blocked as i32) as &dyn rusqlite::ToSql,
+            &telegram_id as &dyn rusqlite::ToSql,
+        ],
+    )?;
+    Ok(())
+}
+
+/// Searches users by telegram_id or username (partial match).
+pub fn search_users(conn: &DbConnection, query: &str) -> Result<Vec<User>> {
+    let pattern = format!("%{}%", query);
+    let mut stmt = conn.prepare(
+        "SELECT
+            u.telegram_id,
+            u.username,
+            COALESCE(s.plan, u.plan) as plan,
+            u.download_format,
+            u.download_subtitles,
+            u.video_quality,
+            u.audio_bitrate,
+            u.language,
+            u.send_as_document,
+            u.send_audio_as_document,
+            s.expires_at as subscription_expires_at,
+            s.telegram_charge_id as telegram_charge_id,
+            COALESCE(s.is_recurring, 0) as is_recurring,
+            COALESCE(u.burn_subtitles, 0) as burn_subtitles,
+            COALESCE(u.progress_bar_style, 'classic') as progress_bar_style,
+            COALESCE(u.is_blocked, 0) as is_blocked
+        FROM users u
+        LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
+        WHERE CAST(u.telegram_id AS TEXT) LIKE ?1 OR COALESCE(u.username, '') LIKE ?1
+        ORDER BY u.telegram_id
+        LIMIT 20",
+    )?;
+    let rows = stmt.query_map([&pattern as &dyn rusqlite::ToSql], |row| {
+        Ok(User {
+            telegram_id: row.get(0)?,
+            username: row.get(1)?,
+            plan: row.get(2)?,
+            download_format: row.get(3)?,
+            download_subtitles: row.get(4)?,
+            video_quality: row.get(5).unwrap_or_else(|_| "best".to_string()),
+            audio_bitrate: row.get(6).unwrap_or_else(|_| "320k".to_string()),
+            language: row.get(7).unwrap_or_else(|_| "ru".to_string()),
+            send_as_document: row.get(8).unwrap_or(0),
+            send_audio_as_document: row.get(9).unwrap_or(0),
+            subscription_expires_at: row.get(10)?,
+            telegram_charge_id: row.get(11)?,
+            is_recurring: row.get::<_, i32>(12).unwrap_or(0) != 0,
+            burn_subtitles: row.get(13).unwrap_or(0),
+            progress_bar_style: row.get(14).unwrap_or_else(|_| "classic".to_string()),
+            is_blocked: row.get::<_, i32>(15).unwrap_or(0) != 0,
+        })
+    })?;
+
+    let mut users = Vec::new();
+    for row in rows {
+        users.push(row?);
+    }
+    Ok(users)
+}
+
 /// Structure representing a download history entry.
 #[derive(Debug, Clone)]
 pub struct DownloadHistoryEntry {
@@ -1228,6 +1468,44 @@ pub fn save_download_history(
         ],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+/// Finds a cached Telegram file_id for the given URL, format and quality/bitrate.
+/// Searches across ALL users — file_ids are reusable within the same Bot API server.
+/// Returns the most recent file_id that matches.
+pub fn find_cached_file_id(
+    conn: &DbConnection,
+    url: &str,
+    format: &str,
+    video_quality: Option<&str>,
+    audio_bitrate: Option<&str>,
+) -> Result<Option<String>> {
+    let (current_api_url, current_is_local) = current_bot_api_info();
+    let mut stmt = conn.prepare(
+        "SELECT file_id FROM download_history
+         WHERE url = ?1 AND format = ?2 AND file_id IS NOT NULL
+         AND bot_api_is_local = ?3
+         AND (?4 IS NULL OR video_quality = ?4)
+         AND (?5 IS NULL OR audio_bitrate = ?5)
+         AND (?6 IS NULL OR bot_api_url = ?6)
+         ORDER BY downloaded_at DESC LIMIT 1",
+    )?;
+    let result = stmt.query_row(
+        rusqlite::params![
+            url,
+            format,
+            current_is_local,
+            video_quality,
+            audio_bitrate,
+            current_api_url
+        ],
+        |row| row.get::<_, String>(0),
+    );
+    match result {
+        Ok(fid) => Ok(Some(fid)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 /// Gets the last N download history entries for a user.
@@ -1853,7 +2131,8 @@ pub fn get_all_users(conn: &DbConnection) -> Result<Vec<User>> {
             s.telegram_charge_id as telegram_charge_id,
             COALESCE(s.is_recurring, 0) as is_recurring,
             COALESCE(u.burn_subtitles, 0) as burn_subtitles,
-            COALESCE(u.progress_bar_style, 'classic') as progress_bar_style
+            COALESCE(u.progress_bar_style, 'classic') as progress_bar_style,
+            COALESCE(u.is_blocked, 0) as is_blocked
         FROM users u
         LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
         ORDER BY u.telegram_id",
@@ -1875,6 +2154,7 @@ pub fn get_all_users(conn: &DbConnection) -> Result<Vec<User>> {
             is_recurring: row.get::<_, i32>(12).unwrap_or(0) != 0,
             burn_subtitles: row.get(13).unwrap_or(0),
             progress_bar_style: row.get(14).unwrap_or_else(|_| "classic".to_string()),
+            is_blocked: row.get::<_, i32>(15).unwrap_or(0) != 0,
         })
     })?;
 
@@ -2045,6 +2325,50 @@ pub fn mark_task_processing(conn: &DbConnection, task_id: &str) -> Result<()> {
         [&task_id as &dyn rusqlite::ToSql],
     )?;
     Ok(())
+}
+
+/// Gets all recoverable tasks — pending or processing (interrupted by restart).
+/// Resets their status to 'pending' atomically and returns them ordered by priority.
+pub fn get_and_reset_recoverable_tasks(conn: &DbConnection) -> Result<Vec<TaskQueueEntry>> {
+    // First reset processing → pending (these were interrupted mid-download)
+    // Only consider tasks created within the last 24 hours
+    conn.execute(
+        "UPDATE task_queue SET status = 'pending', updated_at = CURRENT_TIMESTAMP
+         WHERE status = 'processing'
+         AND created_at > datetime('now', '-1 day')",
+        [],
+    )?;
+
+    let mut stmt = conn.prepare(
+        "SELECT id, user_id, url, format, is_video, video_quality, audio_bitrate, priority, status, error_message, retry_count, created_at, updated_at
+         FROM task_queue
+         WHERE status = 'pending'
+         AND created_at > datetime('now', '-1 day')
+         ORDER BY priority DESC, created_at ASC"
+    )?;
+    let rows = stmt.query_map([], |row| {
+        Ok(TaskQueueEntry {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            url: row.get(2)?,
+            format: row.get(3)?,
+            is_video: row.get::<_, i32>(4)? == 1,
+            video_quality: row.get(5)?,
+            audio_bitrate: row.get(6)?,
+            priority: row.get(7)?,
+            status: row.get(8)?,
+            error_message: row.get(9)?,
+            retry_count: row.get(10)?,
+            created_at: row.get(11)?,
+            updated_at: row.get(12)?,
+        })
+    })?;
+
+    let mut tasks = Vec::new();
+    for row in rows {
+        tasks.push(row?);
+    }
+    Ok(tasks)
 }
 
 /// Updates the telegram_charge_id of a user (used for subscription management)
@@ -2951,6 +3275,18 @@ pub fn cleanup_old_errors(conn: &DbConnection, days: i64) -> Result<usize> {
     Ok(deleted)
 }
 
+/// Removes completed and failed tasks older than `days` from task_queue.
+/// Returns the number of rows deleted.
+pub fn cleanup_old_tasks(conn: &DbConnection, days: i64) -> Result<usize> {
+    let deleted = conn.execute(
+        "DELETE FROM task_queue
+         WHERE status IN ('completed', 'failed')
+         AND updated_at < datetime('now', ?1)",
+        [&format!("-{} days", days)],
+    )?;
+    Ok(deleted)
+}
+
 // ==================== Lyrics Sessions ====================
 
 /// Store fetched lyrics (with parsed sections as JSON) for later retrieval by section.
@@ -3126,6 +3462,7 @@ mod tests {
             is_recurring: false,
             burn_subtitles: 0,
             progress_bar_style: "classic".to_string(),
+            is_blocked: false,
         };
 
         assert_eq!(user.telegram_id(), 123);
@@ -3297,6 +3634,23 @@ mod tests {
     }
 
     #[test]
+    fn test_update_user_plan_to_free_clears_subscription_metadata() {
+        let pool = setup_test_db();
+        let conn = get_connection(&pool).unwrap();
+
+        create_user(&conn, 12364, None).unwrap();
+        update_subscription_data(&conn, 12364, "vip", "charge_123", "2026-12-31 00:00:00", true).unwrap();
+
+        update_user_plan(&conn, 12364, "free").unwrap();
+
+        let user = get_user(&conn, 12364).unwrap().unwrap();
+        assert_eq!(user.plan, Plan::Free);
+        assert_eq!(user.subscription_expires_at, None);
+        assert_eq!(user.telegram_charge_id, None);
+        assert!(!user.is_recurring);
+    }
+
+    #[test]
     fn test_update_user_plan_with_expiry() {
         let pool = setup_test_db();
         let conn = get_connection(&pool).unwrap();
@@ -3321,6 +3675,41 @@ mod tests {
         update_user_plan_with_expiry(&conn, 12362, "free", None).unwrap();
         let user = get_user(&conn, 12362).unwrap().unwrap();
         assert_eq!(user.plan, Plan::Free);
+    }
+
+    #[test]
+    fn test_set_user_blocked_roundtrip() {
+        let pool = setup_test_db();
+        let conn = get_connection(&pool).unwrap();
+
+        create_user(&conn, 12365, Some("blocked_user".to_string())).unwrap();
+        assert!(!is_user_blocked(&conn, 12365).unwrap());
+
+        set_user_blocked(&conn, 12365, true).unwrap();
+        assert!(is_user_blocked(&conn, 12365).unwrap());
+
+        let user = get_user(&conn, 12365).unwrap().unwrap();
+        assert!(user.is_blocked);
+
+        set_user_blocked(&conn, 12365, false).unwrap();
+        assert!(!is_user_blocked(&conn, 12365).unwrap());
+    }
+
+    #[test]
+    fn test_search_users_includes_blocked_flag() {
+        let pool = setup_test_db();
+        let conn = get_connection(&pool).unwrap();
+
+        create_user(&conn, 12366, Some("searchable_admin_target".to_string())).unwrap();
+        set_user_blocked(&conn, 12366, true).unwrap();
+
+        let users = search_users(&conn, "searchable_admin").unwrap();
+        let user = users
+            .into_iter()
+            .find(|user| user.telegram_id == 12366)
+            .expect("user should be returned by search");
+
+        assert!(user.is_blocked);
     }
 
     #[test]

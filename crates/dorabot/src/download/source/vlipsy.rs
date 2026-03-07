@@ -385,6 +385,7 @@ mod tests {
     // ── Real API tests (require network) ──
 
     #[tokio::test]
+    #[ignore = "requires external vlipsy.com network access"]
     async fn test_real_scrape_clip_page() {
         let http = Client::builder()
             .user_agent("doradura-test/0.14")
@@ -407,6 +408,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires external vlipsy.com network access"]
     async fn test_real_scrape_another_clip() {
         let http = Client::builder()
             .user_agent("doradura-test/0.14")
@@ -423,6 +425,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires external vlipsy.com network access"]
     async fn test_real_mp4_accessible() {
         let http = Client::builder()
             .user_agent("doradura-test/0.14")
@@ -454,6 +457,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires external vlipsy.com network access"]
     async fn test_real_get_metadata() {
         let source = VlipsySource::new();
         let url = Url::parse("https://vlipsy.com/clips/sus-dog-original-z2wRJ7aR").unwrap();
@@ -463,6 +467,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires external vlipsy.com network access"]
     async fn test_real_download() {
         let source = VlipsySource::new();
         let url = Url::parse("https://vlipsy.com/clips/sus-dog-original-z2wRJ7aR").unwrap();

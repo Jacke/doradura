@@ -161,6 +161,40 @@ pub fn spawn_stats_reporter(bot: Bot, db_pool: Arc<DbPool>) {
     }
 }
 
+/// Start periodic database cleanup (every 6 hours).
+///
+/// Removes stale data: completed/failed tasks (>7 days), old error logs (>30 days).
+pub fn spawn_db_cleanup(db_pool: Arc<DbPool>) {
+    tokio::spawn(async move {
+        let mut interval = interval(Duration::from_secs(6 * 60 * 60)); // 6 hours
+        loop {
+            interval.tick().await;
+            if let Ok(conn) = crate::storage::get_connection(&db_pool) {
+                let mut total = 0;
+                match db::cleanup_old_tasks(&conn, 7) {
+                    Ok(n) if n > 0 => {
+                        total += n;
+                        log::info!("DB cleanup: removed {} old task_queue entries", n);
+                    }
+                    Err(e) => log::warn!("DB cleanup: task_queue error: {}", e),
+                    _ => {}
+                }
+                match db::cleanup_old_errors(&conn, 30) {
+                    Ok(n) if n > 0 => {
+                        total += n;
+                        log::info!("DB cleanup: removed {} old error_log entries", n);
+                    }
+                    Err(e) => log::warn!("DB cleanup: error_log error: {}", e),
+                    _ => {}
+                }
+                if total > 0 {
+                    log::info!("DB cleanup: {} rows removed total", total);
+                }
+            }
+        }
+    });
+}
+
 /// Start the health check scheduler.
 pub fn spawn_health_checks(bot: Bot) {
     use crate::smoke_tests::{start_health_check_scheduler, HealthCheckScheduler};

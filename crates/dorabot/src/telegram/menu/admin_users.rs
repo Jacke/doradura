@@ -1,0 +1,675 @@
+use crate::storage::db::{self, DbPool};
+use crate::telegram::admin;
+use crate::telegram::Bot;
+use std::collections::HashMap;
+use std::sync::Arc;
+use std::time::Instant;
+use teloxide::prelude::*;
+use teloxide::types::{InlineKeyboardMarkup, MessageId};
+use tokio::sync::RwLock;
+
+const PAGE_SIZE: usize = 8;
+
+// --- Search sessions ---
+
+struct AdminSearchSession {
+    created_at: Instant,
+}
+
+static ADMIN_SEARCH_SESSIONS: std::sync::LazyLock<Arc<RwLock<HashMap<i64, AdminSearchSession>>>> =
+    std::sync::LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
+
+/// Check if an admin is currently in search mode.
+pub async fn is_admin_searching(admin_id: i64) -> bool {
+    let sessions = ADMIN_SEARCH_SESSIONS.read().await;
+    sessions
+        .get(&admin_id)
+        .map(|s| s.created_at.elapsed().as_secs() < 60)
+        .unwrap_or(false)
+}
+
+async fn set_admin_searching(admin_id: i64) {
+    let mut sessions = ADMIN_SEARCH_SESSIONS.write().await;
+    // Evict expired sessions while we have the write lock
+    sessions.retain(|_, s| s.created_at.elapsed().as_secs() < 60);
+    sessions.insert(
+        admin_id,
+        AdminSearchSession {
+            created_at: Instant::now(),
+        },
+    );
+}
+
+async fn clear_admin_searching(admin_id: i64) {
+    let mut sessions = ADMIN_SEARCH_SESSIONS.write().await;
+    sessions.remove(&admin_id);
+}
+
+fn preserves_search_mode(action: Option<&str>) -> bool {
+    matches!(action, Some("s"))
+}
+
+// --- Filter ---
+
+#[derive(Clone, Copy, PartialEq, Default)]
+pub enum Filter {
+    #[default]
+    All,
+    Free,
+    Premium,
+    Vip,
+    Blocked,
+}
+
+impl Filter {
+    fn from_code(s: &str) -> Self {
+        match s {
+            "f" => Filter::Free,
+            "p" => Filter::Premium,
+            "v" => Filter::Vip,
+            "b" => Filter::Blocked,
+            _ => Filter::All,
+        }
+    }
+
+    fn code(&self) -> &'static str {
+        match self {
+            Filter::All => "a",
+            Filter::Free => "f",
+            Filter::Premium => "p",
+            Filter::Vip => "v",
+            Filter::Blocked => "b",
+        }
+    }
+
+    fn db_filter(&self) -> Option<&'static str> {
+        match self {
+            Filter::All => None,
+            Filter::Free => Some("free"),
+            Filter::Premium => Some("premium"),
+            Filter::Vip => Some("vip"),
+            Filter::Blocked => Some("blocked"),
+        }
+    }
+}
+
+fn cb(label: impl Into<String>, data: impl Into<String>) -> teloxide::types::InlineKeyboardButton {
+    crate::telegram::cb(label, data)
+}
+
+fn username_display(user: &db::User) -> String {
+    user.username
+        .as_ref()
+        .map(|u| format!("@{}", u))
+        .unwrap_or_else(|| format!("ID:{}", user.telegram_id))
+}
+
+fn username_short(user: &db::User) -> String {
+    user.username
+        .as_deref()
+        .map(|u| format!("@{}", u))
+        .unwrap_or_else(|| user.telegram_id.to_string())
+}
+
+// --- User list ---
+
+pub async fn show_user_list(
+    bot: &Bot,
+    chat_id: ChatId,
+    msg_id: Option<MessageId>,
+    db_pool: &Arc<DbPool>,
+    page: usize,
+    filter: Filter,
+) -> anyhow::Result<()> {
+    let conn = db::get_connection(db_pool)?;
+    let counts = db::get_user_counts(&conn)?;
+
+    let offset = page * PAGE_SIZE;
+    let (page_users, filtered_total) = db::get_users_paginated(&conn, filter.db_filter(), offset, PAGE_SIZE)?;
+
+    let total_pages = filtered_total.max(1).div_ceil(PAGE_SIZE);
+    let page = page.min(total_pages.saturating_sub(1));
+
+    let mut text = format!(
+        "🔧 Admin: Users ({})\n🆓 {}  ⭐ {}  👑 {}  🚫 {}\n\n",
+        counts.total, counts.free, counts.premium, counts.vip, counts.blocked
+    );
+
+    let start = page * PAGE_SIZE;
+    for (i, user) in page_users.iter().enumerate() {
+        let blocked_mark = if user.is_blocked { " 🚫" } else { "" };
+        text.push_str(&format!(
+            "{}. {} {}{} ({})\n",
+            start + i + 1,
+            user.plan.emoji(),
+            username_display(user),
+            blocked_mark,
+            user.telegram_id
+        ));
+    }
+
+    let f = filter.code();
+    let mut keyboard_rows: Vec<Vec<teloxide::types::InlineKeyboardButton>> = Vec::new();
+
+    // User buttons (2 per row)
+    let mut row = Vec::new();
+    for user in &page_users {
+        let label = format!("{} {}", user.plan.emoji(), username_short(user));
+        row.push(cb(label, format!("au:u:{}", user.telegram_id)));
+        if row.len() == 2 {
+            keyboard_rows.push(std::mem::take(&mut row));
+        }
+    }
+    if !row.is_empty() {
+        keyboard_rows.push(row);
+    }
+
+    // Pagination
+    let mut nav_row = Vec::new();
+    if page > 0 {
+        nav_row.push(cb("◀", format!("au:l:{}:{}", page - 1, f)));
+    }
+    nav_row.push(cb(format!("{}/{}", page + 1, total_pages), "au:noop"));
+    if page + 1 < total_pages {
+        nav_row.push(cb("▶", format!("au:l:{}:{}", page + 1, f)));
+    }
+    keyboard_rows.push(nav_row);
+
+    // Filter row
+    let filter_labels = [("All", "a"), ("🆓", "f"), ("⭐", "p"), ("👑", "v"), ("🚫", "b")];
+    let filter_row: Vec<_> = filter_labels
+        .iter()
+        .map(|(label, code)| {
+            let display = if *code == f {
+                format!("[{}]", label)
+            } else {
+                label.to_string()
+            };
+            cb(display, format!("au:l:0:{}", code))
+        })
+        .collect();
+    keyboard_rows.push(filter_row);
+
+    // Search button
+    keyboard_rows.push(vec![cb("🔍 Search", "au:s")]);
+
+    let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
+
+    if let Some(mid) = msg_id {
+        if let Err(e) = bot.edit_message_text(chat_id, mid, &text).reply_markup(keyboard).await {
+            log::warn!("Failed to edit admin user list: {}", e);
+        }
+    } else {
+        bot.send_message(chat_id, &text).reply_markup(keyboard).await?;
+    }
+
+    Ok(())
+}
+
+// --- User detail ---
+
+async fn show_user_detail(
+    bot: &Bot,
+    chat_id: ChatId,
+    msg_id: MessageId,
+    db_pool: &Arc<DbPool>,
+    target_uid: i64,
+) -> anyhow::Result<()> {
+    let conn = db::get_connection(db_pool)?;
+    let user = match db::get_user(&conn, target_uid)? {
+        Some(u) => u,
+        None => {
+            log::warn!("Admin: user {} not found", target_uid);
+            let _ = bot.edit_message_text(chat_id, msg_id, "❌ User not found").await;
+            return Ok(());
+        }
+    };
+
+    let expires_info = user
+        .subscription_expires_at
+        .as_ref()
+        .map(|e| format!("  📅 until {}", e))
+        .unwrap_or_default();
+
+    let status = if user.is_blocked { "🚫 Blocked" } else { "✅ Active" };
+
+    let text = format!(
+        "👤 {}\n🆔 {}\n📋 {} {}{}  \n{}\n\n⚙️ fmt:{} | vid:{} | aud:{}\n🌐 {} | 📊 {}",
+        username_display(&user),
+        user.telegram_id,
+        user.plan.emoji(),
+        user.plan.display_name(),
+        expires_info,
+        status,
+        user.download_format,
+        user.video_quality,
+        user.audio_bitrate,
+        user.language,
+        user.progress_bar_style,
+    );
+
+    let uid = user.telegram_id;
+    let mut rows: Vec<Vec<teloxide::types::InlineKeyboardButton>> = Vec::new();
+
+    rows.push(vec![
+        cb("🆓 Free", format!("au:sp:{}:f", uid)),
+        cb("⭐ Prem", format!("au:sp:{}:p", uid)),
+        cb("👑 VIP", format!("au:sp:{}:v", uid)),
+    ]);
+
+    let block_label = if user.is_blocked { "✅ Unblock" } else { "🚫 Block" };
+    rows.push(vec![cb(block_label, format!("au:b:{}", uid))]);
+    rows.push(vec![cb("⚙️ Settings", format!("au:st:{}", uid))]);
+    rows.push(vec![cb("🔙 Back", "au:l:0:a")]);
+
+    let keyboard = InlineKeyboardMarkup::new(rows);
+    if let Err(e) = bot
+        .edit_message_text(chat_id, msg_id, text)
+        .reply_markup(keyboard)
+        .await
+    {
+        log::warn!("Failed to edit user detail: {}", e);
+    }
+
+    Ok(())
+}
+
+// --- Set plan ---
+
+async fn handle_set_plan(
+    bot: &Bot,
+    chat_id: ChatId,
+    msg_id: MessageId,
+    db_pool: &Arc<DbPool>,
+    uid: i64,
+    plan_code: &str,
+) -> anyhow::Result<()> {
+    let plan = match plan_code {
+        "f" => "free",
+        "p" => "premium",
+        "v" => "vip",
+        _ => return Ok(()),
+    };
+
+    if plan == "free" {
+        let conn = db::get_connection(db_pool)?;
+        db::update_user_plan(&conn, uid, plan)?;
+        notify_user_plan_change(bot, uid, plan).await;
+        show_user_detail(bot, chat_id, msg_id, db_pool, uid).await?;
+        return Ok(());
+    }
+
+    let plan_emoji = if plan == "premium" { "⭐" } else { "👑" };
+    let plan_name = if plan == "premium" { "Premium" } else { "VIP" };
+    let text = format!("📅 Set {} {} duration for user {}:", plan_emoji, plan_name, uid);
+
+    let pc = plan_code;
+    let keyboard = InlineKeyboardMarkup::new(vec![
+        vec![
+            cb("7 days", format!("au:se:{}:{}:7", uid, pc)),
+            cb("30 days", format!("au:se:{}:{}:30", uid, pc)),
+        ],
+        vec![
+            cb("90 days", format!("au:se:{}:{}:90", uid, pc)),
+            cb("365 days", format!("au:se:{}:{}:365", uid, pc)),
+        ],
+        vec![cb("♾ Unlimited", format!("au:se:{}:{}:0", uid, pc))],
+        vec![cb("🔙 Back", format!("au:u:{}", uid))],
+    ]);
+
+    if let Err(e) = bot
+        .edit_message_text(chat_id, msg_id, text)
+        .reply_markup(keyboard)
+        .await
+    {
+        log::warn!("Failed to edit expiry selector: {}", e);
+    }
+    Ok(())
+}
+
+// --- Set expiry ---
+
+async fn handle_set_expiry(
+    bot: &Bot,
+    chat_id: ChatId,
+    msg_id: MessageId,
+    db_pool: &Arc<DbPool>,
+    uid: i64,
+    plan_code: &str,
+    days: i32,
+) -> anyhow::Result<()> {
+    let plan = match plan_code {
+        "p" => "premium",
+        "v" => "vip",
+        _ => return Ok(()),
+    };
+
+    let conn = db::get_connection(db_pool)?;
+    let days_opt = if days == 0 { None } else { Some(days) };
+    db::update_user_plan_with_expiry(&conn, uid, plan, days_opt)?;
+
+    notify_user_plan_change(bot, uid, plan).await;
+    show_user_detail(bot, chat_id, msg_id, db_pool, uid).await?;
+    Ok(())
+}
+
+async fn notify_user_plan_change(bot: &Bot, uid: i64, plan: &str) {
+    let (emoji, name) = match plan {
+        "premium" => ("⭐", "Premium"),
+        "vip" => ("👑", "VIP"),
+        _ => ("🆓", "Free"),
+    };
+    let text = format!(
+        "💳 Your plan has been changed by administrator.\n\nNew plan: {} {}\n\nChanges take effect immediately! 🎉",
+        emoji, name
+    );
+    if let Err(e) = bot.send_message(ChatId(uid), text).await {
+        log::warn!("Failed to notify user {} about plan change: {}", uid, e);
+    }
+}
+
+// --- Block toggle ---
+
+async fn handle_toggle_block(
+    bot: &Bot,
+    chat_id: ChatId,
+    msg_id: MessageId,
+    db_pool: &Arc<DbPool>,
+    uid: i64,
+    confirmed: bool,
+) -> anyhow::Result<()> {
+    if admin::is_admin(uid) {
+        if let Err(e) = bot
+            .edit_message_text(chat_id, msg_id, "❌ Cannot block an admin user")
+            .reply_markup(InlineKeyboardMarkup::new(vec![vec![cb(
+                "🔙 Back",
+                format!("au:u:{}", uid),
+            )]]))
+            .await
+        {
+            log::warn!("Failed to edit block error: {}", e);
+        }
+        return Ok(());
+    }
+
+    let conn = db::get_connection(db_pool)?;
+    let currently_blocked = db::is_user_blocked(&conn, uid)?;
+
+    if currently_blocked {
+        db::set_user_blocked(&conn, uid, false)?;
+        show_user_detail(bot, chat_id, msg_id, db_pool, uid).await?;
+        return Ok(());
+    }
+
+    if !confirmed {
+        let text = format!("⚠️ Block user {}?\n\nBlocked users cannot use the bot.", uid);
+        let keyboard = InlineKeyboardMarkup::new(vec![
+            vec![cb("🚫 Yes, block", format!("au:cb:{}", uid))],
+            vec![cb("🔙 Cancel", format!("au:u:{}", uid))],
+        ]);
+        if let Err(e) = bot
+            .edit_message_text(chat_id, msg_id, text)
+            .reply_markup(keyboard)
+            .await
+        {
+            log::warn!("Failed to edit block confirmation: {}", e);
+        }
+        return Ok(());
+    }
+
+    db::set_user_blocked(&conn, uid, true)?;
+    show_user_detail(bot, chat_id, msg_id, db_pool, uid).await?;
+    Ok(())
+}
+
+// --- Settings menu ---
+
+const FORMATS: &[&str] = &["mp3", "mp4"];
+const QUALITIES: &[&str] = &["best", "1080p", "720p", "480p", "360p"];
+const BITRATES: &[&str] = &["128k", "192k", "256k", "320k"];
+const LANGUAGES: &[&str] = &["ru", "en"];
+const PROGRESS_STYLES: &[&str] = &["classic", "gradient", "emoji", "dots", "runner", "rpg", "fire", "moon"];
+
+async fn show_settings_menu(
+    bot: &Bot,
+    chat_id: ChatId,
+    msg_id: MessageId,
+    db_pool: &Arc<DbPool>,
+    uid: i64,
+) -> anyhow::Result<()> {
+    let conn = db::get_connection(db_pool)?;
+    let user = match db::get_user(&conn, uid)? {
+        Some(u) => u,
+        None => return Ok(()),
+    };
+
+    let text = format!("⚙️ Settings: {}", username_display(&user));
+
+    let keyboard = InlineKeyboardMarkup::new(vec![
+        vec![cb(
+            format!("Format: {} ▸", user.download_format),
+            format!("au:cs:{}:fmt:{}", uid, next_cycle(FORMATS, &user.download_format)),
+        )],
+        vec![cb(
+            format!("Video: {} ▸", user.video_quality),
+            format!("au:cs:{}:vid:{}", uid, next_cycle(QUALITIES, &user.video_quality)),
+        )],
+        vec![cb(
+            format!("Audio: {} ▸", user.audio_bitrate),
+            format!("au:cs:{}:aud:{}", uid, next_cycle(BITRATES, &user.audio_bitrate)),
+        )],
+        vec![cb(
+            format!("Language: {} ▸", user.language),
+            format!("au:cs:{}:lang:{}", uid, next_cycle(LANGUAGES, &user.language)),
+        )],
+        vec![cb(
+            format!("Progress: {} ▸", user.progress_bar_style),
+            format!(
+                "au:cs:{}:prog:{}",
+                uid,
+                next_cycle(PROGRESS_STYLES, &user.progress_bar_style)
+            ),
+        )],
+        vec![cb("🔙 Back", format!("au:u:{}", uid))],
+    ]);
+
+    if let Err(e) = bot
+        .edit_message_text(chat_id, msg_id, text)
+        .reply_markup(keyboard)
+        .await
+    {
+        log::warn!("Failed to edit settings menu: {}", e);
+    }
+    Ok(())
+}
+
+fn next_cycle<'a>(options: &[&'a str], current: &str) -> &'a str {
+    let idx = options.iter().position(|&o| o == current).unwrap_or(0);
+    options[(idx + 1) % options.len()]
+}
+
+/// Validate that a setting value is in the allowed set.
+fn validate_setting(key: &str, val: &str) -> bool {
+    match key {
+        "fmt" => FORMATS.contains(&val),
+        "vid" => QUALITIES.contains(&val),
+        "aud" => BITRATES.contains(&val),
+        "lang" => LANGUAGES.contains(&val),
+        "prog" => PROGRESS_STYLES.contains(&val),
+        _ => false,
+    }
+}
+
+// --- Change setting ---
+
+async fn handle_change_setting(
+    bot: &Bot,
+    chat_id: ChatId,
+    msg_id: MessageId,
+    db_pool: &Arc<DbPool>,
+    uid: i64,
+    key: &str,
+    val: &str,
+) -> anyhow::Result<()> {
+    if !validate_setting(key, val) {
+        log::warn!("Admin: invalid setting {}={} for user {}", key, val, uid);
+        return Ok(());
+    }
+
+    let conn = db::get_connection(db_pool)?;
+    match key {
+        "fmt" => db::set_user_download_format(&conn, uid, val)?,
+        "vid" => db::set_user_video_quality(&conn, uid, val)?,
+        "aud" => db::set_user_audio_bitrate(&conn, uid, val)?,
+        "lang" => db::set_user_language(&conn, uid, val)?,
+        "prog" => db::set_user_progress_bar_style(&conn, uid, val)?,
+        _ => return Ok(()),
+    }
+    show_settings_menu(bot, chat_id, msg_id, db_pool, uid).await?;
+    Ok(())
+}
+
+// --- Admin search ---
+
+pub async fn handle_admin_search(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbPool>, query: &str) -> anyhow::Result<()> {
+    clear_admin_searching(chat_id.0).await;
+
+    let conn = db::get_connection(db_pool)?;
+    let users = db::search_users(&conn, query)?;
+
+    if users.is_empty() {
+        bot.send_message(chat_id, format!("🔍 No users found for: {}", query))
+            .reply_markup(InlineKeyboardMarkup::new(vec![vec![cb("🔙 Back", "au:l:0:a")]]))
+            .await?;
+        return Ok(());
+    }
+
+    let mut text = format!("🔍 Search results for \"{}\":\n\n", query);
+    let mut keyboard_rows: Vec<Vec<teloxide::types::InlineKeyboardButton>> = Vec::new();
+    let mut row = Vec::new();
+
+    for (i, user) in users.iter().enumerate() {
+        let blocked_mark = if user.is_blocked { " 🚫" } else { "" };
+        text.push_str(&format!(
+            "{}. {} {}{} ({})\n",
+            i + 1,
+            user.plan.emoji(),
+            username_display(user),
+            blocked_mark,
+            user.telegram_id
+        ));
+
+        let label = format!("{} {}", user.plan.emoji(), username_short(user));
+        row.push(cb(label, format!("au:u:{}", user.telegram_id)));
+        if row.len() == 2 {
+            keyboard_rows.push(std::mem::take(&mut row));
+        }
+    }
+    if !row.is_empty() {
+        keyboard_rows.push(row);
+    }
+    keyboard_rows.push(vec![cb("🔙 Back", "au:l:0:a")]);
+
+    let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
+    bot.send_message(chat_id, text).reply_markup(keyboard).await?;
+    Ok(())
+}
+
+// --- Main callback dispatcher ---
+
+pub async fn handle_callback(
+    bot: &Bot,
+    chat_id: ChatId,
+    msg_id: MessageId,
+    db_pool: &Arc<DbPool>,
+    data: &str,
+) -> anyhow::Result<()> {
+    let rest = match data.strip_prefix("au:") {
+        Some(r) => r,
+        None => return Ok(()),
+    };
+
+    let parts: Vec<&str> = rest.splitn(5, ':').collect();
+
+    if !preserves_search_mode(parts.first().copied()) {
+        clear_admin_searching(chat_id.0).await;
+    }
+
+    match parts.first().copied() {
+        Some("l") => {
+            let page = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(0);
+            let filter = parts.get(2).map(|f| Filter::from_code(f)).unwrap_or(Filter::All);
+            show_user_list(bot, chat_id, Some(msg_id), db_pool, page, filter).await?;
+        }
+        Some("u") => {
+            if let Some(uid) = parts.get(1).and_then(|p| p.parse().ok()) {
+                show_user_detail(bot, chat_id, msg_id, db_pool, uid).await?;
+            }
+        }
+        Some("sp") => {
+            if let (Some(uid), Some(plan_code)) = (parts.get(1).and_then(|p| p.parse().ok()), parts.get(2)) {
+                handle_set_plan(bot, chat_id, msg_id, db_pool, uid, plan_code).await?;
+            }
+        }
+        Some("se") => {
+            if let (Some(uid), Some(plan_code), Some(days)) = (
+                parts.get(1).and_then(|p| p.parse().ok()),
+                parts.get(2).copied(),
+                parts.get(3).and_then(|p| p.parse().ok()),
+            ) {
+                handle_set_expiry(bot, chat_id, msg_id, db_pool, uid, plan_code, days).await?;
+            }
+        }
+        Some("b") => {
+            if let Some(uid) = parts.get(1).and_then(|p| p.parse().ok()) {
+                handle_toggle_block(bot, chat_id, msg_id, db_pool, uid, false).await?;
+            }
+        }
+        Some("cb") => {
+            if let Some(uid) = parts.get(1).and_then(|p| p.parse().ok()) {
+                handle_toggle_block(bot, chat_id, msg_id, db_pool, uid, true).await?;
+            }
+        }
+        Some("st") => {
+            if let Some(uid) = parts.get(1).and_then(|p| p.parse().ok()) {
+                show_settings_menu(bot, chat_id, msg_id, db_pool, uid).await?;
+            }
+        }
+        Some("cs") => {
+            if let (Some(uid), Some(key), Some(val)) = (
+                parts.get(1).and_then(|p| p.parse().ok()),
+                parts.get(2).copied(),
+                parts.get(3).copied(),
+            ) {
+                handle_change_setting(bot, chat_id, msg_id, db_pool, uid, key, val).await?;
+            }
+        }
+        Some("s") => {
+            set_admin_searching(chat_id.0).await;
+            if let Err(e) = bot
+                .edit_message_text(chat_id, msg_id, "🔍 Send a username or user ID to search:")
+                .reply_markup(InlineKeyboardMarkup::new(vec![vec![cb("🔙 Cancel", "au:l:0:a")]]))
+                .await
+            {
+                log::warn!("Failed to edit search prompt: {}", e);
+            }
+        }
+        Some("noop") => {}
+        _ => {}
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::preserves_search_mode;
+
+    #[test]
+    fn search_mode_is_preserved_only_for_search_prompt_action() {
+        assert!(preserves_search_mode(Some("s")));
+        assert!(!preserves_search_mode(Some("l")));
+        assert!(!preserves_search_mode(Some("u")));
+        assert!(!preserves_search_mode(None));
+    }
+}

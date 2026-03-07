@@ -623,8 +623,8 @@ mod tests {
         // Text should not be empty
         assert!(!text.is_empty());
 
-        // Keyboard should have 4 rows
-        assert_eq!(keyboard.inline_keyboard.len(), 4);
+        // Keyboard should include the dedicated feedback row.
+        assert_eq!(keyboard.inline_keyboard.len(), 5);
     }
 
     #[test]
@@ -638,7 +638,9 @@ mod tests {
         assert_eq!(keyboard.inline_keyboard[1].len(), 2);
         // Third row: Services + Subscription
         assert_eq!(keyboard.inline_keyboard[2].len(), 2);
-        // Fourth row: Language + Feedback
+        // Fourth row: Language + Vault
         assert_eq!(keyboard.inline_keyboard[3].len(), 2);
+        // Fifth row: Feedback
+        assert_eq!(keyboard.inline_keyboard[4].len(), 1);
     }
 }

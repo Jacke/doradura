@@ -419,12 +419,12 @@ pub mod alerts {
 
     /// Queue depth threshold for triggering alerts
     /// Read from ALERT_QUEUE_DEPTH_THRESHOLD environment variable
-    /// Default: 50 tasks
+    /// Default: 200 tasks (queue max is 1000, alert at ~20% capacity)
     pub static QUEUE_DEPTH_THRESHOLD: Lazy<usize> = Lazy::new(|| {
         env::var("ALERT_QUEUE_DEPTH_THRESHOLD")
             .ok()
             .and_then(|v| v.parse().ok())
-            .unwrap_or(50)
+            .unwrap_or(200)
     });
 
     /// Retry rate threshold percentage for triggering alerts

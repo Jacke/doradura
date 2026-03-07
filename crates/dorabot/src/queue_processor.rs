@@ -37,6 +37,19 @@ pub async fn process_queue(
     let mut interval = interval(config::queue::check_interval());
     let last_download_start = Arc::new(tokio::sync::Mutex::new(std::time::Instant::now()));
 
+    // Periodic cleanup of stale notification_msgs (every 30 min)
+    let queue_for_notif_cleanup = Arc::clone(&queue);
+    tokio::spawn(async move {
+        let mut cleanup_interval = tokio::time::interval(std::time::Duration::from_secs(30 * 60));
+        loop {
+            cleanup_interval.tick().await;
+            let removed = queue_for_notif_cleanup.cleanup_stale_notifications().await;
+            if removed > 0 {
+                log::info!("Queue: cleaned up {} stale notification entries", removed);
+            }
+        }
+    });
+
     loop {
         interval.tick().await;
         if let Some(task) = queue.get_task().await {

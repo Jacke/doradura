@@ -1,3 +1,4 @@
+pub mod admin_users;
 mod audio_effects;
 mod callback_router;
 mod helpers;

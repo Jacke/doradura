@@ -134,7 +134,13 @@ impl DownloadSource for HttpSource {
     }
 
     async fn estimate_size(&self, url: &Url) -> Option<u64> {
-        let response = self.client.head(url.as_str()).send().await.ok()?;
+        let response = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            self.client.head(url.as_str()).send(),
+        )
+        .await
+        .ok()?
+        .ok()?;
         response.content_length()
     }
 

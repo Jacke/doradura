@@ -1083,58 +1083,7 @@ pub async fn handle_admin_command(bot: &Bot, chat_id: ChatId, user_id: i64, db_p
         return Ok(());
     }
 
-    let conn = get_connection(&db_pool)?;
-    let users = get_all_users(&conn)?;
-
-    // Create inline keyboard with users (2 per row)
-    let mut keyboard_rows = Vec::new();
-    let mut current_row = Vec::new();
-
-    for user in users.iter().take(20) {
-        // Show first 20 users
-        let username_display = user
-            .username
-            .as_ref()
-            .map(|u| format!("@{}", u))
-            .unwrap_or_else(|| format!("ID:{}", user.telegram_id));
-
-        let plan_emoji = user.plan.emoji();
-
-        let button_text = format!("{} {}", plan_emoji, username_display);
-        let callback_data = format!("admin:user:{}", user.telegram_id);
-
-        current_row.push(crate::telegram::cb(button_text, callback_data));
-
-        // Every 2 buttons create a new row
-        if current_row.len() == 2 {
-            keyboard_rows.push(current_row.clone());
-            current_row.clear();
-        }
-    }
-
-    // Add remaining buttons if any
-    if !current_row.is_empty() {
-        keyboard_rows.push(current_row);
-    }
-
-    let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
-
-    bot.send_message(
-        chat_id,
-        format!(
-            "🔧 *User Management Panel*\n\n\
-            Select a user to manage:\n\n\
-            Showing: {} of {}\n\n\
-            💡 To manage a specific user use:\n\
-            `/setplan <user_id> <plan>`",
-            users.len().min(20),
-            users.len()
-        ),
-    )
-    .parse_mode(ParseMode::MarkdownV2)
-    .reply_markup(keyboard)
-    .await?;
-
+    crate::telegram::menu::admin_users::show_user_list(bot, chat_id, None, &db_pool, 0, Default::default()).await?;
     Ok(())
 }
 

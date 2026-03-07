@@ -154,9 +154,43 @@ pub async fn handle_message(
         }
     }
 
+    // Check if user is blocked (skip for admins)
+    {
+        let user_id = msg.chat.id.0;
+        if !crate::telegram::admin::is_admin(user_id) {
+            match db::get_connection(&db_pool) {
+                Ok(conn) => match db::is_user_blocked(&conn, user_id) {
+                    Ok(true) => return Ok(None),
+                    Ok(false) => {}
+                    Err(e) => {
+                        log::error!("Failed to check blocked status for {}: {}", user_id, e);
+                        return Ok(None);
+                    }
+                },
+                Err(e) => {
+                    log::error!("Failed to get database connection for blocked check {}: {}", user_id, e);
+                    return Ok(None);
+                }
+            }
+        }
+    }
+
     if let Some(text) = msg.text() {
         log::debug!("handle_message: {:?}", text);
         if text.starts_with("/start") || text.starts_with("/help") {
+            return Ok(None);
+        }
+
+        // Admin search intercept
+        if !text.trim().starts_with('/')
+            && crate::telegram::admin::is_admin(msg.chat.id.0)
+            && crate::telegram::menu::admin_users::is_admin_searching(msg.chat.id.0).await
+        {
+            if let Err(e) =
+                crate::telegram::menu::admin_users::handle_admin_search(&bot, msg.chat.id, &db_pool, text.trim()).await
+            {
+                log::error!("Admin search error: {}", e);
+            }
             return Ok(None);
         }
 

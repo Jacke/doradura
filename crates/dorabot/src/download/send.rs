@@ -427,13 +427,7 @@ where
         // Start progress animation in a separate task
         let bot_clone = bot.clone();
         let title_clone = title.to_string();
-        let mut msg_clone = ProgressMessage {
-            chat_id: progress_msg.chat_id,
-            message_id: progress_msg.message_id,
-            lang: progress_msg.lang.clone(),
-            style: progress_msg.style,
-            source_badge: progress_msg.source_badge.clone(),
-        };
+        let mut msg_clone = progress_msg.clone_for_clear();
 
         let file_size_clone = file_size;
         let file_type_clone = file_type.to_string();

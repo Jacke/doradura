@@ -332,13 +332,7 @@ pub async fn download_and_send_video(
             {
                 let bot_for_clear = bot_clone.clone();
                 let title_for_clear = Arc::clone(&display_title);
-                let mut msg_for_clear = ProgressMessage {
-                    chat_id: progress_msg.chat_id,
-                    message_id: progress_msg.message_id,
-                    lang: progress_msg.lang.clone(),
-                    style: progress_msg.style,
-                    source_badge: progress_msg.source_badge.clone(),
-                };
+                let mut msg_for_clear = progress_msg.clone_for_clear();
                 tokio::spawn(async move {
                     let _ = msg_for_clear
                         .clear_after(

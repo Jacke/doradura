@@ -86,6 +86,19 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
 
     let download_queue = Arc::new(DownloadQueue::new());
 
+    // Recover pending/interrupted tasks from DB after restart
+    match crate::storage::db::get_connection(&db_pool) {
+        Ok(conn) => match crate::storage::db::get_and_reset_recoverable_tasks(&conn) {
+            Ok(entries) if !entries.is_empty() => {
+                let count = download_queue.recover_from_db(entries).await;
+                log::info!("Recovered {} task(s) from database after restart", count);
+            }
+            Ok(_) => log::debug!("No tasks to recover from database"),
+            Err(e) => log::warn!("Failed to recover tasks from database: {}", e),
+        },
+        Err(e) => log::warn!("Failed to get DB connection for task recovery: {}", e),
+    }
+
     let downsub_gateway = Arc::new(DownsubGateway::from_env());
     if downsub_gateway.is_available() {
         log::info!(
@@ -118,6 +131,7 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
     background_tasks::spawn_subscription_expiry_checker(Arc::clone(&db_pool));
     background_tasks::spawn_cookies_checker(bot.clone());
     background_tasks::spawn_content_watcher(bot.clone(), Arc::clone(&db_pool));
+    background_tasks::spawn_db_cleanup(Arc::clone(&db_pool));
 
     // Create extension registry
     let extension_registry = Arc::new(crate::extension::ExtensionRegistry::default_registry());
@@ -146,11 +160,19 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
     // --- Run dispatcher ---
     let webhook_url = if use_webhook { config::WEBHOOK_URL.clone() } else { None };
 
-    if let Some(url) = webhook_url {
+    let result = if let Some(url) = webhook_url {
         run_webhook_mode(bot, &url).await
     } else {
         run_polling_mode(bot, handler, bot_init_start).await
+    };
+
+    // Graceful shutdown: flush pending queue tasks to DB so they survive restart
+    let flushed = download_queue.flush_to_db(&db_pool).await;
+    if flushed > 0 {
+        log::info!("Graceful shutdown: saved {} pending task(s) to database", flushed);
     }
+
+    result
 }
 
 /// Connect to the Bot API with retry logic.

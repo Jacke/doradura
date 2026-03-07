@@ -54,6 +54,36 @@ pub async fn handle_menu_callback(
         let message_id = q.message.as_ref().map(|m| m.id());
 
         if let (Some(chat_id), Some(message_id)) = (chat_id, message_id) {
+            // Blocked user check (skip for admins and admin callbacks)
+            if !data.starts_with("au:") && !data.starts_with("admin:") {
+                let caller_id = i64::try_from(q.from.id.0).unwrap_or(0);
+                if !admin::is_admin(caller_id) {
+                    match db::get_connection(&db_pool) {
+                        Ok(conn) => match db::is_user_blocked(&conn, caller_id) {
+                            Ok(true) => {
+                                let _ = bot.answer_callback_query(callback_id).await;
+                                return Ok(());
+                            }
+                            Ok(false) => {}
+                            Err(e) => {
+                                log::error!("Failed to check blocked status for callback {}: {}", caller_id, e);
+                                let _ = bot.answer_callback_query(callback_id).await;
+                                return Ok(());
+                            }
+                        },
+                        Err(e) => {
+                            log::error!(
+                                "Failed to get database connection for callback blocked check {}: {}",
+                                caller_id,
+                                e
+                            );
+                            let _ = bot.answer_callback_query(callback_id).await;
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+
             let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
             // Lyrics callbacks
             if data.starts_with("lyr:") {
@@ -1581,8 +1611,21 @@ pub async fn handle_menu_callback(
                 // Handle videos and conversion callback queries
                 use crate::telegram::videos::handle_videos_callback;
                 handle_videos_callback(&bot, callback_id.clone(), chat_id, message_id, &data, db_pool.clone()).await?;
+            } else if data.starts_with("au:") {
+                // Admin user management panel
+                let _ = bot.answer_callback_query(callback_id.clone()).await;
+                let is_admin = i64::try_from(q.from.id.0).ok().map(admin::is_admin).unwrap_or(false);
+                if !is_admin {
+                    bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
+                        .await?;
+                    return Ok(());
+                }
+                if let Err(e) = super::admin_users::handle_callback(&bot, chat_id, message_id, &db_pool, &data).await {
+                    log::error!("Admin users callback error: {}", e);
+                }
+                return Ok(());
             } else if data.starts_with("admin:") {
-                // Handle admin panel callbacks
+                // Handle admin panel callbacks (yt-dlp, cookies, browser)
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
 
                 // Check administrator privileges
@@ -1594,7 +1637,6 @@ pub async fn handle_menu_callback(
                     return Ok(());
                 }
 
-                // Handle yt-dlp version/update callbacks
                 // Handle browser/cookie manager callbacks
                 if data.starts_with("admin:browser_") {
                     if let Err(e) =
@@ -1624,216 +1666,6 @@ pub async fn handle_menu_callback(
                         log::error!("Failed to handle test_cookies callback: {}", e);
                     }
                     return Ok(());
-                }
-
-                if let Some(user_id_str) = data.strip_prefix("admin:user:") {
-                    // Show the management menu for a specific user
-
-                    if let Ok(user_id) = user_id_str.parse::<i64>() {
-                        match db::get_connection(&db_pool) {
-                            Ok(conn) => {
-                                match db::get_user(&conn, user_id) {
-                                    Ok(Some(user)) => {
-                                        let username_display = user
-                                            .username
-                                            .as_ref()
-                                            .map(|u| format!("@{}", u))
-                                            .unwrap_or_else(|| format!("ID: {}", user.telegram_id));
-
-                                        let plan_emoji = user.plan.emoji();
-
-                                        let sub_status = if user.telegram_charge_id.is_some() {
-                                            if user.is_recurring {
-                                                "💫🔄 Active subscription \\(auto-renewal\\)"
-                                            } else {
-                                                "💫 Active subscription \\(one-time\\)"
-                                            }
-                                        } else {
-                                            "🔒 No subscription"
-                                        };
-
-                                        let expires_info = if let Some(expires) = &user.subscription_expires_at {
-                                            let escaped_expires = expires.replace("-", "\\-").replace(":", "\\:");
-                                            if user.is_recurring {
-                                                format!("\n📅 Next charge: {}", escaped_expires)
-                                            } else {
-                                                format!("\n📅 Expires: {}", escaped_expires)
-                                            }
-                                        } else {
-                                            String::new()
-                                        };
-
-                                        // Build an action keyboard
-                                        let keyboard = InlineKeyboardMarkup::new(vec![
-                                            vec![crate::telegram::cb(
-                                                "🌟 Set Free",
-                                                format!("admin:setplan:{}:free", user_id),
-                                            )],
-                                            vec![crate::telegram::cb(
-                                                "⭐ Set Premium",
-                                                format!("admin:setplan:{}:premium", user_id),
-                                            )],
-                                            vec![crate::telegram::cb(
-                                                "👑 Set VIP",
-                                                format!("admin:setplan:{}:vip", user_id),
-                                            )],
-                                            vec![crate::telegram::cb("🔙 Back to list", "admin:back")],
-                                        ]);
-
-                                        let _ = bot
-                                            .edit_message_text(
-                                                chat_id,
-                                                message_id,
-                                                format!(
-                                                    "👤 *User Management*\n\n\
-                                    User: {}\n\
-                                    ID: `{}`\n\
-                                    Current plan: {} {}\n\
-                                    Status: {}{}\n\n\
-                                    Choose action:",
-                                                    username_display,
-                                                    user.telegram_id,
-                                                    plan_emoji,
-                                                    user.plan,
-                                                    sub_status,
-                                                    expires_info
-                                                ),
-                                            )
-                                            .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-                                            .reply_markup(keyboard)
-                                            .await;
-                                    }
-                                    Ok(None) => {}
-                                    Err(e) => {
-                                        log::error!("Failed to get user {}: {}", user_id, e);
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                log::error!("Failed to get database connection: {}", e);
-                            }
-                        }
-                    }
-                } else if data.starts_with("admin:setplan:") {
-                    // Change the user's plan
-                    let parts: Vec<&str> = data.split(':').collect();
-                    if parts.len() == 4 {
-                        if let Ok(user_id) = parts[2].parse::<i64>() {
-                            let new_plan = parts[3];
-
-                            match db::get_connection(&db_pool) {
-                                Ok(conn) => {
-                                    match db::update_user_plan(&conn, user_id, new_plan) {
-                                        Ok(_) => {
-                                            let plan_emoji = match new_plan {
-                                                "premium" => "⭐",
-                                                "vip" => "👑",
-                                                _ => "🌟",
-                                            };
-                                            let plan_name = match new_plan {
-                                                "premium" => "Premium",
-                                                "vip" => "VIP",
-                                                _ => "Free",
-                                            };
-
-                                            // Send a notification to the user
-                                            let user_chat_id = teloxide::types::ChatId(user_id);
-                                            let _ = bot
-                                                .send_message(
-                                                    user_chat_id,
-                                                    format!(
-                                                        "💳 *Subscription Plan Change*\n\n\
-                                                    Your plan has been changed by the administrator.\n\n\
-                                                    *New plan:* {} {}\n\n\
-                                                    Changes take effect immediately! 🎉",
-                                                        plan_emoji, plan_name
-                                                    ),
-                                                )
-                                                .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-                                                .await;
-
-                                            let _ = bot
-                                                .edit_message_text(
-                                                    chat_id,
-                                                    message_id,
-                                                    format!(
-                                                        "✅ User {} plan changed to {} {}",
-                                                        user_id, plan_emoji, new_plan
-                                                    ),
-                                                )
-                                                .await;
-                                        }
-                                        Err(e) => {
-                                            log::error!("Failed to update user plan: {}", e);
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    log::error!("Failed to get database connection: {}", e);
-                                }
-                            }
-                        }
-                    }
-                } else if data == "admin:back" {
-                    // Return to the user list
-                    match db::get_connection(&db_pool) {
-                        Ok(conn) => match db::get_all_users(&conn) {
-                            Ok(users) => {
-                                let mut keyboard_rows = Vec::new();
-                                let mut current_row = Vec::new();
-
-                                for user in users.iter().take(20) {
-                                    let username_display = user
-                                        .username
-                                        .as_ref()
-                                        .map(|u| format!("@{}", u))
-                                        .unwrap_or_else(|| format!("ID:{}", user.telegram_id));
-
-                                    let plan_emoji = user.plan.emoji();
-
-                                    let button_text = format!("{} {}", plan_emoji, username_display);
-                                    let callback_data = format!("admin:user:{}", user.telegram_id);
-
-                                    current_row.push(crate::telegram::cb(button_text, callback_data));
-
-                                    if current_row.len() == 2 {
-                                        keyboard_rows.push(current_row.clone());
-                                        current_row.clear();
-                                    }
-                                }
-
-                                if !current_row.is_empty() {
-                                    keyboard_rows.push(current_row);
-                                }
-
-                                let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
-
-                                let _ = bot
-                                    .edit_message_text(
-                                        chat_id,
-                                        message_id,
-                                        format!(
-                                            "🔧 *User Management Panel*\n\n\
-                            Select a user to manage:\n\n\
-                            Shown: {} of {}\n\n\
-                            💡 To manage a specific user use:\n\
-                            `/setplan <user_id> <plan>`",
-                                            users.len().min(20),
-                                            users.len()
-                                        ),
-                                    )
-                                    .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-                                    .reply_markup(keyboard)
-                                    .await;
-                            }
-                            Err(e) => {
-                                log::error!("Failed to get users: {}", e);
-                            }
-                        },
-                        Err(e) => {
-                            log::error!("Failed to get database connection: {}", e);
-                        }
-                    }
                 }
             }
         }

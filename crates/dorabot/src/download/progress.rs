@@ -540,14 +540,24 @@ impl DownloadStatus {
                 let escaped_error = escape_markdown(error);
                 let emoji = Self::get_emoji(file_format.as_ref());
                 let error_label = escape_markdown(&i18n::t(lang, "progress.error"));
-                let mut s = String::with_capacity(escaped_title.len() + escaped_error.len() + error_label.len() + 30);
+                // Telegram message limit is 4096 chars; reserve space for title/label/markup
+                let overhead = emoji.len() + escaped_title.len() + error_label.len() + 30;
+                let max_error_len = 4096_usize.saturating_sub(overhead);
+                let truncated_error = if escaped_error.len() > max_error_len {
+                    let mut truncated = escaped_error[..max_error_len.saturating_sub(3)].to_string();
+                    truncated.push_str("\\.\\.\\.");
+                    truncated
+                } else {
+                    escaped_error
+                };
+                let mut s = String::with_capacity(overhead + truncated_error.len());
                 s.push_str(emoji);
                 s.push_str(" *");
                 s.push_str(&escaped_title);
                 s.push_str("*\n\n❌ ");
                 s.push_str(&error_label);
                 s.push_str(": ");
-                s.push_str(&escaped_error);
+                s.push_str(&truncated_error);
                 s
             }
         }
@@ -627,6 +637,8 @@ pub struct ProgressMessage {
     pub style: ProgressBarStyle,
     /// Source and quality badge (e.g. "YouTube · MP3 320kbps")
     pub source_badge: Option<String>,
+    /// Last successful editMessageText time — used for throttling to avoid Telegram 429
+    last_edit_at: Option<std::time::Instant>,
 }
 
 impl ProgressMessage {
@@ -657,6 +669,7 @@ impl ProgressMessage {
             lang,
             style: ProgressBarStyle::default(),
             source_badge: None,
+            last_edit_at: None,
         }
     }
 
@@ -692,17 +705,45 @@ impl ProgressMessage {
     /// # Ok(())
     /// # }
     /// ```
+    /// Minimum interval between editMessageText calls (prevents Telegram 429).
+    const EDIT_THROTTLE: std::time::Duration = std::time::Duration::from_millis(1500);
+
+    /// Creates a shallow copy suitable for `clear_after_delay` (shares message_id).
+    pub fn clone_for_clear(&self) -> Self {
+        Self {
+            chat_id: self.chat_id,
+            message_id: self.message_id,
+            lang: self.lang.clone(),
+            style: self.style,
+            source_badge: self.source_badge.clone(),
+            last_edit_at: None,
+        }
+    }
+
     pub async fn update(&mut self, bot: &Bot, status: DownloadStatus) -> ResponseResult<()> {
         let text = status.to_message(&self.lang, self.style, self.source_badge.as_deref());
 
         if let Some(msg_id) = self.message_id {
+            // Throttle edits: skip if last successful edit was < 1.5s ago
+            // (except for non-Downloading statuses which are important transitions)
+            if matches!(status, DownloadStatus::Downloading { .. }) {
+                if let Some(last) = self.last_edit_at {
+                    if last.elapsed() < Self::EDIT_THROTTLE {
+                        return Ok(());
+                    }
+                }
+            }
+
             // Update existing message
             match bot
                 .edit_message_text(self.chat_id, msg_id, text.clone())
                 .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                 .await
             {
-                Ok(_) => Ok(()),
+                Ok(_) => {
+                    self.last_edit_at = Some(std::time::Instant::now());
+                    Ok(())
+                }
                 Err(e) => {
                     let error_str = e.to_string();
                     // If the message hasn't changed - that's fine, no need to send a new one
