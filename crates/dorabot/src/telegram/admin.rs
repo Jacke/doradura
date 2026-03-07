@@ -31,6 +31,7 @@ use crate::download::ytdlp;
 use crate::core::config::admin::{ADMIN_IDS, ADMIN_USER_ID};
 use crate::storage::backup::{create_backup, list_backups};
 use crate::storage::db::{get_all_users, get_connection, update_user_plan, update_user_plan_with_expiry, DbPool};
+use crate::storage::SharedStorage;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::net::TcpStream;
@@ -2114,7 +2115,8 @@ pub async fn handle_diagnose_cookies_command(bot: &Bot, chat_id: ChatId, user_id
 /// User sends: `/update_cookies`
 /// Bot responds: `📤 Send your cookies file`
 pub async fn handle_update_cookies_command(
-    db_pool: Arc<crate::storage::db::DbPool>,
+    _db_pool: Arc<crate::storage::db::DbPool>,
+    shared_storage: Arc<SharedStorage>,
     bot: &Bot,
     chat_id: ChatId,
     user_id: i64,
@@ -2138,8 +2140,6 @@ pub async fn handle_update_cookies_command(
 
     // Create cookies upload session
 
-    let conn = crate::storage::db::get_connection(&db_pool)?;
-
     let session = crate::storage::db::CookiesUploadSession {
         id: uuid::Uuid::new_v4().to_string(),
         user_id,
@@ -2147,7 +2147,7 @@ pub async fn handle_update_cookies_command(
         expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
     };
 
-    crate::storage::db::upsert_cookies_upload_session(&conn, &session)?;
+    shared_storage.upsert_cookies_upload_session(&session).await?;
 
     log::info!("✅ Created cookies upload session for admin {}", user_id);
 
@@ -2305,7 +2305,8 @@ pub async fn notify_admin_cookies_refresh(bot: &Bot, admin_id: i64, reason: &str
 }
 
 pub async fn handle_cookies_file_upload(
-    db_pool: Arc<crate::storage::db::DbPool>,
+    _db_pool: Arc<crate::storage::db::DbPool>,
+    shared_storage: Arc<SharedStorage>,
     bot: &Bot,
     chat_id: ChatId,
     user_id: i64,
@@ -2320,9 +2321,7 @@ pub async fn handle_cookies_file_upload(
 
     // Check if there's an active cookies upload session
 
-    let conn = crate::storage::db::get_connection(&db_pool)?;
-
-    let session = crate::storage::db::get_active_cookies_upload_session(&conn, user_id)?;
+    let session = shared_storage.get_active_cookies_upload_session(user_id).await?;
     if session.is_none() {
         log::warn!("❌ No active cookies upload session for user {}", user_id);
         return Ok(()); // Silently ignore if no session
@@ -2364,7 +2363,7 @@ pub async fn handle_cookies_file_upload(
                             let _ = tokio::fs::remove_file(&file_path).await;
 
                             // Delete session
-                            crate::storage::db::delete_cookies_upload_session_by_user(&conn, user_id)?;
+                            shared_storage.delete_cookies_upload_session_by_user(user_id).await?;
 
                             // Delete processing message
                             let _ = bot.delete_message(chat_id, processing_msg.id).await;
@@ -2455,7 +2454,7 @@ pub async fn handle_cookies_file_upload(
                             log::error!("❌ Failed to update cookies file: {}", e);
                             let _ = tokio::fs::remove_file(&file_path).await;
                             let _ = bot.delete_message(chat_id, processing_msg.id).await;
-                            crate::storage::db::delete_cookies_upload_session_by_user(&conn, user_id)?;
+                            shared_storage.delete_cookies_upload_session_by_user(user_id).await?;
 
                             let error_message = format!(
                                 "❌ *Error updating cookies:*\n\n{}\n\n\
@@ -2476,7 +2475,7 @@ pub async fn handle_cookies_file_upload(
                     log::error!("❌ Failed to read cookies file: {}", e);
                     let _ = tokio::fs::remove_file(&file_path).await;
                     let _ = bot.delete_message(chat_id, processing_msg.id).await;
-                    crate::storage::db::delete_cookies_upload_session_by_user(&conn, user_id)?;
+                    shared_storage.delete_cookies_upload_session_by_user(user_id).await?;
 
                     bot.send_message(
                         chat_id,
@@ -2490,7 +2489,7 @@ pub async fn handle_cookies_file_upload(
         Err(e) => {
             log::error!("❌ Failed to download cookies file: {}", e);
             let _ = bot.delete_message(chat_id, processing_msg.id).await;
-            crate::storage::db::delete_cookies_upload_session_by_user(&conn, user_id)?;
+            shared_storage.delete_cookies_upload_session_by_user(user_id).await?;
 
             bot.send_message(
                 chat_id,
@@ -2510,7 +2509,8 @@ pub async fn handle_cookies_file_upload(
 ///
 /// Creates a short-lived upload session for Instagram cookies file.
 pub async fn handle_update_ig_cookies_command(
-    db_pool: Arc<crate::storage::db::DbPool>,
+    _db_pool: Arc<crate::storage::db::DbPool>,
+    shared_storage: Arc<SharedStorage>,
     bot: &Bot,
     chat_id: ChatId,
     user_id: i64,
@@ -2529,8 +2529,6 @@ pub async fn handle_update_ig_cookies_command(
         return Ok(());
     }
 
-    let conn = crate::storage::db::get_connection(&db_pool)?;
-
     let session = crate::storage::db::CookiesUploadSession {
         id: uuid::Uuid::new_v4().to_string(),
         user_id,
@@ -2538,7 +2536,7 @@ pub async fn handle_update_ig_cookies_command(
         expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
     };
 
-    crate::storage::db::upsert_ig_cookies_upload_session(&conn, &session)?;
+    shared_storage.upsert_ig_cookies_upload_session(&session).await?;
 
     log::info!("✅ Created IG cookies upload session for admin {}", user_id);
 
@@ -2562,7 +2560,8 @@ pub async fn handle_update_ig_cookies_command(
 
 /// Handles Instagram cookies file upload after /update_ig_cookies command
 pub async fn handle_ig_cookies_file_upload(
-    db_pool: Arc<crate::storage::db::DbPool>,
+    _db_pool: Arc<crate::storage::db::DbPool>,
+    shared_storage: Arc<SharedStorage>,
     bot: &Bot,
     chat_id: ChatId,
     user_id: i64,
@@ -2575,9 +2574,7 @@ pub async fn handle_ig_cookies_file_upload(
         document.file.id
     );
 
-    let conn = crate::storage::db::get_connection(&db_pool)?;
-
-    let session = crate::storage::db::get_active_ig_cookies_upload_session(&conn, user_id)?;
+    let session = shared_storage.get_active_ig_cookies_upload_session(user_id).await?;
     if session.is_none() {
         log::warn!("❌ No active IG cookies upload session for user {}", user_id);
         return Ok(());
@@ -2604,7 +2601,7 @@ pub async fn handle_ig_cookies_file_upload(
                 match cookies::update_ig_cookies_from_content(&content).await {
                     Ok(path) => {
                         let _ = tokio::fs::remove_file(&file_path).await;
-                        crate::storage::db::delete_ig_cookies_upload_session_by_user(&conn, user_id)?;
+                        shared_storage.delete_ig_cookies_upload_session_by_user(user_id).await?;
                         let _ = bot.delete_message(chat_id, processing_msg.id).await;
 
                         let diagnostic_report = diagnostic.format_report();
@@ -2668,7 +2665,7 @@ pub async fn handle_ig_cookies_file_upload(
                         log::error!("❌ Failed to update IG cookies file: {}", e);
                         let _ = tokio::fs::remove_file(&file_path).await;
                         let _ = bot.delete_message(chat_id, processing_msg.id).await;
-                        crate::storage::db::delete_ig_cookies_upload_session_by_user(&conn, user_id)?;
+                        shared_storage.delete_ig_cookies_upload_session_by_user(user_id).await?;
 
                         let error_message = format!(
                             "❌ *Error updating Instagram cookies:*\n\n{}\n\n\
@@ -2688,7 +2685,7 @@ pub async fn handle_ig_cookies_file_upload(
                 log::error!("❌ Failed to read IG cookies file: {}", e);
                 let _ = tokio::fs::remove_file(&file_path).await;
                 let _ = bot.delete_message(chat_id, processing_msg.id).await;
-                crate::storage::db::delete_ig_cookies_upload_session_by_user(&conn, user_id)?;
+                shared_storage.delete_ig_cookies_upload_session_by_user(user_id).await?;
 
                 bot.send_message(
                     chat_id,
@@ -2701,7 +2698,7 @@ pub async fn handle_ig_cookies_file_upload(
         Err(e) => {
             log::error!("❌ Failed to download IG cookies file: {}", e);
             let _ = bot.delete_message(chat_id, processing_msg.id).await;
-            crate::storage::db::delete_ig_cookies_upload_session_by_user(&conn, user_id)?;
+            shared_storage.delete_ig_cookies_upload_session_by_user(user_id).await?;
 
             bot.send_message(
                 chat_id,

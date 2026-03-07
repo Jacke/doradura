@@ -8,6 +8,7 @@ use crate::extension::ExtensionRegistry;
 use crate::i18n;
 use crate::storage::cache;
 use crate::storage::db::{self, DbPool};
+use crate::storage::SharedStorage;
 use crate::storage::SubtitleCache;
 use crate::telegram::admin;
 use crate::telegram::cache as tg_cache;
@@ -39,6 +40,7 @@ pub async fn handle_menu_callback(
     bot: Bot,
     q: CallbackQuery,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     download_queue: Arc<DownloadQueue>,
     rate_limiter: Arc<RateLimiter>,
     extension_registry: Arc<ExtensionRegistry>,
@@ -96,7 +98,7 @@ pub async fn handle_menu_callback(
                     data: data_clone.clone(),
                     game_short_name: q.game_short_name.clone(),
                 };
-                if let Err(e) = handle_lyrics_callback(bot.clone(), lyr_query, Arc::clone(&db_pool)).await {
+                if let Err(e) = handle_lyrics_callback(bot.clone(), lyr_query, Arc::clone(&shared_storage)).await {
                     log::error!("Lyrics callback error: {}", e);
                 }
                 return Ok(());
@@ -114,7 +116,7 @@ pub async fn handle_menu_callback(
                     data: data_clone,
                     game_short_name: q.game_short_name.clone(),
                 };
-                if let Err(e) = handle_audio_cut_callback(bot.clone(), ac_query, Arc::clone(&db_pool)).await {
+                if let Err(e) = handle_audio_cut_callback(bot.clone(), ac_query, Arc::clone(&shared_storage)).await {
                     log::error!("Audio cut callback error: {}", e);
                 }
                 return Ok(());
@@ -130,7 +132,8 @@ pub async fn handle_menu_callback(
                     data: data_clone,
                     game_short_name: q.game_short_name.clone(),
                 };
-                if let Err(e) = handle_audio_effects_callback(bot.clone(), ae_query, Arc::clone(&db_pool)).await {
+                if let Err(e) = handle_audio_effects_callback(bot.clone(), ae_query, Arc::clone(&shared_storage)).await
+                {
                     log::error!("Audio effects callback error: {}", e);
                 }
                 return Ok(());

@@ -13,6 +13,7 @@ use crate::download::ytdlp_errors::sanitize_user_error_message;
 use crate::downsub::{DownsubError, DownsubGateway};
 use crate::i18n;
 use crate::storage::db::{self, DbPool};
+use crate::storage::SharedStorage;
 use crate::telegram::preview::{get_preview_metadata, get_preview_metadata_with_time_range, send_preview};
 use crate::telegram::Bot;
 use fluent_templates::fluent_bundle::FluentArgs;
@@ -106,6 +107,7 @@ pub async fn handle_message(
     _download_queue: Arc<DownloadQueue>,
     rate_limiter: Arc<RateLimiter>,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     alert_manager: Option<Arc<AlertManager>>,
 ) -> ResponseResult<Option<db::User>> {
     let lang = i18n::user_lang_from_pool_with_fallback(
@@ -118,38 +120,35 @@ pub async fn handle_message(
     if let Some(document) = msg.document() {
         if let Some(user) = msg.from.as_ref() {
             let user_id = user.id.0 as i64;
-            // Check if user has active cookies upload session
-            if let Ok(conn) = db::get_connection(&db_pool) {
-                if let Ok(Some(_session)) = db::get_active_cookies_upload_session(&conn, user_id) {
-                    // Handle YouTube cookies file upload
-                    if let Err(e) = crate::telegram::handle_cookies_file_upload(
-                        db_pool.clone(),
-                        &bot,
-                        msg.chat.id,
-                        user_id,
-                        document,
-                    )
-                    .await
-                    {
-                        log::error!("Failed to handle cookies file upload: {}", e);
-                    }
-                    return Ok(None);
+            if let Ok(Some(_session)) = shared_storage.get_active_cookies_upload_session(user_id).await {
+                if let Err(e) = crate::telegram::handle_cookies_file_upload(
+                    db_pool.clone(),
+                    shared_storage.clone(),
+                    &bot,
+                    msg.chat.id,
+                    user_id,
+                    document,
+                )
+                .await
+                {
+                    log::error!("Failed to handle cookies file upload: {}", e);
                 }
-                // Check if user has active IG cookies upload session
-                if let Ok(Some(_session)) = db::get_active_ig_cookies_upload_session(&conn, user_id) {
-                    if let Err(e) = crate::telegram::handle_ig_cookies_file_upload(
-                        db_pool.clone(),
-                        &bot,
-                        msg.chat.id,
-                        user_id,
-                        document,
-                    )
-                    .await
-                    {
-                        log::error!("Failed to handle IG cookies file upload: {}", e);
-                    }
-                    return Ok(None);
+                return Ok(None);
+            }
+            if let Ok(Some(_session)) = shared_storage.get_active_ig_cookies_upload_session(user_id).await {
+                if let Err(e) = crate::telegram::handle_ig_cookies_file_upload(
+                    db_pool.clone(),
+                    shared_storage.clone(),
+                    &bot,
+                    msg.chat.id,
+                    user_id,
+                    document,
+                )
+                .await
+                {
+                    log::error!("Failed to handle IG cookies file upload: {}", e);
                 }
+                return Ok(None);
             }
         }
     }
@@ -220,92 +219,89 @@ pub async fn handle_message(
 
         // Audio cut sessions (from "Cut Audio" button)
         if !text.trim().starts_with('/') {
-            if let Ok(conn) = db::get_connection(&db_pool) {
-                if let Ok(Some(session)) = db::get_active_audio_cut_session(&conn, msg.chat.id.0) {
-                    let trimmed = text.trim();
-                    if is_cancel_text(trimmed) {
-                        let _ = db::delete_audio_cut_session_by_user(&conn, msg.chat.id.0);
-                        bot.send_message(msg.chat.id, i18n::t(&lang, "commands.audio_cut_cancelled"))
-                            .await
-                            .ok();
-                        return Ok(None);
-                    }
+            if let Ok(Some(session)) = shared_storage.get_active_audio_cut_session(msg.chat.id.0).await {
+                let trimmed = text.trim();
+                if is_cancel_text(trimmed) {
+                    let _ = shared_storage.delete_audio_cut_session_by_user(msg.chat.id.0).await;
+                    bot.send_message(msg.chat.id, i18n::t(&lang, "commands.audio_cut_cancelled"))
+                        .await
+                        .ok();
+                    return Ok(None);
+                }
 
-                    let audio_session = match db::get_audio_effect_session(&conn, &session.audio_session_id) {
-                        Ok(Some(audio_session)) => audio_session,
-                        Ok(None) => {
-                            let _ = db::delete_audio_cut_session_by_user(&conn, msg.chat.id.0);
-                            bot.send_message(msg.chat.id, i18n::t(&lang, "commands.audio_session_expired"))
-                                .await
-                                .ok();
-                            return Ok(None);
-                        }
-                        Err(e) => {
-                            log::warn!("Failed to load audio session for cut: {}", e);
-                            return Ok(None);
-                        }
-                    };
-                    if audio_session.is_expired() {
-                        let _ = db::delete_audio_cut_session_by_user(&conn, msg.chat.id.0);
+                let audio_session = match shared_storage.get_audio_effect_session(&session.audio_session_id).await {
+                    Ok(Some(audio_session)) => audio_session,
+                    Ok(None) => {
+                        let _ = shared_storage.delete_audio_cut_session_by_user(msg.chat.id.0).await;
                         bot.send_message(msg.chat.id, i18n::t(&lang, "commands.audio_session_expired"))
                             .await
                             .ok();
                         return Ok(None);
                     }
-
-                    let audio_duration = Some(audio_session.duration as i64);
-                    if let Some((segments, segments_text)) = parse_audio_segments_spec(trimmed, audio_duration) {
-                        let _ = db::delete_audio_cut_session_by_user(&conn, msg.chat.id.0);
-
-                        let bot_clone = bot.clone();
-                        let db_pool_clone = db_pool.clone();
-                        let chat_id = msg.chat.id;
-                        tokio::spawn(async move {
-                            if let Err(e) = process_audio_cut(
-                                bot_clone,
-                                db_pool_clone,
-                                chat_id,
-                                audio_session,
-                                segments,
-                                segments_text,
-                            )
-                            .await
-                            {
-                                log::warn!("Failed to process audio cut: {}", e);
-                            }
-                        });
-
-                        return Ok(None);
-                    } else {
-                        crate::telegram::send_message_markdown_v2(
-                            &bot,
-                            msg.chat.id,
-                            i18n::t(&lang, "commands.audio_cut_invalid_intervals"),
-                            None,
-                        )
-                        .await
-                        .ok();
+                    Err(e) => {
+                        log::warn!("Failed to load audio session for cut: {}", e);
                         return Ok(None);
                     }
+                };
+                if audio_session.is_expired() {
+                    let _ = shared_storage.delete_audio_cut_session_by_user(msg.chat.id.0).await;
+                    bot.send_message(msg.chat.id, i18n::t(&lang, "commands.audio_session_expired"))
+                        .await
+                        .ok();
+                    return Ok(None);
+                }
+
+                let audio_duration = Some(audio_session.duration as i64);
+                if let Some((segments, segments_text)) = parse_audio_segments_spec(trimmed, audio_duration) {
+                    let _ = shared_storage.delete_audio_cut_session_by_user(msg.chat.id.0).await;
+
+                    let bot_clone = bot.clone();
+                    let db_pool_clone = db_pool.clone();
+                    let chat_id = msg.chat.id;
+                    tokio::spawn(async move {
+                        if let Err(e) = process_audio_cut(
+                            bot_clone,
+                            db_pool_clone,
+                            chat_id,
+                            audio_session,
+                            segments,
+                            segments_text,
+                        )
+                        .await
+                        {
+                            log::warn!("Failed to process audio cut: {}", e);
+                        }
+                    });
+
+                    return Ok(None);
+                } else {
+                    crate::telegram::send_message_markdown_v2(
+                        &bot,
+                        msg.chat.id,
+                        i18n::t(&lang, "commands.audio_cut_invalid_intervals"),
+                        None,
+                    )
+                    .await
+                    .ok();
+                    return Ok(None);
                 }
             }
         }
 
         // Video clip sessions (from /downloads or /cuts -> ✂️ Clip)
         if !text.trim().starts_with('/') {
-            if let Ok(conn) = db::get_connection(&db_pool) {
-                if let Ok(Some(session)) = db::get_active_video_clip_session(&conn, msg.chat.id.0) {
-                    let trimmed = text.trim();
-                    if is_cancel_text(trimmed) {
-                        let _ = db::delete_video_clip_session_by_user(&conn, msg.chat.id.0);
-                        bot.send_message(msg.chat.id, i18n::t(&lang, "commands.video_clip_cancelled"))
-                            .await
-                            .ok();
-                        return Ok(None);
-                    }
+            if let Ok(Some(session)) = shared_storage.get_active_video_clip_session(msg.chat.id.0).await {
+                let trimmed = text.trim();
+                if is_cancel_text(trimmed) {
+                    let _ = shared_storage.delete_video_clip_session_by_user(msg.chat.id.0).await;
+                    bot.send_message(msg.chat.id, i18n::t(&lang, "commands.video_clip_cancelled"))
+                        .await
+                        .ok();
+                    return Ok(None);
+                }
 
-                    // Get video duration from source
-                    let video_duration = match session.source_kind.as_str() {
+                let video_duration = if let Ok(conn) = db::get_connection(&db_pool) {
+                    match session.source_kind.as_str() {
                         "download" => db::get_download_history_entry(&conn, msg.chat.id.0, session.source_id)
                             .ok()
                             .flatten()
@@ -315,48 +311,50 @@ pub async fn handle_message(
                             .flatten()
                             .and_then(|c| c.duration),
                         _ => None,
-                    };
-
-                    if let Some((segments, segments_text, speed)) = parse_segments_spec(trimmed, video_duration) {
-                        let _ = db::delete_video_clip_session_by_user(&conn, msg.chat.id.0);
-
-                        let bot_clone = bot.clone();
-                        let db_pool_clone = db_pool.clone();
-                        let chat_id = msg.chat.id;
-                        tokio::spawn(async move {
-                            if let Err(e) = process_video_clip(
-                                bot_clone,
-                                db_pool_clone,
-                                chat_id,
-                                session,
-                                segments,
-                                segments_text,
-                                speed,
-                            )
-                            .await
-                            {
-                                log::warn!("Failed to process video clip: {}", e);
-                            }
-                        });
-
-                        return Ok(None);
-                    } else {
-                        let extra_note = if session.output_kind == "video_note" {
-                            "\n\n💡 If duration exceeds 60 seconds \\(Telegram limit for video notes\\), video will be automatically trimmed\\."
-                        } else {
-                            ""
-                        };
-                        bot.send_message(
-                            msg.chat.id,
-                            format!(
-                                "❌ Couldn't parse intervals\\.\n\nSend in format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nMultiple separated by commas\\.\nExample: `00:10-00:25, 01:00-01:10`\n\nOr commands: `full`, `first30`, `last30`, `middle30`\\.\n\n💡 You can add speed: `first30 2x`, `full 1\\.5x`\\.\n\nOr type `cancel`\\.{extra_note}",
-                            ),
-                        )
-                        .parse_mode(ParseMode::MarkdownV2)
-                        .await
-                        .ok();
-                        return Ok(None);
                     }
+                } else {
+                    None
+                };
+
+                if let Some((segments, segments_text, speed)) = parse_segments_spec(trimmed, video_duration) {
+                    let _ = shared_storage.delete_video_clip_session_by_user(msg.chat.id.0).await;
+
+                    let bot_clone = bot.clone();
+                    let db_pool_clone = db_pool.clone();
+                    let chat_id = msg.chat.id;
+                    tokio::spawn(async move {
+                        if let Err(e) = process_video_clip(
+                            bot_clone,
+                            db_pool_clone,
+                            chat_id,
+                            session,
+                            segments,
+                            segments_text,
+                            speed,
+                        )
+                        .await
+                        {
+                            log::warn!("Failed to process video clip: {}", e);
+                        }
+                    });
+
+                    return Ok(None);
+                } else {
+                    let extra_note = if session.output_kind == "video_note" {
+                        "\n\n💡 If duration exceeds 60 seconds \\(Telegram limit for video notes\\), video will be automatically trimmed\\."
+                    } else {
+                        ""
+                    };
+                    bot.send_message(
+                        msg.chat.id,
+                        format!(
+                            "❌ Couldn't parse intervals\\.\n\nSend in format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nMultiple separated by commas\\.\nExample: `00:10-00:25, 01:00-01:10`\n\nOr commands: `full`, `first30`, `last30`, `middle30`\\.\n\n💡 You can add speed: `first30 2x`, `full 1\\.5x`\\.\n\nOr type `cancel`\\.{extra_note}",
+                        ),
+                    )
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .await
+                    .ok();
+                    return Ok(None);
                 }
             }
         }

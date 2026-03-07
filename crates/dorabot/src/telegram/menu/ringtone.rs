@@ -193,7 +193,11 @@ pub async fn start_ringtone_session(
         subtitle_lang: None,
     };
 
-    db::upsert_video_clip_session(&conn, &session)
+    SharedStorage::from_sqlite_pool(Arc::clone(db_pool))
+        .await
+        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+        .upsert_video_clip_session(&session)
+        .await
         .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
     // Send prompt

@@ -113,8 +113,15 @@ fn update_cookies_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                 let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
                 let message_text = msg.text().unwrap_or_default();
 
-                if let Err(e) =
-                    handle_update_cookies_command(deps.db_pool.clone(), &bot, msg.chat.id, user_id, message_text).await
+                if let Err(e) = handle_update_cookies_command(
+                    deps.db_pool.clone(),
+                    deps.shared_storage.clone(),
+                    &bot,
+                    msg.chat.id,
+                    user_id,
+                    message_text,
+                )
+                .await
                 {
                     log::error!("❌ /update_cookies handler failed for user {}: {}", user_id, e);
                     let _ = bot
@@ -143,9 +150,15 @@ fn update_ig_cookies_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                 let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
                 let message_text = msg.text().unwrap_or_default();
 
-                if let Err(e) =
-                    handle_update_ig_cookies_command(deps.db_pool.clone(), &bot, msg.chat.id, user_id, message_text)
-                        .await
+                if let Err(e) = handle_update_ig_cookies_command(
+                    deps.db_pool.clone(),
+                    deps.shared_storage.clone(),
+                    &bot,
+                    msg.chat.id,
+                    user_id,
+                    message_text,
+                )
+                .await
                 {
                     log::error!("❌ /update_ig_cookies handler failed for user {}: {}", user_id, e);
                     let _ = bot
@@ -512,6 +525,7 @@ fn message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                     deps.download_queue.clone(),
                     deps.rate_limiter.clone(),
                     deps.db_pool.clone(),
+                    deps.shared_storage.clone(),
                     deps.alert_manager.clone(),
                 )
                 .await;
@@ -646,6 +660,7 @@ fn callback_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                 bot,
                 q,
                 deps.db_pool.clone(),
+                deps.shared_storage.clone(),
                 deps.download_queue.clone(),
                 deps.rate_limiter.clone(),
                 deps.extension_registry.clone(),

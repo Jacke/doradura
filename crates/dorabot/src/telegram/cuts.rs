@@ -1,5 +1,5 @@
 use crate::core::config;
-use crate::storage::{db, DbPool};
+use crate::storage::{db, DbPool, SharedStorage};
 use crate::telegram::commands::{process_video_clip, CutSegment};
 use crate::telegram::Bot;
 use crate::timestamps::format_timestamp;
@@ -8,6 +8,12 @@ use teloxide::prelude::*;
 use teloxide::types::{CallbackQueryId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode};
 
 const ITEMS_PER_PAGE: usize = 5;
+
+async fn shared_storage(db_pool: &Arc<DbPool>) -> Result<Arc<SharedStorage>, teloxide::RequestError> {
+    SharedStorage::from_sqlite_pool(Arc::clone(db_pool))
+        .await
+        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))
+}
 
 fn format_file_size(bytes: i64) -> String {
     if bytes < 1024 {
@@ -498,9 +504,13 @@ This may take a few minutes\\.",
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
                 };
-                db::upsert_video_clip_session(&conn, &session).map_err(|e| {
-                    teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
+                shared_storage(&db_pool)
+                    .await?
+                    .upsert_video_clip_session(&session)
+                    .await
+                    .map_err(|e| {
+                        teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+                    })?;
 
                 let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
                     "❌ Cancel".to_string(),
@@ -549,9 +559,13 @@ This may take a few minutes\\.",
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
                 };
-                db::upsert_video_clip_session(&conn, &session).map_err(|e| {
-                    teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
+                shared_storage(&db_pool)
+                    .await?
+                    .upsert_video_clip_session(&session)
+                    .await
+                    .map_err(|e| {
+                        teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+                    })?;
 
                 // Get user language for localization
                 let lang = crate::i18n::user_lang(&conn, chat_id.0);
@@ -577,9 +591,13 @@ This may take a few minutes\\.",
             }
         }
         "clip_cancel" => {
-            let conn = db::get_connection(&db_pool)
+            let _conn = db::get_connection(&db_pool)
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            db::delete_video_clip_session_by_user(&conn, chat_id.0).ok();
+            shared_storage(&db_pool)
+                .await?
+                .delete_video_clip_session_by_user(chat_id.0)
+                .await
+                .ok();
             bot.delete_message(chat_id, message_id).await.ok();
         }
         // Handle duration button clicks: cuts:dur:{position}:{cut_id}:{seconds}
@@ -652,7 +670,11 @@ This may take a few minutes\\.",
                 };
 
                 // Delete any existing session first
-                db::delete_video_clip_session_by_user(&conn, chat_id.0).ok();
+                shared_storage(&db_pool)
+                    .await?
+                    .delete_video_clip_session_by_user(chat_id.0)
+                    .await
+                    .ok();
 
                 // Create segment
                 let segment = CutSegment { start_secs, end_secs };

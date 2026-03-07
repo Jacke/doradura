@@ -1,6 +1,6 @@
 use crate::core::{config, escape_markdown};
 use crate::downsub::DownsubGateway;
-use crate::storage::{db, DbPool, SubtitleCache};
+use crate::storage::{db, DbPool, SharedStorage, SubtitleCache};
 use crate::telegram::commands::{process_video_clip, CutSegment};
 use crate::telegram::Bot;
 use crate::timestamps::{format_timestamp, select_best_timestamps, VideoTimestamp};
@@ -9,6 +9,12 @@ use teloxide::prelude::*;
 use teloxide::types::{CallbackQueryId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, MessageId, ParseMode};
 
 const ITEMS_PER_PAGE: usize = 5;
+
+async fn shared_storage(db_pool: &Arc<DbPool>) -> Result<Arc<SharedStorage>, teloxide::RequestError> {
+    SharedStorage::from_sqlite_pool(Arc::clone(db_pool))
+        .await
+        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))
+}
 
 fn is_youtube_url(url: &str) -> bool {
     // Check for the domain after the scheme to avoid false positives like "notyoutube.com"
@@ -899,9 +905,13 @@ pub async fn handle_downloads_callback(
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
                 };
-                crate::storage::db::upsert_video_clip_session(&conn, &session).map_err(|e| {
-                    teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
+                shared_storage(&db_pool)
+                    .await?
+                    .upsert_video_clip_session(&session)
+                    .await
+                    .map_err(|e| {
+                        teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+                    })?;
 
                 // Fetch timestamps and build UI
                 let timestamps = db::get_video_timestamps(&conn, download_id).unwrap_or_default();
@@ -954,9 +964,13 @@ pub async fn handle_downloads_callback(
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
                 };
-                crate::storage::db::upsert_video_clip_session(&conn, &session).map_err(|e| {
-                    teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
+                shared_storage(&db_pool)
+                    .await?
+                    .upsert_video_clip_session(&session)
+                    .await
+                    .map_err(|e| {
+                        teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+                    })?;
                 let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
                     "❌ Cancel".to_string(),
                     "downloads:clip_cancel".to_string(),
@@ -1002,9 +1016,13 @@ pub async fn handle_downloads_callback(
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
                 };
-                crate::storage::db::upsert_video_clip_session(&conn, &session).map_err(|e| {
-                    teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
+                shared_storage(&db_pool)
+                    .await?
+                    .upsert_video_clip_session(&session)
+                    .await
+                    .map_err(|e| {
+                        teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+                    })?;
 
                 // Get user language for localization
                 let lang = crate::i18n::user_lang(&conn, chat_id.0);
@@ -1066,9 +1084,13 @@ pub async fn handle_downloads_callback(
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
                 };
-                crate::storage::db::upsert_video_clip_session(&conn, &session).map_err(|e| {
-                    teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
+                shared_storage(&db_pool)
+                    .await?
+                    .upsert_video_clip_session(&session)
+                    .await
+                    .map_err(|e| {
+                        teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+                    })?;
                 let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
                     "❌ Cancel".to_string(),
                     "downloads:clip_cancel".to_string(),
@@ -1078,9 +1100,13 @@ pub async fn handle_downloads_callback(
             }
         }
         "clip_cancel" => {
-            let conn = db::get_connection(&db_pool)
+            let _conn = db::get_connection(&db_pool)
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            crate::storage::db::delete_video_clip_session_by_user(&conn, chat_id.0).ok();
+            shared_storage(&db_pool)
+                .await?
+                .delete_video_clip_session_by_user(chat_id.0)
+                .await
+                .ok();
             bot.delete_message(chat_id, message_id).await.ok();
         }
         // Show subtitle language picker for circle creation
@@ -1139,7 +1165,10 @@ pub async fn handle_downloads_callback(
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
             // Update session subtitle_lang
-            if let Some(mut session) = db::get_active_video_clip_session(&conn, chat_id.0)
+            if let Some(mut session) = shared_storage(&db_pool)
+                .await?
+                .get_active_video_clip_session(chat_id.0)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 session.subtitle_lang = if sub_lang == "none" {
@@ -1147,9 +1176,13 @@ pub async fn handle_downloads_callback(
                 } else {
                     Some(sub_lang.to_string())
                 };
-                db::upsert_video_clip_session(&conn, &session).map_err(|e| {
-                    teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
+                shared_storage(&db_pool)
+                    .await?
+                    .upsert_video_clip_session(&session)
+                    .await
+                    .map_err(|e| {
+                        teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+                    })?;
 
                 // Rebuild circle menu with updated subtitle state
                 let lang = crate::i18n::user_lang(&conn, chat_id.0);
@@ -1236,7 +1269,11 @@ pub async fn handle_downloads_callback(
                 };
 
                 // Delete any existing session first
-                db::delete_video_clip_session_by_user(&conn, chat_id.0).ok();
+                shared_storage(&db_pool)
+                    .await?
+                    .delete_video_clip_session_by_user(chat_id.0)
+                    .await
+                    .ok();
 
                 // Create segment
                 let segment = CutSegment {
@@ -1328,7 +1365,11 @@ pub async fn handle_downloads_callback(
                 };
 
                 // Delete any existing session first
-                db::delete_video_clip_session_by_user(&conn, chat_id.0).ok();
+                shared_storage(&db_pool)
+                    .await?
+                    .delete_video_clip_session_by_user(chat_id.0)
+                    .await
+                    .ok();
 
                 // Create segment
                 let segment = CutSegment { start_secs, end_secs };
@@ -2129,7 +2170,7 @@ async fn add_audio_tools_buttons_from_history(
     use crate::download::audio_effects::{self, AudioEffectSession};
     use std::path::Path;
 
-    let conn = db::get_connection(&db_pool).map_err(|e| e.to_string())?;
+    let _conn = db::get_connection(&db_pool).map_err(|e| e.to_string())?;
     let session_id = uuid::Uuid::new_v4().to_string();
     let session_file_path_raw = audio_effects::get_original_file_path(&session_id, &config::DOWNLOAD_FOLDER);
     let session_file_path = shellexpand::tilde(&session_file_path_raw).into_owned();
@@ -2153,7 +2194,12 @@ async fn add_audio_tools_buttons_from_history(
         title,
         duration,
     );
-    db::create_audio_effect_session(&conn, &session).map_err(|e| e.to_string())?;
+    SharedStorage::from_sqlite_pool(Arc::clone(&db_pool))
+        .await
+        .map_err(|e| e.to_string())?
+        .create_audio_effect_session(&session)
+        .await
+        .map_err(|e| e.to_string())?;
 
     let keyboard = InlineKeyboardMarkup::new(vec![vec![
         crate::telegram::cb("🎛️ Edit Audio", format!("ae:open:{}", session_id)),
