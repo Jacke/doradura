@@ -1,5 +1,5 @@
 use crate::core::metrics;
-use crate::storage::db::{save_task_to_queue, DbPool, TaskQueueEntry};
+use crate::storage::db::{self, save_task_to_queue, DbPool, EnqueueResult, TaskQueueEntry};
 
 /// Maximum number of tasks allowed in the queue to prevent unbounded memory growth.
 const MAX_QUEUE_SIZE: usize = 1000;
@@ -195,6 +195,8 @@ pub struct DownloadQueue {
     /// Separate from the task so deletion works even when the task is already dequeued.
     /// Entries older than 1 hour are cleaned up periodically.
     notification_msgs: Mutex<HashMap<i64, (i32, Instant)>>,
+    /// Optional backing database pool. When present, queue state is canonical in the DB.
+    db_pool: Option<Arc<DbPool>>,
 }
 
 impl Default for DownloadQueue {
@@ -218,11 +220,32 @@ impl DownloadQueue {
     /// let queue = DownloadQueue::new();
     /// ```
     pub fn new() -> Self {
+        Self::with_db_pool(None)
+    }
+
+    pub fn with_db_pool(db_pool: Option<Arc<DbPool>>) -> Self {
         Self {
             queue: Mutex::new(VecDeque::new()),
             active_tasks: Mutex::new(HashSet::new()),
             notification_msgs: Mutex::new(HashMap::new()),
+            db_pool,
         }
+    }
+
+    fn backing_pool(&self, db_pool: Option<Arc<DbPool>>) -> Option<Arc<DbPool>> {
+        db_pool.or_else(|| self.db_pool.clone())
+    }
+
+    fn idempotency_key(task: &DownloadTask) -> String {
+        format!(
+            "{}:{}:{}:{}:{}:{}",
+            task.chat_id.0,
+            task.url,
+            task.format,
+            task.video_quality.as_deref().unwrap_or("-"),
+            task.audio_bitrate.as_deref().unwrap_or("-"),
+            if task.is_video { "video" } else { "audio" }
+        )
     }
 
     /// Adds a task to the queue respecting priority order.
@@ -271,45 +294,79 @@ impl DownloadQueue {
             return;
         }
 
+        let backing_pool = self.backing_pool(db_pool);
+
         // Hold active_tasks lock while checking queue size and inserting,
         // to prevent race conditions where a task key is added but never queued.
         let mut queue = self.queue.lock().await;
 
         // Check queue size limit to prevent unbounded memory growth
-        if queue.len() >= MAX_QUEUE_SIZE {
-            log::warn!(
-                "Queue is full ({} tasks), rejecting new task: {}",
-                queue.len(),
-                task.url
-            );
+        let queue_len = if let Some(ref pool) = backing_pool {
+            match db::get_connection(pool) {
+                Ok(conn) => match db::count_active_tasks(&conn) {
+                    Ok(count) => count,
+                    Err(e) => {
+                        log::warn!("Failed to get DB-backed queue size: {}", e);
+                        queue.len()
+                    }
+                },
+                Err(e) => {
+                    log::warn!("Failed to get DB connection for queue size: {}", e);
+                    queue.len()
+                }
+            }
+        } else {
+            queue.len()
+        };
+        if queue_len >= MAX_QUEUE_SIZE {
+            log::warn!("Queue is full ({} tasks), rejecting new task: {}", queue_len, task.url);
             // Don't insert into active_tasks — task is rejected
             return;
         }
 
         // Add to the active tasks set (only after confirming queue has space)
-        active_tasks.insert(task_key);
+        active_tasks.insert(task_key.clone());
         drop(active_tasks); // Release after both checks passed
 
         // Persist the task to the database to guarantee processing
-        if let Some(ref pool) = db_pool {
+        if let Some(ref pool) = backing_pool {
             if let Ok(conn) = crate::storage::db::get_connection(pool) {
                 let priority_value = task.priority as i32;
-                if let Err(e) = save_task_to_queue(
+                let idempotency_key = Self::idempotency_key(&task);
+                match save_task_to_queue(
                     &conn,
                     &task.id,
                     task.chat_id.0,
                     &task.url,
+                    task.message_id,
                     &task.format,
                     task.is_video,
                     task.video_quality.as_deref(),
                     task.audio_bitrate.as_deref(),
+                    task.time_range.as_ref().map(|(start, _)| start.as_str()),
+                    task.time_range.as_ref().map(|(_, end)| end.as_str()),
+                    task.carousel_mask,
                     priority_value,
+                    &idempotency_key,
                 ) {
-                    log::error!("Failed to save task {} to database: {}", task.id, e);
-                } else {
-                    log::debug!("Task {} saved to database", task.id);
+                    Ok(EnqueueResult::Enqueued) => log::debug!("Task {} saved to database", task.id),
+                    Ok(EnqueueResult::Duplicate) => {
+                        log::info!("Skipping duplicate queued task {}", task.id);
+                        active_tasks_remove_after_duplicate(&self.active_tasks, task_key).await;
+                        return;
+                    }
+                    Err(e) => {
+                        log::error!("Failed to save task {} to database: {}", task.id, e);
+                        active_tasks_remove_after_duplicate(&self.active_tasks, task_key).await;
+                        return;
+                    }
                 }
             }
+        }
+
+        if backing_pool.is_some() {
+            metrics::update_queue_depth_total(queue_len + 1);
+            return;
         }
 
         // Find the insertion position respecting priority order
@@ -389,6 +446,11 @@ impl DownloadQueue {
     ///
     /// Returns the 1-based position in the queue, or `None` if no task was found.
     pub async fn get_queue_position(&self, chat_id: ChatId) -> Option<usize> {
+        if let Some(ref pool) = self.db_pool {
+            if let Ok(conn) = db::get_connection(pool) {
+                return db::get_queue_position(&conn, chat_id.0).ok().flatten();
+            }
+        }
         let queue = self.queue.lock().await;
         queue.iter().position(|task| task.chat_id == chat_id).map(|pos| pos + 1)
     }
@@ -412,6 +474,11 @@ impl DownloadQueue {
     /// # }
     /// ```
     pub async fn size(&self) -> usize {
+        if let Some(ref pool) = self.db_pool {
+            if let Ok(conn) = db::get_connection(pool) {
+                return db::count_active_tasks(&conn).unwrap_or(0);
+            }
+        }
         let queue = self.queue.lock().await;
         queue.len()
     }
@@ -442,6 +509,15 @@ impl DownloadQueue {
     /// # }
     /// ```
     pub async fn filter_tasks_by_chat_id(&self, chat_id: ChatId) -> Vec<DownloadTask> {
+        if let Some(ref pool) = self.db_pool {
+            if let Ok(conn) = db::get_connection(pool) {
+                return db::get_pending_tasks_for_user(&conn, chat_id.0)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(Self::task_from_entry)
+                    .collect();
+            }
+        }
         let queue = self.queue.lock().await;
         queue.iter().filter(|task| task.chat_id == chat_id).cloned().collect()
     }
@@ -531,6 +607,9 @@ impl DownloadQueue {
             .lock()
             .await
             .insert(chat_id.0, (msg_id, Instant::now()));
+        if self.db_pool.is_some() {
+            return;
+        }
         // Also set on the task if it's still in the queue
         let mut queue = self.queue.lock().await;
         if let Some(task) = queue.iter_mut().rev().find(|t| t.chat_id == chat_id) {
@@ -563,6 +642,9 @@ impl DownloadQueue {
     /// Called once at startup to restore tasks that survived a restart.
     /// Returns the number of tasks recovered.
     pub async fn recover_from_db(&self, entries: Vec<TaskQueueEntry>) -> usize {
+        if self.db_pool.is_some() {
+            return entries.len();
+        }
         let count = entries.len();
         let mut queue = self.queue.lock().await;
         let mut active_tasks = self.active_tasks.lock().await;
@@ -584,16 +666,19 @@ impl DownloadQueue {
                 id: entry.id,
                 url: entry.url,
                 chat_id: ChatId(entry.user_id),
-                message_id: None,
+                message_id: entry.message_id,
                 is_video: entry.is_video,
                 format: entry.format,
                 video_quality: entry.video_quality,
                 audio_bitrate: entry.audio_bitrate,
                 created_timestamp: chrono::Utc::now(),
                 priority,
-                time_range: None,
+                time_range: match (entry.time_range_start, entry.time_range_end) {
+                    (Some(start), Some(end)) => Some((start, end)),
+                    _ => None,
+                },
                 queue_message_id: None,
-                carousel_mask: None,
+                carousel_mask: entry.carousel_mask,
             };
 
             // Insert respecting priority order
@@ -621,6 +706,9 @@ impl DownloadQueue {
     /// were only in memory are persisted so they survive the restart.
     /// Returns the number of tasks flushed.
     pub async fn flush_to_db(&self, db_pool: &DbPool) -> usize {
+        if self.db_pool.is_some() {
+            return 0;
+        }
         let queue = self.queue.lock().await;
         if queue.is_empty() {
             return 0;
@@ -641,11 +729,16 @@ impl DownloadQueue {
                 &task.id,
                 task.chat_id.0,
                 &task.url,
+                task.message_id,
                 &task.format,
                 task.is_video,
                 task.video_quality.as_deref(),
                 task.audio_bitrate.as_deref(),
+                task.time_range.as_ref().map(|(start, _)| start.as_str()),
+                task.time_range.as_ref().map(|(_, end)| end.as_str()),
+                task.carousel_mask,
                 task.priority as i32,
+                &Self::idempotency_key(task),
             ) {
                 log::error!("Graceful shutdown: failed to save task {}: {}", task.id, e);
             } else {
@@ -654,6 +747,42 @@ impl DownloadQueue {
         }
         flushed
     }
+
+    pub(crate) fn task_from_entry(entry: TaskQueueEntry) -> DownloadTask {
+        let priority = match entry.priority {
+            2 => TaskPriority::High,
+            1 => TaskPriority::Medium,
+            _ => TaskPriority::Low,
+        };
+        let created_timestamp = chrono::DateTime::parse_from_rfc3339(&entry.created_at)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now());
+        DownloadTask {
+            id: entry.id,
+            url: entry.url,
+            chat_id: ChatId(entry.user_id),
+            message_id: entry.message_id,
+            is_video: entry.is_video,
+            format: entry.format,
+            video_quality: entry.video_quality,
+            audio_bitrate: entry.audio_bitrate,
+            created_timestamp,
+            priority,
+            time_range: match (entry.time_range_start, entry.time_range_end) {
+                (Some(start), Some(end)) => Some((start, end)),
+                _ => None,
+            },
+            queue_message_id: None,
+            carousel_mask: entry.carousel_mask,
+        }
+    }
+}
+
+async fn active_tasks_remove_after_duplicate(
+    active_tasks: &Mutex<HashSet<(String, i64, String)>>,
+    task_key: (String, i64, String),
+) {
+    active_tasks.lock().await.remove(&task_key);
 }
 
 #[cfg(test)]

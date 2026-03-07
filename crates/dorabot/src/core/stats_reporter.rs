@@ -97,7 +97,7 @@ pub fn get_period_stats(conn: &db::DbConnection, hours: i64) -> anyhow::Result<P
     // Failed downloads from task_queue
     let failed_downloads: i64 = query_with_logging(
         conn.query_row(
-            "SELECT COUNT(*) FROM task_queue WHERE status = 'failed' AND updated_at >= ?",
+            "SELECT COUNT(*) FROM task_queue WHERE status = 'dead_letter' AND updated_at >= ?",
             [&since_str],
             |row| row.get(0),
         ),

@@ -78,6 +78,25 @@ pub static BOT_TOKEN: Lazy<String> = Lazy::new(|| {
 /// Read from WEBHOOK_URL environment variable
 pub static WEBHOOK_URL: Lazy<Option<String>> = Lazy::new(|| env::var("WEBHOOK_URL").ok());
 
+/// Secret token expected in Telegram webhook requests.
+/// Must match the token passed when calling setWebhook.
+pub static WEBHOOK_SECRET_TOKEN: Lazy<Option<String>> = Lazy::new(|| env::var("WEBHOOK_SECRET_TOKEN").ok());
+
+/// Fixed webhook path exposed by the application.
+pub static WEBHOOK_PATH: Lazy<String> =
+    Lazy::new(|| env::var("WEBHOOK_PATH").unwrap_or_else(|_| "/telegram/webhook".to_string()));
+
+/// Local listen address for the webhook HTTP server.
+pub static WEBHOOK_LISTEN_ADDR: Lazy<String> =
+    Lazy::new(|| env::var("WEBHOOK_LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string()));
+
+/// Optional Telegram webhook max_connections setting (1-100).
+pub static WEBHOOK_MAX_CONNECTIONS: Lazy<Option<u8>> = Lazy::new(|| {
+    env::var("WEBHOOK_MAX_CONNECTIONS")
+        .ok()
+        .and_then(|value| value.parse::<u8>().ok())
+});
+
 /// Genius API client access token for structured lyrics fetching (optional).
 /// Read from GENIUS_CLIENT_TOKEN environment variable.
 /// When set, Genius is used as primary lyrics source for verse/chorus structure.
