@@ -10,6 +10,7 @@ use tokio::time::interval;
 
 use crate::core::{alerts, config, stats_reporter};
 use crate::storage::db::{self, DbPool};
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 
 /// Start the subscription expiry checker (every hour).
@@ -164,7 +165,7 @@ pub fn spawn_stats_reporter(bot: Bot, db_pool: Arc<DbPool>) {
 /// Start periodic database cleanup (every 6 hours).
 ///
 /// Removes stale data: completed/failed tasks (>7 days), old error logs (>30 days).
-pub fn spawn_db_cleanup(db_pool: Arc<DbPool>) {
+pub fn spawn_db_cleanup(db_pool: Arc<DbPool>, shared_storage: Arc<SharedStorage>) {
     tokio::spawn(async move {
         let mut interval = interval(Duration::from_secs(6 * 60 * 60)); // 6 hours
         loop {
@@ -187,9 +188,9 @@ pub fn spawn_db_cleanup(db_pool: Arc<DbPool>) {
                     Err(e) => log::warn!("DB cleanup: error_log error: {}", e),
                     _ => {}
                 }
-                match db::cleanup_old_processed_updates(&conn, 48) {
+                match shared_storage.cleanup_old_processed_updates(48).await {
                     Ok(n) if n > 0 => {
-                        total += n;
+                        total += n as usize;
                         log::info!("DB cleanup: removed {} old processed_updates entries", n);
                     }
                     Err(e) => log::warn!("DB cleanup: processed_updates error: {}", e),

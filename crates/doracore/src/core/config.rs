@@ -2,6 +2,26 @@ use once_cell::sync::Lazy;
 use std::env;
 use std::time::Duration;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DatabaseDriver {
+    Sqlite,
+    Postgres,
+}
+
+impl DatabaseDriver {
+    pub fn from_env() -> Self {
+        match env::var("DATABASE_DRIVER")
+            .unwrap_or_else(|_| "sqlite".to_string())
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "postgres" | "postgresql" => Self::Postgres,
+            _ => Self::Sqlite,
+        }
+    }
+}
+
 /// Configuration constants for the bot
 /// Cached yt-dlp binary path
 /// Read once at startup from YTDL_BIN environment variable or defaults to "yt-dlp"
@@ -59,6 +79,15 @@ pub static TEMP_FILES_DIR: Lazy<String> =
 /// Default: database.sqlite
 pub static DATABASE_PATH: Lazy<String> =
     Lazy::new(|| env::var("DATABASE_PATH").unwrap_or_else(|_| "database.sqlite".to_string()));
+
+/// Database driver
+/// Read from DATABASE_DRIVER environment variable
+/// Default: sqlite
+pub static DATABASE_DRIVER: Lazy<DatabaseDriver> = Lazy::new(DatabaseDriver::from_env);
+
+/// PostgreSQL connection string for shared multi-instance state
+/// Read from DATABASE_URL environment variable
+pub static DATABASE_URL: Lazy<Option<String>> = Lazy::new(|| env::var("DATABASE_URL").ok());
 
 /// Log file path
 /// Read from LOG_FILE_PATH environment variable
@@ -859,15 +888,25 @@ pub fn validate() -> ConfigValidation {
         errors.push("BOT_TOKEN is not set. The bot cannot start without a valid token.".to_string());
     }
 
-    // DATABASE_PATH — check parent directory exists
-    {
-        let db_path = std::path::Path::new(DATABASE_PATH.as_str());
-        if let Some(parent) = db_path.parent() {
-            if !parent.as_os_str().is_empty() && !parent.exists() {
-                errors.push(format!(
-                    "DATABASE_PATH parent directory does not exist: {}",
-                    parent.display()
-                ));
+    match *DATABASE_DRIVER {
+        DatabaseDriver::Sqlite => {
+            let db_path = std::path::Path::new(DATABASE_PATH.as_str());
+            if let Some(parent) = db_path.parent() {
+                if !parent.as_os_str().is_empty() && !parent.exists() {
+                    errors.push(format!(
+                        "DATABASE_PATH parent directory does not exist: {}",
+                        parent.display()
+                    ));
+                }
+            }
+        }
+        DatabaseDriver::Postgres => {
+            if DATABASE_URL
+                .as_ref()
+                .map(|value| value.trim().is_empty())
+                .unwrap_or(true)
+            {
+                errors.push("DATABASE_URL must be set when DATABASE_DRIVER=postgres.".to_string());
             }
         }
     }

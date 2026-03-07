@@ -4,8 +4,6 @@ use teloxide::types::Message;
 
 use super::types::{HandlerDeps, HandlerError};
 use crate::i18n;
-use crate::storage::db;
-use crate::storage::get_connection;
 use crate::telegram::Bot;
 
 /// Handle /start command
@@ -26,17 +24,17 @@ pub(super) async fn handle_start_command(bot: &Bot, msg: &Message, deps: &Handle
     }
 
     // Check if user exists
-    let user_exists = if let Ok(conn) = get_connection(&deps.db_pool) {
-        let chat_id = msg.chat.id.0;
-        matches!(db::get_user(&conn, chat_id), Ok(Some(_)))
-    } else {
-        false
-    };
+    let user_exists = deps
+        .shared_storage
+        .get_user(msg.chat.id.0)
+        .await
+        .map(|user| user.is_some())
+        .unwrap_or(false);
 
     if user_exists {
         // Existing user - show enhanced main menu
         let _ = show_enhanced_main_menu(bot, msg.chat.id, deps.db_pool.clone()).await;
-        let lang = i18n::user_lang_from_pool(&deps.db_pool, msg.chat.id.0);
+        let lang = i18n::user_lang_from_storage(&deps.shared_storage, msg.chat.id.0).await;
         if let Err(e) = setup_chat_bot_commands(bot, msg.chat.id, &lang).await {
             log::warn!("Failed to set chat-specific commands: {}", e);
         }
@@ -63,29 +61,31 @@ pub(super) async fn handle_start_command(bot: &Bot, msg: &Message, deps: &Handle
                 lang_code
             );
 
-            if let Ok(conn) = get_connection(&deps.db_pool) {
-                let username = msg.from.as_ref().and_then(|u| u.username.clone());
-                if let Err(e) = db::create_user_with_language(&conn, msg.chat.id.0, username.clone(), lang_code) {
-                    log::warn!("Failed to create user with auto-detected language: {}", e);
-                } else {
-                    // Notify admins about new user
-                    use crate::telegram::notifications::notify_admin_new_user;
-                    let bot_notify = bot.clone();
-                    let user_id = msg.chat.id.0;
-                    let first_name = msg.from.as_ref().map(|u| u.first_name.clone());
-                    let lang = lang_code.to_string();
-                    tokio::spawn(async move {
-                        notify_admin_new_user(
-                            &bot_notify,
-                            user_id,
-                            username.as_deref(),
-                            first_name.as_deref(),
-                            Some(&lang),
-                            Some("/start"),
-                        )
-                        .await;
-                    });
-                }
+            let username = msg.from.as_ref().and_then(|u| u.username.clone());
+            if let Err(e) = deps
+                .shared_storage
+                .create_user_with_language(msg.chat.id.0, username.clone(), Some(lang_code))
+                .await
+            {
+                log::warn!("Failed to create user with auto-detected language: {}", e);
+            } else {
+                // Notify admins about new user
+                use crate::telegram::notifications::notify_admin_new_user;
+                let bot_notify = bot.clone();
+                let user_id = msg.chat.id.0;
+                let first_name = msg.from.as_ref().map(|u| u.first_name.clone());
+                let lang = lang_code.to_string();
+                tokio::spawn(async move {
+                    notify_admin_new_user(
+                        &bot_notify,
+                        user_id,
+                        username.as_deref(),
+                        first_name.as_deref(),
+                        Some(&lang),
+                        Some("/start"),
+                    )
+                    .await;
+                });
             }
 
             // Show enhanced main menu in detected language
