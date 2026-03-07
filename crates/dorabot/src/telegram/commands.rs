@@ -1059,6 +1059,7 @@ pub async fn handle_message(
             }
 
             bot.send_message(msg.chat.id, i18n::t(&lang, "commands.no_links"))
+                .parse_mode(ParseMode::MarkdownV2)
                 .await?;
         } else if text.eq_ignore_ascii_case("/exit") {
             // /exit command — stop player if active
@@ -1074,9 +1075,11 @@ pub async fn handle_message(
             }
             // No active player — treat as unknown command
             bot.send_message(msg.chat.id, i18n::t(&lang, "commands.no_links"))
+                .parse_mode(ParseMode::MarkdownV2)
                 .await?;
         } else {
             bot.send_message(msg.chat.id, i18n::t(&lang, "commands.no_links"))
+                .parse_mode(ParseMode::MarkdownV2)
                 .await?;
         }
     }
