@@ -142,7 +142,18 @@ pub(super) async fn handle_downloads_command(bot: &Bot, msg: &Message, deps: &Ha
         search
     );
 
-    match show_downloads_page(bot, msg.chat.id, deps.db_pool.clone(), deps.shared_storage.clone(), 0, filter, search, None).await {
+    match show_downloads_page(
+        bot,
+        msg.chat.id,
+        deps.db_pool.clone(),
+        deps.shared_storage.clone(),
+        0,
+        filter,
+        search,
+        None,
+    )
+    .await
+    {
         Ok(_) => log::info!("✅ Downloads page shown successfully"),
         Err(e) => log::error!("❌ Failed to show downloads page: {:?}", e),
     }
@@ -196,7 +207,15 @@ pub(super) async fn handle_cuts_command(bot: &Bot, msg: &Message, deps: &Handler
         0
     };
 
-    match show_cuts_page(bot, msg.chat.id, deps.db_pool.clone(), deps.shared_storage.clone(), page).await {
+    match show_cuts_page(
+        bot,
+        msg.chat.id,
+        deps.db_pool.clone(),
+        deps.shared_storage.clone(),
+        page,
+    )
+    .await
+    {
         Ok(_) => log::info!("✅ Cuts page shown successfully"),
         Err(e) => log::error!("❌ Failed to show cuts page: {:?}", e),
     }

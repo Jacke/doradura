@@ -114,7 +114,16 @@ pub async fn handle_ringtone_callback(
             // Delete the platform selector message
             bot.delete_message(chat_id, message_id).await.ok();
 
-            start_ringtone_session(bot, chat_id, platform, source_kind, source_id, &db_pool, &shared_storage).await?;
+            start_ringtone_session(
+                bot,
+                chat_id,
+                platform,
+                source_kind,
+                source_id,
+                &db_pool,
+                &shared_storage,
+            )
+            .await?;
         }
         _ => {}
     }
@@ -227,12 +236,10 @@ pub async fn send_ringtone_instructions(
     chat_id: ChatId,
     platform: Platform,
     db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
     let lang = i18n::user_lang_from_pool(db_pool, chat_id.0);
     let instruction_text = i18n::t(&lang, platform.instructions_key());
-    let shared_storage = SharedStorage::from_sqlite_pool(Arc::clone(db_pool))
-        .await
-        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
     // Collect local image paths
     let asset_dir = std::path::Path::new(platform.asset_dir());

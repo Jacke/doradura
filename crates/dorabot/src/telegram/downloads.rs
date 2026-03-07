@@ -481,7 +481,17 @@ pub async fn handle_downloads_callback(
             };
 
             bot.delete_message(chat_id, message_id).await?;
-            show_downloads_page(bot, chat_id, db_pool, shared_storage.clone(), page, filter, search, None).await?;
+            show_downloads_page(
+                bot,
+                chat_id,
+                db_pool,
+                shared_storage.clone(),
+                page,
+                filter,
+                search,
+                None,
+            )
+            .await?;
         }
         "filter" => {
             if parts.len() < 4 {
@@ -521,7 +531,17 @@ pub async fn handle_downloads_callback(
                 Some(parts[4].to_string())
             };
             bot.delete_message(chat_id, message_id).await?;
-            show_downloads_page(bot, chat_id, db_pool, shared_storage.clone(), 0, format, search, category).await?;
+            show_downloads_page(
+                bot,
+                chat_id,
+                db_pool,
+                shared_storage.clone(),
+                0,
+                format,
+                search,
+                category,
+            )
+            .await?;
         }
         "resend" => {
             log::info!("📥 Handling resend action");
@@ -775,6 +795,7 @@ pub async fn handle_downloads_callback(
                                 if let Err(e) = add_audio_tools_buttons_from_history(
                                     bot,
                                     Arc::clone(&db_pool),
+                                    shared_storage.clone(),
                                     chat_id,
                                     sent_message.id,
                                     &telegram_file_id,
@@ -901,8 +922,9 @@ pub async fn handle_downloads_callback(
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
                 };
-                shared_storage.clone()
-                                        .upsert_video_clip_session(&session)
+                shared_storage
+                    .clone()
+                    .upsert_video_clip_session(&session)
                     .await
                     .map_err(|e| {
                         teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
@@ -959,8 +981,9 @@ pub async fn handle_downloads_callback(
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
                 };
-                shared_storage.clone()
-                                        .upsert_video_clip_session(&session)
+                shared_storage
+                    .clone()
+                    .upsert_video_clip_session(&session)
                     .await
                     .map_err(|e| {
                         teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
@@ -1010,8 +1033,9 @@ pub async fn handle_downloads_callback(
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
                 };
-                shared_storage.clone()
-                                        .upsert_video_clip_session(&session)
+                shared_storage
+                    .clone()
+                    .upsert_video_clip_session(&session)
                     .await
                     .map_err(|e| {
                         teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
@@ -1077,8 +1101,9 @@ pub async fn handle_downloads_callback(
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
                 };
-                shared_storage.clone()
-                                        .upsert_video_clip_session(&session)
+                shared_storage
+                    .clone()
+                    .upsert_video_clip_session(&session)
                     .await
                     .map_err(|e| {
                         teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
@@ -1094,8 +1119,9 @@ pub async fn handle_downloads_callback(
         "clip_cancel" => {
             let _conn = db::get_connection(&db_pool)
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            shared_storage.clone()
-                                .delete_video_clip_session_by_user(chat_id.0)
+            shared_storage
+                .clone()
+                .delete_video_clip_session_by_user(chat_id.0)
                 .await
                 .ok();
             bot.delete_message(chat_id, message_id).await.ok();
@@ -1156,8 +1182,9 @@ pub async fn handle_downloads_callback(
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
             // Update session subtitle_lang
-            if let Some(mut session) = shared_storage.clone()
-                                .get_active_video_clip_session(chat_id.0)
+            if let Some(mut session) = shared_storage
+                .clone()
+                .get_active_video_clip_session(chat_id.0)
                 .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
@@ -1166,8 +1193,9 @@ pub async fn handle_downloads_callback(
                 } else {
                     Some(sub_lang.to_string())
                 };
-                shared_storage.clone()
-                                        .upsert_video_clip_session(&session)
+                shared_storage
+                    .clone()
+                    .upsert_video_clip_session(&session)
                     .await
                     .map_err(|e| {
                         teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
@@ -1258,8 +1286,9 @@ pub async fn handle_downloads_callback(
                 };
 
                 // Delete any existing session first
-                shared_storage.clone()
-                                        .delete_video_clip_session_by_user(chat_id.0)
+                shared_storage
+                    .clone()
+                    .delete_video_clip_session_by_user(chat_id.0)
                     .await
                     .ok();
 
@@ -1277,6 +1306,7 @@ pub async fn handle_downloads_callback(
                     if let Err(e) = process_video_clip(
                         bot_clone,
                         db_pool_clone,
+                        shared_storage.clone(),
                         chat_id,
                         session,
                         vec![segment],
@@ -1353,8 +1383,9 @@ pub async fn handle_downloads_callback(
                 };
 
                 // Delete any existing session first
-                shared_storage.clone()
-                                        .delete_video_clip_session_by_user(chat_id.0)
+                shared_storage
+                    .clone()
+                    .delete_video_clip_session_by_user(chat_id.0)
                     .await
                     .ok();
 
@@ -1369,6 +1400,7 @@ pub async fn handle_downloads_callback(
                     if let Err(e) = process_video_clip(
                         bot_clone,
                         db_pool_clone,
+                        shared_storage.clone(),
                         chat_id,
                         session,
                         vec![segment],
@@ -2146,7 +2178,8 @@ fn request_error_from_text(text: String) -> teloxide::RequestError {
 
 async fn add_audio_tools_buttons_from_history(
     bot: &Bot,
-    db_pool: Arc<DbPool>,
+    _db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     chat_id: ChatId,
     message_id: MessageId,
     telegram_file_id: &str,
@@ -2180,9 +2213,7 @@ async fn add_audio_tools_buttons_from_history(
         title,
         duration,
     );
-    SharedStorage::from_sqlite_pool(Arc::clone(&db_pool))
-        .await
-        .map_err(|e| e.to_string())?
+    shared_storage
         .create_audio_effect_session(&session)
         .await
         .map_err(|e| e.to_string())?;

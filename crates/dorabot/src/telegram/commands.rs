@@ -326,6 +326,7 @@ pub async fn handle_message(
                         if let Err(e) = process_video_clip(
                             bot_clone,
                             db_pool_clone,
+                            shared_storage.clone(),
                             chat_id,
                             session,
                             segments,
@@ -1388,6 +1389,7 @@ fn parse_audio_command_segment(text: &str, audio_duration: Option<i64>) -> Optio
 pub async fn process_video_clip(
     bot: Bot,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     chat_id: ChatId,
     session: db::VideoClipSession,
     segments: Vec<CutSegment>,
@@ -2203,8 +2205,14 @@ pub async fn process_video_clip(
         } else {
             crate::telegram::menu::ringtone::Platform::Android
         };
-        if let Err(e) =
-            crate::telegram::menu::ringtone::send_ringtone_instructions(&bot, chat_id, platform, &db_pool).await
+        if let Err(e) = crate::telegram::menu::ringtone::send_ringtone_instructions(
+            &bot,
+            chat_id,
+            platform,
+            &db_pool,
+            &shared_storage,
+        )
+        .await
         {
             log::warn!("Failed to send ringtone instructions: {}", e);
         }
