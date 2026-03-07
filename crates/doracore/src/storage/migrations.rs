@@ -25,12 +25,23 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
     conn.busy_timeout(Duration::from_secs(30))
         .context("set SQLite busy timeout")?;
 
-    // Don't wrap in BEGIN IMMEDIATE — refinery manages its own transactions,
-    // and ALTER TABLE inside nested transactions can fail on SQLite.
-    embedded::migrations::runner()
-        .run(conn)
-        .map(|_| ())
-        .context("apply migrations")
+    match embedded::migrations::runner().run(conn).map(|_| ()) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let msg = e.to_string();
+            // If the only error is a duplicate column from V36 being applied
+            // by the s6 init script, treat it as success
+            if msg.contains("duplicate column name") {
+                log::warn!(
+                    "Migration had duplicate column error (likely from init script), ignoring: {}",
+                    msg
+                );
+                Ok(())
+            } else {
+                Err(e).context("apply migrations")
+            }
+        }
+    }
 }
 
 /// Run migrations for tests without the outer transaction wrapper

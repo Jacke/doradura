@@ -208,16 +208,7 @@ RUN printf '%s\n' \
     '    DB_DIR=\$(dirname \"\$DB_PATH\")' \
     '    mkdir -p \"\$DB_DIR\"' \
     '    chmod 755 \"\$DB_DIR\" 2>/dev/null || true' \
-    '    echo Running database migrations...' \
-    '    MIGRATIONS_DIR=/app/migrations' \
-    '    if [ -d \"\$MIGRATIONS_DIR\" ]; then' \
-    '      for migration in \$(ls -1 \"\$MIGRATIONS_DIR\"/*.sql 2>/dev/null | sort -V); do' \
-    '        migration_name=\$(basename \"\$migration\")' \
-    '        echo \"  Applying: \$migration_name\"' \
-    '        sqlite3 \"\$DB_PATH\" < \"\$migration\" 2>&1 || echo \"  (already applied or error)\"' \
-    '      done' \
-    '      echo Migrations complete' \
-    '    fi' \
+    '    echo Database directory ready. Migrations will be applied by refinery on bot startup.' \
     '  "' \
     '}' \
     'foreground { echo "Setting database permissions..." }' \
