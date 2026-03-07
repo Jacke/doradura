@@ -27,6 +27,7 @@ pub mod startup;
 pub mod telegram;
 pub mod vlipsy;
 pub mod watcher;
+pub mod webhook;
 
 // ── Shared modules — re-exported from doracore ───────────────────────────────
 pub use doracore::conversion;

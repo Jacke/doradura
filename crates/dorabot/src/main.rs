@@ -10,7 +10,7 @@
 use anyhow::Result;
 use dotenvy::dotenv;
 
-use doradura::cli::{Cli, Commands};
+use doradura::cli::{Cli, Commands, WebhookCommand};
 use doradura::core::{config, init_logger};
 
 #[tokio::main]
@@ -77,6 +77,18 @@ async fn main() -> Result<()> {
             verbose,
         }) => doradura::cli_commands::run_cli_download(url, format, quality, bitrate, output, verbose).await,
         Some(Commands::Info { url, json }) => doradura::cli_commands::run_cli_info(url, json).await,
+        Some(Commands::Webhook { command }) => {
+            let bot = doradura::telegram::create_bot()?;
+            match command {
+                WebhookCommand::Set { drop_pending_updates } => {
+                    doradura::webhook::set_webhook(&bot, drop_pending_updates).await
+                }
+                WebhookCommand::Delete { drop_pending_updates } => {
+                    doradura::webhook::delete_webhook(&bot, drop_pending_updates).await
+                }
+                WebhookCommand::Info => doradura::webhook::print_webhook_info(&bot).await,
+            }
+        }
         None => {
             log::info!("No command specified, running bot in default mode");
             doradura::startup::run_bot(false).await

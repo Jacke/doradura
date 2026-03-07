@@ -8,6 +8,7 @@ use std::sync::Arc;
 use teloxide::prelude::*;
 use tokio::time::interval;
 
+use crate::core::retry::Retryable;
 use crate::core::{alerts, config, rate_limiter};
 use crate::download::queue::{self as queue};
 use crate::download::ytdlp_errors::sanitize_user_error_message;
@@ -27,6 +28,10 @@ pub async fn process_queue(
     db_pool: Arc<DbPool>,
     alert_manager: Option<Arc<alerts::AlertManager>>,
 ) {
+    const LEASE_SECONDS: i64 = 300;
+    const HEARTBEAT_SECONDS: u64 = 20;
+    const REAPER_SECONDS: u64 = 60;
+
     let max_concurrent = config::queue::max_concurrent_downloads();
     log::info!(
         "Download queue: max_concurrent={}, inter_delay={}ms",
@@ -36,6 +41,7 @@ pub async fn process_queue(
     let semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent));
     let mut interval = interval(config::queue::check_interval());
     let last_download_start = Arc::new(tokio::sync::Mutex::new(std::time::Instant::now()));
+    let worker_id = format!("{}-{}", std::process::id(), uuid::Uuid::new_v4());
 
     // Periodic cleanup of stale notification_msgs (every 30 min)
     let queue_for_notif_cleanup = Arc::clone(&queue);
@@ -50,9 +56,63 @@ pub async fn process_queue(
         }
     });
 
+    let heartbeat_pool = Arc::clone(&db_pool);
+    let heartbeat_worker_id = worker_id.clone();
+    tokio::spawn(async move {
+        let mut heartbeat_interval = tokio::time::interval(std::time::Duration::from_secs(HEARTBEAT_SECONDS));
+        loop {
+            heartbeat_interval.tick().await;
+            match db::get_connection(&heartbeat_pool) {
+                Ok(conn) => {
+                    if let Err(e) = db::heartbeat_worker_leases(&conn, &heartbeat_worker_id, LEASE_SECONDS) {
+                        log::warn!("Queue heartbeat failed for {}: {}", heartbeat_worker_id, e);
+                    }
+                }
+                Err(e) => log::warn!("Queue heartbeat connection failed: {}", e),
+            }
+        }
+    });
+
+    let reaper_pool = Arc::clone(&db_pool);
+    tokio::spawn(async move {
+        let mut reaper_interval = tokio::time::interval(std::time::Duration::from_secs(REAPER_SECONDS));
+        loop {
+            reaper_interval.tick().await;
+            match db::get_connection(&reaper_pool) {
+                Ok(conn) => match db::recover_expired_leases(&conn, config::admin::MAX_TASK_RETRIES) {
+                    Ok(recovered) if recovered > 0 => {
+                        log::warn!("Recovered {} expired queue lease(s)", recovered);
+                    }
+                    Ok(_) => {}
+                    Err(e) => log::warn!("Queue reaper failed: {}", e),
+                },
+                Err(e) => log::warn!("Queue reaper connection failed: {}", e),
+            }
+        }
+    });
+
     loop {
         interval.tick().await;
-        if let Some(task) = queue.get_task().await {
+        if semaphore.available_permits() == 0 {
+            continue;
+        }
+
+        let claimed_task = match db::get_connection(&db_pool) {
+            Ok(conn) => match db::claim_next_task(&conn, &worker_id, LEASE_SECONDS) {
+                Ok(task) => task,
+                Err(e) => {
+                    log::warn!("Failed to claim next queue task: {}", e);
+                    continue;
+                }
+            },
+            Err(e) => {
+                log::warn!("Failed to get queue DB connection: {}", e);
+                continue;
+            }
+        };
+
+        if let Some(task_entry) = claimed_task {
+            let task = queue::DownloadQueue::task_from_entry(task_entry);
             log::info!("Got task {} from queue", task.id);
             let bot = bot.clone();
             let rate_limiter = Arc::clone(&rate_limiter);
@@ -61,6 +121,7 @@ pub async fn process_queue(
             let last_download_start = Arc::clone(&last_download_start);
             let alert_manager = alert_manager.clone();
             let queue_for_cleanup = Arc::clone(&queue);
+            let worker_id = worker_id.clone();
 
             tokio::spawn(async move {
                 process_single_task(
@@ -72,6 +133,7 @@ pub async fn process_queue(
                     last_download_start,
                     alert_manager,
                     queue_for_cleanup,
+                    worker_id,
                 )
                 .await;
             });
@@ -90,6 +152,7 @@ async fn process_single_task(
     last_download_start: Arc<tokio::sync::Mutex<std::time::Instant>>,
     alert_manager: Option<Arc<alerts::AlertManager>>,
     queue_for_cleanup: Arc<DownloadQueue>,
+    worker_id: String,
 ) {
     // Acquire permit from semaphore (will wait if all permits are taken)
     let _permit = match semaphore.acquire().await {
@@ -97,7 +160,14 @@ async fn process_single_task(
         Err(e) => {
             log::error!("Failed to acquire semaphore permit for task {}: {}", task.id, e);
             if let Ok(conn) = db::get_connection(&db_pool) {
-                let _ = db::mark_task_failed(&conn, &task.id, &format!("Failed to acquire semaphore: {}", e));
+                let _ = db::mark_task_failed(
+                    &conn,
+                    &task.id,
+                    &worker_id,
+                    &format!("Failed to acquire semaphore: {}", e),
+                    false,
+                    config::admin::MAX_TASK_RETRIES,
+                );
             }
             queue_for_cleanup
                 .remove_active_task(&task.url, task.chat_id, &task.format)
@@ -138,7 +208,7 @@ async fn process_single_task(
 
     // Mark the task as processing
     if let Ok(conn) = db::get_connection(&db_pool) {
-        if let Err(e) = db::mark_task_processing(&conn, &task.id) {
+        if let Err(e) = db::mark_task_processing(&conn, &task.id, &worker_id) {
             log::warn!("Failed to mark task {} as processing: {}", task.id, e);
         }
     }
@@ -149,7 +219,14 @@ async fn process_single_task(
             log::error!("Invalid URL for task {}: {} - {}", task.id, task.url, e);
             let error_msg = format!("Invalid URL: {}", e);
             if let Ok(conn) = db::get_connection(&db_pool) {
-                let _ = db::mark_task_failed(&conn, &task.id, &error_msg);
+                let _ = db::mark_task_failed(
+                    &conn,
+                    &task.id,
+                    &worker_id,
+                    &error_msg,
+                    false,
+                    config::admin::MAX_TASK_RETRIES,
+                );
                 notify_admin_task_failed(
                     bot.clone(),
                     Arc::clone(&db_pool),
@@ -258,7 +335,7 @@ async fn process_single_task(
     match result {
         Ok(_) => {
             if let Ok(conn) = db::get_connection(&db_pool) {
-                if let Err(e) = db::mark_task_completed(&conn, &task_id) {
+                if let Err(e) = db::mark_task_completed(&conn, &task_id, &worker_id) {
                     log::warn!("Failed to mark task {} as completed: {}", task_id, e);
                 }
             }
@@ -275,13 +352,21 @@ async fn process_single_task(
             );
 
             if let Ok(conn) = db::get_connection(&db_pool) {
-                if let Err(db_err) = db::mark_task_failed(&conn, &task_id, &user_error_msg) {
+                let should_retry = e.is_retryable();
+                if let Err(db_err) = db::mark_task_failed(
+                    &conn,
+                    &task_id,
+                    &worker_id,
+                    &user_error_msg,
+                    should_retry,
+                    config::admin::MAX_TASK_RETRIES,
+                ) {
                     log::error!("Failed to mark task {} as failed in DB: {}", task_id, db_err);
                 } else {
                     let should_notify = db::get_task_by_id(&conn, &task_id)
                         .ok()
                         .flatten()
-                        .is_some_and(|t| t.retry_count < config::admin::MAX_TASK_RETRIES);
+                        .is_some_and(|t| !should_retry || t.status == "dead_letter");
                     drop(conn);
                     if should_notify {
                         notify_admin_task_failed(

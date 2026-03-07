@@ -187,6 +187,14 @@ pub fn spawn_db_cleanup(db_pool: Arc<DbPool>) {
                     Err(e) => log::warn!("DB cleanup: error_log error: {}", e),
                     _ => {}
                 }
+                match db::cleanup_old_processed_updates(&conn, 48) {
+                    Ok(n) if n > 0 => {
+                        total += n;
+                        log::info!("DB cleanup: removed {} old processed_updates entries", n);
+                    }
+                    Err(e) => log::warn!("DB cleanup: processed_updates error: {}", e),
+                    _ => {}
+                }
                 if total > 0 {
                     log::info!("DB cleanup: {} rows removed total", total);
                 }

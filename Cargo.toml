@@ -18,6 +18,7 @@ refinery = { version = "0.8", features = ["rusqlite"] }
 
 # HTTP
 reqwest = { version = "0.12", default-features = false, features = ["json", "socks", "stream", "rustls-tls"] }
+axum = "0.8"
 
 # Error handling
 thiserror = "1.0"
@@ -54,7 +55,7 @@ prometheus = "0.14"
 clap = { version = "4.5", features = ["derive", "cargo"] }
 
 # Telegram
-teloxide = { version = "0.17", features = ["macros"] }
+teloxide = { version = "0.17", features = ["macros", "webhooks-axum"] }
 
 # TUI
 ratatui = "0.30"
