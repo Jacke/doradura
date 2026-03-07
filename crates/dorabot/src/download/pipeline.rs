@@ -24,6 +24,7 @@ use crate::download::send::{
 };
 use crate::download::source::{DownloadOutput, DownloadSource, MediaMetadata, SourceProgress, SourceRegistry};
 use crate::storage::db::{self as db, save_download_history, DbPool};
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use std::fs;
 use std::sync::Arc;
@@ -138,6 +139,7 @@ pub async fn download_phase(
     registry: &SourceRegistry,
     progress_msg: &mut ProgressMessage,
     message_id: Option<i32>,
+    _shared_storage: Option<&Arc<SharedStorage>>,
 ) -> Result<DownloadPhaseResult, PipelineError> {
     let file_format_str = format.label().to_string();
 
@@ -415,6 +417,7 @@ pub async fn execute(
     url: &Url,
     format: &PipelineFormat,
     db_pool: Option<&Arc<DbPool>>,
+    shared_storage: Option<&Arc<SharedStorage>>,
     message_id: Option<i32>,
     _alert_manager: Option<&Arc<crate::core::alerts::AlertManager>>,
     registry: &SourceRegistry,
@@ -515,7 +518,17 @@ pub async fn execute(
         }
     }
 
-    let phase = download_phase(bot, chat_id, url, format, registry, progress_msg, message_id).await?;
+    let phase = download_phase(
+        bot,
+        chat_id,
+        url,
+        format,
+        registry,
+        progress_msg,
+        message_id,
+        shared_storage,
+    )
+    .await?;
     let DownloadPhaseResult {
         output: download_output,
         title,
@@ -555,13 +568,18 @@ pub async fn execute(
     // ── Step 8: Send to Telegram ──
     let duration = download_output.duration_secs.unwrap_or(0);
 
-    let send_as_document = if let Some(pool) = db_pool {
-        match db::get_connection(pool) {
-            Ok(conn) => match format {
-                PipelineFormat::Audio { .. } => db::get_user_send_audio_as_document(&conn, chat_id.0).unwrap_or(0) == 1,
-                PipelineFormat::Video { .. } => db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0) == 1,
-            },
-            Err(_) => false,
+    let send_as_document = if let Some(storage) = shared_storage {
+        match format {
+            PipelineFormat::Audio { .. } => storage
+                .get_user_send_audio_as_document(chat_id.0)
+                .await
+                .map(|value| value == 1)
+                .unwrap_or(false),
+            PipelineFormat::Video { .. } => storage
+                .get_user_send_as_document(chat_id.0)
+                .await
+                .map(|value| value == 1)
+                .unwrap_or(false),
         }
     } else {
         false

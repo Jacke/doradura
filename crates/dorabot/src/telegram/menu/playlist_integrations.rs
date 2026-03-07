@@ -600,7 +600,16 @@ async fn play_all(bot: &Bot, chat_id: ChatId, message_id: MessageId, playlist_id
 
             let result = timeout(
                 TRACK_DOWNLOAD_TIMEOUT,
-                pipeline::download_phase(&bot_clone, chat_id, &url, &format, registry, &mut progress_msg, None),
+                pipeline::download_phase(
+                    &bot_clone,
+                    chat_id,
+                    &url,
+                    &format,
+                    registry,
+                    &mut progress_msg,
+                    None,
+                    None,
+                ),
             )
             .await;
 
@@ -881,7 +890,7 @@ async fn download_single_track(bot: &Bot, chat_id: ChatId, playlist_id: i64, tra
 
     let result = timeout(
         TRACK_DOWNLOAD_TIMEOUT,
-        pipeline::download_phase(bot, chat_id, &url, &format, registry, &mut progress_msg, None),
+        pipeline::download_phase(bot, chat_id, &url, &format, registry, &mut progress_msg, None, None),
     )
     .await;
 

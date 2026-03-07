@@ -448,7 +448,7 @@ async fn download_player_track(
 
     // Download phase
     let phase_result =
-        match pipeline::download_phase(bot, chat_id, &url, &format, registry, &mut progress_msg, None).await {
+        match pipeline::download_phase(bot, chat_id, &url, &format, registry, &mut progress_msg, None, None).await {
             Ok(r) => {
                 // Track progress message for cleanup if Stop is pressed mid-download
                 if let Some(msg_id) = progress_msg.message_id {

@@ -20,6 +20,7 @@ use crate::download::progress::{DownloadStatus, ProgressBarStyle, ProgressMessag
 use crate::download::send::{send_error_with_sticker, send_video_with_retry};
 use crate::download::source::SourceRegistry;
 use crate::storage::db::{self as db, save_download_history, save_video_timestamps, DbPool};
+use crate::storage::SharedStorage;
 use crate::telegram::cache::PREVIEW_CACHE;
 use crate::telegram::Bot;
 use chrono::{DateTime, Utc};
@@ -42,6 +43,7 @@ pub async fn download_and_send_video(
     rate_limiter: Arc<RateLimiter>,
     _created_timestamp: DateTime<Utc>,
     db_pool: Option<Arc<DbPool>>,
+    shared_storage: Option<Arc<SharedStorage>>,
     video_quality: Option<String>,
     message_id: Option<i32>,
     alert_manager: Option<Arc<crate::core::alerts::AlertManager>>,
@@ -50,33 +52,31 @@ pub async fn download_and_send_video(
     let bot_clone = bot.clone();
     let _rate_limiter = rate_limiter;
     let db_pool_clone = db_pool.clone();
+    let shared_storage_clone = shared_storage.clone();
 
     tokio::spawn(async move {
-        let lang = db_pool_clone
-            .as_ref()
-            .map(|pool| crate::i18n::user_lang_from_pool(pool, chat_id.0))
-            .unwrap_or_else(|| crate::i18n::lang_from_code("ru"));
+        let lang = if let Some(ref storage) = shared_storage_clone {
+            crate::i18n::user_lang_from_storage(storage, chat_id.0).await
+        } else {
+            crate::i18n::lang_from_code("ru")
+        };
         let mut progress_msg = ProgressMessage::new(chat_id, lang);
-        if let Some(ref pool) = db_pool_clone {
-            if let Ok(conn) = db::get_connection(pool) {
-                if let Ok(style_str) = db::get_user_progress_bar_style(&conn, chat_id.0) {
-                    progress_msg.style = ProgressBarStyle::parse(&style_str);
-                }
+        if let Some(ref storage) = shared_storage_clone {
+            if let Ok(style_str) = storage.get_user_progress_bar_style(chat_id.0).await {
+                progress_msg.style = ProgressBarStyle::parse(&style_str);
             }
         }
         let start_time = std::time::Instant::now();
 
         // Metrics setup
-        let user_plan = if let Some(ref pool) = db_pool_clone {
-            if let Ok(conn) = db::get_connection(pool) {
-                db::get_user(&conn, chat_id.0)
-                    .ok()
-                    .flatten()
-                    .map(|u| u.plan)
-                    .unwrap_or_default()
-            } else {
-                Plan::default()
-            }
+        let user_plan = if let Some(ref storage) = shared_storage_clone {
+            storage
+                .get_user(chat_id.0)
+                .await
+                .ok()
+                .flatten()
+                .map(|u| u.plan)
+                .unwrap_or_default()
         } else {
             Plan::default()
         };
@@ -104,6 +104,7 @@ pub async fn download_and_send_video(
                 registry,
                 &mut progress_msg,
                 message_id,
+                shared_storage_clone.as_ref(),
             )
             .await
             .map_err(|e| e.into_app_error())?;
@@ -158,13 +159,21 @@ pub async fn download_and_send_video(
             }
 
             // Burn subtitles if user has the setting enabled
-            let actual_file_path = maybe_burn_subtitles(&actual_file_path, &url, &db_pool_clone, chat_id).await;
+            let actual_file_path = maybe_burn_subtitles(
+                &actual_file_path,
+                &url,
+                &db_pool_clone,
+                shared_storage_clone.as_ref(),
+                chat_id,
+            )
+            .await;
 
             // Get user preference for send_as_document
-            let send_as_document = if let Some(ref pool) = db_pool_clone {
-                db::get_connection(pool)
-                    .ok()
-                    .map(|conn| db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0) == 1)
+            let send_as_document = if let Some(ref storage) = shared_storage_clone {
+                storage
+                    .get_user_send_as_document(chat_id.0)
+                    .await
+                    .map(|value| value == 1)
                     .unwrap_or(false)
             } else {
                 false
@@ -492,7 +501,13 @@ async fn get_thumbnail_url(url: &Url) -> Option<String> {
 /// 2. User DB settings (download_subtitles + burn_subtitles flags with "en,ru")
 ///
 /// Returns the final file path (with or without burned subtitles).
-async fn maybe_burn_subtitles(file_path: &str, url: &Url, db_pool: &Option<Arc<DbPool>>, chat_id: ChatId) -> String {
+async fn maybe_burn_subtitles(
+    file_path: &str,
+    url: &Url,
+    db_pool: &Option<Arc<DbPool>>,
+    shared_storage: Option<&Arc<SharedStorage>>,
+    chat_id: ChatId,
+) -> String {
     // Check for per-URL burn subtitle language (from preview button)
     let cached_lang = crate::telegram::cache::get_burn_sub_lang(url.as_str()).await;
 
@@ -501,15 +516,11 @@ async fn maybe_burn_subtitles(file_path: &str, url: &Url, db_pool: &Option<Arc<D
         lang
     } else {
         // Fall through to existing DB settings check
-        let Some(ref pool) = db_pool else {
+        let Some(storage) = shared_storage else {
             return file_path.to_string();
         };
-        let Ok(conn) = db::get_connection(pool) else {
-            return file_path.to_string();
-        };
-
-        let download_subs = db::get_user_download_subtitles(&conn, chat_id.0).unwrap_or(false);
-        let burn_subs = db::get_user_burn_subtitles(&conn, chat_id.0).unwrap_or(false);
+        let download_subs = storage.get_user_download_subtitles(chat_id.0).await.unwrap_or(false);
+        let burn_subs = storage.get_user_burn_subtitles(chat_id.0).await.unwrap_or(false);
 
         if !(download_subs && burn_subs) {
             return file_path.to_string();
@@ -520,11 +531,12 @@ async fn maybe_burn_subtitles(file_path: &str, url: &Url, db_pool: &Option<Arc<D
     };
 
     // Fetch subtitle style from DB (use default if no pool or error)
-    let subtitle_style = db_pool
-        .as_ref()
-        .and_then(|pool| db::get_connection(pool).ok())
-        .and_then(|conn| db::get_user_subtitle_style(&conn, chat_id.0).ok())
-        .unwrap_or_default();
+    let subtitle_style = if let Some(storage) = shared_storage {
+        storage.get_user_subtitle_style(chat_id.0).await.unwrap_or_default()
+    } else {
+        let _ = db_pool;
+        Default::default()
+    };
 
     let safe_base = std::path::Path::new(file_path)
         .file_stem()
