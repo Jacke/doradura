@@ -1168,10 +1168,10 @@ pub fn set_user_language(conn: &DbConnection, telegram_id: i64, language: &str) 
 pub fn get_user_counts(conn: &DbConnection) -> Result<UserCounts> {
     let mut counts = UserCounts::default();
     let mut stmt = conn.prepare(
-        "SELECT COALESCE(s.plan, u.plan) as plan, COALESCE(u.is_blocked, 0) as is_blocked, COUNT(*)
+        "SELECT COALESCE(s.plan, u.plan) as effective_plan, COALESCE(u.is_blocked, 0) as is_blocked, COUNT(*)
          FROM users u
          LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
-         GROUP BY plan, is_blocked",
+         GROUP BY effective_plan, is_blocked",
     )?;
     let rows = stmt.query_map([], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?, row.get::<_, usize>(2)?))
@@ -4811,5 +4811,46 @@ mod tests {
         let cached: Vec<Option<String>> = vec![];
         let all_cached = total > 0 && cached.iter().all(|id| id.is_some());
         assert!(!all_cached, "all_cached with total=0 must be false");
+    }
+
+    #[test]
+    fn test_get_user_counts_no_ambiguous_column() {
+        let pool = setup_test_db();
+        let conn = get_connection(&pool).unwrap();
+
+        // Create a few users with different plans
+        create_user(&conn, 1001, Some("user_free".to_string())).unwrap();
+        create_user(&conn, 1002, Some("user_premium".to_string())).unwrap();
+        // Upgrade one user to premium via subscription
+        conn.execute(
+            "INSERT OR REPLACE INTO subscriptions (user_id, plan, expires_at)
+             VALUES (1002, 'premium', datetime('now', '+30 days'))",
+            [],
+        )
+        .unwrap();
+
+        // This used to crash with "ambiguous column name: plan"
+        let counts = get_user_counts(&conn).unwrap();
+        assert_eq!(counts.total, 2);
+        assert!(counts.free >= 1);
+        assert!(counts.premium >= 1);
+    }
+
+    #[test]
+    fn test_get_users_paginated_no_ambiguous_column() {
+        let pool = setup_test_db();
+        let conn = get_connection(&pool).unwrap();
+
+        create_user(&conn, 2001, Some("pag_user1".to_string())).unwrap();
+        create_user(&conn, 2002, Some("pag_user2".to_string())).unwrap();
+
+        // Should not crash with ambiguous column errors
+        let (users, total) = get_users_paginated(&conn, None, 0, 10).unwrap();
+        assert_eq!(total, 2);
+        assert_eq!(users.len(), 2);
+
+        let (filtered, count) = get_users_paginated(&conn, Some("free"), 0, 10).unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(filtered.len(), 2);
     }
 }
