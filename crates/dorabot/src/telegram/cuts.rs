@@ -9,12 +9,6 @@ use teloxide::types::{CallbackQueryId, InlineKeyboardButton, InlineKeyboardMarku
 
 const ITEMS_PER_PAGE: usize = 5;
 
-async fn shared_storage(db_pool: &Arc<DbPool>) -> Result<Arc<SharedStorage>, teloxide::RequestError> {
-    SharedStorage::from_sqlite_pool(Arc::clone(db_pool))
-        .await
-        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))
-}
-
 fn format_file_size(bytes: i64) -> String {
     if bytes < 1024 {
         format!("{} B", bytes)
@@ -83,7 +77,7 @@ fn format_duration_short(seconds: i64) -> String {
     format!("{}:{:02}", mins, secs)
 }
 
-pub async fn show_cuts_page(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>, page: usize) -> ResponseResult<Message> {
+pub async fn show_cuts_page(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>, _shared_storage: Arc<SharedStorage>, page: usize) -> ResponseResult<Message> {
     let conn = db::get_connection(&db_pool)
         .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
@@ -200,6 +194,7 @@ pub async fn handle_cuts_callback(
     message_id: MessageId,
     data: &str,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     username: Option<String>,
 ) -> ResponseResult<()> {
     bot.answer_callback_query(callback_id).await?;
@@ -216,7 +211,7 @@ pub async fn handle_cuts_callback(
             }
             let page = parts[2].parse::<usize>().unwrap_or(0);
             bot.delete_message(chat_id, message_id).await.ok();
-            show_cuts_page(bot, chat_id, db_pool, page).await?;
+            show_cuts_page(bot, chat_id, db_pool, shared_storage.clone(), page).await?;
         }
         "open" => {
             if parts.len() < 3 {
@@ -504,9 +499,8 @@ This may take a few minutes\\.",
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
                 };
-                shared_storage(&db_pool)
-                    .await?
-                    .upsert_video_clip_session(&session)
+                shared_storage.clone()
+                                        .upsert_video_clip_session(&session)
                     .await
                     .map_err(|e| {
                         teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
@@ -559,9 +553,8 @@ This may take a few minutes\\.",
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
                 };
-                shared_storage(&db_pool)
-                    .await?
-                    .upsert_video_clip_session(&session)
+                shared_storage.clone()
+                                        .upsert_video_clip_session(&session)
                     .await
                     .map_err(|e| {
                         teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
@@ -593,9 +586,8 @@ This may take a few minutes\\.",
         "clip_cancel" => {
             let _conn = db::get_connection(&db_pool)
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            shared_storage(&db_pool)
-                .await?
-                .delete_video_clip_session_by_user(chat_id.0)
+            shared_storage.clone()
+                                .delete_video_clip_session_by_user(chat_id.0)
                 .await
                 .ok();
             bot.delete_message(chat_id, message_id).await.ok();
@@ -670,9 +662,8 @@ This may take a few minutes\\.",
                 };
 
                 // Delete any existing session first
-                shared_storage(&db_pool)
-                    .await?
-                    .delete_video_clip_session_by_user(chat_id.0)
+                shared_storage.clone()
+                                        .delete_video_clip_session_by_user(chat_id.0)
                     .await
                     .ok();
 

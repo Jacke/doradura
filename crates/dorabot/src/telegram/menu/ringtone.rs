@@ -84,6 +84,7 @@ pub async fn handle_ringtone_callback(
     message_id: MessageId,
     data: &str,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
     let _ = bot.answer_callback_query(callback_id).await;
 
@@ -113,7 +114,7 @@ pub async fn handle_ringtone_callback(
             // Delete the platform selector message
             bot.delete_message(chat_id, message_id).await.ok();
 
-            start_ringtone_session(bot, chat_id, platform, source_kind, source_id, &db_pool).await?;
+            start_ringtone_session(bot, chat_id, platform, source_kind, source_id, &db_pool, &shared_storage).await?;
         }
         _ => {}
     }
@@ -155,6 +156,7 @@ pub async fn start_ringtone_session(
     source_kind: &str,
     source_id: i64,
     db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
     let conn = db::get_connection(db_pool)
         .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
@@ -193,9 +195,7 @@ pub async fn start_ringtone_session(
         subtitle_lang: None,
     };
 
-    SharedStorage::from_sqlite_pool(Arc::clone(db_pool))
-        .await
-        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+    shared_storage
         .upsert_video_clip_session(&session)
         .await
         .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;

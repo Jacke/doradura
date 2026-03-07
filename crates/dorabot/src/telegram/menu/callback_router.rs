@@ -1577,6 +1577,7 @@ pub async fn handle_menu_callback(
                     message_id,
                     &data,
                     Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
                 )
                 .await
                 {
@@ -1593,6 +1594,7 @@ pub async fn handle_menu_callback(
                     message_id,
                     &data,
                     db_pool.clone(),
+                    shared_storage.clone(),
                     q.from.username.clone(),
                     downsub_gateway.clone(),
                     subtitle_cache.clone(),
@@ -1607,6 +1609,7 @@ pub async fn handle_menu_callback(
                     message_id,
                     &data,
                     db_pool.clone(),
+                    shared_storage.clone(),
                     q.from.username.clone(),
                 )
                 .await?;
