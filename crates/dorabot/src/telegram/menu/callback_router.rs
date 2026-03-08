@@ -11,7 +11,6 @@ use crate::storage::db::{self, DbPool};
 use crate::storage::SharedStorage;
 use crate::storage::SubtitleCache;
 use crate::telegram::admin;
-use crate::telegram::cache as tg_cache;
 use crate::telegram::setup_chat_bot_commands;
 use crate::telegram::Bot;
 use std::sync::Arc;
@@ -1318,60 +1317,69 @@ pub async fn handle_menu_callback(
                                 }
                             };
 
-                            // Get metadata from preview cache
-                            if let Some(metadata) = tg_cache::PREVIEW_CACHE.get(url.as_str()).await {
-                                // Get user settings for format/quality
-                                let (current_format, video_quality) = match crate::storage::db::get_connection(&db_pool)
-                                {
-                                    Ok(conn) => {
-                                        let fmt = db::get_user_download_format(&conn, chat_id.0)
-                                            .unwrap_or_else(|_| "mp4".to_string());
-                                        let qual = db::get_user_video_quality(&conn, chat_id.0).ok();
-                                        (fmt, qual)
-                                    }
-                                    Err(_) => ("mp4".to_string(), None),
-                                };
+                            let (current_format, video_quality) = match crate::storage::db::get_connection(&db_pool) {
+                                Ok(conn) => {
+                                    let fmt = db::get_user_download_format(&conn, chat_id.0)
+                                        .unwrap_or_else(|_| "mp4".to_string());
+                                    let qual = db::get_user_video_quality(&conn, chat_id.0).ok();
+                                    (fmt, qual)
+                                }
+                                Err(_) => ("mp4".to_string(), None),
+                            };
 
-                                let preview_context = shared_storage
-                                    .get_preview_context(chat_id.0, url.as_str())
+                            match crate::telegram::preview::get_preview_metadata(
+                                &url,
+                                Some(&current_format),
+                                video_quality.as_deref(),
+                            )
+                            .await
+                            {
+                                Ok(metadata) => {
+                                    let preview_context = shared_storage
+                                        .get_preview_context(chat_id.0, url.as_str())
+                                        .await
+                                        .ok()
+                                        .flatten();
+                                    let time_range =
+                                        preview_context.as_ref().and_then(|context| context.time_range.clone());
+                                    match crate::telegram::preview::update_preview_message(
+                                        &bot,
+                                        chat_id,
+                                        message_id,
+                                        &url,
+                                        &metadata,
+                                        &current_format,
+                                        video_quality.as_deref(),
+                                        Arc::clone(&db_pool),
+                                        Arc::clone(&shared_storage),
+                                        time_range.as_ref(),
+                                    )
                                     .await
-                                    .ok()
-                                    .flatten();
-                                let time_range =
-                                    preview_context.as_ref().and_then(|context| context.time_range.clone());
-                                match crate::telegram::preview::update_preview_message(
-                                    &bot,
-                                    chat_id,
-                                    message_id,
-                                    &url,
-                                    &metadata,
-                                    &current_format,
-                                    video_quality.as_deref(),
-                                    Arc::clone(&db_pool),
-                                    Arc::clone(&shared_storage),
-                                    time_range.as_ref(),
-                                )
-                                .await
-                                {
-                                    Ok(_) => {}
-                                    Err(e) => {
-                                        log::error!("Failed to update preview after burn_subs_lang selection: {:?}", e);
-                                        let _ = bot
-                                            .send_message(
-                                                chat_id,
-                                                "Failed to update preview. Please send the link again.",
-                                            )
-                                            .await;
+                                    {
+                                        Ok(_) => {}
+                                        Err(e) => {
+                                            log::error!(
+                                                "Failed to update preview after burn_subs_lang selection: {:?}",
+                                                e
+                                            );
+                                            let _ = bot
+                                                .send_message(
+                                                    chat_id,
+                                                    "Failed to update preview. Please send the link again.",
+                                                )
+                                                .await;
+                                        }
                                     }
                                 }
-                            } else {
-                                log::warn!(
-                                    "Preview metadata not found in cache for burn_subs_lang, url={}",
-                                    url_str
-                                );
-                                let _ = bot
-                                    .send_message(chat_id, "⏰ Preview expired, please send the link again")
-                                    .await;
+                                Err(e) => {
+                                    log::error!(
+                                        "Failed to refresh preview metadata after burn_subs_lang selection: {:?}",
+                                        e
+                                    );
+                                    let _ = bot
+                                        .send_message(chat_id, "⏰ Preview expired, please send the link again")
+                                        .await;
+                                }
                             }
                         }
                         _ => {
@@ -1649,7 +1657,16 @@ pub async fn handle_menu_callback(
             } else if data.starts_with("videos:") || data.starts_with("convert:") {
                 // Handle videos and conversion callback queries
                 use crate::telegram::videos::handle_videos_callback;
-                handle_videos_callback(&bot, callback_id.clone(), chat_id, message_id, &data, db_pool.clone()).await?;
+                handle_videos_callback(
+                    &bot,
+                    callback_id.clone(),
+                    chat_id,
+                    message_id,
+                    &data,
+                    db_pool.clone(),
+                    shared_storage.clone(),
+                )
+                .await?;
             } else if data.starts_with("au:") {
                 // Admin user management panel
                 let _ = bot.answer_callback_query(callback_id.clone()).await;

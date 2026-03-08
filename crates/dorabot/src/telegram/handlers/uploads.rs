@@ -4,14 +4,12 @@ use teloxide::prelude::*;
 use teloxide::types::Message;
 
 use super::types::{HandlerDeps, HandlerError};
-use crate::storage::db::{create_user, get_user};
-use crate::storage::get_connection;
 use crate::telegram::Bot;
 
 /// Handler for media uploads (photo/video/document) from premium/vip users
 pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::UpdateHandler<HandlerError> {
     use crate::core::subscription::PlanLimits;
-    use crate::storage::uploads::{find_duplicate_upload, save_upload, NewUpload};
+    use crate::storage::uploads::NewUpload;
     use teloxide::dispatching::UpdateFilterExt;
     use teloxide::types::ParseMode;
 
@@ -75,26 +73,16 @@ pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::
                 }
 
                 // Get user and check plan
-                let conn = match get_connection(&deps.db_pool) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        log::error!("Failed to get DB connection: {}", e);
-                        return Ok(());
-                    }
-                };
-
-                let user = match get_user(&conn, chat_id.0) {
+                let user = match deps.shared_storage.get_user(chat_id.0).await {
                     Ok(Some(u)) => u,
                     Ok(None) => {
-                        // User doesn't exist, create them
                         let username = msg.from.as_ref().and_then(|u| u.username.clone());
-                        if let Err(e) = create_user(&conn, chat_id.0, username) {
+                        if let Err(e) = deps.shared_storage.create_user(chat_id.0, username).await {
                             log::error!("Failed to create user: {}", e);
                             return Ok(());
                         }
 
-                        // Fetch the newly created user
-                        match get_user(&conn, chat_id.0) {
+                        match deps.shared_storage.get_user(chat_id.0).await {
                             Ok(Some(u)) => u,
                             _ => {
                                 log::error!("Failed to get created user");
@@ -225,7 +213,7 @@ pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::
 
                 // Check for duplicates
                 if let Some(ref unique_id) = file_unique_id {
-                    if let Ok(Some(existing)) = find_duplicate_upload(&conn, chat_id.0, unique_id) {
+                    if let Ok(Some(existing)) = deps.shared_storage.find_duplicate_upload(chat_id.0, unique_id).await {
                         bot.send_message(
                             chat_id,
                             format!(
@@ -303,7 +291,7 @@ pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::
                     thumbnail_file_id: thumbnail_file_id.as_deref(),
                 };
 
-                match save_upload(&conn, &upload) {
+                match deps.shared_storage.save_upload(&upload).await {
                     Ok(upload_id) => {
                         log::info!(
                             "Upload saved: id={}, user={}, type={}, title={}",

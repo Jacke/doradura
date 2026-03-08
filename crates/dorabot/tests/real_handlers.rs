@@ -1696,6 +1696,7 @@ async fn test_videos_convert_audio_callback_routing() {
         teloxide::types::MessageId(42),
         &format!("videos:convert:audio:{}", upload_id),
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(
@@ -1750,6 +1751,7 @@ async fn test_videos_convert_gif_callback_routing() {
         teloxide::types::MessageId(42),
         &format!("videos:convert:gif:{}", upload_id),
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(
@@ -1792,6 +1794,7 @@ async fn test_videos_convert_compress_callback_routing() {
         teloxide::types::MessageId(42),
         &format!("videos:convert:compress:{}", upload_id),
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(
@@ -1834,6 +1837,7 @@ async fn test_videos_convert_nonexistent_upload() {
         teloxide::types::MessageId(42),
         "videos:convert:audio:99999",
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "Should handle non-existent upload gracefully");
@@ -1858,6 +1862,7 @@ async fn test_videos_cancel_callback() {
         teloxide::types::MessageId(42),
         "videos:cancel",
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "videos:cancel should succeed: {:?}", result.err());
@@ -1888,6 +1893,7 @@ async fn test_videos_unknown_action() {
         teloxide::types::MessageId(42),
         "videos:unknown_action",
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "Unknown action should not crash");
@@ -1913,6 +1919,7 @@ async fn test_videos_malformed_data() {
         teloxide::types::MessageId(42),
         "videos",
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "Malformed data should not crash");
@@ -1934,7 +1941,16 @@ async fn test_show_videos_page_empty() {
     test.create_test_user(123456789, "testuser", "ru");
     test.mock_all_telegram_api().await;
 
-    let result = show_videos_page(test.bot(), ChatId(123456789), test.deps.db_pool.clone(), 0, None, None).await;
+    let result = show_videos_page(
+        test.bot(),
+        ChatId(123456789),
+        test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
+        0,
+        None,
+        None,
+    )
+    .await;
     assert!(result.is_ok(), "show_videos_page should succeed with no uploads");
 
     let requests = test.mock_server.received_requests().await.unwrap();
@@ -1959,7 +1975,16 @@ async fn test_show_videos_page_with_uploads() {
     test.create_test_upload(123456789, "my_photo.jpg", "photo", "file_photo_1");
     test.mock_all_telegram_api().await;
 
-    let result = show_videos_page(test.bot(), ChatId(123456789), test.deps.db_pool.clone(), 0, None, None).await;
+    let result = show_videos_page(
+        test.bot(),
+        ChatId(123456789),
+        test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
+        0,
+        None,
+        None,
+    )
+    .await;
     assert!(result.is_ok(), "show_videos_page should succeed with uploads");
 
     let requests = test.mock_server.received_requests().await.unwrap();
@@ -1996,6 +2021,7 @@ async fn test_show_videos_page_with_filter() {
         test.bot(),
         ChatId(123456789),
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
         0,
         Some("video".to_string()),
         None,
@@ -2316,6 +2342,7 @@ async fn test_videos_page_callback() {
         teloxide::types::MessageId(42),
         "videos:page:0:all:123456789",
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "Page navigation should succeed");
@@ -2341,6 +2368,7 @@ async fn test_videos_delete_callback() {
         teloxide::types::MessageId(42),
         &format!("videos:delete:{}", upload_id),
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "Delete action should succeed");
@@ -2367,6 +2395,7 @@ async fn test_videos_send_callback() {
         teloxide::types::MessageId(42),
         &format!("videos:send:video:{}", upload_id),
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "Send video action should succeed");
@@ -2392,6 +2421,7 @@ async fn test_videos_open_callback() {
         teloxide::types::MessageId(42),
         &format!("videos:open:{}", upload_id),
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "Open action should succeed");
@@ -2523,6 +2553,7 @@ async fn test_videos_submenu_send_edits_message() {
         teloxide::types::MessageId(42),
         &format!("videos:submenu:send:{}", upload_id),
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "Submenu send should succeed");
@@ -2587,6 +2618,7 @@ async fn test_videos_submenu_convert_edits_message() {
         teloxide::types::MessageId(42),
         &format!("videos:submenu:convert:{}", upload_id),
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "Submenu convert should succeed");
@@ -2658,6 +2690,7 @@ async fn test_videos_submenu_deleted_upload() {
         teloxide::types::MessageId(42),
         "videos:submenu:send:99999",
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "Should not error on missing upload");
@@ -2700,6 +2733,7 @@ async fn test_videos_back_navigation() {
         teloxide::types::MessageId(42),
         &format!("videos:open:{}", upload_id),
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "Back navigation should succeed");
