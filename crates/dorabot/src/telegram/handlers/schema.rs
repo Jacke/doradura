@@ -349,7 +349,14 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                     }
                     Command::Info => {
                         log::info!("⚡ Command::Info matched, calling handle_info_command");
-                        match handle_info_command(bot.clone(), msg.clone(), deps.db_pool.clone()).await {
+                        match handle_info_command(
+                            bot.clone(),
+                            msg.clone(),
+                            deps.db_pool.clone(),
+                            deps.shared_storage.clone(),
+                        )
+                        .await
+                        {
                             Ok(_) => log::info!("✅ handle_info_command completed successfully"),
                             Err(e) => log::error!("❌ handle_info_command failed: {:?}", e),
                         }
@@ -359,6 +366,7 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                             bot.clone(),
                             msg.clone(),
                             deps.db_pool.clone(),
+                            deps.shared_storage.clone(),
                             deps.downsub_gateway.clone(),
                             deps.subtitle_cache.clone(),
                         )

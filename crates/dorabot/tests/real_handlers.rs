@@ -793,7 +793,13 @@ async fn test_real_handle_info_command() {
     let message = RealHandlerTest::create_message_from_json("/info", 123456789, 123456789);
 
     // Call the REAL function
-    let result = handle_info_command(test.bot().clone(), message, test.deps.db_pool.clone()).await;
+    let result = handle_info_command(
+        test.bot().clone(),
+        message,
+        test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
+    )
+    .await;
     assert!(result.is_ok(), "handle_info_command should succeed");
 
     // Verify the request

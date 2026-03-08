@@ -54,8 +54,10 @@ pub async fn handle_rate_limit(
     rate_limiter: &RateLimiter,
     plan: &str,
     db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
 ) -> ResponseResult<bool> {
-    let lang = i18n::user_lang_from_pool(db_pool, msg.chat.id.0);
+    let _ = db_pool;
+    let lang = i18n::user_lang_from_storage(shared_storage, msg.chat.id.0).await;
     if rate_limiter.is_rate_limited(msg.chat.id, plan).await {
         if let Some(remaining_time) = rate_limiter.get_remaining_time(msg.chat.id).await {
             let remaining_seconds = remaining_time.as_secs();
@@ -518,7 +520,7 @@ pub async fn handle_message(
             // Check rate limit before processing URLs
             let plan = user_info.as_ref().map(|u| u.plan.as_str()).unwrap_or("free");
             let plan_string = plan.to_string();
-            if !handle_rate_limit(&bot, &msg, &rate_limiter, &plan_string, &db_pool).await? {
+            if !handle_rate_limit(&bot, &msg, &rate_limiter, &plan_string, &db_pool, &shared_storage).await? {
                 return Ok(user_info);
             }
 
@@ -1364,7 +1366,8 @@ pub async fn process_video_clip(
 ) -> Result<(), AppError> {
     use tokio::process::Command;
 
-    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let _ = db_pool;
+    let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
     let total_len: i64 = segments.iter().map(|s| (s.end_secs - s.start_secs).max(0)).sum();
     let is_video_note = session.output_kind == "video_note";
     let is_iphone_ringtone = session.output_kind == "iphone_ringtone";
@@ -2155,7 +2158,7 @@ pub async fn process_video_clip(
             }
         }
     } else if is_ringtone {
-        let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+        let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
         match bot
             .send_document(chat_id, teloxide::types::InputFile::file(output_path.clone()))
             .caption(escape_markdown(&clip_title))
@@ -2408,7 +2411,8 @@ async fn process_audio_cut(
 ) -> Result<(), AppError> {
     use tokio::process::Command;
 
-    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let _ = db_pool;
+    let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
     let total_len: i64 = segments.iter().map(|s| (s.end_secs - s.start_secs).max(0)).sum();
     if total_len <= 0 {
         bot.send_message(chat_id, i18n::t(&lang, "commands.empty_cut"))
@@ -2606,7 +2610,12 @@ fn build_cut_filter(segments: &[CutSegment], with_video: bool, with_audio: bool)
 /// - Displays available video formats with quality and sizes
 /// - Shows audio format information
 /// - Sends formatted message to user
-pub async fn handle_info_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>) -> ResponseResult<()> {
+pub async fn handle_info_command(
+    bot: Bot,
+    msg: Message,
+    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
     log::info!("════════════════════════════════════════════════════════");
     log::info!("📋 /info command called");
     log::info!("Chat ID: {}", msg.chat.id);
@@ -2621,7 +2630,8 @@ pub async fn handle_info_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>) -
 
         if parts.len() < 2 {
             log::warn!("⚠️  No URL provided, sending usage instructions");
-            let lang = i18n::user_lang_from_pool(&db_pool, msg.chat.id.0);
+            let _ = &db_pool;
+            let lang = i18n::user_lang_from_storage(&shared_storage, msg.chat.id.0).await;
             match bot
                 .send_message(msg.chat.id, i18n::t(&lang, "commands.info_usage"))
                 .await
@@ -2643,7 +2653,7 @@ pub async fn handle_info_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>) -
             }
             Err(e) => {
                 log::error!("❌ Failed to parse URL '{}': {}", url_text, e);
-                let lang = i18n::user_lang_from_pool(&db_pool, msg.chat.id.0);
+                let lang = i18n::user_lang_from_storage(&shared_storage, msg.chat.id.0).await;
                 match bot
                     .send_message(msg.chat.id, i18n::t(&lang, "commands.invalid_url"))
                     .await
@@ -2657,7 +2667,7 @@ pub async fn handle_info_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>) -
 
         // Send "processing" message
         log::info!("📤 Sending 'processing' message...");
-        let lang = i18n::user_lang_from_pool(&db_pool, msg.chat.id.0);
+        let lang = i18n::user_lang_from_storage(&shared_storage, msg.chat.id.0).await;
         let processing_msg = match bot
             .send_message(msg.chat.id, i18n::t(&lang, "commands.processing"))
             .await
@@ -2852,10 +2862,12 @@ pub async fn handle_downsub_command(
     bot: Bot,
     msg: Message,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     downsub_gateway: Arc<DownsubGateway>,
     subtitle_cache: Arc<crate::storage::SubtitleCache>,
 ) -> ResponseResult<()> {
-    let lang = i18n::user_lang_from_pool(&db_pool, msg.chat.id.0);
+    let _ = db_pool;
+    let lang = i18n::user_lang_from_storage(&shared_storage, msg.chat.id.0).await;
     let usage_text = i18n::t(&lang, "commands.downsub_usage");
     let disabled_text = i18n::t(&lang, "commands.downsub_disabled");
 
