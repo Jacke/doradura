@@ -101,7 +101,7 @@ pub async fn handle_ringtone_callback(
             // Delete the button message (options menu)
             bot.delete_message(chat_id, message_id).await.ok();
 
-            send_platform_selector(bot, chat_id, source_kind, source_id, &db_pool).await?;
+            send_platform_selector(bot, chat_id, source_kind, source_id, &shared_storage).await?;
         }
         "platform" => {
             // ringtone:platform:{platform}:{source_kind}:{source_id}
@@ -137,7 +137,7 @@ pub async fn send_platform_selector(
     chat_id: ChatId,
     source_kind: &str,
     source_id: i64,
-    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
     let iphone_cb = format!("ringtone:platform:iphone:{}:{}", source_kind, source_id);
     let android_cb = format!("ringtone:platform:android:{}:{}", source_kind, source_id);
@@ -150,7 +150,7 @@ pub async fn send_platform_selector(
         vec![crate::telegram::cb("❌ Cancel", "downloads:clip_cancel")],
     ]);
 
-    let lang = i18n::user_lang_from_pool(db_pool, chat_id.0);
+    let lang = i18n::user_lang_from_storage(shared_storage, chat_id.0).await;
     let text = i18n::t(&lang, "ringtone-platform-select");
     bot.send_message(chat_id, text).reply_markup(keyboard).await?;
 
@@ -164,7 +164,7 @@ pub async fn start_ringtone_session(
     platform: Platform,
     source_kind: &str,
     source_id: i64,
-    db_pool: &Arc<DbPool>,
+    _db_pool: &Arc<DbPool>,
     shared_storage: &Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
     // Try to send audio/video preview so the user can identify the track
@@ -211,7 +211,7 @@ pub async fn start_ringtone_session(
         .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
     // Send prompt
-    let lang = i18n::user_lang_from_pool(db_pool, chat_id.0);
+    let lang = i18n::user_lang_from_storage(shared_storage, chat_id.0).await;
     let prompt_text = i18n::t(&lang, platform.prompt_key());
 
     let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb("❌ Cancel", "downloads:clip_cancel")]]);
@@ -236,10 +236,10 @@ pub async fn send_ringtone_instructions(
     bot: &Bot,
     chat_id: ChatId,
     platform: Platform,
-    db_pool: &Arc<DbPool>,
+    _db_pool: &Arc<DbPool>,
     shared_storage: &Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
-    let lang = i18n::user_lang_from_pool(db_pool, chat_id.0);
+    let lang = i18n::user_lang_from_storage(shared_storage, chat_id.0).await;
     let instruction_text = i18n::t(&lang, platform.instructions_key());
 
     // Collect local image paths

@@ -37,11 +37,11 @@ async fn load_menu_user_state(shared_storage: &SharedStorage, chat_id: ChatId) -
 pub async fn show_main_menu(
     bot: &Bot,
     chat_id: ChatId,
-    db_pool: Arc<DbPool>,
+    _db_pool: Arc<DbPool>,
     shared_storage: Arc<SharedStorage>,
 ) -> ResponseResult<Message> {
     let (_, video_quality, audio_bitrate, _) = load_menu_user_state(&shared_storage, chat_id).await;
-    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     let quality_emoji = match video_quality.as_str() {
         "1080p" => "🎬 1080p",
@@ -145,13 +145,13 @@ pub(crate) async fn edit_main_menu(
     bot: &Bot,
     chat_id: ChatId,
     message_id: MessageId,
-    db_pool: Arc<DbPool>,
+    _db_pool: Arc<DbPool>,
     shared_storage: Arc<SharedStorage>,
     url_id: Option<&str>,
     _preview_msg_id: Option<MessageId>,
 ) -> ResponseResult<()> {
     let (_, video_quality, audio_bitrate, _) = load_menu_user_state(&shared_storage, chat_id).await;
-    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     let quality_emoji = match video_quality.as_str() {
         "1080p" => "🎬 1080p",
@@ -235,13 +235,13 @@ pub(crate) async fn edit_main_menu(
 pub async fn send_main_menu_as_new(
     bot: &Bot,
     chat_id: ChatId,
-    db_pool: Arc<DbPool>,
+    _db_pool: Arc<DbPool>,
     shared_storage: Arc<SharedStorage>,
     url_id: Option<&str>,
     preview_msg_id: Option<MessageId>,
 ) -> ResponseResult<()> {
     let (_, video_quality, audio_bitrate, _) = load_menu_user_state(&shared_storage, chat_id).await;
-    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     let quality_emoji = match video_quality.as_str() {
         "1080p" => "🎬 1080p",
@@ -336,10 +336,10 @@ pub async fn send_main_menu_as_new(
 pub async fn show_enhanced_main_menu(
     bot: &Bot,
     chat_id: ChatId,
-    db_pool: Arc<DbPool>,
+    _db_pool: Arc<DbPool>,
     shared_storage: Arc<SharedStorage>,
 ) -> ResponseResult<Message> {
-    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
     let (format, video_quality, audio_bitrate, plan) = load_menu_user_state(&shared_storage, chat_id).await;
 
     // Format emoji
@@ -399,10 +399,10 @@ pub(crate) async fn edit_enhanced_main_menu(
     bot: &Bot,
     chat_id: ChatId,
     message_id: MessageId,
-    db_pool: Arc<DbPool>,
+    _db_pool: Arc<DbPool>,
     shared_storage: Arc<SharedStorage>,
 ) -> ResponseResult<()> {
-    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
     let (format, video_quality, audio_bitrate, plan) = load_menu_user_state(&shared_storage, chat_id).await;
 
     let format_emoji = match format.as_str() {

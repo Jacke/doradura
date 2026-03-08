@@ -1037,7 +1037,7 @@ pub async fn handle_downloads_callback(
                     })?;
 
                 // Get user language for localization
-                let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
+                let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
                 // Fetch timestamps and build UI
                 let timestamps = shared_storage
@@ -1193,7 +1193,7 @@ pub async fn handle_downloads_callback(
                     })?;
 
                 // Rebuild circle menu with updated subtitle state
-                let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
+                let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
                 let timestamps = shared_storage
                     .get_video_timestamps(download_id)
                     .await
@@ -1770,7 +1770,7 @@ pub async fn handle_downloads_callback(
                 if let Some(file_id) = download.file_id.clone() {
                     bot.delete_message(chat_id, message_id).await.ok();
 
-                    let user_lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
+                    let user_lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
                     let mut args = fluent_templates::fluent_bundle::FluentArgs::new();
                     args.set("lang", lang_code.as_str());
                     let status_text = crate::i18n::t_args(&user_lang, "video_circle.burn_subs_status", &args);

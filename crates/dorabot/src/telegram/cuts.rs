@@ -571,7 +571,7 @@ This may take a few minutes\\.",
                     })?;
 
                 // Get user language for localization
-                let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
+                let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
                 // Build keyboard: duration buttons + cancel button
                 let mut keyboard_rows = build_duration_buttons_for_cut(cut_id, &lang);

@@ -62,7 +62,7 @@ pub async fn show_history_page(
     shared_storage: Arc<SharedStorage>,
     page: usize,
 ) -> ResponseResult<Message> {
-    let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     // Fetch all history entries to count pages
     let all_entries = match shared_storage.get_download_history(chat_id.0, None).await {
@@ -199,7 +199,7 @@ pub async fn handle_history_callback(
     download_queue: Arc<crate::download::queue::DownloadQueue>,
     rate_limiter: Arc<crate::core::rate_limiter::RateLimiter>,
 ) -> ResponseResult<()> {
-    let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     let parts: Vec<&str> = data.splitn(3, ':').collect();
     if parts.len() < 3 {
