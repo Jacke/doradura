@@ -253,6 +253,18 @@ CREATE TABLE IF NOT EXISTS search_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_search_sessions_created_at
     ON search_sessions(created_at);
+
+CREATE TABLE IF NOT EXISTS prompt_sessions (
+    user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    payload_json TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (user_id, kind)
+);
+
+CREATE INDEX IF NOT EXISTS idx_prompt_sessions_expires_at
+    ON prompt_sessions(expires_at);
 "#;
 
 #[derive(Debug, Clone)]
@@ -1931,6 +1943,142 @@ impl SharedStorage {
                     .execute(pg_pool)
                     .await
                     .context("postgres delete_search_session")?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn upsert_prompt_session(
+        &self,
+        user_id: i64,
+        kind: &str,
+        payload_json: &str,
+        ttl_secs: i64,
+    ) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite upsert_prompt_session connection")?;
+                conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS prompt_sessions (
+                        user_id INTEGER NOT NULL,
+                        kind TEXT NOT NULL,
+                        payload_json TEXT NOT NULL DEFAULT '',
+                        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                        expires_at TEXT NOT NULL,
+                        PRIMARY KEY (user_id, kind)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_prompt_sessions_expires_at ON prompt_sessions(expires_at);",
+                )
+                .context("sqlite ensure prompt_sessions table")?;
+                conn.execute(
+                    "INSERT OR REPLACE INTO prompt_sessions (
+                        user_id, kind, payload_json, created_at, expires_at
+                     ) VALUES (?1, ?2, ?3, datetime('now'), datetime('now', '+' || ?4 || ' seconds'))",
+                    rusqlite::params![user_id, kind, payload_json, ttl_secs],
+                )
+                .context("sqlite upsert_prompt_session")?;
+                Ok(())
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query(
+                    "INSERT INTO prompt_sessions (
+                        user_id, kind, payload_json, created_at, expires_at
+                     ) VALUES ($1, $2, $3, NOW(), NOW() + ($4 * INTERVAL '1 second'))
+                     ON CONFLICT (user_id, kind) DO UPDATE SET
+                        payload_json = EXCLUDED.payload_json,
+                        created_at = NOW(),
+                        expires_at = EXCLUDED.expires_at",
+                )
+                .bind(user_id)
+                .bind(kind)
+                .bind(payload_json)
+                .bind(ttl_secs)
+                .execute(pg_pool)
+                .await
+                .context("postgres upsert_prompt_session")?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn get_prompt_session(&self, user_id: i64, kind: &str) -> Result<Option<String>> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite get_prompt_session connection")?;
+                conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS prompt_sessions (
+                        user_id INTEGER NOT NULL,
+                        kind TEXT NOT NULL,
+                        payload_json TEXT NOT NULL DEFAULT '',
+                        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                        expires_at TEXT NOT NULL,
+                        PRIMARY KEY (user_id, kind)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_prompt_sessions_expires_at ON prompt_sessions(expires_at);",
+                )
+                .context("sqlite ensure prompt_sessions table")?;
+                let row = conn
+                    .query_row(
+                        "SELECT payload_json
+                         FROM prompt_sessions
+                         WHERE user_id = ?1
+                           AND kind = ?2
+                           AND expires_at > datetime('now')",
+                        rusqlite::params![user_id, kind],
+                        |row| row.get(0),
+                    )
+                    .optional()
+                    .context("sqlite get_prompt_session")?;
+                Ok(row)
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let row = sqlx::query(
+                    "SELECT payload_json
+                     FROM prompt_sessions
+                     WHERE user_id = $1
+                       AND kind = $2
+                       AND expires_at > NOW()",
+                )
+                .bind(user_id)
+                .bind(kind)
+                .fetch_optional(pg_pool)
+                .await
+                .context("postgres get_prompt_session")?;
+                Ok(row.map(|row| row.get("payload_json")))
+            }
+        }
+    }
+
+    pub async fn delete_prompt_session(&self, user_id: i64, kind: &str) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite delete_prompt_session connection")?;
+                conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS prompt_sessions (
+                        user_id INTEGER NOT NULL,
+                        kind TEXT NOT NULL,
+                        payload_json TEXT NOT NULL DEFAULT '',
+                        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                        expires_at TEXT NOT NULL,
+                        PRIMARY KEY (user_id, kind)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_prompt_sessions_expires_at ON prompt_sessions(expires_at);",
+                )
+                .context("sqlite ensure prompt_sessions table")?;
+                conn.execute(
+                    "DELETE FROM prompt_sessions WHERE user_id = ?1 AND kind = ?2",
+                    rusqlite::params![user_id, kind],
+                )
+                .context("sqlite delete_prompt_session")?;
+                Ok(())
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query("DELETE FROM prompt_sessions WHERE user_id = $1 AND kind = $2")
+                    .bind(user_id)
+                    .bind(kind)
+                    .execute(pg_pool)
+                    .await
+                    .context("postgres delete_prompt_session")?;
                 Ok(())
             }
         }

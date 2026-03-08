@@ -229,7 +229,8 @@ pub async fn handle_menu_callback(
                     "feedback" => {
                         // Delete current message and send feedback prompt
                         let _ = bot.delete_message(chat_id, message_id).await;
-                        let _ = crate::telegram::feedback::send_feedback_prompt(&bot, chat_id, &lang).await;
+                        let _ = crate::telegram::feedback::send_feedback_prompt(&bot, chat_id, &lang, &shared_storage)
+                            .await;
                     }
                     _ => {}
                 }
@@ -1567,6 +1568,7 @@ pub async fn handle_menu_callback(
                     message_id,
                     &data,
                     Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
                 )
                 .await
                 {
@@ -1631,7 +1633,10 @@ pub async fn handle_menu_callback(
                         .await?;
                     return Ok(());
                 }
-                if let Err(e) = super::admin_users::handle_callback(&bot, chat_id, message_id, &db_pool, &data).await {
+                if let Err(e) =
+                    super::admin_users::handle_callback(&bot, chat_id, message_id, &db_pool, &shared_storage, &data)
+                        .await
+                {
                     log::error!("Admin users callback error: {}", e);
                 }
                 return Ok(());

@@ -5,31 +5,31 @@
 use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
 use teloxide::prelude::*;
 use teloxide::types::{CallbackQueryId, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId};
-use tokio::sync::RwLock;
 
-static VAULT_SETUP_STATES: std::sync::LazyLock<Arc<RwLock<HashMap<i64, Instant>>>> =
-    std::sync::LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
+const VAULT_SETUP_PROMPT_KIND: &str = "vault_setup";
+const VAULT_SETUP_TTL_SECS: i64 = 300;
 
-pub async fn is_waiting_for_vault_setup(user_id: i64) -> bool {
-    let states = VAULT_SETUP_STATES.read().await;
-    if let Some(ts) = states.get(&user_id) {
-        ts.elapsed().as_secs() < 300
-    } else {
-        false
-    }
+pub async fn is_waiting_for_vault_setup(shared_storage: &Arc<SharedStorage>, user_id: i64) -> bool {
+    shared_storage
+        .get_prompt_session(user_id, VAULT_SETUP_PROMPT_KIND)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
 }
 
-async fn set_waiting_for_vault_setup(user_id: i64, waiting: bool) {
-    let mut states = VAULT_SETUP_STATES.write().await;
+async fn set_waiting_for_vault_setup(shared_storage: &Arc<SharedStorage>, user_id: i64, waiting: bool) {
     if waiting {
-        states.insert(user_id, Instant::now());
+        let _ = shared_storage
+            .upsert_prompt_session(user_id, VAULT_SETUP_PROMPT_KIND, "", VAULT_SETUP_TTL_SECS)
+            .await;
     } else {
-        states.remove(&user_id);
+        let _ = shared_storage
+            .delete_prompt_session(user_id, VAULT_SETUP_PROMPT_KIND)
+            .await;
     }
 }
 
@@ -47,7 +47,7 @@ pub async fn handle_vault_callback(
     match suffix {
         "menu" => show_vault_menu(bot, chat_id, message_id, &db_pool, &shared_storage).await,
         "setup" => {
-            set_waiting_for_vault_setup(chat_id.0, true).await;
+            set_waiting_for_vault_setup(&shared_storage, chat_id.0, true).await;
             let text = "\
 \u{1f5c4} *Vault Setup*\n\n\
 Steps:\n\
@@ -107,7 +107,7 @@ async fn show_vault_menu(
     db_pool: &Arc<DbPool>,
     shared_storage: &Arc<SharedStorage>,
 ) {
-    set_waiting_for_vault_setup(chat_id.0, false).await;
+    set_waiting_for_vault_setup(shared_storage, chat_id.0, false).await;
 
     let _ = db_pool;
     let vault = shared_storage.get_user_vault(chat_id.0).await.ok().flatten();
@@ -181,7 +181,7 @@ pub async fn handle_vault_setup_input(
     db_pool: &Arc<DbPool>,
     shared_storage: &Arc<SharedStorage>,
 ) {
-    set_waiting_for_vault_setup(msg.chat.id.0, false).await;
+    set_waiting_for_vault_setup(shared_storage, msg.chat.id.0, false).await;
     let chat_id = msg.chat.id;
 
     // Try forwarded message first

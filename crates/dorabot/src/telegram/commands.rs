@@ -183,10 +183,16 @@ pub async fn handle_message(
         // Admin search intercept
         if !text.trim().starts_with('/')
             && crate::telegram::admin::is_admin(msg.chat.id.0)
-            && crate::telegram::menu::admin_users::is_admin_searching(msg.chat.id.0).await
+            && crate::telegram::menu::admin_users::is_admin_searching(&shared_storage, msg.chat.id.0).await
         {
-            if let Err(e) =
-                crate::telegram::menu::admin_users::handle_admin_search(&bot, msg.chat.id, &db_pool, text.trim()).await
+            if let Err(e) = crate::telegram::menu::admin_users::handle_admin_search(
+                &bot,
+                msg.chat.id,
+                &db_pool,
+                &shared_storage,
+                text.trim(),
+            )
+            .await
             {
                 log::error!("Admin search error: {}", e);
             }
@@ -361,7 +367,7 @@ pub async fn handle_message(
         }
 
         // Check if user is waiting to provide feedback
-        if crate::telegram::feedback::is_waiting_for_feedback(msg.chat.id.0).await {
+        if crate::telegram::feedback::is_waiting_for_feedback(&shared_storage, msg.chat.id.0).await {
             // Get user info for admin notification
             let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
             let first_name = msg.from.as_ref().map(|u| u.first_name.as_str()).unwrap_or("Unknown");
@@ -378,27 +384,37 @@ pub async fn handle_message(
             .await;
 
             // Send confirmation to user and return to main menu
-            let _ = crate::telegram::feedback::send_feedback_confirmation(&bot, msg.chat.id, &lang).await;
+            let _ =
+                crate::telegram::feedback::send_feedback_confirmation(&bot, msg.chat.id, &lang, &shared_storage).await;
             let _ = crate::telegram::show_enhanced_main_menu(&bot, msg.chat.id, db_pool.clone()).await;
 
             return Ok(None);
         }
 
         // Check if user is waiting for playlist name input
-        if crate::telegram::menu::playlist::is_waiting_for_playlist_name(msg.chat.id.0).await {
-            crate::telegram::menu::playlist::handle_playlist_name_input(&bot, msg.chat.id, text, db_pool.clone()).await;
+        if crate::telegram::menu::playlist::is_waiting_for_playlist_name(&shared_storage, msg.chat.id.0).await {
+            crate::telegram::menu::playlist::handle_playlist_name_input(
+                &bot,
+                msg.chat.id,
+                text,
+                db_pool.clone(),
+                shared_storage.clone(),
+            )
+            .await;
             return Ok(None);
         }
 
         // Check if user is waiting for import URL input
-        if let Some(pl_id) = crate::telegram::menu::playlist::get_import_playlist_id(msg.chat.id.0).await {
+        if let Some(pl_id) =
+            crate::telegram::menu::playlist::get_import_playlist_id(&shared_storage, msg.chat.id.0).await
+        {
             let text_lower = text.trim().to_lowercase();
             if text_lower == "cancel" {
-                crate::telegram::menu::playlist::clear_import_url_session(msg.chat.id.0).await;
+                crate::telegram::menu::playlist::clear_import_url_session(&shared_storage, msg.chat.id.0).await;
                 let _ = bot.send_message(msg.chat.id, "Cancelled.").await;
                 return Ok(None);
             }
-            crate::telegram::menu::playlist::clear_import_url_session(msg.chat.id.0).await;
+            crate::telegram::menu::playlist::clear_import_url_session(&shared_storage, msg.chat.id.0).await;
             // Handle import in background
             let bot_clone = bot.clone();
             let db_pool_clone = db_pool.clone();
@@ -417,7 +433,7 @@ pub async fn handle_message(
         }
 
         // Check if user is waiting for vault setup
-        if crate::telegram::menu::vault::is_waiting_for_vault_setup(msg.chat.id.0).await {
+        if crate::telegram::menu::vault::is_waiting_for_vault_setup(&shared_storage, msg.chat.id.0).await {
             let bot_clone = bot.clone();
             let db_pool_clone = db_pool.clone();
             let shared_storage_clone = shared_storage.clone();
@@ -435,7 +451,8 @@ pub async fn handle_message(
         }
 
         // Check if user is waiting for playlist integrations import URL
-        if crate::telegram::menu::playlist_integrations::is_waiting_for_import_url(msg.chat.id.0).await {
+        if crate::telegram::menu::playlist_integrations::is_waiting_for_import_url(&shared_storage, msg.chat.id.0).await
+        {
             let bot_clone = bot.clone();
             let db_pool_clone = db_pool.clone();
             let shared_storage_clone = shared_storage.clone();
@@ -454,8 +471,16 @@ pub async fn handle_message(
         }
 
         // Check if user is waiting for Vlipsy search
-        if crate::telegram::menu::vlipsy::is_waiting_for_vlipsy_search(msg.chat.id.0).await {
-            crate::telegram::menu::vlipsy::handle_search_text(&bot, msg.chat.id, text, &lang, db_pool.clone()).await;
+        if crate::telegram::menu::vlipsy::is_waiting_for_vlipsy_search(&shared_storage, msg.chat.id.0).await {
+            crate::telegram::menu::vlipsy::handle_search_text(
+                &bot,
+                msg.chat.id,
+                text,
+                &lang,
+                db_pool.clone(),
+                shared_storage.clone(),
+            )
+            .await;
             return Ok(None);
         }
 

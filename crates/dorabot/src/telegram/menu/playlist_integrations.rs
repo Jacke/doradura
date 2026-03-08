@@ -21,14 +21,12 @@ use crate::storage::db::{self, DbPool};
 use crate::storage::SharedStorage;
 use crate::telegram::notifications::notify_admin_text;
 use crate::telegram::Bot;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use teloxide::prelude::*;
 use teloxide::types::{
     CallbackQueryId, ChatId, FileId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, MessageId,
 };
-use tokio::sync::RwLock;
 use tokio::time::timeout;
 use url::Url;
 
@@ -38,24 +36,27 @@ const TRACK_DOWNLOAD_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 
 // ── State: waiting for import URL ───────────────────────────────────────
 
-static IMPORT_URL_STATES: std::sync::LazyLock<Arc<RwLock<HashMap<i64, Instant>>>> =
-    std::sync::LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
+const IMPORT_URL_PROMPT_KIND: &str = "playlist_integrations_import_url";
+const IMPORT_URL_TTL_SECS: i64 = 300;
 
-pub async fn is_waiting_for_import_url(user_id: i64) -> bool {
-    let states = IMPORT_URL_STATES.read().await;
-    if let Some(ts) = states.get(&user_id) {
-        ts.elapsed().as_secs() < 300
-    } else {
-        false
-    }
+pub async fn is_waiting_for_import_url(shared_storage: &Arc<SharedStorage>, user_id: i64) -> bool {
+    shared_storage
+        .get_prompt_session(user_id, IMPORT_URL_PROMPT_KIND)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
 }
 
-async fn set_waiting_for_import_url(user_id: i64, waiting: bool) {
-    let mut states = IMPORT_URL_STATES.write().await;
+async fn set_waiting_for_import_url(shared_storage: &Arc<SharedStorage>, user_id: i64, waiting: bool) {
     if waiting {
-        states.insert(user_id, Instant::now());
+        let _ = shared_storage
+            .upsert_prompt_session(user_id, IMPORT_URL_PROMPT_KIND, "", IMPORT_URL_TTL_SECS)
+            .await;
     } else {
-        states.remove(&user_id);
+        let _ = shared_storage
+            .delete_prompt_session(user_id, IMPORT_URL_PROMPT_KIND)
+            .await;
     }
 }
 
@@ -65,9 +66,9 @@ pub async fn handle_playlist_integrations_command(
     bot: &Bot,
     chat_id: ChatId,
     db_pool: &Arc<DbPool>,
-    _shared_storage: &Arc<SharedStorage>,
+    shared_storage: &Arc<SharedStorage>,
 ) {
-    show_playlist_list(bot, chat_id, 0, db_pool, None).await;
+    show_playlist_list(bot, chat_id, 0, db_pool, shared_storage, None).await;
 }
 
 // ── URL input handler (called from message handler) ─────────────────────
@@ -77,9 +78,9 @@ pub async fn handle_import_url_input(
     chat_id: ChatId,
     text: &str,
     db_pool: Arc<DbPool>,
-    _shared_storage: Arc<SharedStorage>,
+    shared_storage: Arc<SharedStorage>,
 ) {
-    set_waiting_for_import_url(chat_id.0, false).await;
+    set_waiting_for_import_url(&shared_storage, chat_id.0, false).await;
 
     let url = text.trim();
 
@@ -263,9 +264,9 @@ pub async fn handle_playlist_integrations_callback(
 
     if let Some(page_str) = suffix.strip_prefix("list:") {
         let page = page_str.parse::<usize>().unwrap_or(0);
-        show_playlist_list(bot, chat_id, page, &db_pool, Some(message_id)).await;
+        show_playlist_list(bot, chat_id, page, &db_pool, &shared_storage, Some(message_id)).await;
     } else if suffix == "new" {
-        set_waiting_for_import_url(chat_id.0, true).await;
+        set_waiting_for_import_url(&shared_storage, chat_id.0, true).await;
         let text = "📥 Send a playlist URL:\n\n• Spotify: open.spotify.com/playlist/...\n• SoundCloud: soundcloud.com/.../sets/...\n• YouTube: youtube.com/playlist?list=...\n• Yandex Music: music.yandex.ru/.../playlists/...";
         let kb = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
             "❌ Cancel",
@@ -290,7 +291,7 @@ pub async fn handle_playlist_integrations_callback(
         confirm_delete(bot, chat_id, message_id, id, &db_pool).await;
     } else if let Some(id_str) = suffix.strip_prefix("delok:") {
         let id = id_str.parse::<i64>().unwrap_or(0);
-        execute_delete(bot, chat_id, message_id, id, &db_pool).await;
+        execute_delete(bot, chat_id, message_id, id, &db_pool, &shared_storage).await;
     } else if let Some(rest) = suffix.strip_prefix("dl:") {
         let parts: Vec<&str> = rest.splitn(2, ':').collect();
         if parts.len() == 2 {
@@ -313,9 +314,10 @@ async fn show_playlist_list(
     chat_id: ChatId,
     page: usize,
     db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
     edit_msg: Option<MessageId>,
 ) {
-    set_waiting_for_import_url(chat_id.0, false).await;
+    set_waiting_for_import_url(shared_storage, chat_id.0, false).await;
 
     let conn = match db::get_connection(db_pool) {
         Ok(c) => c,
@@ -832,7 +834,14 @@ async fn confirm_delete(bot: &Bot, chat_id: ChatId, message_id: MessageId, playl
     let _ = bot.edit_message_text(chat_id, message_id, text).reply_markup(kb).await;
 }
 
-async fn execute_delete(bot: &Bot, chat_id: ChatId, message_id: MessageId, playlist_id: i64, db_pool: &Arc<DbPool>) {
+async fn execute_delete(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    playlist_id: i64,
+    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
+) {
     if let Ok(conn) = db::get_connection(db_pool) {
         // Auth check
         match db::get_synced_playlist(&conn, playlist_id) {
@@ -846,7 +855,7 @@ async fn execute_delete(bot: &Bot, chat_id: ChatId, message_id: MessageId, playl
             log::error!("Failed to delete synced playlist {}: {}", playlist_id, e);
         }
     }
-    show_playlist_list(bot, chat_id, 0, db_pool, Some(message_id)).await;
+    show_playlist_list(bot, chat_id, 0, db_pool, shared_storage, Some(message_id)).await;
 }
 
 // ── Download single track ───────────────────────────────────────────────
