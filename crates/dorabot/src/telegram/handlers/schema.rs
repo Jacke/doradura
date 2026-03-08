@@ -425,7 +425,8 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                         let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
                         let message_text = msg.text().unwrap_or("");
                         let args = message_text.strip_prefix("/charges").unwrap_or("").trim();
-                        let _ = handle_charges_command(&bot, msg.chat.id, user_id, deps.db_pool.clone(), args).await;
+                        let _ =
+                            handle_charges_command(&bot, msg.chat.id, user_id, deps.shared_storage.clone(), args).await;
                     }
                     Command::DownloadTg => {
                         let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);

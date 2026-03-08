@@ -1136,7 +1136,7 @@ pub async fn handle_charges_command(
     bot: &Bot,
     chat_id: ChatId,
     user_id: i64,
-    db_pool: std::sync::Arc<crate::storage::db::DbPool>,
+    shared_storage: Arc<SharedStorage>,
     args: &str,
 ) -> Result<()> {
     if !is_admin(user_id) {
@@ -1145,20 +1145,11 @@ pub async fn handle_charges_command(
         return Ok(());
     }
 
-    let conn = match crate::storage::db::get_connection(&db_pool) {
-        Ok(c) => c,
-        Err(e) => {
-            bot.send_message(chat_id, format!("❌ DB connection error: {}", e))
-                .await?;
-            return Ok(());
-        }
-    };
-
     let args_trimmed = args.trim();
 
     // Handle stats request
     if args_trimmed == "stats" {
-        match crate::storage::db::get_charges_stats(&conn) {
+        match shared_storage.get_charges_stats().await {
             Ok((total_charges, total_amount, premium_count, vip_count, recurring_count)) => {
                 let text = format!(
                     "📊 *Payment Statistics*\n\n\
@@ -1207,9 +1198,9 @@ pub async fn handle_charges_command(
 
     // Get charges
     let charges = if let Some(user_id) = user_filter {
-        crate::storage::db::get_user_charges(&conn, user_id)
+        shared_storage.get_user_charges(user_id).await
     } else {
-        crate::storage::db::get_all_charges(&conn, plan_filter, Some(20), 0)
+        shared_storage.get_all_charges(plan_filter, Some(20), 0).await
     };
 
     match charges {

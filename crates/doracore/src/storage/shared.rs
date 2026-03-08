@@ -13,7 +13,7 @@ use crate::core::types::Plan;
 use crate::download::audio_effects::{AudioEffectSession, MorphProfile};
 use crate::storage::db;
 use crate::storage::db::{
-    AudioCutSession, CookiesUploadSession, CutEntry, DbConnection, DbPool, DownloadHistoryEntry, EnqueueResult,
+    AudioCutSession, Charge, CookiesUploadSession, CutEntry, DbConnection, DbPool, DownloadHistoryEntry, EnqueueResult,
     PlayerSession, Playlist, PlaylistItem, SubtitleStyle, SyncedPlaylist, SyncedTrack, TaskQueueEntry, User, UserVault,
     VideoClipSession,
 };
@@ -1237,6 +1237,96 @@ impl SharedStorage {
                 .await
                 .context("postgres save_feedback")?;
                 Ok(row.get::<i64, _>("id"))
+            }
+        }
+    }
+
+    pub async fn get_user_charges(&self, user_id: i64) -> Result<Vec<Charge>> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite get_user_charges connection")?;
+                db::get_user_charges(&conn, user_id).context("sqlite get_user_charges")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let rows = sqlx::query(
+                    "SELECT id, user_id, plan, telegram_charge_id, provider_charge_id, currency,
+                            total_amount, invoice_payload, is_recurring, is_first_recurring,
+                            CAST(subscription_expiration_date AS TEXT) AS subscription_expiration_date,
+                            CAST(payment_date AS TEXT) AS payment_date,
+                            CAST(created_at AS TEXT) AS created_at
+                     FROM charges
+                     WHERE user_id = $1
+                     ORDER BY payment_date DESC",
+                )
+                .bind(user_id)
+                .fetch_all(pg_pool)
+                .await
+                .context("postgres get_user_charges")?;
+                rows.into_iter().map(map_pg_charge).collect()
+            }
+        }
+    }
+
+    pub async fn get_all_charges(
+        &self,
+        plan_filter: Option<&str>,
+        limit: Option<i64>,
+        offset: i64,
+    ) -> Result<Vec<Charge>> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite get_all_charges connection")?;
+                db::get_all_charges(&conn, plan_filter, limit, offset).context("sqlite get_all_charges")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let rows = sqlx::query(
+                    "SELECT id, user_id, plan, telegram_charge_id, provider_charge_id, currency,
+                            total_amount, invoice_payload, is_recurring, is_first_recurring,
+                            CAST(subscription_expiration_date AS TEXT) AS subscription_expiration_date,
+                            CAST(payment_date AS TEXT) AS payment_date,
+                            CAST(created_at AS TEXT) AS created_at
+                     FROM charges
+                     WHERE ($1::text IS NULL OR plan = $1)
+                     ORDER BY payment_date DESC
+                     LIMIT $2 OFFSET $3",
+                )
+                .bind(plan_filter)
+                .bind(limit.unwrap_or(-1))
+                .bind(offset)
+                .fetch_all(pg_pool)
+                .await
+                .context("postgres get_all_charges")?;
+                rows.into_iter().map(map_pg_charge).collect()
+            }
+        }
+    }
+
+    pub async fn get_charges_stats(&self) -> Result<(i64, i64, i64, i64, i64)> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite get_charges_stats connection")?;
+                db::get_charges_stats(&conn).context("sqlite get_charges_stats")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let row = sqlx::query(
+                    "SELECT
+                        COUNT(*)::bigint AS total_charges,
+                        COALESCE(SUM(total_amount), 0)::bigint AS total_amount,
+                        COALESCE(SUM(CASE WHEN plan = 'premium' THEN 1 ELSE 0 END), 0)::bigint AS premium_count,
+                        COALESCE(SUM(CASE WHEN plan = 'vip' THEN 1 ELSE 0 END), 0)::bigint AS vip_count,
+                        COALESCE(SUM(CASE WHEN is_recurring = 1 THEN 1 ELSE 0 END), 0)::bigint AS recurring_count
+                     FROM charges",
+                )
+                .fetch_one(pg_pool)
+                .await
+                .context("postgres get_charges_stats")?;
+                Ok((
+                    row.get("total_charges"),
+                    row.get("total_amount"),
+                    row.get("premium_count"),
+                    row.get("vip_count"),
+                    row.get("recurring_count"),
+                ))
             }
         }
     }
@@ -5750,6 +5840,27 @@ fn map_pg_download_history(row: sqlx::postgres::PgRow) -> DownloadHistoryEntry {
         part_index: row.get("part_index"),
         category: row.get("category"),
     }
+}
+
+fn map_pg_charge(row: sqlx::postgres::PgRow) -> Result<Charge> {
+    let plan = Plan::from_str(&row.get::<String, _>("plan"))
+        .map_err(|err| anyhow!("invalid charge plan in postgres: {err}"))?;
+
+    Ok(Charge {
+        id: row.get("id"),
+        user_id: row.get("user_id"),
+        plan,
+        telegram_charge_id: row.get("telegram_charge_id"),
+        provider_charge_id: row.get("provider_charge_id"),
+        currency: row.get("currency"),
+        total_amount: row.get("total_amount"),
+        invoice_payload: row.get("invoice_payload"),
+        is_recurring: row.get::<i32, _>("is_recurring") != 0,
+        is_first_recurring: row.get::<i32, _>("is_first_recurring") != 0,
+        subscription_expiration_date: row.get("subscription_expiration_date"),
+        payment_date: row.get("payment_date"),
+        created_at: row.get("created_at"),
+    })
 }
 
 fn map_pg_cut(row: sqlx::postgres::PgRow) -> CutEntry {
