@@ -775,7 +775,13 @@ pub async fn handle_menu_callback(
                                     {
                                         Ok(metadata) => {
                                             // Update existing preview message
-                                            let time_range = tg_cache::get_time_range(url.as_str()).await;
+                                            let preview_context = shared_storage
+                                                .get_preview_context(chat_id.0, url.as_str())
+                                                .await
+                                                .ok()
+                                                .flatten();
+                                            let time_range =
+                                                preview_context.as_ref().and_then(|context| context.time_range.clone());
                                             match crate::telegram::preview::update_preview_message(
                                                 &bot,
                                                 chat_id,
@@ -785,6 +791,7 @@ pub async fn handle_menu_callback(
                                                 &current_format,
                                                 video_quality.as_deref(),
                                                 Arc::clone(&db_pool),
+                                                Arc::clone(&shared_storage),
                                                 time_range.as_ref(),
                                             )
                                             .await
@@ -897,6 +904,7 @@ pub async fn handle_menu_callback(
                             format,
                             None,
                             Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
                             Arc::clone(&download_queue),
                             Arc::clone(&rate_limiter),
                         )
@@ -1030,8 +1038,15 @@ pub async fn handle_menu_callback(
                         Some(url_str) => {
                             match Url::parse(&url_str) {
                                 Ok(url) => {
-                                    let original_message_id = tg_cache::get_link_message_id(&url_str).await;
-                                    let time_range = tg_cache::get_time_range(&url_str).await;
+                                    let preview_context = shared_storage
+                                        .get_preview_context(chat_id.0, &url_str)
+                                        .await
+                                        .ok()
+                                        .flatten();
+                                    let original_message_id =
+                                        preview_context.as_ref().and_then(|context| context.original_message_id);
+                                    let time_range =
+                                        preview_context.as_ref().and_then(|context| context.time_range.clone());
                                     // Get user preferences for quality/bitrate and plan
                                     let conn = db::get_connection(&db_pool).map_err(|e| {
                                         RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
@@ -1284,9 +1299,13 @@ pub async fn handle_menu_callback(
 
                             // Store or clear the subtitle language in cache
                             if lang_code == "none" {
-                                tg_cache::store_burn_sub_lang(&url_str, None).await;
+                                let _ = shared_storage
+                                    .set_preview_burn_sub_lang(chat_id.0, &url_str, None, 3600)
+                                    .await;
                             } else {
-                                tg_cache::store_burn_sub_lang(&url_str, Some(lang_code.clone())).await;
+                                let _ = shared_storage
+                                    .set_preview_burn_sub_lang(chat_id.0, &url_str, Some(&lang_code), 3600)
+                                    .await;
                             }
 
                             // Refresh the preview by rebuilding the keyboard with updated burn_sub_lang
@@ -1313,7 +1332,13 @@ pub async fn handle_menu_callback(
                                     Err(_) => ("mp4".to_string(), None),
                                 };
 
-                                let time_range = tg_cache::get_time_range(url.as_str()).await;
+                                let preview_context = shared_storage
+                                    .get_preview_context(chat_id.0, url.as_str())
+                                    .await
+                                    .ok()
+                                    .flatten();
+                                let time_range =
+                                    preview_context.as_ref().and_then(|context| context.time_range.clone());
                                 match crate::telegram::preview::update_preview_message(
                                     &bot,
                                     chat_id,
@@ -1323,6 +1348,7 @@ pub async fn handle_menu_callback(
                                     &current_format,
                                     video_quality.as_deref(),
                                     Arc::clone(&db_pool),
+                                    Arc::clone(&shared_storage),
                                     time_range.as_ref(),
                                 )
                                 .await

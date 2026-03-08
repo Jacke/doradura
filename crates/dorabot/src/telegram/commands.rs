@@ -24,6 +24,8 @@ use teloxide::prelude::*;
 use teloxide::types::{InputFile, ParseMode};
 use url::Url;
 
+const PREVIEW_CONTEXT_TTL_SECS: i64 = 3600;
+
 /// Cached regex for matching URLs
 /// Compiled once at startup and reused for all requests
 static URL_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"https?://[^\s]+").expect("Failed to compile URL regex"));
@@ -589,7 +591,9 @@ pub async fn handle_message(
                         }
                     }
 
-                    crate::telegram::cache::store_link_message_id(url.as_str(), msg.id.0).await;
+                    let _ = shared_storage
+                        .upsert_preview_link_message(msg.chat.id.0, url.as_str(), msg.id.0, PREVIEW_CONTEXT_TTL_SECS)
+                        .await;
                     valid_urls.push(url);
                 }
 
@@ -833,7 +837,9 @@ pub async fn handle_message(
                     url.set_query(if new_query.is_empty() { None } else { Some(&new_query) });
                 }
 
-                crate::telegram::cache::store_link_message_id(url.as_str(), msg.id.0).await;
+                let _ = shared_storage
+                    .upsert_preview_link_message(msg.chat.id.0, url.as_str(), msg.id.0, PREVIEW_CONTEXT_TTL_SECS)
+                    .await;
 
                 // Check if this is a channel/artist/playlist URL → extract latest track
                 if doracore::download::playlist::is_playlist_url(&url) {
@@ -902,7 +908,9 @@ pub async fn handle_message(
                 let time_range = parse_download_time_range(text, url_text);
                 if let Some(ref tr) = time_range {
                     log::info!("Parsed time range for {}: {} - {}", url, tr.0, tr.1);
-                    crate::telegram::cache::store_time_range(url.as_str(), tr.clone()).await;
+                    let _ = shared_storage
+                        .upsert_preview_time_range(msg.chat.id.0, url.as_str(), &tr.0, &tr.1, PREVIEW_CONTEXT_TTL_SECS)
+                        .await;
                 }
 
                 // Send "processing" message

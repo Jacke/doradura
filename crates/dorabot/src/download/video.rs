@@ -509,7 +509,16 @@ async fn maybe_burn_subtitles(
     chat_id: ChatId,
 ) -> String {
     // Check for per-URL burn subtitle language (from preview button)
-    let cached_lang = crate::telegram::cache::get_burn_sub_lang(url.as_str()).await;
+    let cached_lang = if let Some(storage) = shared_storage {
+        storage
+            .get_preview_context(chat_id.0, url.as_str())
+            .await
+            .ok()
+            .flatten()
+            .and_then(|context| context.burn_sub_lang)
+    } else {
+        None
+    };
 
     let sub_lang = if let Some(lang) = cached_lang {
         log::info!("Using cached burn subtitle language '{}' for {}", lang, url.as_str());

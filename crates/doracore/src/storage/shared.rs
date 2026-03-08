@@ -265,6 +265,21 @@ CREATE TABLE IF NOT EXISTS prompt_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_prompt_sessions_expires_at
     ON prompt_sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS preview_contexts (
+    user_id BIGINT NOT NULL,
+    url TEXT NOT NULL,
+    original_message_id INTEGER,
+    time_range_start TEXT,
+    time_range_end TEXT,
+    burn_sub_lang TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (user_id, url)
+);
+
+CREATE INDEX IF NOT EXISTS idx_preview_contexts_expires_at
+    ON preview_contexts(expires_at);
 "#;
 
 #[derive(Debug, Clone)]
@@ -282,6 +297,13 @@ pub struct QueueTaskInput<'a> {
     pub carousel_mask: Option<u32>,
     pub priority: i32,
     pub idempotency_key: &'a str,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PreviewContext {
+    pub original_message_id: Option<i32>,
+    pub time_range: Option<(String, String)>,
+    pub burn_sub_lang: Option<String>,
 }
 
 #[derive(Clone)]
@@ -2080,6 +2102,256 @@ impl SharedStorage {
                     .await
                     .context("postgres delete_prompt_session")?;
                 Ok(())
+            }
+        }
+    }
+
+    pub async fn upsert_preview_link_message(
+        &self,
+        user_id: i64,
+        url: &str,
+        original_message_id: i32,
+        ttl_secs: i64,
+    ) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite upsert_preview_link_message connection")?;
+                conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS preview_contexts (
+                        user_id INTEGER NOT NULL,
+                        url TEXT NOT NULL,
+                        original_message_id INTEGER,
+                        time_range_start TEXT,
+                        time_range_end TEXT,
+                        burn_sub_lang TEXT,
+                        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                        expires_at TEXT NOT NULL,
+                        PRIMARY KEY (user_id, url)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_preview_contexts_expires_at ON preview_contexts(expires_at);",
+                )
+                .context("sqlite ensure preview_contexts table")?;
+                conn.execute(
+                    "INSERT INTO preview_contexts (
+                        user_id, url, original_message_id, created_at, expires_at
+                     ) VALUES (?1, ?2, ?3, datetime('now'), datetime('now', '+' || ?4 || ' seconds'))
+                     ON CONFLICT(user_id, url) DO UPDATE SET
+                        original_message_id = excluded.original_message_id,
+                        expires_at = excluded.expires_at",
+                    rusqlite::params![user_id, url, original_message_id, ttl_secs],
+                )
+                .context("sqlite upsert_preview_link_message")?;
+                Ok(())
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query(
+                    "INSERT INTO preview_contexts (
+                        user_id, url, original_message_id, created_at, expires_at
+                     ) VALUES ($1, $2, $3, NOW(), NOW() + ($4 * INTERVAL '1 second'))
+                     ON CONFLICT (user_id, url) DO UPDATE SET
+                        original_message_id = EXCLUDED.original_message_id,
+                        expires_at = EXCLUDED.expires_at",
+                )
+                .bind(user_id)
+                .bind(url)
+                .bind(original_message_id)
+                .bind(ttl_secs)
+                .execute(pg_pool)
+                .await
+                .context("postgres upsert_preview_link_message")?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn upsert_preview_time_range(
+        &self,
+        user_id: i64,
+        url: &str,
+        start: &str,
+        end: &str,
+        ttl_secs: i64,
+    ) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite upsert_preview_time_range connection")?;
+                conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS preview_contexts (
+                        user_id INTEGER NOT NULL,
+                        url TEXT NOT NULL,
+                        original_message_id INTEGER,
+                        time_range_start TEXT,
+                        time_range_end TEXT,
+                        burn_sub_lang TEXT,
+                        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                        expires_at TEXT NOT NULL,
+                        PRIMARY KEY (user_id, url)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_preview_contexts_expires_at ON preview_contexts(expires_at);",
+                )
+                .context("sqlite ensure preview_contexts table")?;
+                conn.execute(
+                    "INSERT INTO preview_contexts (
+                        user_id, url, time_range_start, time_range_end, created_at, expires_at
+                     ) VALUES (?1, ?2, ?3, ?4, datetime('now'), datetime('now', '+' || ?5 || ' seconds'))
+                     ON CONFLICT(user_id, url) DO UPDATE SET
+                        time_range_start = excluded.time_range_start,
+                        time_range_end = excluded.time_range_end,
+                        expires_at = excluded.expires_at",
+                    rusqlite::params![user_id, url, start, end, ttl_secs],
+                )
+                .context("sqlite upsert_preview_time_range")?;
+                Ok(())
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query(
+                    "INSERT INTO preview_contexts (
+                        user_id, url, time_range_start, time_range_end, created_at, expires_at
+                     ) VALUES ($1, $2, $3, $4, NOW(), NOW() + ($5 * INTERVAL '1 second'))
+                     ON CONFLICT (user_id, url) DO UPDATE SET
+                        time_range_start = EXCLUDED.time_range_start,
+                        time_range_end = EXCLUDED.time_range_end,
+                        expires_at = EXCLUDED.expires_at",
+                )
+                .bind(user_id)
+                .bind(url)
+                .bind(start)
+                .bind(end)
+                .bind(ttl_secs)
+                .execute(pg_pool)
+                .await
+                .context("postgres upsert_preview_time_range")?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn set_preview_burn_sub_lang(
+        &self,
+        user_id: i64,
+        url: &str,
+        burn_sub_lang: Option<&str>,
+        ttl_secs: i64,
+    ) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite set_preview_burn_sub_lang connection")?;
+                conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS preview_contexts (
+                        user_id INTEGER NOT NULL,
+                        url TEXT NOT NULL,
+                        original_message_id INTEGER,
+                        time_range_start TEXT,
+                        time_range_end TEXT,
+                        burn_sub_lang TEXT,
+                        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                        expires_at TEXT NOT NULL,
+                        PRIMARY KEY (user_id, url)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_preview_contexts_expires_at ON preview_contexts(expires_at);",
+                )
+                .context("sqlite ensure preview_contexts table")?;
+                conn.execute(
+                    "INSERT INTO preview_contexts (
+                        user_id, url, burn_sub_lang, created_at, expires_at
+                     ) VALUES (?1, ?2, ?3, datetime('now'), datetime('now', '+' || ?4 || ' seconds'))
+                     ON CONFLICT(user_id, url) DO UPDATE SET
+                        burn_sub_lang = excluded.burn_sub_lang,
+                        expires_at = excluded.expires_at",
+                    rusqlite::params![user_id, url, burn_sub_lang, ttl_secs],
+                )
+                .context("sqlite set_preview_burn_sub_lang")?;
+                Ok(())
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query(
+                    "INSERT INTO preview_contexts (
+                        user_id, url, burn_sub_lang, created_at, expires_at
+                     ) VALUES ($1, $2, $3, NOW(), NOW() + ($4 * INTERVAL '1 second'))
+                     ON CONFLICT (user_id, url) DO UPDATE SET
+                        burn_sub_lang = EXCLUDED.burn_sub_lang,
+                        expires_at = EXCLUDED.expires_at",
+                )
+                .bind(user_id)
+                .bind(url)
+                .bind(burn_sub_lang)
+                .bind(ttl_secs)
+                .execute(pg_pool)
+                .await
+                .context("postgres set_preview_burn_sub_lang")?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn get_preview_context(&self, user_id: i64, url: &str) -> Result<Option<PreviewContext>> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite get_preview_context connection")?;
+                conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS preview_contexts (
+                        user_id INTEGER NOT NULL,
+                        url TEXT NOT NULL,
+                        original_message_id INTEGER,
+                        time_range_start TEXT,
+                        time_range_end TEXT,
+                        burn_sub_lang TEXT,
+                        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                        expires_at TEXT NOT NULL,
+                        PRIMARY KEY (user_id, url)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_preview_contexts_expires_at ON preview_contexts(expires_at);",
+                )
+                .context("sqlite ensure preview_contexts table")?;
+                let row = conn
+                    .query_row(
+                        "SELECT original_message_id, time_range_start, time_range_end, burn_sub_lang
+                         FROM preview_contexts
+                         WHERE user_id = ?1
+                           AND url = ?2
+                           AND expires_at > datetime('now')",
+                        rusqlite::params![user_id, url],
+                        |row| {
+                            let start: Option<String> = row.get(1)?;
+                            let end: Option<String> = row.get(2)?;
+                            Ok(PreviewContext {
+                                original_message_id: row.get(0)?,
+                                time_range: match (start, end) {
+                                    (Some(start), Some(end)) => Some((start, end)),
+                                    _ => None,
+                                },
+                                burn_sub_lang: row.get(3)?,
+                            })
+                        },
+                    )
+                    .optional()
+                    .context("sqlite get_preview_context")?;
+                Ok(row)
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let row = sqlx::query(
+                    "SELECT original_message_id, time_range_start, time_range_end, burn_sub_lang
+                     FROM preview_contexts
+                     WHERE user_id = $1
+                       AND url = $2
+                       AND expires_at > NOW()",
+                )
+                .bind(user_id)
+                .bind(url)
+                .fetch_optional(pg_pool)
+                .await
+                .context("postgres get_preview_context")?;
+                Ok(row.map(|row| PreviewContext {
+                    original_message_id: row.get("original_message_id"),
+                    time_range: match (
+                        row.get::<Option<String>, _>("time_range_start"),
+                        row.get::<Option<String>, _>("time_range_end"),
+                    ) {
+                        (Some(start), Some(end)) => Some((start, end)),
+                        _ => None,
+                    },
+                    burn_sub_lang: row.get("burn_sub_lang"),
+                }))
             }
         }
     }

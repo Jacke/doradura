@@ -1,5 +1,5 @@
 use crate::core::escape_markdown;
-use crate::storage::{cache, db::DbPool};
+use crate::storage::{cache, db::DbPool, SharedStorage};
 use crate::telegram::types::{PreviewMetadata, VideoFormatInfo};
 use crate::telegram::Bot;
 use std::sync::Arc;
@@ -420,6 +420,7 @@ pub async fn update_preview_message(
     default_format: &str,
     default_quality: Option<&str>,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     time_range: Option<&(String, String)>,
 ) -> ResponseResult<()> {
     let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
@@ -528,7 +529,12 @@ pub async fn update_preview_message(
     let url_id = cache::store_url(&db_pool, url.as_str()).await;
 
     // Look up per-URL burn subtitle language from cache
-    let burn_sub_lang = crate::telegram::cache::get_burn_sub_lang(url.as_str()).await;
+    let burn_sub_lang = shared_storage
+        .get_preview_context(chat_id.0, url.as_str())
+        .await
+        .ok()
+        .flatten()
+        .and_then(|context| context.burn_sub_lang);
 
     let is_youtube = {
         let u = url.as_str();
