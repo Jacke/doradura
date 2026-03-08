@@ -54,6 +54,25 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS charges (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+    plan TEXT NOT NULL,
+    telegram_charge_id TEXT NOT NULL,
+    provider_charge_id TEXT,
+    currency TEXT NOT NULL,
+    total_amount BIGINT NOT NULL,
+    invoice_payload TEXT NOT NULL,
+    is_recurring INTEGER NOT NULL DEFAULT 0,
+    is_first_recurring INTEGER NOT NULL DEFAULT 0,
+    subscription_expiration_date TIMESTAMPTZ,
+    payment_date TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_charges_user_id
+    ON charges(user_id, payment_date DESC);
+
 CREATE TABLE IF NOT EXISTS bot_assets (
     key TEXT PRIMARY KEY,
     file_id TEXT NOT NULL,
@@ -1077,6 +1096,179 @@ impl SharedStorage {
                 .await
                 .context("postgres expire_old_subscriptions")?;
                 Ok(result.rows_affected() as usize)
+            }
+        }
+    }
+
+    pub async fn update_user_plan_with_expiry(&self, telegram_id: i64, plan: &str, days: Option<i32>) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite update_user_plan_with_expiry connection")?;
+                db::update_user_plan_with_expiry(&conn, telegram_id, plan, days)
+                    .context("sqlite update_user_plan_with_expiry")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let expires_at = days.map(|days| chrono::Utc::now() + chrono::Duration::days(i64::from(days)));
+                sqlx::query(
+                    "INSERT INTO subscriptions (user_id, plan, expires_at, telegram_charge_id, is_recurring, updated_at)
+                     VALUES ($1, $2, $3, NULL, 0, NOW())
+                     ON CONFLICT (user_id) DO UPDATE SET
+                        plan = EXCLUDED.plan,
+                        expires_at = EXCLUDED.expires_at,
+                        telegram_charge_id = NULL,
+                        is_recurring = 0,
+                        updated_at = NOW()",
+                )
+                .bind(telegram_id)
+                .bind(plan)
+                .bind(expires_at)
+                .execute(pg_pool)
+                .await
+                .context("postgres update_user_plan_with_expiry subscriptions")?;
+                sqlx::query("UPDATE users SET plan = $2, updated_at = NOW() WHERE telegram_id = $1")
+                    .bind(telegram_id)
+                    .bind(plan)
+                    .execute(pg_pool)
+                    .await
+                    .context("postgres update_user_plan_with_expiry users")?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn save_charge(
+        &self,
+        user_id: i64,
+        plan: &str,
+        telegram_charge_id: &str,
+        provider_charge_id: Option<&str>,
+        currency: &str,
+        total_amount: i64,
+        invoice_payload: &str,
+        is_recurring: bool,
+        is_first_recurring: bool,
+        subscription_expiration_date: Option<&str>,
+    ) -> Result<i64> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite save_charge connection")?;
+                db::save_charge(
+                    &conn,
+                    user_id,
+                    plan,
+                    telegram_charge_id,
+                    provider_charge_id,
+                    currency,
+                    total_amount,
+                    invoice_payload,
+                    is_recurring,
+                    is_first_recurring,
+                    subscription_expiration_date,
+                )
+                .context("sqlite save_charge")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let row = sqlx::query(
+                    "INSERT INTO charges (
+                        user_id, plan, telegram_charge_id, provider_charge_id, currency,
+                        total_amount, invoice_payload, is_recurring, is_first_recurring,
+                        subscription_expiration_date
+                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                     RETURNING id",
+                )
+                .bind(user_id)
+                .bind(plan)
+                .bind(telegram_charge_id)
+                .bind(provider_charge_id)
+                .bind(currency)
+                .bind(total_amount)
+                .bind(invoice_payload)
+                .bind(i32::from(is_recurring))
+                .bind(i32::from(is_first_recurring))
+                .bind(subscription_expiration_date)
+                .fetch_one(pg_pool)
+                .await
+                .context("postgres save_charge")?;
+                Ok(row.get::<i64, _>("id"))
+            }
+        }
+    }
+
+    pub async fn update_subscription_data(
+        &self,
+        telegram_id: i64,
+        plan: &str,
+        charge_id: &str,
+        subscription_expires_at: &str,
+        is_recurring: bool,
+    ) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite update_subscription_data connection")?;
+                db::update_subscription_data(
+                    &conn,
+                    telegram_id,
+                    plan,
+                    charge_id,
+                    subscription_expires_at,
+                    is_recurring,
+                )
+                .context("sqlite update_subscription_data")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query(
+                    "INSERT INTO subscriptions (user_id, plan, expires_at, telegram_charge_id, is_recurring, updated_at)
+                     VALUES ($1, $2, $3, $4, $5, NOW())
+                     ON CONFLICT (user_id) DO UPDATE SET
+                        plan = EXCLUDED.plan,
+                        expires_at = EXCLUDED.expires_at,
+                        telegram_charge_id = EXCLUDED.telegram_charge_id,
+                        is_recurring = EXCLUDED.is_recurring,
+                        updated_at = NOW()",
+                )
+                .bind(telegram_id)
+                .bind(plan)
+                .bind(subscription_expires_at)
+                .bind(charge_id)
+                .bind(i32::from(is_recurring))
+                .execute(pg_pool)
+                .await
+                .context("postgres update_subscription_data subscriptions")?;
+                sqlx::query("UPDATE users SET plan = $2, updated_at = NOW() WHERE telegram_id = $1")
+                    .bind(telegram_id)
+                    .bind(plan)
+                    .execute(pg_pool)
+                    .await
+                    .context("postgres update_subscription_data users")?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn cancel_subscription(&self, telegram_id: i64) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite cancel_subscription connection")?;
+                db::cancel_subscription(&conn, telegram_id).context("sqlite cancel_subscription")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query(
+                    "INSERT INTO subscriptions (user_id, plan, is_recurring, updated_at)
+                     VALUES ($1, 'free', 0, NOW())
+                     ON CONFLICT (user_id) DO UPDATE SET
+                        is_recurring = 0,
+                        updated_at = NOW()",
+                )
+                .bind(telegram_id)
+                .execute(pg_pool)
+                .await
+                .context("postgres cancel_subscription subscriptions")?;
+                sqlx::query("UPDATE users SET plan = 'free', updated_at = NOW() WHERE telegram_id = $1")
+                    .bind(telegram_id)
+                    .execute(pg_pool)
+                    .await
+                    .context("postgres cancel_subscription users")?;
+                Ok(())
             }
         }
     }

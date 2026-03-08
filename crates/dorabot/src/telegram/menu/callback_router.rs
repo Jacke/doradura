@@ -348,8 +348,12 @@ pub async fn handle_menu_callback(
                 match action {
                     "cancel" => {
                         // Cancel the user's subscription
-                        match crate::core::subscription::cancel_subscription(&bot, chat_id.0, Arc::clone(&db_pool))
-                            .await
+                        match crate::core::subscription::cancel_subscription(
+                            &bot,
+                            chat_id.0,
+                            Arc::clone(&shared_storage),
+                        )
+                        .await
                         {
                             Ok(_) => {
                                 log::info!("Subscription canceled for user {}", chat_id.0);

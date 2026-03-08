@@ -1,6 +1,5 @@
 use crate::core::metrics;
 use crate::core::types::Plan;
-use crate::storage::db;
 use crate::storage::{DbPool, SharedStorage};
 use crate::telegram::Bot;
 use std::sync::Arc;
@@ -568,15 +567,14 @@ pub async fn create_subscription_invoice(bot: &Bot, chat_id: ChatId, plan: &str)
 
 /// Activates a subscription for a user
 pub async fn activate_subscription(
-    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     telegram_id: i64,
     plan: &str,
     days: i32,
 ) -> Result<(), String> {
-    let conn = db::get_connection(&db_pool).map_err(|e| format!("Failed to get connection: {}", e))?;
-
-    // Update the user's plan with an expiry date
-    db::update_user_plan_with_expiry(&conn, telegram_id, plan, Some(days))
+    shared_storage
+        .update_user_plan_with_expiry(telegram_id, plan, Some(days))
+        .await
         .map_err(|e| format!("Failed to update plan: {}", e))?;
 
     log::info!(
@@ -602,7 +600,7 @@ pub async fn activate_subscription(
 pub async fn handle_successful_payment(
     bot: &Bot,
     msg: &teloxide::types::Message,
-    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> ResponseResult<()> {
     if let Some(payment) = msg.successful_payment() {
         log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -652,10 +650,6 @@ pub async fn handle_successful_payment(
                 plan
             );
 
-            // Get database connection
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
             // Save charge_id from payment (convert to string)
             let charge_id_str = payment.telegram_payment_charge_id.0.clone();
 
@@ -684,19 +678,21 @@ pub async fn handle_successful_payment(
 
             // Save payment (charge) information to DB for accounting
             log::info!("💾 Saving charge data for accounting...");
-            if let Err(e) = db::save_charge(
-                &conn,
-                telegram_id,
-                plan,
-                &charge_id_str,
-                Some(&payment.provider_payment_charge_id),
-                &payment.currency,
-                payment.total_amount as i64,
-                &payment.invoice_payload,
-                is_recurring,
-                is_first_recurring,
-                Some(&subscription_expires_at),
-            ) {
+            if let Err(e) = shared_storage
+                .save_charge(
+                    telegram_id,
+                    plan,
+                    &charge_id_str,
+                    Some(&payment.provider_payment_charge_id),
+                    &payment.currency,
+                    payment.total_amount as i64,
+                    &payment.invoice_payload,
+                    is_recurring,
+                    is_first_recurring,
+                    Some(&subscription_expires_at),
+                )
+                .await
+            {
                 log::error!("❌ Failed to save charge data: {}", e);
                 // Continue execution as this is not a critical error
             } else {
@@ -717,14 +713,16 @@ pub async fn handle_successful_payment(
 
             // Update subscription data in the DB
             log::info!("💾 Updating subscription data in database...");
-            if let Err(e) = db::update_subscription_data(
-                &conn,
-                telegram_id,
-                plan,
-                &charge_id_str,
-                &subscription_expires_at,
-                is_recurring,
-            ) {
+            if let Err(e) = shared_storage
+                .update_subscription_data(
+                    telegram_id,
+                    plan,
+                    &charge_id_str,
+                    &subscription_expires_at,
+                    is_recurring,
+                )
+                .await
+            {
                 log::error!("❌ Failed to update subscription data: {}", e);
 
                 // Track payment failure (database error)
@@ -822,20 +820,21 @@ pub async fn handle_successful_payment(
 /// # Returns
 ///
 /// Returns `Result<(), String>` or an error if cancellation fails.
-pub async fn cancel_subscription(bot: &Bot, telegram_id: i64, db_pool: Arc<DbPool>) -> Result<(), String> {
+pub async fn cancel_subscription(
+    bot: &Bot,
+    telegram_id: i64,
+    shared_storage: Arc<SharedStorage>,
+) -> Result<(), String> {
     log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     log::info!("🚫 SUBSCRIPTION CANCELLATION REQUEST");
     log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     log::info!("  • User ID: {}", telegram_id);
 
-    let conn = db::get_connection(&db_pool).map_err(|e| {
-        log::error!("❌ Failed to get database connection: {}", e);
-        format!("Failed to get connection: {}", e)
-    })?;
-
     // Get the user's charge_id
     log::info!("📋 Fetching user data...");
-    let user = db::get_user(&conn, telegram_id)
+    let user = shared_storage
+        .get_user(telegram_id)
+        .await
         .map_err(|e| {
             log::error!("❌ Failed to get user: {}", e);
             format!("Failed to get user: {}", e)
@@ -887,7 +886,7 @@ pub async fn cancel_subscription(bot: &Bot, telegram_id: i64, db_pool: Arc<DbPoo
 
     // Update the is_recurring flag in the DB (user retains access until expiry date)
     log::info!("💾 Updating database (removing recurring flag)...");
-    db::cancel_subscription(&conn, telegram_id).map_err(|e| {
+    shared_storage.cancel_subscription(telegram_id).await.map_err(|e| {
         log::error!("❌ Failed to update subscription status in DB: {}", e);
         format!("Failed to update subscription status: {}", e)
     })?;
@@ -910,11 +909,15 @@ pub async fn cancel_subscription(bot: &Bot, telegram_id: i64, db_pool: Arc<DbPoo
 /// # Returns
 ///
 /// Returns `Result<(), String>` or an error if restoration fails.
-pub async fn restore_subscription(bot: &Bot, telegram_id: i64, db_pool: Arc<DbPool>) -> Result<(), String> {
-    let conn = db::get_connection(&db_pool).map_err(|e| format!("Failed to get connection: {}", e))?;
-
+pub async fn restore_subscription(
+    bot: &Bot,
+    telegram_id: i64,
+    shared_storage: Arc<SharedStorage>,
+) -> Result<(), String> {
     // Get the user's charge_id
-    let user = db::get_user(&conn, telegram_id)
+    let user = shared_storage
+        .get_user(telegram_id)
+        .await
         .map_err(|e| format!("Failed to get user: {}", e))?
         .ok_or_else(|| "User not found".to_string())?;
 

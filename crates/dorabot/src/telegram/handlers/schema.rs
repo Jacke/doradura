@@ -83,7 +83,9 @@ fn successful_payment_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> 
 
                 log::info!("Received successful_payment message");
 
-                if let Err(e) = subscription::handle_successful_payment(&bot, &msg, Arc::clone(&deps.db_pool)).await {
+                if let Err(e) =
+                    subscription::handle_successful_payment(&bot, &msg, Arc::clone(&deps.shared_storage)).await
+                {
                     log::error!("Failed to handle successful payment: {:?}", e);
                     notify_admin_text(
                         &bot,
