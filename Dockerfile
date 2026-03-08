@@ -181,6 +181,9 @@ RUN printf '%s\n' \
     'foreground { chmod 775 /data }' \
     'foreground { /bin/sh -c "chown 1000:2000 /data/*.sqlite* 2>/dev/null || true" }' \
     'foreground { /bin/sh -c "chmod 664 /data/*.sqlite* 2>/dev/null || true" }' \
+    'foreground { echo "Fixing Bot API binlog permissions..." }' \
+    'foreground { /bin/sh -c "chown telegram-bot-api:shareddata /data/*.binlog /data/tqueue.binlog 2>/dev/null || true" }' \
+    'foreground { /bin/sh -c "chmod 660 /data/*.binlog 2>/dev/null || true" }' \
     'foreground { /bin/sh -c "echo \"[init-data] /data contains $(ls /data | wc -l) files\"" }' \
     'foreground { echo "================================================" }' \
     'foreground { /bin/sh -c "START=$(cat /tmp/init_start_ms 2>/dev/null || echo 0); END=$(($(date +%s%N)/1000000)); ELAPSED=$((END - START)); echo \"[init-data] COMPLETE in ${ELAPSED}ms at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\"" }' \
