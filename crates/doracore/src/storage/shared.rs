@@ -1010,6 +1010,136 @@ impl SharedStorage {
         }
     }
 
+    pub async fn set_user_video_quality(&self, telegram_id: i64, quality: &str) -> Result<()> {
+        self.set_user_string_setting(
+            telegram_id,
+            "video_quality",
+            quality,
+            "UPDATE users SET video_quality = $2, updated_at = NOW() WHERE telegram_id = $1",
+        )
+        .await
+    }
+
+    pub async fn set_user_audio_bitrate(&self, telegram_id: i64, bitrate: &str) -> Result<()> {
+        self.set_user_string_setting(
+            telegram_id,
+            "audio_bitrate",
+            bitrate,
+            "UPDATE users SET audio_bitrate = $2, updated_at = NOW() WHERE telegram_id = $1",
+        )
+        .await
+    }
+
+    pub async fn set_user_send_as_document(&self, telegram_id: i64, send_as_document: i32) -> Result<()> {
+        self.set_user_i32_setting(
+            telegram_id,
+            "send_as_document",
+            send_as_document,
+            "UPDATE users SET send_as_document = $2, updated_at = NOW() WHERE telegram_id = $1",
+        )
+        .await
+    }
+
+    pub async fn set_user_send_audio_as_document(&self, telegram_id: i64, send_audio_as_document: i32) -> Result<()> {
+        self.set_user_i32_setting(
+            telegram_id,
+            "send_audio_as_document",
+            send_audio_as_document,
+            "UPDATE users SET send_audio_as_document = $2, updated_at = NOW() WHERE telegram_id = $1",
+        )
+        .await
+    }
+
+    pub async fn set_user_burn_subtitles(&self, telegram_id: i64, enabled: bool) -> Result<()> {
+        self.set_user_i32_setting(
+            telegram_id,
+            "burn_subtitles",
+            i32::from(enabled),
+            "UPDATE users SET burn_subtitles = $2, updated_at = NOW() WHERE telegram_id = $1",
+        )
+        .await
+    }
+
+    pub async fn set_user_language(&self, telegram_id: i64, language: &str) -> Result<()> {
+        self.set_user_string_setting(
+            telegram_id,
+            "language",
+            language,
+            "UPDATE users SET language = $2, updated_at = NOW() WHERE telegram_id = $1",
+        )
+        .await
+    }
+
+    pub async fn set_user_subtitle_font_size(&self, telegram_id: i64, value: &str) -> Result<()> {
+        self.set_user_string_setting(
+            telegram_id,
+            "subtitle_font_size",
+            value,
+            "UPDATE users SET subtitle_font_size = $2, updated_at = NOW() WHERE telegram_id = $1",
+        )
+        .await
+    }
+
+    pub async fn set_user_subtitle_text_color(&self, telegram_id: i64, value: &str) -> Result<()> {
+        self.set_user_string_setting(
+            telegram_id,
+            "subtitle_text_color",
+            value,
+            "UPDATE users SET subtitle_text_color = $2, updated_at = NOW() WHERE telegram_id = $1",
+        )
+        .await
+    }
+
+    pub async fn set_user_subtitle_outline_color(&self, telegram_id: i64, value: &str) -> Result<()> {
+        self.set_user_string_setting(
+            telegram_id,
+            "subtitle_outline_color",
+            value,
+            "UPDATE users SET subtitle_outline_color = $2, updated_at = NOW() WHERE telegram_id = $1",
+        )
+        .await
+    }
+
+    pub async fn set_user_subtitle_outline_width(&self, telegram_id: i64, value: i32) -> Result<()> {
+        self.set_user_i32_setting(
+            telegram_id,
+            "subtitle_outline_width",
+            value,
+            "UPDATE users SET subtitle_outline_width = $2, updated_at = NOW() WHERE telegram_id = $1",
+        )
+        .await
+    }
+
+    pub async fn set_user_subtitle_shadow(&self, telegram_id: i64, value: i32) -> Result<()> {
+        self.set_user_i32_setting(
+            telegram_id,
+            "subtitle_shadow",
+            value,
+            "UPDATE users SET subtitle_shadow = $2, updated_at = NOW() WHERE telegram_id = $1",
+        )
+        .await
+    }
+
+    pub async fn set_user_subtitle_position(&self, telegram_id: i64, value: &str) -> Result<()> {
+        self.set_user_string_setting(
+            telegram_id,
+            "subtitle_position",
+            value,
+            "UPDATE users SET subtitle_position = $2, updated_at = NOW() WHERE telegram_id = $1",
+        )
+        .await
+    }
+
+    pub async fn set_user_progress_bar_style(&self, telegram_id: i64, style: &str) -> Result<()> {
+        self.set_user_string_setting(
+            telegram_id,
+            "progress_bar_style",
+            style,
+            "UPDATE users SET progress_bar_style = $2, updated_at = NOW() WHERE telegram_id = $1",
+        )
+        .await
+    }
+
     pub async fn get_bot_asset(&self, key: &str) -> Result<Option<String>> {
         match self {
             Self::Sqlite { db_pool } => {
@@ -2648,6 +2778,73 @@ impl SharedStorage {
                 Ok(row
                     .map(|row| row.get::<i32, _>(sqlite_selector))
                     .unwrap_or(default_value))
+            }
+        }
+    }
+
+    async fn set_user_string_setting(
+        &self,
+        telegram_id: i64,
+        sqlite_selector: &str,
+        value: &str,
+        postgres_query: &str,
+    ) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite set_user_string_setting connection")?;
+                match sqlite_selector {
+                    "language" => db::set_user_language(&conn, telegram_id, value),
+                    "progress_bar_style" => db::set_user_progress_bar_style(&conn, telegram_id, value),
+                    "video_quality" => db::set_user_video_quality(&conn, telegram_id, value),
+                    "audio_bitrate" => db::set_user_audio_bitrate(&conn, telegram_id, value),
+                    "subtitle_font_size" => db::set_user_subtitle_font_size(&conn, telegram_id, value),
+                    "subtitle_text_color" => db::set_user_subtitle_text_color(&conn, telegram_id, value),
+                    "subtitle_outline_color" => db::set_user_subtitle_outline_color(&conn, telegram_id, value),
+                    "subtitle_position" => db::set_user_subtitle_position(&conn, telegram_id, value),
+                    _ => Err(rusqlite::Error::InvalidQuery),
+                }
+                .map_err(anyhow::Error::from)
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query(postgres_query)
+                    .bind(telegram_id)
+                    .bind(value)
+                    .execute(pg_pool)
+                    .await
+                    .context("postgres set_user_string_setting")?;
+                Ok(())
+            }
+        }
+    }
+
+    async fn set_user_i32_setting(
+        &self,
+        telegram_id: i64,
+        sqlite_selector: &str,
+        value: i32,
+        postgres_query: &str,
+    ) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite set_user_i32_setting connection")?;
+                match sqlite_selector {
+                    "send_as_document" => db::set_user_send_as_document(&conn, telegram_id, value),
+                    "send_audio_as_document" => db::set_user_send_audio_as_document(&conn, telegram_id, value),
+                    "burn_subtitles" => db::set_user_burn_subtitles(&conn, telegram_id, value != 0),
+                    "subtitle_outline_width" => db::set_user_subtitle_outline_width(&conn, telegram_id, value),
+                    "subtitle_shadow" => db::set_user_subtitle_shadow(&conn, telegram_id, value),
+                    _ => Err(rusqlite::Error::InvalidQuery),
+                }
+                .map_err(anyhow::Error::from)
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query(postgres_query)
+                    .bind(telegram_id)
+                    .bind(value)
+                    .execute(pg_pool)
+                    .await
+                    .context("postgres set_user_i32_setting")?;
+                Ok(())
             }
         }
     }
