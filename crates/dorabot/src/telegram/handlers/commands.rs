@@ -17,7 +17,14 @@ pub(super) async fn handle_start_command(bot: &Bot, msg: &Message, deps: &Handle
         if let Some(token) = text.strip_prefix("/start pl_") {
             let token = token.trim();
             if !token.is_empty() {
-                crate::telegram::menu::playlist::handle_clone_playlist(bot, msg.chat.id, token, &deps.db_pool).await;
+                crate::telegram::menu::playlist::handle_clone_playlist(
+                    bot,
+                    msg.chat.id,
+                    token,
+                    &deps.db_pool,
+                    &deps.shared_storage,
+                )
+                .await;
                 return Ok(());
             }
         }

@@ -304,11 +304,10 @@ pub async fn handle_search_callback(
                 match &session.context {
                     SearchContext::PlayerMode { playlist_id } | SearchContext::AddToPlaylist { playlist_id } => {
                         let pl_id = *playlist_id;
-                        if let Ok(conn) = db::get_connection(&db_pool) {
-                            match db::get_playlist(&conn, pl_id) {
-                                Ok(Some(pl)) if pl.user_id == chat_id.0 => {
-                                    let _ = db::add_playlist_item(
-                                        &conn,
+                        match shared_storage.get_playlist(pl_id).await {
+                            Ok(Some(pl)) if pl.user_id == chat_id.0 => {
+                                let _ = shared_storage
+                                    .add_playlist_item(
                                         pl_id,
                                         &result.title,
                                         Some(&result.artist),
@@ -316,10 +315,10 @@ pub async fn handle_search_callback(
                                         result.duration_secs.map(|d| d as i32),
                                         None,
                                         session.source.source_name(),
-                                    );
-                                }
-                                _ => {}
+                                    )
+                                    .await;
                             }
+                            _ => {}
                         }
                     }
                     SearchContext::Standalone => {}
@@ -347,14 +346,12 @@ pub async fn handle_search_callback(
         if parts.len() == 2 {
             if let (Ok(pl_id), Ok(idx)) = (parts[0].parse::<i64>(), parts[1].parse::<usize>()) {
                 if let Some(result) = session.results.get(idx) {
-                    if let Ok(conn) = db::get_connection(&db_pool) {
-                        // Verify ownership
-                        match db::get_playlist(&conn, pl_id) {
-                            Ok(Some(pl)) if pl.user_id == chat_id.0 => {}
-                            _ => return Ok(()),
-                        }
-                        let _ = db::add_playlist_item(
-                            &conn,
+                    match shared_storage.get_playlist(pl_id).await {
+                        Ok(Some(pl)) if pl.user_id == chat_id.0 => {}
+                        _ => return Ok(()),
+                    }
+                    let _ = shared_storage
+                        .add_playlist_item(
                             pl_id,
                             &result.title,
                             Some(&result.artist),
@@ -362,11 +359,11 @@ pub async fn handle_search_callback(
                             result.duration_secs.map(|d| d as i32),
                             None,
                             session.source.source_name(),
-                        );
-                        let _ = bot
-                            .send_message(chat_id, format!("➕ Added \"{}\" to playlist", result.title))
-                            .await;
-                    }
+                        )
+                        .await;
+                    let _ = bot
+                        .send_message(chat_id, format!("➕ Added \"{}\" to playlist", result.title))
+                        .await;
                 }
             }
         }

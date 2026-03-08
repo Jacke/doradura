@@ -398,9 +398,9 @@ pub async fn handle_message(
             crate::telegram::menu::playlist::handle_playlist_name_input(
                 &bot,
                 msg.chat.id,
-                text,
                 db_pool.clone(),
                 shared_storage.clone(),
+                text,
             )
             .await;
             return Ok(None);
@@ -420,6 +420,7 @@ pub async fn handle_message(
             // Handle import in background
             let bot_clone = bot.clone();
             let db_pool_clone = db_pool.clone();
+            let shared_storage_clone = shared_storage.clone();
             let url_text = text.trim().to_string();
             tokio::spawn(async move {
                 crate::download::playlist_import::handle_import_url(
@@ -428,6 +429,7 @@ pub async fn handle_message(
                     &url_text,
                     pl_id,
                     db_pool_clone,
+                    shared_storage_clone,
                 )
                 .await;
             });

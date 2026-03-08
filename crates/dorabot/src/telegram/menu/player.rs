@@ -14,7 +14,7 @@ use crate::download::progress::ProgressMessage;
 use crate::download::search::format_duration;
 use crate::download::send::send_audio_with_retry;
 use crate::download::source::SourceRegistry;
-use crate::storage::db::{self, DbPool, PlaylistItem};
+use crate::storage::db::{DbPool, PlaylistItem};
 use crate::storage::SharedStorage;
 use crate::telegram::notifications::notify_admin_text;
 use crate::telegram::Bot;
@@ -63,21 +63,16 @@ async fn restore_default_commands(bot: &Bot, chat_id: ChatId) {
 pub async fn handle_player_command(
     bot: &Bot,
     chat_id: ChatId,
-    db_pool: &Arc<DbPool>,
+    _db_pool: &Arc<DbPool>,
     shared_storage: &Arc<SharedStorage>,
 ) {
-    let conn = match db::get_connection(db_pool) {
-        Ok(c) => c,
-        Err(_) => {
-            let _ = bot.send_message(chat_id, "Database error").await;
-            return;
-        }
-    };
-
     // Check for existing session — show player menu
     if let Ok(Some(session)) = shared_storage.get_player_session(chat_id.0).await {
-        if let Ok(Some(pl)) = db::get_playlist(&conn, session.playlist_id) {
-            let items = db::get_playlist_items(&conn, session.playlist_id).unwrap_or_default();
+        if let Ok(Some(pl)) = shared_storage.get_playlist(session.playlist_id).await {
+            let items = shared_storage
+                .get_playlist_items(session.playlist_id)
+                .await
+                .unwrap_or_default();
             let msg = send_player_menu(bot, chat_id, &pl.name, &items, session.is_shuffle, None).await;
             if let Some(msg_id) = msg {
                 track_message(shared_storage, chat_id.0, msg_id.0).await;
@@ -86,7 +81,7 @@ pub async fn handle_player_command(
         }
     }
 
-    let playlists = db::get_user_playlists(&conn, chat_id.0).unwrap_or_default();
+    let playlists = shared_storage.get_user_playlists(chat_id.0).await.unwrap_or_default();
 
     if playlists.is_empty() {
         let rows = vec![vec![InlineKeyboardButton::callback(
@@ -104,7 +99,7 @@ pub async fn handle_player_command(
     // Show playlist selector
     let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
     for pl in &playlists {
-        let count = db::count_playlist_items(&conn, pl.id).unwrap_or(0);
+        let count = shared_storage.count_playlist_items(pl.id).await.unwrap_or(0);
         let label = format!("▶ {} ({} tracks)", pl.name, count);
         rows.push(vec![InlineKeyboardButton::callback(
             label,
@@ -257,17 +252,15 @@ async fn send_player_menu(
 // ── Play all tracks ───────────────────────────────────────────────────────
 
 async fn play_all_tracks(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbPool>, shared_storage: &Arc<SharedStorage>) {
-    let conn = match db::get_connection(db_pool) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-
     let session = match shared_storage.get_player_session(chat_id.0).await {
         Ok(Some(s)) => s,
         _ => return,
     };
 
-    let mut items = db::get_playlist_items(&conn, session.playlist_id).unwrap_or_default();
+    let mut items = shared_storage
+        .get_playlist_items(session.playlist_id)
+        .await
+        .unwrap_or_default();
     if items.is_empty() {
         let _ = send_tracked_message(bot, chat_id, "Playlist is empty.", shared_storage).await;
         return;
@@ -523,9 +516,7 @@ async fn download_player_track(
                     item.title,
                     fid
                 );
-                if let Ok(conn) = db::get_connection(db_pool) {
-                    let _ = db::update_item_file_id(&conn, item.id, fid);
-                }
+                let _ = shared_storage.update_playlist_item_file_id(item.id, fid).await;
             } else if let Some(doc) = sent_msg.document() {
                 // Sent as document (large file fallback)
                 let fid = &doc.file.id.0;
@@ -535,9 +526,7 @@ async fn download_player_track(
                     item.title,
                     fid
                 );
-                if let Ok(conn) = db::get_connection(db_pool) {
-                    let _ = db::update_item_file_id(&conn, item.id, fid);
-                }
+                let _ = shared_storage.update_playlist_item_file_id(item.id, fid).await;
             }
             // Send to vault
             let vault_fid = sent_msg
@@ -599,17 +588,12 @@ pub async fn handle_player_callback(
 ) -> Result<(), teloxide::RequestError> {
     let _ = bot.answer_callback_query(callback_id).await;
 
-    let conn = match db::get_connection(&db_pool) {
-        Ok(c) => c,
-        Err(_) => return Ok(()),
-    };
-
     // pw:play:{pl_id} — enter player mode
     if let Some(pl_id_str) = data.strip_prefix("pw:play:") {
         if let Ok(pl_id) = pl_id_str.parse::<i64>() {
-            match db::get_playlist(&conn, pl_id) {
+            match shared_storage.get_playlist(pl_id).await {
                 Ok(Some(pl)) if pl.user_id == chat_id.0 || pl.is_public => {
-                    let items = db::get_playlist_items(&conn, pl_id).unwrap_or_default();
+                    let items = shared_storage.get_playlist_items(pl_id).await.unwrap_or_default();
                     if items.is_empty() {
                         let _ = bot.send_message(chat_id, "Playlist is empty.").await;
                         return Ok(());
@@ -632,8 +616,13 @@ pub async fn handle_player_callback(
         }
     };
 
-    let items = db::get_playlist_items(&conn, session.playlist_id).unwrap_or_default();
-    let pl_name = db::get_playlist(&conn, session.playlist_id)
+    let items = shared_storage
+        .get_playlist_items(session.playlist_id)
+        .await
+        .unwrap_or_default();
+    let pl_name = shared_storage
+        .get_playlist(session.playlist_id)
+        .await
         .ok()
         .flatten()
         .map(|p| p.name)
@@ -653,7 +642,10 @@ pub async fn handle_player_callback(
             }
         }
         "pw:list" => {
-            let page_items = db::get_playlist_items_page(&conn, session.playlist_id, 0, 20).unwrap_or_default();
+            let page_items = shared_storage
+                .get_playlist_items_page(session.playlist_id, 0, 20)
+                .await
+                .unwrap_or_default();
             let total = items.len();
             let mut text = format!("📋 {} ({} tracks)\n\n", pl_name, total);
             for item in &page_items {
