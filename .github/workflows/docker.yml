@@ -69,6 +69,7 @@ jobs:
 
       - name: Trigger Railway redeploy
         if: env.HAS_RAILWAY_TOKEN == 'true'
+        continue-on-error: true
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
         run: railway redeploy --service doradura -y
