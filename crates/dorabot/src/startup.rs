@@ -118,7 +118,7 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
         alert_manager.clone(),
     ));
 
-    background_tasks::spawn_subscription_expiry_checker(Arc::clone(&db_pool));
+    background_tasks::spawn_subscription_expiry_checker(Arc::clone(&shared_storage));
     background_tasks::spawn_cookies_checker(bot.clone());
     background_tasks::spawn_content_watcher(bot.clone(), Arc::clone(&db_pool), Arc::clone(&shared_storage));
     background_tasks::spawn_db_cleanup(Arc::clone(&db_pool), Arc::clone(&shared_storage));

@@ -499,11 +499,6 @@ pub async fn handle_playlist_callback(
 ) -> Result<(), teloxide::RequestError> {
     let _ = bot.answer_callback_query(callback_id).await;
 
-    let conn = match db::get_connection(&db_pool) {
-        Ok(c) => c,
-        Err(_) => return Ok(()),
-    };
-
     // pl:new — create
     if data == "pl:new" {
         set_playlist_name_session(
@@ -696,7 +691,7 @@ pub async fn handle_playlist_callback(
                     }
                     "h" => {
                         // Show download history for adding
-                        let _ = show_history_for_add(bot, chat_id, pl_id, 0, &db_pool).await;
+                        let _ = show_history_for_add(bot, chat_id, pl_id, 0, &shared_storage).await;
                     }
                     _ => {}
                 }
@@ -769,7 +764,7 @@ pub async fn handle_playlist_callback(
                 if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
                     return Ok(());
                 }
-                if let Ok(Some(entry)) = db::get_download_history_entry(&conn, chat_id.0, entry_id) {
+                if let Ok(Some(entry)) = shared_storage.get_download_history_entry(chat_id.0, entry_id).await {
                     let source = crate::download::search::source_name_from_url(&entry.url);
                     let _ = shared_storage
                         .add_playlist_item(
@@ -883,15 +878,13 @@ async fn show_history_for_add(
     chat_id: ChatId,
     playlist_id: i64,
     page: usize,
-    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
-    let conn = match db::get_connection(db_pool) {
-        Ok(c) => c,
-        Err(_) => return Ok(()),
-    };
-
     // Get recent downloads
-    let history = db::get_download_history(&conn, chat_id.0, Some(10)).unwrap_or_default();
+    let history = shared_storage
+        .get_download_history(chat_id.0, Some(10))
+        .await
+        .unwrap_or_default();
 
     if history.is_empty() {
         let _ = bot.send_message(chat_id, "No download history.").await;

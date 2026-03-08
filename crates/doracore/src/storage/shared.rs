@@ -1055,6 +1055,32 @@ impl SharedStorage {
         }
     }
 
+    pub async fn expire_old_subscriptions(&self) -> Result<usize> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite expire_old_subscriptions connection")?;
+                db::expire_old_subscriptions(&conn).context("sqlite expire_old_subscriptions")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let result = sqlx::query(
+                    "UPDATE subscriptions
+                     SET plan = 'free',
+                         expires_at = NULL,
+                         telegram_charge_id = NULL,
+                         is_recurring = FALSE,
+                         updated_at = NOW()
+                     WHERE plan != 'free'
+                       AND expires_at IS NOT NULL
+                       AND expires_at <= NOW()",
+                )
+                .execute(pg_pool)
+                .await
+                .context("postgres expire_old_subscriptions")?;
+                Ok(result.rows_affected() as usize)
+            }
+        }
+    }
+
     pub async fn create_user(&self, telegram_id: i64, username: Option<String>) -> Result<()> {
         self.create_user_with_language(telegram_id, username, None).await
     }

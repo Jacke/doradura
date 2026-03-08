@@ -16,20 +16,17 @@ use crate::telegram::Bot;
 /// Start the subscription expiry checker (every hour).
 ///
 /// Automatically expires subscriptions past their expiry date.
-pub fn spawn_subscription_expiry_checker(db_pool: Arc<DbPool>) {
+pub fn spawn_subscription_expiry_checker(shared_storage: Arc<SharedStorage>) {
     tokio::spawn(async move {
         let mut interval = interval(Duration::from_secs(60 * 60));
         loop {
             interval.tick().await;
-            match crate::storage::get_connection(&db_pool) {
-                Ok(conn) => match db::expire_old_subscriptions(&conn) {
-                    Ok(count) if count > 0 => {
-                        log::info!("Expired {} subscription(s) automatically", count);
-                    }
-                    Ok(_) => {}
-                    Err(e) => log::error!("Failed to expire old subscriptions: {}", e),
-                },
-                Err(e) => log::error!("Failed to get DB connection for expiry check: {}", e),
+            match shared_storage.expire_old_subscriptions().await {
+                Ok(count) if count > 0 => {
+                    log::info!("Expired {} subscription(s) automatically", count);
+                }
+                Ok(_) => {}
+                Err(e) => log::error!("Failed to expire old subscriptions: {}", e),
             }
         }
     });
