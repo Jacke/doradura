@@ -17,6 +17,9 @@ use crate::telegram::Bot;
 const LOCK_ALERT_MONITOR: i64 = 1101;
 const LOCK_STATS_REPORTER: i64 = 1102;
 const LOCK_UPDATES_CLEANUP: i64 = 1002;
+const LOCK_SUBSCRIPTION_EXPIRY: i64 = 1103;
+const LOCK_COOKIES_CHECKER: i64 = 1104;
+const LOCK_CONTENT_WATCHER: i64 = 1105;
 
 async fn try_acquire_pg_singleton_lock(
     shared_storage: &Arc<SharedStorage>,
@@ -62,8 +65,25 @@ async fn try_acquire_pg_singleton_lock(
 /// Start the subscription expiry checker (every hour).
 ///
 /// Automatically expires subscriptions past their expiry date.
-pub fn spawn_subscription_expiry_checker(shared_storage: Arc<SharedStorage>) {
+pub async fn spawn_subscription_expiry_checker(shared_storage: Arc<SharedStorage>) {
+    let lock_conn = match shared_storage.as_ref() {
+        SharedStorage::Sqlite { .. } => None,
+        SharedStorage::Postgres { .. } => {
+            match try_acquire_pg_singleton_lock(
+                &shared_storage,
+                LOCK_SUBSCRIPTION_EXPIRY,
+                "subscription expiry checker",
+            )
+            .await
+            {
+                Some(conn) => Some(conn),
+                None => return,
+            }
+        }
+    };
+
     tokio::spawn(async move {
+        let _lock_conn = lock_conn;
         let mut interval = interval(Duration::from_secs(60 * 60));
         loop {
             interval.tick().await;
@@ -81,11 +101,22 @@ pub fn spawn_subscription_expiry_checker(shared_storage: Arc<SharedStorage>) {
 /// Start the cookies validation checker (every 5 minutes).
 ///
 /// Notifies admins when YouTube cookies need refresh.
-pub fn spawn_cookies_checker(bot: Bot) {
+pub async fn spawn_cookies_checker(bot: Bot, shared_storage: Arc<SharedStorage>) {
+    let lock_conn = match shared_storage.as_ref() {
+        SharedStorage::Sqlite { .. } => None,
+        SharedStorage::Postgres { .. } => {
+            match try_acquire_pg_singleton_lock(&shared_storage, LOCK_COOKIES_CHECKER, "cookies checker").await {
+                Some(conn) => Some(conn),
+                None => return,
+            }
+        }
+    };
+
     tokio::spawn(async move {
         use crate::download::cookies;
         use crate::telegram::notify_admin_cookies_refresh;
 
+        let _lock_conn = lock_conn;
         let mut interval = interval(Duration::from_secs(5 * 60));
         loop {
             interval.tick().await;
@@ -116,8 +147,18 @@ pub fn spawn_cookies_checker(bot: Bot) {
     });
 }
 
-pub fn spawn_content_watcher(bot: Bot, db_pool: Arc<DbPool>, shared_storage: Arc<SharedStorage>) {
+pub async fn spawn_content_watcher(bot: Bot, db_pool: Arc<DbPool>, shared_storage: Arc<SharedStorage>) {
     use crate::watcher::{scheduler, WatcherRegistry};
+
+    let lock_conn = match shared_storage.as_ref() {
+        SharedStorage::Sqlite { .. } => None,
+        SharedStorage::Postgres { .. } => {
+            match try_acquire_pg_singleton_lock(&shared_storage, LOCK_CONTENT_WATCHER, "content watcher").await {
+                Some(conn) => Some(conn),
+                None => return,
+            }
+        }
+    };
 
     let watcher_registry = Arc::new(WatcherRegistry::default_registry());
     let notification_rx = scheduler::start_scheduler(
@@ -130,6 +171,7 @@ pub fn spawn_content_watcher(bot: Bot, db_pool: Arc<DbPool>, shared_storage: Arc
         Arc::clone(&db_pool),
         Arc::clone(&shared_storage),
         notification_rx,
+        lock_conn,
     );
     log::info!("Content watcher scheduler and notification dispatcher started");
 }

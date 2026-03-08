@@ -10,6 +10,7 @@ use crate::telegram::cb;
 use crate::telegram::Bot;
 use crate::watcher::traits::WatchNotification;
 use crate::watcher::WatcherRegistry;
+use sqlx::{pool::PoolConnection, Postgres};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -845,8 +846,10 @@ pub fn start_notification_dispatcher(
     db_pool: Arc<DbPool>,
     shared_storage: Arc<SharedStorage>,
     mut rx: mpsc::UnboundedReceiver<WatchNotification>,
+    lock_conn: Option<PoolConnection<Postgres>>,
 ) {
     tokio::spawn(async move {
+        let _lock_conn = lock_conn;
         let http_client = reqwest::Client::new();
         let ig_source = InstagramSource::new();
 
