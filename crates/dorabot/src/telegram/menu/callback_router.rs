@@ -158,33 +158,74 @@ pub async fn handle_menu_callback(
                             chat_id,
                             message_id,
                             Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
                             url_id,
                             preview_msg_id,
                         )
                         .await?;
                     }
                     "video_quality" => {
-                        show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), url_id).await?;
+                        show_video_quality_menu(
+                            &bot,
+                            chat_id,
+                            message_id,
+                            Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
+                            url_id,
+                        )
+                        .await?;
                     }
                     "audio_bitrate" => {
-                        show_audio_bitrate_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), url_id).await?;
+                        show_audio_bitrate_menu(
+                            &bot,
+                            chat_id,
+                            message_id,
+                            Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
+                            url_id,
+                        )
+                        .await?;
                     }
                     "services" => {
                         show_services_menu(&bot, chat_id, message_id, &lang, &extension_registry).await?;
                     }
                     "language" => {
-                        show_language_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), url_id).await?;
+                        show_language_menu(
+                            &bot,
+                            chat_id,
+                            message_id,
+                            Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
+                            url_id,
+                        )
+                        .await?;
                     }
                     "subtitle_style" => {
-                        show_subtitle_style_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
+                        show_subtitle_style_menu(
+                            &bot,
+                            chat_id,
+                            message_id,
+                            Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
+                        )
+                        .await?;
                     }
                     "progress_bar_style" => {
-                        show_progress_bar_style_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
+                        show_progress_bar_style_menu(
+                            &bot,
+                            chat_id,
+                            message_id,
+                            Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
+                        )
+                        .await?;
                     }
                     "subscription" => {
                         // Delete the old message and show subscription info
                         let _ = bot.delete_message(chat_id, message_id).await;
-                        let _ = show_subscription_info(&bot, chat_id, Arc::clone(&db_pool)).await;
+                        let _ =
+                            show_subscription_info(&bot, chat_id, Arc::clone(&db_pool), Arc::clone(&shared_storage))
+                                .await;
                     }
                     _ => {}
                 }
@@ -199,7 +240,14 @@ pub async fn handle_menu_callback(
                     }
                     "current" => {
                         // Show detailed current settings
-                        show_current_settings_detail(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
+                        show_current_settings_detail(
+                            &bot,
+                            chat_id,
+                            message_id,
+                            Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
+                        )
+                        .await?;
                     }
                     "stats" => {
                         // Delete current message and show stats
@@ -218,8 +266,13 @@ pub async fn handle_menu_callback(
                     "subscription" => {
                         // Delete current message and show subscription info
                         let _ = bot.delete_message(chat_id, message_id).await;
-                        let _ = crate::core::subscription::show_subscription_info(&bot, chat_id, Arc::clone(&db_pool))
-                            .await;
+                        let _ = crate::core::subscription::show_subscription_info(
+                            &bot,
+                            chat_id,
+                            Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
+                        )
+                        .await;
                     }
                     "help" => {
                         // Edit message to show help
@@ -307,7 +360,13 @@ pub async fn handle_menu_callback(
 
                                 // Refresh the subscription menu
                                 let _ = bot.delete_message(chat_id, message_id).await;
-                                let _ = show_subscription_info(&bot, chat_id, Arc::clone(&db_pool)).await;
+                                let _ = show_subscription_info(
+                                    &bot,
+                                    chat_id,
+                                    Arc::clone(&db_pool),
+                                    Arc::clone(&shared_storage),
+                                )
+                                .await;
                             }
                             Err(e) => {
                                 log::error!("Failed to cancel subscription: {}", e);
@@ -462,7 +521,15 @@ pub async fn handle_menu_callback(
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
                 // Update the menu to show new selection
-                show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
+                show_video_quality_menu(
+                    &bot,
+                    chat_id,
+                    message_id,
+                    Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
+                    None,
+                )
+                .await?;
             } else if data == "send_type:toggle" {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
                 let conn = db::get_connection(&db_pool)
@@ -476,7 +543,15 @@ pub async fn handle_menu_callback(
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
                 // Refresh the menu
-                show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
+                show_video_quality_menu(
+                    &bot,
+                    chat_id,
+                    message_id,
+                    Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
+                    None,
+                )
+                .await?;
             } else if data.starts_with("ct:") {
                 // Carousel toggle: ct:{index}:{url_id}:{mask} or ct:all:{url_id}:{mask}
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
@@ -571,7 +646,15 @@ pub async fn handle_menu_callback(
                 );
 
                 // Refresh the menu
-                show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
+                show_video_quality_menu(
+                    &bot,
+                    chat_id,
+                    message_id,
+                    Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
+                    None,
+                )
+                .await?;
             } else if let Some(bitrate) = data.strip_prefix("bitrate:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
                 // Remove "bitrate:" prefix
@@ -581,7 +664,15 @@ pub async fn handle_menu_callback(
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
                 // Update the menu to show new selection
-                show_audio_bitrate_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
+                show_audio_bitrate_menu(
+                    &bot,
+                    chat_id,
+                    message_id,
+                    Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
+                    None,
+                )
+                .await?;
             } else if data == "audio_send_type:toggle" {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
                 let conn = db::get_connection(&db_pool)
@@ -595,7 +686,15 @@ pub async fn handle_menu_callback(
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
                 // Refresh the menu
-                show_audio_bitrate_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
+                show_audio_bitrate_menu(
+                    &bot,
+                    chat_id,
+                    message_id,
+                    Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
+                    None,
+                )
+                .await?;
             } else if let Some(setting) = data.strip_prefix("subtitle:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
                 let conn = db::get_connection(&db_pool).map_err(db_err)?;
@@ -656,7 +755,14 @@ pub async fn handle_menu_callback(
                     _ => {}
                 }
 
-                show_subtitle_style_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
+                show_subtitle_style_menu(
+                    &bot,
+                    chat_id,
+                    message_id,
+                    Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
+                )
+                .await?;
             } else if let Some(style_name) = data.strip_prefix("pbar_style:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
                 let conn = db::get_connection(&db_pool)
@@ -667,7 +773,14 @@ pub async fn handle_menu_callback(
                 log::info!("User {} set progress bar style to {}", chat_id.0, style_name);
 
                 // Refresh the menu
-                show_progress_bar_style_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
+                show_progress_bar_style_menu(
+                    &bot,
+                    chat_id,
+                    message_id,
+                    Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
+                )
+                .await?;
             } else if data.starts_with("video_send_type:toggle:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
 
@@ -911,7 +1024,16 @@ pub async fn handle_menu_callback(
                     }
                 } else {
                     // Update the menu to show new selection
-                    show_download_type_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None, None).await?;
+                    show_download_type_menu(
+                        &bot,
+                        chat_id,
+                        message_id,
+                        Arc::clone(&db_pool),
+                        Arc::clone(&shared_storage),
+                        None,
+                        None,
+                    )
+                    .await?;
                 }
             } else if data.starts_with("dl:tm:") {
                 // MP3 toggle: flip quality buttons between dl:mp4+mp3:q:uid and dl:mp4:q:uid

@@ -1,6 +1,7 @@
 use crate::core::metrics;
 use crate::core::types::Plan;
-use crate::storage::db::{self, DbPool};
+use crate::storage::db;
+use crate::storage::{DbPool, SharedStorage};
 use crate::telegram::Bot;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -87,45 +88,46 @@ fn format_subscription_period_for_log(period: &Seconds) -> String {
 }
 
 /// Shows information about the user's current plan and available subscriptions
-pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
+pub async fn show_subscription_info(
+    bot: &Bot,
+    chat_id: ChatId,
+    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<Message> {
     log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     log::info!("📊 SHOW SUBSCRIPTION INFO REQUEST");
     log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     log::info!("  • User ID: {}", chat_id.0);
 
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+    let _ = db_pool;
 
-    let user = match db::get_user(&conn, chat_id.0) {
-        Ok(Some(u)) => u,
+    let user = match shared_storage.get_user(chat_id.0).await {
+        Ok(Some(user)) => user,
         Ok(None) => {
-            // Create user if not found
-            if let Err(e) = db::create_user(&conn, chat_id.0, None) {
+            if let Err(e) = shared_storage.create_user(chat_id.0, None).await {
                 log::error!("Failed to create user: {}", e);
             }
-            // Try to fetch again
-            db::get_user(&conn, chat_id.0)
+            shared_storage
+                .get_user(chat_id.0)
+                .await
                 .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
-                .unwrap_or_else(|| {
-                    // Fallback to free plan
-                    crate::storage::db::User {
-                        telegram_id: chat_id.0,
-                        username: None,
-                        plan: Plan::Free,
-                        download_format: "mp3".to_string(),
-                        download_subtitles: 0,
-                        video_quality: "best".to_string(),
-                        language: "ru".to_string(),
-                        send_as_document: 0,
-                        send_audio_as_document: 0,
-                        audio_bitrate: "320k".to_string(),
-                        subscription_expires_at: None,
-                        telegram_charge_id: None,
-                        is_recurring: false,
-                        burn_subtitles: 0,
-                        progress_bar_style: "classic".to_string(),
-                        is_blocked: false,
-                    }
+                .unwrap_or_else(|| crate::storage::db::User {
+                    telegram_id: chat_id.0,
+                    username: None,
+                    plan: Plan::Free,
+                    download_format: "mp3".to_string(),
+                    download_subtitles: 0,
+                    video_quality: "best".to_string(),
+                    language: "ru".to_string(),
+                    send_as_document: 0,
+                    send_audio_as_document: 0,
+                    audio_bitrate: "320k".to_string(),
+                    subscription_expires_at: None,
+                    telegram_charge_id: None,
+                    is_recurring: false,
+                    burn_subtitles: 0,
+                    progress_bar_style: "classic".to_string(),
+                    is_blocked: false,
                 })
         }
         Err(e) => {
@@ -136,21 +138,19 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
         }
     };
 
-    let subscription = db::get_subscription(&conn, chat_id.0).ok().flatten();
-    let is_subscription_active = db::is_subscription_active(&conn, chat_id.0).unwrap_or(false);
-    let subscription_plan = subscription.as_ref().map(|s| s.plan).unwrap_or(user.plan);
-    let subscription_expires_at = subscription
-        .as_ref()
-        .and_then(|s| s.expires_at.clone())
-        .or_else(|| user.subscription_expires_at.clone());
-    let subscription_charge_id = subscription
-        .as_ref()
-        .and_then(|s| s.telegram_charge_id.clone())
-        .or_else(|| user.telegram_charge_id.clone());
-    let subscription_is_recurring = subscription
-        .as_ref()
-        .map(|s| s.is_recurring)
-        .unwrap_or(user.is_recurring);
+    let is_subscription_active = if user.plan == Plan::Free {
+        false
+    } else if let Some(ref expires_at) = user.subscription_expires_at {
+        chrono::NaiveDateTime::parse_from_str(expires_at, "%Y-%m-%d %H:%M:%S")
+            .map(|dt| chrono::Utc::now().naive_utc() < dt)
+            .unwrap_or(true)
+    } else {
+        true
+    };
+    let subscription_plan = user.plan;
+    let subscription_expires_at = user.subscription_expires_at.clone();
+    let subscription_charge_id = user.telegram_charge_id.clone();
+    let subscription_is_recurring = user.is_recurring;
 
     log::info!("📋 User data from database:");
     log::info!("  • Plan: {}", subscription_plan);

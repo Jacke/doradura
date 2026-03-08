@@ -390,7 +390,13 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                         let _ = handle_backup_command(&bot, msg.chat.id, user_id).await;
                     }
                     Command::Plan => {
-                        let _ = show_subscription_info(&bot, msg.chat.id, deps.db_pool.clone()).await;
+                        let _ = show_subscription_info(
+                            &bot,
+                            msg.chat.id,
+                            deps.db_pool.clone(),
+                            deps.shared_storage.clone(),
+                        )
+                        .await;
                     }
                     Command::Users => {
                         let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
