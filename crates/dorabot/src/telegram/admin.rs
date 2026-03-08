@@ -30,7 +30,7 @@ use crate::download::ytdlp;
 
 use crate::core::config::admin::{ADMIN_IDS, ADMIN_USER_ID};
 use crate::storage::backup::{create_backup, list_backups};
-use crate::storage::db::{get_all_users, get_connection, update_user_plan, update_user_plan_with_expiry, DbPool};
+use crate::storage::db::{get_all_users, get_connection, DbPool};
 use crate::storage::SharedStorage;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -944,7 +944,7 @@ pub async fn handle_setplan_command(
     chat_id: ChatId,
     user_id: i64,
     message_text: &str,
-    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> Result<()> {
     if !is_admin(user_id) {
         bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
@@ -1009,19 +1009,10 @@ pub async fn handle_setplan_command(
         None
     };
 
-    let conn = get_connection(&db_pool)?;
-
-    // Update plan with optional expiry date
-    if let Some(days_count) = days {
-        update_user_plan_with_expiry(&conn, user_id, plan, Some(days_count))?;
-    } else {
-        // For free plan, clear expiry; for paid plans without days, set as unlimited
-        if plan == "free" {
-            update_user_plan_with_expiry(&conn, user_id, plan, None)?;
-        } else {
-            update_user_plan(&conn, user_id, plan)?;
-        }
-    }
+    let expiry_days = if plan == "free" { None } else { days };
+    shared_storage
+        .update_user_plan_with_expiry(user_id, plan, expiry_days)
+        .await?;
 
     let (plan_emoji, plan_name) = match plan {
         "premium" => ("⭐", "Premium"),

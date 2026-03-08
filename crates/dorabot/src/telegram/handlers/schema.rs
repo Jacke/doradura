@@ -10,8 +10,6 @@ use super::commands::{handle_cuts_command, handle_downloads_command, handle_star
 use super::types::{HandlerDeps, HandlerError};
 use super::uploads::media_upload_handler;
 use crate::i18n;
-use crate::storage::db::{create_user, get_user};
-use crate::storage::get_connection;
 use crate::telegram::bot::Command;
 use crate::telegram::Bot;
 
@@ -410,8 +408,14 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                     Command::Setplan => {
                         let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
                         let message_text = msg.text().unwrap_or("");
-                        let _ = handle_setplan_command(&bot, msg.chat.id, user_id, message_text, deps.db_pool.clone())
-                            .await;
+                        let _ = handle_setplan_command(
+                            &bot,
+                            msg.chat.id,
+                            user_id,
+                            message_text,
+                            deps.shared_storage.clone(),
+                        )
+                        .await;
                     }
                     Command::Transactions => {
                         let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
@@ -535,7 +539,6 @@ fn voice_message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
 
 /// Handler for regular messages (URLs, text)
 fn message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
-    use crate::storage::db::log_request;
     use crate::telegram::{handle_message, is_message_addressed_to_bot};
 
     let bot_username = deps.bot_username.clone();
@@ -562,51 +565,52 @@ fn message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                 if let Some(text) = msg.text() {
                     match &user_info_result {
                         Ok(Some(user)) => {
-                            if let Ok(conn) = get_connection(&deps.db_pool) {
-                                if let Err(e) = log_request(&conn, user.telegram_id(), text) {
-                                    log::error!("Failed to log request: {}", e);
-                                }
+                            if let Err(e) = deps.shared_storage.log_request(user.telegram_id(), text).await {
+                                log::error!("Failed to log request: {}", e);
                             }
                         }
                         Ok(None) | Err(_) => {
-                            if let Ok(conn) = get_connection(&deps.db_pool) {
-                                let chat_id = msg.chat.id.0;
-                                match get_user(&conn, chat_id) {
-                                    Ok(Some(user)) => {
-                                        if let Err(e) = log_request(&conn, user.telegram_id(), text) {
-                                            log::error!("Failed to log request: {}", e);
+                            let chat_id = msg.chat.id.0;
+                            match deps.shared_storage.get_user(chat_id).await {
+                                Ok(Some(user)) => {
+                                    if let Err(e) = deps.shared_storage.log_request(user.telegram_id(), text).await {
+                                        log::error!("Failed to log request: {}", e);
+                                    }
+                                }
+                                Ok(None) => {
+                                    let username = msg.from.as_ref().and_then(|u| u.username.clone());
+                                    let lang_code = msg.from.as_ref().and_then(|u| u.language_code.as_deref());
+                                    if let Err(e) = deps
+                                        .shared_storage
+                                        .create_user_with_language(chat_id, username.clone(), lang_code)
+                                        .await
+                                    {
+                                        log::error!("Failed to create user: {}", e);
+                                    } else {
+                                        if let Err(e) = deps.shared_storage.log_request(chat_id, text).await {
+                                            log::error!("Failed to log request for new user: {}", e);
                                         }
+                                        // Notify admins about new user
+                                        use crate::telegram::notifications::notify_admin_new_user;
+                                        let bot_notify = bot.clone();
+                                        let first_name = msg.from.as_ref().map(|u| u.first_name.clone());
+                                        let lang_code_owned = msg.from.as_ref().and_then(|u| u.language_code.clone());
+                                        let first_message = text.to_string();
+                                        tokio::spawn(async move {
+                                            notify_admin_new_user(
+                                                &bot_notify,
+                                                chat_id,
+                                                username.as_deref(),
+                                                first_name.as_deref(),
+                                                lang_code_owned.as_deref(),
+                                                Some(&first_message),
+                                            )
+                                            .await;
+                                        });
                                     }
-                                    Ok(None) => {
-                                        let username = msg.from.as_ref().and_then(|u| u.username.clone());
-                                        if let Err(e) = create_user(&conn, chat_id, username.clone()) {
-                                            log::error!("Failed to create user: {}", e);
-                                        } else {
-                                            if let Err(e) = log_request(&conn, chat_id, text) {
-                                                log::error!("Failed to log request for new user: {}", e);
-                                            }
-                                            // Notify admins about new user
-                                            use crate::telegram::notifications::notify_admin_new_user;
-                                            let bot_notify = bot.clone();
-                                            let first_name = msg.from.as_ref().map(|u| u.first_name.clone());
-                                            let lang_code = msg.from.as_ref().and_then(|u| u.language_code.clone());
-                                            let first_message = text.to_string();
-                                            tokio::spawn(async move {
-                                                notify_admin_new_user(
-                                                    &bot_notify,
-                                                    chat_id,
-                                                    username.as_deref(),
-                                                    first_name.as_deref(),
-                                                    lang_code.as_deref(),
-                                                    Some(&first_message),
-                                                )
-                                                .await;
-                                            });
-                                        }
-                                    }
-                                    Err(e) => {
-                                        log::error!("Failed to get user from database: {}", e);
-                                    }
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to get user from storage: {}", e);
                                 }
                             }
                         }

@@ -90,6 +90,16 @@ CREATE INDEX IF NOT EXISTS idx_feedback_messages_status
 CREATE INDEX IF NOT EXISTS idx_feedback_messages_user_id
     ON feedback_messages(user_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS request_history (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+    request_text TEXT NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_request_history_user_timestamp
+    ON request_history(user_id, timestamp DESC);
+
 CREATE TABLE IF NOT EXISTS bot_assets (
     key TEXT PRIMARY KEY,
     file_id TEXT NOT NULL,
@@ -1644,6 +1654,24 @@ impl SharedStorage {
                 .await
                 .context("postgres create_user subscriptions insert")?;
                 tx.commit().await.context("postgres create_user commit")?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn log_request(&self, user_id: i64, request_text: &str) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite log_request connection")?;
+                db::log_request(&conn, user_id, request_text).context("sqlite log_request")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query("INSERT INTO request_history (user_id, request_text) VALUES ($1, $2)")
+                    .bind(user_id)
+                    .bind(request_text)
+                    .execute(pg_pool)
+                    .await
+                    .context("postgres log_request")?;
                 Ok(())
             }
         }
