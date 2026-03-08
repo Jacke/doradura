@@ -1,6 +1,5 @@
 # syntax=docker/dockerfile:1
 # Build stage for Rust application with cargo-chef for dependency caching
-# cache-bust: 2026-02-23
 FROM rust:1.93-alpine AS chef
 # hadolint ignore=DL3018
 RUN apk add --no-cache musl-dev && \
@@ -37,98 +36,76 @@ COPY migrations ./migrations
 
 RUN cargo build --release -p doradura && \
     cp /app/target/release/doradura /app/doradura-bin && \
+    strip /app/doradura-bin && \
     echo "Binary built successfully:" && \
-    ls -lh /app/doradura-bin && \
-    file /app/doradura-bin && \
-    ldd /app/doradura-bin || echo "Static binary (no dynamic libs)"
+    ls -lh /app/doradura-bin
 
-# Runtime stage - based on aiogram/telegram-bot-api
+# === bgutil builder stage (runs in parallel with rust-builder) ===
+FROM aiogram/telegram-bot-api:latest AS bgutil-builder
+# hadolint ignore=DL3002,DL3018
+USER root
+RUN apk add --no-cache \
+  nodejs npm git \
+  build-base pkgconfig \
+  cairo-dev pango-dev jpeg-dev giflib-dev pixman-dev python3
+
+WORKDIR /opt/bgutil
+RUN git clone --single-branch --branch 1.2.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git .
+WORKDIR /opt/bgutil/server
+RUN npm install && npx tsc
+
+# === Runtime stage ===
 # hadolint ignore=DL3007
 FROM aiogram/telegram-bot-api:latest
 
 # hadolint ignore=DL3002
 USER root
 
-# s6-overlay version
+# s6-overlay
 ARG S6_OVERLAY_VERSION=3.2.0.2
-
-# Install s6-overlay
 ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz /tmp
 ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-x86_64.tar.xz /tmp
 RUN tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz && \
     tar -C / -Jxpf /tmp/s6-overlay-x86_64.tar.xz && \
     rm /tmp/s6-overlay-*.tar.xz
 
-# Install runtime dependencies + build deps for canvas (bgutil PO Token server)
+# Runtime dependencies only (no build-base, no *-dev)
 # hadolint ignore=DL3018
 RUN apk add --no-cache \
-  ca-certificates \
-  musl \
-  libssl3 \
-  libcrypto3 \
-  ffmpeg \
-  python3 \
-  py3-pip \
-  sqlite-libs \
-  libgcc \
-  libstdc++ \
-  wget \
-  curl \
-  unzip \
-  bash \
-  nodejs \
-  npm \
-  git \
-  build-base \
-  pkgconfig \
-  cairo-dev \
-  pango-dev \
-  jpeg-dev \
-  giflib-dev \
-  pixman-dev \
-  ttf-dejavu \
-  fontconfig && \
-  fc-cache -f && \
-  node --version && echo "Node.js available for yt-dlp --js-runtimes node"
+  ca-certificates musl libssl3 libcrypto3 \
+  ffmpeg python3 py3-pip sqlite-libs \
+  libgcc libstdc++ wget curl bash \
+  nodejs npm \
+  cairo pango libjpeg-turbo giflib pixman \
+  ttf-dejavu fontconfig && \
+  fc-cache -f
 
-# Install curl-impersonate for Instagram TLS fingerprint spoofing
-# Instagram blocks datacenter IPs via JA3 fingerprinting; curl-impersonate mimics Chrome's TLS
+# curl-impersonate for Instagram TLS fingerprint spoofing
 RUN wget -q https://github.com/lexiforest/curl-impersonate/releases/download/v1.4.4/curl-impersonate-v1.4.4.x86_64-linux-musl.tar.gz \
       -O /tmp/curl-impersonate.tar.gz && \
     tar -xzf /tmp/curl-impersonate.tar.gz -C /usr/local/bin/ && \
     rm /tmp/curl-impersonate.tar.gz && \
-    chmod +x /usr/local/bin/curl-impersonate* && \
-    ls -la /usr/local/bin/curl-impersonate* && \
-    echo "curl-impersonate installed"
+    chmod +x /usr/local/bin/curl-impersonate*
 
-# Install Deno from Alpine edge/testing (musl-compatible build)
+# Deno for yt-dlp JS runtime
 # hadolint ignore=DL3018
-RUN apk add --no-cache deno --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing && \
-  deno --version && echo "Deno available for yt-dlp --js-runtimes deno"
+RUN apk add --no-cache deno --repository=https://dl-cdn.alpinelinux.org/alpine/edge/testing
 
-# Install yt-dlp from nightly builds (latest fixes for YouTube compatibility)
-# Retry up to 3 times with 5s wait to handle transient GitHub 502 errors
+# yt-dlp nightly
 RUN wget --tries=3 --waitretry=5 --progress=dot:giga \
   https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp \
   -O /usr/local/bin/yt-dlp && \
   chmod a+rx /usr/local/bin/yt-dlp
 
-# Install all Python dependencies in one layer
+# Python deps
 # hadolint ignore=DL3013
 RUN pip3 install --no-cache-dir --break-system-packages \
-    keyring pycryptodomex bgutil-ytdlp-pot-provider \
-    curl_cffi
+    keyring pycryptodomex bgutil-ytdlp-pot-provider curl_cffi
 
-# Install bgutil PO Token HTTP server (generates tokens for yt-dlp)
-WORKDIR /opt/bgutil
-RUN git clone --single-branch --branch 1.2.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git .
-WORKDIR /opt/bgutil/server
-RUN npm install && \
-    npx tsc && \
-    echo "bgutil PO Token server built successfully"
-WORKDIR /app
+# Copy pre-built bgutil from builder stage
+COPY --from=bgutil-builder /opt/bgutil /opt/bgutil
 
-# Create shared group and users, then set up directories
+# Create users and directories
 RUN addgroup -g 2000 shareddata && \
   adduser -D -u 1000 -G shareddata botuser && \
   addgroup telegram-bot-api shareddata && \
@@ -139,15 +116,14 @@ RUN addgroup -g 2000 shareddata && \
   chown telegram-bot-api:shareddata /data && \
   chmod 775 /data
 
-# Copy the compiled binary from rust-builder and set permissions
+# Copy compiled binary and migrations
 COPY --from=rust-builder --chown=1000:2000 /app/doradura-bin /app/doradura
-RUN chmod 755 /app/doradura && \
-  ls -la /app/doradura
-
-# Copy migrations for auto-migration on startup
+RUN chmod 755 /app/doradura
 COPY --from=rust-builder --chown=1000:2000 /app/migrations /app/migrations
 
-# Set environment variables
+WORKDIR /app
+
+# Environment
 ENV BOT_API_DATA_DIR=/data
 ENV BOT_API_URL=http://localhost:8081
 ENV S6_KEEP_ENV=1
@@ -156,7 +132,6 @@ ENV S6_CMD_WAIT_FOR_SERVICES_MAXTIME=0
 
 # === s6-overlay service definitions ===
 
-# Create s6-rc service directories
 RUN mkdir -p /etc/s6-overlay/s6-rc.d/user/contents.d \
              /etc/s6-overlay/s6-rc.d/init-data/dependencies.d \
              /etc/s6-overlay/s6-rc.d/telegram-bot-api/dependencies.d \
@@ -164,12 +139,11 @@ RUN mkdir -p /etc/s6-overlay/s6-rc.d/user/contents.d \
              /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d \
              /etc/s6-overlay/scripts
 
-# === init-data oneshot service (runs migrations, sets up directories) ===
+# === init-data oneshot service ===
 RUN echo "oneshot" > /etc/s6-overlay/s6-rc.d/init-data/type && \
     touch /etc/s6-overlay/s6-rc.d/init-data/dependencies.d/base && \
     echo "/etc/s6-overlay/scripts/init-data" > /etc/s6-overlay/s6-rc.d/init-data/up
 
-# Create init-data script
 # hadolint ignore=SC2016
 RUN printf '%s\n' \
     '#!/command/execlineb -P' \
@@ -247,7 +221,7 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/type && \
     > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/run && \
     chmod +x /etc/s6-overlay/s6-rc.d/bgutil-pot-server/run
 
-# Create wait script for Bot API
+# Wait script for Bot API
 # hadolint ignore=SC2016
 RUN printf '%s\n' \
     '#!/bin/sh' \
@@ -320,10 +294,6 @@ RUN touch /etc/s6-overlay/s6-rc.d/user/contents.d/init-data \
           /etc/s6-overlay/s6-rc.d/user/contents.d/bgutil-pot-server \
           /etc/s6-overlay/s6-rc.d/user/contents.d/doradura-bot
 
-# Expose ports (8080=webapp, 8081=bot-api, 8082=bot-api-stats, 9090=metrics)
 EXPOSE 8080 8081 8082 9090
-
-# Note: Health check disabled - Railway uses port checks
-# Bot API takes 2-3 minutes to initialize, health check kills container prematurely
 
 ENTRYPOINT ["/init"]
