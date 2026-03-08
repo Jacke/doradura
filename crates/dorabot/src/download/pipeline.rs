@@ -23,7 +23,7 @@ use crate::download::send::{
     send_audio_with_retry, send_error_with_sticker, send_error_with_sticker_and_message, send_video_with_retry,
 };
 use crate::download::source::{DownloadOutput, DownloadSource, MediaMetadata, SourceProgress, SourceRegistry};
-use crate::storage::db::{self as db, save_download_history, DbPool};
+use crate::storage::db::{self as db, DbPool};
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use std::fs;
@@ -708,32 +708,31 @@ pub async fn execute(
         .await;
 
     // ── Step 10: Save to download history ──
-    if let Some(pool) = db_pool {
-        if let Ok(conn) = db::get_connection(pool) {
-            let file_id = match format {
-                PipelineFormat::Audio { .. } => sent_message
-                    .audio()
-                    .map(|a| a.file.id.0.clone())
-                    .or_else(|| sent_message.document().map(|d| d.file.id.0.clone())),
-                PipelineFormat::Video { .. } => sent_message
-                    .video()
-                    .map(|v| v.file.id.0.clone())
-                    .or_else(|| sent_message.document().map(|d| d.file.id.0.clone())),
-            };
+    if let Some(storage) = shared_storage {
+        let file_id = match format {
+            PipelineFormat::Audio { .. } => sent_message
+                .audio()
+                .map(|a| a.file.id.0.clone())
+                .or_else(|| sent_message.document().map(|d| d.file.id.0.clone())),
+            PipelineFormat::Video { .. } => sent_message
+                .video()
+                .map(|v| v.file.id.0.clone())
+                .or_else(|| sent_message.document().map(|d| d.file.id.0.clone())),
+        };
 
-            let author_opt = if !artist.trim().is_empty() {
-                Some(artist.as_str())
-            } else {
-                None
-            };
+        let author_opt = if !artist.trim().is_empty() {
+            Some(artist.as_str())
+        } else {
+            None
+        };
 
-            let (video_quality_opt, audio_bitrate_opt) = match format {
-                PipelineFormat::Audio { ref bitrate, .. } => (None, bitrate.as_deref().or(Some("320k"))),
-                PipelineFormat::Video { ref quality, .. } => (quality.as_deref(), None),
-            };
+        let (video_quality_opt, audio_bitrate_opt) = match format {
+            PipelineFormat::Audio { ref bitrate, .. } => (None, bitrate.as_deref().or(Some("320k"))),
+            PipelineFormat::Video { ref quality, .. } => (quality.as_deref(), None),
+        };
 
-            match save_download_history(
-                &conn,
+        match storage
+            .save_download_history(
                 chat_id.0,
                 url.as_str(),
                 title.as_str(),
@@ -746,42 +745,39 @@ pub async fn execute(
                 audio_bitrate_opt,
                 None,
                 None,
-            ) {
-                Ok(db_id) => {
-                    let sent_msg_id = sent_message.id.0;
-                    if let Err(e) = db::update_download_message_id(&conn, db_id, sent_msg_id, chat_id.0) {
-                        log::warn!("Failed to save message_id for download {}: {}", db_id, e);
+            )
+            .await
+        {
+            Ok(db_id) => {
+                let sent_msg_id = sent_message.id.0;
+                if let Err(e) = storage.update_download_message_id(db_id, sent_msg_id, chat_id.0).await {
+                    log::warn!("Failed to save message_id for download {}: {}", db_id, e);
+                }
+                // Auto-categorize in background if user has categories and API key is set
+                let storage_c = Arc::clone(storage);
+                let title_c = title.clone();
+                let artist_c = artist.clone();
+                let user_id_c = chat_id.0;
+                tokio::spawn(async move {
+                    let Ok(cats) = storage_c.get_user_categories(user_id_c).await else {
+                        return;
+                    };
+                    if cats.is_empty() {
+                        return;
                     }
-                    // Auto-categorize in background if user has categories and API key is set
-                    let db_pool_c = Arc::clone(pool);
-                    let title_c = title.clone();
-                    let artist_c = artist.clone();
-                    let user_id_c = chat_id.0;
-                    tokio::spawn(async move {
-                        let Ok(conn_c) = db::get_connection(&db_pool_c) else {
-                            return;
-                        };
-                        let Ok(cats) = db::get_user_categories(&conn_c, user_id_c) else {
-                            return;
-                        };
-                        if cats.is_empty() {
-                            return;
-                        }
-                        let Some(category) =
-                            crate::core::categorizer::suggest_category(&cats, &title_c, &artist_c).await
-                        else {
-                            return;
-                        };
-                        if let Err(e) = db::set_download_category(&conn_c, user_id_c, db_id, Some(&category)) {
-                            log::warn!("Failed to auto-set category for download {}: {}", db_id, e);
-                        } else {
-                            log::info!("auto-categorized download {} → '{}'", db_id, category);
-                        }
-                    });
-                }
-                Err(e) => {
-                    log::warn!("Failed to save download history: {}", e);
-                }
+                    let Some(category) = crate::core::categorizer::suggest_category(&cats, &title_c, &artist_c).await
+                    else {
+                        return;
+                    };
+                    if let Err(e) = storage_c.set_download_category(user_id_c, db_id, Some(&category)).await {
+                        log::warn!("Failed to auto-set category for download {}: {}", db_id, e);
+                    } else {
+                        log::info!("auto-categorized download {} → '{}'", db_id, category);
+                    }
+                });
+            }
+            Err(e) => {
+                log::warn!("Failed to save download history: {}", e);
             }
         }
     }

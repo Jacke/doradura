@@ -308,20 +308,20 @@ pub async fn handle_message(
                     return Ok(None);
                 }
 
-                let video_duration = if let Ok(conn) = db::get_connection(&db_pool) {
-                    match session.source_kind.as_str() {
-                        "download" => db::get_download_history_entry(&conn, msg.chat.id.0, session.source_id)
-                            .ok()
-                            .flatten()
-                            .and_then(|d| d.duration),
-                        "cut" => db::get_cut_entry(&conn, msg.chat.id.0, session.source_id)
-                            .ok()
-                            .flatten()
-                            .and_then(|c| c.duration),
-                        _ => None,
-                    }
-                } else {
-                    None
+                let video_duration = match session.source_kind.as_str() {
+                    "download" => shared_storage
+                        .get_download_history_entry(msg.chat.id.0, session.source_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .and_then(|d| d.duration),
+                    "cut" => shared_storage
+                        .get_cut_entry(msg.chat.id.0, session.source_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .and_then(|c| c.duration),
+                    _ => None,
                 };
 
                 if let Some((segments, segments_text, speed)) = parse_segments_spec(trimmed, video_duration) {
@@ -1566,10 +1566,12 @@ pub async fn process_video_clip(
             .ok();
     }
 
-    let conn = db::get_connection(&db_pool)?;
     let (file_id, original_url, base_title, video_quality) = match session.source_kind.as_str() {
         "download" => {
-            let download = match db::get_download_history_entry(&conn, chat_id.0, session.source_id)? {
+            let download = match shared_storage
+                .get_download_history_entry(chat_id.0, session.source_id)
+                .await?
+            {
                 Some(d) => d,
                 None => {
                     bot.send_message(chat_id, i18n::t(&lang, "commands.cut_file_not_found"))
@@ -1596,7 +1598,7 @@ pub async fn process_video_clip(
             (fid, download.url, download.title, download.video_quality)
         }
         "cut" => {
-            let cut = match db::get_cut_entry(&conn, chat_id.0, session.source_id)? {
+            let cut = match shared_storage.get_cut_entry(chat_id.0, session.source_id).await? {
                 Some(c) => c,
                 None => {
                     bot.send_message(chat_id, i18n::t(&lang, "commands.cut_not_found"))
@@ -1635,8 +1637,16 @@ pub async fn process_video_clip(
 
     // Get message_id for MTProto fallback (if available)
     let message_info = match session.source_kind.as_str() {
-        "download" => db::get_download_message_info(&conn, session.source_id).ok().flatten(),
-        "cut" => db::get_cut_message_info(&conn, session.source_id).ok().flatten(),
+        "download" => shared_storage
+            .get_download_message_info(session.source_id)
+            .await
+            .ok()
+            .flatten(),
+        "cut" => shared_storage
+            .get_cut_message_info(session.source_id)
+            .await
+            .ok()
+            .flatten(),
         _ => None,
     };
     let (fallback_message_id, fallback_chat_id) = message_info.unzip();
@@ -2331,21 +2341,22 @@ pub async fn process_video_clip(
 
     if let Some(fid) = sent_file_id {
         let segments_json = serde_json::to_string(&segments).unwrap_or_else(|_| "[]".to_string());
-        let _ = db::create_cut(
-            &conn,
-            chat_id.0,
-            &original_url,
-            &session.source_kind,
-            session.source_id,
-            output_kind,
-            &segments_json,
-            &segments_text,
-            &clip_title,
-            Some(&fid),
-            Some(file_size),
-            Some(actual_total_len.max(1)),
-            video_quality.as_deref(),
-        );
+        let _ = shared_storage
+            .create_cut(
+                chat_id.0,
+                &original_url,
+                &session.source_kind,
+                session.source_id,
+                output_kind,
+                &segments_json,
+                &segments_text,
+                &clip_title,
+                Some(&fid),
+                Some(file_size),
+                Some(actual_total_len.max(1)),
+                video_quality.as_deref(),
+            )
+            .await;
     }
 
     tokio::fs::remove_file(&actual_input_path).await.ok();

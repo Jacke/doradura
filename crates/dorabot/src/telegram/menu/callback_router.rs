@@ -265,7 +265,13 @@ pub async fn handle_menu_callback(
                     "history" => {
                         // Delete current message and show history
                         let _ = bot.delete_message(chat_id, message_id).await;
-                        let _ = crate::core::history::show_history(&bot, chat_id, Arc::clone(&db_pool)).await;
+                        let _ = crate::core::history::show_history(
+                            &bot,
+                            chat_id,
+                            Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
+                        )
+                        .await;
                     }
                     "services" => {
                         // Edit message to show services
@@ -1592,6 +1598,7 @@ pub async fn handle_menu_callback(
                     message_id,
                     &data,
                     Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
                     Arc::clone(&download_queue),
                     Arc::clone(&rate_limiter),
                 )

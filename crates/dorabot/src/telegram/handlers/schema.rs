@@ -365,7 +365,8 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                         .await;
                     }
                     Command::History => {
-                        let _ = show_history(&bot, msg.chat.id, deps.db_pool.clone()).await;
+                        let _ =
+                            show_history(&bot, msg.chat.id, deps.db_pool.clone(), deps.shared_storage.clone()).await;
                     }
                     Command::Downloads => {
                         handle_downloads_command(&bot, &msg, &deps).await?;

@@ -19,7 +19,7 @@ use crate::download::pipeline::{self, DownloadPhaseResult, PipelineFormat};
 use crate::download::progress::{DownloadStatus, ProgressBarStyle, ProgressMessage};
 use crate::download::send::{send_error_with_sticker, send_video_with_retry};
 use crate::download::source::SourceRegistry;
-use crate::storage::db::{self as db, save_download_history, save_video_timestamps, DbPool};
+use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::telegram::cache::PREVIEW_CACHE;
 use crate::telegram::Bot;
@@ -219,23 +219,22 @@ pub async fn download_and_send_video(
                 .await?;
 
                 // Save to download history
-                if let Some(ref pool) = db_pool_clone {
-                    if let Ok(conn) = db::get_connection(pool) {
-                        let file_id = sent_message
-                            .video()
-                            .map(|v| v.file.id.0.clone())
-                            .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
+                if let Some(ref storage) = shared_storage_clone {
+                    let file_id = sent_message
+                        .video()
+                        .map(|v| v.file.id.0.clone())
+                        .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
 
-                        let author_opt = if !artist.trim().is_empty() {
-                            Some(artist.as_str())
-                        } else {
-                            None
-                        };
+                    let author_opt = if !artist.trim().is_empty() {
+                        Some(artist.as_str())
+                    } else {
+                        None
+                    };
 
-                        let duration = probe_video_metadata(part_path).map(|(d, _, _)| d as i64);
+                    let duration = probe_video_metadata(part_path).map(|(d, _, _)| d as i64);
 
-                        match save_download_history(
-                            &conn,
+                    match storage
+                        .save_download_history(
                             chat_id.0,
                             url.as_str(),
                             title.as_str(),
@@ -248,65 +247,66 @@ pub async fn download_and_send_video(
                             None,
                             first_part_db_id,
                             if total_parts > 1 { Some(part_index) } else { None },
-                        ) {
-                            Ok(id) => {
-                                let sent_msg_id = sent_message.id.0;
-                                if let Err(e) = db::update_download_message_id(&conn, id, sent_msg_id, chat_id.0) {
-                                    log::warn!("Failed to save message_id for download {}: {}", id, e);
-                                }
+                        )
+                        .await
+                    {
+                        Ok(id) => {
+                            let sent_msg_id = sent_message.id.0;
+                            if let Err(e) = storage.update_download_message_id(id, sent_msg_id, chat_id.0).await {
+                                log::warn!("Failed to save message_id for download {}: {}", id, e);
+                            }
 
-                                // Save video timestamps (first part or single)
-                                if total_parts == 1 || first_part_db_id.is_none() {
-                                    if let Some(metadata) = PREVIEW_CACHE.get(url.as_str()).await {
-                                        if !metadata.timestamps.is_empty() {
-                                            if let Err(e) = save_video_timestamps(&conn, id, &metadata.timestamps) {
-                                                log::warn!("Failed to save timestamps for download {}: {}", id, e);
-                                            }
+                            // Save video timestamps (first part or single)
+                            if total_parts == 1 || first_part_db_id.is_none() {
+                                if let Some(metadata) = PREVIEW_CACHE.get(url.as_str()).await {
+                                    if !metadata.timestamps.is_empty() {
+                                        if let Err(e) = storage.save_video_timestamps(id, &metadata.timestamps).await {
+                                            log::warn!("Failed to save timestamps for download {}: {}", id, e);
                                         }
                                     }
                                 }
-
-                                if first_part_db_id.is_none() && total_parts > 1 {
-                                    first_part_db_id = Some(id);
-                                }
-
-                                // Add post-download buttons for single-part videos (not for time_range clips)
-                                if total_parts == 1 && format.time_range().is_none() {
-                                    let bot_for_button = bot_clone.clone();
-                                    let msg_id = sent_message.id;
-                                    let url_str = url.as_str().to_string();
-                                    tokio::spawn(async move {
-                                        use teloxide::types::InlineKeyboardMarkup;
-                                        let mut rows = vec![vec![crate::telegram::cb(
-                                            "✂️ Cut Video",
-                                            format!("downloads:clip:{}", id),
-                                        )]];
-                                        // Add "Burn subtitles" for YouTube videos
-                                        let is_yt = url_str.contains("://youtube.com/")
-                                            || url_str.contains("://www.youtube.com/")
-                                            || url_str.contains("://m.youtube.com/")
-                                            || url_str.contains("://music.youtube.com/")
-                                            || url_str.contains("://youtu.be/");
-                                        if is_yt {
-                                            rows.push(vec![crate::telegram::cb(
-                                                "🔤 Burn subtitles",
-                                                format!("downloads:burn_subs:{}", id),
-                                            )]);
-                                        }
-                                        let keyboard = InlineKeyboardMarkup::new(rows);
-                                        if let Err(e) = bot_for_button
-                                            .edit_message_reply_markup(chat_id, msg_id)
-                                            .reply_markup(keyboard)
-                                            .await
-                                        {
-                                            log::warn!("Failed to add post-download buttons: {}", e);
-                                        }
-                                    });
-                                }
                             }
-                            Err(e) => {
-                                log::warn!("Failed to save history for part {}: {}", part_index, e);
+
+                            if first_part_db_id.is_none() && total_parts > 1 {
+                                first_part_db_id = Some(id);
                             }
+
+                            // Add post-download buttons for single-part videos (not for time_range clips)
+                            if total_parts == 1 && format.time_range().is_none() {
+                                let bot_for_button = bot_clone.clone();
+                                let msg_id = sent_message.id;
+                                let url_str = url.as_str().to_string();
+                                tokio::spawn(async move {
+                                    use teloxide::types::InlineKeyboardMarkup;
+                                    let mut rows = vec![vec![crate::telegram::cb(
+                                        "✂️ Cut Video",
+                                        format!("downloads:clip:{}", id),
+                                    )]];
+                                    // Add "Burn subtitles" for YouTube videos
+                                    let is_yt = url_str.contains("://youtube.com/")
+                                        || url_str.contains("://www.youtube.com/")
+                                        || url_str.contains("://m.youtube.com/")
+                                        || url_str.contains("://music.youtube.com/")
+                                        || url_str.contains("://youtu.be/");
+                                    if is_yt {
+                                        rows.push(vec![crate::telegram::cb(
+                                            "🔤 Burn subtitles",
+                                            format!("downloads:burn_subs:{}", id),
+                                        )]);
+                                    }
+                                    let keyboard = InlineKeyboardMarkup::new(rows);
+                                    if let Err(e) = bot_for_button
+                                        .edit_message_reply_markup(chat_id, msg_id)
+                                        .reply_markup(keyboard)
+                                        .await
+                                    {
+                                        log::warn!("Failed to add post-download buttons: {}", e);
+                                    }
+                                });
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to save download history: {}", e);
                         }
                     }
                 }

@@ -167,16 +167,17 @@ pub async fn start_ringtone_session(
     db_pool: &Arc<DbPool>,
     shared_storage: &Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
-    let conn = db::get_connection(db_pool)
-        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
     // Try to send audio/video preview so the user can identify the track
     let file_id = match source_kind {
-        "download" => db::get_download_history_entry(&conn, chat_id.0, source_id)
+        "download" => shared_storage
+            .get_download_history_entry(chat_id.0, source_id)
+            .await
             .ok()
             .flatten()
             .and_then(|d| d.file_id),
-        "cut" => db::get_cut_entry(&conn, chat_id.0, source_id)
+        "cut" => shared_storage
+            .get_cut_entry(chat_id.0, source_id)
+            .await
             .ok()
             .flatten()
             .and_then(|c| c.file_id),
