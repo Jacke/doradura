@@ -11,8 +11,8 @@ use crate::core::types::Plan;
 use crate::download::audio_effects::{AudioEffectSession, MorphProfile};
 use crate::storage::db;
 use crate::storage::db::{
-    AudioCutSession, CookiesUploadSession, DbConnection, DbPool, EnqueueResult, SubtitleStyle, TaskQueueEntry, User,
-    VideoClipSession,
+    AudioCutSession, CookiesUploadSession, DbConnection, DbPool, EnqueueResult, PlayerSession, SubtitleStyle,
+    TaskQueueEntry, User, VideoClipSession,
 };
 
 const POSTGRES_BOOTSTRAP_SQL: &str = r#"
@@ -188,6 +188,31 @@ CREATE TABLE IF NOT EXISTS lyrics_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_lyrics_sessions_expires_at
     ON lyrics_sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS player_sessions (
+    user_id BIGINT PRIMARY KEY REFERENCES users(telegram_id) ON DELETE CASCADE,
+    playlist_id BIGINT NOT NULL,
+    current_position INTEGER NOT NULL DEFAULT 0,
+    is_shuffle INTEGER NOT NULL DEFAULT 0,
+    player_message_id INTEGER,
+    sticker_message_id INTEGER,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS player_messages (
+    user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+    message_id INTEGER NOT NULL,
+    PRIMARY KEY (user_id, message_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_player_messages_user
+    ON player_messages(user_id);
+
+CREATE TABLE IF NOT EXISTS new_category_sessions (
+    user_id BIGINT PRIMARY KEY REFERENCES users(telegram_id) ON DELETE CASCADE,
+    download_id BIGINT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 "#;
 
 #[derive(Debug, Clone)]
@@ -1269,6 +1294,234 @@ impl SharedStorage {
                         row.get::<i32, _>("has_structure") != 0,
                     )
                 }))
+            }
+        }
+    }
+
+    pub async fn create_player_session(
+        &self,
+        user_id: i64,
+        playlist_id: i64,
+        player_message_id: Option<i32>,
+        sticker_message_id: Option<i32>,
+    ) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite create_player_session connection")?;
+                db::create_player_session(&conn, user_id, playlist_id, player_message_id, sticker_message_id)
+                    .context("sqlite create_player_session")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query(
+                    "INSERT INTO player_sessions (
+                        user_id, playlist_id, current_position, is_shuffle, player_message_id, sticker_message_id, updated_at
+                     ) VALUES ($1, $2, 0, 0, $3, $4, NOW())
+                     ON CONFLICT (user_id) DO UPDATE SET
+                        playlist_id = EXCLUDED.playlist_id,
+                        current_position = 0,
+                        is_shuffle = 0,
+                        player_message_id = EXCLUDED.player_message_id,
+                        sticker_message_id = EXCLUDED.sticker_message_id,
+                        updated_at = NOW()",
+                )
+                .bind(user_id)
+                .bind(playlist_id)
+                .bind(player_message_id)
+                .bind(sticker_message_id)
+                .execute(pg_pool)
+                .await
+                .context("postgres create_player_session")?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn get_player_session(&self, user_id: i64) -> Result<Option<PlayerSession>> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite get_player_session connection")?;
+                db::get_player_session(&conn, user_id).context("sqlite get_player_session")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let row = sqlx::query(
+                    "SELECT user_id, playlist_id, current_position, is_shuffle, player_message_id, sticker_message_id,
+                            updated_at::text AS updated_at
+                     FROM player_sessions
+                     WHERE user_id = $1",
+                )
+                .bind(user_id)
+                .fetch_optional(pg_pool)
+                .await
+                .context("postgres get_player_session")?;
+                Ok(row.map(|row| PlayerSession {
+                    user_id: row.get("user_id"),
+                    playlist_id: row.get("playlist_id"),
+                    current_position: row.get("current_position"),
+                    is_shuffle: row.get::<i32, _>("is_shuffle") != 0,
+                    player_message_id: row.get("player_message_id"),
+                    sticker_message_id: row.get("sticker_message_id"),
+                    updated_at: row.get("updated_at"),
+                }))
+            }
+        }
+    }
+
+    pub async fn toggle_player_shuffle(&self, user_id: i64) -> Result<bool> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite toggle_player_shuffle connection")?;
+                db::toggle_player_shuffle(&conn, user_id).context("sqlite toggle_player_shuffle")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let row = sqlx::query(
+                    "UPDATE player_sessions
+                     SET is_shuffle = CASE WHEN is_shuffle = 0 THEN 1 ELSE 0 END,
+                         updated_at = NOW()
+                     WHERE user_id = $1
+                     RETURNING is_shuffle",
+                )
+                .bind(user_id)
+                .fetch_one(pg_pool)
+                .await
+                .context("postgres toggle_player_shuffle")?;
+                Ok(row.get::<i32, _>("is_shuffle") != 0)
+            }
+        }
+    }
+
+    pub async fn delete_player_session(&self, user_id: i64) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite delete_player_session connection")?;
+                db::delete_player_session(&conn, user_id).context("sqlite delete_player_session")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query("DELETE FROM player_sessions WHERE user_id = $1")
+                    .bind(user_id)
+                    .execute(pg_pool)
+                    .await
+                    .context("postgres delete_player_session")?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn add_player_message(&self, user_id: i64, message_id: i32) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite add_player_message connection")?;
+                db::add_player_message(&conn, user_id, message_id).context("sqlite add_player_message")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query(
+                    "INSERT INTO player_messages (user_id, message_id)
+                     VALUES ($1, $2)
+                     ON CONFLICT (user_id, message_id) DO NOTHING",
+                )
+                .bind(user_id)
+                .bind(message_id)
+                .execute(pg_pool)
+                .await
+                .context("postgres add_player_message")?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn get_player_messages(&self, user_id: i64) -> Result<Vec<i32>> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite get_player_messages connection")?;
+                db::get_player_messages(&conn, user_id).context("sqlite get_player_messages")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let rows = sqlx::query("SELECT message_id FROM player_messages WHERE user_id = $1")
+                    .bind(user_id)
+                    .fetch_all(pg_pool)
+                    .await
+                    .context("postgres get_player_messages")?;
+                Ok(rows.into_iter().map(|row| row.get("message_id")).collect())
+            }
+        }
+    }
+
+    pub async fn delete_player_messages(&self, user_id: i64) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite delete_player_messages connection")?;
+                db::delete_player_messages(&conn, user_id).context("sqlite delete_player_messages")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query("DELETE FROM player_messages WHERE user_id = $1")
+                    .bind(user_id)
+                    .execute(pg_pool)
+                    .await
+                    .context("postgres delete_player_messages")?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn create_new_category_session(&self, user_id: i64, download_id: i64) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite create_new_category_session connection")?;
+                db::create_new_category_session(&conn, user_id, download_id)
+                    .context("sqlite create_new_category_session")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query(
+                    "INSERT INTO new_category_sessions (user_id, download_id, created_at)
+                     VALUES ($1, $2, NOW())
+                     ON CONFLICT (user_id) DO UPDATE SET
+                        download_id = EXCLUDED.download_id,
+                        created_at = NOW()",
+                )
+                .bind(user_id)
+                .bind(download_id)
+                .execute(pg_pool)
+                .await
+                .context("postgres create_new_category_session")?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn get_active_new_category_session(&self, user_id: i64) -> Result<Option<i64>> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite get_active_new_category_session connection")?;
+                db::get_active_new_category_session(&conn, user_id).context("sqlite get_active_new_category_session")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let row = sqlx::query(
+                    "SELECT download_id
+                     FROM new_category_sessions
+                     WHERE user_id = $1
+                       AND created_at > NOW() - INTERVAL '10 minutes'",
+                )
+                .bind(user_id)
+                .fetch_optional(pg_pool)
+                .await
+                .context("postgres get_active_new_category_session")?;
+                Ok(row.map(|row| row.get("download_id")))
+            }
+        }
+    }
+
+    pub async fn delete_new_category_session(&self, user_id: i64) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite delete_new_category_session connection")?;
+                db::delete_new_category_session(&conn, user_id).context("sqlite delete_new_category_session")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query("DELETE FROM new_category_sessions WHERE user_id = $1")
+                    .bind(user_id)
+                    .execute(pg_pool)
+                    .await
+                    .context("postgres delete_new_category_session")?;
+                Ok(())
             }
         }
     }

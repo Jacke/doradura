@@ -2096,9 +2096,9 @@ pub async fn handle_downloads_callback(
                 return Ok(());
             }
             let download_id = parts[2].parse::<i64>().unwrap_or(0);
-            let conn = db::get_connection(&db_pool)
+            let _conn = db::get_connection(&db_pool)
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            let _ = db::create_new_category_session(&conn, chat_id.0, download_id);
+            let _ = shared_storage.create_new_category_session(chat_id.0, download_id).await;
             bot.edit_message_text(
                 chat_id,
                 message_id,

@@ -195,8 +195,8 @@ pub async fn handle_message(
 
         // New-category sessions (from downloads:newcat callback)
         if !text.trim().starts_with('/') {
-            if let Ok(conn) = db::get_connection(&db_pool) {
-                if let Ok(Some(download_id)) = db::get_active_new_category_session(&conn, msg.chat.id.0) {
+            if let Ok(Some(download_id)) = shared_storage.get_active_new_category_session(msg.chat.id.0).await {
+                if let Ok(conn) = db::get_connection(&db_pool) {
                     let name = text.trim();
                     if name.is_empty() || name.len() > 64 {
                         bot.send_message(msg.chat.id, "❌ Category name must be 1–64 characters")
@@ -207,7 +207,7 @@ pub async fn handle_message(
                         let name: String = name.chars().take(32).collect();
                         let _ = db::create_user_category(&conn, msg.chat.id.0, &name);
                         let _ = db::set_download_category(&conn, msg.chat.id.0, download_id, Some(&name));
-                        let _ = db::delete_new_category_session(&conn, msg.chat.id.0);
+                        let _ = shared_storage.delete_new_category_session(msg.chat.id.0).await;
                         bot.send_message(msg.chat.id, format!("✅ Category «{}» created and assigned", name))
                             .await
                             .ok();
@@ -1014,17 +1014,16 @@ pub async fn handle_message(
             // No URLs found — check for player/search context before showing "no links"
 
             // "exit" text stops player mode
-            if text.eq_ignore_ascii_case("exit") {
-                if let Ok(conn) = crate::storage::db::get_connection(&db_pool) {
-                    if crate::storage::db::get_player_session(&conn, msg.chat.id.0)
-                        .ok()
-                        .flatten()
-                        .is_some()
-                    {
-                        crate::telegram::menu::player::stop_player(&bot, msg.chat.id, &db_pool).await;
-                        return Ok(None);
-                    }
-                }
+            if text.eq_ignore_ascii_case("exit")
+                && shared_storage
+                    .get_player_session(msg.chat.id.0)
+                    .await
+                    .ok()
+                    .flatten()
+                    .is_some()
+            {
+                crate::telegram::menu::player::stop_player(&bot, msg.chat.id, &db_pool, &shared_storage).await;
+                return Ok(None);
             }
 
             // Standalone search context: if user typed text while a search session with empty query exists
@@ -1043,33 +1042,31 @@ pub async fn handle_message(
             }
 
             // Player mode: text → music search (only non-URL text)
-            if let Ok(conn) = crate::storage::db::get_connection(&db_pool) {
-                if let Ok(Some(session)) = crate::storage::db::get_player_session(&conn, msg.chat.id.0) {
-                    crate::telegram::menu::search::handle_player_search(
-                        &bot,
-                        msg.chat.id,
-                        text,
-                        db_pool.clone(),
-                        session.playlist_id,
-                    )
-                    .await;
-                    return Ok(None);
-                }
+            if let Ok(Some(session)) = shared_storage.get_player_session(msg.chat.id.0).await {
+                crate::telegram::menu::search::handle_player_search(
+                    &bot,
+                    msg.chat.id,
+                    text,
+                    db_pool.clone(),
+                    session.playlist_id,
+                )
+                .await;
+                return Ok(None);
             }
 
             bot.send_message(msg.chat.id, i18n::t(&lang, "commands.no_links"))
                 .await?;
         } else if text.eq_ignore_ascii_case("/exit") {
             // /exit command — stop player if active
-            if let Ok(conn) = crate::storage::db::get_connection(&db_pool) {
-                if crate::storage::db::get_player_session(&conn, msg.chat.id.0)
-                    .ok()
-                    .flatten()
-                    .is_some()
-                {
-                    crate::telegram::menu::player::stop_player(&bot, msg.chat.id, &db_pool).await;
-                    return Ok(None);
-                }
+            if shared_storage
+                .get_player_session(msg.chat.id.0)
+                .await
+                .ok()
+                .flatten()
+                .is_some()
+            {
+                crate::telegram::menu::player::stop_player(&bot, msg.chat.id, &db_pool, &shared_storage).await;
+                return Ok(None);
             }
             // No active player — treat as unknown command
             bot.send_message(msg.chat.id, i18n::t(&lang, "commands.no_links"))
