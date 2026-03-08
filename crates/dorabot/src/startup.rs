@@ -66,6 +66,11 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
 
     setup_all_language_commands(&bot).await?;
 
+    // Set online avatar
+    if let Err(e) = crate::telegram::avatar::set_online_avatar(&bot).await {
+        log::warn!("Failed to set online avatar: {}", e);
+    }
+
     // Notify admin about startup
     {
         use crate::telegram::notifications::notify_admin_startup;
@@ -158,6 +163,7 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
     let handler = schema(handler_deps);
 
     // --- Run dispatcher ---
+    let bot_for_shutdown = bot.clone();
     let webhook_url = if use_webhook { config::WEBHOOK_URL.clone() } else { None };
 
     let result = if let Some(url) = webhook_url {
@@ -165,6 +171,11 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
     } else {
         run_polling_mode(bot, handler, bot_init_start).await
     };
+
+    // Set offline avatar before shutdown
+    if let Err(e) = crate::telegram::avatar::set_offline_avatar(&bot_for_shutdown).await {
+        log::warn!("Failed to set offline avatar: {}", e);
+    }
 
     // Graceful shutdown: flush pending queue tasks to DB so they survive restart
     let flushed = download_queue.flush_to_db(&db_pool).await;

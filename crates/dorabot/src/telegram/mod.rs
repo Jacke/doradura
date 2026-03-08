@@ -46,6 +46,7 @@ pub fn cb(label: impl Into<String>, data: impl Into<String>) -> InlineKeyboardBu
 
 pub mod admin;
 pub mod analytics;
+pub mod avatar;
 pub mod bot;
 pub mod bot_api_logger;
 pub mod cache;

@@ -11,6 +11,7 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY locales ./locales
 COPY migrations ./migrations
+COPY assets ./assets
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS rust-builder
@@ -33,12 +34,16 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY locales ./locales
 COPY migrations ./migrations
+COPY assets ./assets
 
 RUN cargo build --release -p doradura && \
+    cargo build --release -p health-monitor && \
     cp /app/target/release/doradura /app/doradura-bin && \
+    cp /app/target/release/health-monitor /app/health-monitor-bin && \
     strip /app/doradura-bin && \
-    echo "Binary built successfully:" && \
-    ls -lh /app/doradura-bin
+    strip /app/health-monitor-bin && \
+    echo "Binaries built successfully:" && \
+    ls -lh /app/doradura-bin /app/health-monitor-bin
 
 # === bgutil builder stage (runs in parallel with rust-builder) ===
 FROM aiogram/telegram-bot-api:latest AS bgutil-builder
@@ -118,7 +123,8 @@ RUN addgroup -g 2000 shareddata && \
 
 # Copy compiled binary and migrations
 COPY --from=rust-builder --chown=1000:2000 /app/doradura-bin /app/doradura
-RUN chmod 755 /app/doradura
+COPY --from=rust-builder --chown=1000:2000 /app/health-monitor-bin /app/health-monitor
+RUN chmod 755 /app/doradura /app/health-monitor
 COPY --from=rust-builder --chown=1000:2000 /app/migrations /app/migrations
 
 WORKDIR /app
@@ -137,6 +143,7 @@ RUN mkdir -p /etc/s6-overlay/s6-rc.d/user/contents.d \
              /etc/s6-overlay/s6-rc.d/telegram-bot-api/dependencies.d \
              /etc/s6-overlay/s6-rc.d/bgutil-pot-server/dependencies.d \
              /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d \
+             /etc/s6-overlay/s6-rc.d/health-monitor/dependencies.d \
              /etc/s6-overlay/scripts
 
 # === init-data oneshot service ===
@@ -286,11 +293,25 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/doradura-bot/type && \
     > /etc/s6-overlay/s6-rc.d/doradura-bot/run && \
     chmod +x /etc/s6-overlay/s6-rc.d/doradura-bot/run
 
+# === health-monitor longrun service ===
+RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/health-monitor/type && \
+    touch /etc/s6-overlay/s6-rc.d/health-monitor/dependencies.d/doradura-bot && \
+    printf '%s\n' \
+    '#!/command/execlineb -P' \
+    'foreground { echo "[health-monitor] START" }' \
+    's6-setuidgid botuser' \
+    's6-env RUST_LOG=info' \
+    'fdmove -c 2 1' \
+    '/app/health-monitor' \
+    > /etc/s6-overlay/s6-rc.d/health-monitor/run && \
+    chmod +x /etc/s6-overlay/s6-rc.d/health-monitor/run
+
 # Enable all services
 RUN touch /etc/s6-overlay/s6-rc.d/user/contents.d/init-data \
           /etc/s6-overlay/s6-rc.d/user/contents.d/telegram-bot-api \
           /etc/s6-overlay/s6-rc.d/user/contents.d/bgutil-pot-server \
-          /etc/s6-overlay/s6-rc.d/user/contents.d/doradura-bot
+          /etc/s6-overlay/s6-rc.d/user/contents.d/doradura-bot \
+          /etc/s6-overlay/s6-rc.d/user/contents.d/health-monitor
 
 EXPOSE 8080 8081 8082 9090
 

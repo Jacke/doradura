@@ -1660,7 +1660,7 @@ dependencies = [
 
 [[package]]
 name = "doradura"
-version = "0.24.4"
+version = "0.26.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2650,6 +2650,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7382cf6263419f2d8df38c55d7da83da5c18aef87fc7a7fc1fb1e344edfe14c1"
 dependencies = [
  "hashbrown 0.15.5",
+]
+
+[[package]]
+name = "health-monitor"
+version = "0.25.2"
+dependencies = [
+ "env_logger 0.11.8",
+ "log",
+ "reqwest",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

@@ -1,0 +1,11 @@
+[package]
+name = "health-monitor"
+version = "0.25.2"
+edition = "2021"
+
+[dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+serde_json = "1.0"
+tokio = { version = "1.40", features = ["rt", "macros", "time"] }
+log = "0.4"
+env_logger = "0.11"
