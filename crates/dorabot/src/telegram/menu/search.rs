@@ -9,13 +9,11 @@
 use crate::download::search::{format_duration, search, SearchResult, SearchSource};
 use crate::i18n;
 use crate::storage::db::{self, DbPool};
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
 use teloxide::prelude::*;
 use teloxide::types::{CallbackQueryId, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId};
-use tokio::sync::RwLock;
 
 const RESULTS_PER_PAGE: usize = 5;
 const SESSION_TTL_SECS: u64 = 600; // 10 minutes
@@ -40,41 +38,85 @@ pub struct SearchSession {
     pub results: Vec<SearchResult>,
     pub source: SearchSource,
     pub context: SearchContext,
-    pub created_at: Instant,
 }
 
-static SEARCH_SESSIONS: std::sync::LazyLock<Arc<RwLock<HashMap<i64, SearchSession>>>> =
-    std::sync::LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
-
-/// Store a search session for a user.
-pub async fn set_search_session(user_id: i64, session: SearchSession) {
-    let mut sessions = SEARCH_SESSIONS.write().await;
-    sessions.insert(user_id, session);
-}
-
-/// Get a search session for a user (returns None if expired).
-pub async fn get_search_session(user_id: i64) -> Option<SearchSession> {
-    let sessions = SEARCH_SESSIONS.read().await;
-    let session = sessions.get(&user_id)?;
-    if session.created_at.elapsed().as_secs() > SESSION_TTL_SECS {
-        drop(sessions);
-        clear_search_session(user_id).await;
-        return None;
+fn encode_search_context(context: &SearchContext) -> (&'static str, Option<i64>) {
+    match context {
+        SearchContext::Standalone => ("standalone", None),
+        SearchContext::PlayerMode { playlist_id } => ("player", Some(*playlist_id)),
+        SearchContext::AddToPlaylist { playlist_id } => ("playlist", Some(*playlist_id)),
     }
-    Some(session.clone())
 }
 
-/// Remove a search session for a user.
-pub async fn clear_search_session(user_id: i64) {
-    let mut sessions = SEARCH_SESSIONS.write().await;
-    sessions.remove(&user_id);
+fn decode_search_context(kind: &str, playlist_id: Option<i64>) -> Option<SearchContext> {
+    match kind {
+        "standalone" => Some(SearchContext::Standalone),
+        "player" => playlist_id.map(|playlist_id| SearchContext::PlayerMode { playlist_id }),
+        "playlist" => playlist_id.map(|playlist_id| SearchContext::AddToPlaylist { playlist_id }),
+        _ => None,
+    }
+}
+
+pub async fn set_search_session(
+    shared_storage: &Arc<SharedStorage>,
+    user_id: i64,
+    session: &SearchSession,
+) -> anyhow::Result<()> {
+    let results_json = serde_json::to_string(&session.results)?;
+    let (context_kind, playlist_id) = encode_search_context(&session.context);
+    shared_storage
+        .upsert_search_session(
+            user_id,
+            &session.query,
+            &results_json,
+            session.source.code(),
+            context_kind,
+            playlist_id,
+        )
+        .await
+}
+
+pub async fn get_search_session(shared_storage: &Arc<SharedStorage>, user_id: i64) -> Option<SearchSession> {
+    let (query, results_json, source_code, context_kind, playlist_id) = shared_storage
+        .get_search_session(user_id, SESSION_TTL_SECS as i64)
+        .await
+        .ok()
+        .flatten()?;
+    let source = SearchSource::from_code(&source_code)?;
+    let context = decode_search_context(&context_kind, playlist_id)?;
+    let results = serde_json::from_str::<Vec<SearchResult>>(&results_json).ok()?;
+    Some(SearchSession {
+        query,
+        results,
+        source,
+        context,
+    })
+}
+
+pub async fn clear_search_session(shared_storage: &Arc<SharedStorage>, user_id: i64) {
+    let _ = shared_storage.delete_search_session(user_id).await;
 }
 
 // ── Perform search and show results ───────────────────────────────────────
 
 /// Handle text input as a music search (called from player mode intercept).
-pub async fn handle_player_search(bot: &Bot, chat_id: ChatId, text: &str, db_pool: Arc<DbPool>, playlist_id: i64) {
-    handle_standalone_search(bot, chat_id, text, db_pool, SearchContext::PlayerMode { playlist_id }).await;
+pub async fn handle_player_search(
+    bot: &Bot,
+    chat_id: ChatId,
+    text: &str,
+    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+    playlist_id: i64,
+) {
+    handle_standalone_search(
+        bot,
+        chat_id,
+        text,
+        db_pool,
+        shared_storage,
+        SearchContext::PlayerMode { playlist_id },
+    )
+    .await;
 }
 
 /// Handle standalone search (from /search or menu).
@@ -83,6 +125,7 @@ pub async fn handle_standalone_search(
     chat_id: ChatId,
     text: &str,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     context: SearchContext,
 ) {
     let _lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
@@ -113,15 +156,12 @@ pub async fn handle_standalone_search(
                 results: results.clone(),
                 source,
                 context: context.clone(),
-                created_at: Instant::now(),
             };
-            set_search_session(chat_id.0, session).await;
+            let _ = set_search_session(&shared_storage, chat_id.0, &session).await;
             if let Ok(Some(msg_id)) = show_search_results(bot, chat_id, &results, text, source, 0, &context).await {
                 // Track search result messages in player mode for cleanup
                 if matches!(context, SearchContext::PlayerMode { .. }) {
-                    if let Ok(conn) = db::get_connection(&db_pool) {
-                        let _ = db::add_player_message(&conn, chat_id.0, msg_id.0);
-                    }
+                    let _ = shared_storage.add_player_message(chat_id.0, msg_id.0).await;
                 }
             }
         }
@@ -239,11 +279,12 @@ pub async fn handle_search_callback(
     message_id: MessageId,
     data: &str,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     download_queue: Arc<crate::download::queue::DownloadQueue>,
 ) -> Result<(), teloxide::RequestError> {
     let _ = bot.answer_callback_query(callback_id).await;
 
-    let session = match get_search_session(chat_id.0).await {
+    let session = match get_search_session(&shared_storage, chat_id.0).await {
         Some(s) => s,
         None => {
             let _ = bot
@@ -350,9 +391,7 @@ pub async fn handle_search_callback(
                 .await
                 {
                     if matches!(session.context, SearchContext::PlayerMode { .. }) {
-                        if let Ok(conn) = db::get_connection(&db_pool) {
-                            let _ = db::add_player_message(&conn, chat_id.0, msg_id.0);
-                        }
+                        let _ = shared_storage.add_player_message(chat_id.0, msg_id.0).await;
                     }
                 }
             }
@@ -381,17 +420,14 @@ pub async fn handle_search_callback(
                         results: results.clone(),
                         source: new_source,
                         context: session.context.clone(),
-                        created_at: Instant::now(),
                     };
-                    set_search_session(chat_id.0, new_session).await;
+                    let _ = set_search_session(&shared_storage, chat_id.0, &new_session).await;
                     if let Ok(Some(msg_id)) =
                         show_search_results(bot, chat_id, &results, &session.query, new_source, 0, &session.context)
                             .await
                     {
                         if matches!(session.context, SearchContext::PlayerMode { .. }) {
-                            if let Ok(conn) = db::get_connection(&db_pool) {
-                                let _ = db::add_player_message(&conn, chat_id.0, msg_id.0);
-                            }
+                            let _ = shared_storage.add_player_message(chat_id.0, msg_id.0).await;
                         }
                     }
                 }

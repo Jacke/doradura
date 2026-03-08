@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
+use rusqlite::OptionalExtension;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::{PgPool, Row};
 
@@ -239,6 +240,19 @@ CREATE TABLE IF NOT EXISTS vault_cache (
 
 CREATE INDEX IF NOT EXISTS idx_vault_cache_lookup
     ON vault_cache(user_id, url);
+
+CREATE TABLE IF NOT EXISTS search_sessions (
+    user_id BIGINT PRIMARY KEY REFERENCES users(telegram_id) ON DELETE CASCADE,
+    query TEXT NOT NULL,
+    results_json TEXT NOT NULL,
+    source TEXT NOT NULL,
+    context_kind TEXT NOT NULL,
+    playlist_id BIGINT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_search_sessions_created_at
+    ON search_sessions(created_at);
 "#;
 
 #[derive(Debug, Clone)]
@@ -1765,6 +1779,158 @@ impl SharedStorage {
                     .execute(pg_pool)
                     .await
                     .context("postgres clear_vault_cache")?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn upsert_search_session(
+        &self,
+        user_id: i64,
+        query: &str,
+        results_json: &str,
+        source: &str,
+        context_kind: &str,
+        playlist_id: Option<i64>,
+    ) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite upsert_search_session connection")?;
+                conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS search_sessions (
+                        user_id INTEGER PRIMARY KEY,
+                        query TEXT NOT NULL,
+                        results_json TEXT NOT NULL,
+                        source TEXT NOT NULL,
+                        context_kind TEXT NOT NULL,
+                        playlist_id INTEGER,
+                        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_search_sessions_created_at ON search_sessions(created_at);",
+                )
+                .context("sqlite ensure search_sessions table")?;
+                conn.execute(
+                    "INSERT OR REPLACE INTO search_sessions (
+                        user_id, query, results_json, source, context_kind, playlist_id, created_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))",
+                    rusqlite::params![user_id, query, results_json, source, context_kind, playlist_id],
+                )
+                .context("sqlite upsert_search_session")?;
+                Ok(())
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query(
+                    "INSERT INTO search_sessions (
+                        user_id, query, results_json, source, context_kind, playlist_id, created_at
+                     ) VALUES ($1, $2, $3, $4, $5, $6, NOW())
+                     ON CONFLICT (user_id) DO UPDATE SET
+                        query = EXCLUDED.query,
+                        results_json = EXCLUDED.results_json,
+                        source = EXCLUDED.source,
+                        context_kind = EXCLUDED.context_kind,
+                        playlist_id = EXCLUDED.playlist_id,
+                        created_at = NOW()",
+                )
+                .bind(user_id)
+                .bind(query)
+                .bind(results_json)
+                .bind(source)
+                .bind(context_kind)
+                .bind(playlist_id)
+                .execute(pg_pool)
+                .await
+                .context("postgres upsert_search_session")?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn get_search_session(
+        &self,
+        user_id: i64,
+        ttl_secs: i64,
+    ) -> Result<Option<(String, String, String, String, Option<i64>)>> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite get_search_session connection")?;
+                conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS search_sessions (
+                        user_id INTEGER PRIMARY KEY,
+                        query TEXT NOT NULL,
+                        results_json TEXT NOT NULL,
+                        source TEXT NOT NULL,
+                        context_kind TEXT NOT NULL,
+                        playlist_id INTEGER,
+                        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_search_sessions_created_at ON search_sessions(created_at);",
+                )
+                .context("sqlite ensure search_sessions table")?;
+                let row = conn
+                    .query_row(
+                        "SELECT query, results_json, source, context_kind, playlist_id
+                         FROM search_sessions
+                         WHERE user_id = ?1
+                           AND datetime(created_at, '+' || ?2 || ' seconds') > datetime('now')",
+                        rusqlite::params![user_id, ttl_secs],
+                        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+                    )
+                    .optional()
+                    .context("sqlite get_search_session")?;
+                Ok(row)
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let row = sqlx::query(
+                    "SELECT query, results_json, source, context_kind, playlist_id
+                     FROM search_sessions
+                     WHERE user_id = $1
+                       AND created_at > NOW() - ($2 * INTERVAL '1 second')",
+                )
+                .bind(user_id)
+                .bind(ttl_secs)
+                .fetch_optional(pg_pool)
+                .await
+                .context("postgres get_search_session")?;
+                Ok(row.map(|row| {
+                    (
+                        row.get("query"),
+                        row.get("results_json"),
+                        row.get("source"),
+                        row.get("context_kind"),
+                        row.get("playlist_id"),
+                    )
+                }))
+            }
+        }
+    }
+
+    pub async fn delete_search_session(&self, user_id: i64) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite delete_search_session connection")?;
+                conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS search_sessions (
+                        user_id INTEGER PRIMARY KEY,
+                        query TEXT NOT NULL,
+                        results_json TEXT NOT NULL,
+                        source TEXT NOT NULL,
+                        context_kind TEXT NOT NULL,
+                        playlist_id INTEGER,
+                        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_search_sessions_created_at ON search_sessions(created_at);",
+                )
+                .context("sqlite ensure search_sessions table")?;
+                conn.execute("DELETE FROM search_sessions WHERE user_id = ?1", [user_id])
+                    .context("sqlite delete_search_session")?;
+                Ok(())
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query("DELETE FROM search_sessions WHERE user_id = $1")
+                    .bind(user_id)
+                    .execute(pg_pool)
+                    .await
+                    .context("postgres delete_search_session")?;
                 Ok(())
             }
         }

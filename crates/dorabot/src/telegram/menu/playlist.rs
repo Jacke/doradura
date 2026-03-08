@@ -20,6 +20,7 @@
 use crate::core::types::Plan;
 use crate::download::search::format_duration;
 use crate::storage::db::{self, DbPool};
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -463,6 +464,7 @@ pub async fn handle_playlist_callback(
     message_id: MessageId,
     data: &str,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
     let _ = bot.answer_callback_query(callback_id).await;
 
@@ -645,9 +647,10 @@ pub async fn handle_playlist_callback(
                         // Set search context
                         use super::search::{set_search_session, SearchContext, SearchSession};
                         // We store the context for future search handling
-                        set_search_session(
+                        let _ = set_search_session(
+                            &shared_storage,
                             chat_id.0,
-                            SearchSession {
+                            &SearchSession {
                                 query: String::new(),
                                 results: vec![],
                                 source: if parts[1] == "y" {
@@ -656,7 +659,6 @@ pub async fn handle_playlist_callback(
                                     crate::download::search::SearchSource::SoundCloud
                                 },
                                 context: SearchContext::AddToPlaylist { playlist_id: pl_id },
-                                created_at: Instant::now(),
                             },
                         )
                         .await;

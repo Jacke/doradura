@@ -1036,13 +1036,16 @@ pub async fn handle_message(
             }
 
             // Standalone search context: if user typed text while a search session with empty query exists
-            if let Some(session) = crate::telegram::menu::search::get_search_session(msg.chat.id.0).await {
+            if let Some(session) =
+                crate::telegram::menu::search::get_search_session(&shared_storage, msg.chat.id.0).await
+            {
                 if session.query.is_empty() {
                     crate::telegram::menu::search::handle_standalone_search(
                         &bot,
                         msg.chat.id,
                         text,
                         db_pool.clone(),
+                        shared_storage.clone(),
                         session.context.clone(),
                     )
                     .await;
@@ -1057,6 +1060,7 @@ pub async fn handle_message(
                     msg.chat.id,
                     text,
                     db_pool.clone(),
+                    shared_storage.clone(),
                     session.playlist_id,
                 )
                 .await;
