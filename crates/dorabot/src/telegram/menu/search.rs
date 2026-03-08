@@ -8,7 +8,7 @@
 
 use crate::download::search::{format_duration, search, SearchResult, SearchSource};
 use crate::i18n;
-use crate::storage::db::{self, DbPool};
+use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use std::sync::Arc;
@@ -144,9 +144,7 @@ pub async fn handle_standalone_search(
                     .await
                 {
                     if matches!(context, SearchContext::PlayerMode { .. }) {
-                        if let Ok(conn) = db::get_connection(&db_pool) {
-                            let _ = db::add_player_message(&conn, chat_id.0, msg.id.0);
-                        }
+                        let _ = shared_storage.add_player_message(chat_id.0, msg.id.0).await;
                     }
                 }
                 return;
