@@ -18,6 +18,7 @@ use crate::download::search::format_duration;
 use crate::download::send::send_audio_with_retry;
 use crate::download::source::SourceRegistry;
 use crate::storage::db::{self, DbPool};
+use crate::storage::SharedStorage;
 use crate::telegram::notifications::notify_admin_text;
 use crate::telegram::Bot;
 use std::collections::HashMap;
@@ -60,13 +61,24 @@ async fn set_waiting_for_import_url(user_id: i64, waiting: bool) {
 
 // ── /playlist_integrations command ──────────────────────────────────────
 
-pub async fn handle_playlist_integrations_command(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbPool>) {
+pub async fn handle_playlist_integrations_command(
+    bot: &Bot,
+    chat_id: ChatId,
+    db_pool: &Arc<DbPool>,
+    _shared_storage: &Arc<SharedStorage>,
+) {
     show_playlist_list(bot, chat_id, 0, db_pool, None).await;
 }
 
 // ── URL input handler (called from message handler) ─────────────────────
 
-pub async fn handle_import_url_input(bot: &Bot, chat_id: ChatId, text: &str, db_pool: Arc<DbPool>) {
+pub async fn handle_import_url_input(
+    bot: &Bot,
+    chat_id: ChatId,
+    text: &str,
+    db_pool: Arc<DbPool>,
+    _shared_storage: Arc<SharedStorage>,
+) {
     set_waiting_for_import_url(chat_id.0, false).await;
 
     let url = text.trim();
@@ -242,6 +254,7 @@ pub async fn handle_playlist_integrations_callback(
     message_id: MessageId,
     data: &str,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     _download_queue: Arc<crate::download::queue::DownloadQueue>,
 ) -> Result<(), teloxide::RequestError> {
     let _ = bot.answer_callback_query(callback_id).await;
@@ -268,7 +281,7 @@ pub async fn handle_playlist_integrations_callback(
         }
     } else if let Some(id_str) = suffix.strip_prefix("play:") {
         let id = id_str.parse::<i64>().unwrap_or(0);
-        play_all(bot, chat_id, message_id, id, &db_pool).await;
+        play_all(bot, chat_id, message_id, id, &db_pool, &shared_storage).await;
     } else if let Some(id_str) = suffix.strip_prefix("resync:") {
         let id = id_str.parse::<i64>().unwrap_or(0);
         resync_playlist(bot, chat_id, message_id, id, &db_pool).await;
@@ -283,7 +296,7 @@ pub async fn handle_playlist_integrations_callback(
         if parts.len() == 2 {
             let pl_id = parts[0].parse::<i64>().unwrap_or(0);
             let track_id = parts[1].parse::<i64>().unwrap_or(0);
-            download_single_track(bot, chat_id, pl_id, track_id, &db_pool).await;
+            download_single_track(bot, chat_id, pl_id, track_id, &db_pool, &shared_storage).await;
         }
     } else if let Some(id_str) = suffix.strip_prefix("retry:") {
         let id = id_str.parse::<i64>().unwrap_or(0);
@@ -514,7 +527,14 @@ async fn show_tracks_view(
 
 // ── Play All ────────────────────────────────────────────────────────────
 
-async fn play_all(bot: &Bot, chat_id: ChatId, message_id: MessageId, playlist_id: i64, db_pool: &Arc<DbPool>) {
+async fn play_all(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    playlist_id: i64,
+    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
+) {
     let conn = match db::get_connection(db_pool) {
         Ok(c) => c,
         Err(_) => return,
@@ -545,6 +565,7 @@ async fn play_all(bot: &Bot, chat_id: ChatId, message_id: MessageId, playlist_id
 
     let bot_clone = bot.clone();
     let db_pool_clone = db_pool.clone();
+    let shared_storage_clone = Arc::clone(shared_storage);
     let pl_name = pl.name.clone();
     let msg_id = message_id;
 
@@ -563,7 +584,8 @@ async fn play_all(bot: &Bot, chat_id: ChatId, message_id: MessageId, playlist_id
             // Try vault cache first
             let track_url = track.resolved_url.as_deref().or(track.source_url.as_deref());
             if let Some(url_str) = track_url {
-                if let Some(cached_fid) = crate::download::vault::check_vault_cache(&db_pool_clone, chat_id.0, url_str)
+                if let Some(cached_fid) =
+                    crate::download::vault::check_vault_cache(&shared_storage_clone, chat_id.0, url_str).await
                 {
                     let input = InputFile::file_id(FileId(cached_fid));
                     if bot_clone.send_audio(chat_id, input).await.is_ok() {
@@ -608,7 +630,7 @@ async fn play_all(bot: &Bot, chat_id: ChatId, message_id: MessageId, playlist_id
                     registry,
                     &mut progress_msg,
                     None,
-                    None,
+                    Some(&shared_storage_clone),
                 ),
             )
             .await;
@@ -653,7 +675,7 @@ async fn play_all(bot: &Bot, chat_id: ChatId, message_id: MessageId, playlist_id
                             if let Some(ref url_str) = track_url {
                                 crate::download::vault::send_to_vault_background(
                                     bot_clone.clone(),
-                                    db_pool_clone.clone(),
+                                    shared_storage_clone.clone(),
                                     chat_id.0,
                                     url_str.to_string(),
                                     fid.clone(),
@@ -829,7 +851,14 @@ async fn execute_delete(bot: &Bot, chat_id: ChatId, message_id: MessageId, playl
 
 // ── Download single track ───────────────────────────────────────────────
 
-async fn download_single_track(bot: &Bot, chat_id: ChatId, playlist_id: i64, track_id: i64, db_pool: &Arc<DbPool>) {
+async fn download_single_track(
+    bot: &Bot,
+    chat_id: ChatId,
+    playlist_id: i64,
+    track_id: i64,
+    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
+) {
     let conn = match db::get_connection(db_pool) {
         Ok(c) => c,
         Err(_) => return,
@@ -849,7 +878,7 @@ async fn download_single_track(bot: &Bot, chat_id: ChatId, playlist_id: i64, tra
     // Try vault cache first
     let track_url_str = track.resolved_url.as_deref().or(track.source_url.as_deref());
     if let Some(url_s) = track_url_str {
-        if let Some(cached_fid) = crate::download::vault::check_vault_cache(db_pool, chat_id.0, url_s) {
+        if let Some(cached_fid) = crate::download::vault::check_vault_cache(shared_storage, chat_id.0, url_s).await {
             let input = InputFile::file_id(FileId(cached_fid));
             if bot.send_audio(chat_id, input).await.is_ok() {
                 return;
@@ -890,7 +919,16 @@ async fn download_single_track(bot: &Bot, chat_id: ChatId, playlist_id: i64, tra
 
     let result = timeout(
         TRACK_DOWNLOAD_TIMEOUT,
-        pipeline::download_phase(bot, chat_id, &url, &format, registry, &mut progress_msg, None, None),
+        pipeline::download_phase(
+            bot,
+            chat_id,
+            &url,
+            &format,
+            registry,
+            &mut progress_msg,
+            None,
+            Some(shared_storage),
+        ),
     )
     .await;
 
@@ -934,7 +972,7 @@ async fn download_single_track(bot: &Bot, chat_id: ChatId, playlist_id: i64, tra
                         }
                         crate::download::vault::send_to_vault_background(
                             bot.clone(),
-                            db_pool.clone(),
+                            Arc::clone(shared_storage),
                             chat_id.0,
                             url_str.to_string(),
                             fid.clone(),

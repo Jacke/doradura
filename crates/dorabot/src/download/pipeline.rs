@@ -428,8 +428,10 @@ pub async fn execute(
 
     // ── Vault cache lookup (audio only) ──
     if matches!(format, PipelineFormat::Audio { .. }) {
-        if let Some(pool) = db_pool {
-            if let Some(cached_fid) = crate::download::vault::check_vault_cache(pool, chat_id.0, url.as_str()) {
+        if let Some(shared_storage) = shared_storage {
+            if let Some(cached_fid) =
+                crate::download::vault::check_vault_cache(shared_storage, chat_id.0, url.as_str()).await
+            {
                 log::info!("Pipeline: vault cache hit for {} (chat {})", url, chat_id);
                 let input = teloxide::types::InputFile::file_id(teloxide::types::FileId(cached_fid));
                 match bot.send_audio(chat_id, input).await {
@@ -786,7 +788,7 @@ pub async fn execute(
 
     // ── Step 10b: Send to vault (audio only, fire-and-forget) ──
     if matches!(format, PipelineFormat::Audio { .. }) {
-        if let Some(pool) = db_pool {
+        if let Some(shared_storage) = shared_storage {
             let file_id_for_vault = sent_message
                 .audio()
                 .map(|a| a.file.id.0.clone())
@@ -794,7 +796,7 @@ pub async fn execute(
             if let Some(fid) = file_id_for_vault {
                 crate::download::vault::send_to_vault_background(
                     bot.clone(),
-                    Arc::clone(pool),
+                    Arc::clone(shared_storage),
                     chat_id.0,
                     url.to_string(),
                     fid,

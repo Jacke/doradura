@@ -484,6 +484,7 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                             &bot,
                             msg.chat.id,
                             &deps.db_pool,
+                            &deps.shared_storage,
                         )
                         .await;
                     }

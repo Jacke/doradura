@@ -1531,6 +1531,7 @@ pub async fn handle_menu_callback(
                     message_id,
                     &data,
                     Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
                 )
                 .await
                 {
@@ -1547,6 +1548,7 @@ pub async fn handle_menu_callback(
                     message_id,
                     &data,
                     Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
                     Arc::clone(&download_queue),
                 )
                 .await

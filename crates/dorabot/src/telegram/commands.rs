@@ -420,9 +420,16 @@ pub async fn handle_message(
         if crate::telegram::menu::vault::is_waiting_for_vault_setup(msg.chat.id.0).await {
             let bot_clone = bot.clone();
             let db_pool_clone = db_pool.clone();
+            let shared_storage_clone = shared_storage.clone();
             let msg_clone = msg.clone();
             tokio::spawn(async move {
-                crate::telegram::menu::vault::handle_vault_setup_input(&bot_clone, &msg_clone, &db_pool_clone).await;
+                crate::telegram::menu::vault::handle_vault_setup_input(
+                    &bot_clone,
+                    &msg_clone,
+                    &db_pool_clone,
+                    &shared_storage_clone,
+                )
+                .await;
             });
             return Ok(None);
         }
@@ -431,6 +438,7 @@ pub async fn handle_message(
         if crate::telegram::menu::playlist_integrations::is_waiting_for_import_url(msg.chat.id.0).await {
             let bot_clone = bot.clone();
             let db_pool_clone = db_pool.clone();
+            let shared_storage_clone = shared_storage.clone();
             let url_text = text.trim().to_string();
             tokio::spawn(async move {
                 crate::telegram::menu::playlist_integrations::handle_import_url_input(
@@ -438,6 +446,7 @@ pub async fn handle_message(
                     msg.chat.id,
                     &url_text,
                     db_pool_clone,
+                    shared_storage_clone,
                 )
                 .await;
             });

@@ -435,7 +435,7 @@ async fn download_player_track(
     let url = Url::parse(&item.url)?;
 
     // Check vault cache first
-    if let Some(cached_fid) = crate::download::vault::check_vault_cache(db_pool, chat_id.0, &item.url) {
+    if let Some(cached_fid) = crate::download::vault::check_vault_cache(shared_storage, chat_id.0, &item.url).await {
         let input = teloxide::types::InputFile::file_id(teloxide::types::FileId(cached_fid));
         if bot.send_audio(chat_id, input).await.is_ok() {
             return Ok(());
@@ -453,24 +453,34 @@ async fn download_player_track(
     let mut progress_msg = ProgressMessage::new(chat_id, lang);
 
     // Download phase
-    let phase_result =
-        match pipeline::download_phase(bot, chat_id, &url, &format, registry, &mut progress_msg, None, None).await {
-            Ok(r) => {
-                // Track progress message for cleanup if Stop is pressed mid-download
-                if let Some(msg_id) = progress_msg.message_id {
-                    track_message(shared_storage, chat_id.0, msg_id.0).await;
-                }
-                r
+    let phase_result = match pipeline::download_phase(
+        bot,
+        chat_id,
+        &url,
+        &format,
+        registry,
+        &mut progress_msg,
+        None,
+        Some(shared_storage),
+    )
+    .await
+    {
+        Ok(r) => {
+            // Track progress message for cleanup if Stop is pressed mid-download
+            if let Some(msg_id) = progress_msg.message_id {
+                track_message(shared_storage, chat_id.0, msg_id.0).await;
             }
-            Err(e) => {
-                // Track + delete progress message on error too
-                if let Some(msg_id) = progress_msg.message_id {
-                    track_message(shared_storage, chat_id.0, msg_id.0).await;
-                    let _ = bot.delete_message(chat_id, msg_id).await;
-                }
-                return Err(format!("Download failed: {:?}", e).into());
+            r
+        }
+        Err(e) => {
+            // Track + delete progress message on error too
+            if let Some(msg_id) = progress_msg.message_id {
+                track_message(shared_storage, chat_id.0, msg_id.0).await;
+                let _ = bot.delete_message(chat_id, msg_id).await;
             }
-        };
+            return Err(format!("Download failed: {:?}", e).into());
+        }
+    };
 
     // Send audio
     let duration = phase_result.output.duration_secs.unwrap_or(0);
@@ -537,7 +547,7 @@ async fn download_player_track(
             if let Some(fid) = vault_fid {
                 crate::download::vault::send_to_vault_background(
                     bot.clone(),
-                    Arc::clone(db_pool),
+                    Arc::clone(shared_storage),
                     chat_id.0,
                     item.url.clone(),
                     fid,
