@@ -153,19 +153,14 @@ RUN printf '%s\n' \
     'foreground { echo "================================================" }' \
     'foreground { mkdir -p /data /tmp }' \
     'foreground { chmod 1777 /tmp }' \
-    'foreground { echo "Clearing Bot API data for clean start..." }' \
+    'foreground { echo "Cleaning up old temp files..." }' \
     'foreground {' \
     '  /bin/sh -c "' \
-    '    for d in /data/*/; do' \
-    '      if [ -d \"\$d\" ]; then' \
-    '        if [ -f \"\${d}binlog\" ] || ls \"\${d}\"*.binlog 2>/dev/null | head -1 > /dev/null; then' \
-    '          echo Removing Bot API directory: \$d' \
-    '          rm -rf \"\$d\"' \
-    '        fi' \
-    '      fi' \
-    '    done' \
-    '    find /data -name \"*.binlog\" -delete 2>/dev/null || true' \
+    '    find /data -maxdepth 1 -name \"refresh_error_*.png\" -delete 2>/dev/null || true' \
+    '    find /data -maxdepth 1 -name \"signout_detected_*.png\" -delete 2>/dev/null || true' \
     '    find /data -name \"*.binlog.lock\" -delete 2>/dev/null || true' \
+    '    COUNT=\$(find /data -maxdepth 1 -name \"*.png\" 2>/dev/null | wc -l)' \
+    '    echo Cleaned up temp files. Remaining files in /data: \$COUNT pngs' \
     '  "' \
     '}' \
     'foreground { chown telegram-bot-api:shareddata /data }' \
@@ -186,7 +181,7 @@ RUN printf '%s\n' \
     'foreground { chmod 775 /data }' \
     'foreground { /bin/sh -c "chown 1000:2000 /data/*.sqlite* 2>/dev/null || true" }' \
     'foreground { /bin/sh -c "chmod 664 /data/*.sqlite* 2>/dev/null || true" }' \
-    'foreground { ls -la /data }' \
+    'foreground { /bin/sh -c "echo \"[init-data] /data contains $(ls /data | wc -l) files\"" }' \
     'foreground { echo "================================================" }' \
     'foreground { /bin/sh -c "START=$(cat /tmp/init_start_ms 2>/dev/null || echo 0); END=$(($(date +%s%N)/1000000)); ELAPSED=$((END - START)); echo \"[init-data] COMPLETE in ${ELAPSED}ms at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\"" }' \
     'foreground { echo "Starting services (telegram-bot-api, bgutil, doradura-bot)..." }' \
