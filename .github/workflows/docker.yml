@@ -19,6 +19,9 @@ jobs:
       attestations: write
       id-token: write
 
+    env:
+      HAS_RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN != '' }}
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -61,13 +64,11 @@ jobs:
           push-to-registry: true
 
       - name: Install Railway CLI
+        if: env.HAS_RAILWAY_TOKEN == 'true'
         run: npm i -g @railway/cli
 
       - name: Trigger Railway redeploy
+        if: env.HAS_RAILWAY_TOKEN == 'true'
         env:
           RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: |
-          railway redeploy \
-            --service doradura \
-            --environment production \
-            -y
+        run: railway redeploy --service doradura -y
