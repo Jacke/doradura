@@ -12,7 +12,7 @@ use crate::download::error::DownloadError;
 use crate::download::pipeline::{self, PipelineFormat, PipelineResult};
 use crate::download::progress::{ProgressBarStyle, ProgressMessage};
 use crate::download::source::SourceRegistry;
-use crate::storage::db::{self as db, DbPool};
+use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use chrono::{DateTime, Utc};
@@ -107,7 +107,7 @@ pub async fn download_and_send_audio(
             .map_err(|e| e.into_app_error())?;
 
             // Audio-specific: add effects button
-            add_audio_effects_button(&bot_clone, chat_id, &pipeline_result, db_pool_clone.as_ref()).await;
+            add_audio_effects_button(&bot_clone, chat_id, &pipeline_result, shared_storage_clone.as_ref()).await;
 
             // Share page: create after successful audio send (YouTube only, fire-and-forget)
             if crate::core::share::is_youtube_url(url.as_str()) {
@@ -211,17 +211,15 @@ pub async fn download_and_send_audio(
 ///
 /// Creates an AudioEffectSession, copies the downloaded file for effects processing,
 /// and adds inline keyboard buttons to the sent message.
-async fn add_audio_effects_button(bot: &Bot, chat_id: ChatId, result: &PipelineResult, db_pool: Option<&Arc<DbPool>>) {
-    let Some(pool) = db_pool else {
+async fn add_audio_effects_button(
+    bot: &Bot,
+    chat_id: ChatId,
+    result: &PipelineResult,
+    shared_storage: Option<&Arc<SharedStorage>>,
+) {
+    let Some(storage) = shared_storage else {
         return;
     };
-    let Ok(conn) = db::get_connection(pool) else {
-        log::warn!("Audio effects: failed to get DB connection");
-        return;
-    };
-
-    // TODO: Re-enable premium check after testing
-    // if !db::is_premium_or_vip(&conn, chat_id.0).unwrap_or(false) { return; }
 
     use crate::download::audio_effects::{self, AudioEffectSession};
 
@@ -242,7 +240,7 @@ async fn add_audio_effects_button(bot: &Bot, chat_id: ChatId, result: &PipelineR
                 result.duration,
             );
 
-            match db::create_audio_effect_session(&conn, &session) {
+            match storage.create_audio_effect_session(&session).await {
                 Ok(_) => {
                     log::info!("Audio effects: session created with id {}", session_id);
                     let bot_for_button = bot.clone();
