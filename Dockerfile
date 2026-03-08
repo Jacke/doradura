@@ -188,18 +188,8 @@ RUN printf '%s\n' \
     'foreground { chmod 775 /data }' \
     'foreground { /bin/sh -c "chown 1000:2000 /data/*.sqlite* 2>/dev/null || true" }' \
     'foreground { /bin/sh -c "chmod 664 /data/*.sqlite* 2>/dev/null || true" }' \
-    'foreground {' \
-    '  /bin/sh -c "' \
-    '    if [ \"\${CLEAR_BOT_API_BINLOG:-}\" = \"1\" ] || [ \"\${CLEAR_BOT_API_BINLOG:-}\" = \"true\" ]; then' \
-    '      echo [init-data] CLEAR_BOT_API_BINLOG set — removing corrupted binlog files' \
-    '      rm -f /data/*.binlog /data/tqueue.binlog' \
-    '    else' \
-    '      echo Fixing Bot API binlog permissions...' \
-    '      chown telegram-bot-api:shareddata /data/*.binlog /data/tqueue.binlog 2>/dev/null || true' \
-    '      chmod 660 /data/*.binlog 2>/dev/null || true' \
-    '    fi' \
-    '  "' \
-    '}' \
+    'foreground { echo "Clearing Bot API binlog for clean start..." }' \
+    'foreground { /bin/sh -c "rm -f /data/*.binlog /data/tqueue.binlog 2>/dev/null || true" }' \
     'foreground { /bin/sh -c "echo \"[init-data] /data contains $(ls /data | wc -l) files\"" }' \
     'foreground { echo "================================================" }' \
     'foreground { /bin/sh -c "START=$(cat /tmp/init_start_ms 2>/dev/null || echo 0); END=$(($(date +%s%N)/1000000)); ELAPSED=$((END - START)); echo \"[init-data] COMPLETE in ${ELAPSED}ms at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\"" }' \
