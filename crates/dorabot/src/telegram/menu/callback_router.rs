@@ -249,7 +249,13 @@ pub async fn handle_menu_callback(
                     "stats" => {
                         // Delete current message and show stats
                         let _ = bot.delete_message(chat_id, message_id).await;
-                        let _ = crate::core::stats::show_user_stats(&bot, chat_id, Arc::clone(&db_pool)).await;
+                        let _ = crate::core::stats::show_user_stats(
+                            &bot,
+                            chat_id,
+                            Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
+                        )
+                        .await;
                     }
                     "history" => {
                         // Delete current message and show history

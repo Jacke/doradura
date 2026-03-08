@@ -387,7 +387,9 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                     }
                     Command::Stats => {
                         log::info!("Stats command called for user {}", msg.chat.id);
-                        match show_user_stats(&bot, msg.chat.id, deps.db_pool.clone()).await {
+                        match show_user_stats(&bot, msg.chat.id, deps.db_pool.clone(), deps.shared_storage.clone())
+                            .await
+                        {
                             Ok(_) => log::info!("Stats sent successfully"),
                             Err(e) => log::error!("Failed to show user stats: {:?}", e),
                         }

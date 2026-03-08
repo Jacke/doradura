@@ -1,9 +1,8 @@
 use crate::core::{escape_markdown, truncate_string_safe};
-use crate::storage::db::{self, DbPool};
+use crate::storage::{DbPool, SharedStorage};
 use crate::telegram::Bot;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::RequestError;
 
 /// Formats a byte size into a human-readable string
 /// Escapes dots for MarkdownV2
@@ -60,17 +59,17 @@ fn create_activity_chart(activity_by_day: &[(String, i64)]) -> String {
 }
 
 /// Shows the user's download statistics
-pub async fn show_user_stats(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
+pub async fn show_user_stats(
+    bot: &Bot,
+    chat_id: ChatId,
+    _db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<Message> {
     log::info!("show_user_stats called for chat_id: {}", chat_id.0);
 
-    let conn = db::get_connection(&db_pool).map_err(|e| {
-        log::error!("Failed to get DB connection: {}", e);
-        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-    })?;
+    log::debug!("Fetching shared stats for user {}", chat_id.0);
 
-    log::debug!("DB connection obtained, fetching stats for user {}", chat_id.0);
-
-    let stats = match db::get_user_stats(&conn, chat_id.0) {
+    let stats = match shared_storage.get_user_stats(chat_id.0).await {
         Ok(stats) => {
             log::info!(
                 "Stats fetched: downloads={}, size={}, days={}",
@@ -144,11 +143,13 @@ pub async fn show_user_stats(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -
 }
 
 /// Shows global bot statistics
-pub async fn show_global_stats(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-    let stats = match db::get_global_stats(&conn) {
+pub async fn show_global_stats(
+    bot: &Bot,
+    chat_id: ChatId,
+    _db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<Message> {
+    let stats = match shared_storage.get_global_stats().await {
         Ok(stats) => stats,
         Err(e) => {
             log::error!("Failed to get global stats: {}", e);
