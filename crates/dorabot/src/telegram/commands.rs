@@ -181,14 +181,9 @@ pub async fn handle_message(
             && crate::telegram::admin::is_admin(msg.chat.id.0)
             && crate::telegram::menu::admin_users::is_admin_searching(&shared_storage, msg.chat.id.0).await
         {
-            if let Err(e) = crate::telegram::menu::admin_users::handle_admin_search(
-                &bot,
-                msg.chat.id,
-                &db_pool,
-                &shared_storage,
-                text.trim(),
-            )
-            .await
+            if let Err(e) =
+                crate::telegram::menu::admin_users::handle_admin_search(&bot, msg.chat.id, &shared_storage, text.trim())
+                    .await
             {
                 log::error!("Admin search error: {}", e);
             }

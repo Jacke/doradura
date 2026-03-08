@@ -1076,15 +1076,21 @@ pub async fn handle_setplan_command(
 /// * `bot` - Bot instance
 /// * `chat_id` - Chat ID where to send response
 /// * `user_id` - Telegram user ID of the requester
-/// * `db_pool` - Database connection pool
-pub async fn handle_admin_command(bot: &Bot, chat_id: ChatId, user_id: i64, db_pool: Arc<DbPool>) -> Result<()> {
+/// * `shared_storage` - Shared runtime storage
+pub async fn handle_admin_command(
+    bot: &Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    shared_storage: Arc<SharedStorage>,
+) -> Result<()> {
     if !is_admin(user_id) {
         bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
             .await?;
         return Ok(());
     }
 
-    crate::telegram::menu::admin_users::show_user_list(bot, chat_id, None, &db_pool, 0, Default::default()).await?;
+    crate::telegram::menu::admin_users::show_user_list(bot, chat_id, None, &shared_storage, 0, Default::default())
+        .await?;
     Ok(())
 }
 

@@ -14,8 +14,8 @@ use crate::download::audio_effects::{AudioEffectSession, MorphProfile};
 use crate::storage::db;
 use crate::storage::db::{
     AudioCutSession, Charge, CookiesUploadSession, CutEntry, DbConnection, DbPool, DownloadHistoryEntry, EnqueueResult,
-    PlayerSession, Playlist, PlaylistItem, SubtitleStyle, SyncedPlaylist, SyncedTrack, TaskQueueEntry, User, UserVault,
-    VideoClipSession,
+    PlayerSession, Playlist, PlaylistItem, SubtitleStyle, SyncedPlaylist, SyncedTrack, TaskQueueEntry, User,
+    UserCounts, UserVault, VideoClipSession,
 };
 use crate::storage::uploads::{self, NewUpload, UploadEntry};
 use crate::timestamps::{TimestampSource, VideoTimestamp};
@@ -1087,6 +1087,195 @@ impl SharedStorage {
                 .await
                 .context("postgres get_user")?;
                 row.map(map_pg_user).transpose()
+            }
+        }
+    }
+
+    pub async fn get_user_counts(&self) -> Result<UserCounts> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite get_user_counts connection")?;
+                db::get_user_counts(&conn).context("sqlite get_user_counts")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let rows = sqlx::query(
+                    "SELECT
+                        COALESCE(s.plan, u.plan) AS plan,
+                        COALESCE(u.is_blocked, 0) AS is_blocked,
+                        COUNT(*) AS count
+                     FROM users u
+                     LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
+                     GROUP BY COALESCE(s.plan, u.plan), COALESCE(u.is_blocked, 0)",
+                )
+                .fetch_all(pg_pool)
+                .await
+                .context("postgres get_user_counts")?;
+
+                let mut counts = UserCounts::default();
+                for row in rows {
+                    let plan: String = row.get("plan");
+                    let blocked = row.get::<i32, _>("is_blocked") != 0;
+                    let count = row.get::<i64, _>("count") as usize;
+                    counts.total += count;
+                    if blocked {
+                        counts.blocked += count;
+                    }
+                    match plan.as_str() {
+                        "premium" => counts.premium += count,
+                        "vip" => counts.vip += count,
+                        _ => counts.free += count,
+                    }
+                }
+                Ok(counts)
+            }
+        }
+    }
+
+    pub async fn get_users_paginated(
+        &self,
+        filter: Option<&str>,
+        offset: usize,
+        limit: usize,
+    ) -> Result<(Vec<User>, usize)> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite get_users_paginated connection")?;
+                db::get_users_paginated(&conn, filter, offset, limit).context("sqlite get_users_paginated")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let where_sql = match filter {
+                    Some("free") => "WHERE COALESCE(s.plan, u.plan) = 'free'",
+                    Some("premium") => "WHERE COALESCE(s.plan, u.plan) = 'premium'",
+                    Some("vip") => "WHERE COALESCE(s.plan, u.plan) = 'vip'",
+                    Some("blocked") => "WHERE COALESCE(u.is_blocked, 0) = 1",
+                    _ => "",
+                };
+
+                let count_sql = format!(
+                    "SELECT COUNT(*) AS count
+                     FROM users u
+                     LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
+                     {}",
+                    where_sql
+                );
+                let total = sqlx::query(&count_sql)
+                    .fetch_one(pg_pool)
+                    .await
+                    .context("postgres get_users_paginated count")?
+                    .get::<i64, _>("count") as usize;
+
+                let query_sql = format!(
+                    "SELECT
+                        u.telegram_id,
+                        u.username,
+                        COALESCE(s.plan, u.plan) AS plan,
+                        u.download_format,
+                        u.download_subtitles,
+                        u.video_quality,
+                        u.audio_bitrate,
+                        u.language,
+                        u.send_as_document,
+                        u.send_audio_as_document,
+                        CAST(s.expires_at AS TEXT) AS subscription_expires_at,
+                        s.telegram_charge_id,
+                        COALESCE(s.is_recurring, 0) AS is_recurring,
+                        COALESCE(u.burn_subtitles, 0) AS burn_subtitles,
+                        COALESCE(u.progress_bar_style, 'classic') AS progress_bar_style,
+                        COALESCE(u.is_blocked, 0) AS is_blocked
+                     FROM users u
+                     LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
+                     {}
+                     ORDER BY u.telegram_id
+                     LIMIT $1 OFFSET $2",
+                    where_sql
+                );
+                let rows = sqlx::query(&query_sql)
+                    .bind(limit as i64)
+                    .bind(offset as i64)
+                    .fetch_all(pg_pool)
+                    .await
+                    .context("postgres get_users_paginated rows")?;
+                let users = rows.into_iter().map(map_pg_user).collect::<Result<Vec<_>>>()?;
+                Ok((users, total))
+            }
+        }
+    }
+
+    pub async fn search_users(&self, query: &str) -> Result<Vec<User>> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite search_users connection")?;
+                db::search_users(&conn, query).context("sqlite search_users")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let pattern = format!("%{}%", query);
+                let rows = sqlx::query(
+                    "SELECT
+                        u.telegram_id,
+                        u.username,
+                        COALESCE(s.plan, u.plan) AS plan,
+                        u.download_format,
+                        u.download_subtitles,
+                        u.video_quality,
+                        u.audio_bitrate,
+                        u.language,
+                        u.send_as_document,
+                        u.send_audio_as_document,
+                        CAST(s.expires_at AS TEXT) AS subscription_expires_at,
+                        s.telegram_charge_id,
+                        COALESCE(s.is_recurring, 0) AS is_recurring,
+                        COALESCE(u.burn_subtitles, 0) AS burn_subtitles,
+                        COALESCE(u.progress_bar_style, 'classic') AS progress_bar_style,
+                        COALESCE(u.is_blocked, 0) AS is_blocked
+                     FROM users u
+                     LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
+                     WHERE CAST(u.telegram_id AS TEXT) LIKE $1
+                        OR COALESCE(u.username, '') LIKE $1
+                     ORDER BY u.telegram_id
+                     LIMIT 20",
+                )
+                .bind(pattern)
+                .fetch_all(pg_pool)
+                .await
+                .context("postgres search_users")?;
+                rows.into_iter().map(map_pg_user).collect()
+            }
+        }
+    }
+
+    pub async fn is_user_blocked(&self, telegram_id: i64) -> Result<bool> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite is_user_blocked connection")?;
+                db::is_user_blocked(&conn, telegram_id).context("sqlite is_user_blocked")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let blocked =
+                    sqlx::query_scalar::<_, i32>("SELECT COALESCE(is_blocked, 0) FROM users WHERE telegram_id = $1")
+                        .bind(telegram_id)
+                        .fetch_optional(pg_pool)
+                        .await
+                        .context("postgres is_user_blocked")?
+                        .unwrap_or(0);
+                Ok(blocked != 0)
+            }
+        }
+    }
+
+    pub async fn set_user_blocked(&self, telegram_id: i64, blocked: bool) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite set_user_blocked connection")?;
+                db::set_user_blocked(&conn, telegram_id, blocked).context("sqlite set_user_blocked")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query("UPDATE users SET is_blocked = $2, updated_at = NOW() WHERE telegram_id = $1")
+                    .bind(telegram_id)
+                    .bind(if blocked { 1 } else { 0 })
+                    .execute(pg_pool)
+                    .await
+                    .context("postgres set_user_blocked")?;
+                Ok(())
             }
         }
     }

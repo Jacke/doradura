@@ -1871,8 +1871,7 @@ pub async fn handle_menu_callback(
                     return Ok(());
                 }
                 if let Err(e) =
-                    super::admin_users::handle_callback(&bot, chat_id, message_id, &db_pool, &shared_storage, &data)
-                        .await
+                    super::admin_users::handle_callback(&bot, chat_id, message_id, &shared_storage, &data).await
                 {
                     log::error!("Admin users callback error: {}", e);
                 }
