@@ -7,7 +7,6 @@
 //! - `sr:src:{src}` — switch source
 
 use crate::download::search::{format_duration, search, SearchResult, SearchSource};
-use crate::i18n;
 use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
@@ -128,7 +127,7 @@ pub async fn handle_standalone_search(
     shared_storage: Arc<SharedStorage>,
     context: SearchContext,
 ) {
-    let _lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let _ = db_pool;
     let source = SearchSource::YouTube;
 
     let status_msg = bot.send_message(chat_id, "Searching...").await;

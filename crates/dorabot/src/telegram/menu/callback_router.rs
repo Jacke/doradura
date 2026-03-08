@@ -1303,6 +1303,7 @@ pub async fn handle_menu_callback(
                                             plan.as_str(),
                                             &download_queue,
                                             &db_pool,
+                                            &shared_storage,
                                         )
                                         .await
                                         {
@@ -1360,6 +1361,7 @@ pub async fn handle_menu_callback(
                                             plan.as_str(),
                                             &download_queue,
                                             &db_pool,
+                                            &shared_storage,
                                         )
                                         .await
                                         {

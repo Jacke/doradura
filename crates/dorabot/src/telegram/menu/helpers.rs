@@ -197,7 +197,9 @@ pub(crate) async fn start_download_from_preview(
     }
 
     // Send queue position notification and store message ID for later deletion
-    if let Some(msg_id) = send_queue_position_message(bot, chat_id, plan.as_str(), &download_queue, &db_pool).await {
+    if let Some(msg_id) =
+        send_queue_position_message(bot, chat_id, plan.as_str(), &download_queue, &db_pool, &shared_storage).await
+    {
         download_queue.set_queue_message_id(chat_id, msg_id.0).await;
     }
 
@@ -214,10 +216,12 @@ pub(crate) async fn send_queue_position_message(
     plan: &str,
     download_queue: &Arc<DownloadQueue>,
     db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
 ) -> Option<MessageId> {
     let queue_size = download_queue.size().await;
     let position = download_queue.get_queue_position(chat_id).await;
-    let lang = i18n::user_lang_from_pool(db_pool, chat_id.0);
+    let _ = db_pool;
+    let lang = i18n::user_lang_from_storage(shared_storage, chat_id.0).await;
 
     let message = if queue_size > 0 {
         // Show position in queue

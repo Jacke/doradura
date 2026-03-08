@@ -244,7 +244,8 @@ pub async fn handle_vlipsy_callback(
     db_pool: Arc<DbPool>,
     shared_storage: Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
-    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let _ = db_pool;
+    let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     if data == "vl:search" {
         let _ = bot.answer_callback_query(callback_id).await;
