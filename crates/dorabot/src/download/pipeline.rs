@@ -466,55 +466,68 @@ pub async fn execute(
     // ── Cross-user file_id dedup (skip re-download if someone already downloaded this) ──
     // Only for full downloads (no time_range = no cuts), where we can guarantee identical output.
     if format.time_range().is_none() {
-        if let Some(pool) = db_pool {
+        let (vq, ab) = match format {
+            PipelineFormat::Audio { ref bitrate, .. } => (None, bitrate.as_deref()),
+            PipelineFormat::Video { ref quality, .. } => (quality.as_deref(), None),
+        };
+        let cached_fid = if let Some(storage) = shared_storage {
+            storage
+                .find_cached_file_id(url.as_str(), format.label(), vq, ab)
+                .await
+                .ok()
+                .flatten()
+        } else if let Some(pool) = db_pool {
             if let Ok(conn) = db::get_connection(pool) {
-                let (vq, ab) = match format {
-                    PipelineFormat::Audio { ref bitrate, .. } => (None, bitrate.as_deref()),
-                    PipelineFormat::Video { ref quality, .. } => (quality.as_deref(), None),
-                };
-                if let Ok(Some(cached_fid)) = db::find_cached_file_id(&conn, url.as_str(), format.label(), vq, ab) {
-                    log::info!("Pipeline: cross-user file_id cache hit for {} (chat {})", url, chat_id);
-                    let input = teloxide::types::InputFile::file_id(teloxide::types::FileId(cached_fid.clone()));
-                    let send_result = match format {
-                        PipelineFormat::Audio { .. } => bot.send_audio(chat_id, input).await,
-                        PipelineFormat::Video { .. } => bot.send_video(chat_id, input).await,
+                db::find_cached_file_id(&conn, url.as_str(), format.label(), vq, ab)
+                    .ok()
+                    .flatten()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(cached_fid) = cached_fid {
+            log::info!("Pipeline: cross-user file_id cache hit for {} (chat {})", url, chat_id);
+            let input = teloxide::types::InputFile::file_id(teloxide::types::FileId(cached_fid.clone()));
+            let send_result = match format {
+                PipelineFormat::Audio { .. } => bot.send_audio(chat_id, input).await,
+                PipelineFormat::Video { .. } => bot.send_video(chat_id, input).await,
+            };
+            match send_result {
+                Ok(sent_message) => {
+                    let (file_size, duration) = match format {
+                        PipelineFormat::Audio { .. } => (
+                            sent_message.audio().map(|a| a.file.size).unwrap_or(0) as u64,
+                            sent_message.audio().map(|a| a.duration.seconds()).unwrap_or(0),
+                        ),
+                        PipelineFormat::Video { .. } => (
+                            sent_message.video().map(|v| v.file.size).unwrap_or(0) as u64,
+                            sent_message.video().map(|v| v.duration.seconds()).unwrap_or(0),
+                        ),
                     };
-                    match send_result {
-                        Ok(sent_message) => {
-                            let (file_size, duration) = match format {
-                                PipelineFormat::Audio { .. } => (
-                                    sent_message.audio().map(|a| a.file.size).unwrap_or(0) as u64,
-                                    sent_message.audio().map(|a| a.duration.seconds()).unwrap_or(0),
-                                ),
-                                PipelineFormat::Video { .. } => (
-                                    sent_message.video().map(|v| v.file.size).unwrap_or(0) as u64,
-                                    sent_message.video().map(|v| v.duration.seconds()).unwrap_or(0),
-                                ),
-                            };
-                            return Ok(PipelineResult {
-                                sent_message,
-                                file_size,
-                                duration,
-                                title: String::new(),
-                                artist: String::new(),
-                                display_title: Arc::from("(cached)"),
-                                download_path: String::new(),
-                                output: DownloadOutput {
-                                    file_path: String::new(),
-                                    file_size: 0,
-                                    duration_secs: Some(duration),
-                                    mime_hint: None,
-                                    additional_files: None,
-                                },
-                            });
-                        }
-                        Err(e) => {
-                            log::warn!(
-                                "Pipeline: file_id cache send failed (file_id may be expired), falling through: {}",
-                                e
-                            );
-                        }
-                    }
+                    return Ok(PipelineResult {
+                        sent_message,
+                        file_size,
+                        duration,
+                        title: String::new(),
+                        artist: String::new(),
+                        display_title: Arc::from("(cached)"),
+                        download_path: String::new(),
+                        output: DownloadOutput {
+                            file_path: String::new(),
+                            file_size: 0,
+                            duration_secs: Some(duration),
+                            mime_hint: None,
+                            additional_files: None,
+                        },
+                    });
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Pipeline: file_id cache send failed (file_id may be expired), falling through: {}",
+                        e
+                    );
                 }
             }
         }

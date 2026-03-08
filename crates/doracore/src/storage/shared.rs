@@ -3607,6 +3607,52 @@ impl SharedStorage {
         }
     }
 
+    pub async fn find_cached_file_id(
+        &self,
+        url: &str,
+        format: &str,
+        video_quality: Option<&str>,
+        audio_bitrate: Option<&str>,
+    ) -> Result<Option<String>> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite find_cached_file_id connection")?;
+                db::find_cached_file_id(&conn, url, format, video_quality, audio_bitrate)
+                    .context("sqlite find_cached_file_id")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let current_api_url = std::env::var("BOT_API_URL").ok();
+                let current_is_local = current_api_url
+                    .as_deref()
+                    .map(|u| !u.contains("api.telegram.org"))
+                    .unwrap_or(false);
+                let row = sqlx::query(
+                    "SELECT file_id
+                     FROM download_history
+                     WHERE url = $1
+                       AND format = $2
+                       AND file_id IS NOT NULL
+                       AND bot_api_is_local = $3
+                       AND ($4::text IS NULL OR video_quality = $4)
+                       AND ($5::text IS NULL OR audio_bitrate = $5)
+                       AND ($6::text IS NULL OR bot_api_url = $6)
+                     ORDER BY downloaded_at DESC
+                     LIMIT 1",
+                )
+                .bind(url)
+                .bind(format)
+                .bind(i32::from(current_is_local))
+                .bind(video_quality)
+                .bind(audio_bitrate)
+                .bind(current_api_url)
+                .fetch_optional(pg_pool)
+                .await
+                .context("postgres find_cached_file_id")?;
+                Ok(row.map(|row| row.get("file_id")))
+            }
+        }
+    }
+
     pub async fn get_download_history_entry(
         &self,
         telegram_id: i64,

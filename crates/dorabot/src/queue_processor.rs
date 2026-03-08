@@ -292,6 +292,7 @@ async fn process_single_task(
                 created_timestamp,
                 task_format.clone(),
                 Some(Arc::clone(&sqlite_pool)),
+                Some(Arc::clone(&shared_storage)),
                 task_message_id,
                 alert_manager.clone(),
             )
