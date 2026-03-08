@@ -64,6 +64,7 @@ pretty_env_logger = "0.5"
 simplelog = "0.11"
 reqwest = { workspace = true }
 mime = "0.3"
+redis = { workspace = true }
 
 # MTProto support via grammers
 grammers-client = "0.6"

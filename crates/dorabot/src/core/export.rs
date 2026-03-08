@@ -1,9 +1,9 @@
 use crate::storage::db::{self, DbPool};
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::InputFile;
-use teloxide::RequestError;
 
 /// Exports download history to TXT format
 fn export_to_txt(entries: &[db::DownloadHistoryEntry]) -> String {
@@ -63,11 +63,13 @@ fn export_to_json(entries: &[db::DownloadHistoryEntry]) -> Result<String, serde_
 }
 
 /// Shows the export format selection menu
-pub async fn show_export_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-    let entries = match db::get_all_download_history(&conn, chat_id.0) {
+pub async fn show_export_menu(
+    bot: &Bot,
+    chat_id: ChatId,
+    _db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<Message> {
+    let entries = match shared_storage.get_all_download_history(chat_id.0).await {
         Ok(entries) => entries,
         Err(e) => {
             log::error!("Failed to get download history: {}", e);
@@ -110,11 +112,14 @@ pub async fn show_export_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) 
 }
 
 /// Handles an export request for the chosen format
-pub async fn handle_export(bot: &Bot, chat_id: ChatId, format: &str, db_pool: Arc<DbPool>) -> ResponseResult<()> {
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-    let entries = match db::get_all_download_history(&conn, chat_id.0) {
+pub async fn handle_export(
+    bot: &Bot,
+    chat_id: ChatId,
+    format: &str,
+    _db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
+    let entries = match shared_storage.get_all_download_history(chat_id.0).await {
         Ok(entries) => entries,
         Err(e) => {
             log::error!("Failed to get download history: {}", e);

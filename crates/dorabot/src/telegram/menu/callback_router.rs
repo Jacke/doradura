@@ -917,7 +917,7 @@ pub async fn handle_menu_callback(
                     };
 
                     // Get URL from cache and send new preview with updated format
-                    match cache::get_url(&db_pool, url_id).await {
+                    match cache::get_url(&db_pool, Some(shared_storage.as_ref()), url_id).await {
                         Some(url_str) => {
                             match url::Url::parse(&url_str) {
                                 Ok(url) => {
@@ -1226,7 +1226,7 @@ pub async fn handle_menu_callback(
                     );
 
                     // Get URL from cache by ID
-                    match cache::get_url(&db_pool, url_id).await {
+                    match cache::get_url(&db_pool, Some(shared_storage.as_ref()), url_id).await {
                         Some(url_str) => {
                             match Url::parse(&url_str) {
                                 Ok(url) => {
@@ -1492,7 +1492,7 @@ pub async fn handle_menu_callback(
                                 None => return Ok(()),
                             };
 
-                            let url_str = match cache::get_url(&db_pool, &url_id).await {
+                            let url_str = match cache::get_url(&db_pool, Some(shared_storage.as_ref()), &url_id).await {
                                 Some(u) => u,
                                 None => {
                                     bot.send_message(chat_id, "❌ Link expired, please send the URL again")
@@ -1608,7 +1608,14 @@ pub async fn handle_menu_callback(
                 // Handle export callbacks
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
                 // Remove "export:" prefix
-                crate::core::export::handle_export(&bot, chat_id, format, Arc::clone(&db_pool)).await?;
+                crate::core::export::handle_export(
+                    &bot,
+                    chat_id,
+                    format,
+                    Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
+                )
+                .await?;
             } else if data.starts_with("analytics:") {
                 // Handle analytics callback buttons
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
@@ -1626,7 +1633,7 @@ pub async fn handle_menu_callback(
                     "analytics:refresh" => {
                         // Re-generate and update analytics dashboard
                         use crate::telegram::analytics::generate_analytics_dashboard;
-                        let dashboard = generate_analytics_dashboard(&db_pool).await;
+                        let dashboard = generate_analytics_dashboard(&db_pool, &shared_storage).await;
 
                         let keyboard = InlineKeyboardMarkup::new(vec![
                             vec![
@@ -1678,7 +1685,7 @@ pub async fn handle_menu_callback(
                 let category = data.strip_prefix("metrics:").unwrap_or("");
 
                 use crate::telegram::analytics::generate_metrics_report;
-                let metrics_text = generate_metrics_report(&db_pool, Some(category.to_string())).await;
+                let metrics_text = generate_metrics_report(&db_pool, &shared_storage, Some(category.to_string())).await;
 
                 let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
                     "🔙 To main dashboard",
@@ -1692,7 +1699,12 @@ pub async fn handle_menu_callback(
             } else if data.starts_with("vfx:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
                 if let Err(e) = crate::telegram::voice_effects::handle_voice_effect_callback(
-                    &bot, chat_id, message_id, &data, &db_pool,
+                    &bot,
+                    chat_id,
+                    message_id,
+                    &data,
+                    &db_pool,
+                    shared_storage.as_ref(),
                 )
                 .await
                 {
@@ -1701,9 +1713,15 @@ pub async fn handle_menu_callback(
                 return Ok(());
             } else if data.starts_with("vp:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
-                if let Err(e) =
-                    crate::telegram::preview::vlipsy::handle_vlipsy_callback(&bot, chat_id, message_id, &data, &db_pool)
-                        .await
+                if let Err(e) = crate::telegram::preview::vlipsy::handle_vlipsy_callback(
+                    &bot,
+                    chat_id,
+                    message_id,
+                    &data,
+                    &db_pool,
+                    &shared_storage,
+                )
+                .await
                 {
                     log::error!("Vlipsy preview callback error: {}", e);
                 }

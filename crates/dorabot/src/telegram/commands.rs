@@ -58,8 +58,8 @@ pub async fn handle_rate_limit(
 ) -> ResponseResult<bool> {
     let _ = db_pool;
     let lang = i18n::user_lang_from_storage(shared_storage, msg.chat.id.0).await;
-    if rate_limiter.is_rate_limited(msg.chat.id, plan).await {
-        if let Some(remaining_time) = rate_limiter.get_remaining_time(msg.chat.id).await {
+    match rate_limiter.check_and_update(msg.chat.id, plan).await {
+        Ok(Some(remaining_time)) => {
             let remaining_seconds = remaining_time.as_secs();
             let unit = if lang.language.as_str() == "ru" {
                 pluralize_seconds(remaining_seconds).to_string()
@@ -71,14 +71,16 @@ pub async fn handle_rate_limit(
             args.set("unit", unit);
             let text = i18n::t_args(&lang, "commands.rate_limited_with_eta", &args);
             bot.send_message(msg.chat.id, text).await?;
-        } else {
+            Ok(false)
+        }
+        Ok(None) => Ok(true),
+        Err(e) => {
+            log::error!("Rate limiter check failed for {}: {}", msg.chat.id.0, e);
             let text = i18n::t(&lang, "commands.rate_limited");
             bot.send_message(msg.chat.id, text).await?;
+            Ok(false)
         }
-        return Ok(false);
     }
-    rate_limiter.update_rate_limit(msg.chat.id, plan).await;
-    Ok(true)
 }
 
 /// Handle incoming message and process download requests
@@ -812,7 +814,8 @@ pub async fn handle_message(
                     let processing_msg = bot
                         .send_message(msg.chat.id, i18n::t(&lang, "commands.processing"))
                         .await?;
-                    let url_id = crate::storage::cache::store_url(&db_pool, url.as_str()).await;
+                    let url_id =
+                        crate::storage::cache::store_url(&db_pool, Some(shared_storage.as_ref()), url.as_str()).await;
                     match crate::telegram::preview::vlipsy::send_vlipsy_preview(
                         &bot,
                         msg.chat.id,

@@ -57,7 +57,7 @@ pub(crate) async fn start_download_from_preview(
     download_queue: Arc<DownloadQueue>,
     rate_limiter: Arc<RateLimiter>,
 ) -> ResponseResult<()> {
-    let url_str = match cache::get_url(&db_pool, url_id).await {
+    let url_str = match cache::get_url(&db_pool, Some(shared_storage.as_ref()), url_id).await {
         Some(url_str) => url_str,
         None => {
             log::warn!("URL not found in cache for ID: {} (expired or invalid)", url_id);

@@ -15,31 +15,18 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 
-use crate::storage::db::DbPool;
-use crate::storage::get_connection;
+use crate::storage::{SharePageRecord, SharedStorage};
 
 /// Shared state for the web server.
 #[derive(Clone)]
 struct WebState {
-    db: Arc<DbPool>,
-}
-
-/// Row fetched from the share_pages table.
-struct ShareRow {
-    id: String,
-    youtube_url: String,
-    title: String,
-    artist: Option<String>,
-    thumbnail_url: Option<String>,
-    duration_secs: Option<i64>,
-    streaming_links_json: Option<String>,
-    created_at: String,
+    shared_storage: Arc<SharedStorage>,
 }
 
 /// Start the public web server.
-pub async fn start_web_server(port: u16, db: Arc<DbPool>) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn start_web_server(port: u16, shared_storage: Arc<SharedStorage>) -> Result<(), Box<dyn std::error::Error>> {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    let state = WebState { db };
+    let state = WebState { shared_storage };
 
     let app = Router::new()
         .route("/s/:id", get(share_page_handler))
@@ -56,28 +43,6 @@ pub async fn start_web_server(port: u16, db: Arc<DbPool>) -> Result<(), Box<dyn 
     axum::serve(listener, app).await?;
 
     Ok(())
-}
-
-/// Fetch a share page row from DB by ID.
-fn fetch_share_row(db: &Arc<DbPool>, id: &str) -> Option<ShareRow> {
-    let conn = get_connection(db).ok()?;
-    conn.query_row(
-        "SELECT id, youtube_url, title, artist, thumbnail_url, duration_secs, streaming_links, created_at FROM share_pages WHERE id = ?1",
-        rusqlite::params![id],
-        |row| {
-            Ok(ShareRow {
-                id: row.get(0)?,
-                youtube_url: row.get(1)?,
-                title: row.get(2)?,
-                artist: row.get(3)?,
-                thumbnail_url: row.get(4)?,
-                duration_secs: row.get(5)?,
-                streaming_links_json: row.get(6)?,
-                created_at: row.get(7)?,
-            })
-        },
-    )
-    .ok()
 }
 
 /// Format seconds as MM:SS or H:MM:SS.
@@ -102,7 +67,7 @@ fn parse_streaming_links(json_str: &str) -> serde_json::Value {
 
 /// GET /s/:id — renders the share page HTML.
 async fn share_page_handler(Path(id): Path<String>, State(state): State<WebState>) -> Response {
-    let Some(row) = fetch_share_row(&state.db, &id) else {
+    let Some(row) = state.shared_storage.get_share_page_record(&id).await.ok().flatten() else {
         return (StatusCode::NOT_FOUND, Html("<h1>Not found</h1>".to_string())).into_response();
     };
 
@@ -112,7 +77,7 @@ async fn share_page_handler(Path(id): Path<String>, State(state): State<WebState
 
 /// GET /api/s/:id — returns share page data as JSON.
 async fn share_api_handler(Path(id): Path<String>, State(state): State<WebState>) -> Response {
-    let Some(row) = fetch_share_row(&state.db, &id) else {
+    let Some(row) = state.shared_storage.get_share_page_record(&id).await.ok().flatten() else {
         return (StatusCode::NOT_FOUND, Json(json!({"error": "Not found"}))).into_response();
     };
 
@@ -142,7 +107,7 @@ async fn health_handler() -> impl IntoResponse {
 }
 
 /// Render the share page HTML with ambilight UI.
-fn render_share_page(row: &ShareRow) -> String {
+fn render_share_page(row: &SharePageRecord) -> String {
     let title = html_escape(&row.title);
     let artist = row.artist.as_deref().map(html_escape).unwrap_or_default();
     let thumbnail_url = row.thumbnail_url.as_deref().unwrap_or("");

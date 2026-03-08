@@ -188,7 +188,7 @@ pub async fn send_preview(
 
     // Build inline keyboard
     // Store URL in cache and get a short ID (instead of base64)
-    let url_id = cache::store_url(&db_pool, url.as_str()).await;
+    let url_id = cache::store_url(&db_pool, Some(shared_storage.as_ref()), url.as_str()).await;
     log::debug!("Stored URL {} with ID: {}", url.as_str(), url_id);
 
     // Look up per-URL burn subtitle language from cache
@@ -520,7 +520,7 @@ pub async fn update_preview_message(
 
     // Build inline keyboard
     // Store URL in cache and get a short ID
-    let url_id = cache::store_url(&db_pool, url.as_str()).await;
+    let url_id = cache::store_url(&db_pool, Some(shared_storage.as_ref()), url.as_str()).await;
 
     // Look up per-URL burn subtitle language from cache
     let burn_sub_lang = shared_storage

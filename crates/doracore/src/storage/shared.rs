@@ -14,11 +14,23 @@ use crate::download::audio_effects::{AudioEffectSession, MorphProfile};
 use crate::storage::db;
 use crate::storage::db::{
     AudioCutSession, Charge, CookiesUploadSession, CutEntry, DbConnection, DbPool, DownloadHistoryEntry, EnqueueResult,
-    GlobalStats, PlayerSession, Playlist, PlaylistItem, SentFile, SubtitleStyle, SyncedPlaylist, SyncedTrack,
-    TaskQueueEntry, User, UserCounts, UserStats, UserVault, VideoClipSession,
+    ErrorLogEntry, GlobalStats, PlayerSession, Playlist, PlaylistItem, SentFile, SubtitleStyle, SyncedPlaylist,
+    SyncedTrack, TaskQueueEntry, User, UserCounts, UserStats, UserVault, VideoClipSession,
 };
 use crate::storage::uploads::{self, NewUpload, UploadEntry};
 use crate::timestamps::{TimestampSource, VideoTimestamp};
+
+#[derive(Debug, Clone)]
+pub struct SharePageRecord {
+    pub id: String,
+    pub youtube_url: String,
+    pub title: String,
+    pub artist: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub duration_secs: Option<i64>,
+    pub streaming_links_json: Option<String>,
+    pub created_at: String,
+}
 
 const POSTGRES_BOOTSTRAP_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS users (
@@ -99,6 +111,66 @@ CREATE TABLE IF NOT EXISTS request_history (
 
 CREATE INDEX IF NOT EXISTS idx_request_history_user_timestamp
     ON request_history(user_id, timestamp DESC);
+
+CREATE TABLE IF NOT EXISTS alert_history (
+    id BIGSERIAL PRIMARY KEY,
+    alert_type TEXT NOT NULL,
+    severity TEXT NOT NULL,
+    message TEXT NOT NULL,
+    metadata TEXT,
+    triggered_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    resolved_at TIMESTAMPTZ,
+    acknowledged INTEGER NOT NULL DEFAULT 0,
+    acknowledged_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_alert_history_type
+    ON alert_history(alert_type);
+CREATE INDEX IF NOT EXISTS idx_alert_history_triggered
+    ON alert_history(triggered_at DESC);
+CREATE INDEX IF NOT EXISTS idx_alert_history_unresolved
+    ON alert_history(alert_type, resolved_at);
+
+CREATE TABLE IF NOT EXISTS error_log (
+    id BIGSERIAL PRIMARY KEY,
+    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    user_id BIGINT,
+    username TEXT,
+    error_type TEXT NOT NULL,
+    error_message TEXT NOT NULL,
+    url TEXT,
+    context TEXT,
+    resolved INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_error_log_timestamp
+    ON error_log(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_error_log_user_id
+    ON error_log(user_id);
+CREATE INDEX IF NOT EXISTS idx_error_log_type
+    ON error_log(error_type);
+CREATE INDEX IF NOT EXISTS idx_error_log_period
+    ON error_log(timestamp, error_type);
+
+CREATE TABLE IF NOT EXISTS share_pages (
+    id TEXT PRIMARY KEY,
+    youtube_url TEXT NOT NULL,
+    title TEXT NOT NULL,
+    artist TEXT,
+    thumbnail_url TEXT,
+    duration_secs BIGINT,
+    streaming_links TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS url_cache (
+    id TEXT PRIMARY KEY,
+    url TEXT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_url_cache_expires_at
+    ON url_cache(expires_at);
 
 CREATE TABLE IF NOT EXISTS bot_assets (
     key TEXT PRIMARY KEY,
@@ -1911,6 +1983,452 @@ impl SharedStorage {
         }
     }
 
+    pub async fn get_all_download_history(&self, telegram_id: i64) -> Result<Vec<DownloadHistoryEntry>> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite get_all_download_history connection")?;
+                db::get_all_download_history(&conn, telegram_id).context("sqlite get_all_download_history")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let rows = sqlx::query(
+                    "SELECT id, url, title, format, downloaded_at::text AS downloaded_at, file_id, author,
+                            file_size, duration, video_quality, audio_bitrate, bot_api_url, bot_api_is_local,
+                            source_id, part_index, category
+                     FROM download_history
+                     WHERE user_id = $1
+                     ORDER BY downloaded_at DESC",
+                )
+                .bind(telegram_id)
+                .fetch_all(pg_pool)
+                .await
+                .context("postgres get_all_download_history")?;
+                Ok(rows.into_iter().map(map_pg_download_history).collect())
+            }
+        }
+    }
+
+    pub async fn count_active_subscriptions(&self) -> Result<i64> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite count_active_subscriptions connection")?;
+                let count = conn
+                    .query_row(
+                        "SELECT COUNT(*) FROM subscriptions WHERE expires_at > datetime('now')",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .context("sqlite count_active_subscriptions")?;
+                Ok(count)
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let count =
+                    sqlx::query_scalar::<_, i64>("SELECT COUNT(*)::bigint FROM subscriptions WHERE expires_at > NOW()")
+                        .fetch_one(pg_pool)
+                        .await
+                        .context("postgres count_active_subscriptions")?;
+                Ok(count)
+            }
+        }
+    }
+
+    pub async fn count_daily_active_users(&self) -> Result<i64> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite count_daily_active_users connection")?;
+                let count = conn
+                    .query_row(
+                        "SELECT COUNT(DISTINCT user_id) FROM request_history WHERE date(timestamp) = date('now')",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .context("sqlite count_daily_active_users")?;
+                Ok(count)
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let count = sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(DISTINCT user_id)::bigint FROM request_history WHERE DATE(timestamp) = CURRENT_DATE",
+                )
+                .fetch_one(pg_pool)
+                .await
+                .context("postgres count_daily_active_users")?;
+                Ok(count)
+            }
+        }
+    }
+
+    pub async fn count_monthly_active_users(&self) -> Result<i64> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite count_monthly_active_users connection")?;
+                let count = conn
+                    .query_row(
+                        "SELECT COUNT(DISTINCT user_id) FROM request_history WHERE timestamp >= datetime('now', '-30 days')",
+                        [],
+                        |row| row.get(0),
+                    )
+                    .context("sqlite count_monthly_active_users")?;
+                Ok(count)
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let count = sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(DISTINCT user_id)::bigint FROM request_history WHERE timestamp >= NOW() - INTERVAL '30 days'",
+                )
+                .fetch_one(pg_pool)
+                .await
+                .context("postgres count_monthly_active_users")?;
+                Ok(count)
+            }
+        }
+    }
+
+    pub async fn log_alert_history(
+        &self,
+        alert_type: &str,
+        severity: &str,
+        message: &str,
+        metadata: Option<&str>,
+        triggered_at: &str,
+    ) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite log_alert_history connection")?;
+                conn.execute(
+                    "INSERT INTO alert_history (alert_type, severity, message, metadata, triggered_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    rusqlite::params![alert_type, severity, message, metadata, triggered_at],
+                )
+                .context("sqlite log_alert_history")?;
+                Ok(())
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query(
+                    "INSERT INTO alert_history (alert_type, severity, message, metadata, triggered_at)
+                     VALUES ($1, $2, $3, $4, $5::timestamptz)",
+                )
+                .bind(alert_type)
+                .bind(severity)
+                .bind(message)
+                .bind(metadata)
+                .bind(triggered_at)
+                .execute(pg_pool)
+                .await
+                .context("postgres log_alert_history")?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn resolve_alert_history(&self, alert_type: &str, resolved_at: &str) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite resolve_alert_history connection")?;
+                conn.execute(
+                    "UPDATE alert_history SET resolved_at = ?1 WHERE alert_type = ?2 AND resolved_at IS NULL",
+                    rusqlite::params![resolved_at, alert_type],
+                )
+                .context("sqlite resolve_alert_history")?;
+                Ok(())
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query(
+                    "UPDATE alert_history SET resolved_at = $1::timestamptz
+                     WHERE alert_type = $2 AND resolved_at IS NULL",
+                )
+                .bind(resolved_at)
+                .bind(alert_type)
+                .execute(pg_pool)
+                .await
+                .context("postgres resolve_alert_history")?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn log_error(
+        &self,
+        user_id: Option<i64>,
+        username: Option<&str>,
+        error_type: &str,
+        error_message: &str,
+        url: Option<&str>,
+        context: Option<&str>,
+    ) -> Result<i64> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite log_error connection")?;
+                db::log_error(&conn, user_id, username, error_type, error_message, url, context)
+                    .context("sqlite log_error")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let row = sqlx::query(
+                    "INSERT INTO error_log (user_id, username, error_type, error_message, url, context)
+                     VALUES ($1, $2, $3, $4, $5, $6)
+                     RETURNING id",
+                )
+                .bind(user_id)
+                .bind(username)
+                .bind(error_type)
+                .bind(error_message)
+                .bind(url)
+                .bind(context)
+                .fetch_one(pg_pool)
+                .await
+                .context("postgres log_error")?;
+                Ok(row.get("id"))
+            }
+        }
+    }
+
+    pub async fn get_recent_errors(&self, hours: i64, limit: i64) -> Result<Vec<ErrorLogEntry>> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite get_recent_errors connection")?;
+                db::get_recent_errors(&conn, hours, limit).context("sqlite get_recent_errors")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let rows = sqlx::query(
+                    "SELECT id, timestamp::text AS timestamp, user_id, username, error_type, error_message, url, context, resolved
+                     FROM error_log
+                     WHERE timestamp >= NOW() - make_interval(hours => $1)
+                     ORDER BY timestamp DESC
+                     LIMIT $2",
+                )
+                .bind(hours as i32)
+                .bind(limit)
+                .fetch_all(pg_pool)
+                .await
+                .context("postgres get_recent_errors")?;
+                Ok(rows.into_iter().map(map_pg_error_log_entry).collect())
+            }
+        }
+    }
+
+    pub async fn get_error_stats(&self, hours: i64) -> Result<Vec<(String, i64)>> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite get_error_stats connection")?;
+                db::get_error_stats(&conn, hours).context("sqlite get_error_stats")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let rows = sqlx::query(
+                    "SELECT error_type, COUNT(*)::bigint AS cnt
+                     FROM error_log
+                     WHERE timestamp >= NOW() - make_interval(hours => $1)
+                     GROUP BY error_type
+                     ORDER BY cnt DESC",
+                )
+                .bind(hours as i32)
+                .fetch_all(pg_pool)
+                .await
+                .context("postgres get_error_stats")?;
+                Ok(rows
+                    .into_iter()
+                    .map(|row| (row.get::<String, _>("error_type"), row.get::<i64, _>("cnt")))
+                    .collect())
+            }
+        }
+    }
+
+    pub async fn cleanup_old_errors(&self, days: i64) -> Result<usize> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite cleanup_old_errors connection")?;
+                db::cleanup_old_errors(&conn, days).context("sqlite cleanup_old_errors")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let result = sqlx::query("DELETE FROM error_log WHERE timestamp < NOW() - make_interval(days => $1)")
+                    .bind(days as i32)
+                    .execute(pg_pool)
+                    .await
+                    .context("postgres cleanup_old_errors")?;
+                Ok(result.rows_affected() as usize)
+            }
+        }
+    }
+
+    pub async fn cleanup_old_tasks(&self, days: i64) -> Result<usize> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite cleanup_old_tasks connection")?;
+                db::cleanup_old_tasks(&conn, days).context("sqlite cleanup_old_tasks")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let result = sqlx::query(
+                    "DELETE FROM task_queue
+                     WHERE status IN ('completed', 'dead_letter')
+                       AND updated_at < NOW() - make_interval(days => $1)",
+                )
+                .bind(days as i32)
+                .execute(pg_pool)
+                .await
+                .context("postgres cleanup_old_tasks")?;
+                Ok(result.rows_affected() as usize)
+            }
+        }
+    }
+
+    pub async fn create_share_page_record(
+        &self,
+        id: &str,
+        youtube_url: &str,
+        title: &str,
+        artist: Option<&str>,
+        thumbnail_url: Option<&str>,
+        duration_secs: Option<i64>,
+        streaming_links_json: Option<&str>,
+    ) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite create_share_page_record connection")?;
+                conn.execute(
+                    "INSERT INTO share_pages (id, youtube_url, title, artist, thumbnail_url, duration_secs, streaming_links)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                    rusqlite::params![
+                        id,
+                        youtube_url,
+                        title,
+                        artist,
+                        thumbnail_url,
+                        duration_secs,
+                        streaming_links_json
+                    ],
+                )
+                .context("sqlite create_share_page_record")?;
+                Ok(())
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query(
+                    "INSERT INTO share_pages (id, youtube_url, title, artist, thumbnail_url, duration_secs, streaming_links)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7)",
+                )
+                .bind(id)
+                .bind(youtube_url)
+                .bind(title)
+                .bind(artist)
+                .bind(thumbnail_url)
+                .bind(duration_secs)
+                .bind(streaming_links_json)
+                .execute(pg_pool)
+                .await
+                .context("postgres create_share_page_record")?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn get_share_page_record(&self, id: &str) -> Result<Option<SharePageRecord>> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite get_share_page_record connection")?;
+                let result = conn
+                    .query_row(
+                        "SELECT id, youtube_url, title, artist, thumbnail_url, duration_secs, streaming_links, created_at
+                         FROM share_pages WHERE id = ?1",
+                        rusqlite::params![id],
+                        |row| {
+                            Ok(SharePageRecord {
+                                id: row.get(0)?,
+                                youtube_url: row.get(1)?,
+                                title: row.get(2)?,
+                                artist: row.get(3)?,
+                                thumbnail_url: row.get(4)?,
+                                duration_secs: row.get(5)?,
+                                streaming_links_json: row.get(6)?,
+                                created_at: row.get(7)?,
+                            })
+                        },
+                    )
+                    .optional()
+                    .context("sqlite get_share_page_record")?;
+                Ok(result)
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let row = sqlx::query(
+                    "SELECT id, youtube_url, title, artist, thumbnail_url, duration_secs,
+                            streaming_links, created_at::text AS created_at
+                     FROM share_pages WHERE id = $1",
+                )
+                .bind(id)
+                .fetch_optional(pg_pool)
+                .await
+                .context("postgres get_share_page_record")?;
+                Ok(row.map(map_pg_share_page_record))
+            }
+        }
+    }
+
+    pub async fn store_cached_url(&self, id: &str, url: &str, expires_at: &str) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite store_cached_url connection")?;
+                conn.execute(
+                    "INSERT OR REPLACE INTO url_cache (id, url, expires_at) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![id, url, expires_at],
+                )
+                .context("sqlite store_cached_url")?;
+                Ok(())
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query(
+                    "INSERT INTO url_cache (id, url, expires_at)
+                     VALUES ($1, $2, $3::timestamptz)
+                     ON CONFLICT (id) DO UPDATE
+                     SET url = EXCLUDED.url,
+                         expires_at = EXCLUDED.expires_at",
+                )
+                .bind(id)
+                .bind(url)
+                .bind(expires_at)
+                .execute(pg_pool)
+                .await
+                .context("postgres store_cached_url")?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn get_cached_url(&self, id: &str) -> Result<Option<String>> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite get_cached_url connection")?;
+                let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+                conn.query_row(
+                    "SELECT url FROM url_cache WHERE id = ?1 AND expires_at > ?2",
+                    rusqlite::params![id, now],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .context("sqlite get_cached_url")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let row = sqlx::query("SELECT url FROM url_cache WHERE id = $1 AND expires_at > NOW()")
+                    .bind(id)
+                    .fetch_optional(pg_pool)
+                    .await
+                    .context("postgres get_cached_url")?;
+                Ok(row.map(|row| row.get("url")))
+            }
+        }
+    }
+
+    pub async fn cleanup_expired_url_cache(&self) -> Result<usize> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite cleanup_expired_url_cache connection")?;
+                let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+                conn.execute("DELETE FROM url_cache WHERE expires_at <= ?1", rusqlite::params![now])
+                    .context("sqlite cleanup_expired_url_cache")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let result = sqlx::query("DELETE FROM url_cache WHERE expires_at <= NOW()")
+                    .execute(pg_pool)
+                    .await
+                    .context("postgres cleanup_expired_url_cache")?;
+                Ok(result.rows_affected() as usize)
+            }
+        }
+    }
+
     pub async fn get_user_language(&self, telegram_id: i64) -> Result<String> {
         self.get_user_string_setting(
             telegram_id,
@@ -3509,6 +4027,26 @@ impl SharedStorage {
                 .await
                 .context("postgres get_audio_effect_session")?;
                 row.map(map_pg_audio_effect_session).transpose()
+            }
+        }
+    }
+
+    pub async fn delete_expired_audio_sessions(&self) -> Result<Vec<AudioEffectSession>> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite delete_expired_audio_sessions connection")?;
+                db::delete_expired_audio_sessions(&conn).context("sqlite delete_expired_audio_sessions")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let rows = sqlx::query(
+                    "DELETE FROM audio_effect_sessions
+                     WHERE expires_at < NOW()
+                     RETURNING *",
+                )
+                .fetch_all(pg_pool)
+                .await
+                .context("postgres delete_expired_audio_sessions")?;
+                rows.into_iter().map(map_pg_audio_effect_session).collect()
             }
         }
     }
@@ -6327,6 +6865,33 @@ fn map_pg_sent_file(row: sqlx::postgres::PgRow) -> Result<SentFile> {
         message_id: row.get("message_id"),
         chat_id: row.get("chat_id"),
     })
+}
+
+fn map_pg_error_log_entry(row: sqlx::postgres::PgRow) -> ErrorLogEntry {
+    ErrorLogEntry {
+        id: row.get("id"),
+        timestamp: row.get("timestamp"),
+        user_id: row.get("user_id"),
+        username: row.get("username"),
+        error_type: row.get("error_type"),
+        error_message: row.get("error_message"),
+        url: row.get("url"),
+        context: row.get("context"),
+        resolved: row.get::<i32, _>("resolved") != 0,
+    }
+}
+
+fn map_pg_share_page_record(row: sqlx::postgres::PgRow) -> SharePageRecord {
+    SharePageRecord {
+        id: row.get("id"),
+        youtube_url: row.get("youtube_url"),
+        title: row.get("title"),
+        artist: row.get("artist"),
+        thumbnail_url: row.get("thumbnail_url"),
+        duration_secs: row.get("duration_secs"),
+        streaming_links_json: row.get("streaming_links"),
+        created_at: row.get("created_at"),
+    }
 }
 
 fn map_pg_cut(row: sqlx::postgres::PgRow) -> CutEntry {

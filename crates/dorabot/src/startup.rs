@@ -81,10 +81,11 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
         .map_err(|e| anyhow::anyhow!("Failed to create shared storage backend: {}", e))?;
 
     // Initialize core services
-    crate::core::error_logger::init_error_logger(Arc::clone(&db_pool));
-    crate::download::audio_effects::start_cleanup_task(Arc::clone(&db_pool));
+    crate::core::error_logger::init_error_logger(Arc::clone(&shared_storage));
+    crate::download::audio_effects::start_cleanup_task(Arc::clone(&shared_storage));
 
-    let rate_limiter = Arc::new(RateLimiter::new());
+    let rate_limiter =
+        Arc::new(RateLimiter::from_config().map_err(|e| anyhow::anyhow!("Failed to initialize rate limiter: {}", e))?);
     Arc::clone(&rate_limiter).spawn_cleanup_task(std::time::Duration::from_secs(300));
 
     let download_queue = Arc::new(DownloadQueue::with_storage(Some(Arc::clone(&shared_storage))));
@@ -100,14 +101,14 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
     }
 
     // --- Spawn background tasks ---
-    background_tasks::spawn_web_server(Arc::clone(&db_pool));
+    background_tasks::spawn_web_server(Arc::clone(&shared_storage));
     background_tasks::spawn_metrics_server();
 
-    let alert_manager = background_tasks::start_alert_monitor(bot.clone(), Arc::clone(&db_pool)).await;
+    let alert_manager = background_tasks::start_alert_monitor(bot.clone(), Arc::clone(&shared_storage)).await;
 
     let _disk_monitor_handle = crate::core::disk::start_disk_monitor_task(alert_manager.clone());
 
-    background_tasks::spawn_stats_reporter(bot.clone(), Arc::clone(&db_pool));
+    background_tasks::spawn_stats_reporter(bot.clone(), Arc::clone(&shared_storage)).await;
     background_tasks::spawn_health_checks(bot.clone());
 
     tokio::spawn(queue_processor::process_queue(
@@ -121,7 +122,7 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
     background_tasks::spawn_subscription_expiry_checker(Arc::clone(&shared_storage));
     background_tasks::spawn_cookies_checker(bot.clone());
     background_tasks::spawn_content_watcher(bot.clone(), Arc::clone(&db_pool), Arc::clone(&shared_storage));
-    background_tasks::spawn_db_cleanup(Arc::clone(&db_pool), Arc::clone(&shared_storage));
+    background_tasks::spawn_db_cleanup(Arc::clone(&db_pool), Arc::clone(&shared_storage)).await;
 
     // Create extension registry
     let extension_registry = Arc::new(crate::extension::ExtensionRegistry::default_registry());

@@ -10,5 +10,5 @@ pub mod uploads;
 
 // Re-exports for convenience
 pub use db::{create_pool, get_connection, DbConnection, DbPool};
-pub use shared::{QueueTaskInput, SharedStorage};
+pub use shared::{QueueTaskInput, SharePageRecord, SharedStorage};
 pub use subtitle_cache::SubtitleCache;

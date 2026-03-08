@@ -89,6 +89,10 @@ pub static DATABASE_DRIVER: Lazy<DatabaseDriver> = Lazy::new(DatabaseDriver::fro
 /// Read from DATABASE_URL environment variable
 pub static DATABASE_URL: Lazy<Option<String>> = Lazy::new(|| env::var("DATABASE_URL").ok());
 
+/// Redis connection string for distributed cooldowns and cache coordination
+/// Read from REDIS_URL environment variable
+pub static REDIS_URL: Lazy<Option<String>> = Lazy::new(|| env::var("REDIS_URL").ok());
+
 /// Log file path
 /// Read from LOG_FILE_PATH environment variable
 /// Default: app.log
@@ -907,6 +911,9 @@ pub fn validate() -> ConfigValidation {
                 .unwrap_or(true)
             {
                 errors.push("DATABASE_URL must be set when DATABASE_DRIVER=postgres.".to_string());
+            }
+            if REDIS_URL.as_ref().map(|value| value.trim().is_empty()).unwrap_or(true) {
+                errors.push("REDIS_URL must be set when DATABASE_DRIVER=postgres.".to_string());
             }
         }
     }

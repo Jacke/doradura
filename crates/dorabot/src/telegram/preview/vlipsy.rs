@@ -14,6 +14,7 @@ use crate::core::escape_markdown;
 use crate::download::source::vlipsy::scrape_clip_page;
 use crate::storage::cache;
 use crate::storage::db::DbPool;
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use reqwest::Client;
 use std::sync::Arc;
@@ -106,6 +107,7 @@ pub async fn handle_vlipsy_callback(
     message_id: MessageId,
     data: &str,
     db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Parse: "vp:{action}:{param}:{url_id}"
     let parts: Vec<&str> = data.splitn(4, ':').collect();
@@ -121,7 +123,17 @@ pub async fn handle_vlipsy_callback(
         "rep" => handle_repeat_toggle(bot, chat_id, message_id, param, url_id).await,
         "video" | "circle" | "mp3" => {
             let repeat: u8 = param.parse().unwrap_or(1);
-            handle_download(bot, chat_id, message_id, action, repeat, url_id, db_pool).await
+            handle_download(
+                bot,
+                chat_id,
+                message_id,
+                action,
+                repeat,
+                url_id,
+                db_pool,
+                shared_storage,
+            )
+            .await
         }
         _ => {
             log::warn!("Unknown vp action: {}", action);
@@ -166,9 +178,10 @@ async fn handle_download(
     repeat: u8,
     url_id: &str,
     db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Resolve URL from cache
-    let url_str = match cache::get_url(db_pool, url_id).await {
+    let url_str = match cache::get_url(db_pool, Some(shared_storage.as_ref()), url_id).await {
         Some(u) => u,
         None => {
             log::warn!("Vlipsy URL expired for url_id={}", url_id);

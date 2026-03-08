@@ -356,8 +356,8 @@ pub async fn download_and_send_video(
 
             // Share page: create after successful video send (YouTube only, fire-and-forget)
             if crate::core::share::is_youtube_url(url.as_str()) {
-                if let Some(ref pool) = db_pool_clone {
-                    let pool_share = Arc::clone(pool);
+                if let Some(ref storage) = shared_storage_clone {
+                    let storage_share = Arc::clone(storage);
                     let url_str = url.to_string();
                     let title_share = title.clone();
                     let artist_share = artist.clone();
@@ -372,7 +372,7 @@ pub async fn download_and_send_video(
                             Some(artist_share.as_str())
                         };
                         if let Some((share_url, streaming_links)) = crate::core::share::create_share_page(
-                            &pool_share,
+                            &storage_share,
                             &url_str,
                             &title_share,
                             artist_opt,

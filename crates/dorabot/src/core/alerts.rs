@@ -11,10 +11,11 @@
 //! - Database persistence of alert history
 
 use crate::core::{config, metrics};
-use crate::storage::db::{self, DbPool};
+use crate::storage::SharedStorage;
 use crate::telegram::admin;
 use crate::telegram::Bot;
 use chrono::{DateTime, Duration, Utc};
+use sqlx::{pool::PoolConnection, Postgres};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
@@ -295,8 +296,8 @@ pub struct AlertManager {
     bot: Bot,
     /// Admin user ID to send alerts to
     admin_chat_id: ChatId,
-    /// Database pool for persisting alert history
-    db_pool: Arc<DbPool>,
+    /// Shared storage for persisting alert history
+    shared_storage: Arc<SharedStorage>,
     /// Last alert time for each alert type (for throttling)
     last_alert_time: Arc<Mutex<HashMap<AlertType, DateTime<Utc>>>>,
     /// Currently active alerts (for resolution detection)
@@ -309,11 +310,11 @@ pub struct AlertManager {
 
 impl AlertManager {
     /// Creates a new AlertManager
-    pub fn new(bot: Bot, admin_chat_id: ChatId, db_pool: Arc<DbPool>) -> Self {
+    pub fn new(bot: Bot, admin_chat_id: ChatId, shared_storage: Arc<SharedStorage>) -> Self {
         Self {
             bot,
             admin_chat_id,
-            db_pool,
+            shared_storage,
             last_alert_time: Arc::new(Mutex::new(HashMap::new())),
             active_alerts: Arc::new(Mutex::new(HashMap::new())),
             recent_downloads: Arc::new(Mutex::new(VecDeque::new())),
@@ -377,23 +378,23 @@ impl AlertManager {
         }
 
         // Save to database
-        if let Ok(conn) = db::get_connection(&self.db_pool) {
-            let severity_str = match alert.severity {
-                Severity::Critical => "critical",
-                Severity::Warning => "warning",
-            };
+        let severity_str = match alert.severity {
+            Severity::Critical => "critical",
+            Severity::Warning => "warning",
+        };
 
-            if let Err(e) = conn.execute(
-                "INSERT INTO alert_history (alert_type, severity, message, triggered_at) VALUES (?, ?, ?, ?)",
-                rusqlite::params![
-                    alert.alert_type.as_str(),
-                    severity_str,
-                    format!("{}\n\n{}", alert.title, alert.message),
-                    alert.triggered_at.to_rfc3339(),
-                ],
-            ) {
-                log::error!("Failed to save alert to database: {}", e);
-            }
+        if let Err(e) = self
+            .shared_storage
+            .log_alert_history(
+                alert.alert_type.as_str(),
+                severity_str,
+                &format!("{}\n\n{}", alert.title, alert.message),
+                alert.details.as_deref(),
+                &alert.triggered_at.to_rfc3339(),
+            )
+            .await
+        {
+            log::error!("Failed to save alert to database: {}", e);
         }
 
         Ok(())
@@ -422,13 +423,12 @@ impl AlertManager {
             }
 
             // Update database
-            if let Ok(conn) = db::get_connection(&self.db_pool) {
-                if let Err(e) = conn.execute(
-                    "UPDATE alert_history SET resolved_at = ? WHERE alert_type = ? AND resolved_at IS NULL",
-                    rusqlite::params![Utc::now().to_rfc3339(), alert_type.as_str()],
-                ) {
-                    log::error!("Failed to update alert resolution in database: {}", e);
-                }
+            if let Err(e) = self
+                .shared_storage
+                .resolve_alert_history(alert_type.as_str(), &Utc::now().to_rfc3339())
+                .await
+            {
+                log::error!("Failed to update alert resolution in database: {}", e);
             }
         }
 
@@ -783,12 +783,18 @@ impl AlertManager {
 ///
 /// This function spawns a background task that periodically checks metrics
 /// and sends alerts to the admin when thresholds are exceeded.
-pub async fn start_alert_monitor(bot: Bot, admin_chat_id: ChatId, db_pool: Arc<DbPool>) -> Arc<AlertManager> {
-    let alert_manager = Arc::new(AlertManager::new(bot, admin_chat_id, db_pool));
+pub async fn start_alert_monitor(
+    bot: Bot,
+    admin_chat_id: ChatId,
+    shared_storage: Arc<SharedStorage>,
+    lock_conn: Option<PoolConnection<Postgres>>,
+) -> Arc<AlertManager> {
+    let alert_manager = Arc::new(AlertManager::new(bot, admin_chat_id, shared_storage));
 
     // Spawn background monitoring task
     let manager_clone = Arc::clone(&alert_manager);
     tokio::spawn(async move {
+        let _lock_conn = lock_conn;
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(60));
 
         loop {

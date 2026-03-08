@@ -123,7 +123,7 @@ pub async fn show_history_page(
         ));
 
         // Store URL in cache and get a short ID
-        let url_id = crate::storage::cache::store_url(&db_pool, &entry.url).await;
+        let url_id = crate::storage::cache::store_url(&db_pool, Some(shared_storage.as_ref()), &entry.url).await;
         let callback_data = format!("history:repeat:{}:{}", entry.id, url_id);
         let delete_callback = format!("history:delete:{}", entry.id);
 
@@ -303,7 +303,7 @@ pub async fn handle_history_callback(
             }
 
             // Get URL from cache (fallback)
-            match crate::storage::cache::get_url(&db_pool, url_id).await {
+            match crate::storage::cache::get_url(&db_pool, Some(shared_storage.as_ref()), url_id).await {
                 Some(url_str) => {
                     // URL found in cache
                     match Url::parse(&url_str) {
@@ -317,21 +317,25 @@ pub async fn handle_history_callback(
                                 .map(|user| user.plan)
                                 .unwrap_or_default();
 
-                            // Check rate limit
-                            if rate_limiter.is_rate_limited(chat_id, plan.as_str()).await {
-                                if let Some(remaining_time) = rate_limiter.get_remaining_time(chat_id).await {
+                            // Check and reserve rate limit atomically.
+                            match rate_limiter.check_and_update(chat_id, plan.as_str()).await {
+                                Ok(Some(remaining_time)) => {
                                     let remaining_seconds = remaining_time.as_secs();
                                     let mut args = fluent_templates::fluent_bundle::FluentArgs::new();
                                     args.set("seconds", remaining_seconds);
                                     bot.answer_callback_query(callback_id)
                                         .text(crate::i18n::t_args(&lang, "commands.wait_seconds", &args))
                                         .await?;
-                                } else {
+                                    return Ok(());
+                                }
+                                Ok(None) => {}
+                                Err(e) => {
+                                    log::error!("Rate limiter check failed for {}: {}", chat_id.0, e);
                                     bot.answer_callback_query(callback_id)
                                         .text(crate::i18n::t(&lang, "commands.wait"))
                                         .await?;
+                                    return Ok(());
                                 }
-                                return Ok(());
                             }
 
                             bot.answer_callback_query(callback_id.clone()).await?;
@@ -344,8 +348,6 @@ pub async fn handle_history_callback(
                                 },
                                 Err(_) => "mp3".to_string(),
                             };
-
-                            rate_limiter.update_rate_limit(chat_id, plan.as_str()).await;
 
                             // Get user preferences for quality/bitrate
                             let video_quality = if format == "mp4" {

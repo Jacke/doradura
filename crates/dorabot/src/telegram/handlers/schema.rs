@@ -409,7 +409,8 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                         }
                     }
                     Command::Export => {
-                        let _ = show_export_menu(&bot, msg.chat.id, deps.db_pool.clone()).await;
+                        let _ = show_export_menu(&bot, msg.chat.id, deps.db_pool.clone(), deps.shared_storage.clone())
+                            .await;
                     }
                     Command::Backup => {
                         let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
@@ -486,10 +487,22 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                         .await;
                     }
                     Command::Analytics => {
-                        let _ = handle_analytics_command(bot.clone(), msg.clone(), deps.db_pool.clone()).await;
+                        let _ = handle_analytics_command(
+                            bot.clone(),
+                            msg.clone(),
+                            deps.db_pool.clone(),
+                            deps.shared_storage.clone(),
+                        )
+                        .await;
                     }
                     Command::Health => {
-                        let _ = handle_health_command(bot.clone(), msg.clone(), deps.db_pool.clone()).await;
+                        let _ = handle_health_command(
+                            bot.clone(),
+                            msg.clone(),
+                            deps.db_pool.clone(),
+                            deps.shared_storage.clone(),
+                        )
+                        .await;
                     }
                     Command::DownsubHealth => {
                         let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
@@ -497,10 +510,23 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                             .await;
                     }
                     Command::Metrics => {
-                        let _ = handle_metrics_command(bot.clone(), msg.clone(), deps.db_pool.clone(), None).await;
+                        let _ = handle_metrics_command(
+                            bot.clone(),
+                            msg.clone(),
+                            deps.db_pool.clone(),
+                            deps.shared_storage.clone(),
+                            None,
+                        )
+                        .await;
                     }
                     Command::Revenue => {
-                        let _ = handle_revenue_command(bot.clone(), msg.clone(), deps.db_pool.clone()).await;
+                        let _ = handle_revenue_command(
+                            bot.clone(),
+                            msg.clone(),
+                            deps.db_pool.clone(),
+                            deps.shared_storage.clone(),
+                        )
+                        .await;
                     }
                     Command::BotApiSpeed => {
                         let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
@@ -562,7 +588,7 @@ fn voice_message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
         .endpoint(move |bot: Bot, msg: Message| {
             let deps = deps.clone();
             async move {
-                if let Err(e) = handle_voice_message(bot, msg, deps.db_pool).await {
+                if let Err(e) = handle_voice_message(bot, msg, deps.db_pool, deps.shared_storage).await {
                     log::error!("Voice effects handler error: {:?}", e);
                 }
                 Ok(())
