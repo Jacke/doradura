@@ -156,28 +156,85 @@ async fn admin_login_handler(State(_state): State<WebState>) -> Response {
 
     let html = format!(
         r#"<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
     <title>Admin Login — Doradura</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body {{ background: #0d0d0d; color: #fff; font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }}
-        .card {{ background: rgba(255,255,255,0.05); padding: 40px; border-radius: 20px; text-align: center; border: 1px solid rgba(255,255,255,0.1); }}
-        h1 {{ margin-bottom: 20px; font-size: 1.5rem; }}
+        *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            background: #0d0d0d;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }}
+        .login-wrap {{
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 32px;
+        }}
+        .logo {{
+            font-size: 2rem;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            color: #fff;
+        }}
+        .logo span {{ color: #7c6aff; }}
+        .card {{
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 20px;
+            padding: 40px 48px;
+            text-align: center;
+            box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+            min-width: 320px;
+        }}
+        .card h1 {{
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #fff;
+        }}
+        .card p {{
+            color: #666;
+            font-size: 0.88rem;
+            margin-bottom: 28px;
+            line-height: 1.5;
+        }}
+        .tg-wrap {{
+            display: flex;
+            justify-content: center;
+        }}
+        .footer {{
+            color: #444;
+            font-size: 0.78rem;
+        }}
     </style>
 </head>
 <body>
-    <div class="card">
-        <h1>Admin Login</h1>
-        <script async src="https://telegram.org/js/telegram-widget.js?22" 
-                data-telegram-login="{}" 
-                data-size="large" 
-                data-auth-url="/admin/auth" 
-                data-request-access="write"></script>
+    <div class="login-wrap">
+        <div class="logo">dora<span>dura</span></div>
+        <div class="card">
+            <h1>Admin Access</h1>
+            <p>Sign in with your Telegram account<br>to access the dashboard.</p>
+            <div class="tg-wrap">
+                <script async src="https://telegram.org/js/telegram-widget.js?22"
+                        data-telegram-login="{bot_username}"
+                        data-size="large"
+                        data-auth-url="/admin/auth"
+                        data-request-access="write"></script>
+            </div>
+        </div>
+        <div class="footer">Only authorised admins can log in.</div>
     </div>
 </body>
 </html>"#,
-        bot_username
+        bot_username = bot_username
     );
 
     Html(html).into_response()
@@ -293,120 +350,870 @@ fn generate_admin_token(user_id: i64, bot_token: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
+// --- Admin Stats ---
+
 struct AdminStats {
+    // Overview
     total_users: i64,
     total_downloads: i64,
     active_tasks: i64,
-    recent_errors: Vec<(String, String, String)>, // (timestamp, category, message)
+    errors_today: i64,
+    downloads_today: i64,
+    new_users_today: i64,
+    // Downloads per day — (date_str, count), last 30 days, chronological order
+    downloads_per_day: Vec<(String, i64)>,
+    // Top users — (username_or_id, download_count, plan)
+    top_users: Vec<(String, i64, String)>,
+    // Recent downloads — (title, username_or_id, format, downloaded_at)
+    recent_downloads: Vec<(String, String, String, String)>,
+    // Recent errors — (timestamp, error_type, error_message, url, user_id)
+    recent_errors: Vec<(String, String, String, String, String)>,
+    // Format distribution — (format, count)
+    format_dist: Vec<(String, i64)>,
 }
 
 fn fetch_admin_stats(db: &Arc<DbPool>) -> AdminStats {
-    let conn = get_connection(db).unwrap();
+    let conn = match get_connection(db) {
+        Ok(c) => c,
+        Err(_) => {
+            return AdminStats {
+                total_users: 0,
+                total_downloads: 0,
+                active_tasks: 0,
+                errors_today: 0,
+                downloads_today: 0,
+                new_users_today: 0,
+                downloads_per_day: vec![],
+                top_users: vec![],
+                recent_downloads: vec![],
+                recent_errors: vec![],
+                format_dist: vec![],
+            };
+        }
+    };
 
     let total_users: i64 = conn
-        .query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))
+        .query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))
         .unwrap_or(0);
+
     let total_downloads: i64 = conn
-        .query_row("SELECT COUNT(*) FROM download_history", [], |row| row.get(0))
+        .query_row("SELECT COUNT(*) FROM download_history", [], |r| r.get(0))
         .unwrap_or(0);
+
     let active_tasks: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM task_queue WHERE status IN ('pending', 'processing')",
+            "SELECT COUNT(*) FROM task_queue WHERE status IN ('pending','processing')",
             [],
-            |row| row.get(0),
+            |r| r.get(0),
         )
         .unwrap_or(0);
 
-    let mut stmt = conn
-        .prepare("SELECT timestamp, category, message FROM error_log ORDER BY timestamp DESC LIMIT 10")
-        .unwrap();
-    let recent_errors = stmt
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-        .unwrap()
-        .filter_map(|r| r.ok())
-        .collect();
+    let errors_today: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM error_log WHERE date(timestamp) = date('now')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    let downloads_today: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM download_history WHERE date(downloaded_at) = date('now')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    // users table has no created_at column; approximate via first download
+    let new_users_today: i64 = conn
+        .query_row(
+            "SELECT COUNT(DISTINCT user_id) FROM download_history \
+             WHERE date(downloaded_at) = date('now') \
+             AND user_id NOT IN (SELECT user_id FROM download_history WHERE date(downloaded_at) < date('now'))",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    // Downloads per day for last 30 days
+    let downloads_per_day = conn
+        .prepare(
+            "SELECT date(downloaded_at) AS day, COUNT(*) AS cnt \
+             FROM download_history \
+             WHERE downloaded_at >= date('now','-29 days') \
+             GROUP BY day \
+             ORDER BY day ASC",
+        )
+        .and_then(|mut s| {
+            let rows = s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+            Ok(rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+        })
+        .unwrap_or_default();
+
+    // Top 10 users by download count
+    let top_users = conn
+        .prepare(
+            "SELECT COALESCE(u.username, CAST(u.telegram_id AS TEXT)), \
+                    COUNT(d.id) AS cnt, \
+                    COALESCE(u.plan, 'free') \
+             FROM download_history d \
+             JOIN users u ON u.telegram_id = d.user_id \
+             GROUP BY d.user_id \
+             ORDER BY cnt DESC \
+             LIMIT 10",
+        )
+        .and_then(|mut s| {
+            let rows = s.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?, r.get::<_, String>(2)?))
+            })?;
+            Ok(rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+        })
+        .unwrap_or_default();
+
+    // Last 20 downloads
+    let recent_downloads = conn
+        .prepare(
+            "SELECT COALESCE(d.title, d.url), \
+                    COALESCE(u.username, CAST(u.telegram_id AS TEXT)), \
+                    COALESCE(d.format, '?'), \
+                    d.downloaded_at \
+             FROM download_history d \
+             LEFT JOIN users u ON u.telegram_id = d.user_id \
+             ORDER BY d.downloaded_at DESC \
+             LIMIT 20",
+        )
+        .and_then(|mut s| {
+            let rows = s.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                ))
+            })?;
+            Ok(rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+        })
+        .unwrap_or_default();
+
+    // Last 20 errors — bug fix: correct column names error_type, error_message
+    let recent_errors = conn
+        .prepare(
+            "SELECT timestamp, \
+                    COALESCE(error_type, ''), \
+                    COALESCE(error_message, ''), \
+                    COALESCE(url, ''), \
+                    COALESCE(CAST(user_id AS TEXT), '') \
+             FROM error_log \
+             ORDER BY timestamp DESC \
+             LIMIT 20",
+        )
+        .and_then(|mut s| {
+            let rows = s.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            })?;
+            Ok(rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+        })
+        .unwrap_or_default();
+
+    // Format distribution
+    let format_dist = conn
+        .prepare(
+            "SELECT COALESCE(format, 'unknown') AS fmt, COUNT(*) AS cnt \
+             FROM download_history \
+             GROUP BY fmt \
+             ORDER BY cnt DESC",
+        )
+        .and_then(|mut s| {
+            let rows = s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+            Ok(rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+        })
+        .unwrap_or_default();
 
     AdminStats {
         total_users,
         total_downloads,
         active_tasks,
+        errors_today,
+        downloads_today,
+        new_users_today,
+        downloads_per_day,
+        top_users,
+        recent_downloads,
         recent_errors,
+        format_dist,
+    }
+}
+
+/// Format an integer with thousands separators, e.g. 1234567 -> "1,234,567".
+fn fmt_num(n: i64) -> String {
+    let s = n.to_string();
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    let offset = bytes.len() % 3;
+    for (i, &b) in bytes.iter().enumerate() {
+        if i != 0 && (i % 3 == offset) {
+            out.push(',');
+        }
+        out.push(b as char);
+    }
+    out
+}
+
+/// Truncate a string for display (adds … if needed).
+fn truncate(s: &str, max: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max {
+        s.to_owned()
+    } else {
+        chars[..max].iter().collect::<String>() + "…"
+    }
+}
+
+/// Return a colour class name for an error type.
+fn error_type_class(error_type: &str) -> &'static str {
+    let t = error_type.to_lowercase();
+    if t.contains("network") || t.contains("timeout") || t.contains("connect") {
+        "err-network"
+    } else if t.contains("auth") || t.contains("permission") || t.contains("forbidden") {
+        "err-auth"
+    } else if t.contains("download") || t.contains("yt") || t.contains("youtube") {
+        "err-download"
+    } else if t.contains("db") || t.contains("sql") || t.contains("database") {
+        "err-db"
+    } else {
+        "err-other"
     }
 }
 
 fn render_admin_dashboard(stats: &AdminStats) -> String {
-    let mut errors_html = String::new();
-    for (ts, cat, msg) in &stats.recent_errors {
-        errors_html.push_str(&format!(
-            r#"<tr><td>{}</td><td><span class="badge">{}</span></td><td>{}</td></tr>"#,
-            ts,
-            cat,
-            html_escape(msg)
+    // --- Overview cards ---
+    let cards_html = format!(
+        r#"
+        <div class="stat-card">
+            <div class="stat-icon">👤</div>
+            <div class="stat-body">
+                <div class="stat-value">{total_users}</div>
+                <div class="stat-label">Total Users</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">⬇</div>
+            <div class="stat-body">
+                <div class="stat-value">{total_dl}</div>
+                <div class="stat-label">Total Downloads</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">⚙</div>
+            <div class="stat-body">
+                <div class="stat-value active-val">{active_tasks}</div>
+                <div class="stat-label">Active Tasks</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">⚡</div>
+            <div class="stat-body">
+                <div class="stat-value">{dl_today}</div>
+                <div class="stat-label">Downloads Today</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">🆕</div>
+            <div class="stat-body">
+                <div class="stat-value">{new_users}</div>
+                <div class="stat-label">New Users Today</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">🔴</div>
+            <div class="stat-body">
+                <div class="stat-value {err_class}">{errors_today}</div>
+                <div class="stat-label">Errors Today</div>
+            </div>
+        </div>"#,
+        total_users = fmt_num(stats.total_users),
+        total_dl = fmt_num(stats.total_downloads),
+        active_tasks = fmt_num(stats.active_tasks),
+        dl_today = fmt_num(stats.downloads_today),
+        new_users = fmt_num(stats.new_users_today),
+        errors_today = fmt_num(stats.errors_today),
+        err_class = if stats.errors_today > 0 { "err-val" } else { "" },
+    );
+
+    // --- Downloads per day bar chart ---
+    let max_day_count = stats
+        .downloads_per_day
+        .iter()
+        .map(|(_, c)| *c)
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let mut chart_html = String::new();
+    // Fill gaps: build a map for quick lookup then iterate last 30 days
+    // We render whatever the DB returns (already ordered)
+    for (date, count) in &stats.downloads_per_day {
+        let pct = (*count as f64 / max_day_count as f64 * 100.0) as u64;
+        let short_date = date.get(5..).unwrap_or(date); // MM-DD
+        chart_html.push_str(&format!(
+            r#"<div class="bar-col">
+                <div class="bar-tip">{count}</div>
+                <div class="bar" style="height:{pct}%"></div>
+                <div class="bar-label">{date}</div>
+            </div>"#,
+            count = count,
+            pct = pct,
+            date = short_date,
         ));
+    }
+    if chart_html.is_empty() {
+        chart_html = r#"<div class="empty-state">No download data yet.</div>"#.to_owned();
+    }
+
+    // --- Top users ---
+    let mut top_users_html = String::new();
+    for (i, (name, count, plan)) in stats.top_users.iter().enumerate() {
+        let rank_class = match i {
+            0 => "rank-gold",
+            1 => "rank-silver",
+            2 => "rank-bronze",
+            _ => "",
+        };
+        let plan_class = match plan.as_str() {
+            "premium" | "pro" => "plan-premium",
+            "vip" => "plan-vip",
+            _ => "plan-free",
+        };
+        top_users_html.push_str(&format!(
+            r#"<tr>
+                <td><span class="rank {rank_class}">#{rank}</span></td>
+                <td class="mono">@{name}</td>
+                <td>{count}</td>
+                <td><span class="pill {plan_class}">{plan}</span></td>
+            </tr>"#,
+            rank = i + 1,
+            rank_class = rank_class,
+            name = html_escape(name),
+            count = fmt_num(*count),
+            plan_class = plan_class,
+            plan = html_escape(plan),
+        ));
+    }
+    if top_users_html.is_empty() {
+        top_users_html = r#"<tr><td colspan="4" class="empty-state">No data yet.</td></tr>"#.to_owned();
+    }
+
+    // --- Recent downloads ---
+    let mut recent_dl_html = String::new();
+    for (title, user, format, ts) in &stats.recent_downloads {
+        let short_ts = ts.get(..16).unwrap_or(ts);
+        recent_dl_html.push_str(&format!(
+            r#"<tr>
+                <td class="title-cell">{title}</td>
+                <td class="mono">@{user}</td>
+                <td><span class="fmt-badge">{fmt}</span></td>
+                <td class="dim">{ts}</td>
+            </tr>"#,
+            title = html_escape(&truncate(title, 50)),
+            user = html_escape(user),
+            fmt = html_escape(format),
+            ts = html_escape(short_ts),
+        ));
+    }
+    if recent_dl_html.is_empty() {
+        recent_dl_html = r#"<tr><td colspan="4" class="empty-state">No downloads yet.</td></tr>"#.to_owned();
+    }
+
+    // --- Recent errors ---
+    let mut errors_html = String::new();
+    for (ts, error_type, msg, url, uid) in &stats.recent_errors {
+        let short_ts = ts.get(..16).unwrap_or(ts);
+        let ec = error_type_class(error_type);
+        let short_url = if url.len() > 48 {
+            format!("{}…", &url[..48])
+        } else {
+            url.clone()
+        };
+        errors_html.push_str(&format!(
+            r#"<tr>
+                <td class="dim mono">{ts}</td>
+                <td><span class="err-badge {ec}">{etype}</span></td>
+                <td class="msg-cell">{msg}</td>
+                <td class="dim mono small">{url}</td>
+                <td class="dim mono">{uid}</td>
+            </tr>"#,
+            ts = html_escape(short_ts),
+            ec = ec,
+            etype = html_escape(error_type),
+            msg = html_escape(&truncate(msg, 80)),
+            url = html_escape(&short_url),
+            uid = html_escape(uid),
+        ));
+    }
+    if errors_html.is_empty() {
+        errors_html = r#"<tr><td colspan="5" class="empty-state">No errors. 🎉</td></tr>"#.to_owned();
+    }
+
+    // --- Format distribution ---
+    let total_fmt: i64 = stats.format_dist.iter().map(|(_, c)| c).sum::<i64>().max(1);
+    let mut fmt_html = String::new();
+    for (fmt, count) in &stats.format_dist {
+        let pct = (*count as f64 / total_fmt as f64 * 100.0) as u64;
+        let bar_class = match fmt.as_str() {
+            "mp3" => "fmt-mp3",
+            "mp4" | "mkv" | "webm" => "fmt-video",
+            "m4a" | "aac" => "fmt-aac",
+            "flac" | "wav" => "fmt-lossless",
+            _ => "fmt-other",
+        };
+        fmt_html.push_str(&format!(
+            r#"<div class="fmt-row">
+                <span class="fmt-name">{fmt}</span>
+                <div class="fmt-bar-track">
+                    <div class="fmt-bar {bar_class}" style="width:{pct}%"></div>
+                </div>
+                <span class="fmt-count">{count} ({pct}%)</span>
+            </div>"#,
+            fmt = html_escape(fmt),
+            bar_class = bar_class,
+            pct = pct,
+            count = fmt_num(*count),
+        ));
+    }
+    if fmt_html.is_empty() {
+        fmt_html = r#"<div class="empty-state">No data yet.</div>"#.to_owned();
     }
 
     format!(
         r#"<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
     <title>Dashboard — Doradura Admin</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body {{ background: #0d0d0d; color: #fff; font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 20px; }}
-        .container {{ max-width: 900px; margin: 0 auto; }}
-        .header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 1px solid #333; padding-bottom: 10px; }}
-        h1 {{ margin: 0; font-size: 1.5rem; }}
-        .stats-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 40px; }}
-        .stat-card {{ background: #1a1a1a; padding: 20px; border-radius: 12px; border: 1px solid #333; }}
-        .stat-card .label {{ color: #888; font-size: 0.9rem; margin-bottom: 10px; }}
-        .stat-card .value {{ font-size: 1.8rem; font-weight: bold; }}
-        table {{ width: 100%; border-collapse: collapse; background: #1a1a1a; border-radius: 12px; overflow: hidden; border: 1px solid #333; }}
-        th, td {{ padding: 12px 15px; text-align: left; border-bottom: 1px solid #333; }}
-        th {{ background: #222; color: #888; font-weight: normal; font-size: 0.85rem; text-transform: uppercase; }}
-        .badge {{ background: #444; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; }}
+        *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+        :root {{
+            --bg:       #0d0d0d;
+            --surface:  #141414;
+            --card:     #1a1a1a;
+            --border:   #252525;
+            --border2:  #333;
+            --text:     #e8e8e8;
+            --muted:    #666;
+            --accent:   #7c6aff;
+            --green:    #22c55e;
+            --red:      #ef4444;
+            --yellow:   #f59e0b;
+            --blue:     #3b82f6;
+        }}
+
+        body {{
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            font-size: 14px;
+            line-height: 1.5;
+            min-height: 100vh;
+        }}
+
+        /* ── Layout ── */
+        .topbar {{
+            position: sticky; top: 0; z-index: 100;
+            background: rgba(13,13,13,0.85);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+            padding: 0 28px;
+            height: 56px;
+            display: flex; align-items: center; justify-content: space-between;
+        }}
+        .topbar-brand {{ font-weight: 700; font-size: 1.05rem; letter-spacing: -0.3px; }}
+        .topbar-brand span {{ color: var(--accent); }}
+        .topbar-right {{ display: flex; align-items: center; gap: 16px; }}
+        .logout {{
+            color: var(--muted); text-decoration: none; font-size: 0.82rem;
+            padding: 5px 12px; border: 1px solid var(--border2); border-radius: 8px;
+            transition: color .15s, border-color .15s;
+        }}
+        .logout:hover {{ color: var(--text); border-color: #555; }}
+
+        .page {{ max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }}
+
+        /* ── Tabs (CSS-only) ── */
+        .tabs-wrap {{ margin-bottom: 28px; }}
+        .tab-radio {{ display: none; }}
+
+        .tab-labels {{
+            display: flex; gap: 4px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 4px;
+            width: fit-content;
+        }}
+        .tab-label {{
+            padding: 7px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--muted);
+            transition: background .15s, color .15s;
+            user-select: none;
+        }}
+        .tab-label:hover {{ color: var(--text); }}
+
+        #tab-overview:checked ~ .tab-labels label[for="tab-overview"],
+        #tab-users:checked   ~ .tab-labels label[for="tab-users"],
+        #tab-dl:checked      ~ .tab-labels label[for="tab-dl"],
+        #tab-errors:checked  ~ .tab-labels label[for="tab-errors"] {{
+            background: var(--card);
+            color: var(--text);
+            border: 1px solid var(--border2);
+        }}
+
+        .tab-content {{ display: none; }}
+        #tab-overview:checked ~ .tab-contents #pane-overview,
+        #tab-users:checked   ~ .tab-contents #pane-users,
+        #tab-dl:checked      ~ .tab-contents #pane-dl,
+        #tab-errors:checked  ~ .tab-contents #pane-errors {{
+            display: block;
+        }}
+
+        /* ── Stat Cards ── */
+        .stats-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 32px;
+        }}
+        .stat-card {{
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 18px 20px;
+            display: flex; align-items: flex-start; gap: 14px;
+            transition: border-color .15s;
+        }}
+        .stat-card:hover {{ border-color: var(--border2); }}
+        .stat-icon {{ font-size: 1.4rem; opacity: 0.7; flex-shrink: 0; }}
+        .stat-value {{
+            font-size: 1.7rem; font-weight: 700;
+            line-height: 1.1; margin-bottom: 4px;
+            font-variant-numeric: tabular-nums;
+        }}
+        .stat-label {{ color: var(--muted); font-size: 0.8rem; }}
+        .active-val {{ color: var(--green); }}
+        .err-val    {{ color: var(--red); }}
+
+        /* ── Section headers ── */
+        .section-title {{
+            font-size: 0.78rem; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.08em;
+            color: var(--muted); margin-bottom: 14px;
+        }}
+
+        /* ── Cards / panels ── */
+        .panel {{
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            overflow: hidden;
+            margin-bottom: 28px;
+        }}
+        .panel-head {{
+            padding: 14px 20px;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.85rem; font-weight: 600; color: var(--muted);
+            text-transform: uppercase; letter-spacing: 0.06em;
+        }}
+
+        /* ── Tables ── */
+        .tbl-wrap {{ overflow-x: auto; }}
+        table {{ width: 100%; border-collapse: collapse; }}
+        th, td {{ padding: 11px 18px; text-align: left; border-bottom: 1px solid var(--border); }}
+        th {{ background: var(--surface); color: var(--muted); font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }}
         tr:last-child td {{ border-bottom: none; }}
-        @media (max-width: 600px) {{ .stats-grid {{ grid-template-columns: 1fr; }} }}
+        tr:hover td {{ background: rgba(255,255,255,0.02); }}
+
+        .mono  {{ font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace; font-size: 0.82rem; }}
+        .small {{ font-size: 0.78rem; }}
+        .dim   {{ color: var(--muted); }}
+        .title-cell {{ max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+        .msg-cell   {{ max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+        .empty-state {{ padding: 32px; text-align: center; color: var(--muted); font-size: 0.9rem; }}
+
+        /* ── Pills / badges ── */
+        .pill {{
+            display: inline-block; padding: 2px 9px; border-radius: 20px;
+            font-size: 0.75rem; font-weight: 600;
+        }}
+        .plan-free    {{ background: #232323; color: #888; }}
+        .plan-premium {{ background: rgba(124,106,255,0.18); color: #a799ff; }}
+        .plan-vip     {{ background: rgba(245,158,11,0.15); color: #f59e0b; }}
+
+        .fmt-badge {{
+            display: inline-block; padding: 1px 8px; border-radius: 6px;
+            font-size: 0.75rem; font-weight: 600;
+            background: rgba(255,255,255,0.07); color: #ccc;
+            font-family: 'SF Mono', ui-monospace, monospace;
+        }}
+
+        .err-badge {{
+            display: inline-block; padding: 2px 9px; border-radius: 6px;
+            font-size: 0.75rem; font-weight: 600;
+            font-family: 'SF Mono', ui-monospace, monospace;
+        }}
+        .err-network  {{ background: rgba(59,130,246,0.15); color: #60a5fa; }}
+        .err-auth     {{ background: rgba(245,158,11,0.15); color: #fbbf24; }}
+        .err-download {{ background: rgba(239,68,68,0.15);  color: #f87171; }}
+        .err-db       {{ background: rgba(168,85,247,0.15); color: #c084fc; }}
+        .err-other    {{ background: rgba(255,255,255,0.07); color: #999; }}
+
+        /* ── Rank ── */
+        .rank {{ display: inline-block; font-weight: 700; font-size: 0.82rem; width: 28px; text-align: center; }}
+        .rank-gold   {{ color: #f59e0b; }}
+        .rank-silver {{ color: #94a3b8; }}
+        .rank-bronze {{ color: #a16207; }}
+
+        /* ── Bar chart ── */
+        .chart-wrap {{
+            padding: 20px 16px 0;
+            height: 180px;
+            display: flex; align-items: flex-end; gap: 3px;
+            overflow-x: auto;
+        }}
+        .bar-col {{
+            display: flex; flex-direction: column; align-items: center;
+            flex: 1 1 0; min-width: 18px; max-width: 44px;
+            height: 100%;
+            position: relative;
+            justify-content: flex-end;
+        }}
+        .bar-tip {{
+            font-size: 0.6rem; color: var(--muted);
+            margin-bottom: 2px;
+            white-space: nowrap;
+        }}
+        .bar {{
+            width: 100%; background: var(--accent);
+            border-radius: 4px 4px 0 0;
+            min-height: 2px;
+            opacity: 0.75;
+            transition: opacity .15s;
+        }}
+        .bar:hover {{ opacity: 1; }}
+        .bar-label {{
+            font-size: 0.58rem; color: var(--muted);
+            margin-top: 4px; writing-mode: vertical-rl;
+            transform: rotate(180deg);
+            max-height: 40px; overflow: hidden;
+        }}
+        .chart-footer {{
+            padding: 8px 16px 16px;
+            font-size: 0.75rem; color: var(--muted);
+            text-align: right;
+        }}
+
+        /* ── Format bars ── */
+        .fmt-rows {{ padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }}
+        .fmt-row {{ display: flex; align-items: center; gap: 12px; }}
+        .fmt-name {{ width: 56px; font-family: 'SF Mono', ui-monospace, monospace; font-size: 0.8rem; color: var(--muted); flex-shrink: 0; }}
+        .fmt-bar-track {{
+            flex: 1; height: 8px; background: var(--border); border-radius: 99px; overflow: hidden;
+        }}
+        .fmt-bar {{ height: 100%; border-radius: 99px; transition: width .4s; }}
+        .fmt-mp3      {{ background: var(--accent); }}
+        .fmt-video    {{ background: var(--blue); }}
+        .fmt-aac      {{ background: var(--green); }}
+        .fmt-lossless {{ background: var(--yellow); }}
+        .fmt-other    {{ background: #555; }}
+        .fmt-count {{ font-size: 0.78rem; color: var(--muted); white-space: nowrap; width: 110px; text-align: right; }}
+
+        /* ── Two-column layout ── */
+        .two-col {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }}
+        @media (max-width: 768px) {{
+            .two-col {{ grid-template-columns: 1fr; }}
+            .stats-grid {{ grid-template-columns: repeat(2, 1fr); }}
+        }}
+        @media (max-width: 480px) {{
+            .stats-grid {{ grid-template-columns: 1fr; }}
+            .tab-label {{ padding: 7px 12px; font-size: 0.78rem; }}
+        }}
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>Doradura Admin</h1>
-            <a href="/admin/login" style="color:#888; text-decoration:none; font-size:0.9rem;">Logout</a>
-        </div>
-        
-        <div class="stats-grid">
-            <div class="stat-card">
-                <div class="label">Total Users</div>
-                <div class="value">{}</div>
-            </div>
-            <div class="stat-card">
-                <div class="label">Total Downloads</div>
-                <div class="value">{}</div>
-            </div>
-            <div class="stat-card">
-                <div class="label">Active Tasks</div>
-                <div class="value">{}</div>
-            </div>
-        </div>
 
-        <h2>Recent Errors</h2>
-        <table>
-            <thead>
-                <tr>
-                    <th>Time</th>
-                    <th>Category</th>
-                    <th>Message</th>
-                </tr>
-            </thead>
-            <tbody>
-                {}
-            </tbody>
-        </table>
+<div class="topbar">
+    <div class="topbar-brand">dora<span>dura</span></div>
+    <div class="topbar-right">
+        <span style="color:var(--muted);font-size:0.8rem;">Admin Dashboard</span>
+        <a href="/admin/login" class="logout">Logout</a>
     </div>
+</div>
+
+<div class="page">
+
+    <!-- CSS-only tab switcher -->
+    <input type="radio" name="tab" id="tab-overview" class="tab-radio" checked>
+    <input type="radio" name="tab" id="tab-users"    class="tab-radio">
+    <input type="radio" name="tab" id="tab-dl"       class="tab-radio">
+    <input type="radio" name="tab" id="tab-errors"   class="tab-radio">
+
+    <div class="tabs-wrap">
+        <div class="tab-labels">
+            <label for="tab-overview" class="tab-label">Overview</label>
+            <label for="tab-users"    class="tab-label">Users</label>
+            <label for="tab-dl"       class="tab-label">Downloads</label>
+            <label for="tab-errors"   class="tab-label">Errors</label>
+        </div>
+    </div>
+
+    <div class="tab-contents">
+
+        <!-- ══════════════════════════════════════════
+             Pane: Overview
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-overview">
+
+            <div class="stats-grid">
+                {cards}
+            </div>
+
+            <!-- Downloads chart -->
+            <div class="panel">
+                <div class="panel-head">Downloads — last 30 days</div>
+                <div class="chart-wrap">
+                    {chart}
+                </div>
+                <div class="chart-footer">Each bar = one calendar day</div>
+            </div>
+
+            <!-- Two-col: format dist + system -->
+            <div class="two-col">
+                <div class="panel">
+                    <div class="panel-head">Format Distribution</div>
+                    <div class="fmt-rows">{fmt}</div>
+                </div>
+                <div class="panel">
+                    <div class="panel-head">System</div>
+                    <div style="padding:20px; display:flex; flex-direction:column; gap:14px;">
+                        <div style="display:flex;justify-content:space-between;">
+                            <span style="color:var(--muted);">Queue size</span>
+                            <strong>{active_tasks}</strong>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;">
+                            <span style="color:var(--muted);">Total users</span>
+                            <strong>{total_users}</strong>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;">
+                            <span style="color:var(--muted);">Total downloads</span>
+                            <strong>{total_dl}</strong>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;">
+                            <span style="color:var(--muted);">Downloads today</span>
+                            <strong>{dl_today}</strong>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;">
+                            <span style="color:var(--muted);">Errors today</span>
+                            <strong style="color:{err_color};">{errors_today}</strong>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div><!-- /pane-overview -->
+
+        <!-- ══════════════════════════════════════════
+             Pane: Users
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-users">
+            <div class="panel">
+                <div class="panel-head">Top 10 Users by Downloads</div>
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>User</th>
+                                <th>Downloads</th>
+                                <th>Plan</th>
+                            </tr>
+                        </thead>
+                        <tbody>{top_users}</tbody>
+                    </table>
+                </div>
+            </div>
+        </div><!-- /pane-users -->
+
+        <!-- ══════════════════════════════════════════
+             Pane: Downloads
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-dl">
+            <div class="panel">
+                <div class="panel-head">Recent 20 Downloads</div>
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Title</th>
+                                <th>User</th>
+                                <th>Format</th>
+                                <th>Time</th>
+                            </tr>
+                        </thead>
+                        <tbody>{recent_dl}</tbody>
+                    </table>
+                </div>
+            </div>
+        </div><!-- /pane-dl -->
+
+        <!-- ══════════════════════════════════════════
+             Pane: Errors
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-errors">
+            <div class="panel">
+                <div class="panel-head">Recent 20 Errors</div>
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Type</th>
+                                <th>Message</th>
+                                <th>URL</th>
+                                <th>User</th>
+                            </tr>
+                        </thead>
+                        <tbody>{errors}</tbody>
+                    </table>
+                </div>
+            </div>
+        </div><!-- /pane-errors -->
+
+    </div><!-- /tab-contents -->
+</div><!-- /page -->
+
 </body>
 </html>"#,
-        stats.total_users, stats.total_downloads, stats.active_tasks, errors_html
+        cards = cards_html,
+        chart = chart_html,
+        fmt = fmt_html,
+        top_users = top_users_html,
+        recent_dl = recent_dl_html,
+        errors = errors_html,
+        active_tasks = fmt_num(stats.active_tasks),
+        total_users = fmt_num(stats.total_users),
+        total_dl = fmt_num(stats.total_downloads),
+        dl_today = fmt_num(stats.downloads_today),
+        errors_today = fmt_num(stats.errors_today),
+        err_color = if stats.errors_today > 0 { "#ef4444" } else { "inherit" },
     )
 }
 
