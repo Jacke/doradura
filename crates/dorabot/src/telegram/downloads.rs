@@ -155,29 +155,29 @@ fn build_timestamp_ui(
 pub async fn show_downloads_page(
     bot: &Bot,
     chat_id: ChatId,
-    db_pool: Arc<DbPool>,
-    _shared_storage: Arc<SharedStorage>,
+    _db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     page: usize,
     file_type_filter: Option<String>,
     search_text: Option<String>,
     category_filter: Option<String>,
 ) -> ResponseResult<Message> {
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
     // Get filtered downloads
     let all_downloads = if file_type_filter.as_deref() == Some("edit") {
-        db::get_cuts_history_filtered(&conn, chat_id.0, search_text.as_deref())
+        shared_storage
+            .get_cuts_history_filtered(chat_id.0, search_text.as_deref())
+            .await
             .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
     } else {
-        db::get_download_history_filtered(
-            &conn,
-            chat_id.0,
-            file_type_filter.as_deref(),
-            search_text.as_deref(),
-            category_filter.as_deref(),
-        )
-        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+        shared_storage
+            .get_download_history_filtered(
+                chat_id.0,
+                file_type_filter.as_deref(),
+                search_text.as_deref(),
+                category_filter.as_deref(),
+            )
+            .await
+            .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
     };
 
     if all_downloads.is_empty() {
@@ -380,7 +380,7 @@ pub async fn show_downloads_page(
     }
 
     // Category filter buttons row
-    let user_cats = db::get_user_categories(&conn, chat_id.0).unwrap_or_default();
+    let user_cats = shared_storage.get_user_categories(chat_id.0).await.unwrap_or_default();
     if !user_cats.is_empty() {
         let ft_str = file_type_filter.as_deref().unwrap_or("");
         let search_str = search_text.as_deref().unwrap_or("");
@@ -552,15 +552,14 @@ pub async fn handle_downloads_callback(
             let download_id = parts[2].parse::<i64>().unwrap_or(0);
             log::info!("📥 Download ID: {}", download_id);
 
-            let conn = db::get_connection(&db_pool).map_err(|e| {
-                log::error!("📥 Failed to get DB connection: {}", e);
-                teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-            })?;
-
-            if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id).map_err(|e| {
-                log::error!("📥 Failed to get download entry: {}", e);
-                teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-            })? {
+            if let Some(download) = shared_storage
+                .get_download_history_entry(chat_id.0, download_id)
+                .await
+                .map_err(|e| {
+                    log::error!("📥 Failed to get download entry: {}", e);
+                    teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+                })?
+            {
                 if download.file_id.is_some() {
                     // Show options: resend as audio/document/video
                     let mut options = Vec::new();
@@ -664,12 +663,7 @@ pub async fn handle_downloads_callback(
             let cut_id = parts[2].parse::<i64>().unwrap_or(0);
             log::info!("📥 Cut ID: {}", cut_id);
 
-            let conn = db::get_connection(&db_pool).map_err(|e| {
-                log::error!("📥 Failed to get DB connection: {}", e);
-                teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-            })?;
-
-            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id).map_err(|e| {
+            if let Some(cut) = shared_storage.get_cut_entry(chat_id.0, cut_id).await.map_err(|e| {
                 log::error!("📥 Failed to get cut entry: {}", e);
                 teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
             })? {
@@ -729,10 +723,9 @@ pub async fn handle_downloads_callback(
             let send_type = parts[2];
             let download_id = parts[3].parse::<i64>().unwrap_or(0);
 
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-            if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id)
+            if let Some(download) = shared_storage
+                .get_download_history_entry(chat_id.0, download_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 if let Some(fid) = download.file_id {
@@ -833,10 +826,9 @@ pub async fn handle_downloads_callback(
             let send_type = parts[2];
             let cut_id = parts[3].parse::<i64>().unwrap_or(0);
 
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id)
+            if let Some(cut) = shared_storage
+                .get_cut_entry(chat_id.0, cut_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 if let Some(fid) = cut.file_id {
@@ -891,9 +883,9 @@ pub async fn handle_downloads_callback(
                 return Ok(());
             }
             let download_id = parts[2].parse::<i64>().unwrap_or(0);
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id)
+            if let Some(download) = shared_storage
+                .get_download_history_entry(chat_id.0, download_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 if download.format != "mp4" {
@@ -931,7 +923,10 @@ pub async fn handle_downloads_callback(
                     })?;
 
                 // Fetch timestamps and build UI
-                let timestamps = db::get_video_timestamps(&conn, download_id).unwrap_or_default();
+                let timestamps = shared_storage
+                    .get_video_timestamps(download_id)
+                    .await
+                    .unwrap_or_default();
                 let (ts_buttons, ts_text) = build_timestamp_ui(&timestamps, "clip", download_id);
 
                 // Build keyboard with timestamp buttons and cancel button
@@ -957,9 +952,9 @@ pub async fn handle_downloads_callback(
                 return Ok(());
             }
             let cut_id = parts[2].parse::<i64>().unwrap_or(0);
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id)
+            if let Some(cut) = shared_storage
+                .get_cut_entry(chat_id.0, cut_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 if cut.file_id.is_none() {
@@ -1002,9 +997,9 @@ pub async fn handle_downloads_callback(
                 return Ok(());
             }
             let download_id = parts[2].parse::<i64>().unwrap_or(0);
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id)
+            if let Some(download) = shared_storage
+                .get_download_history_entry(chat_id.0, download_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 if download.format != "mp4" {
@@ -1042,10 +1037,13 @@ pub async fn handle_downloads_callback(
                     })?;
 
                 // Get user language for localization
-                let lang = crate::i18n::user_lang(&conn, chat_id.0);
+                let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
 
                 // Fetch timestamps and build UI
-                let timestamps = db::get_video_timestamps(&conn, download_id).unwrap_or_default();
+                let timestamps = shared_storage
+                    .get_video_timestamps(download_id)
+                    .await
+                    .unwrap_or_default();
                 let (ts_buttons, ts_text) = build_timestamp_ui(&timestamps, "circle", download_id);
 
                 // Build keyboard: duration buttons + subtitle button + timestamp buttons + cancel button
@@ -1077,9 +1075,9 @@ pub async fn handle_downloads_callback(
                 return Ok(());
             }
             let cut_id = parts[2].parse::<i64>().unwrap_or(0);
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id)
+            if let Some(cut) = shared_storage
+                .get_cut_entry(chat_id.0, cut_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 if cut.file_id.is_none() {
@@ -1178,9 +1176,6 @@ pub async fn handle_downloads_callback(
             let sub_lang = parts[2];
             let download_id = parts[3].parse::<i64>().unwrap_or(0);
 
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
             // Update session subtitle_lang
             if let Some(mut session) = shared_storage
                 .clone()
@@ -1202,8 +1197,11 @@ pub async fn handle_downloads_callback(
                     })?;
 
                 // Rebuild circle menu with updated subtitle state
-                let lang = crate::i18n::user_lang(&conn, chat_id.0);
-                let timestamps = db::get_video_timestamps(&conn, download_id).unwrap_or_default();
+                let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
+                let timestamps = shared_storage
+                    .get_video_timestamps(download_id)
+                    .await
+                    .unwrap_or_default();
                 let (ts_buttons, ts_text) = build_timestamp_ui(&timestamps, "circle", download_id);
 
                 let mut keyboard_rows = build_duration_buttons(download_id, &lang);
@@ -1245,10 +1243,9 @@ pub async fn handle_downloads_callback(
             let download_id = parts[3].parse::<i64>().unwrap_or(0);
             let time_seconds = parts[4].parse::<i64>().unwrap_or(0);
 
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-            if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id)
+            if let Some(download) = shared_storage
+                .get_download_history_entry(chat_id.0, download_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 // Delete the prompt message
@@ -1334,10 +1331,9 @@ pub async fn handle_downloads_callback(
                 60 // default for "full"
             };
 
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-            if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id)
+            if let Some(download) = shared_storage
+                .get_download_history_entry(chat_id.0, download_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 // Delete the prompt message
@@ -1419,9 +1415,9 @@ pub async fn handle_downloads_callback(
                 return Ok(());
             }
             let download_id = parts[2].parse::<i64>().unwrap_or(0);
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id)
+            if let Some(download) = shared_storage
+                .get_download_history_entry(chat_id.0, download_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 let speed_options = vec![
@@ -1463,9 +1459,9 @@ pub async fn handle_downloads_callback(
                 return Ok(());
             }
             let cut_id = parts[2].parse::<i64>().unwrap_or(0);
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id)
+            if let Some(cut) = shared_storage
+                .get_cut_entry(chat_id.0, cut_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 let speed_options = vec![
@@ -1509,9 +1505,9 @@ pub async fn handle_downloads_callback(
             let speed_str = parts[2];
             let download_id = parts[3].parse::<i64>().unwrap_or(0);
             let speed: f32 = speed_str.parse().unwrap_or(1.0);
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id)
+            if let Some(download) = shared_storage
+                .get_download_history_entry(chat_id.0, download_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 if let Some(file_id) = download.file_id {
@@ -1538,23 +1534,27 @@ pub async fn handle_downloads_callback(
                                 .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()))
                                 .or_else(|| sent_message.audio().map(|a| a.file.id.0.clone()));
                             if let Some(fid) = new_file_id {
-                                if let Ok(db_id) = db::save_download_history(
-                                    &conn,
-                                    chat_id.0,
-                                    &download.url,
-                                    &new_title,
-                                    "mp4",
-                                    Some(&fid),
-                                    download.author.as_deref(),
-                                    Some(file_size),
-                                    new_duration,
-                                    download.video_quality.as_deref(),
-                                    None,
-                                    None,
-                                    None,
-                                ) {
+                                if let Ok(db_id) = shared_storage
+                                    .save_download_history(
+                                        chat_id.0,
+                                        &download.url,
+                                        &new_title,
+                                        "mp4",
+                                        Some(&fid),
+                                        download.author.as_deref(),
+                                        Some(file_size),
+                                        new_duration,
+                                        download.video_quality.as_deref(),
+                                        None,
+                                        None,
+                                        None,
+                                    )
+                                    .await
+                                {
                                     // Save message_id for MTProto file_reference refresh
-                                    let _ = db::update_download_message_id(&conn, db_id, sent_message.id.0, chat_id.0);
+                                    let _ = shared_storage
+                                        .update_download_message_id(db_id, sent_message.id.0, chat_id.0)
+                                        .await;
                                 }
                             }
                         }
@@ -1587,9 +1587,9 @@ pub async fn handle_downloads_callback(
             let speed_str = parts[2];
             let cut_id = parts[3].parse::<i64>().unwrap_or(0);
             let speed: f32 = speed_str.parse().unwrap_or(1.0);
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id)
+            if let Some(cut) = shared_storage
+                .get_cut_entry(chat_id.0, cut_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 if let Some(file_id) = cut.file_id {
@@ -1620,23 +1620,27 @@ pub async fn handle_downloads_callback(
                                 .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()))
                                 .or_else(|| sent_message.audio().map(|a| a.file.id.0.clone()));
                             if let Some(fid) = new_file_id {
-                                if let Ok(db_id) = db::save_download_history(
-                                    &conn,
-                                    chat_id.0,
-                                    &cut.original_url,
-                                    &new_title,
-                                    "mp4",
-                                    Some(&fid),
-                                    None,
-                                    Some(file_size),
-                                    new_duration,
-                                    cut.video_quality.as_deref(),
-                                    None,
-                                    None,
-                                    None,
-                                ) {
+                                if let Ok(db_id) = shared_storage
+                                    .save_download_history(
+                                        chat_id.0,
+                                        &cut.original_url,
+                                        &new_title,
+                                        "mp4",
+                                        Some(&fid),
+                                        None,
+                                        Some(file_size),
+                                        new_duration,
+                                        cut.video_quality.as_deref(),
+                                        None,
+                                        None,
+                                        None,
+                                    )
+                                    .await
+                                {
                                     // Save message_id for MTProto file_reference refresh
-                                    let _ = db::update_download_message_id(&conn, db_id, sent_message.id.0, chat_id.0);
+                                    let _ = shared_storage
+                                        .update_download_message_id(db_id, sent_message.id.0, chat_id.0)
+                                        .await;
                                 }
                             }
                         }
@@ -1667,10 +1671,9 @@ pub async fn handle_downloads_callback(
                 return Ok(());
             }
             let download_id = parts[2].parse::<i64>().unwrap_or(0);
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-            if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id)
+            if let Some(download) = shared_storage
+                .get_download_history_entry(chat_id.0, download_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 let loading_msg = bot
@@ -1720,10 +1723,9 @@ pub async fn handle_downloads_callback(
                 return Ok(());
             }
             let download_id = parts[2].parse::<i64>().unwrap_or(0);
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-            if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id)
+            if let Some(download) = shared_storage
+                .get_download_history_entry(chat_id.0, download_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 let lang_options = vec![
@@ -1764,10 +1766,9 @@ pub async fn handle_downloads_callback(
             }
             let lang_code = parts[2].to_string();
             let download_id = parts[3].parse::<i64>().unwrap_or(0);
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-            if let Some(download) = db::get_download_history_entry(&conn, chat_id.0, download_id)
+            if let Some(download) = shared_storage
+                .get_download_history_entry(chat_id.0, download_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 if let Some(file_id) = download.file_id.clone() {
@@ -1780,13 +1781,17 @@ pub async fn handle_downloads_callback(
                     let processing_msg = bot.send_message(chat_id, status_text).await?;
 
                     // Get message_id for MTProto fallback
-                    let message_info = db::get_download_message_info(&conn, download_id).ok().flatten();
+                    let message_info = shared_storage
+                        .get_download_message_info(download_id)
+                        .await
+                        .ok()
+                        .flatten();
                     let (fallback_message_id, fallback_chat_id) = message_info.unzip();
 
                     let bot = bot.clone();
                     let url = download.url.clone();
                     let title = download.title.clone();
-                    let db_pool = Arc::clone(&db_pool);
+                    let shared_storage = Arc::clone(&shared_storage);
                     let username = username.clone();
 
                     tokio::spawn(async move {
@@ -1884,19 +1889,18 @@ pub async fn handle_downloads_callback(
                                 bot.delete_message(chat_id, processing_msg.id).await.ok();
 
                                 // Save to download history
-                                if let Ok(conn) = db::get_connection(&db_pool) {
-                                    let new_file_id = sent_message
-                                        .video()
-                                        .map(|v| v.file.id.0.clone())
-                                        .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
-                                    let file_size = tokio::fs::metadata(&actual_path)
-                                        .await
-                                        .map(|m| m.len() as i64)
-                                        .unwrap_or(0);
-                                    if let Some(fid) = new_file_id {
-                                        let new_title = format!("{} [{} subs]", title, lang_code);
-                                        if let Ok(db_id) = db::save_download_history(
-                                            &conn,
+                                let new_file_id = sent_message
+                                    .video()
+                                    .map(|v| v.file.id.0.clone())
+                                    .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
+                                let file_size = tokio::fs::metadata(&actual_path)
+                                    .await
+                                    .map(|m| m.len() as i64)
+                                    .unwrap_or(0);
+                                if let Some(fid) = new_file_id {
+                                    let new_title = format!("{} [{} subs]", title, lang_code);
+                                    if let Ok(db_id) = shared_storage
+                                        .save_download_history(
                                             chat_id.0,
                                             &url,
                                             &new_title,
@@ -1909,14 +1913,12 @@ pub async fn handle_downloads_callback(
                                             None,
                                             None,
                                             None,
-                                        ) {
-                                            let _ = db::update_download_message_id(
-                                                &conn,
-                                                db_id,
-                                                sent_message.id.0,
-                                                chat_id.0,
-                                            );
-                                        }
+                                        )
+                                        .await
+                                    {
+                                        let _ = shared_storage
+                                            .update_download_message_id(db_id, sent_message.id.0, chat_id.0)
+                                            .await;
                                     }
                                 }
 
@@ -1962,10 +1964,10 @@ pub async fn handle_downloads_callback(
                 return Ok(());
             }
             let download_id = parts[2].parse::<i64>().unwrap_or(0);
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            let user_cats = db::get_user_categories(&conn, chat_id.0).unwrap_or_default();
-            let download = db::get_download_history_entry(&conn, chat_id.0, download_id)
+            let user_cats = shared_storage.get_user_categories(chat_id.0).await.unwrap_or_default();
+            let download = shared_storage
+                .get_download_history_entry(chat_id.0, download_id)
+                .await
                 .ok()
                 .flatten();
             let mut rows: Vec<Vec<InlineKeyboardButton>> = user_cats
@@ -2006,12 +2008,12 @@ pub async fn handle_downloads_callback(
                 .get(3)
                 .filter(|s| !s.is_empty())
                 .map(|s| urlencoding::decode(s).unwrap_or_default().to_string());
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            let _ = db::set_download_category(&conn, chat_id.0, download_id, category.as_deref());
+            let _ = shared_storage
+                .set_download_category(chat_id.0, download_id, category.as_deref())
+                .await;
 
             // Reload download and rebuild resend keyboard with updated category button
-            if let Ok(Some(download)) = db::get_download_history_entry(&conn, chat_id.0, download_id) {
+            if let Ok(Some(download)) = shared_storage.get_download_history_entry(chat_id.0, download_id).await {
                 let mut options: Vec<Vec<InlineKeyboardButton>> = Vec::new();
                 if download.format == "mp3" {
                     options.push(vec![
@@ -2096,8 +2098,6 @@ pub async fn handle_downloads_callback(
                 return Ok(());
             }
             let download_id = parts[2].parse::<i64>().unwrap_or(0);
-            let _conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
             let _ = shared_storage.create_new_category_session(chat_id.0, download_id).await;
             bot.edit_message_text(
                 chat_id,
