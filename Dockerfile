@@ -11,7 +11,8 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates ./crates
 COPY locales ./locales
 COPY migrations ./migrations
-COPY assets ./assets
+# NOTE: assets/ intentionally NOT copied here — planner only needs Cargo.toml/src
+# to generate recipe.json. Copying assets would invalidate cache on every PNG change.
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS rust-builder
@@ -36,8 +37,7 @@ COPY locales ./locales
 COPY migrations ./migrations
 COPY assets ./assets
 
-RUN cargo build --release -p doradura && \
-    cargo build --release -p health-monitor && \
+RUN cargo build --release -p doradura -p health-monitor && \
     cp /app/target/release/doradura /app/doradura-bin && \
     cp /app/target/release/health-monitor /app/health-monitor-bin && \
     strip /app/doradura-bin && \
