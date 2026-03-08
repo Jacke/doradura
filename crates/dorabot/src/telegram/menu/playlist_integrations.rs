@@ -341,12 +341,11 @@ async fn show_playlist_list(
     bot: &Bot,
     chat_id: ChatId,
     page: usize,
-    db_pool: &Arc<DbPool>,
+    _db_pool: &Arc<DbPool>,
     shared_storage: &Arc<SharedStorage>,
     edit_msg: Option<MessageId>,
 ) {
     set_waiting_for_import_url(shared_storage, chat_id.0, false).await;
-    let _ = db_pool;
     let playlists = shared_storage
         .get_user_synced_playlists(chat_id.0)
         .await
@@ -583,7 +582,7 @@ async fn play_all(
         .await;
 
     let bot_clone = bot.clone();
-    let db_pool_clone = db_pool.clone();
+    let _db_pool_clone = db_pool.clone();
     let shared_storage_clone = Arc::clone(shared_storage);
     let pl_name = pl.name.clone();
     let msg_id = message_id;
@@ -636,7 +635,7 @@ async fn play_all(
                 bitrate: None,
                 time_range: None,
             };
-            let lang = crate::i18n::user_lang_from_pool(&db_pool_clone, chat_id.0);
+            let lang = crate::i18n::user_lang_from_storage(&shared_storage_clone, chat_id.0).await;
             let mut progress_msg = ProgressMessage::new(chat_id, lang);
 
             let result = timeout(
@@ -875,7 +874,7 @@ async fn download_single_track(
     chat_id: ChatId,
     playlist_id: i64,
     track_id: i64,
-    db_pool: &Arc<DbPool>,
+    _db_pool: &Arc<DbPool>,
     shared_storage: &Arc<SharedStorage>,
 ) {
     // Auth check: verify playlist belongs to user
@@ -928,7 +927,7 @@ async fn download_single_track(
         bitrate: None,
         time_range: None,
     };
-    let lang = crate::i18n::user_lang_from_pool(db_pool, chat_id.0);
+    let lang = crate::i18n::user_lang_from_storage(shared_storage, chat_id.0).await;
     let mut progress_msg = ProgressMessage::new(chat_id, lang);
 
     let result = timeout(

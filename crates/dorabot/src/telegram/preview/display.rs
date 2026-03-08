@@ -78,7 +78,7 @@ pub async fn send_preview(
     shared_storage: Arc<SharedStorage>,
     time_range: Option<&(String, String)>,
 ) -> ResponseResult<Message> {
-    let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     // Override format for photo posts (Instagram photos shouldn't show MP3 button)
     let default_format = if metadata.is_photo { "photo" } else { default_format };
@@ -417,7 +417,7 @@ pub async fn update_preview_message(
     shared_storage: Arc<SharedStorage>,
     time_range: Option<&(String, String)>,
 ) -> ResponseResult<()> {
-    let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     // Override format for photo posts (Instagram photos shouldn't show MP3 button)
     let default_format = if metadata.is_photo { "photo" } else { default_format };

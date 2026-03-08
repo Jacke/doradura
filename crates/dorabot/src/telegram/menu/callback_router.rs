@@ -73,7 +73,7 @@ pub async fn handle_menu_callback(
                 }
             }
 
-            let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+            let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
             // Lyrics callbacks
             if data.starts_with("lyr:") {
                 let lyr_query = CallbackQuery {

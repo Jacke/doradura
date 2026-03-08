@@ -650,7 +650,7 @@ fn pre_checkout_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                 }
             } else {
                 // Reject unknown payment types
-                let lang = i18n::user_lang_from_pool(&deps.db_pool, user_id as i64);
+                let lang = i18n::user_lang_from_storage(&deps.shared_storage, user_id as i64).await;
                 match bot
                     .answer_pre_checkout_query(query_id.clone(), false)
                     .error_message(i18n::t(&lang, "payment.unknown_type"))

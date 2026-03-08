@@ -422,7 +422,7 @@ async fn download_player_track(
     bot: &Bot,
     chat_id: ChatId,
     item: &PlaylistItem,
-    db_pool: &Arc<DbPool>,
+    _db_pool: &Arc<DbPool>,
     shared_storage: &Arc<SharedStorage>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let url = Url::parse(&item.url)?;
@@ -442,7 +442,7 @@ async fn download_player_track(
         time_range: None,
     };
 
-    let lang = crate::i18n::user_lang_from_pool(db_pool, chat_id.0);
+    let lang = crate::i18n::user_lang_from_storage(shared_storage, chat_id.0).await;
     let mut progress_msg = ProgressMessage::new(chat_id, lang);
 
     // Download phase
