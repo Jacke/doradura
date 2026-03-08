@@ -203,6 +203,7 @@ async fn process_single_task(
         message_id: task_message_id,
         created_timestamp,
         carousel_mask,
+        with_lyrics,
         ..
     } = task;
 
@@ -255,6 +256,7 @@ async fn process_single_task(
                 task_message_id,
                 alert_manager.clone(),
                 time_range.clone(),
+                with_lyrics,
             )
             .await
         }

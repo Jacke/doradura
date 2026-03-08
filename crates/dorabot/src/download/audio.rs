@@ -36,6 +36,7 @@ pub async fn download_and_send_audio(
     message_id: Option<i32>,
     alert_manager: Option<Arc<crate::core::alerts::AlertManager>>,
     time_range: Option<(String, String)>,
+    with_lyrics: bool,
 ) -> ResponseResult<()> {
     log::info!(
         "Starting download_and_send_audio for chat {} with URL: {}",
@@ -109,7 +110,7 @@ pub async fn download_and_send_audio(
             add_audio_effects_button(&bot_clone, chat_id, &pipeline_result, db_pool_clone.as_ref()).await;
 
             // Lyrics highlights: fetch lyrics + LLM highlight in background, send as reply
-            {
+            if with_lyrics {
                 let bot_lyr = bot_clone.clone();
                 let title_lyr = pipeline_result.title.clone();
                 let artist_lyr = pipeline_result.artist.clone();
