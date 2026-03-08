@@ -14,8 +14,8 @@ use crate::download::audio_effects::{AudioEffectSession, MorphProfile};
 use crate::storage::db;
 use crate::storage::db::{
     AudioCutSession, Charge, CookiesUploadSession, CutEntry, DbConnection, DbPool, DownloadHistoryEntry, EnqueueResult,
-    GlobalStats, PlayerSession, Playlist, PlaylistItem, SubtitleStyle, SyncedPlaylist, SyncedTrack, TaskQueueEntry,
-    User, UserCounts, UserStats, UserVault, VideoClipSession,
+    GlobalStats, PlayerSession, Playlist, PlaylistItem, SentFile, SubtitleStyle, SyncedPlaylist, SyncedTrack,
+    TaskQueueEntry, User, UserCounts, UserStats, UserVault, VideoClipSession,
 };
 use crate::storage::uploads::{self, NewUpload, UploadEntry};
 use crate::timestamps::{TimestampSource, VideoTimestamp};
@@ -1249,6 +1249,69 @@ impl SharedStorage {
                 .await
                 .context("postgres search_users")?;
                 rows.into_iter().map(map_pg_user).collect()
+            }
+        }
+    }
+
+    pub async fn get_all_users(&self) -> Result<Vec<User>> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite get_all_users connection")?;
+                db::get_all_users(&conn).context("sqlite get_all_users")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let rows = sqlx::query(
+                    "SELECT
+                        u.telegram_id,
+                        u.username,
+                        COALESCE(s.plan, u.plan) AS plan,
+                        u.download_format,
+                        u.download_subtitles,
+                        u.video_quality,
+                        u.audio_bitrate,
+                        u.language,
+                        u.send_as_document,
+                        u.send_audio_as_document,
+                        CAST(s.expires_at AS TEXT) AS subscription_expires_at,
+                        s.telegram_charge_id,
+                        COALESCE(s.is_recurring, 0) AS is_recurring,
+                        COALESCE(u.burn_subtitles, 0) AS burn_subtitles,
+                        COALESCE(u.progress_bar_style, 'classic') AS progress_bar_style,
+                        COALESCE(u.is_blocked, 0) AS is_blocked
+                     FROM users u
+                     LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
+                     ORDER BY u.telegram_id",
+                )
+                .fetch_all(pg_pool)
+                .await
+                .context("postgres get_all_users")?;
+                rows.into_iter().map(map_pg_user).collect()
+            }
+        }
+    }
+
+    pub async fn get_sent_files(&self, limit: Option<i32>) -> Result<Vec<SentFile>> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite get_sent_files connection")?;
+                db::get_sent_files(&conn, limit).context("sqlite get_sent_files")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let rows = sqlx::query(
+                    "SELECT dh.id, dh.user_id, u.username, dh.url, dh.title, dh.format,
+                            CAST(dh.downloaded_at AS TEXT) AS downloaded_at, dh.file_id,
+                            dh.message_id, dh.chat_id
+                     FROM download_history dh
+                     LEFT JOIN users u ON u.telegram_id = dh.user_id
+                     WHERE dh.file_id IS NOT NULL
+                     ORDER BY dh.downloaded_at DESC
+                     LIMIT $1",
+                )
+                .bind(i64::from(limit.unwrap_or(50)))
+                .fetch_all(pg_pool)
+                .await
+                .context("postgres get_sent_files")?;
+                rows.into_iter().map(map_pg_sent_file).collect()
             }
         }
     }
@@ -6248,6 +6311,21 @@ fn map_pg_charge(row: sqlx::postgres::PgRow) -> Result<Charge> {
         subscription_expiration_date: row.get("subscription_expiration_date"),
         payment_date: row.get("payment_date"),
         created_at: row.get("created_at"),
+    })
+}
+
+fn map_pg_sent_file(row: sqlx::postgres::PgRow) -> Result<SentFile> {
+    Ok(SentFile {
+        id: row.get("id"),
+        user_id: row.get("user_id"),
+        username: row.get("username"),
+        url: row.get("url"),
+        title: row.get("title"),
+        format: row.get("format"),
+        downloaded_at: row.get("downloaded_at"),
+        file_id: row.get("file_id"),
+        message_id: row.get("message_id"),
+        chat_id: row.get("chat_id"),
     })
 }
 

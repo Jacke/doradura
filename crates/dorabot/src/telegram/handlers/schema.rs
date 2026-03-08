@@ -286,8 +286,15 @@ fn send_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                 let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
                 let message_text = msg.text().unwrap_or_default();
 
-                if let Err(e) =
-                    handle_send_command(&bot, msg.chat.id, user_id, message_text, deps.db_pool.clone()).await
+                if let Err(e) = handle_send_command(
+                    &bot,
+                    msg.chat.id,
+                    user_id,
+                    message_text,
+                    deps.db_pool.clone(),
+                    deps.shared_storage.clone(),
+                )
+                .await
                 {
                     log::error!("/send handler failed for user {}: {}", user_id, e);
                     let _ = bot.send_message(msg.chat.id, format!("Error: {}", e)).await;
@@ -309,8 +316,15 @@ fn broadcast_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                 let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
                 let message_text = msg.text().unwrap_or_default();
 
-                if let Err(e) =
-                    handle_broadcast_command(&bot, msg.chat.id, user_id, message_text, deps.db_pool.clone()).await
+                if let Err(e) = handle_broadcast_command(
+                    &bot,
+                    msg.chat.id,
+                    user_id,
+                    message_text,
+                    deps.db_pool.clone(),
+                    deps.shared_storage.clone(),
+                )
+                .await
                 {
                     log::error!("/broadcast handler failed for user {}: {}", user_id, e);
                     let _ = bot.send_message(msg.chat.id, format!("Error: {}", e)).await;
@@ -413,7 +427,15 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                     Command::Users => {
                         let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
                         let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
-                        let _ = handle_users_command(&bot, msg.chat.id, username, user_id, deps.db_pool.clone()).await;
+                        let _ = handle_users_command(
+                            &bot,
+                            msg.chat.id,
+                            username,
+                            user_id,
+                            deps.db_pool.clone(),
+                            deps.shared_storage.clone(),
+                        )
+                        .await;
                     }
                     Command::Setplan => {
                         let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
@@ -458,6 +480,7 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                             user_id,
                             username,
                             deps.db_pool.clone(),
+                            deps.shared_storage.clone(),
                             message_text,
                         )
                         .await;

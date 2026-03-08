@@ -30,7 +30,7 @@ use crate::download::ytdlp;
 
 use crate::core::config::admin::{ADMIN_IDS, ADMIN_USER_ID};
 use crate::storage::backup::{create_backup, list_backups};
-use crate::storage::db::{get_all_users, get_connection, DbPool};
+use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -802,6 +802,7 @@ pub async fn handle_users_command(
     username: Option<&str>,
     user_id: i64,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> Result<()> {
     log::debug!("Users command: username={:?}, is_admin={}", username, is_admin(user_id));
 
@@ -812,8 +813,8 @@ pub async fn handle_users_command(
         return Ok(());
     }
 
-    let conn = get_connection(&db_pool)?;
-    let users = get_all_users(&conn)?;
+    let _ = db_pool;
+    let users = shared_storage.get_all_users().await?;
 
     log::debug!("Found {} users in database", users.len());
 
@@ -1936,10 +1937,9 @@ pub async fn handle_sent_files_command(
     user_id: i64,
     username: Option<&str>,
     db_pool: std::sync::Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     message_text: &str,
 ) -> Result<()> {
-    use crate::storage::db::{get_connection, get_sent_files};
-
     // Check admin permissions
     if !is_admin(user_id) {
         bot.send_message(chat_id, "❌ This command is only available to administrators.")
@@ -1961,11 +1961,9 @@ pub async fn handle_sent_files_command(
         limit
     );
 
-    // Get connection from pool
-    let conn = get_connection(&db_pool)?;
+    let _ = db_pool;
 
-    // Retrieve sent files
-    match get_sent_files(&conn, limit) {
+    match shared_storage.get_sent_files(limit).await {
         Ok(files) => {
             if files.is_empty() {
                 bot.send_message(
@@ -3271,6 +3269,7 @@ pub async fn handle_send_command(
     user_id: i64,
     message_text: &str,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> Result<()> {
     if !is_admin(user_id) {
         bot.send_message(chat_id, "Access denied.").await?;
@@ -3299,8 +3298,8 @@ pub async fn handle_send_command(
     let text = parts[2].trim();
 
     // Check that user exists in DB
-    let conn = get_connection(&db_pool)?;
-    if crate::storage::db::get_user(&conn, target_id)?.is_none() {
+    let _ = db_pool;
+    if shared_storage.get_user(target_id).await?.is_none() {
         bot.send_message(chat_id, format!("User {} not found in database.", target_id))
             .await?;
         return Ok(());
@@ -3335,6 +3334,7 @@ pub async fn handle_broadcast_command(
     user_id: i64,
     message_text: &str,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> Result<()> {
     if !is_admin(user_id) {
         bot.send_message(chat_id, "Access denied.").await?;
@@ -3353,8 +3353,8 @@ pub async fn handle_broadcast_command(
         }
     };
 
-    let conn = get_connection(&db_pool)?;
-    let users = get_all_users(&conn)?;
+    let _ = db_pool;
+    let users = shared_storage.get_all_users().await?;
     let total = users.len();
 
     bot.send_message(chat_id, format!("Broadcasting to {} users...", total))
