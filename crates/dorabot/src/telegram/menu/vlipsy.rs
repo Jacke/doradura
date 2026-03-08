@@ -85,7 +85,7 @@ pub async fn handle_search_text(
 
     let text = text.trim();
     if text.eq_ignore_ascii_case("cancel") {
-        let _ = crate::telegram::show_enhanced_main_menu(bot, chat_id, _db_pool).await;
+        let _ = crate::telegram::show_enhanced_main_menu(bot, chat_id, _db_pool, shared_storage).await;
         return;
     }
 

@@ -603,7 +603,13 @@ async fn test_real_show_main_menu() {
     test.mock_all_telegram_api().await;
 
     // Call the REAL function
-    let result = show_main_menu(test.bot(), ChatId(123456789), test.deps.db_pool.clone()).await;
+    let result = show_main_menu(
+        test.bot(),
+        ChatId(123456789),
+        test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
+    )
+    .await;
     assert!(result.is_ok(), "show_main_menu should succeed");
 
     // Verify what was sent to Telegram API
@@ -660,7 +666,13 @@ async fn test_real_show_enhanced_main_menu() {
     test.mock_all_telegram_api().await;
 
     // Call the REAL function
-    let result = show_enhanced_main_menu(test.bot(), ChatId(123456789), test.deps.db_pool.clone()).await;
+    let result = show_enhanced_main_menu(
+        test.bot(),
+        ChatId(123456789),
+        test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
+    )
+    .await;
     assert!(result.is_ok(), "show_enhanced_main_menu should succeed");
 
     // Verify the request
@@ -1595,7 +1607,13 @@ async fn test_enhanced_menu_has_services_button() {
     test.create_test_user(123456789, "testuser", "en");
     test.mock_all_telegram_api().await;
 
-    let result = show_enhanced_main_menu(test.bot(), ChatId(123456789), test.deps.db_pool.clone()).await;
+    let result = show_enhanced_main_menu(
+        test.bot(),
+        ChatId(123456789),
+        test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
+    )
+    .await;
     assert!(result.is_ok());
 
     let requests = test.mock_server.received_requests().await.unwrap();

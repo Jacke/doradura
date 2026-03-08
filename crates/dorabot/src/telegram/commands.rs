@@ -388,7 +388,9 @@ pub async fn handle_message(
             // Send confirmation to user and return to main menu
             let _ =
                 crate::telegram::feedback::send_feedback_confirmation(&bot, msg.chat.id, &lang, &shared_storage).await;
-            let _ = crate::telegram::show_enhanced_main_menu(&bot, msg.chat.id, db_pool.clone()).await;
+            let _ =
+                crate::telegram::show_enhanced_main_menu(&bot, msg.chat.id, db_pool.clone(), shared_storage.clone())
+                    .await;
 
             return Ok(None);
         }
@@ -990,6 +992,7 @@ pub async fn handle_message(
                             default_quality,
                             Some(processing_msg.id),
                             Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
                             time_range.as_ref(),
                         )
                         .await

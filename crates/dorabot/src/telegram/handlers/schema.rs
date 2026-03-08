@@ -344,7 +344,8 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                         handle_start_command(&bot, &msg, &deps).await?;
                     }
                     Command::Settings => {
-                        let _ = show_main_menu(&bot, msg.chat.id, deps.db_pool.clone()).await;
+                        let _ =
+                            show_main_menu(&bot, msg.chat.id, deps.db_pool.clone(), deps.shared_storage.clone()).await;
                     }
                     Command::Info => {
                         log::info!("⚡ Command::Info matched, calling handle_info_command");

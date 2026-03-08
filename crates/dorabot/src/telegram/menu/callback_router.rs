@@ -1,7 +1,6 @@
 use crate::core::history::handle_history_callback;
 use crate::core::rate_limiter::RateLimiter;
 use crate::core::subscription::{create_subscription_invoice, show_subscription_info};
-use crate::core::types::Plan;
 use crate::download::queue::{DownloadQueue, DownloadTask};
 use crate::downsub::DownsubGateway;
 use crate::extension::ExtensionRegistry;
@@ -236,7 +235,16 @@ pub async fn handle_menu_callback(
                 match action {
                     "settings" => {
                         // Show the old main menu (current /mode functionality)
-                        edit_main_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None, None).await?;
+                        edit_main_menu(
+                            &bot,
+                            chat_id,
+                            message_id,
+                            Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
+                            None,
+                            None,
+                        )
+                        .await?;
                     }
                     "current" => {
                         // Show detailed current settings
@@ -437,7 +445,8 @@ pub async fn handle_menu_callback(
 
                     // Delete language selection message and show main menu
                     let _ = bot.delete_message(chat_id, message_id).await;
-                    let _ = show_enhanced_main_menu(&bot, chat_id, Arc::clone(&db_pool)).await;
+                    let _ =
+                        show_enhanced_main_menu(&bot, chat_id, Arc::clone(&db_pool), Arc::clone(&shared_storage)).await;
 
                     // Send random voice message in background
                     let bot_voice = bot.clone();
@@ -504,9 +513,25 @@ pub async fn handle_menu_callback(
                         .await;
 
                     if preview_url_id.is_some() {
-                        edit_main_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), preview_url_id, None).await?;
+                        edit_main_menu(
+                            &bot,
+                            chat_id,
+                            message_id,
+                            Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
+                            preview_url_id,
+                            None,
+                        )
+                        .await?;
                     } else {
-                        edit_enhanced_main_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
+                        edit_enhanced_main_menu(
+                            &bot,
+                            chat_id,
+                            message_id,
+                            Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
+                        )
+                        .await?;
                     }
                 } else {
                     bot.answer_callback_query(callback_id)
@@ -611,6 +636,7 @@ pub async fn handle_menu_callback(
                     chat_id,
                     &data,
                     Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
                 )
                 .await
                 {
@@ -890,13 +916,12 @@ pub async fn handle_menu_callback(
                         Some(url_str) => {
                             match url::Url::parse(&url_str) {
                                 Ok(url) => {
-                                    let conn = db::get_connection(&db_pool).map_err(|e| {
-                                        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                                    })?;
-                                    let current_format = db::get_user_download_format(&conn, chat_id.0)
+                                    let current_format = shared_storage
+                                        .get_user_download_format(chat_id.0)
+                                        .await
                                         .unwrap_or_else(|_| "mp3".to_string());
                                     let video_quality = if current_format == "mp4" {
-                                        db::get_user_video_quality(&conn, chat_id.0).ok()
+                                        shared_storage.get_user_video_quality(chat_id.0).await.ok()
                                     } else {
                                         None
                                     };
@@ -984,6 +1009,7 @@ pub async fn handle_menu_callback(
                         chat_id,
                         message_id,
                         Arc::clone(&db_pool),
+                        Arc::clone(&shared_storage),
                         Some(url_id),
                         preview_msg_id,
                     )
@@ -991,10 +1017,26 @@ pub async fn handle_menu_callback(
                 } else {
                     match data.as_str() {
                         "back:main" => {
-                            edit_main_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None, None).await?;
+                            edit_main_menu(
+                                &bot,
+                                chat_id,
+                                message_id,
+                                Arc::clone(&db_pool),
+                                Arc::clone(&shared_storage),
+                                None,
+                                None,
+                            )
+                            .await?;
                         }
                         "back:enhanced_main" => {
-                            edit_enhanced_main_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
+                            edit_enhanced_main_menu(
+                                &bot,
+                                chat_id,
+                                message_id,
+                                Arc::clone(&db_pool),
+                                Arc::clone(&shared_storage),
+                            )
+                            .await?;
                         }
                         "back:start" => {
                             bot.edit_message_text(
@@ -1193,13 +1235,13 @@ pub async fn handle_menu_callback(
                                     let time_range =
                                         preview_context.as_ref().and_then(|context| context.time_range.clone());
                                     // Get user preferences for quality/bitrate and plan
-                                    let conn = db::get_connection(&db_pool).map_err(|e| {
-                                        RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                                    })?;
-                                    let plan = match db::get_user(&conn, chat_id.0) {
-                                        Ok(Some(ref user)) => user.plan,
-                                        _ => Plan::default(),
-                                    };
+                                    let plan = shared_storage
+                                        .get_user(chat_id.0)
+                                        .await
+                                        .ok()
+                                        .flatten()
+                                        .map(|user| user.plan)
+                                        .unwrap_or_default();
 
                                     // Rate limit disabled - users can download without waiting
                                     let _ = (rate_limiter, &plan); // silence unused warnings
@@ -1211,7 +1253,9 @@ pub async fn handle_menu_callback(
                                             Some(quality)
                                         } else {
                                             Some(
-                                                db::get_user_video_quality(&conn, chat_id.0)
+                                                shared_storage
+                                                    .get_user_video_quality(chat_id.0)
+                                                    .await
                                                     .unwrap_or_else(|_| "best".to_string()),
                                             )
                                         };
@@ -1230,7 +1274,9 @@ pub async fn handle_menu_callback(
 
                                         // Task 2: MP3 (audio)
                                         let audio_bitrate = Some(
-                                            db::get_user_audio_bitrate(&conn, chat_id.0)
+                                            shared_storage
+                                                .get_user_audio_bitrate(chat_id.0)
+                                                .await
                                                 .unwrap_or_else(|_| "320k".to_string()),
                                         );
                                         let mut task_mp3 = DownloadTask::from_plan(
@@ -1272,7 +1318,9 @@ pub async fn handle_menu_callback(
                                             } else {
                                                 // Use the user's saved settings
                                                 Some(
-                                                    db::get_user_video_quality(&conn, chat_id.0)
+                                                    shared_storage
+                                                        .get_user_video_quality(chat_id.0)
+                                                        .await
                                                         .unwrap_or_else(|_| "best".to_string()),
                                                 )
                                             }
@@ -1281,7 +1329,9 @@ pub async fn handle_menu_callback(
                                         };
                                         let audio_bitrate = if format == "mp3" {
                                             Some(
-                                                db::get_user_audio_bitrate(&conn, chat_id.0)
+                                                shared_storage
+                                                    .get_user_audio_bitrate(chat_id.0)
+                                                    .await
                                                     .unwrap_or_else(|_| "320k".to_string()),
                                             )
                                         } else {
@@ -1372,6 +1422,7 @@ pub async fn handle_menu_callback(
                                     &bot,
                                     chat_id,
                                     Arc::clone(&db_pool),
+                                    Arc::clone(&shared_storage),
                                     Some(url_id),
                                     Some(preview_msg_id),
                                 )
@@ -1383,6 +1434,7 @@ pub async fn handle_menu_callback(
                                     chat_id,
                                     message_id,
                                     Arc::clone(&db_pool),
+                                    Arc::clone(&shared_storage),
                                     Some(url_id),
                                     Some(preview_msg_id),
                                 )
@@ -1463,15 +1515,11 @@ pub async fn handle_menu_callback(
                                 }
                             };
 
-                            let (current_format, video_quality) = match crate::storage::db::get_connection(&db_pool) {
-                                Ok(conn) => {
-                                    let fmt = db::get_user_download_format(&conn, chat_id.0)
-                                        .unwrap_or_else(|_| "mp4".to_string());
-                                    let qual = db::get_user_video_quality(&conn, chat_id.0).ok();
-                                    (fmt, qual)
-                                }
-                                Err(_) => ("mp4".to_string(), None),
-                            };
+                            let current_format = shared_storage
+                                .get_user_download_format(chat_id.0)
+                                .await
+                                .unwrap_or_else(|_| "mp4".to_string());
+                            let video_quality = shared_storage.get_user_video_quality(chat_id.0).await.ok();
 
                             match crate::telegram::preview::get_preview_metadata(
                                 &url,

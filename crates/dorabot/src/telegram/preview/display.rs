@@ -75,6 +75,7 @@ pub async fn send_preview(
     default_quality: Option<&str>,
     old_preview_msg_id: Option<MessageId>,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     time_range: Option<&(String, String)>,
 ) -> ResponseResult<Message> {
     let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
@@ -202,22 +203,15 @@ pub async fn send_preview(
             || u.contains("://youtu.be/")
     };
 
-    let (send_as_document, audio_bitrate) = match crate::storage::db::get_connection(&db_pool) {
-        Ok(conn) => {
-            let send_as_document = if has_video_formats {
-                crate::storage::db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0)
-            } else {
-                0
-            };
-            let audio_bitrate =
-                crate::storage::db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
-            (send_as_document, audio_bitrate)
-        }
-        Err(e) => {
-            log::warn!("Failed to get db connection for preview settings: {}", e);
-            (0, "320k".to_string())
-        }
+    let send_as_document = if has_video_formats {
+        shared_storage.get_user_send_as_document(chat_id.0).await.unwrap_or(0)
+    } else {
+        0
     };
+    let audio_bitrate = shared_storage
+        .get_user_audio_bitrate(chat_id.0)
+        .await
+        .unwrap_or_else(|_| "320k".to_string());
 
     // Carousel photo selector: show toggle keyboard instead of standard photo/video buttons
     let keyboard = if metadata.carousel_count > 1 {
@@ -546,25 +540,21 @@ pub async fn update_preview_message(
     };
 
     let mut resolved_quality = default_quality.map(|q| q.to_string());
-    let mut audio_bitrate = "320k".to_string();
+    let audio_bitrate = shared_storage
+        .get_user_audio_bitrate(chat_id.0)
+        .await
+        .unwrap_or_else(|_| "320k".to_string());
     let mut send_as_document = 0;
-    match crate::storage::db::get_connection(&db_pool) {
-        Ok(conn) => {
-            audio_bitrate =
-                crate::storage::db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
-            if has_video_formats {
-                if resolved_quality.is_none() {
-                    resolved_quality = Some(
-                        crate::storage::db::get_user_video_quality(&conn, chat_id.0)
-                            .unwrap_or_else(|_| "best".to_string()),
-                    );
-                }
-                send_as_document = crate::storage::db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0);
-            }
+    if has_video_formats {
+        if resolved_quality.is_none() {
+            resolved_quality = Some(
+                shared_storage
+                    .get_user_video_quality(chat_id.0)
+                    .await
+                    .unwrap_or_else(|_| "best".to_string()),
+            );
         }
-        Err(e) => {
-            log::warn!("Failed to get db connection for preview settings: {}", e);
-        }
+        send_as_document = shared_storage.get_user_send_as_document(chat_id.0).await.unwrap_or(0);
     }
 
     let keyboard = if metadata.carousel_count > 1 {

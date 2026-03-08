@@ -1056,6 +1056,16 @@ impl SharedStorage {
         .await
     }
 
+    pub async fn get_user_download_format(&self, telegram_id: i64) -> Result<String> {
+        self.get_user_string_setting(
+            telegram_id,
+            "download_format",
+            "SELECT download_format FROM users WHERE telegram_id = $1",
+            "mp3",
+        )
+        .await
+    }
+
     pub async fn get_user_audio_bitrate(&self, telegram_id: i64) -> Result<String> {
         self.get_user_string_setting(
             telegram_id,

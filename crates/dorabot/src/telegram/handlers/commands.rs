@@ -40,7 +40,7 @@ pub(super) async fn handle_start_command(bot: &Bot, msg: &Message, deps: &Handle
 
     if user_exists {
         // Existing user - show enhanced main menu
-        let _ = show_enhanced_main_menu(bot, msg.chat.id, deps.db_pool.clone()).await;
+        let _ = show_enhanced_main_menu(bot, msg.chat.id, deps.db_pool.clone(), deps.shared_storage.clone()).await;
         let lang = i18n::user_lang_from_storage(&deps.shared_storage, msg.chat.id.0).await;
         if let Err(e) = setup_chat_bot_commands(bot, msg.chat.id, &lang).await {
             log::warn!("Failed to set chat-specific commands: {}", e);
@@ -96,7 +96,7 @@ pub(super) async fn handle_start_command(bot: &Bot, msg: &Message, deps: &Handle
             }
 
             // Show enhanced main menu in detected language
-            let _ = show_enhanced_main_menu(bot, msg.chat.id, deps.db_pool.clone()).await;
+            let _ = show_enhanced_main_menu(bot, msg.chat.id, deps.db_pool.clone(), deps.shared_storage.clone()).await;
             let lang = i18n::lang_from_code(lang_code);
             if let Err(e) = setup_chat_bot_commands(bot, msg.chat.id, &lang).await {
                 log::warn!("Failed to set chat-specific commands: {}", e);

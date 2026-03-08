@@ -178,6 +178,7 @@ pub async fn handle_instagram_callback(
     chat_id: ChatId,
     data: &str,
     db_pool: std::sync::Arc<crate::storage::db::DbPool>,
+    shared_storage: std::sync::Arc<crate::storage::SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
     let _ = bot.answer_callback_query(callback_id.clone()).await;
 
@@ -199,15 +200,17 @@ pub async fn handle_instagram_callback(
             let processing_msg = bot.send_message(chat_id, "⏳").await?;
 
             // Get user format preference
-            let format = crate::storage::db::get_connection(&db_pool)
+            let format = shared_storage
+                .get_user_download_format(chat_id.0)
+                .await
                 .ok()
-                .and_then(|conn| crate::storage::db::get_user_download_format(&conn, chat_id.0).ok())
                 .unwrap_or_else(|| "mp3".to_string());
 
             let video_quality = if format == "mp4" {
-                crate::storage::db::get_connection(&db_pool)
+                shared_storage
+                    .get_user_video_quality(chat_id.0)
+                    .await
                     .ok()
-                    .and_then(|conn| crate::storage::db::get_user_video_quality(&conn, chat_id.0).ok())
                     .or_else(|| Some("best".to_string()))
             } else {
                 None
@@ -229,6 +232,7 @@ pub async fn handle_instagram_callback(
                         default_quality,
                         Some(processing_msg.id),
                         std::sync::Arc::clone(&db_pool),
+                        std::sync::Arc::clone(&shared_storage),
                         None,
                     )
                     .await
