@@ -143,9 +143,13 @@ impl RealHandlerTest {
         let extension_registry = Arc::new(doradura::extension::ExtensionRegistry::default_registry());
 
         let subtitle_cache = Arc::new(doradura::storage::SubtitleCache::new("/tmp/doradura_test_subtitles"));
+        let shared_storage = Arc::new(doradura::storage::SharedStorage::Sqlite {
+            db_pool: Arc::clone(&db_pool),
+        });
 
         let deps = HandlerDeps::new(
             db_pool,
+            shared_storage,
             download_queue,
             rate_limiter,
             downsub_gateway,
@@ -748,6 +752,7 @@ async fn test_real_handle_menu_callback() {
         test.bot().clone(),
         callback,
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
@@ -798,6 +803,7 @@ async fn test_real_settings_callback() {
         test.bot().clone(),
         callback,
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
@@ -855,6 +861,7 @@ async fn test_real_downloads_callback() {
         test.bot().clone(),
         callback,
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
@@ -912,6 +919,7 @@ async fn test_real_info_callback() {
         test.bot().clone(),
         callback,
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
@@ -1209,6 +1217,7 @@ async fn test_callback_mode_services() {
         test.bot().clone(),
         callback,
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
@@ -1262,6 +1271,7 @@ async fn test_callback_main_services() {
         test.bot().clone(),
         callback,
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
@@ -1303,6 +1313,7 @@ async fn test_callback_ext_detail_ytdlp() {
         test.bot().clone(),
         callback,
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
@@ -1364,6 +1375,7 @@ async fn test_callback_ext_detail_converter() {
         test.bot().clone(),
         callback,
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
@@ -1408,6 +1420,7 @@ async fn test_callback_ext_detail_audio_effects() {
         test.bot().clone(),
         callback,
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
@@ -1451,6 +1464,7 @@ async fn test_callback_ext_detail_http() {
         test.bot().clone(),
         callback,
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
@@ -1495,6 +1509,7 @@ async fn test_callback_ext_back() {
         test.bot().clone(),
         callback,
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
@@ -1556,6 +1571,7 @@ async fn test_callback_ext_detail_nonexistent() {
         test.bot().clone(),
         callback,
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
@@ -1680,6 +1696,7 @@ async fn test_videos_convert_audio_callback_routing() {
         teloxide::types::MessageId(42),
         &format!("videos:convert:audio:{}", upload_id),
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(
@@ -1734,6 +1751,7 @@ async fn test_videos_convert_gif_callback_routing() {
         teloxide::types::MessageId(42),
         &format!("videos:convert:gif:{}", upload_id),
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(
@@ -1776,6 +1794,7 @@ async fn test_videos_convert_compress_callback_routing() {
         teloxide::types::MessageId(42),
         &format!("videos:convert:compress:{}", upload_id),
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(
@@ -1818,6 +1837,7 @@ async fn test_videos_convert_nonexistent_upload() {
         teloxide::types::MessageId(42),
         "videos:convert:audio:99999",
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "Should handle non-existent upload gracefully");
@@ -1842,6 +1862,7 @@ async fn test_videos_cancel_callback() {
         teloxide::types::MessageId(42),
         "videos:cancel",
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "videos:cancel should succeed: {:?}", result.err());
@@ -1872,6 +1893,7 @@ async fn test_videos_unknown_action() {
         teloxide::types::MessageId(42),
         "videos:unknown_action",
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "Unknown action should not crash");
@@ -1897,6 +1919,7 @@ async fn test_videos_malformed_data() {
         teloxide::types::MessageId(42),
         "videos",
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "Malformed data should not crash");
@@ -1918,7 +1941,16 @@ async fn test_show_videos_page_empty() {
     test.create_test_user(123456789, "testuser", "ru");
     test.mock_all_telegram_api().await;
 
-    let result = show_videos_page(test.bot(), ChatId(123456789), test.deps.db_pool.clone(), 0, None, None).await;
+    let result = show_videos_page(
+        test.bot(),
+        ChatId(123456789),
+        test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
+        0,
+        None,
+        None,
+    )
+    .await;
     assert!(result.is_ok(), "show_videos_page should succeed with no uploads");
 
     let requests = test.mock_server.received_requests().await.unwrap();
@@ -1943,7 +1975,16 @@ async fn test_show_videos_page_with_uploads() {
     test.create_test_upload(123456789, "my_photo.jpg", "photo", "file_photo_1");
     test.mock_all_telegram_api().await;
 
-    let result = show_videos_page(test.bot(), ChatId(123456789), test.deps.db_pool.clone(), 0, None, None).await;
+    let result = show_videos_page(
+        test.bot(),
+        ChatId(123456789),
+        test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
+        0,
+        None,
+        None,
+    )
+    .await;
     assert!(result.is_ok(), "show_videos_page should succeed with uploads");
 
     let requests = test.mock_server.received_requests().await.unwrap();
@@ -1980,6 +2021,7 @@ async fn test_show_videos_page_with_filter() {
         test.bot(),
         ChatId(123456789),
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
         0,
         Some("video".to_string()),
         None,
@@ -2009,6 +2051,7 @@ async fn test_ext_detail_ytdlp_all_capabilities() {
         test.bot().clone(),
         callback,
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
@@ -2067,6 +2110,7 @@ async fn test_ext_detail_http_all_capabilities() {
         test.bot().clone(),
         callback,
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
@@ -2118,6 +2162,7 @@ async fn test_ext_detail_converter_all_capabilities() {
         test.bot().clone(),
         callback,
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
@@ -2165,6 +2210,7 @@ async fn test_ext_detail_audio_effects_all_capabilities() {
         test.bot().clone(),
         callback,
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
         test.deps.download_queue.clone(),
         test.deps.rate_limiter.clone(),
         test.deps.extension_registry.clone(),
@@ -2223,6 +2269,7 @@ async fn test_ext_detail_all_locales() {
             test.bot().clone(),
             callback,
             test.deps.db_pool.clone(),
+            test.deps.shared_storage.clone(),
             test.deps.download_queue.clone(),
             test.deps.rate_limiter.clone(),
             test.deps.extension_registry.clone(),
@@ -2295,6 +2342,7 @@ async fn test_videos_page_callback() {
         teloxide::types::MessageId(42),
         "videos:page:0:all:123456789",
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "Page navigation should succeed");
@@ -2320,6 +2368,7 @@ async fn test_videos_delete_callback() {
         teloxide::types::MessageId(42),
         &format!("videos:delete:{}", upload_id),
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "Delete action should succeed");
@@ -2346,6 +2395,7 @@ async fn test_videos_send_callback() {
         teloxide::types::MessageId(42),
         &format!("videos:send:video:{}", upload_id),
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "Send video action should succeed");
@@ -2371,6 +2421,7 @@ async fn test_videos_open_callback() {
         teloxide::types::MessageId(42),
         &format!("videos:open:{}", upload_id),
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "Open action should succeed");
@@ -2502,6 +2553,7 @@ async fn test_videos_submenu_send_edits_message() {
         teloxide::types::MessageId(42),
         &format!("videos:submenu:send:{}", upload_id),
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "Submenu send should succeed");
@@ -2566,6 +2618,7 @@ async fn test_videos_submenu_convert_edits_message() {
         teloxide::types::MessageId(42),
         &format!("videos:submenu:convert:{}", upload_id),
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "Submenu convert should succeed");
@@ -2637,6 +2690,7 @@ async fn test_videos_submenu_deleted_upload() {
         teloxide::types::MessageId(42),
         "videos:submenu:send:99999",
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "Should not error on missing upload");
@@ -2679,6 +2733,7 @@ async fn test_videos_back_navigation() {
         teloxide::types::MessageId(42),
         &format!("videos:open:{}", upload_id),
         test.deps.db_pool.clone(),
+        test.deps.shared_storage.clone(),
     )
     .await;
     assert!(result.is_ok(), "Back navigation should succeed");

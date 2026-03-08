@@ -9,35 +9,41 @@
 
 use crate::i18n;
 use crate::storage::db::DbPool;
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use crate::vlipsy::VlipsyClient;
-use std::collections::HashMap;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{
     CallbackQueryId, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, MessageId, ParseMode,
 };
-use tokio::sync::RwLock;
 use unic_langid::LanguageIdentifier;
 
 const RESULTS_PER_PAGE: u32 = 5;
 
 // ── State tracking ──────────────────────────────────────────────────────────
 
-static VLIPSY_SEARCH_STATES: std::sync::LazyLock<Arc<RwLock<HashMap<i64, bool>>>> =
-    std::sync::LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
+const VLIPSY_SEARCH_PROMPT_KIND: &str = "vlipsy_search";
+const VLIPSY_SEARCH_TTL_SECS: i64 = 300;
 
-pub async fn is_waiting_for_vlipsy_search(user_id: i64) -> bool {
-    let states = VLIPSY_SEARCH_STATES.read().await;
-    states.get(&user_id).copied().unwrap_or(false)
+pub async fn is_waiting_for_vlipsy_search(shared_storage: &Arc<SharedStorage>, user_id: i64) -> bool {
+    shared_storage
+        .get_prompt_session(user_id, VLIPSY_SEARCH_PROMPT_KIND)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
 }
 
-pub async fn set_waiting_for_vlipsy_search(user_id: i64, waiting: bool) {
-    let mut states = VLIPSY_SEARCH_STATES.write().await;
+pub async fn set_waiting_for_vlipsy_search(shared_storage: &Arc<SharedStorage>, user_id: i64, waiting: bool) {
     if waiting {
-        states.insert(user_id, true);
+        let _ = shared_storage
+            .upsert_prompt_session(user_id, VLIPSY_SEARCH_PROMPT_KIND, "", VLIPSY_SEARCH_TTL_SECS)
+            .await;
     } else {
-        states.remove(&user_id);
+        let _ = shared_storage
+            .delete_prompt_session(user_id, VLIPSY_SEARCH_PROMPT_KIND)
+            .await;
     }
 }
 
@@ -47,6 +53,7 @@ pub async fn send_search_prompt(
     bot: &Bot,
     chat_id: ChatId,
     lang: &LanguageIdentifier,
+    shared_storage: &Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
     if !crate::vlipsy::is_available() {
         bot.send_message(chat_id, i18n::t(lang, "vlipsy.unavailable"))
@@ -55,7 +62,7 @@ pub async fn send_search_prompt(
         return Ok(());
     }
 
-    set_waiting_for_vlipsy_search(chat_id.0, true).await;
+    set_waiting_for_vlipsy_search(shared_storage, chat_id.0, true).await;
 
     bot.send_message(chat_id, i18n::t(lang, "vlipsy.search_prompt"))
         .parse_mode(ParseMode::MarkdownV2)
@@ -72,8 +79,9 @@ pub async fn handle_search_text(
     text: &str,
     lang: &LanguageIdentifier,
     _db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) {
-    set_waiting_for_vlipsy_search(chat_id.0, false).await;
+    set_waiting_for_vlipsy_search(&shared_storage, chat_id.0, false).await;
 
     let text = text.trim();
     if text.eq_ignore_ascii_case("cancel") {
@@ -234,12 +242,13 @@ pub async fn handle_vlipsy_callback(
     message_id: MessageId,
     data: &str,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
     let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
 
     if data == "vl:search" {
         let _ = bot.answer_callback_query(callback_id).await;
-        send_search_prompt(bot, chat_id, &lang).await?;
+        send_search_prompt(bot, chat_id, &lang, &shared_storage).await?;
         return Ok(());
     }
 
@@ -352,6 +361,23 @@ async fn send_clip(bot: &Bot, chat_id: ChatId, clip_id: &str, lang: &LanguageIde
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::db;
+    use crate::storage::SharedStorage;
+    use std::sync::Arc;
+    async fn test_shared_storage() -> Arc<SharedStorage> {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let (_file, path) = tmp.keep().unwrap();
+        let db_pool = Arc::new(db::create_pool(path.to_str().unwrap()).unwrap());
+        let conn = db::get_connection(&db_pool).unwrap();
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS users (
+                telegram_id INTEGER PRIMARY KEY
+            )",
+            [],
+        )
+        .unwrap();
+        SharedStorage::from_sqlite_pool(db_pool).await.unwrap()
+    }
 
     #[test]
     fn test_build_page_callback_short_query() {
@@ -393,13 +419,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_state_tracking() {
+        let shared_storage = test_shared_storage().await;
         let user_id = 999_999_999;
-        assert!(!is_waiting_for_vlipsy_search(user_id).await);
+        let conn = db::get_connection(&shared_storage.sqlite_pool()).unwrap();
+        conn.execute("INSERT INTO users (telegram_id) VALUES (?1)", [user_id])
+            .unwrap();
+        assert!(!is_waiting_for_vlipsy_search(&shared_storage, user_id).await);
 
-        set_waiting_for_vlipsy_search(user_id, true).await;
-        assert!(is_waiting_for_vlipsy_search(user_id).await);
+        set_waiting_for_vlipsy_search(&shared_storage, user_id, true).await;
+        assert!(is_waiting_for_vlipsy_search(&shared_storage, user_id).await);
 
-        set_waiting_for_vlipsy_search(user_id, false).await;
-        assert!(!is_waiting_for_vlipsy_search(user_id).await);
+        set_waiting_for_vlipsy_search(&shared_storage, user_id, false).await;
+        assert!(!is_waiting_for_vlipsy_search(&shared_storage, user_id).await);
     }
 }

@@ -10,8 +10,9 @@ use crate::core::rate_limiter::RateLimiter;
 use crate::download::queue::DownloadQueue;
 use crate::downsub::DownsubGateway;
 use crate::extension::ExtensionRegistry;
-use crate::storage::db::{self, create_user, create_user_with_language, get_user};
-use crate::storage::{get_connection, SubtitleCache};
+use crate::storage::db;
+use crate::storage::SharedStorage;
+use crate::storage::SubtitleCache;
 use crate::telegram::notifications::notify_admin_new_user;
 use crate::telegram::Bot;
 
@@ -22,6 +23,7 @@ pub type HandlerError = Box<dyn std::error::Error + Send + Sync + 'static>;
 #[derive(Clone)]
 pub struct HandlerDeps {
     pub db_pool: Arc<db::DbPool>,
+    pub shared_storage: Arc<SharedStorage>,
     pub download_queue: Arc<DownloadQueue>,
     pub rate_limiter: Arc<RateLimiter>,
     pub downsub_gateway: Arc<DownsubGateway>,
@@ -36,6 +38,7 @@ impl HandlerDeps {
     /// Create new handler dependencies
     pub fn new(
         db_pool: Arc<db::DbPool>,
+        shared_storage: Arc<SharedStorage>,
         download_queue: Arc<DownloadQueue>,
         rate_limiter: Arc<RateLimiter>,
         downsub_gateway: Arc<DownsubGateway>,
@@ -47,6 +50,7 @@ impl HandlerDeps {
     ) -> Self {
         Self {
             db_pool,
+            shared_storage,
             download_queue,
             rate_limiter,
             downsub_gateway,
@@ -106,26 +110,22 @@ pub enum UserCreationResult {
 ///
 /// # Returns
 /// `UserCreationResult` indicating whether user existed, was created, or there was an error
-pub fn ensure_user_exists(
-    db_pool: &Arc<db::DbPool>,
+pub async fn ensure_user_exists(
+    shared_storage: &Arc<SharedStorage>,
     bot: &Bot,
     user: &UserInfo,
     first_action: Option<&str>,
 ) -> UserCreationResult {
-    let conn = match get_connection(db_pool) {
-        Ok(c) => c,
-        Err(_) => return UserCreationResult::DbError,
-    };
-
-    // Check if user already exists
-    match get_user(&conn, user.chat_id) {
+    match shared_storage.get_user(user.chat_id).await {
         Ok(Some(_)) => UserCreationResult::Existed,
         Ok(None) => {
             // Create user with language if available
             let create_result = if let Some(ref lang) = user.language_code {
-                create_user_with_language(&conn, user.chat_id, user.username.clone(), lang)
+                shared_storage
+                    .create_user_with_language(user.chat_id, user.username.clone(), Some(lang))
+                    .await
             } else {
-                create_user(&conn, user.chat_id, user.username.clone())
+                shared_storage.create_user(user.chat_id, user.username.clone()).await
             };
 
             if create_result.is_ok() {

@@ -15,7 +15,7 @@ use teloxide::update_listeners::webhooks::{self, Options};
 use teloxide::update_listeners::UpdateListener;
 
 use crate::core::config;
-use crate::storage::db::{self, DbPool};
+use crate::storage::SharedStorage;
 use crate::telegram::handlers::HandlerError;
 use crate::telegram::Bot;
 
@@ -24,7 +24,7 @@ const TELEGRAM_SECRET_HEADER: &str = "X-Telegram-Bot-Api-Secret-Token";
 
 #[derive(Clone)]
 struct DedupState {
-    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     bot_id: i64,
     secret_token: Arc<str>,
 }
@@ -32,7 +32,7 @@ struct DedupState {
 pub async fn run_webhook_mode(
     bot: Bot,
     handler: UpdateHandler<HandlerError>,
-    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     bot_id: UserId,
     bot_init_start: std::time::Instant,
 ) -> Result<()> {
@@ -55,7 +55,7 @@ pub async fn run_webhook_mode(
 
     let app = router.layer(middleware::from_fn_with_state(
         DedupState {
-            db_pool,
+            shared_storage,
             bot_id: bot_id.0 as i64,
             secret_token: Arc::<str>::from(secret_token),
         },
@@ -130,15 +130,11 @@ async fn dedup_middleware(State(state): State<DedupState>, request: Request<Body
         None => return StatusCode::BAD_REQUEST.into_response(),
     };
 
-    let conn = match db::get_connection(&state.db_pool) {
-        Ok(conn) => conn,
-        Err(err) => {
-            log::warn!("Failed to get DB connection for webhook dedup: {}", err);
-            return StatusCode::SERVICE_UNAVAILABLE.into_response();
-        }
-    };
-
-    match db::register_processed_update(&conn, state.bot_id, update_id) {
+    match state
+        .shared_storage
+        .register_processed_update(state.bot_id, update_id)
+        .await
+    {
         Ok(true) => {
             let request = Request::from_parts(parts, Body::from(bytes));
             next.run(request).await

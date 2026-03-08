@@ -143,9 +143,13 @@ impl RealHandlerTest {
         let extension_registry = Arc::new(doradura::extension::ExtensionRegistry::default_registry());
 
         let subtitle_cache = Arc::new(doradura::storage::SubtitleCache::new("/tmp/doradura_test_subtitles"));
+        let shared_storage = Arc::new(doradura::storage::SharedStorage::Sqlite {
+            db_pool: Arc::clone(&db_pool),
+        });
 
         let deps = HandlerDeps::new(
             db_pool,
+            shared_storage,
             download_queue,
             rate_limiter,
             downsub_gateway,

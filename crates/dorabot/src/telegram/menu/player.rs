@@ -15,6 +15,7 @@ use crate::download::search::format_duration;
 use crate::download::send::send_audio_with_retry;
 use crate::download::source::SourceRegistry;
 use crate::storage::db::{self, DbPool, PlaylistItem};
+use crate::storage::SharedStorage;
 use crate::telegram::notifications::notify_admin_text;
 use crate::telegram::Bot;
 use rand::seq::SliceRandom;
@@ -59,7 +60,12 @@ async fn restore_default_commands(bot: &Bot, chat_id: ChatId) {
 // ── Player command ────────────────────────────────────────────────────────
 
 /// Handle /player command: show playlist selector.
-pub async fn handle_player_command(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbPool>) {
+pub async fn handle_player_command(
+    bot: &Bot,
+    chat_id: ChatId,
+    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
+) {
     let conn = match db::get_connection(db_pool) {
         Ok(c) => c,
         Err(_) => {
@@ -69,12 +75,12 @@ pub async fn handle_player_command(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbP
     };
 
     // Check for existing session — show player menu
-    if let Ok(Some(session)) = db::get_player_session(&conn, chat_id.0) {
+    if let Ok(Some(session)) = shared_storage.get_player_session(chat_id.0).await {
         if let Ok(Some(pl)) = db::get_playlist(&conn, session.playlist_id) {
             let items = db::get_playlist_items(&conn, session.playlist_id).unwrap_or_default();
             let msg = send_player_menu(bot, chat_id, &pl.name, &items, session.is_shuffle, None).await;
             if let Some(msg_id) = msg {
-                track_message(db_pool, chat_id.0, msg_id.0);
+                track_message(shared_storage, chat_id.0, msg_id.0).await;
             }
             return;
         }
@@ -114,25 +120,22 @@ pub async fn handle_player_command(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbP
 }
 
 /// Stop the player: delete all tracked UI messages, unpin, cleanup DB, restore commands.
-pub async fn stop_player(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbPool>) {
-    if let Ok(conn) = db::get_connection(db_pool) {
-        if let Ok(Some(session)) = db::get_player_session(&conn, chat_id.0) {
-            // Unpin the pinned message
-            if let Some(sticker_id) = session.sticker_message_id {
-                let _ = bot.unpin_chat_message(chat_id).message_id(MessageId(sticker_id)).await;
-            }
+pub async fn stop_player(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbPool>, shared_storage: &Arc<SharedStorage>) {
+    let _ = db_pool;
 
-            // Delete all tracked UI messages (sticker, banner, menus, statuses)
-            if let Ok(msg_ids) = db::get_player_messages(&conn, chat_id.0) {
-                for msg_id in msg_ids {
-                    let _ = bot.delete_message(chat_id, MessageId(msg_id)).await;
-                }
-            }
-
-            // Cleanup DB
-            let _ = db::delete_player_messages(&conn, chat_id.0);
-            let _ = db::delete_player_session(&conn, chat_id.0);
+    if let Ok(Some(session)) = shared_storage.get_player_session(chat_id.0).await {
+        if let Some(sticker_id) = session.sticker_message_id {
+            let _ = bot.unpin_chat_message(chat_id).message_id(MessageId(sticker_id)).await;
         }
+
+        if let Ok(msg_ids) = shared_storage.get_player_messages(chat_id.0).await {
+            for msg_id in msg_ids {
+                let _ = bot.delete_message(chat_id, MessageId(msg_id)).await;
+            }
+        }
+
+        let _ = shared_storage.delete_player_messages(chat_id.0).await;
+        let _ = shared_storage.delete_player_session(chat_id.0).await;
     }
 
     // Restore default bot commands for this chat
@@ -147,7 +150,8 @@ async fn enter_player_mode(
     playlist_id: i64,
     playlist_name: &str,
     items: &[PlaylistItem],
-    db_pool: &Arc<DbPool>,
+    _db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
 ) {
     // 1. Set player-mode bot commands
     set_player_commands(bot, chat_id).await;
@@ -163,7 +167,7 @@ async fn enter_player_mode(
         .map(|msg| msg.id);
 
     if let Some(sid) = sticker_msg_id {
-        track_message(db_pool, chat_id.0, sid.0);
+        track_message(shared_storage, chat_id.0, sid.0).await;
     }
 
     // 3. Send banner "Music Player by Dora" and pin it
@@ -174,19 +178,19 @@ async fn enter_player_mode(
         .map(|msg| msg.id);
 
     if let Some(bid) = banner_msg_id {
-        track_message(db_pool, chat_id.0, bid.0);
+        track_message(shared_storage, chat_id.0, bid.0).await;
         let _ = bot.pin_chat_message(chat_id, bid).disable_notification(true).await;
     }
 
     // 4. Create player session (sticker_message_id stores the PINNED message for unpin)
-    if let Ok(conn) = db::get_connection(db_pool) {
-        let _ = db::create_player_session(&conn, chat_id.0, playlist_id, None, banner_msg_id.map(|m| m.0));
-    }
+    let _ = shared_storage
+        .create_player_session(chat_id.0, playlist_id, None, banner_msg_id.map(|m| m.0))
+        .await;
 
     // 5. Send player menu
     let menu_msg = send_player_menu(bot, chat_id, playlist_name, items, false, None).await;
     if let Some(msg_id) = menu_msg {
-        track_message(db_pool, chat_id.0, msg_id.0);
+        track_message(shared_storage, chat_id.0, msg_id.0).await;
     }
 }
 
@@ -252,20 +256,20 @@ async fn send_player_menu(
 
 // ── Play all tracks ───────────────────────────────────────────────────────
 
-async fn play_all_tracks(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbPool>) {
+async fn play_all_tracks(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbPool>, shared_storage: &Arc<SharedStorage>) {
     let conn = match db::get_connection(db_pool) {
         Ok(c) => c,
         Err(_) => return,
     };
 
-    let session = match db::get_player_session(&conn, chat_id.0) {
+    let session = match shared_storage.get_player_session(chat_id.0).await {
         Ok(Some(s)) => s,
         _ => return,
     };
 
     let mut items = db::get_playlist_items(&conn, session.playlist_id).unwrap_or_default();
     if items.is_empty() {
-        let _ = send_tracked_message(bot, chat_id, "Playlist is empty.", db_pool).await;
+        let _ = send_tracked_message(bot, chat_id, "Playlist is empty.", shared_storage).await;
         return;
     }
 
@@ -293,7 +297,7 @@ async fn play_all_tracks(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbPool>) {
     } else {
         format!("📨 Sending {} cached tracks...", total)
     };
-    let status_msg_id = send_tracked_message(bot, chat_id, &status_text, db_pool).await;
+    let status_msg_id = send_tracked_message(bot, chat_id, &status_text, shared_storage).await;
 
     // Send cached tracks instantly
     let mut send_errors = 0;
@@ -319,6 +323,7 @@ async fn play_all_tracks(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbPool>) {
     if !uncached.is_empty() {
         let bot_clone = bot.clone();
         let db_pool_clone = Arc::clone(db_pool);
+        let shared_storage_clone = Arc::clone(shared_storage);
         let uncached_items: Vec<PlaylistItem> = uncached.into_iter().cloned().collect();
         let status_msg_id_clone = status_msg_id;
 
@@ -336,7 +341,7 @@ async fn play_all_tracks(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbPool>) {
 
                 let result = timeout(
                     TRACK_DOWNLOAD_TIMEOUT,
-                    download_player_track(&bot_clone, chat_id, item, &db_pool_clone),
+                    download_player_track(&bot_clone, chat_id, item, &db_pool_clone, &shared_storage_clone),
                 )
                 .await;
 
@@ -425,11 +430,12 @@ async fn download_player_track(
     chat_id: ChatId,
     item: &PlaylistItem,
     db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let url = Url::parse(&item.url)?;
 
     // Check vault cache first
-    if let Some(cached_fid) = crate::download::vault::check_vault_cache(db_pool, chat_id.0, &item.url) {
+    if let Some(cached_fid) = crate::download::vault::check_vault_cache(shared_storage, chat_id.0, &item.url).await {
         let input = teloxide::types::InputFile::file_id(teloxide::types::FileId(cached_fid));
         if bot.send_audio(chat_id, input).await.is_ok() {
             return Ok(());
@@ -447,24 +453,34 @@ async fn download_player_track(
     let mut progress_msg = ProgressMessage::new(chat_id, lang);
 
     // Download phase
-    let phase_result =
-        match pipeline::download_phase(bot, chat_id, &url, &format, registry, &mut progress_msg, None).await {
-            Ok(r) => {
-                // Track progress message for cleanup if Stop is pressed mid-download
-                if let Some(msg_id) = progress_msg.message_id {
-                    track_message(db_pool, chat_id.0, msg_id.0);
-                }
-                r
+    let phase_result = match pipeline::download_phase(
+        bot,
+        chat_id,
+        &url,
+        &format,
+        registry,
+        &mut progress_msg,
+        None,
+        Some(shared_storage),
+    )
+    .await
+    {
+        Ok(r) => {
+            // Track progress message for cleanup if Stop is pressed mid-download
+            if let Some(msg_id) = progress_msg.message_id {
+                track_message(shared_storage, chat_id.0, msg_id.0).await;
             }
-            Err(e) => {
-                // Track + delete progress message on error too
-                if let Some(msg_id) = progress_msg.message_id {
-                    track_message(db_pool, chat_id.0, msg_id.0);
-                    let _ = bot.delete_message(chat_id, msg_id).await;
-                }
-                return Err(format!("Download failed: {:?}", e).into());
+            r
+        }
+        Err(e) => {
+            // Track + delete progress message on error too
+            if let Some(msg_id) = progress_msg.message_id {
+                track_message(shared_storage, chat_id.0, msg_id.0).await;
+                let _ = bot.delete_message(chat_id, msg_id).await;
             }
-        };
+            return Err(format!("Download failed: {:?}", e).into());
+        }
+    };
 
     // Send audio
     let duration = phase_result.output.duration_secs.unwrap_or(0);
@@ -531,7 +547,7 @@ async fn download_player_track(
             if let Some(fid) = vault_fid {
                 crate::download::vault::send_to_vault_background(
                     bot.clone(),
-                    Arc::clone(db_pool),
+                    Arc::clone(shared_storage),
                     chat_id.0,
                     item.url.clone(),
                     fid,
@@ -553,17 +569,20 @@ async fn download_player_track(
 // ── Message tracking helpers ──────────────────────────────────────────────
 
 /// Send a message and track it for cleanup on player exit.
-async fn send_tracked_message(bot: &Bot, chat_id: ChatId, text: &str, db_pool: &Arc<DbPool>) -> Option<MessageId> {
+async fn send_tracked_message(
+    bot: &Bot,
+    chat_id: ChatId,
+    text: &str,
+    shared_storage: &Arc<SharedStorage>,
+) -> Option<MessageId> {
     let msg = bot.send_message(chat_id, text).await.ok()?;
-    track_message(db_pool, chat_id.0, msg.id.0);
+    track_message(shared_storage, chat_id.0, msg.id.0).await;
     Some(msg.id)
 }
 
 /// Track an already-sent message for cleanup on player exit.
-fn track_message(db_pool: &Arc<DbPool>, user_id: i64, message_id: i32) {
-    if let Ok(conn) = db::get_connection(db_pool) {
-        let _ = db::add_player_message(&conn, user_id, message_id);
-    }
+async fn track_message(shared_storage: &Arc<SharedStorage>, user_id: i64, message_id: i32) {
+    let _ = shared_storage.add_player_message(user_id, message_id).await;
 }
 
 // ── Callback handler ──────────────────────────────────────────────────────
@@ -575,6 +594,7 @@ pub async fn handle_player_callback(
     message_id: MessageId,
     data: &str,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     _download_queue: Arc<crate::download::queue::DownloadQueue>,
 ) -> Result<(), teloxide::RequestError> {
     let _ = bot.answer_callback_query(callback_id).await;
@@ -595,7 +615,7 @@ pub async fn handle_player_callback(
                         return Ok(());
                     }
                     let _ = bot.delete_message(chat_id, message_id).await;
-                    enter_player_mode(bot, chat_id, pl_id, &pl.name, &items, &db_pool).await;
+                    enter_player_mode(bot, chat_id, pl_id, &pl.name, &items, &db_pool, &shared_storage).await;
                 }
                 _ => return Ok(()),
             }
@@ -604,7 +624,7 @@ pub async fn handle_player_callback(
     }
 
     // Get current session for all other callbacks
-    let session = match db::get_player_session(&conn, chat_id.0) {
+    let session = match shared_storage.get_player_session(chat_id.0).await {
         Ok(Some(s)) => s,
         _ => {
             let _ = bot.send_message(chat_id, "No active player session.").await;
@@ -621,14 +641,14 @@ pub async fn handle_player_callback(
 
     match data {
         "pw:play_all" => {
-            play_all_tracks(bot, chat_id, &db_pool).await;
+            play_all_tracks(bot, chat_id, &db_pool, &shared_storage).await;
         }
         "pw:shuf" => {
-            if let Ok(new_shuffle) = db::toggle_player_shuffle(&conn, chat_id.0) {
+            if let Ok(new_shuffle) = shared_storage.toggle_player_shuffle(chat_id.0).await {
                 let _ = bot.delete_message(chat_id, message_id).await;
                 let new_msg = send_player_menu(bot, chat_id, &pl_name, &items, new_shuffle, None).await;
                 if let Some(msg_id) = new_msg {
-                    track_message(&db_pool, chat_id.0, msg_id.0);
+                    track_message(&shared_storage, chat_id.0, msg_id.0).await;
                 }
             }
         }
@@ -653,16 +673,16 @@ pub async fn handle_player_callback(
                     ));
                 }
             }
-            let _ = send_tracked_message(bot, chat_id, &text, &db_pool).await;
+            let _ = send_tracked_message(bot, chat_id, &text, &shared_storage).await;
         }
         "pw:srch" => {
-            let _ = send_tracked_message(bot, chat_id, "🔍 Type your search query:", &db_pool).await;
+            let _ = send_tracked_message(bot, chat_id, "🔍 Type your search query:", &shared_storage).await;
         }
         "pw:add" => {
-            let _ = send_tracked_message(bot, chat_id, "🔍 Search for a track to add:", &db_pool).await;
+            let _ = send_tracked_message(bot, chat_id, "🔍 Search for a track to add:", &shared_storage).await;
         }
         "pw:stop" => {
-            stop_player(bot, chat_id, &db_pool).await;
+            stop_player(bot, chat_id, &db_pool, &shared_storage).await;
         }
         _ => {}
     }

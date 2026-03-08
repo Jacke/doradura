@@ -20,6 +20,7 @@ use crate::download::DownloadQueue;
 use crate::downsub::DownsubGateway;
 use crate::queue_processor;
 use crate::storage::create_pool;
+use crate::storage::SharedStorage;
 use crate::telegram::handlers::HandlerError;
 use crate::telegram::{create_bot, schema, setup_all_language_commands, HandlerDeps};
 
@@ -75,6 +76,9 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
     let db_pool = Arc::new(
         create_pool(&config::DATABASE_PATH).map_err(|e| anyhow::anyhow!("Failed to create database pool: {}", e))?,
     );
+    let shared_storage = SharedStorage::from_sqlite_pool(Arc::clone(&db_pool))
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to create shared storage backend: {}", e))?;
 
     // Initialize core services
     crate::core::error_logger::init_error_logger(Arc::clone(&db_pool));
@@ -83,7 +87,7 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
     let rate_limiter = Arc::new(RateLimiter::new());
     Arc::clone(&rate_limiter).spawn_cleanup_task(std::time::Duration::from_secs(300));
 
-    let download_queue = Arc::new(DownloadQueue::with_db_pool(Some(Arc::clone(&db_pool))));
+    let download_queue = Arc::new(DownloadQueue::with_storage(Some(Arc::clone(&shared_storage))));
 
     let downsub_gateway = Arc::new(DownsubGateway::from_env());
     if downsub_gateway.is_available() {
@@ -110,14 +114,14 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
         bot.clone(),
         Arc::clone(&download_queue),
         Arc::clone(&rate_limiter),
-        Arc::clone(&db_pool),
+        Arc::clone(&shared_storage),
         alert_manager.clone(),
     ));
 
     background_tasks::spawn_subscription_expiry_checker(Arc::clone(&db_pool));
     background_tasks::spawn_cookies_checker(bot.clone());
-    background_tasks::spawn_content_watcher(bot.clone(), Arc::clone(&db_pool));
-    background_tasks::spawn_db_cleanup(Arc::clone(&db_pool));
+    background_tasks::spawn_content_watcher(bot.clone(), Arc::clone(&db_pool), Arc::clone(&shared_storage));
+    background_tasks::spawn_db_cleanup(Arc::clone(&db_pool), Arc::clone(&shared_storage));
 
     // Create extension registry
     let extension_registry = Arc::new(crate::extension::ExtensionRegistry::default_registry());
@@ -131,6 +135,7 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
     // Create handler dependencies
     let handler_deps = HandlerDeps::new(
         Arc::clone(&db_pool),
+        Arc::clone(&shared_storage),
         Arc::clone(&download_queue),
         Arc::clone(&rate_limiter),
         Arc::clone(&downsub_gateway),
@@ -148,7 +153,7 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
 
     let result = if let Some(url) = webhook_url {
         log::info!("Webhook mode requested with public URL {}", url);
-        crate::webhook::run_webhook_mode(bot, handler, Arc::clone(&db_pool), bot_id, bot_init_start).await
+        crate::webhook::run_webhook_mode(bot, handler, Arc::clone(&shared_storage), bot_id, bot_init_start).await
     } else {
         run_polling_mode(bot, handler, bot_init_start).await
     };

@@ -113,8 +113,15 @@ fn update_cookies_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                 let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
                 let message_text = msg.text().unwrap_or_default();
 
-                if let Err(e) =
-                    handle_update_cookies_command(deps.db_pool.clone(), &bot, msg.chat.id, user_id, message_text).await
+                if let Err(e) = handle_update_cookies_command(
+                    deps.db_pool.clone(),
+                    deps.shared_storage.clone(),
+                    &bot,
+                    msg.chat.id,
+                    user_id,
+                    message_text,
+                )
+                .await
                 {
                     log::error!("❌ /update_cookies handler failed for user {}: {}", user_id, e);
                     let _ = bot
@@ -143,9 +150,15 @@ fn update_ig_cookies_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                 let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
                 let message_text = msg.text().unwrap_or_default();
 
-                if let Err(e) =
-                    handle_update_ig_cookies_command(deps.db_pool.clone(), &bot, msg.chat.id, user_id, message_text)
-                        .await
+                if let Err(e) = handle_update_ig_cookies_command(
+                    deps.db_pool.clone(),
+                    deps.shared_storage.clone(),
+                    &bot,
+                    msg.chat.id,
+                    user_id,
+                    message_text,
+                )
+                .await
                 {
                     log::error!("❌ /update_ig_cookies handler failed for user {}: {}", user_id, e);
                     let _ = bot
@@ -377,7 +390,13 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                         let _ = handle_backup_command(&bot, msg.chat.id, user_id).await;
                     }
                     Command::Plan => {
-                        let _ = show_subscription_info(&bot, msg.chat.id, deps.db_pool.clone()).await;
+                        let _ = show_subscription_info(
+                            &bot,
+                            msg.chat.id,
+                            deps.db_pool.clone(),
+                            deps.shared_storage.clone(),
+                        )
+                        .await;
                     }
                     Command::Users => {
                         let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
@@ -450,11 +469,22 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                         let _ = handle_version_command(&bot, msg.chat.id, user_id).await;
                     }
                     Command::Subscriptions => {
-                        crate::telegram::subscriptions::handle_subscriptions_command(&bot, msg.chat.id, &deps.db_pool)
-                            .await;
+                        crate::telegram::subscriptions::handle_subscriptions_command(
+                            &bot,
+                            msg.chat.id,
+                            &deps.db_pool,
+                            &deps.shared_storage,
+                        )
+                        .await;
                     }
                     Command::Player => {
-                        crate::telegram::menu::player::handle_player_command(&bot, msg.chat.id, &deps.db_pool).await;
+                        crate::telegram::menu::player::handle_player_command(
+                            &bot,
+                            msg.chat.id,
+                            &deps.db_pool,
+                            &deps.shared_storage,
+                        )
+                        .await;
                     }
                     Command::Playlists => {
                         crate::telegram::menu::playlist::handle_playlists_command(&bot, msg.chat.id, &deps.db_pool)
@@ -465,6 +495,7 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                             &bot,
                             msg.chat.id,
                             &deps.db_pool,
+                            &deps.shared_storage,
                         )
                         .await;
                     }
@@ -512,6 +543,7 @@ fn message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                     deps.download_queue.clone(),
                     deps.rate_limiter.clone(),
                     deps.db_pool.clone(),
+                    deps.shared_storage.clone(),
                     deps.alert_manager.clone(),
                 )
                 .await;
@@ -646,6 +678,7 @@ fn callback_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                 bot,
                 q,
                 deps.db_pool.clone(),
+                deps.shared_storage.clone(),
                 deps.download_queue.clone(),
                 deps.rate_limiter.clone(),
                 deps.extension_registry.clone(),

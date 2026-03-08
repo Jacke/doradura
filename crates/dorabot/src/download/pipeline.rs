@@ -24,6 +24,7 @@ use crate::download::send::{
 };
 use crate::download::source::{DownloadOutput, DownloadSource, MediaMetadata, SourceProgress, SourceRegistry};
 use crate::storage::db::{self as db, save_download_history, DbPool};
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use std::fs;
 use std::sync::Arc;
@@ -138,6 +139,7 @@ pub async fn download_phase(
     registry: &SourceRegistry,
     progress_msg: &mut ProgressMessage,
     message_id: Option<i32>,
+    _shared_storage: Option<&Arc<SharedStorage>>,
 ) -> Result<DownloadPhaseResult, PipelineError> {
     let file_format_str = format.label().to_string();
 
@@ -415,6 +417,7 @@ pub async fn execute(
     url: &Url,
     format: &PipelineFormat,
     db_pool: Option<&Arc<DbPool>>,
+    shared_storage: Option<&Arc<SharedStorage>>,
     message_id: Option<i32>,
     _alert_manager: Option<&Arc<crate::core::alerts::AlertManager>>,
     registry: &SourceRegistry,
@@ -425,8 +428,10 @@ pub async fn execute(
 
     // ── Vault cache lookup (audio only) ──
     if matches!(format, PipelineFormat::Audio { .. }) {
-        if let Some(pool) = db_pool {
-            if let Some(cached_fid) = crate::download::vault::check_vault_cache(pool, chat_id.0, url.as_str()) {
+        if let Some(shared_storage) = shared_storage {
+            if let Some(cached_fid) =
+                crate::download::vault::check_vault_cache(shared_storage, chat_id.0, url.as_str()).await
+            {
                 log::info!("Pipeline: vault cache hit for {} (chat {})", url, chat_id);
                 let input = teloxide::types::InputFile::file_id(teloxide::types::FileId(cached_fid));
                 match bot.send_audio(chat_id, input).await {
@@ -515,7 +520,17 @@ pub async fn execute(
         }
     }
 
-    let phase = download_phase(bot, chat_id, url, format, registry, progress_msg, message_id).await?;
+    let phase = download_phase(
+        bot,
+        chat_id,
+        url,
+        format,
+        registry,
+        progress_msg,
+        message_id,
+        shared_storage,
+    )
+    .await?;
     let DownloadPhaseResult {
         output: download_output,
         title,
@@ -555,13 +570,18 @@ pub async fn execute(
     // ── Step 8: Send to Telegram ──
     let duration = download_output.duration_secs.unwrap_or(0);
 
-    let send_as_document = if let Some(pool) = db_pool {
-        match db::get_connection(pool) {
-            Ok(conn) => match format {
-                PipelineFormat::Audio { .. } => db::get_user_send_audio_as_document(&conn, chat_id.0).unwrap_or(0) == 1,
-                PipelineFormat::Video { .. } => db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0) == 1,
-            },
-            Err(_) => false,
+    let send_as_document = if let Some(storage) = shared_storage {
+        match format {
+            PipelineFormat::Audio { .. } => storage
+                .get_user_send_audio_as_document(chat_id.0)
+                .await
+                .map(|value| value == 1)
+                .unwrap_or(false),
+            PipelineFormat::Video { .. } => storage
+                .get_user_send_as_document(chat_id.0)
+                .await
+                .map(|value| value == 1)
+                .unwrap_or(false),
         }
     } else {
         false
@@ -768,7 +788,7 @@ pub async fn execute(
 
     // ── Step 10b: Send to vault (audio only, fire-and-forget) ──
     if matches!(format, PipelineFormat::Audio { .. }) {
-        if let Some(pool) = db_pool {
+        if let Some(shared_storage) = shared_storage {
             let file_id_for_vault = sent_message
                 .audio()
                 .map(|a| a.file.id.0.clone())
@@ -776,7 +796,7 @@ pub async fn execute(
             if let Some(fid) = file_id_for_vault {
                 crate::download::vault::send_to_vault_background(
                     bot.clone(),
-                    Arc::clone(pool),
+                    Arc::clone(shared_storage),
                     chat_id.0,
                     url.to_string(),
                     fid,

@@ -8,9 +8,9 @@ use crate::extension::ExtensionRegistry;
 use crate::i18n;
 use crate::storage::cache;
 use crate::storage::db::{self, DbPool};
+use crate::storage::SharedStorage;
 use crate::storage::SubtitleCache;
 use crate::telegram::admin;
-use crate::telegram::cache as tg_cache;
 use crate::telegram::setup_chat_bot_commands;
 use crate::telegram::Bot;
 use std::sync::Arc;
@@ -39,6 +39,7 @@ pub async fn handle_menu_callback(
     bot: Bot,
     q: CallbackQuery,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     download_queue: Arc<DownloadQueue>,
     rate_limiter: Arc<RateLimiter>,
     extension_registry: Arc<ExtensionRegistry>,
@@ -96,7 +97,7 @@ pub async fn handle_menu_callback(
                     data: data_clone.clone(),
                     game_short_name: q.game_short_name.clone(),
                 };
-                if let Err(e) = handle_lyrics_callback(bot.clone(), lyr_query, Arc::clone(&db_pool)).await {
+                if let Err(e) = handle_lyrics_callback(bot.clone(), lyr_query, Arc::clone(&shared_storage)).await {
                     log::error!("Lyrics callback error: {}", e);
                 }
                 return Ok(());
@@ -114,7 +115,7 @@ pub async fn handle_menu_callback(
                     data: data_clone,
                     game_short_name: q.game_short_name.clone(),
                 };
-                if let Err(e) = handle_audio_cut_callback(bot.clone(), ac_query, Arc::clone(&db_pool)).await {
+                if let Err(e) = handle_audio_cut_callback(bot.clone(), ac_query, Arc::clone(&shared_storage)).await {
                     log::error!("Audio cut callback error: {}", e);
                 }
                 return Ok(());
@@ -130,7 +131,8 @@ pub async fn handle_menu_callback(
                     data: data_clone,
                     game_short_name: q.game_short_name.clone(),
                 };
-                if let Err(e) = handle_audio_effects_callback(bot.clone(), ae_query, Arc::clone(&db_pool)).await {
+                if let Err(e) = handle_audio_effects_callback(bot.clone(), ae_query, Arc::clone(&shared_storage)).await
+                {
                     log::error!("Audio effects callback error: {}", e);
                 }
                 return Ok(());
@@ -156,33 +158,74 @@ pub async fn handle_menu_callback(
                             chat_id,
                             message_id,
                             Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
                             url_id,
                             preview_msg_id,
                         )
                         .await?;
                     }
                     "video_quality" => {
-                        show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), url_id).await?;
+                        show_video_quality_menu(
+                            &bot,
+                            chat_id,
+                            message_id,
+                            Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
+                            url_id,
+                        )
+                        .await?;
                     }
                     "audio_bitrate" => {
-                        show_audio_bitrate_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), url_id).await?;
+                        show_audio_bitrate_menu(
+                            &bot,
+                            chat_id,
+                            message_id,
+                            Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
+                            url_id,
+                        )
+                        .await?;
                     }
                     "services" => {
                         show_services_menu(&bot, chat_id, message_id, &lang, &extension_registry).await?;
                     }
                     "language" => {
-                        show_language_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), url_id).await?;
+                        show_language_menu(
+                            &bot,
+                            chat_id,
+                            message_id,
+                            Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
+                            url_id,
+                        )
+                        .await?;
                     }
                     "subtitle_style" => {
-                        show_subtitle_style_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
+                        show_subtitle_style_menu(
+                            &bot,
+                            chat_id,
+                            message_id,
+                            Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
+                        )
+                        .await?;
                     }
                     "progress_bar_style" => {
-                        show_progress_bar_style_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
+                        show_progress_bar_style_menu(
+                            &bot,
+                            chat_id,
+                            message_id,
+                            Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
+                        )
+                        .await?;
                     }
                     "subscription" => {
                         // Delete the old message and show subscription info
                         let _ = bot.delete_message(chat_id, message_id).await;
-                        let _ = show_subscription_info(&bot, chat_id, Arc::clone(&db_pool)).await;
+                        let _ =
+                            show_subscription_info(&bot, chat_id, Arc::clone(&db_pool), Arc::clone(&shared_storage))
+                                .await;
                     }
                     _ => {}
                 }
@@ -197,7 +240,14 @@ pub async fn handle_menu_callback(
                     }
                     "current" => {
                         // Show detailed current settings
-                        show_current_settings_detail(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
+                        show_current_settings_detail(
+                            &bot,
+                            chat_id,
+                            message_id,
+                            Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
+                        )
+                        .await?;
                     }
                     "stats" => {
                         // Delete current message and show stats
@@ -216,8 +266,13 @@ pub async fn handle_menu_callback(
                     "subscription" => {
                         // Delete current message and show subscription info
                         let _ = bot.delete_message(chat_id, message_id).await;
-                        let _ = crate::core::subscription::show_subscription_info(&bot, chat_id, Arc::clone(&db_pool))
-                            .await;
+                        let _ = crate::core::subscription::show_subscription_info(
+                            &bot,
+                            chat_id,
+                            Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
+                        )
+                        .await;
                     }
                     "help" => {
                         // Edit message to show help
@@ -226,7 +281,8 @@ pub async fn handle_menu_callback(
                     "feedback" => {
                         // Delete current message and send feedback prompt
                         let _ = bot.delete_message(chat_id, message_id).await;
-                        let _ = crate::telegram::feedback::send_feedback_prompt(&bot, chat_id, &lang).await;
+                        let _ = crate::telegram::feedback::send_feedback_prompt(&bot, chat_id, &lang, &shared_storage)
+                            .await;
                     }
                     _ => {}
                 }
@@ -304,7 +360,13 @@ pub async fn handle_menu_callback(
 
                                 // Refresh the subscription menu
                                 let _ = bot.delete_message(chat_id, message_id).await;
-                                let _ = show_subscription_info(&bot, chat_id, Arc::clone(&db_pool)).await;
+                                let _ = show_subscription_info(
+                                    &bot,
+                                    chat_id,
+                                    Arc::clone(&db_pool),
+                                    Arc::clone(&shared_storage),
+                                )
+                                .await;
                             }
                             Err(e) => {
                                 log::error!("Failed to cancel subscription: {}", e);
@@ -398,37 +460,38 @@ pub async fn handle_menu_callback(
                     .iter()
                     .any(|(code, _)| code.eq_ignore_ascii_case(lang_code))
                 {
-                    if let Ok(conn) = db::get_connection(&db_pool) {
-                        if let Ok(None) = db::get_user(&conn, chat_id.0) {
-                            log::info!(
-                                "Creating user before setting language: chat_id={}, username={:?}",
-                                chat_id.0,
-                                q.from.username
-                            );
-                            let username = q.from.username.clone();
-                            if let Err(e) = db::create_user(&conn, chat_id.0, username.clone()) {
-                                log::warn!("Failed to create user before setting language: {}", e);
-                            } else {
-                                // Notify admins about new user
-                                use crate::telegram::notifications::notify_admin_new_user;
-                                let bot_notify = bot.clone();
-                                let user_id = chat_id.0;
-                                let first_name = q.from.first_name.clone();
-                                let lang = lang_code.to_string();
-                                tokio::spawn(async move {
-                                    notify_admin_new_user(
-                                        &bot_notify,
-                                        user_id,
-                                        username.as_deref(),
-                                        Some(&first_name),
-                                        Some(&lang),
-                                        Some("language change"),
-                                    )
-                                    .await;
-                                });
-                            }
+                    if let Ok(None) = shared_storage.get_user(chat_id.0).await {
+                        log::info!(
+                            "Creating user before setting language: chat_id={}, username={:?}",
+                            chat_id.0,
+                            q.from.username
+                        );
+                        let username = q.from.username.clone();
+                        if let Err(e) = shared_storage
+                            .create_user_with_language(chat_id.0, username.clone(), Some(lang_code))
+                            .await
+                        {
+                            log::warn!("Failed to create user before setting language: {}", e);
+                        } else {
+                            use crate::telegram::notifications::notify_admin_new_user;
+                            let bot_notify = bot.clone();
+                            let user_id = chat_id.0;
+                            let first_name = q.from.first_name.clone();
+                            let lang = lang_code.to_string();
+                            tokio::spawn(async move {
+                                notify_admin_new_user(
+                                    &bot_notify,
+                                    user_id,
+                                    username.as_deref(),
+                                    Some(&first_name),
+                                    Some(&lang),
+                                    Some("language change"),
+                                )
+                                .await;
+                            });
                         }
-                        let _ = db::set_user_language(&conn, chat_id.0, lang_code);
+                    } else {
+                        let _ = shared_storage.set_user_language(chat_id.0, lang_code).await;
                     }
 
                     let new_lang = i18n::lang_from_code(lang_code);
@@ -452,28 +515,42 @@ pub async fn handle_menu_callback(
                 }
             } else if let Some(quality) = data.strip_prefix("quality:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
-                // Remove "quality:" prefix
-                let conn = db::get_connection(&db_pool)
-                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-                db::set_user_video_quality(&conn, chat_id.0, quality)
+                shared_storage
+                    .set_user_video_quality(chat_id.0, quality)
+                    .await
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
                 // Update the menu to show new selection
-                show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
+                show_video_quality_menu(
+                    &bot,
+                    chat_id,
+                    message_id,
+                    Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
+                    None,
+                )
+                .await?;
             } else if data == "send_type:toggle" {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
-                let conn = db::get_connection(&db_pool)
-                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
                 // Get the current value and toggle it
-                let current_value = db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0);
+                let current_value = shared_storage.get_user_send_as_document(chat_id.0).await.unwrap_or(0);
                 let new_value = if current_value == 0 { 1 } else { 0 };
 
-                db::set_user_send_as_document(&conn, chat_id.0, new_value)
+                shared_storage
+                    .set_user_send_as_document(chat_id.0, new_value)
+                    .await
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
                 // Refresh the menu
-                show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
+                show_video_quality_menu(
+                    &bot,
+                    chat_id,
+                    message_id,
+                    Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
+                    None,
+                )
+                .await?;
             } else if data.starts_with("ct:") {
                 // Carousel toggle: ct:{index}:{url_id}:{mask} or ct:all:{url_id}:{mask}
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
@@ -517,7 +594,12 @@ pub async fn handle_menu_callback(
                 if !username.is_empty() {
                     let registry = std::sync::Arc::new(crate::watcher::WatcherRegistry::default_registry());
                     crate::telegram::subscriptions::show_subscribe_confirm(
-                        &bot, chat_id, username, &db_pool, &registry,
+                        &bot,
+                        chat_id,
+                        username,
+                        &db_pool,
+                        &shared_storage,
+                        &registry,
                     )
                     .await;
                 }
@@ -544,20 +626,20 @@ pub async fn handle_menu_callback(
                     message_id,
                     &data,
                     Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
                     &registry,
                 )
                 .await;
                 return Ok(());
             } else if data == "video:toggle_burn_subs" {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
-                let conn = db::get_connection(&db_pool)
-                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
                 // Get the current value and toggle it
-                let current_value = db::get_user_burn_subtitles(&conn, chat_id.0).unwrap_or(false);
+                let current_value = shared_storage.get_user_burn_subtitles(chat_id.0).await.unwrap_or(false);
                 let new_value = !current_value;
 
-                db::set_user_burn_subtitles(&conn, chat_id.0, new_value)
+                shared_storage
+                    .set_user_burn_subtitles(chat_id.0, new_value)
+                    .await
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
                 log::info!(
@@ -568,35 +650,62 @@ pub async fn handle_menu_callback(
                 );
 
                 // Refresh the menu
-                show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
+                show_video_quality_menu(
+                    &bot,
+                    chat_id,
+                    message_id,
+                    Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
+                    None,
+                )
+                .await?;
             } else if let Some(bitrate) = data.strip_prefix("bitrate:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
-                // Remove "bitrate:" prefix
-                let conn = db::get_connection(&db_pool)
-                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-                db::set_user_audio_bitrate(&conn, chat_id.0, bitrate)
+                shared_storage
+                    .set_user_audio_bitrate(chat_id.0, bitrate)
+                    .await
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
                 // Update the menu to show new selection
-                show_audio_bitrate_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
+                show_audio_bitrate_menu(
+                    &bot,
+                    chat_id,
+                    message_id,
+                    Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
+                    None,
+                )
+                .await?;
             } else if data == "audio_send_type:toggle" {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
-                let conn = db::get_connection(&db_pool)
-                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
                 // Get the current value and toggle it
-                let current_value = db::get_user_send_audio_as_document(&conn, chat_id.0).unwrap_or(0);
+                let current_value = shared_storage
+                    .get_user_send_audio_as_document(chat_id.0)
+                    .await
+                    .unwrap_or(0);
                 let new_value = if current_value == 0 { 1 } else { 0 };
 
-                db::set_user_send_audio_as_document(&conn, chat_id.0, new_value)
+                shared_storage
+                    .set_user_send_audio_as_document(chat_id.0, new_value)
+                    .await
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
                 // Refresh the menu
-                show_audio_bitrate_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
+                show_audio_bitrate_menu(
+                    &bot,
+                    chat_id,
+                    message_id,
+                    Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
+                    None,
+                )
+                .await?;
             } else if let Some(setting) = data.strip_prefix("subtitle:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
-                let conn = db::get_connection(&db_pool).map_err(db_err)?;
-                let style = db::get_user_subtitle_style(&conn, chat_id.0).unwrap_or_default();
+                let style = shared_storage
+                    .get_user_subtitle_style(chat_id.0)
+                    .await
+                    .unwrap_or_default();
 
                 match setting {
                     "font_size" => {
@@ -606,7 +715,10 @@ pub async fn handle_menu_callback(
                             "large" => "xlarge",
                             _ => "small",
                         };
-                        db::set_user_subtitle_font_size(&conn, chat_id.0, next).map_err(db_err)?;
+                        shared_storage
+                            .set_user_subtitle_font_size(chat_id.0, next)
+                            .await
+                            .map_err(db_err)?;
                     }
                     "text_color" => {
                         let next = match style.text_color.as_str() {
@@ -615,7 +727,10 @@ pub async fn handle_menu_callback(
                             "cyan" => "green",
                             _ => "white",
                         };
-                        db::set_user_subtitle_text_color(&conn, chat_id.0, next).map_err(db_err)?;
+                        shared_storage
+                            .set_user_subtitle_text_color(chat_id.0, next)
+                            .await
+                            .map_err(db_err)?;
                     }
                     "outline_color" => {
                         let next = match style.outline_color.as_str() {
@@ -623,7 +738,10 @@ pub async fn handle_menu_callback(
                             "dark_gray" => "none",
                             _ => "black",
                         };
-                        db::set_user_subtitle_outline_color(&conn, chat_id.0, next).map_err(db_err)?;
+                        shared_storage
+                            .set_user_subtitle_outline_color(chat_id.0, next)
+                            .await
+                            .map_err(db_err)?;
                     }
                     "outline_width" => {
                         let next = match style.outline_width {
@@ -633,7 +751,10 @@ pub async fn handle_menu_callback(
                             3 => 4,
                             _ => 0,
                         };
-                        db::set_user_subtitle_outline_width(&conn, chat_id.0, next).map_err(db_err)?;
+                        shared_storage
+                            .set_user_subtitle_outline_width(chat_id.0, next)
+                            .await
+                            .map_err(db_err)?;
                     }
                     "shadow" => {
                         let next = match style.shadow {
@@ -641,30 +762,50 @@ pub async fn handle_menu_callback(
                             1 => 2,
                             _ => 0,
                         };
-                        db::set_user_subtitle_shadow(&conn, chat_id.0, next).map_err(db_err)?;
+                        shared_storage
+                            .set_user_subtitle_shadow(chat_id.0, next)
+                            .await
+                            .map_err(db_err)?;
                     }
                     "position" => {
                         let next = match style.position.as_str() {
                             "bottom" => "top",
                             _ => "bottom",
                         };
-                        db::set_user_subtitle_position(&conn, chat_id.0, next).map_err(db_err)?;
+                        shared_storage
+                            .set_user_subtitle_position(chat_id.0, next)
+                            .await
+                            .map_err(db_err)?;
                     }
                     _ => {}
                 }
 
-                show_subtitle_style_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
+                show_subtitle_style_menu(
+                    &bot,
+                    chat_id,
+                    message_id,
+                    Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
+                )
+                .await?;
             } else if let Some(style_name) = data.strip_prefix("pbar_style:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
-                let conn = db::get_connection(&db_pool)
-                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-                db::set_user_progress_bar_style(&conn, chat_id.0, style_name)
+                shared_storage
+                    .set_user_progress_bar_style(chat_id.0, style_name)
+                    .await
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
                 log::info!("User {} set progress bar style to {}", chat_id.0, style_name);
 
                 // Refresh the menu
-                show_progress_bar_style_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
+                show_progress_bar_style_menu(
+                    &bot,
+                    chat_id,
+                    message_id,
+                    Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
+                )
+                .await?;
             } else if data.starts_with("video_send_type:toggle:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
 
@@ -673,11 +814,8 @@ pub async fn handle_menu_callback(
                 if parts.len() >= 3 {
                     let url_id = parts[2];
 
-                    let conn = db::get_connection(&db_pool)
-                        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
                     // Get the current value and toggle it
-                    let current_value = db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0);
+                    let current_value = shared_storage.get_user_send_as_document(chat_id.0).await.unwrap_or(0);
                     let new_value = if current_value == 0 { 1 } else { 0 };
 
                     // Log the change
@@ -689,7 +827,9 @@ pub async fn handle_menu_callback(
                         if new_value == 0 { "send_video" } else { "send_document" }
                     );
 
-                    db::set_user_send_as_document(&conn, chat_id.0, new_value)
+                    shared_storage
+                        .set_user_send_as_document(chat_id.0, new_value)
+                        .await
                         .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
                     // Get the current keyboard from the message and update only the toggle button
@@ -771,7 +911,13 @@ pub async fn handle_menu_callback(
                                     {
                                         Ok(metadata) => {
                                             // Update existing preview message
-                                            let time_range = tg_cache::get_time_range(url.as_str()).await;
+                                            let preview_context = shared_storage
+                                                .get_preview_context(chat_id.0, url.as_str())
+                                                .await
+                                                .ok()
+                                                .flatten();
+                                            let time_range =
+                                                preview_context.as_ref().and_then(|context| context.time_range.clone());
                                             match crate::telegram::preview::update_preview_message(
                                                 &bot,
                                                 chat_id,
@@ -781,6 +927,7 @@ pub async fn handle_menu_callback(
                                                 &current_format,
                                                 video_quality.as_deref(),
                                                 Arc::clone(&db_pool),
+                                                Arc::clone(&shared_storage),
                                                 time_range.as_ref(),
                                             )
                                             .await
@@ -893,6 +1040,7 @@ pub async fn handle_menu_callback(
                             format,
                             None,
                             Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
                             Arc::clone(&download_queue),
                             Arc::clone(&rate_limiter),
                         )
@@ -900,7 +1048,16 @@ pub async fn handle_menu_callback(
                     }
                 } else {
                     // Update the menu to show new selection
-                    show_download_type_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None, None).await?;
+                    show_download_type_menu(
+                        &bot,
+                        chat_id,
+                        message_id,
+                        Arc::clone(&db_pool),
+                        Arc::clone(&shared_storage),
+                        None,
+                        None,
+                    )
+                    .await?;
                 }
             } else if data.starts_with("dl:tm:") {
                 // MP3 toggle: flip quality buttons between dl:mp4+mp3:q:uid and dl:mp4:q:uid
@@ -1026,8 +1183,15 @@ pub async fn handle_menu_callback(
                         Some(url_str) => {
                             match Url::parse(&url_str) {
                                 Ok(url) => {
-                                    let original_message_id = tg_cache::get_link_message_id(&url_str).await;
-                                    let time_range = tg_cache::get_time_range(&url_str).await;
+                                    let preview_context = shared_storage
+                                        .get_preview_context(chat_id.0, &url_str)
+                                        .await
+                                        .ok()
+                                        .flatten();
+                                    let original_message_id =
+                                        preview_context.as_ref().and_then(|context| context.original_message_id);
+                                    let time_range =
+                                        preview_context.as_ref().and_then(|context| context.time_range.clone());
                                     // Get user preferences for quality/bitrate and plan
                                     let conn = db::get_connection(&db_pool).map_err(|e| {
                                         RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
@@ -1280,9 +1444,13 @@ pub async fn handle_menu_callback(
 
                             // Store or clear the subtitle language in cache
                             if lang_code == "none" {
-                                tg_cache::store_burn_sub_lang(&url_str, None).await;
+                                let _ = shared_storage
+                                    .set_preview_burn_sub_lang(chat_id.0, &url_str, None, 3600)
+                                    .await;
                             } else {
-                                tg_cache::store_burn_sub_lang(&url_str, Some(lang_code.clone())).await;
+                                let _ = shared_storage
+                                    .set_preview_burn_sub_lang(chat_id.0, &url_str, Some(&lang_code), 3600)
+                                    .await;
                             }
 
                             // Refresh the preview by rebuilding the keyboard with updated burn_sub_lang
@@ -1295,53 +1463,69 @@ pub async fn handle_menu_callback(
                                 }
                             };
 
-                            // Get metadata from preview cache
-                            if let Some(metadata) = tg_cache::PREVIEW_CACHE.get(url.as_str()).await {
-                                // Get user settings for format/quality
-                                let (current_format, video_quality) = match crate::storage::db::get_connection(&db_pool)
-                                {
-                                    Ok(conn) => {
-                                        let fmt = db::get_user_download_format(&conn, chat_id.0)
-                                            .unwrap_or_else(|_| "mp4".to_string());
-                                        let qual = db::get_user_video_quality(&conn, chat_id.0).ok();
-                                        (fmt, qual)
-                                    }
-                                    Err(_) => ("mp4".to_string(), None),
-                                };
+                            let (current_format, video_quality) = match crate::storage::db::get_connection(&db_pool) {
+                                Ok(conn) => {
+                                    let fmt = db::get_user_download_format(&conn, chat_id.0)
+                                        .unwrap_or_else(|_| "mp4".to_string());
+                                    let qual = db::get_user_video_quality(&conn, chat_id.0).ok();
+                                    (fmt, qual)
+                                }
+                                Err(_) => ("mp4".to_string(), None),
+                            };
 
-                                let time_range = tg_cache::get_time_range(url.as_str()).await;
-                                match crate::telegram::preview::update_preview_message(
-                                    &bot,
-                                    chat_id,
-                                    message_id,
-                                    &url,
-                                    &metadata,
-                                    &current_format,
-                                    video_quality.as_deref(),
-                                    Arc::clone(&db_pool),
-                                    time_range.as_ref(),
-                                )
-                                .await
-                                {
-                                    Ok(_) => {}
-                                    Err(e) => {
-                                        log::error!("Failed to update preview after burn_subs_lang selection: {:?}", e);
-                                        let _ = bot
-                                            .send_message(
-                                                chat_id,
-                                                "Failed to update preview. Please send the link again.",
-                                            )
-                                            .await;
+                            match crate::telegram::preview::get_preview_metadata(
+                                &url,
+                                Some(&current_format),
+                                video_quality.as_deref(),
+                            )
+                            .await
+                            {
+                                Ok(metadata) => {
+                                    let preview_context = shared_storage
+                                        .get_preview_context(chat_id.0, url.as_str())
+                                        .await
+                                        .ok()
+                                        .flatten();
+                                    let time_range =
+                                        preview_context.as_ref().and_then(|context| context.time_range.clone());
+                                    match crate::telegram::preview::update_preview_message(
+                                        &bot,
+                                        chat_id,
+                                        message_id,
+                                        &url,
+                                        &metadata,
+                                        &current_format,
+                                        video_quality.as_deref(),
+                                        Arc::clone(&db_pool),
+                                        Arc::clone(&shared_storage),
+                                        time_range.as_ref(),
+                                    )
+                                    .await
+                                    {
+                                        Ok(_) => {}
+                                        Err(e) => {
+                                            log::error!(
+                                                "Failed to update preview after burn_subs_lang selection: {:?}",
+                                                e
+                                            );
+                                            let _ = bot
+                                                .send_message(
+                                                    chat_id,
+                                                    "Failed to update preview. Please send the link again.",
+                                                )
+                                                .await;
+                                        }
                                     }
                                 }
-                            } else {
-                                log::warn!(
-                                    "Preview metadata not found in cache for burn_subs_lang, url={}",
-                                    url_str
-                                );
-                                let _ = bot
-                                    .send_message(chat_id, "⏰ Preview expired, please send the link again")
-                                    .await;
+                                Err(e) => {
+                                    log::error!(
+                                        "Failed to refresh preview metadata after burn_subs_lang selection: {:?}",
+                                        e
+                                    );
+                                    let _ = bot
+                                        .send_message(chat_id, "⏰ Preview expired, please send the link again")
+                                        .await;
+                                }
                             }
                         }
                         _ => {
@@ -1478,6 +1662,7 @@ pub async fn handle_menu_callback(
                     message_id,
                     &data,
                     Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
                     Arc::clone(&download_queue),
                 )
                 .await
@@ -1495,6 +1680,7 @@ pub async fn handle_menu_callback(
                     message_id,
                     &data,
                     Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
                     Arc::clone(&download_queue),
                 )
                 .await
@@ -1512,6 +1698,7 @@ pub async fn handle_menu_callback(
                     message_id,
                     &data,
                     Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
                 )
                 .await
                 {
@@ -1527,6 +1714,7 @@ pub async fn handle_menu_callback(
                     message_id,
                     &data,
                     Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
                 )
                 .await
                 {
@@ -1543,6 +1731,7 @@ pub async fn handle_menu_callback(
                     message_id,
                     &data,
                     Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
                     Arc::clone(&download_queue),
                 )
                 .await
@@ -1559,6 +1748,7 @@ pub async fn handle_menu_callback(
                     message_id,
                     &data,
                     Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
                 )
                 .await
                 {
@@ -1574,6 +1764,7 @@ pub async fn handle_menu_callback(
                     message_id,
                     &data,
                     Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
                 )
                 .await
                 {
@@ -1590,6 +1781,7 @@ pub async fn handle_menu_callback(
                     message_id,
                     &data,
                     db_pool.clone(),
+                    shared_storage.clone(),
                     q.from.username.clone(),
                     downsub_gateway.clone(),
                     subtitle_cache.clone(),
@@ -1604,13 +1796,23 @@ pub async fn handle_menu_callback(
                     message_id,
                     &data,
                     db_pool.clone(),
+                    shared_storage.clone(),
                     q.from.username.clone(),
                 )
                 .await?;
             } else if data.starts_with("videos:") || data.starts_with("convert:") {
                 // Handle videos and conversion callback queries
                 use crate::telegram::videos::handle_videos_callback;
-                handle_videos_callback(&bot, callback_id.clone(), chat_id, message_id, &data, db_pool.clone()).await?;
+                handle_videos_callback(
+                    &bot,
+                    callback_id.clone(),
+                    chat_id,
+                    message_id,
+                    &data,
+                    db_pool.clone(),
+                    shared_storage.clone(),
+                )
+                .await?;
             } else if data.starts_with("au:") {
                 // Admin user management panel
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
@@ -1620,7 +1822,10 @@ pub async fn handle_menu_callback(
                         .await?;
                     return Ok(());
                 }
-                if let Err(e) = super::admin_users::handle_callback(&bot, chat_id, message_id, &db_pool, &data).await {
+                if let Err(e) =
+                    super::admin_users::handle_callback(&bot, chat_id, message_id, &db_pool, &shared_storage, &data)
+                        .await
+                {
                     log::error!("Admin users callback error: {}", e);
                 }
                 return Ok(());

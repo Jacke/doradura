@@ -20,17 +20,17 @@
 use crate::core::types::Plan;
 use crate::download::search::format_duration;
 use crate::storage::db::{self, DbPool};
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
 use teloxide::prelude::*;
 use teloxide::types::{CallbackQueryId, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId};
-use tokio::sync::RwLock;
 
 const TRACKS_PER_PAGE: usize = 8;
 const PLAYLISTS_PER_PAGE: usize = 5;
 const SESSION_TTL_SECS: u64 = 300; // 5 minutes
+const PLAYLIST_NAME_PROMPT_KIND: &str = "playlist_name";
+const PLAYLIST_IMPORT_PROMPT_KIND: &str = "playlist_import_url";
 
 /// Truncate a string to `max_chars` characters safely (no panic on multi-byte).
 fn truncate_str(s: &str, max_chars: usize) -> &str {
@@ -69,75 +69,111 @@ pub enum NameAction {
 #[derive(Debug, Clone)]
 pub struct PlaylistNameSession {
     pub action: NameAction,
-    pub created_at: Instant,
 }
 
-static PLAYLIST_NAME_STATES: std::sync::LazyLock<Arc<RwLock<HashMap<i64, PlaylistNameSession>>>> =
-    std::sync::LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
-
-/// Import URL input session: (playlist_id, created_at).
-#[allow(clippy::type_complexity)]
-static IMPORT_URL_STATES: std::sync::LazyLock<Arc<RwLock<HashMap<i64, (i64, Instant)>>>> =
-    std::sync::LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
-
-pub async fn is_waiting_for_playlist_name(user_id: i64) -> bool {
-    get_playlist_name_session(user_id).await.is_some()
-}
-
-pub async fn get_playlist_name_session(user_id: i64) -> Option<PlaylistNameSession> {
-    let states = PLAYLIST_NAME_STATES.read().await;
-    let session = states.get(&user_id)?;
-    if session.created_at.elapsed().as_secs() > SESSION_TTL_SECS {
-        drop(states);
-        clear_playlist_name_session(user_id).await;
-        return None;
+fn encode_playlist_name_session(session: &PlaylistNameSession) -> String {
+    match session.action {
+        NameAction::Create => "create".to_string(),
+        NameAction::Rename(playlist_id) => format!("rename:{playlist_id}"),
     }
-    Some(session.clone())
 }
 
-pub async fn set_playlist_name_session(user_id: i64, session: PlaylistNameSession) {
-    let mut states = PLAYLIST_NAME_STATES.write().await;
-    states.insert(user_id, session);
-}
-
-pub async fn clear_playlist_name_session(user_id: i64) {
-    let mut states = PLAYLIST_NAME_STATES.write().await;
-    states.remove(&user_id);
-}
-
-pub async fn is_waiting_for_import_url(user_id: i64) -> bool {
-    get_import_playlist_id(user_id).await.is_some()
-}
-
-pub async fn get_import_playlist_id(user_id: i64) -> Option<i64> {
-    let states = IMPORT_URL_STATES.read().await;
-    let (pl_id, created_at) = states.get(&user_id)?;
-    if created_at.elapsed().as_secs() > SESSION_TTL_SECS {
-        drop(states);
-        clear_import_url_session(user_id).await;
-        return None;
+fn decode_playlist_name_session(payload: &str) -> Option<PlaylistNameSession> {
+    if payload == "create" {
+        Some(PlaylistNameSession {
+            action: NameAction::Create,
+        })
+    } else {
+        payload
+            .strip_prefix("rename:")
+            .and_then(|v| v.parse::<i64>().ok())
+            .map(|playlist_id| PlaylistNameSession {
+                action: NameAction::Rename(playlist_id),
+            })
     }
-    Some(*pl_id)
 }
 
-pub async fn set_import_url_session(user_id: i64, playlist_id: i64) {
-    let mut states = IMPORT_URL_STATES.write().await;
-    states.insert(user_id, (playlist_id, Instant::now()));
+pub async fn is_waiting_for_playlist_name(shared_storage: &Arc<SharedStorage>, user_id: i64) -> bool {
+    get_playlist_name_session(shared_storage, user_id).await.is_some()
 }
 
-pub async fn clear_import_url_session(user_id: i64) {
-    let mut states = IMPORT_URL_STATES.write().await;
-    states.remove(&user_id);
+pub async fn get_playlist_name_session(
+    shared_storage: &Arc<SharedStorage>,
+    user_id: i64,
+) -> Option<PlaylistNameSession> {
+    let payload = shared_storage
+        .get_prompt_session(user_id, PLAYLIST_NAME_PROMPT_KIND)
+        .await
+        .ok()
+        .flatten()?;
+    decode_playlist_name_session(&payload)
+}
+
+pub async fn set_playlist_name_session(
+    shared_storage: &Arc<SharedStorage>,
+    user_id: i64,
+    session: PlaylistNameSession,
+) {
+    let _ = shared_storage
+        .upsert_prompt_session(
+            user_id,
+            PLAYLIST_NAME_PROMPT_KIND,
+            &encode_playlist_name_session(&session),
+            SESSION_TTL_SECS as i64,
+        )
+        .await;
+}
+
+pub async fn clear_playlist_name_session(shared_storage: &Arc<SharedStorage>, user_id: i64) {
+    let _ = shared_storage
+        .delete_prompt_session(user_id, PLAYLIST_NAME_PROMPT_KIND)
+        .await;
+}
+
+pub async fn is_waiting_for_import_url(shared_storage: &Arc<SharedStorage>, user_id: i64) -> bool {
+    get_import_playlist_id(shared_storage, user_id).await.is_some()
+}
+
+pub async fn get_import_playlist_id(shared_storage: &Arc<SharedStorage>, user_id: i64) -> Option<i64> {
+    shared_storage
+        .get_prompt_session(user_id, PLAYLIST_IMPORT_PROMPT_KIND)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|payload| payload.parse::<i64>().ok())
+}
+
+pub async fn set_import_url_session(shared_storage: &Arc<SharedStorage>, user_id: i64, playlist_id: i64) {
+    let _ = shared_storage
+        .upsert_prompt_session(
+            user_id,
+            PLAYLIST_IMPORT_PROMPT_KIND,
+            &playlist_id.to_string(),
+            SESSION_TTL_SECS as i64,
+        )
+        .await;
+}
+
+pub async fn clear_import_url_session(shared_storage: &Arc<SharedStorage>, user_id: i64) {
+    let _ = shared_storage
+        .delete_prompt_session(user_id, PLAYLIST_IMPORT_PROMPT_KIND)
+        .await;
 }
 
 // ── Handle text input for playlist name ───────────────────────────────────
 
-pub async fn handle_playlist_name_input(bot: &Bot, chat_id: ChatId, text: &str, db_pool: Arc<DbPool>) {
-    let session = match get_playlist_name_session(chat_id.0).await {
+pub async fn handle_playlist_name_input(
+    bot: &Bot,
+    chat_id: ChatId,
+    text: &str,
+    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+) {
+    let session = match get_playlist_name_session(&shared_storage, chat_id.0).await {
         Some(s) => s,
         None => return,
     };
-    clear_playlist_name_session(chat_id.0).await;
+    clear_playlist_name_session(&shared_storage, chat_id.0).await;
 
     let text = text.trim();
     if text.eq_ignore_ascii_case("cancel") {
@@ -463,6 +499,7 @@ pub async fn handle_playlist_callback(
     message_id: MessageId,
     data: &str,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
     let _ = bot.answer_callback_query(callback_id).await;
 
@@ -474,10 +511,10 @@ pub async fn handle_playlist_callback(
     // pl:new — create
     if data == "pl:new" {
         set_playlist_name_session(
+            &shared_storage,
             chat_id.0,
             PlaylistNameSession {
                 action: NameAction::Create,
-                created_at: Instant::now(),
             },
         )
         .await;
@@ -519,10 +556,10 @@ pub async fn handle_playlist_callback(
                 return Ok(());
             }
             set_playlist_name_session(
+                &shared_storage,
                 chat_id.0,
                 PlaylistNameSession {
                     action: NameAction::Rename(pl_id),
-                    created_at: Instant::now(),
                 },
             )
             .await;
@@ -645,9 +682,10 @@ pub async fn handle_playlist_callback(
                         // Set search context
                         use super::search::{set_search_session, SearchContext, SearchSession};
                         // We store the context for future search handling
-                        set_search_session(
+                        let _ = set_search_session(
+                            &shared_storage,
                             chat_id.0,
-                            SearchSession {
+                            &SearchSession {
                                 query: String::new(),
                                 results: vec![],
                                 source: if parts[1] == "y" {
@@ -656,7 +694,6 @@ pub async fn handle_playlist_callback(
                                     crate::download::search::SearchSource::SoundCloud
                                 },
                                 context: SearchContext::AddToPlaylist { playlist_id: pl_id },
-                                created_at: Instant::now(),
                             },
                         )
                         .await;
@@ -717,7 +754,7 @@ pub async fn handle_playlist_callback(
             if verify_ownership(&conn, pl_id, chat_id.0).is_none() {
                 return Ok(());
             }
-            set_import_url_session(chat_id.0, pl_id).await;
+            set_import_url_session(&shared_storage, chat_id.0, pl_id).await;
             let _ = bot
                 .send_message(
                     chat_id,

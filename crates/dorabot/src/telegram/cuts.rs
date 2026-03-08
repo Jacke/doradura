@@ -1,5 +1,5 @@
 use crate::core::config;
-use crate::storage::{db, DbPool};
+use crate::storage::{db, DbPool, SharedStorage};
 use crate::telegram::commands::{process_video_clip, CutSegment};
 use crate::telegram::Bot;
 use crate::timestamps::format_timestamp;
@@ -77,7 +77,13 @@ fn format_duration_short(seconds: i64) -> String {
     format!("{}:{:02}", mins, secs)
 }
 
-pub async fn show_cuts_page(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>, page: usize) -> ResponseResult<Message> {
+pub async fn show_cuts_page(
+    bot: &Bot,
+    chat_id: ChatId,
+    db_pool: Arc<DbPool>,
+    _shared_storage: Arc<SharedStorage>,
+    page: usize,
+) -> ResponseResult<Message> {
     let conn = db::get_connection(&db_pool)
         .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
@@ -194,6 +200,7 @@ pub async fn handle_cuts_callback(
     message_id: MessageId,
     data: &str,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     username: Option<String>,
 ) -> ResponseResult<()> {
     bot.answer_callback_query(callback_id).await?;
@@ -210,7 +217,7 @@ pub async fn handle_cuts_callback(
             }
             let page = parts[2].parse::<usize>().unwrap_or(0);
             bot.delete_message(chat_id, message_id).await.ok();
-            show_cuts_page(bot, chat_id, db_pool, page).await?;
+            show_cuts_page(bot, chat_id, db_pool, shared_storage.clone(), page).await?;
         }
         "open" => {
             if parts.len() < 3 {
@@ -498,9 +505,13 @@ This may take a few minutes\\.",
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
                 };
-                db::upsert_video_clip_session(&conn, &session).map_err(|e| {
-                    teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
+                shared_storage
+                    .clone()
+                    .upsert_video_clip_session(&session)
+                    .await
+                    .map_err(|e| {
+                        teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+                    })?;
 
                 let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
                     "❌ Cancel".to_string(),
@@ -549,9 +560,13 @@ This may take a few minutes\\.",
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
                 };
-                db::upsert_video_clip_session(&conn, &session).map_err(|e| {
-                    teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
+                shared_storage
+                    .clone()
+                    .upsert_video_clip_session(&session)
+                    .await
+                    .map_err(|e| {
+                        teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+                    })?;
 
                 // Get user language for localization
                 let lang = crate::i18n::user_lang(&conn, chat_id.0);
@@ -577,9 +592,13 @@ This may take a few minutes\\.",
             }
         }
         "clip_cancel" => {
-            let conn = db::get_connection(&db_pool)
+            let _conn = db::get_connection(&db_pool)
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            db::delete_video_clip_session_by_user(&conn, chat_id.0).ok();
+            shared_storage
+                .clone()
+                .delete_video_clip_session_by_user(chat_id.0)
+                .await
+                .ok();
             bot.delete_message(chat_id, message_id).await.ok();
         }
         // Handle duration button clicks: cuts:dur:{position}:{cut_id}:{seconds}
@@ -652,7 +671,11 @@ This may take a few minutes\\.",
                 };
 
                 // Delete any existing session first
-                db::delete_video_clip_session_by_user(&conn, chat_id.0).ok();
+                shared_storage
+                    .clone()
+                    .delete_video_clip_session_by_user(chat_id.0)
+                    .await
+                    .ok();
 
                 // Create segment
                 let segment = CutSegment { start_secs, end_secs };
@@ -665,6 +688,7 @@ This may take a few minutes\\.",
                     if let Err(e) = process_video_clip(
                         bot_clone,
                         db_pool_clone,
+                        shared_storage.clone(),
                         chat_id,
                         session,
                         vec![segment],

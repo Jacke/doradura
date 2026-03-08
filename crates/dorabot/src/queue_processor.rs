@@ -13,7 +13,7 @@ use crate::core::{alerts, config, rate_limiter};
 use crate::download::queue::{self as queue};
 use crate::download::ytdlp_errors::sanitize_user_error_message;
 use crate::download::{download_and_send_audio, download_and_send_subtitles, download_and_send_video, DownloadQueue};
-use crate::storage::db::{self as db, DbPool};
+use crate::storage::SharedStorage;
 use crate::telegram::notifications::notify_admin_task_failed;
 use crate::telegram::Bot;
 
@@ -25,7 +25,7 @@ pub async fn process_queue(
     bot: Bot,
     queue: Arc<DownloadQueue>,
     rate_limiter: Arc<rate_limiter::RateLimiter>,
-    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     alert_manager: Option<Arc<alerts::AlertManager>>,
 ) {
     const LEASE_SECONDS: i64 = 300;
@@ -56,37 +56,35 @@ pub async fn process_queue(
         }
     });
 
-    let heartbeat_pool = Arc::clone(&db_pool);
+    let heartbeat_storage = Arc::clone(&shared_storage);
     let heartbeat_worker_id = worker_id.clone();
     tokio::spawn(async move {
         let mut heartbeat_interval = tokio::time::interval(std::time::Duration::from_secs(HEARTBEAT_SECONDS));
         loop {
             heartbeat_interval.tick().await;
-            match db::get_connection(&heartbeat_pool) {
-                Ok(conn) => {
-                    if let Err(e) = db::heartbeat_worker_leases(&conn, &heartbeat_worker_id, LEASE_SECONDS) {
-                        log::warn!("Queue heartbeat failed for {}: {}", heartbeat_worker_id, e);
-                    }
-                }
-                Err(e) => log::warn!("Queue heartbeat connection failed: {}", e),
+            if let Err(e) = heartbeat_storage
+                .heartbeat_worker_leases(&heartbeat_worker_id, LEASE_SECONDS)
+                .await
+            {
+                log::warn!("Queue heartbeat failed for {}: {}", heartbeat_worker_id, e);
             }
         }
     });
 
-    let reaper_pool = Arc::clone(&db_pool);
+    let reaper_storage = Arc::clone(&shared_storage);
     tokio::spawn(async move {
         let mut reaper_interval = tokio::time::interval(std::time::Duration::from_secs(REAPER_SECONDS));
         loop {
             reaper_interval.tick().await;
-            match db::get_connection(&reaper_pool) {
-                Ok(conn) => match db::recover_expired_leases(&conn, config::admin::MAX_TASK_RETRIES) {
-                    Ok(recovered) if recovered > 0 => {
-                        log::warn!("Recovered {} expired queue lease(s)", recovered);
-                    }
-                    Ok(_) => {}
-                    Err(e) => log::warn!("Queue reaper failed: {}", e),
-                },
-                Err(e) => log::warn!("Queue reaper connection failed: {}", e),
+            match reaper_storage
+                .recover_expired_leases(config::admin::MAX_TASK_RETRIES)
+                .await
+            {
+                Ok(recovered) if recovered > 0 => {
+                    log::warn!("Recovered {} expired queue lease(s)", recovered);
+                }
+                Ok(_) => {}
+                Err(e) => log::warn!("Queue reaper failed: {}", e),
             }
         }
     });
@@ -97,16 +95,10 @@ pub async fn process_queue(
             continue;
         }
 
-        let claimed_task = match db::get_connection(&db_pool) {
-            Ok(conn) => match db::claim_next_task(&conn, &worker_id, LEASE_SECONDS) {
-                Ok(task) => task,
-                Err(e) => {
-                    log::warn!("Failed to claim next queue task: {}", e);
-                    continue;
-                }
-            },
+        let claimed_task = match shared_storage.claim_next_task(&worker_id, LEASE_SECONDS).await {
+            Ok(task) => task,
             Err(e) => {
-                log::warn!("Failed to get queue DB connection: {}", e);
+                log::warn!("Failed to claim next queue task: {}", e);
                 continue;
             }
         };
@@ -117,7 +109,7 @@ pub async fn process_queue(
             let bot = bot.clone();
             let rate_limiter = Arc::clone(&rate_limiter);
             let semaphore = Arc::clone(&semaphore);
-            let db_pool = Arc::clone(&db_pool);
+            let shared_storage = Arc::clone(&shared_storage);
             let last_download_start = Arc::clone(&last_download_start);
             let alert_manager = alert_manager.clone();
             let queue_for_cleanup = Arc::clone(&queue);
@@ -128,7 +120,7 @@ pub async fn process_queue(
                     bot,
                     task,
                     semaphore,
-                    db_pool,
+                    shared_storage,
                     rate_limiter,
                     last_download_start,
                     alert_manager,
@@ -147,7 +139,7 @@ async fn process_single_task(
     bot: Bot,
     task: queue::DownloadTask,
     semaphore: Arc<tokio::sync::Semaphore>,
-    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     rate_limiter: Arc<rate_limiter::RateLimiter>,
     last_download_start: Arc<tokio::sync::Mutex<std::time::Instant>>,
     alert_manager: Option<Arc<alerts::AlertManager>>,
@@ -159,16 +151,15 @@ async fn process_single_task(
         Ok(p) => p,
         Err(e) => {
             log::error!("Failed to acquire semaphore permit for task {}: {}", task.id, e);
-            if let Ok(conn) = db::get_connection(&db_pool) {
-                let _ = db::mark_task_failed(
-                    &conn,
+            let _ = shared_storage
+                .mark_task_failed(
                     &task.id,
                     &worker_id,
                     &format!("Failed to acquire semaphore: {}", e),
                     false,
                     config::admin::MAX_TASK_RETRIES,
-                );
-            }
+                )
+                .await;
             queue_for_cleanup
                 .remove_active_task(&task.url, task.chat_id, &task.format)
                 .await;
@@ -207,10 +198,8 @@ async fn process_single_task(
     }
 
     // Mark the task as processing
-    if let Ok(conn) = db::get_connection(&db_pool) {
-        if let Err(e) = db::mark_task_processing(&conn, &task.id, &worker_id) {
-            log::warn!("Failed to mark task {} as processing: {}", task.id, e);
-        }
+    if let Err(e) = shared_storage.mark_task_processing(&task.id, &worker_id).await {
+        log::warn!("Failed to mark task {} as processing: {}", task.id, e);
     }
 
     let url = match url::Url::parse(&task.url) {
@@ -218,26 +207,19 @@ async fn process_single_task(
         Err(e) => {
             log::error!("Invalid URL for task {}: {} - {}", task.id, task.url, e);
             let error_msg = format!("Invalid URL: {}", e);
-            if let Ok(conn) = db::get_connection(&db_pool) {
-                let _ = db::mark_task_failed(
-                    &conn,
-                    &task.id,
-                    &worker_id,
-                    &error_msg,
-                    false,
-                    config::admin::MAX_TASK_RETRIES,
-                );
-                notify_admin_task_failed(
-                    bot.clone(),
-                    Arc::clone(&db_pool),
-                    &task.id,
-                    task.chat_id.0,
-                    &task.url,
-                    &error_msg,
-                    None,
-                )
+            let _ = shared_storage
+                .mark_task_failed(&task.id, &worker_id, &error_msg, false, config::admin::MAX_TASK_RETRIES)
                 .await;
-            }
+            notify_admin_task_failed(
+                bot.clone(),
+                shared_storage.sqlite_pool(),
+                &task.id,
+                task.chat_id.0,
+                &task.url,
+                &error_msg,
+                None,
+            )
+            .await;
             queue_for_cleanup
                 .remove_active_task(&task.url, task.chat_id, &task.format)
                 .await;
@@ -283,6 +265,7 @@ async fn process_single_task(
     }
 
     // Dispatch by format
+    let sqlite_pool = shared_storage.sqlite_pool();
     let result = match task_format.as_str() {
         "mp4" => {
             download_and_send_video(
@@ -291,7 +274,8 @@ async fn process_single_task(
                 url,
                 rate_limiter.clone(),
                 created_timestamp,
-                Some(Arc::clone(&db_pool)),
+                Some(Arc::clone(&sqlite_pool)),
+                Some(Arc::clone(&shared_storage)),
                 video_quality,
                 task_message_id,
                 alert_manager.clone(),
@@ -307,7 +291,7 @@ async fn process_single_task(
                 rate_limiter.clone(),
                 created_timestamp,
                 task_format.clone(),
-                Some(Arc::clone(&db_pool)),
+                Some(Arc::clone(&sqlite_pool)),
                 task_message_id,
                 alert_manager.clone(),
             )
@@ -321,7 +305,8 @@ async fn process_single_task(
                 url,
                 rate_limiter.clone(),
                 created_timestamp,
-                Some(Arc::clone(&db_pool)),
+                Some(Arc::clone(&sqlite_pool)),
+                Some(Arc::clone(&shared_storage)),
                 audio_bitrate,
                 task_message_id,
                 alert_manager.clone(),
@@ -334,10 +319,8 @@ async fn process_single_task(
     // Handle result
     match result {
         Ok(_) => {
-            if let Ok(conn) = db::get_connection(&db_pool) {
-                if let Err(e) = db::mark_task_completed(&conn, &task_id, &worker_id) {
-                    log::warn!("Failed to mark task {} as completed: {}", task_id, e);
-                }
+            if let Err(e) = shared_storage.mark_task_completed(&task_id, &worker_id).await {
+                log::warn!("Failed to mark task {} as completed: {}", task_id, e);
             }
             log::info!("Task {} completed successfully", task_id);
         }
@@ -351,27 +334,22 @@ async fn process_single_task(
                 admin_error_msg
             );
 
-            if let Ok(conn) = db::get_connection(&db_pool) {
-                let should_retry = e.is_retryable();
-                if let Err(db_err) = db::mark_task_failed(
-                    &conn,
+            let should_retry = e.is_retryable();
+            match shared_storage
+                .mark_task_failed(
                     &task_id,
                     &worker_id,
                     &user_error_msg,
                     should_retry,
                     config::admin::MAX_TASK_RETRIES,
-                ) {
-                    log::error!("Failed to mark task {} as failed in DB: {}", task_id, db_err);
-                } else {
-                    let should_notify = db::get_task_by_id(&conn, &task_id)
-                        .ok()
-                        .flatten()
-                        .is_some_and(|t| !should_retry || t.status == "dead_letter");
-                    drop(conn);
-                    if should_notify {
+                )
+                .await
+            {
+                Ok(retry_scheduled) => {
+                    if !retry_scheduled {
                         notify_admin_task_failed(
                             bot.clone(),
-                            Arc::clone(&db_pool),
+                            Arc::clone(&sqlite_pool),
                             &task_id,
                             task_chat_id.0,
                             &task_url,
@@ -381,6 +359,7 @@ async fn process_single_task(
                         .await;
                     }
                 }
+                Err(db_err) => log::error!("Failed to mark task {} as failed in DB: {}", task_id, db_err),
             }
         }
     }

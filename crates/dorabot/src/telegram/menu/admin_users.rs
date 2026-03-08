@@ -1,48 +1,37 @@
 use crate::storage::db::{self, DbPool};
+use crate::storage::SharedStorage;
 use crate::telegram::admin;
 use crate::telegram::Bot;
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardMarkup, MessageId};
-use tokio::sync::RwLock;
 
 const PAGE_SIZE: usize = 8;
+const ADMIN_SEARCH_PROMPT_KIND: &str = "admin_user_search";
+const ADMIN_SEARCH_TTL_SECS: i64 = 60;
 
 // --- Search sessions ---
 
-struct AdminSearchSession {
-    created_at: Instant,
-}
-
-static ADMIN_SEARCH_SESSIONS: std::sync::LazyLock<Arc<RwLock<HashMap<i64, AdminSearchSession>>>> =
-    std::sync::LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
-
 /// Check if an admin is currently in search mode.
-pub async fn is_admin_searching(admin_id: i64) -> bool {
-    let sessions = ADMIN_SEARCH_SESSIONS.read().await;
-    sessions
-        .get(&admin_id)
-        .map(|s| s.created_at.elapsed().as_secs() < 60)
-        .unwrap_or(false)
+pub async fn is_admin_searching(shared_storage: &Arc<SharedStorage>, admin_id: i64) -> bool {
+    shared_storage
+        .get_prompt_session(admin_id, ADMIN_SEARCH_PROMPT_KIND)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
 }
 
-async fn set_admin_searching(admin_id: i64) {
-    let mut sessions = ADMIN_SEARCH_SESSIONS.write().await;
-    // Evict expired sessions while we have the write lock
-    sessions.retain(|_, s| s.created_at.elapsed().as_secs() < 60);
-    sessions.insert(
-        admin_id,
-        AdminSearchSession {
-            created_at: Instant::now(),
-        },
-    );
+async fn set_admin_searching(shared_storage: &Arc<SharedStorage>, admin_id: i64) {
+    let _ = shared_storage
+        .upsert_prompt_session(admin_id, ADMIN_SEARCH_PROMPT_KIND, "", ADMIN_SEARCH_TTL_SECS)
+        .await;
 }
 
-async fn clear_admin_searching(admin_id: i64) {
-    let mut sessions = ADMIN_SEARCH_SESSIONS.write().await;
-    sessions.remove(&admin_id);
+async fn clear_admin_searching(shared_storage: &Arc<SharedStorage>, admin_id: i64) {
+    let _ = shared_storage
+        .delete_prompt_session(admin_id, ADMIN_SEARCH_PROMPT_KIND)
+        .await;
 }
 
 fn preserves_search_mode(action: Option<&str>) -> bool {
@@ -531,8 +520,14 @@ async fn handle_change_setting(
 
 // --- Admin search ---
 
-pub async fn handle_admin_search(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbPool>, query: &str) -> anyhow::Result<()> {
-    clear_admin_searching(chat_id.0).await;
+pub async fn handle_admin_search(
+    bot: &Bot,
+    chat_id: ChatId,
+    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
+    query: &str,
+) -> anyhow::Result<()> {
+    clear_admin_searching(shared_storage, chat_id.0).await;
 
     let conn = db::get_connection(db_pool)?;
     let users = db::search_users(&conn, query)?;
@@ -582,6 +577,7 @@ pub async fn handle_callback(
     chat_id: ChatId,
     msg_id: MessageId,
     db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
     data: &str,
 ) -> anyhow::Result<()> {
     let rest = match data.strip_prefix("au:") {
@@ -592,7 +588,7 @@ pub async fn handle_callback(
     let parts: Vec<&str> = rest.splitn(5, ':').collect();
 
     if !preserves_search_mode(parts.first().copied()) {
-        clear_admin_searching(chat_id.0).await;
+        clear_admin_searching(shared_storage, chat_id.0).await;
     }
 
     match parts.first().copied() {
@@ -645,7 +641,7 @@ pub async fn handle_callback(
             }
         }
         Some("s") => {
-            set_admin_searching(chat_id.0).await;
+            set_admin_searching(shared_storage, chat_id.0).await;
             if let Err(e) = bot
                 .edit_message_text(chat_id, msg_id, "🔍 Send a username or user ID to search:")
                 .reply_markup(InlineKeyboardMarkup::new(vec![vec![cb("🔙 Cancel", "au:l:0:a")]]))

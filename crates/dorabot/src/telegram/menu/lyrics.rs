@@ -5,7 +5,7 @@
 //!   `lyr:s:{lyrics_session_id}:{idx}` — show the section at index `idx` (or "all")
 
 use crate::lyrics::{self, LyricsSection};
-use crate::storage::db::{self, DbPool};
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -16,7 +16,11 @@ use uuid::Uuid;
 
 const MAX_MSG_LEN: usize = 4000;
 
-pub(crate) async fn handle_lyrics_callback(bot: Bot, q: CallbackQuery, db_pool: Arc<DbPool>) -> ResponseResult<()> {
+pub(crate) async fn handle_lyrics_callback(
+    bot: Bot,
+    q: CallbackQuery,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
     let data = q.data.clone().unwrap_or_default();
     let chat_id = match q.message.as_ref().map(|m| m.chat().id) {
         Some(id) => id,
@@ -30,13 +34,13 @@ pub(crate) async fn handle_lyrics_callback(bot: Bot, q: CallbackQuery, db_pool: 
     // ── Section display ───────────────────────────────────────────────────────
     if let Some(rest) = data.strip_prefix("lyr:s:") {
         bot.answer_callback_query(q.id).await?;
-        return handle_show_section(&bot, chat_id, rest, &db_pool).await;
+        return handle_show_section(&bot, chat_id, rest, &shared_storage).await;
     }
 
     // ── Initial fetch ─────────────────────────────────────────────────────────
     if let Some(audio_session_id) = data.strip_prefix("lyr:") {
         bot.answer_callback_query(q.id).text("🎵 Fetching lyrics…").await?;
-        return handle_fetch_lyrics(&bot, chat_id, user_id, audio_session_id, &db_pool).await;
+        return handle_fetch_lyrics(&bot, chat_id, user_id, audio_session_id, &shared_storage).await;
     }
 
     bot.answer_callback_query(q.id).await?;
@@ -50,12 +54,13 @@ async fn handle_fetch_lyrics(
     chat_id: ChatId,
     user_id: i64,
     audio_session_id: &str,
-    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
 ) -> ResponseResult<()> {
-    let conn = db::get_connection(db_pool).map_err(db_err)?;
-
     // Get artist + title from the audio effects session (display_title = "Artist - Song")
-    let ae_session = db::get_audio_effect_session(&conn, audio_session_id).map_err(db_err)?;
+    let ae_session = shared_storage
+        .get_audio_effect_session(audio_session_id)
+        .await
+        .map_err(db_err)?;
     let (artist, song_title) = match ae_session {
         Some(ref s) => {
             let (a, t) = lyrics::parse_artist_title(&s.title);
@@ -89,16 +94,17 @@ async fn handle_fetch_lyrics(
                 // Save session and show section picker keyboard
                 let session_id = Uuid::new_v4().to_string();
                 let sections_json = serde_json::to_string(&lyr.sections).map_err(json_err)?;
-                db::create_lyrics_session(
-                    &conn,
-                    &session_id,
-                    user_id,
-                    &artist,
-                    &song_title,
-                    &sections_json,
-                    lyr.has_structure,
-                )
-                .map_err(db_err)?;
+                shared_storage
+                    .create_lyrics_session(
+                        &session_id,
+                        user_id,
+                        &artist,
+                        &song_title,
+                        &sections_json,
+                        lyr.has_structure,
+                    )
+                    .await
+                    .map_err(db_err)?;
                 send_section_picker(bot, chat_id, &artist, &song_title, &session_id, &lyr.sections).await?;
             }
         }
@@ -163,15 +169,19 @@ fn build_section_keyboard(session_id: &str, sections: &[LyricsSection]) -> Inlin
 
 // ── Show a selected section ───────────────────────────────────────────────────
 
-async fn handle_show_section(bot: &Bot, chat_id: ChatId, rest: &str, db_pool: &Arc<DbPool>) -> ResponseResult<()> {
+async fn handle_show_section(
+    bot: &Bot,
+    chat_id: ChatId,
+    rest: &str,
+    shared_storage: &Arc<SharedStorage>,
+) -> ResponseResult<()> {
     // rest = "{lyrics_session_id}:{idx_or_all}"
     let (session_id, idx_str) = match rest.rsplit_once(':') {
         Some(pair) => pair,
         None => return Ok(()),
     };
 
-    let conn = db::get_connection(db_pool).map_err(db_err)?;
-    let row = db::get_lyrics_session(&conn, session_id).map_err(db_err)?;
+    let row = shared_storage.get_lyrics_session(session_id).await.map_err(db_err)?;
 
     let (artist, title, sections_json, has_structure) = match row {
         Some(r) => r,
