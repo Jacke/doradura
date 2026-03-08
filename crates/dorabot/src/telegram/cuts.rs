@@ -594,8 +594,6 @@ This may take a few minutes\\.",
             }
         }
         "clip_cancel" => {
-            let _conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
             shared_storage
                 .clone()
                 .delete_video_clip_session_by_user(chat_id.0)

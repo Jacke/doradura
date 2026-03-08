@@ -1115,8 +1115,6 @@ pub async fn handle_downloads_callback(
             }
         }
         "clip_cancel" => {
-            let _conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
             shared_storage
                 .clone()
                 .delete_video_clip_session_by_user(chat_id.0)
@@ -1131,9 +1129,7 @@ pub async fn handle_downloads_callback(
                 return Ok(());
             }
             let download_id = parts[2].parse::<i64>().unwrap_or(0);
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            let lang = crate::i18n::user_lang(&conn, chat_id.0);
+            let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
             // Build language picker keyboard (2 rows of 5 languages + "No subs" row)
             const SUBTITLE_LANGS: [&str; 10] = ["en", "ru", "uk", "es", "pt", "ar", "fa", "fr", "de", "hi"];
