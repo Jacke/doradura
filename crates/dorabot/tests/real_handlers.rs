@@ -69,7 +69,17 @@ impl RealHandlerTest {
                     id INTEGER PRIMARY KEY,
                     telegram_id INTEGER NOT NULL UNIQUE,
                     username TEXT,
+                    plan TEXT DEFAULT 'free',
+                    download_format TEXT DEFAULT 'mp3',
+                    download_subtitles INTEGER DEFAULT 0,
+                    video_quality TEXT DEFAULT 'best',
+                    audio_bitrate TEXT DEFAULT '320k',
                     language TEXT DEFAULT 'ru',
+                    send_as_document INTEGER DEFAULT 0,
+                    send_audio_as_document INTEGER DEFAULT 0,
+                    burn_subtitles INTEGER DEFAULT 0,
+                    progress_bar_style TEXT DEFAULT 'classic',
+                    is_blocked INTEGER DEFAULT 0,
                     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
                     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
                 );
@@ -102,7 +112,64 @@ impl RealHandlerTest {
                     plan TEXT DEFAULT 'free',
                     started_at TEXT,
                     expires_at TEXT,
+                    telegram_charge_id TEXT,
+                    is_recurring INTEGER DEFAULT 0,
                     FOREIGN KEY (user_id) REFERENCES users(telegram_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS download_history (
+                    id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    url TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    format TEXT NOT NULL,
+                    downloaded_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    file_id TEXT,
+                    author TEXT,
+                    file_size INTEGER,
+                    duration INTEGER,
+                    video_quality TEXT,
+                    audio_bitrate TEXT,
+                    bot_api_url TEXT,
+                    bot_api_is_local INTEGER DEFAULT 0,
+                    source_id INTEGER,
+                    part_index INTEGER,
+                    category TEXT,
+                    message_id INTEGER,
+                    chat_id INTEGER
+                );
+
+                CREATE TABLE IF NOT EXISTS cuts (
+                    id INTEGER PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    original_url TEXT NOT NULL,
+                    source_kind TEXT NOT NULL,
+                    source_id INTEGER NOT NULL,
+                    output_kind TEXT NOT NULL,
+                    segments_json TEXT NOT NULL,
+                    segments_text TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    file_id TEXT,
+                    file_size INTEGER,
+                    duration INTEGER,
+                    video_quality TEXT,
+                    message_id INTEGER,
+                    chat_id INTEGER
+                );
+
+                CREATE TABLE IF NOT EXISTS user_categories (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(user_id, name)
+                );
+
+                CREATE TABLE IF NOT EXISTS new_category_sessions (
+                    user_id INTEGER PRIMARY KEY,
+                    download_id INTEGER NOT NULL,
+                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
                 );
 
                 CREATE TABLE IF NOT EXISTS request_history (
@@ -176,6 +243,12 @@ impl RealHandlerTest {
             rusqlite::params![telegram_id, username, language],
         )
         .expect("Failed to insert test user");
+
+        conn.execute(
+            "INSERT OR IGNORE INTO subscriptions (user_id, plan) VALUES (?1, 'free')",
+            rusqlite::params![telegram_id],
+        )
+        .expect("Failed to insert subscription");
 
         // Also create user settings
         conn.execute(

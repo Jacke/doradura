@@ -1236,6 +1236,16 @@ impl SharedStorage {
         .await
     }
 
+    pub async fn set_user_download_format(&self, telegram_id: i64, format: &str) -> Result<()> {
+        self.set_user_string_setting(
+            telegram_id,
+            "download_format",
+            format,
+            "UPDATE users SET download_format = $2, updated_at = NOW() WHERE telegram_id = $1",
+        )
+        .await
+    }
+
     pub async fn set_user_audio_bitrate(&self, telegram_id: i64, bitrate: &str) -> Result<()> {
         self.set_user_string_setting(
             telegram_id,

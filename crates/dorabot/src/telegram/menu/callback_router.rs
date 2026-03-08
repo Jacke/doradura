@@ -6,7 +6,7 @@ use crate::downsub::DownsubGateway;
 use crate::extension::ExtensionRegistry;
 use crate::i18n;
 use crate::storage::cache;
-use crate::storage::db::{self, DbPool};
+use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::storage::SubtitleCache;
 use crate::telegram::admin;
@@ -58,25 +58,14 @@ pub async fn handle_menu_callback(
             if !data.starts_with("au:") && !data.starts_with("admin:") {
                 let caller_id = i64::try_from(q.from.id.0).unwrap_or(0);
                 if !admin::is_admin(caller_id) {
-                    match db::get_connection(&db_pool) {
-                        Ok(conn) => match db::is_user_blocked(&conn, caller_id) {
-                            Ok(true) => {
-                                let _ = bot.answer_callback_query(callback_id).await;
-                                return Ok(());
-                            }
-                            Ok(false) => {}
-                            Err(e) => {
-                                log::error!("Failed to check blocked status for callback {}: {}", caller_id, e);
-                                let _ = bot.answer_callback_query(callback_id).await;
-                                return Ok(());
-                            }
-                        },
+                    match shared_storage.get_user(caller_id).await {
+                        Ok(Some(user)) if user.is_blocked => {
+                            let _ = bot.answer_callback_query(callback_id).await;
+                            return Ok(());
+                        }
+                        Ok(_) => {}
                         Err(e) => {
-                            log::error!(
-                                "Failed to get database connection for callback blocked check {}: {}",
-                                caller_id,
-                                e
-                            );
+                            log::error!("Failed to check blocked status for callback {}: {}", caller_id, e);
                             let _ = bot.answer_callback_query(callback_id).await;
                             return Ok(());
                         }
@@ -409,35 +398,35 @@ pub async fn handle_menu_callback(
                     .iter()
                     .any(|(code, _)| code.eq_ignore_ascii_case(lang_code))
                 {
-                    if let Ok(conn) = db::get_connection(&db_pool) {
-                        let username = q.from.username.clone();
-                        // Create user with selected language
-                        if let Err(e) = db::create_user_with_language(&conn, chat_id.0, username.clone(), lang_code) {
-                            log::warn!("Failed to create user with language: {}", e);
-                        } else {
-                            log::info!(
-                                "New user created with language: chat_id={}, language={}",
-                                chat_id.0,
-                                lang_code
-                            );
-                            // Notify admins about new user
-                            use crate::telegram::notifications::notify_admin_new_user;
-                            let bot_notify = bot.clone();
-                            let user_id = chat_id.0;
-                            let first_name = q.from.first_name.clone();
-                            let lang = lang_code.to_string();
-                            tokio::spawn(async move {
-                                notify_admin_new_user(
-                                    &bot_notify,
-                                    user_id,
-                                    username.as_deref(),
-                                    Some(&first_name),
-                                    Some(&lang),
-                                    Some("/start → language"),
-                                )
-                                .await;
-                            });
-                        }
+                    let username = q.from.username.clone();
+                    if let Err(e) = shared_storage
+                        .create_user_with_language(chat_id.0, username.clone(), Some(lang_code))
+                        .await
+                    {
+                        log::warn!("Failed to create user with language: {}", e);
+                    } else {
+                        log::info!(
+                            "New user created with language: chat_id={}, language={}",
+                            chat_id.0,
+                            lang_code
+                        );
+                        // Notify admins about new user
+                        use crate::telegram::notifications::notify_admin_new_user;
+                        let bot_notify = bot.clone();
+                        let user_id = chat_id.0;
+                        let first_name = q.from.first_name.clone();
+                        let lang = lang_code.to_string();
+                        tokio::spawn(async move {
+                            notify_admin_new_user(
+                                &bot_notify,
+                                user_id,
+                                username.as_deref(),
+                                Some(&first_name),
+                                Some(&lang),
+                                Some("/start → language"),
+                            )
+                            .await;
+                        });
                     }
 
                     let new_lang = i18n::lang_from_code(lang_code);
@@ -1071,9 +1060,9 @@ pub async fn handle_menu_callback(
                     let _ = bot.answer_callback_query(callback_id.clone()).await;
                 }
 
-                let conn = db::get_connection(&db_pool)
-                    .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-                db::set_user_download_format(&conn, chat_id.0, format)
+                shared_storage
+                    .set_user_download_format(chat_id.0, format)
+                    .await
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
                 if is_from_preview {

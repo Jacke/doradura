@@ -159,17 +159,11 @@ pub async fn handle_message(
     {
         let user_id = msg.chat.id.0;
         if !crate::telegram::admin::is_admin(user_id) {
-            match db::get_connection(&db_pool) {
-                Ok(conn) => match db::is_user_blocked(&conn, user_id) {
-                    Ok(true) => return Ok(None),
-                    Ok(false) => {}
-                    Err(e) => {
-                        log::error!("Failed to check blocked status for {}: {}", user_id, e);
-                        return Ok(None);
-                    }
-                },
+            match shared_storage.get_user(user_id).await {
+                Ok(Some(user)) if user.is_blocked => return Ok(None),
+                Ok(_) => {}
                 Err(e) => {
-                    log::error!("Failed to get database connection for blocked check {}: {}", user_id, e);
+                    log::error!("Failed to check blocked status for {}: {}", user_id, e);
                     return Ok(None);
                 }
             }
@@ -204,24 +198,24 @@ pub async fn handle_message(
         // New-category sessions (from downloads:newcat callback)
         if !text.trim().starts_with('/') {
             if let Ok(Some(download_id)) = shared_storage.get_active_new_category_session(msg.chat.id.0).await {
-                if let Ok(conn) = db::get_connection(&db_pool) {
-                    let name = text.trim();
-                    if name.is_empty() || name.len() > 64 {
-                        bot.send_message(msg.chat.id, "❌ Category name must be 1–64 characters")
-                            .await
-                            .ok();
-                    } else {
-                        // Truncate to 32 chars for callback data safety
-                        let name: String = name.chars().take(32).collect();
-                        let _ = db::create_user_category(&conn, msg.chat.id.0, &name);
-                        let _ = db::set_download_category(&conn, msg.chat.id.0, download_id, Some(&name));
-                        let _ = shared_storage.delete_new_category_session(msg.chat.id.0).await;
-                        bot.send_message(msg.chat.id, format!("✅ Category «{}» created and assigned", name))
-                            .await
-                            .ok();
-                    }
-                    return Ok(None);
+                let name = text.trim();
+                if name.is_empty() || name.len() > 64 {
+                    bot.send_message(msg.chat.id, "❌ Category name must be 1–64 characters")
+                        .await
+                        .ok();
+                } else {
+                    // Truncate to 32 chars for callback data safety
+                    let name: String = name.chars().take(32).collect();
+                    let _ = shared_storage.create_user_category(msg.chat.id.0, &name).await;
+                    let _ = shared_storage
+                        .set_download_category(msg.chat.id.0, download_id, Some(&name))
+                        .await;
+                    let _ = shared_storage.delete_new_category_session(msg.chat.id.0).await;
+                    bot.send_message(msg.chat.id, format!("✅ Category «{}» created and assigned", name))
+                        .await
+                        .ok();
                 }
+                return Ok(None);
             }
         }
 
@@ -265,11 +259,13 @@ pub async fn handle_message(
 
                     let bot_clone = bot.clone();
                     let db_pool_clone = db_pool.clone();
+                    let shared_storage_clone = shared_storage.clone();
                     let chat_id = msg.chat.id;
                     tokio::spawn(async move {
                         if let Err(e) = process_audio_cut(
                             bot_clone,
                             db_pool_clone,
+                            shared_storage_clone,
                             chat_id,
                             audio_session,
                             segments,
@@ -505,17 +501,11 @@ pub async fn handle_message(
 
             // Get user's preferred download format from database
             // Use get_user to get full user info (will be reused for logging)
-            let (format, user_info) = match db::get_connection(&db_pool) {
-                Ok(conn) => match db::get_user(&conn, msg.chat.id.0) {
-                    Ok(Some(user)) => (user.download_format().to_string(), Some(user)),
-                    Ok(None) => (String::from("mp3"), None),
-                    Err(e) => {
-                        log::warn!("Failed to get user: {}, using default mp3", e);
-                        (String::from("mp3"), None)
-                    }
-                },
+            let (format, user_info) = match shared_storage.get_user(msg.chat.id.0).await {
+                Ok(Some(user)) => (user.download_format().to_string(), Some(user)),
+                Ok(None) => (String::from("mp3"), None),
                 Err(e) => {
-                    log::error!("Failed to get database connection: {}, using default mp3", e);
+                    log::error!("Failed to get user: {}, using default mp3", e);
                     (String::from("mp3"), None)
                 }
             };
@@ -617,74 +607,36 @@ pub async fn handle_message(
                 let download_queue = _download_queue.clone();
                 let bot_clone = bot.clone();
                 let db_pool_clone = db_pool.clone();
+                let shared_storage_clone = shared_storage.clone();
                 let chat_id = msg.chat.id;
                 let lang_clone = lang.clone();
 
                 tokio::spawn(async move {
                     let mut status_text = confirmation_msg.clone();
                     status_text.push_str("\n\n");
-
-                    // Get a DB connection to read user settings
-                    let conn = match db::get_connection(&db_pool_clone) {
-                        Ok(c) => c,
-                        Err(_) => {
-                            // If we cannot get a connection, fall back to defaults
-                            for (idx, url) in valid_urls.iter().enumerate() {
-                                match get_preview_metadata(url, Some(&format), None).await {
-                                    Ok(metadata) => {
-                                        let display_title = metadata.display_title();
-
-                                        // Check the file size
-                                        let status_marker = if let Some(filesize) = metadata.filesize {
-                                            let max_size = if format == "mp4" {
-                                                config::validation::max_video_size_bytes()
-                                            } else {
-                                                config::validation::max_audio_size_bytes()
-                                            };
-
-                                            if filesize > max_size {
-                                                i18n::t(&lang_clone, "commands.status_too_large")
-                                            } else {
-                                                i18n::t(&lang_clone, "commands.status_in_queue")
-                                            }
-                                        } else {
-                                            i18n::t(&lang_clone, "commands.status_in_queue")
-                                        };
-
-                                        status_text.push_str(&format!(
-                                            "{}. {} [{}]\n",
-                                            idx + 1,
-                                            display_title.chars().take(50).collect::<String>(),
-                                            status_marker
-                                        ));
-                                    }
-                                    Err(_) => {
-                                        status_text.push_str(&format!(
-                                            "{}. {} [{}]\n",
-                                            idx + 1,
-                                            url.as_str().chars().take(50).collect::<String>(),
-                                            i18n::t(&lang_clone, "commands.status_error")
-                                        ));
-                                    }
-                                }
-                            }
-                            return;
-                        }
+                    let preview_video_quality = if format == "mp4" {
+                        shared_storage_clone
+                            .get_user_video_quality(chat_id.0)
+                            .await
+                            .ok()
+                            .or_else(|| Some("best".to_string()))
+                    } else {
+                        None
+                    };
+                    let task_video_quality = preview_video_quality.clone();
+                    let task_audio_bitrate = if format == "mp3" {
+                        shared_storage_clone
+                            .get_user_audio_bitrate(chat_id.0)
+                            .await
+                            .ok()
+                            .or_else(|| Some("320k".to_string()))
+                    } else {
+                        None
                     };
 
                     for (idx, url) in valid_urls.iter().enumerate() {
                         // Get metadata for preview
-                        // Get video quality for preview (for group downloads)
-                        let video_quality_for_preview = if format == "mp4" {
-                            match db::get_user_video_quality(&conn, chat_id.0) {
-                                Ok(q) => Some(q),
-                                Err(_) => Some("best".to_string()),
-                            }
-                        } else {
-                            None
-                        };
-
-                        match get_preview_metadata(url, Some(&format), video_quality_for_preview.as_deref()).await {
+                        match get_preview_metadata(url, Some(&format), preview_video_quality.as_deref()).await {
                             Ok(metadata) => {
                                 let display_title = metadata.display_title();
 
@@ -729,30 +681,6 @@ pub async fn handle_message(
                                     continue;
                                 }
 
-                                // Add to queue using preview callback logic
-                                // Get user preferences for quality/bitrate
-                                let conn = match db::get_connection(&db_pool_clone) {
-                                    Ok(c) => c,
-                                    Err(_) => continue,
-                                };
-
-                                let video_quality = if format == "mp4" {
-                                    match db::get_user_video_quality(&conn, chat_id.0) {
-                                        Ok(q) => Some(q),
-                                        Err(_) => Some("best".to_string()),
-                                    }
-                                } else {
-                                    None
-                                };
-                                let audio_bitrate = if format == "mp3" {
-                                    match db::get_user_audio_bitrate(&conn, chat_id.0) {
-                                        Ok(b) => Some(b),
-                                        Err(_) => Some("320k".to_string()),
-                                    }
-                                } else {
-                                    None
-                                };
-
                                 let is_video = format == "mp4";
                                 let plan_for_task = plan_string.clone();
                                 let task = crate::download::queue::DownloadTask::from_plan(
@@ -761,11 +689,11 @@ pub async fn handle_message(
                                     Some(msg.id.0),
                                     is_video,
                                     format.clone(),
-                                    video_quality,
-                                    audio_bitrate,
+                                    task_video_quality.clone(),
+                                    task_audio_bitrate.clone(),
                                     &plan_for_task,
                                 );
-                                download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
+                                download_queue.add_task(task, Some(Arc::clone(&db_pool_clone))).await;
                             }
                             Err(e) => {
                                 log::error!("Failed to get preview metadata for URL {}: {:?}", url, e);
@@ -924,17 +852,12 @@ pub async fn handle_message(
 
                 // Show preview instead of immediately downloading
                 // Get video quality for the preview
-                let conn_for_preview = db::get_connection(&db_pool);
-
                 let video_quality = if format == "mp4" {
-                    if let Ok(ref conn) = conn_for_preview {
-                        match db::get_user_video_quality(conn, msg.chat.id.0) {
-                            Ok(q) => Some(q),
-                            Err(_) => Some("best".to_string()),
-                        }
-                    } else {
-                        Some("best".to_string())
-                    }
+                    shared_storage
+                        .get_user_video_quality(msg.chat.id.0)
+                        .await
+                        .ok()
+                        .or_else(|| Some("best".to_string()))
                 } else {
                     None
                 };
@@ -2482,6 +2405,7 @@ pub async fn burn_circle_subtitles(
 async fn process_audio_cut(
     bot: Bot,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     chat_id: ChatId,
     session: crate::download::audio_effects::AudioEffectSession,
     segments: Vec<CutSegment>,
@@ -2590,8 +2514,10 @@ async fn process_audio_cut(
     }
 
     let caption = format!("{} [cut {}]", session.title, segments_text);
-    let conn = db::get_connection(&db_pool)?;
-    let send_as_document = db::get_user_send_audio_as_document(&conn, chat_id.0).unwrap_or(0);
+    let send_as_document = shared_storage
+        .get_user_send_audio_as_document(chat_id.0)
+        .await
+        .unwrap_or(0);
 
     let send_res = if send_as_document == 0 {
         bot.send_audio(chat_id, teloxide::types::InputFile::file(output_path.clone()))
