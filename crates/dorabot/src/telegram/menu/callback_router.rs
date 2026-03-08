@@ -594,7 +594,12 @@ pub async fn handle_menu_callback(
                 if !username.is_empty() {
                     let registry = std::sync::Arc::new(crate::watcher::WatcherRegistry::default_registry());
                     crate::telegram::subscriptions::show_subscribe_confirm(
-                        &bot, chat_id, username, &db_pool, &registry,
+                        &bot,
+                        chat_id,
+                        username,
+                        &db_pool,
+                        &shared_storage,
+                        &registry,
                     )
                     .await;
                 }
@@ -621,6 +626,7 @@ pub async fn handle_menu_callback(
                     message_id,
                     &data,
                     Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
                     &registry,
                 )
                 .await;

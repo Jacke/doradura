@@ -5,8 +5,7 @@
 
 use crate::core::config;
 use crate::storage::db::DbPool;
-use crate::storage::get_connection;
-use crate::watcher::db;
+use crate::storage::SharedStorage;
 use crate::watcher::traits::WatchNotification;
 use crate::watcher::WatcherRegistry;
 use std::sync::Arc;
@@ -19,6 +18,7 @@ use tokio::time::{interval, Duration};
 /// by the Telegram notification dispatcher.
 pub fn start_scheduler(
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     registry: Arc<WatcherRegistry>,
 ) -> mpsc::UnboundedReceiver<WatchNotification> {
     let (tx, rx) = mpsc::unbounded_channel();
@@ -36,7 +36,7 @@ pub fn start_scheduler(
         loop {
             ticker.tick().await;
 
-            if let Err(e) = run_check_cycle(&db_pool, &registry, &tx).await {
+            if let Err(e) = run_check_cycle(&db_pool, &shared_storage, &registry, &tx).await {
                 log::error!("Watcher check cycle failed: {}", e);
             }
         }
@@ -58,12 +58,15 @@ struct CycleSummary {
 /// Run one check cycle: iterate source groups, check for updates, emit notifications.
 async fn run_check_cycle(
     db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
     registry: &WatcherRegistry,
     tx: &mpsc::UnboundedSender<WatchNotification>,
 ) -> Result<(), String> {
-    let conn = get_connection(db_pool).map_err(|e| format!("DB connection error: {}", e))?;
-    let groups = db::get_active_source_groups(&conn)?;
-    drop(conn);
+    let _ = db_pool;
+    let groups = shared_storage
+        .get_active_content_source_groups()
+        .await
+        .map_err(|e| format!("DB connection error: {}", e))?;
 
     if groups.is_empty() {
         log::debug!("Watcher: no active subscriptions");
@@ -104,15 +107,15 @@ async fn run_check_cycle(
         {
             Ok(result) => {
                 // Update DB state for all subscriptions of this source
-                let conn = get_connection(db_pool).map_err(|e| format!("DB error: {}", e))?;
-                db::update_check_success(
-                    &conn,
-                    &group.source_type,
-                    &group.source_id,
-                    &result.new_state,
-                    result.new_meta.as_ref(),
-                )?;
-                drop(conn);
+                shared_storage
+                    .update_content_check_success(
+                        &group.source_type,
+                        &group.source_id,
+                        &result.new_state,
+                        result.new_meta.as_ref(),
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?;
 
                 // Fan out notifications to all subscribers
                 for update in &result.updates {
@@ -160,14 +163,18 @@ async fn run_check_cycle(
                 );
                 summary.errors += 1;
 
-                let conn = get_connection(db_pool).map_err(|e| format!("DB error: {}", e))?;
-                let error_count = db::update_check_error(&conn, &group.source_type, &group.source_id, &e)?;
+                let error_count = shared_storage
+                    .update_content_check_error(&group.source_type, &group.source_id, &e)
+                    .await
+                    .map_err(|e| e.to_string())?;
 
                 if error_count >= max_errors {
-                    let disabled = db::auto_disable_errored(&conn, &group.source_type, &group.source_id, max_errors)?;
+                    let disabled = shared_storage
+                        .auto_disable_errored_content(&group.source_type, &group.source_id, max_errors)
+                        .await
+                        .map_err(|e| e.to_string())?;
                     summary.disabled += disabled;
                 }
-                drop(conn);
             }
         }
     }

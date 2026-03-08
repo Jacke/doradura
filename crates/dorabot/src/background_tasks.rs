@@ -73,13 +73,21 @@ pub fn spawn_cookies_checker(bot: Bot) {
     });
 }
 
-/// Start the content watcher scheduler + notification dispatcher.
-pub fn spawn_content_watcher(bot: Bot, db_pool: Arc<DbPool>) {
+pub fn spawn_content_watcher(bot: Bot, db_pool: Arc<DbPool>, shared_storage: Arc<SharedStorage>) {
     use crate::watcher::{scheduler, WatcherRegistry};
 
     let watcher_registry = Arc::new(WatcherRegistry::default_registry());
-    let notification_rx = scheduler::start_scheduler(Arc::clone(&db_pool), Arc::clone(&watcher_registry));
-    crate::telegram::subscriptions::start_notification_dispatcher(bot, Arc::clone(&db_pool), notification_rx);
+    let notification_rx = scheduler::start_scheduler(
+        Arc::clone(&db_pool),
+        Arc::clone(&shared_storage),
+        Arc::clone(&watcher_registry),
+    );
+    crate::telegram::subscriptions::start_notification_dispatcher(
+        bot,
+        Arc::clone(&db_pool),
+        Arc::clone(&shared_storage),
+        notification_rx,
+    );
     log::info!("Content watcher scheduler and notification dispatcher started");
 }
 
