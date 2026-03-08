@@ -83,7 +83,7 @@ pub async fn notify_admin_feedback(
     username: Option<&str>,
     first_name: &str,
     message_text: &str,
-    db_pool: std::sync::Arc<crate::storage::db::DbPool>,
+    shared_storage: &Arc<SharedStorage>,
 ) -> ResponseResult<()> {
     log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     log::info!("💬 FEEDBACK RECEIVED");
@@ -95,17 +95,15 @@ pub async fn notify_admin_feedback(
 
     // Save feedback to database
     log::info!("💾 Saving feedback to database...");
-    match crate::storage::db::get_connection(&db_pool) {
-        Ok(conn) => match crate::storage::db::save_feedback(&conn, user_id, username, first_name, message_text) {
-            Ok(feedback_id) => {
-                log::info!("✅ Feedback saved successfully with ID: {}", feedback_id);
-            }
-            Err(e) => {
-                log::error!("❌ Failed to save feedback to database: {}", e);
-            }
-        },
+    match shared_storage
+        .save_feedback(user_id, username, first_name, message_text)
+        .await
+    {
+        Ok(feedback_id) => {
+            log::info!("✅ Feedback saved successfully with ID: {}", feedback_id);
+        }
         Err(e) => {
-            log::error!("❌ Failed to get database connection: {}", e);
+            log::error!("❌ Failed to save feedback to database: {}", e);
         }
     }
 

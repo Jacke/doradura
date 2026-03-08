@@ -73,6 +73,23 @@ CREATE TABLE IF NOT EXISTS charges (
 CREATE INDEX IF NOT EXISTS idx_charges_user_id
     ON charges(user_id, payment_date DESC);
 
+CREATE TABLE IF NOT EXISTS feedback_messages (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
+    username TEXT,
+    first_name TEXT NOT NULL,
+    message TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'new',
+    admin_reply TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    replied_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_feedback_messages_status
+    ON feedback_messages(status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_feedback_messages_user_id
+    ON feedback_messages(user_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS bot_assets (
     key TEXT PRIMARY KEY,
     file_id TEXT NOT NULL,
@@ -1189,6 +1206,36 @@ impl SharedStorage {
                 .fetch_one(pg_pool)
                 .await
                 .context("postgres save_charge")?;
+                Ok(row.get::<i64, _>("id"))
+            }
+        }
+    }
+
+    pub async fn save_feedback(
+        &self,
+        user_id: i64,
+        username: Option<&str>,
+        first_name: &str,
+        message: &str,
+    ) -> Result<i64> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite save_feedback connection")?;
+                db::save_feedback(&conn, user_id, username, first_name, message).context("sqlite save_feedback")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let row = sqlx::query(
+                    "INSERT INTO feedback_messages (user_id, username, first_name, message, status)
+                     VALUES ($1, $2, $3, $4, 'new')
+                     RETURNING id",
+                )
+                .bind(user_id)
+                .bind(username)
+                .bind(first_name)
+                .bind(message)
+                .fetch_one(pg_pool)
+                .await
+                .context("postgres save_feedback")?;
                 Ok(row.get::<i64, _>("id"))
             }
         }

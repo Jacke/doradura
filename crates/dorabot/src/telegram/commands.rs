@@ -377,7 +377,7 @@ pub async fn handle_message(
                 username,
                 first_name,
                 text,
-                db_pool.clone(),
+                &shared_storage,
             )
             .await;
 
