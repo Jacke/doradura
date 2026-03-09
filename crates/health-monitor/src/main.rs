@@ -14,6 +14,10 @@ use reqwest::Client;
 const ONLINE_AVATAR: &[u8] = include_bytes!("../../../assets/avatar/online.png");
 const OFFLINE_AVATAR: &[u8] = include_bytes!("../../../assets/avatar/offline.png");
 
+/// Always use official Telegram API for avatar changes — Local Bot API
+/// often doesn't support newer methods like setMyProfilePhoto (Bot API 8.2+).
+const TELEGRAM_API_URL: &str = "https://api.telegram.org";
+
 struct Config {
     bot_token: String,
     bot_api_url: String,
@@ -60,7 +64,7 @@ impl Config {
     }
 }
 
-async fn set_avatar(client: &Client, api_url: &str, token: &str, photo: &[u8]) -> Result<(), String> {
+async fn set_avatar(client: &Client, _api_url: &str, token: &str, photo: &[u8]) -> Result<(), String> {
     let photo_part = reqwest::multipart::Part::bytes(photo.to_vec())
         .file_name("photo.png")
         .mime_str("image/png")
@@ -68,7 +72,8 @@ async fn set_avatar(client: &Client, api_url: &str, token: &str, photo: &[u8]) -
 
     let form = reqwest::multipart::Form::new().part("photo", photo_part);
 
-    let url = format!("{}/bot{}/setMyProfilePhoto", api_url.trim_end_matches('/'), token);
+    // Use official Telegram API — Local Bot API doesn't support setMyProfilePhoto
+    let url = format!("{}/bot{}/setMyProfilePhoto", TELEGRAM_API_URL, token);
 
     let resp: serde_json::Value = client
         .post(&url)
@@ -124,6 +129,7 @@ async fn main() {
     let client = Client::new();
     let mut is_online = false;
     let mut failures: u32 = config.fail_threshold; // start assuming bot is down
+    let mut avatar_errors: u32 = 0; // backoff counter for avatar API failures
 
     loop {
         let healthy = check_health(&client, &config.health_url).await;
@@ -135,13 +141,27 @@ async fn main() {
             failures = 0;
 
             if !is_online {
-                info!("Bot is healthy — setting ONLINE avatar");
-                match set_avatar(&client, &config.bot_api_url, &config.bot_token, ONLINE_AVATAR).await {
-                    Ok(()) => {
-                        is_online = true;
-                        info!("Online avatar set successfully");
+                // Backoff: only retry avatar after 2^n intervals (max ~30 min)
+                let backoff_intervals = 1u32.checked_shl(avatar_errors.min(6)).unwrap_or(64);
+                if avatar_errors == 0 || failures == 0 {
+                    info!("Bot is healthy — setting ONLINE avatar");
+                    match set_avatar(&client, &config.bot_api_url, &config.bot_token, ONLINE_AVATAR).await {
+                        Ok(()) => {
+                            is_online = true;
+                            avatar_errors = 0;
+                            info!("Online avatar set successfully");
+                        }
+                        Err(e) => {
+                            avatar_errors += 1;
+                            error!(
+                                "Failed to set online avatar: {e} (will retry in ~{}s)",
+                                backoff_intervals * config.interval.as_secs() as u32
+                            );
+                        }
                     }
-                    Err(e) => error!("Failed to set online avatar: {e}"),
+                } else {
+                    // Skip this cycle, wait for backoff
+                    avatar_errors = avatar_errors.saturating_sub(1);
                 }
             }
         } else {
@@ -153,6 +173,7 @@ async fn main() {
                 match set_avatar(&client, &config.bot_api_url, &config.bot_token, OFFLINE_AVATAR).await {
                     Ok(()) => {
                         is_online = false;
+                        avatar_errors = 0;
                         info!("Offline avatar set successfully");
                     }
                     Err(e) => error!("Failed to set offline avatar: {e}"),
