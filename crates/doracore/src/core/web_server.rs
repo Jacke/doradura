@@ -1270,8 +1270,8 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
     for (ts, error_type, msg, url, uid) in &stats.recent_errors {
         let short_ts = ts.get(..16).unwrap_or(ts);
         let ec = error_type_class(error_type);
-        let short_url = if url.len() > 48 {
-            format!("{}…", &url[..48])
+        let short_url = if url.chars().count() > 48 {
+            format!("{}…", url.chars().take(48).collect::<String>())
         } else {
             url.clone()
         };

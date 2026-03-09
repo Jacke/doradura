@@ -151,8 +151,8 @@ impl SmokeTestResult {
 
         if let Some(ref error) = self.error_message {
             // Truncate long error messages
-            let error_preview = if error.len() > 100 {
-                format!("{}...", &error[..100])
+            let error_preview = if error.chars().count() > 100 {
+                format!("{}...", error.chars().take(100).collect::<String>())
             } else {
                 error.clone()
             };

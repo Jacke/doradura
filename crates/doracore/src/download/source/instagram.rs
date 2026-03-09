@@ -1181,8 +1181,8 @@ impl DownloadSource for InstagramSource {
                 } else {
                     // Truncate caption for title (first line, max 100 chars)
                     let first_line = media.caption.lines().next().unwrap_or(&media.caption);
-                    if first_line.len() > 100 {
-                        format!("{}...", &first_line[..97])
+                    if first_line.chars().count() > 100 {
+                        format!("{}...", first_line.chars().take(97).collect::<String>())
                     } else {
                         first_line.to_string()
                     }

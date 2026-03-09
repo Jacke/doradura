@@ -2000,8 +2000,8 @@ pub async fn handle_sent_files_command(
                 };
 
                 // Truncate title if too long
-                let title = if file.title.len() > 40 {
-                    format!("{}...", &file.title[..37])
+                let title = if file.title.chars().count() > 40 {
+                    format!("{}...", file.title.chars().take(37).collect::<String>())
                 } else {
                     file.title.clone()
                 };
@@ -2772,8 +2772,8 @@ pub async fn handle_proxy_stats_command(bot: &Bot, chat_id: ChatId, _user_id: i6
             stat.successes,
             stat.failures
         ));
-        if proxy_url.len() > 40 {
-            message.push_str(&format!("`{}...`\n", &proxy_url[..37]));
+        if proxy_url.chars().count() > 40 {
+            message.push_str(&format!("`{}...`\n", proxy_url.chars().take(37).collect::<String>()));
         } else {
             message.push_str(&format!("`{}`\n", proxy_url));
         }
