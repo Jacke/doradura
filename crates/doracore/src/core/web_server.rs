@@ -799,8 +799,11 @@ async fn admin_api_users(State(state): State<WebState>, header_map: HeaderMap, Q
     let query_sql = format!(
         "SELECT u.telegram_id, COALESCE(u.username, ''), COALESCE(u.plan, 'free'), \
                 COALESCE(u.is_blocked, 0), COALESCE(u.language, 'ru'), \
-                (SELECT COUNT(*) FROM download_history d WHERE d.user_id = u.telegram_id) AS dl_count \
-         FROM users u {} \
+                COUNT(d.id) AS dl_count \
+         FROM users u \
+         LEFT JOIN download_history d ON d.user_id = u.telegram_id \
+         {} \
+         GROUP BY u.telegram_id \
          ORDER BY dl_count DESC \
          LIMIT {} OFFSET {}",
         where_clause, USERS_PER_PAGE, offset
@@ -1846,7 +1849,7 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
     let usersPage = 1, usersFilter = 'all', usersSearch = '';
     let dlPage = 1, dlSearch = '';
     let usersLoaded = false, dlLoaded = false;
-    let debounceTimer = null;
+    let usersDebounce = null, dlDebounce = null;
 
     // --- Helpers ---
     const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -2044,8 +2047,8 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
     const userSearchEl = document.getElementById('user-search');
     if (userSearchEl) {{
         userSearchEl.addEventListener('input', () => {{
-            clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(() => {{
+            clearTimeout(usersDebounce);
+            usersDebounce = setTimeout(() => {{
                 usersSearch = userSearchEl.value.trim();
                 usersPage = 1;
                 loadUsers();
@@ -2056,8 +2059,8 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
     const dlSearchEl = document.getElementById('dl-search');
     if (dlSearchEl) {{
         dlSearchEl.addEventListener('input', () => {{
-            clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(() => {{
+            clearTimeout(dlDebounce);
+            dlDebounce = setTimeout(() => {{
                 dlSearch = dlSearchEl.value.trim();
                 dlPage = 1;
                 loadDownloads();

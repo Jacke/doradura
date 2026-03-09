@@ -217,12 +217,11 @@ async fn connect_to_bot_api(bot: &crate::telegram::Bot) -> Result<teloxide::type
             Err(e) => {
                 let elapsed = start.elapsed();
                 if elapsed >= DEADLINE {
-                    log::error!(
-                        "Bot API not reachable after {:.0}s ({} attempts). Shutting down.",
+                    return Err(anyhow::anyhow!(
+                        "Bot API not reachable after {:.0}s ({} attempts)",
                         elapsed.as_secs_f64(),
                         attempt
-                    );
-                    std::process::exit(1);
+                    ));
                 }
 
                 let err_str = e.to_string();
