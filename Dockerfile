@@ -154,7 +154,7 @@ RUN echo "oneshot" > /etc/s6-overlay/s6-rc.d/init-data/type && \
 # hadolint ignore=SC2016
 RUN printf '%s\n' \
     '#!/command/execlineb -P' \
-    'foreground { /bin/sh -c "echo \"[init-data] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/init_start_ms && echo $(($(date +%s%N)/1000000)) > /tmp/container_start_ms" }' \
+    'foreground { /bin/sh -c "echo \"[init-data] START at $(date -u +%Y-%m-%dT%H:%M:%SZ)\" && echo $(($(date +%s)*1000)) > /tmp/init_start_ms && echo $(($(date +%s)*1000)) > /tmp/container_start_ms" }' \
     'foreground { echo "================================================" }' \
     'foreground { echo "Initializing Telegram Bot API + Doradura Bot" }' \
     'foreground { echo "================================================" }' \
@@ -205,7 +205,7 @@ RUN printf '%s\n' \
     '}' \
     'foreground { /bin/sh -c "echo \"[init-data] /data contains $(ls /data | wc -l) files\"" }' \
     'foreground { echo "================================================" }' \
-    'foreground { /bin/sh -c "START=$(cat /tmp/init_start_ms 2>/dev/null || echo 0); END=$(($(date +%s%N)/1000000)); ELAPSED=$((END - START)); echo \"[init-data] COMPLETE in ${ELAPSED}ms at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\"" }' \
+    'foreground { /bin/sh -c "START=$(cat /tmp/init_start_ms 2>/dev/null || echo 0); END=$(($(date +%s)*1000)); ELAPSED=$((END - START)); echo \"[init-data] COMPLETE in ${ELAPSED}ms at $(date +%Y-%m-%dT%H:%M:%SZ)\"" }' \
     'foreground { echo "Starting services (telegram-bot-api, bgutil, doradura-bot)..." }' \
     'echo "================================================"' \
     > /etc/s6-overlay/scripts/init-data && \
@@ -217,7 +217,7 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/telegram-bot-api/type && \
     touch /etc/s6-overlay/s6-rc.d/telegram-bot-api/dependencies.d/init-data && \
     printf '%s\n' \
     '#!/command/execlineb -P' \
-    'foreground { /bin/sh -c "echo \"[telegram-bot-api] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/bot_api_start_ms" }' \
+    'foreground { /bin/sh -c "echo \"[telegram-bot-api] START at $(date +%Y-%m-%dT%H:%M:%SZ)\" && echo $(($(date +%s)*1000)) > /tmp/bot_api_start_ms" }' \
     's6-setuidgid telegram-bot-api' \
     'fdmove -c 2 1' \
     '/bin/sh -c "umask 007 && exec telegram-bot-api --local --api-id=${TELEGRAM_API_ID} --api-hash=${TELEGRAM_API_HASH} --http-port=8081 --http-stat-port=8082 --dir=/data --temp-dir=/tmp --verbosity=1"' \
@@ -230,8 +230,8 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/type && \
     touch /etc/s6-overlay/s6-rc.d/bgutil-pot-server/dependencies.d/init-data && \
     printf '%s\n' \
     '#!/bin/sh' \
-    'echo "[bgutil-pot-server] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)"' \
-    'echo $(($(date +%s%N)/1000000)) > /tmp/bgutil_start_ms' \
+    'echo "[bgutil-pot-server] START at $(date +%Y-%m-%dT%H:%M:%SZ)"' \
+    'echo $(($(date +%s)*1000)) > /tmp/bgutil_start_ms' \
     'export HOME=/home/botuser' \
     'export TOKEN_TTL=6' \
     'exec s6-setuidgid botuser node /opt/bgutil/server/build/main.js 2>&1' \
@@ -246,7 +246,7 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/doradura-bot/type && \
     touch /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d/telegram-bot-api && \
     printf '%s\n' \
     '#!/command/execlineb -P' \
-    'foreground { /bin/sh -c "echo \"[doradura-bot] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/doradura_start_ms" }' \
+    'foreground { /bin/sh -c "echo \"[doradura-bot] START at $(date +%Y-%m-%dT%H:%M:%SZ)\" && echo $(($(date +%s)*1000)) > /tmp/doradura_start_ms" }' \
     's6-setuidgid botuser' \
     's6-env DATABASE_PATH=/data/database.sqlite' \
     's6-env TEMP_FILES_DIR=/data' \
