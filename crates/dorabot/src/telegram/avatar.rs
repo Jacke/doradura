@@ -20,13 +20,18 @@ fn api_url(bot: &Bot, method: &str) -> String {
 }
 
 /// Set bot profile photo from PNG bytes.
+///
+/// Bot API 9.4: `setMyProfilePhoto` expects an `InputProfilePhotoStatic` JSON object
+/// with the actual file sent as a separate multipart part via `attach://` reference.
 async fn set_bot_avatar(bot: &Bot, photo_bytes: &[u8]) -> anyhow::Result<()> {
-    let photo_part = reqwest::multipart::Part::bytes(photo_bytes.to_vec())
+    let photo_file = reqwest::multipart::Part::bytes(photo_bytes.to_vec())
         .file_name("photo.png")
         .mime_str("image/png")
         .unwrap();
 
-    let form = reqwest::multipart::Form::new().part("photo", photo_part);
+    let form = reqwest::multipart::Form::new()
+        .text("photo", r#"{"type":"static","photo":"attach://photo_file"}"#)
+        .part("photo_file", photo_file);
 
     let resp: serde_json::Value = bot
         .client()

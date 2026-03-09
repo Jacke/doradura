@@ -14,8 +14,11 @@ use reqwest::Client;
 const ONLINE_AVATAR: &[u8] = include_bytes!("../../../assets/avatar/online.png");
 const OFFLINE_AVATAR: &[u8] = include_bytes!("../../../assets/avatar/offline.png");
 
-/// Always use official Telegram API for avatar changes — Local Bot API
-/// often doesn't support newer methods like setMyProfilePhoto (Bot API 8.2+).
+const ONLINE_NAME: &str = "Dora \u{2013} Downloader Youtube Instagram TikTok";
+const OFFLINE_NAME: &str = "Dora \u{2013} Sleep";
+
+/// Always use official Telegram API — Local Bot API doesn't support
+/// newer methods like setMyProfilePhoto (Bot API 9.4).
 const TELEGRAM_API_URL: &str = "https://api.telegram.org";
 
 struct Config {
@@ -65,14 +68,17 @@ impl Config {
 }
 
 async fn set_avatar(client: &Client, _api_url: &str, token: &str, photo: &[u8]) -> Result<(), String> {
-    let photo_part = reqwest::multipart::Part::bytes(photo.to_vec())
+    // Bot API 9.4: setMyProfilePhoto expects InputProfilePhotoStatic JSON object
+    // with the actual file sent as a separate multipart part via attach:// reference.
+    let photo_file = reqwest::multipart::Part::bytes(photo.to_vec())
         .file_name("photo.png")
         .mime_str("image/png")
         .map_err(|e| e.to_string())?;
 
-    let form = reqwest::multipart::Form::new().part("photo", photo_part);
+    let form = reqwest::multipart::Form::new()
+        .text("photo", r#"{"type":"static","photo":"attach://photo_file"}"#)
+        .part("photo_file", photo_file);
 
-    // Use official Telegram API — Local Bot API doesn't support setMyProfilePhoto
     let url = format!("{}/bot{}/setMyProfilePhoto", TELEGRAM_API_URL, token);
 
     let resp: serde_json::Value = client
@@ -94,6 +100,31 @@ async fn set_avatar(client: &Client, _api_url: &str, token: &str, photo: &[u8]) 
             .and_then(|v| v.as_str())
             .unwrap_or("unknown error");
         Err(format!("Bot API error: {desc}"))
+    }
+}
+
+async fn set_bot_name(client: &Client, token: &str, name: &str) -> Result<(), String> {
+    let url = format!("{}/bot{}/setMyName", TELEGRAM_API_URL, token);
+
+    let resp: serde_json::Value = client
+        .post(&url)
+        .json(&serde_json::json!({ "name": name }))
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {e}"))?
+        .json()
+        .await
+        .map_err(|e| format!("json parse failed: {e}"))?;
+
+    if resp.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+        Ok(())
+    } else {
+        let desc = resp
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown error");
+        Err(format!("setMyName error: {desc}"))
     }
 }
 
@@ -121,12 +152,22 @@ async fn main() {
         config.health_url,
     );
 
+    let client = Client::new();
+
+    // Immediately signal offline on startup — covers container restart gap.
+    // Between old container death and bot ready, avatar should show "sleeping".
+    info!("Setting OFFLINE status on startup (bot not ready yet)");
+    if let Err(e) = set_avatar(&client, &config.bot_api_url, &config.bot_token, OFFLINE_AVATAR).await {
+        warn!("Failed to set startup offline avatar: {e}");
+    }
+    if let Err(e) = set_bot_name(&client, &config.bot_token, OFFLINE_NAME).await {
+        warn!("Failed to set startup offline name: {e}");
+    }
+
     // Wait for bot to start up before monitoring
     info!("Waiting {}s for bot startup...", config.startup_delay.as_secs());
     tokio::time::sleep(config.startup_delay).await;
     info!("Startup delay complete, beginning health checks");
-
-    let client = Client::new();
     let mut is_online = false;
     let mut failures: u32 = config.fail_threshold; // start assuming bot is down
     let mut avatar_errors: u32 = 0; // backoff counter for avatar API failures
@@ -150,6 +191,9 @@ async fn main() {
                             is_online = true;
                             avatar_errors = 0;
                             info!("Online avatar set successfully");
+                            if let Err(e) = set_bot_name(&client, &config.bot_token, ONLINE_NAME).await {
+                                warn!("Failed to set online bot name: {e}");
+                            }
                         }
                         Err(e) => {
                             avatar_errors += 1;
@@ -175,6 +219,9 @@ async fn main() {
                         is_online = false;
                         avatar_errors = 0;
                         info!("Offline avatar set successfully");
+                        if let Err(e) = set_bot_name(&client, &config.bot_token, OFFLINE_NAME).await {
+                            warn!("Failed to set offline bot name: {e}");
+                        }
                     }
                     Err(e) => error!("Failed to set offline avatar: {e}"),
                 }
