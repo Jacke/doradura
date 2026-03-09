@@ -238,57 +238,15 @@ RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/type && \
     > /etc/s6-overlay/s6-rc.d/bgutil-pot-server/run && \
     chmod +x /etc/s6-overlay/s6-rc.d/bgutil-pot-server/run
 
-# Wait script for Bot API
-# hadolint ignore=SC2016
-RUN printf '%s\n' \
-    '#!/bin/sh' \
-    'BOT_API="${BOT_API_URL:-http://localhost:8081}"' \
-    'BOT_TOKEN="${TELOXIDE_TOKEN:-}"' \
-    'READY=0' \
-    'START_TIME=$(date +%s)' \
-    'START_MS=$(($(date +%s%N)/1000000))' \
-    'echo "[wait-for-bot-api] Waiting for Bot API at $BOT_API..."' \
-    'for i in $(seq 1 180); do' \
-    '  if [ $i -le 60 ]; then' \
-    '    [ $((i % 5)) -eq 0 ] && echo "[wait-for-bot-api] Still waiting... (${i}s elapsed)"' \
-    '  else' \
-    '    [ $((i % 10)) -eq 0 ] && echo "[wait-for-bot-api] Still waiting... (${i}s elapsed)"' \
-    '  fi' \
-    '  if wget -q --spider "$BOT_API" 2>/dev/null; then' \
-    '    if [ -n "$BOT_TOKEN" ]; then' \
-    '      RESP=$(wget -q -O - "$BOT_API/bot$BOT_TOKEN/getMe" 2>/dev/null || echo "")' \
-    '      if echo "$RESP" | grep -q "\"ok\":true"; then' \
-    '        END_TIME=$(date +%s)' \
-    '        ELAPSED=$((END_TIME - START_TIME))' \
-    '        echo "[wait-for-bot-api] Bot API READY after ${ELAPSED}s (${i} checks)"' \
-    '        READY=1' \
-    '        break' \
-    '      elif echo "$RESP" | grep -q "restart"; then' \
-    '        [ $((i % 10)) -eq 0 ] && echo "[wait-for-bot-api] Bot API initializing... (${i}s)"' \
-    '      fi' \
-    '    else' \
-    '      echo "[wait-for-bot-api] Bot API server responding"' \
-    '      READY=1' \
-    '      break' \
-    '    fi' \
-    '  fi' \
-    '  sleep 1' \
-    'done' \
-    'if [ $READY -eq 0 ]; then' \
-    '  echo "[wait-for-bot-api] WARNING: Bot API not ready after 180s, starting anyway..."' \
-    'fi' \
-    > /etc/s6-overlay/scripts/wait-for-bot-api && \
-    chmod +x /etc/s6-overlay/scripts/wait-for-bot-api
-
 # === doradura-bot longrun service ===
+# NOTE: No wait-for-bot-api script — the bot handles retries internally
+# with exponential backoff + jitter (see startup.rs connect_to_bot_api).
 # hadolint ignore=SC2016
 RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/doradura-bot/type && \
     touch /etc/s6-overlay/s6-rc.d/doradura-bot/dependencies.d/telegram-bot-api && \
     printf '%s\n' \
     '#!/command/execlineb -P' \
     'foreground { /bin/sh -c "echo \"[doradura-bot] START at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)\" && echo $(($(date +%s%N)/1000000)) > /tmp/doradura_start_ms" }' \
-    'foreground { /etc/s6-overlay/scripts/wait-for-bot-api }' \
-    'foreground { /bin/sh -c "START=$(cat /tmp/doradura_start_ms 2>/dev/null || echo 0); END=$(($(date +%s%N)/1000000)); ELAPSED=$((END - START)); echo \"[doradura-bot] Bot API check complete, waited ${ELAPSED}ms. Launching bot at $(date +%Y-%m-%dT%H:%M:%S.%3NZ)...\"" }' \
     's6-setuidgid botuser' \
     's6-env DATABASE_PATH=/data/database.sqlite' \
     's6-env TEMP_FILES_DIR=/data' \
