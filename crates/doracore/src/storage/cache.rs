@@ -17,12 +17,6 @@ const EVICTION_BATCH_SIZE: usize = 1_000;
 struct CachedMetadata {
     title: String,
     artist: String,
-    #[allow(dead_code)]
-    thumbnail_url: Option<String>,
-    #[allow(dead_code)]
-    duration: Option<u32>,
-    #[allow(dead_code)]
-    filesize: Option<u64>,
     cached_at: Instant,
 }
 
@@ -150,23 +144,24 @@ impl MetadataCache {
             CachedMetadata {
                 title,
                 artist,
-                thumbnail_url: None,
-                duration: None,
-                filesize: None,
                 cached_at: Instant::now(),
             },
         );
     }
 
     /// Stores extended metadata in the cache
+    ///
+    /// The extra parameters (`thumbnail_url`, `duration`, `filesize`) are accepted
+    /// for API compatibility but not persisted in the in-memory cache — only
+    /// `title` and `artist` are cached.
     pub async fn set_extended(
         &self,
         url: &Url,
         title: String,
         artist: String,
-        thumbnail_url: Option<String>,
-        duration: Option<u32>,
-        filesize: Option<u64>,
+        _thumbnail_url: Option<String>,
+        _duration: Option<u32>,
+        _filesize: Option<u64>,
     ) {
         // Do not cache "Unknown Track" or empty values
         if title.trim().is_empty() || title.trim() == "Unknown Track" {
@@ -185,9 +180,6 @@ impl MetadataCache {
             CachedMetadata {
                 title,
                 artist,
-                thumbnail_url,
-                duration,
-                filesize,
                 cached_at: Instant::now(),
             },
         );

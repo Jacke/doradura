@@ -8,7 +8,6 @@ use crate::core::utils::{escape_filename, sanitize_filename};
 use crate::download::error::DownloadError;
 use crate::download::metadata::{add_cookies_args, get_metadata_from_ytdlp, probe_video_metadata};
 use crate::download::progress::{DownloadStatus, ProgressBarStyle, ProgressMessage};
-use crate::download::proxy::ProxyListManager;
 use crate::download::send::send_error_with_sticker;
 use crate::download::ytdlp_errors::sanitize_user_error_message;
 use crate::storage::db::{self as db, DbPool};
@@ -90,29 +89,6 @@ pub type CommandError = AppError;
 // is_local_bot_api is now in crate::core::config::bot_api
 
 // validate_cookies_file_format and add_cookies_args moved to metadata.rs
-
-/// Selects a proxy from configured sources and returns the proxy URL if available
-///
-/// Returns the proxy URL if configured and healthy, None otherwise
-#[allow(dead_code)]
-async fn get_proxy_for_download() -> Option<String> {
-    // Skip if proxy system is not configured
-    if config::proxy::WARP_PROXY.is_none() && config::proxy::PROXY_FILE.is_none() {
-        return None;
-    }
-
-    // Create proxy manager with configured strategy
-    let manager = ProxyListManager::new(config::proxy::get_selection_strategy());
-
-    // Select a proxy for this download
-    if let Some(proxy) = manager.select().await {
-        log::debug!("Selected proxy for download: {}", proxy);
-        Some(proxy.to_string())
-    } else {
-        log::warn!("Proxy configured but no healthy proxies available");
-        None
-    }
-}
 
 // probe_duration_seconds, has_both_video_and_audio, probe_video_metadata,
 // build_telegram_safe_format, find_actual_downloaded_file, get_metadata_from_ytdlp

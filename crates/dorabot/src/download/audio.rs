@@ -38,6 +38,7 @@ pub async fn download_and_send_audio(
     message_id: Option<i32>,
     alert_manager: Option<Arc<crate::core::alerts::AlertManager>>,
     time_range: Option<(String, String)>,
+    with_lyrics: bool,
 ) -> ResponseResult<()> {
     log::info!(
         "Starting download_and_send_audio for chat {} with URL: {}",
@@ -108,6 +109,17 @@ pub async fn download_and_send_audio(
 
             // Audio-specific: add effects button
             add_audio_effects_button(&bot_clone, chat_id, &pipeline_result, shared_storage_clone.as_ref()).await;
+
+            // Lyrics highlights: fetch lyrics + LLM highlight in background, send as reply
+            if with_lyrics {
+                let bot_lyr = bot_clone.clone();
+                let title_lyr = pipeline_result.title.clone();
+                let artist_lyr = pipeline_result.artist.clone();
+                let sent_msg_id = pipeline_result.sent_message.id;
+                tokio::spawn(async move {
+                    send_lyrics_highlights(&bot_lyr, chat_id, sent_msg_id, &artist_lyr, &title_lyr).await;
+                });
+            }
 
             // Share page: create after successful audio send (YouTube only, fire-and-forget)
             if crate::core::share::is_youtube_url(url.as_str()) {
@@ -345,5 +357,65 @@ async fn send_share_message(
 
     if let Err(e) = bot.send_message(chat_id, text).reply_markup(keyboard).await {
         log::warn!("Failed to send share message: {}", e);
+    }
+}
+
+/// Fetch lyrics and extract key lines via LLM, then send as a reply to the audio message.
+///
+/// Silently does nothing if:
+/// - ANTHROPIC_API_KEY is not set
+/// - Lyrics are not found for this track
+/// - LLM fails to extract highlights
+/// - The track is not a song (no artist metadata)
+async fn send_lyrics_highlights(
+    bot: &Bot,
+    chat_id: ChatId,
+    reply_to: teloxide::types::MessageId,
+    artist: &str,
+    title: &str,
+) {
+    // Skip if no artist — probably not a song (podcast, audiobook, etc.)
+    if artist.trim().is_empty() || title.trim().is_empty() {
+        return;
+    }
+
+    // Skip if ANTHROPIC_API_KEY is not configured
+    if std::env::var("ANTHROPIC_API_KEY").is_err() {
+        return;
+    }
+
+    // Step 1: Fetch lyrics
+    let lyrics = match crate::lyrics::fetch_lyrics(artist, title, None).await {
+        Some(lyr) => lyr,
+        None => {
+            log::debug!("Lyrics highlights: no lyrics found for '{} - {}'", artist, title);
+            return;
+        }
+    };
+
+    let full_text = lyrics.all_text();
+
+    // Step 2: Extract highlights via LLM
+    let highlights = match crate::lyrics::highlights::extract_highlights(artist, title, &full_text).await {
+        Some(h) => h,
+        None => {
+            log::debug!("Lyrics highlights: LLM returned nothing for '{} - {}'", artist, title);
+            return;
+        }
+    };
+
+    // Step 3: Send as italic reply to the audio message
+    let escaped = crate::core::escape_markdown(&highlights);
+    let text = format!("_{}_", escaped);
+
+    if let Err(e) = bot
+        .send_message(chat_id, text)
+        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+        .reply_parameters(teloxide::types::ReplyParameters::new(reply_to))
+        .await
+    {
+        log::warn!("Failed to send lyrics highlights: {}", e);
+    } else {
+        log::info!("Lyrics highlights sent for '{} - {}'", artist, title);
     }
 }

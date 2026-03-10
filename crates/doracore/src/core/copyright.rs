@@ -49,34 +49,7 @@ pub static COPYRIGHT_ENABLED: Lazy<bool> = Lazy::new(|| {
         .unwrap_or(true)
 });
 
-/// Dora the Explorer themed sign-off messages
-/// These are inspired by Dora's famous catchphrases
-const DORA_MESSAGES: &[&str] = &[
-    // Classic Dora
-    "We did it! ¡Lo hicimos!",
-    "¡Vámonos! Let's go!",
-    "We couldn't have done it without you!",
-    // Map references
-    "I'm the Map, I'm the Map!",
-    "If there's a place you wanna go, I'm the one you need to know!",
-    // Adventure vibes
-    "Come on, vámonos! Everybody, let's go!",
-    "Delicioso!",
-    // Backpack references
-    "Backpack, Backpack!",
-    "Anything that you might need, I've got inside for you!",
-    // Encouraging
-    "If you just believe in yourself, anything is possible!",
-    "I have to keep going no matter what!",
-    // Swiper reference (playful)
-    "Swiper, no swiping!",
-    // Short and sweet
-    "¡Excelente!",
-    "Super!",
-    "You did it!",
-];
-
-/// Alternative Dora-themed messages (bilingual Russian/Spanish style)
+/// Dora the Explorer themed sign-off messages (bilingual Russian/Spanish style)
 const DORA_MESSAGES_RU: &[&str] = &[
     // Classic Dora bilingual
     "We did it! ¡Lo hicimos!",
@@ -107,13 +80,6 @@ pub fn get_random_dora_message() -> &'static str {
     let messages = DORA_MESSAGES_RU; // Use the default message set
     let index = rand::thread_rng().gen_range(0..messages.len());
     messages[index]
-}
-
-/// Get a random English Dora message
-#[allow(dead_code)]
-pub fn get_random_dora_message_en() -> &'static str {
-    let index = rand::thread_rng().gen_range(0..DORA_MESSAGES.len());
-    DORA_MESSAGES[index]
 }
 
 /// Formats a copyright signature for media captions
@@ -155,7 +121,6 @@ mod tests {
     #[test]
     fn test_dora_messages_count() {
         // Verify we have enough messages for variety
-        assert!(DORA_MESSAGES.len() >= 10);
         assert!(DORA_MESSAGES_RU.len() >= 10);
     }
 

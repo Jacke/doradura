@@ -6,6 +6,8 @@
 //! If `GENIUS_CLIENT_TOKEN` env var is set, Genius is tried first for better
 //! structure (especially for rap/hip-hop). Otherwise falls back to LRCLIB.
 
+pub mod highlights;
+
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde::{Deserialize, Serialize};

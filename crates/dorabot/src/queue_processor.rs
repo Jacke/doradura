@@ -227,7 +227,8 @@ async fn process_single_task(
         }
     };
 
-    // Delete the "Task added to queue" notification
+    // Delete the "Task added to queue" notification after a short delay
+    // so the user has time to read the queue position message
     {
         use teloxide::types::MessageId;
         let qmsg_id = queue_for_cleanup
@@ -235,7 +236,12 @@ async fn process_single_task(
             .await
             .or(task.queue_message_id);
         if let Some(id) = qmsg_id {
-            let _ = bot.delete_message(task.chat_id, MessageId(id)).await;
+            let bot_del = bot.clone();
+            let chat_id_del = task.chat_id;
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                let _ = bot_del.delete_message(chat_id_del, MessageId(id)).await;
+            });
         }
     }
 
@@ -256,6 +262,7 @@ async fn process_single_task(
         message_id: task_message_id,
         created_timestamp,
         carousel_mask,
+        with_lyrics,
         ..
     } = task;
 
@@ -312,6 +319,7 @@ async fn process_single_task(
                 task_message_id,
                 alert_manager.clone(),
                 time_range.clone(),
+                with_lyrics,
             )
             .await
         }

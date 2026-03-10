@@ -84,6 +84,46 @@ impl VideoTimestamp {
     }
 }
 
+/// Parse "MM:SS" or "HH:MM:SS" string to seconds
+pub fn parse_timestamp_to_secs(text: &str) -> Option<i64> {
+    let parts: Vec<&str> = text.split(':').collect();
+    match parts.len() {
+        2 => {
+            let minutes: i64 = parts[0].parse().ok()?;
+            let seconds: i64 = parts[1].parse().ok()?;
+            Some(minutes * 60 + seconds)
+        }
+        3 => {
+            let hours: i64 = parts[0].parse().ok()?;
+            let minutes: i64 = parts[1].parse().ok()?;
+            let seconds: i64 = parts[2].parse().ok()?;
+            Some(hours * 3600 + minutes * 60 + seconds)
+        }
+        _ => None,
+    }
+}
+
+/// Filter timestamps to only those within a time range, adjusting to clip-relative times.
+///
+/// Timestamps outside [start_secs, end_secs) are removed.
+/// Remaining timestamps have start_secs subtracted from their time_seconds.
+pub fn filter_timestamps_for_range(
+    timestamps: &[VideoTimestamp],
+    start_secs: i64,
+    end_secs: i64,
+) -> Vec<VideoTimestamp> {
+    timestamps
+        .iter()
+        .filter(|ts| ts.time_seconds >= start_secs && ts.time_seconds < end_secs)
+        .map(|ts| VideoTimestamp {
+            source: ts.source,
+            time_seconds: ts.time_seconds - start_secs,
+            end_seconds: ts.end_seconds.map(|e| (e - start_secs).min(end_secs - start_secs)),
+            label: ts.label.clone(),
+        })
+        .collect()
+}
+
 /// Format seconds as MM:SS or HH:MM:SS
 pub fn format_timestamp(seconds: i64) -> String {
     let hours = seconds / 3600;
@@ -128,5 +168,50 @@ mod tests {
         let label = ts.display_label(15);
         assert!(label.len() <= 15);
         assert!(label.ends_with("..."));
+    }
+
+    #[test]
+    fn test_parse_timestamp_to_secs() {
+        assert_eq!(parse_timestamp_to_secs("0:10"), Some(10));
+        assert_eq!(parse_timestamp_to_secs("1:30"), Some(90));
+        assert_eq!(parse_timestamp_to_secs("1:00:00"), Some(3600));
+        assert_eq!(parse_timestamp_to_secs("invalid"), None);
+    }
+
+    #[test]
+    fn test_filter_timestamps_for_range() {
+        let timestamps = vec![
+            VideoTimestamp {
+                source: TimestampSource::Chapter,
+                time_seconds: 5,
+                end_seconds: Some(10),
+                label: Some("Before".into()),
+            },
+            VideoTimestamp {
+                source: TimestampSource::Chapter,
+                time_seconds: 15,
+                end_seconds: Some(25),
+                label: Some("Inside1".into()),
+            },
+            VideoTimestamp {
+                source: TimestampSource::Chapter,
+                time_seconds: 30,
+                end_seconds: Some(40),
+                label: Some("Inside2".into()),
+            },
+            VideoTimestamp {
+                source: TimestampSource::Chapter,
+                time_seconds: 50,
+                end_seconds: None,
+                label: Some("After".into()),
+            },
+        ];
+        // Range: 10s - 40s
+        let filtered = filter_timestamps_for_range(&timestamps, 10, 40);
+        assert_eq!(filtered.len(), 2);
+        assert_eq!(filtered[0].time_seconds, 5); // 15 - 10
+        assert_eq!(filtered[0].label.as_deref(), Some("Inside1"));
+        assert_eq!(filtered[1].time_seconds, 20); // 30 - 10
+        assert_eq!(filtered[1].label.as_deref(), Some("Inside2"));
     }
 }

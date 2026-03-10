@@ -81,6 +81,25 @@ When performing code audits, ALWAYS read and follow the severity criteria define
 - `perf:` → PATCH bump (оптимизация)
 - `feat!:` или `BREAKING:` → MINOR bump (ломающее изменение)
 
+## ⚠️ CRITICAL: Telegram Bot API State в Docker
+
+### НЕ ТРОГАЙ init-data очистку `/data` без крайней необходимости
+
+**Инцидент (2026-03-09):** Попытка сохранить binlog для быстрого рестарта уронила прод на ~1 час.
+
+**Что случилось:**
+1. Попытались сохранять binlog между рестартами (ради ~10с старта вместо ~150с)
+2. `chown -R 1000:2000 /data` забирал ownership binlog у `telegram-bot-api` → Permission denied crash loop
+3. Crash loop повредил поддиректории Bot API → Bot API застрял в вечном "restart"
+4. Удаление только `*.binlog` файлов недостаточно — нужно чистить и директории с внутренним state
+
+**Правила:**
+- **Bot API хранит state НЕ ТОЛЬКО в `*.binlog`** — есть поддиректории в `/data/*/` с внутренней БД. Частичная очистка = corrupted state
+- **Init скрипт ДОЛЖЕН удалять ВСЕ Bot API директории** (содержащие binlog) + все `*.binlog` файлы
+- **Изменения в init скриптах контейнера ОСОБЕННО ОПАСНЫ** — каждый фикс = 8-20 мин Docker build. Тестируй на staging
+- **Permissions в `/data`**: sqlite → `botuser:shareddata`, всё остальное → `telegram-bot-api:shareddata`
+- **Если хочешь ускорить старт** — это отдельная задача, не hotfix. Нужен гранулярный chown и staging-тест
+
 ## YouTube Downloads on Railway
 
 ### CRITICAL: Proxy is REQUIRED

@@ -1106,6 +1106,74 @@ pub async fn handle_menu_callback(
                     )
                     .await?;
                 }
+            } else if data.starts_with("dl:tl:") {
+                // Lyrics toggle: flip mp3 buttons between dl:mp3: and dl:mp3+lyr:
+                let _ = bot.answer_callback_query(callback_id.clone()).await;
+                let parts: Vec<&str> = data.split(':').collect();
+                if parts.len() >= 3 {
+                    let url_id = parts[2];
+                    if let Some(teloxide::types::MaybeInaccessibleMessage::Regular(regular_msg)) = q.message.as_ref() {
+                        if let Some(keyboard) = regular_msg.reply_markup() {
+                            let mut new_buttons = keyboard.inline_keyboard.clone();
+
+                            // Detect current state: any dl:mp3+lyr: button = ON
+                            let currently_on = new_buttons.iter().flatten().any(|btn| {
+                                matches!(&btn.kind,
+                                    teloxide::types::InlineKeyboardButtonKind::CallbackData(d)
+                                    if d.starts_with("dl:mp3+lyr:"))
+                            });
+
+                            for row in &mut new_buttons {
+                                for button in row {
+                                    if let teloxide::types::InlineKeyboardButtonKind::CallbackData(ref mut cb) =
+                                        button.kind
+                                    {
+                                        if currently_on {
+                                            // mp3+lyr:uid → mp3:uid
+                                            if let Some(rest) = cb.strip_prefix("dl:mp3+lyr:") {
+                                                *cb = format!("dl:mp3:{}", rest);
+                                            }
+                                        } else {
+                                            // mp3:uid → mp3+lyr:uid (only standalone mp3, not mp4+mp3)
+                                            if cb.starts_with("dl:mp3:") && !cb.starts_with("dl:mp3+lyr:") {
+                                                let rest = cb.trim_start_matches("dl:mp3:");
+                                                *cb = format!("dl:mp3+lyr:{}", rest);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Update toggle button text
+                            for row in &mut new_buttons {
+                                for button in row {
+                                    if let teloxide::types::InlineKeyboardButtonKind::CallbackData(ref cb) = button.kind
+                                    {
+                                        if cb == &format!("dl:tl:{}", url_id) {
+                                            button.text = if currently_on {
+                                                "☐ 📝 Lyrics".to_string()
+                                            } else {
+                                                "☑ 📝 Lyrics".to_string()
+                                            };
+                                        }
+                                    }
+                                }
+                            }
+
+                            let new_keyboard = teloxide::types::InlineKeyboardMarkup::new(new_buttons);
+                            let _ = bot
+                                .edit_message_reply_markup(chat_id, message_id)
+                                .reply_markup(new_keyboard)
+                                .await;
+                            log::info!(
+                                "Lyrics toggle: {} → {} for user {}",
+                                if currently_on { "ON" } else { "OFF" },
+                                if currently_on { "OFF" } else { "ON" },
+                                chat_id.0
+                            );
+                        }
+                    }
+                }
             } else if data.starts_with("dl:tm:") {
                 // MP3 toggle: flip quality buttons between dl:mp4+mp3:q:uid and dl:mp4:q:uid
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
@@ -1189,7 +1257,10 @@ pub async fn handle_menu_callback(
                 let parts: Vec<&str> = data.split(':').collect();
 
                 if parts.len() >= 3 {
-                    let format = parts[1];
+                    let raw_format = parts[1];
+                    // Detect lyrics flag: mp3+lyr → mp3 with lyrics enabled
+                    let with_lyrics = raw_format == "mp3+lyr";
+                    let format = if with_lyrics { "mp3" } else { raw_format };
 
                     // For carousel photos: dl:photo:url_id:mask (mask is a decimal bitmask)
                     let (url_id, carousel_mask) = if format == "photo" && parts.len() == 4 {
@@ -1295,6 +1366,7 @@ pub async fn handle_menu_callback(
                                             plan.as_str(),
                                         );
                                         task_mp3.time_range = time_range.clone();
+                                        task_mp3.with_lyrics = with_lyrics;
                                         download_queue.add_task(task_mp3, Some(Arc::clone(&db_pool))).await;
 
                                         log::info!(
@@ -1358,6 +1430,7 @@ pub async fn handle_menu_callback(
                                         );
                                         task.time_range = time_range.clone();
                                         task.carousel_mask = carousel_mask;
+                                        task.with_lyrics = with_lyrics;
                                         download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
 
                                         // Send queue position notification and store message ID for later deletion

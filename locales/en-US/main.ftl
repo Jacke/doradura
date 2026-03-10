@@ -120,7 +120,7 @@ commands =
     .audio_source_missing = ❌ Couldn't find the original audio file.
     .audio_cut_processing = ✂️ Cutting audio: {$segments}…
     .audio_too_large_for_telegram = ❌ The audio is too large for Telegram.
-    .no_links = Sorry, I didn't find any links. Please send a link to a track or video, or send a file for conversion.
+    .no_links = 🔥 *Hey, I'm Dora\!* Here's what I can do for you:\n\n🎵 *Music & Audio*\n├ Download from YouTube, Spotify, SoundCloud, Bandcamp\n├ MP3 up to 320 kbps · FLAC · WAV\n├ ✂️ Cut & trim any part\n├ 🎸 Audio effects \(bass boost, reverb, speed\)\n└ 📱 Create ringtones \(iPhone & Android\)\n\n📹 *Video*\n├ YouTube, TikTok, Instagram, Twitch, VK\n├ Quality up to 4K · with subtitles\n├ ⭕ Video circles for Telegram\n├ ✂️ Clip any segment · speed change\n└ 🔥 Burn subtitles into video\n\n🔄 *Convert anything*\n├ 📄 DOCX → PDF\n├ 🖼 Image resize & format change\n└ 📎 Send any file — I'll figure it out\n\n🎯 *Pro tips*\n├ Paste a link with time: `url 1:00\-2:30`\n├ 🔍 Search music right in chat\n├ 📋 Create playlists & import from Spotify\n└ 🗂 Organize downloads into categories\n\n*Just send me a link or a file\!* ❤️‍🔥
     .info_usage = Usage: /info <URL>\n\nExample:\n/info https://www.youtube.com/watch?v=dQw4w9WgXcQ
     .invalid_url = Invalid link\\. Please send a valid link\\.
     .info_duration = ⏱ Duration: {$duration}\n\n

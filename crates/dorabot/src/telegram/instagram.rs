@@ -76,8 +76,8 @@ fn build_profile_caption(
     profile: &crate::download::source::instagram::InstagramProfile,
     lang: &LanguageIdentifier,
 ) -> String {
-    let bio_preview = if profile.biography.len() > 200 {
-        format!("{}...", &profile.biography[..197])
+    let bio_preview = if profile.biography.chars().count() > 200 {
+        format!("{}...", profile.biography.chars().take(197).collect::<String>())
     } else {
         profile.biography.clone()
     };
@@ -404,8 +404,8 @@ fn build_highlights_keyboard(
     for (i, hl) in highlights.iter().take(10).enumerate() {
         let label = format!("{} ({})", hl.title, hl.item_count);
         // Truncate label to fit callback data
-        let display_label = if label.len() > 30 {
-            format!("{}...", &label[..27])
+        let display_label = if label.chars().count() > 30 {
+            format!("{}...", label.chars().take(27).collect::<String>())
         } else {
             label
         };

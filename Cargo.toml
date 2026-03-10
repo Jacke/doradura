@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/doracore", "crates/dorabot", "crates/doratui"]
+members = ["crates/doracore", "crates/dorabot", "crates/doratui", "crates/health-monitor"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -19,7 +19,7 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-r
 redis = { version = "0.27", default-features = false, features = ["aio", "tokio-comp", "script"] }
 
 # HTTP
-reqwest = { version = "0.12", default-features = false, features = ["json", "socks", "stream", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "socks", "stream", "rustls-tls"] }
 axum = "0.8"
 
 # Error handling
