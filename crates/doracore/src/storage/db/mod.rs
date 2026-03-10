@@ -2307,7 +2307,7 @@ pub fn get_task_by_id(conn: &DbConnection, task_id: &str) -> Result<Option<TaskQ
 
 /// Claims the next runnable task using an SQLite immediate transaction.
 pub fn claim_next_task(conn: &DbConnection, worker_id: &str, lease_seconds: i64) -> Result<Option<TaskQueueEntry>> {
-    conn.execute_batch("BEGIN TRANSACTION")?;
+    conn.execute_batch("BEGIN IMMEDIATE TRANSACTION")?;
 
     let result = (|| -> Result<Option<TaskQueueEntry>> {
         let sql = format!(

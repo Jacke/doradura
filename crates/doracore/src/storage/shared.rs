@@ -682,6 +682,12 @@ fn upload_entry_from_pg_row(row: &sqlx::postgres::PgRow) -> UploadEntry {
     }
 }
 
+/// Task status transitions used by `run_task_status_update`.
+enum TaskStatusUpdate {
+    Processing,
+    Uploading,
+}
+
 #[derive(Clone)]
 pub enum SharedStorage {
     Sqlite { db_pool: Arc<DbPool> },
@@ -892,32 +898,13 @@ impl SharedStorage {
     }
 
     pub async fn mark_task_processing(&self, task_id: &str, worker_id: &str) -> Result<()> {
-        self.run_task_status_update(
-            "UPDATE task_queue
-             SET status = 'processing',
-                 started_at = COALESCE(started_at, NOW()),
-                 updated_at = NOW()
-             WHERE id = $1
-               AND worker_id = $2
-               AND status IN ('leased', 'processing', 'uploading')",
-            task_id,
-            worker_id,
-        )
-        .await
+        self.run_task_status_update(TaskStatusUpdate::Processing, task_id, worker_id)
+            .await
     }
 
     pub async fn mark_task_uploading(&self, task_id: &str, worker_id: &str) -> Result<()> {
-        self.run_task_status_update(
-            "UPDATE task_queue
-             SET status = 'uploading',
-                 updated_at = NOW()
-             WHERE id = $1
-               AND worker_id = $2
-               AND status IN ('leased', 'processing', 'uploading')",
-            task_id,
-            worker_id,
-        )
-        .await
+        self.run_task_status_update(TaskStatusUpdate::Uploading, task_id, worker_id)
+            .await
     }
 
     pub async fn mark_task_completed(&self, task_id: &str, worker_id: &str) -> Result<()> {
@@ -6243,18 +6230,47 @@ impl SharedStorage {
         }
     }
 
-    async fn run_task_status_update(&self, postgres_query: &str, task_id: &str, worker_id: &str) -> Result<()> {
+    async fn run_task_status_update(
+        &self,
+        status: TaskStatusUpdate,
+        task_id: &str,
+        worker_id: &str,
+    ) -> Result<()> {
         match self {
             Self::Sqlite { db_pool } => {
                 let conn = db::get_connection(db_pool).context("sqlite run_task_status_update connection")?;
-                if postgres_query.contains("processing") {
-                    db::mark_task_processing(&conn, task_id, worker_id).context("sqlite mark_task_processing")
-                } else {
-                    db::mark_task_uploading(&conn, task_id, worker_id).context("sqlite mark_task_uploading")
+                match status {
+                    TaskStatusUpdate::Processing => {
+                        db::mark_task_processing(&conn, task_id, worker_id)
+                            .context("sqlite mark_task_processing")
+                    }
+                    TaskStatusUpdate::Uploading => {
+                        db::mark_task_uploading(&conn, task_id, worker_id)
+                            .context("sqlite mark_task_uploading")
+                    }
                 }
             }
             Self::Postgres { pg_pool, .. } => {
-                sqlx::query(postgres_query)
+                let query = match status {
+                    TaskStatusUpdate::Processing => {
+                        "UPDATE task_queue
+                         SET status = 'processing',
+                             started_at = COALESCE(started_at, NOW()),
+                             updated_at = NOW()
+                         WHERE id = $1
+                           AND worker_id = $2
+                           AND status IN ('leased', 'processing', 'uploading')"
+                    }
+                    TaskStatusUpdate::Uploading => {
+                        "UPDATE task_queue
+                         SET status = 'uploading',
+                             updated_at = NOW()
+                         WHERE id = $1
+                           AND worker_id = $2
+                           AND status IN ('leased', 'processing', 'uploading')"
+                    }
+                };
+                sqlx::query(query)
                     .bind(task_id)
                     .bind(worker_id)
                     .execute(pg_pool)
