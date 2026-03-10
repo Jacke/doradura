@@ -4,17 +4,24 @@
 //! Runs on WEB_PORT (default 3000) alongside the internal metrics server.
 
 use axum::{
-    extract::{Path, State},
-    http::StatusCode,
-    response::{Html, IntoResponse, Json, Response},
-    routing::get,
+    extract::{Path, Query, State},
+    http::{header, HeaderMap, StatusCode},
+    response::{Html, IntoResponse, Json, Redirect, Response},
+    routing::{get, post},
     Router,
 };
+use hmac::{Hmac, Mac};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest, Sha256};
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 
+use crate::core::config;
+use crate::core::copyright::get_bot_username;
+use crate::i18n;
 use crate::storage::db::DbPool;
 use crate::storage::get_connection;
 
@@ -22,6 +29,7 @@ use crate::storage::get_connection;
 #[derive(Clone)]
 struct WebState {
     db: Arc<DbPool>,
+    bot_token: String,
 }
 
 /// Row fetched from the share_pages table.
@@ -36,26 +44,401 @@ struct ShareRow {
     created_at: String,
 }
 
+/// Query parameters from Telegram Login Widget
+#[derive(Deserialize, Debug)]
+struct TelegramAuth {
+    id: i64,
+    first_name: Option<String>,
+    last_name: Option<String>,
+    username: Option<String>,
+    photo_url: Option<String>,
+    auth_date: i64,
+    hash: String,
+}
+
+// --- Admin API types ---
+
+#[derive(Deserialize)]
+struct UserQuery {
+    page: Option<u32>,
+    filter: Option<String>,
+    search: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct DownloadQuery {
+    page: Option<u32>,
+    search: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct PlanUpdateReq {
+    plan: String,
+}
+
+#[derive(Deserialize)]
+struct BlockUpdateReq {
+    blocked: bool,
+}
+
+#[derive(Serialize)]
+struct ApiUser {
+    telegram_id: i64,
+    username: String,
+    plan: String,
+    is_blocked: bool,
+    download_count: i64,
+    language: String,
+}
+
+#[derive(Serialize)]
+struct ApiDownload {
+    id: i64,
+    title: String,
+    author: String,
+    user: String,
+    user_id: i64,
+    format: String,
+    file_size: Option<i64>,
+    duration: Option<i64>,
+    video_quality: String,
+    audio_bitrate: String,
+    downloaded_at: String,
+    url: String,
+}
+
+#[derive(Serialize)]
+struct PaginatedResponse<T: Serialize> {
+    items: Vec<T>,
+    total: i64,
+    page: u32,
+    per_page: u32,
+    total_pages: u32,
+}
+
 /// Start the public web server.
 pub async fn start_web_server(port: u16, db: Arc<DbPool>) -> Result<(), Box<dyn std::error::Error>> {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    let state = WebState { db };
+    let bot_token = config::BOT_TOKEN.clone();
+    let state = WebState { db, bot_token };
 
     let app = Router::new()
         .route("/s/:id", get(share_page_handler))
         .route("/api/s/:id", get(share_api_handler))
         .route("/health", get(health_handler))
+        .route("/privacy", get(privacy_handler))
+        // Admin routes
+        .route("/admin", get(admin_dashboard_handler))
+        .route("/admin/login", get(admin_login_handler))
+        .route("/admin/auth", get(admin_auth_handler))
+        // Admin API
+        .route("/admin/api/users", get(admin_api_users))
+        .route("/admin/api/users/:id/plan", post(admin_api_user_plan))
+        .route("/admin/api/users/:id/block", post(admin_api_user_block))
+        .route("/admin/api/downloads", get(admin_api_downloads))
         .with_state(state);
 
     log::info!("Starting web server on http://{}", addr);
     log::info!("  /s/:id      - Share page (HTML)");
     log::info!("  /api/s/:id  - Share page (JSON)");
+    log::info!("  /privacy    - Privacy Policy");
+    log::info!("  /admin      - Admin Dashboard");
     log::info!("  /health     - Health check");
 
     let listener = TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// GET /privacy — renders the privacy policy HTML.
+async fn privacy_handler(headers: HeaderMap, Query(params): Query<BTreeMap<String, String>>) -> Response {
+    // 1. Detect language (Query param > Accept-Language > Fallback RU)
+    let lang_code = params
+        .get("lang")
+        .cloned()
+        .or_else(|| {
+            headers
+                .get(header::ACCEPT_LANGUAGE)
+                .and_then(|h| h.to_str().ok())
+                .and_then(|s| s.split(',').next())
+                .and_then(|s| s.split(';').next())
+                .map(|s| s.trim().split('-').next().unwrap_or("ru").to_lowercase())
+        })
+        .unwrap_or_else(|| "ru".to_string());
+
+    let supported = i18n::is_language_supported(&lang_code).unwrap_or("ru");
+
+    let html = render_privacy_page(supported);
+    Html(html).into_response()
+}
+
+fn render_privacy_page(lang: &str) -> String {
+    let title = match lang {
+        "en" => "Privacy Policy — Doradura",
+        "ru" => "Политика конфиденциальности — Doradura",
+        "fr" => "Politique de confidentialité — Doradura",
+        "de" => "Datenschutzerklärung — Doradura",
+        _ => "Privacy Policy",
+    };
+
+    let content = match lang {
+        "ru" => {
+            r#"
+            <h1>Политика конфиденциальности</h1>
+            <p class="lead">Мы уважаем вашу конфиденциальность и стремимся защищать ваши персональные данные.</p>
+            
+            <section>
+                <h2>1. Общие положения</h2>
+                <p>Настоящая политика объясняет, как сервис Doradura обрабатывает данные пользователей. Мы минимизируем сбор данных и храним только то, что необходимо для работы сервиса.</p>
+            </section>
+
+            <section>
+                <h2>2. Какие данные мы собираем</h2>
+                <ul>
+                    <li><strong>Telegram ID и юзернейм:</strong> Для идентификации вашего аккаунта и предоставления доступа к функциям бота.</li>
+                    <li><strong>История загрузок:</strong> Метаданные (название, ссылка, дата) для статистики и повторного доступа к файлам.</li>
+                    <li><strong>Настройки:</strong> Выбранный язык, предпочтительное качество видео и аудио.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2>3. Как мы используем данные</h2>
+                <p>Ваши данные используются исключительно для:</p>
+                <ul>
+                    <li>Обеспечения работы функций загрузки и конвертации.</li>
+                    <li>Улучшения качества сервиса на основе анонимной статистики.</li>
+                    <li>Предоставления персональных настроек и доступа к подпискам.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2>4. Безопасность и хранение</h2>
+                <p>Мы используем современные методы шифрования для защиты базы данных. Ваши файлы не хранятся на наших серверах долго — они удаляются автоматически через 10 минут после отправки.</p>
+            </section>
+
+            <section>
+                <h2>5. Права пользователей</h2>
+                <p>Вы имеете право запросить удаление всех ваших данных из нашей системы через команду /settings или обратившись к администратору.</p>
+            </section>
+        "#
+        }
+        "fr" => {
+            r#"
+            <h1>Politique de confidentialité</h1>
+            <p class="lead">Nous respectons votre vie privée et nous nous engageons à protéger vos données personnelles.</p>
+            
+            <section>
+                <h2>1. Dispositions générales</h2>
+                <p>Cette politique explique comment Doradura traite les données des utilisateurs. Nous minimisons la collecte de données et ne conservons que ce qui est nécessaire au fonctionnement du service.</p>
+            </section>
+
+            <section>
+                <h2>2. Données collectées</h2>
+                <ul>
+                    <li><strong>ID Telegram et nom d'utilisateur :</strong> Pour identifier votre compte et fournir l'accès aux fonctions du bot.</li>
+                    <li><strong>Historique des téléchargements :</strong> Métadonnées (titre, lien, date) pour les statistiques et l'accès répété aux fichiers.</li>
+                    <li><strong>Paramètres :</strong> Langue choisie, qualité vidéo et audio préférée.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2>3. Utilisation des données</h2>
+                <p>Vos données sont utilisées exclusivement pour :</p>
+                <ul>
+                    <li>Assurer le fonctionnement des fonctions de téléchargement et de conversion.</li>
+                    <li>Améliorer la qualité du service sur la base de statistiques anonymes.</li>
+                    <li>Fournir des paramètres personnels et l'accès aux abonnements.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2>4. Sécurité et stockage</h2>
+                <p>Nous utilisons des méthodes de cryptage modernes pour protéger la base de données. Vos fichiers ne sont pas stockés longtemps sur nos serveurs — ils sont supprimés automatiquement 10 minutes après l'envoi.</p>
+            </section>
+        "#
+        }
+        "de" => {
+            r#"
+            <h1>Datenschutzerklärung</h1>
+            <p class="lead">Wir respektieren Ihre Privatsphäre und setzen uns für den Schutz Ihrer personenbezogenen Daten ein.</p>
+            
+            <section>
+                <h2>1. Allgemeine Bestimmungen</h2>
+                <p>Diese Richtlinie erklärt, wie Doradura Benutzerdaten verarbeitet. Wir minimieren die Datenerhebung und speichern nur das, was für den Betrieb des Dienstes notwendig ist.</p>
+            </section>
+
+            <section>
+                <h2>2. Welche Daten wir sammeln</h2>
+                <ul>
+                    <li><strong>Telegram ID und Benutzername:</strong> Um Ihr Konto zu identifizieren und Zugriff auf die Bot-Funktionen zu gewähren.</li>
+                    <li><strong>Download-Verlauf:</strong> Metadaten (Titel, Link, Datum) für Statistiken und wiederholten Zugriff auf Dateien.</li>
+                    <li><strong>Einstellungen:</strong> Gewählte Sprache, bevorzugte Video- und Audioqualität.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2>3. Verwendung der Daten</h2>
+                <p>Ihre Daten werden ausschließlich verwendet für:</p>
+                <ul>
+                    <li>Bereitstellung von Download- und Konvertierungsfunktionen.</li>
+                    <li>Verbesserung der Servicequalität auf Basis anonymer Statistiken.</li>
+                    <li>Bereitstellung persönlicher Einstellungen und Zugriff auf Abonnements.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2>4. Sicherheit und Speicherung</h2>
+                <p>Wir verwenden moderne Verschlüsselungsmethoden, um die Datenbank zu schützen. Ihre Dateien werden nicht lange auf unseren Servern gespeichert — sie werden 10 Minuten nach dem Senden automatisch gelöscht.</p>
+            </section>
+        "#
+        }
+        _ => {
+            r#"
+            <h1>Privacy Policy</h1>
+            <p class="lead">We respect your privacy and are committed to protecting your personal data.</p>
+            
+            <section>
+                <h2>1. General Provisions</h2>
+                <p>This policy explains how Doradura processes user data. We minimize data collection and only store what is necessary for the service to function.</p>
+            </section>
+
+            <section>
+                <h2>2. Data We Collect</h2>
+                <ul>
+                    <li><strong>Telegram ID and Username:</strong> To identify your account and provide access to the bot's features.</li>
+                    <li><strong>Download History:</strong> Metadata (title, link, date) for statistics and repeat access to files.</li>
+                    <li><strong>Settings:</strong> Chosen language, preferred video and audio quality.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2>3. How We Use Data</h2>
+                <p>Your data is used exclusively to:</p>
+                <ul>
+                    <li>Ensure the operation of download and conversion functions.</li>
+                    <li>Improve service quality based on anonymous statistics.</li>
+                    <li>Provide personal settings and access to subscriptions.</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2>4. Security and Storage</h2>
+                <p>We use modern encryption methods to protect the database. Your files are not stored on our servers for long — they are deleted automatically 10 minutes after sending.</p>
+            </section>
+
+            <section>
+                <h2>5. User Rights</h2>
+                <p>You have the right to request the deletion of all your data from our system via the /settings command or by contacting the administrator.</p>
+            </section>
+        "#
+        }
+    };
+
+    let lang_switcher = format!(
+        r#"<div class="lang-switcher">
+            <a href="/privacy?lang=en" class="{en_active}">EN</a>
+            <a href="/privacy?lang=ru" class="{ru_active}">RU</a>
+            <a href="/privacy?lang=fr" class="{fr_active}">FR</a>
+            <a href="/privacy?lang=de" class="{de_active}">DE</a>
+        </div>"#,
+        en_active = if lang == "en" { "active" } else { "" },
+        ru_active = if lang == "ru" { "active" } else { "" },
+        fr_active = if lang == "fr" { "active" } else { "" },
+        de_active = if lang == "de" { "active" } else { "" },
+    );
+
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="{lang}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{title}</title>
+    <style>
+        :root {{
+            --bg: #0d0d0d;
+            --surface: #141414;
+            --text: #e0e0e0;
+            --muted: #888;
+            --accent: #7c6aff;
+            --border: #252525;
+        }}
+        body {{
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 40px 20px;
+            display: flex;
+            justify-content: center;
+        }}
+        .container {{
+            max-width: 700px;
+            width: 100%;
+        }}
+        .logo {{
+            font-size: 1.5rem;
+            font-weight: 800;
+            margin-bottom: 40px;
+            text-align: center;
+        }}
+        .logo span {{ color: var(--accent); }}
+        h1 {{ font-size: 2rem; font-weight: 700; margin-bottom: 16px; color: #fff; }}
+        h2 {{ font-size: 1.25rem; font-weight: 600; margin-top: 32px; margin-bottom: 12px; color: #fff; }}
+        p {{ margin-bottom: 16px; color: var(--text); }}
+        .lead {{ font-size: 1.15rem; color: var(--muted); margin-bottom: 32px; }}
+        ul {{ margin-bottom: 24px; padding-left: 20px; }}
+        li {{ margin-bottom: 8px; }}
+        strong {{ color: #fff; }}
+        section {{ border-top: 1px solid var(--border); padding-top: 8px; margin-top: 32px; }}
+        .lang-switcher {{
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            margin-bottom: 40px;
+        }}
+        .lang-switcher a {{
+            color: var(--muted);
+            text-decoration: none;
+            font-size: 0.85rem;
+            font-weight: 600;
+            padding: 4px 12px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            transition: all 0.2s;
+        }}
+        .lang-switcher a:hover {{ border-color: var(--accent); color: #fff; }}
+        .lang-switcher a.active {{ background: var(--accent); border-color: var(--accent); color: #fff; }}
+        footer {{
+            margin-top: 60px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border);
+            text-align: center;
+            color: var(--muted);
+            font-size: 0.85rem;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">dora<span>dura</span></div>
+        {lang_switcher}
+        <article>
+            {content}
+        </article>
+        <footer>
+            &copy; 2026 Doradura. All rights reserved.
+        </footer>
+    </div>
+</body>
+</html>"#,
+        lang = lang,
+        title = title,
+        lang_switcher = lang_switcher,
+        content = content
+    )
 }
 
 /// Fetch a share page row from DB by ID.
@@ -78,26 +461,6 @@ fn fetch_share_row(db: &Arc<DbPool>, id: &str) -> Option<ShareRow> {
         },
     )
     .ok()
-}
-
-/// Format seconds as MM:SS or H:MM:SS.
-fn format_duration(secs: i64) -> String {
-    if secs < 0 {
-        return String::new();
-    }
-    let h = secs / 3600;
-    let m = (secs % 3600) / 60;
-    let s = secs % 60;
-    if h > 0 {
-        format!("{}:{:02}:{:02}", h, m, s)
-    } else {
-        format!("{}:{:02}", m, s)
-    }
-}
-
-/// Parse streaming links JSON into individual URLs.
-fn parse_streaming_links(json_str: &str) -> serde_json::Value {
-    serde_json::from_str(json_str).unwrap_or_default()
 }
 
 /// GET /s/:id — renders the share page HTML.
@@ -139,6 +502,1607 @@ async fn share_api_handler(Path(id): Path<String>, State(state): State<WebState>
 /// GET /health — simple health check.
 async fn health_handler() -> impl IntoResponse {
     (StatusCode::OK, "ok")
+}
+
+// --- Admin Handlers ---
+
+/// GET /admin/login — Login page with Telegram Widget.
+async fn admin_login_handler(State(_state): State<WebState>) -> Response {
+    let bot_username = match get_bot_username() {
+        Some(u) => u.to_string(),
+        None => {
+            // Fallback to ADMIN_USERNAME env var if bot hasn't started yet
+            let fallback = config::admin::ADMIN_USERNAME.clone();
+            if fallback.is_empty() {
+                return (StatusCode::INTERNAL_SERVER_ERROR, "Bot username not available yet").into_response();
+            }
+            fallback
+        }
+    };
+
+    let html = format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Admin Login — Doradura</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+        body {{
+            background: #0d0d0d;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }}
+        .login-wrap {{
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 32px;
+        }}
+        .logo {{
+            font-size: 2rem;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            color: #fff;
+        }}
+        .logo span {{ color: #7c6aff; }}
+        .card {{
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 20px;
+            padding: 40px 48px;
+            text-align: center;
+            box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+            min-width: 320px;
+        }}
+        .card h1 {{
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #fff;
+        }}
+        .card p {{
+            color: #666;
+            font-size: 0.88rem;
+            margin-bottom: 28px;
+            line-height: 1.5;
+        }}
+        .tg-wrap {{
+            display: flex;
+            justify-content: center;
+        }}
+        .footer {{
+            color: #444;
+            font-size: 0.78rem;
+        }}
+    </style>
+</head>
+<body>
+    <div class="login-wrap">
+        <div class="logo">dora<span>dura</span></div>
+        <div class="card">
+            <h1>Admin Access</h1>
+            <p>Sign in with your Telegram account<br>to access the dashboard.</p>
+            <div class="tg-wrap">
+                <script async src="https://telegram.org/js/telegram-widget.js?22"
+                        data-telegram-login="{bot_username}"
+                        data-size="large"
+                        data-auth-url="/admin/auth"
+                        data-request-access="write"></script>
+            </div>
+        </div>
+        <div class="footer">Only authorised admins can log in.</div>
+    </div>
+</body>
+</html>"#,
+        bot_username = bot_username
+    );
+
+    Html(html).into_response()
+}
+
+/// GET /admin/auth — Telegram authentication callback.
+async fn admin_auth_handler(State(state): State<WebState>, Query(auth): Query<TelegramAuth>) -> Response {
+    // 1. Verify Telegram hash
+    if !verify_telegram_hash(&auth, &state.bot_token) {
+        return (StatusCode::UNAUTHORIZED, "Invalid hash").into_response();
+    }
+
+    // 2. Check if user is admin
+    let is_admin = config::admin::ADMIN_IDS.contains(&auth.id) || *config::admin::ADMIN_USER_ID == auth.id;
+    if !is_admin {
+        return (StatusCode::FORBIDDEN, "Not an admin").into_response();
+    }
+
+    // 3. Set admin cookie
+    let admin_token = generate_admin_token(auth.id, &state.bot_token);
+    let cookie = format!(
+        "admin_token={}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400",
+        admin_token
+    );
+
+    Response::builder()
+        .status(StatusCode::SEE_OTHER)
+        .header(header::SET_COOKIE, cookie)
+        .header(header::LOCATION, "/admin")
+        .body(axum::body::Body::empty())
+        .unwrap()
+}
+
+/// GET /admin — Admin Dashboard.
+async fn admin_dashboard_handler(State(state): State<WebState>, header_map: header::HeaderMap) -> Response {
+    // 1. Check admin cookie
+    let cookie_str = header_map
+        .get(header::COOKIE)
+        .and_then(|c| c.to_str().ok())
+        .unwrap_or("");
+    let mut authed_user_id = None;
+
+    if let Some(token) = cookie_str.split(';').find(|s| s.trim().starts_with("admin_token=")) {
+        let token_val = token.trim().strip_prefix("admin_token=").unwrap();
+
+        // Verify token (brute force check against admin IDs since it's a small list)
+        for &admin_id in config::admin::ADMIN_IDS.iter() {
+            if generate_admin_token(admin_id, &state.bot_token) == token_val {
+                authed_user_id = Some(admin_id);
+                break;
+            }
+        }
+        if authed_user_id.is_none()
+            && *config::admin::ADMIN_USER_ID != 0
+            && generate_admin_token(*config::admin::ADMIN_USER_ID, &state.bot_token) == token_val
+        {
+            authed_user_id = Some(*config::admin::ADMIN_USER_ID);
+        }
+    }
+
+    if authed_user_id.is_none() {
+        return Redirect::to("/admin/login").into_response();
+    }
+
+    // 2. Fetch stats
+    let stats = fetch_admin_stats(&state.db);
+
+    // 3. Render Dashboard
+    let html = render_admin_dashboard(&stats);
+    Html(html).into_response()
+}
+
+/// Verify Telegram auth hash.
+fn verify_telegram_hash(auth: &TelegramAuth, bot_token: &str) -> bool {
+    let mut params = BTreeMap::new();
+    params.insert("id", auth.id.to_string());
+    if let Some(ref s) = auth.first_name {
+        params.insert("first_name", s.clone());
+    }
+    if let Some(ref s) = auth.last_name {
+        params.insert("last_name", s.clone());
+    }
+    if let Some(ref s) = auth.username {
+        params.insert("username", s.clone());
+    }
+    if let Some(ref s) = auth.photo_url {
+        params.insert("photo_url", s.clone());
+    }
+    params.insert("auth_date", auth.auth_date.to_string());
+
+    let data_check_string = params
+        .iter()
+        .map(|(k, v)| format!("{}={}", k, v))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let mut hasher = Sha256::new();
+    hasher.update(bot_token);
+    let secret_key = hasher.finalize();
+
+    type HmacSha256 = Hmac<Sha256>;
+    let mut mac = HmacSha256::new_from_slice(&secret_key).expect("HMAC can take key of any size");
+    mac.update(data_check_string.as_bytes());
+
+    let result = mac.finalize().into_bytes();
+    hex::encode(result) == auth.hash
+}
+
+/// Generate a secure token for the admin cookie.
+fn generate_admin_token(user_id: i64, bot_token: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(format!("{}:{}", user_id, bot_token));
+    hex::encode(hasher.finalize())
+}
+
+// --- Admin auth helper ---
+
+/// Verify admin cookie and return admin user ID, or an error response.
+#[allow(clippy::result_large_err)]
+fn verify_admin(header_map: &HeaderMap, bot_token: &str) -> Result<i64, Response> {
+    let cookie_str = header_map
+        .get(header::COOKIE)
+        .and_then(|c| c.to_str().ok())
+        .unwrap_or("");
+
+    if let Some(token) = cookie_str.split(';').find(|s| s.trim().starts_with("admin_token=")) {
+        let token_val = token.trim().strip_prefix("admin_token=").unwrap();
+        for &admin_id in config::admin::ADMIN_IDS.iter() {
+            if generate_admin_token(admin_id, bot_token) == token_val {
+                return Ok(admin_id);
+            }
+        }
+        if *config::admin::ADMIN_USER_ID != 0
+            && generate_admin_token(*config::admin::ADMIN_USER_ID, bot_token) == token_val
+        {
+            return Ok(*config::admin::ADMIN_USER_ID);
+        }
+    }
+    Err((StatusCode::UNAUTHORIZED, "Not authenticated").into_response())
+}
+
+// --- Admin API handlers ---
+
+const USERS_PER_PAGE: u32 = 50;
+const DOWNLOADS_PER_PAGE: u32 = 50;
+
+/// GET /admin/api/users — paginated, filterable user list.
+async fn admin_api_users(State(state): State<WebState>, header_map: HeaderMap, Query(q): Query<UserQuery>) -> Response {
+    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+        return resp;
+    }
+    let page = q.page.unwrap_or(1).max(1);
+    let filter = q.filter.as_deref().unwrap_or("all");
+    let search = q.search.as_deref().unwrap_or("");
+    let offset = ((page - 1) * USERS_PER_PAGE) as i64;
+
+    let conn = match get_connection(&state.db) {
+        Ok(c) => c,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    };
+
+    // Build WHERE clause
+    let mut conditions = Vec::new();
+    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+    match filter {
+        "free" => conditions.push("COALESCE(u.plan, 'free') = 'free'".to_string()),
+        "premium" => conditions.push("u.plan = 'premium'".to_string()),
+        "vip" => conditions.push("u.plan = 'vip'".to_string()),
+        "blocked" => conditions.push("u.is_blocked = 1".to_string()),
+        _ => {}
+    }
+
+    if !search.is_empty() {
+        conditions.push("(u.username LIKE ?1 OR CAST(u.telegram_id AS TEXT) LIKE ?1)".to_string());
+        params.push(Box::new(format!("%{}%", search)));
+    }
+
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    };
+
+    let count_sql = format!("SELECT COUNT(*) FROM users u {}", where_clause);
+    let total: i64 = conn
+        .query_row(
+            &count_sql,
+            rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    let total_pages = ((total as f64) / USERS_PER_PAGE as f64).ceil() as u32;
+
+    let query_sql = format!(
+        "SELECT u.telegram_id, COALESCE(u.username, ''), COALESCE(u.plan, 'free'), \
+                COALESCE(u.is_blocked, 0), COALESCE(u.language, 'ru'), \
+                COUNT(d.id) AS dl_count \
+         FROM users u \
+         LEFT JOIN download_history d ON d.user_id = u.telegram_id \
+         {} \
+         GROUP BY u.telegram_id \
+         ORDER BY dl_count DESC \
+         LIMIT {} OFFSET {}",
+        where_clause, USERS_PER_PAGE, offset
+    );
+
+    let users: Vec<ApiUser> = conn
+        .prepare(&query_sql)
+        .and_then(|mut s| {
+            let rows = s.query_map(rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())), |r| {
+                Ok(ApiUser {
+                    telegram_id: r.get(0)?,
+                    username: r.get(1)?,
+                    plan: r.get(2)?,
+                    is_blocked: r.get::<_, i64>(3)? != 0,
+                    language: r.get(4)?,
+                    download_count: r.get(5)?,
+                })
+            })?;
+            Ok(rows.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default();
+
+    Json(PaginatedResponse {
+        items: users,
+        total,
+        page,
+        per_page: USERS_PER_PAGE,
+        total_pages,
+    })
+    .into_response()
+}
+
+/// POST /admin/api/users/:id/plan — change user plan.
+async fn admin_api_user_plan(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Path(user_id): Path<i64>,
+    Json(body): Json<PlanUpdateReq>,
+) -> Response {
+    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+        return resp;
+    }
+    let valid_plans = ["free", "premium", "vip"];
+    if !valid_plans.contains(&body.plan.as_str()) {
+        return (StatusCode::BAD_REQUEST, "Invalid plan").into_response();
+    }
+    let conn = match get_connection(&state.db) {
+        Ok(c) => c,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    };
+    match conn.execute(
+        "UPDATE users SET plan = ?1 WHERE telegram_id = ?2",
+        rusqlite::params![body.plan, user_id],
+    ) {
+        Ok(0) => (StatusCode::NOT_FOUND, "User not found").into_response(),
+        Ok(_) => {
+            log::info!("Admin changed plan for user {} to {}", user_id, body.plan);
+            Json(json!({"ok": true, "plan": body.plan})).into_response()
+        }
+        Err(e) => {
+            log::error!("Failed to update plan: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response()
+        }
+    }
+}
+
+/// POST /admin/api/users/:id/block — block/unblock user.
+async fn admin_api_user_block(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Path(user_id): Path<i64>,
+    Json(body): Json<BlockUpdateReq>,
+) -> Response {
+    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+        return resp;
+    }
+    let conn = match get_connection(&state.db) {
+        Ok(c) => c,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    };
+    let blocked_val: i64 = if body.blocked { 1 } else { 0 };
+    match conn.execute(
+        "UPDATE users SET is_blocked = ?1 WHERE telegram_id = ?2",
+        rusqlite::params![blocked_val, user_id],
+    ) {
+        Ok(0) => (StatusCode::NOT_FOUND, "User not found").into_response(),
+        Ok(_) => {
+            log::info!(
+                "Admin {} user {}",
+                if body.blocked { "blocked" } else { "unblocked" },
+                user_id
+            );
+            Json(json!({"ok": true, "blocked": body.blocked})).into_response()
+        }
+        Err(e) => {
+            log::error!("Failed to update block status: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response()
+        }
+    }
+}
+
+/// GET /admin/api/downloads — paginated download history with full details.
+async fn admin_api_downloads(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Query(q): Query<DownloadQuery>,
+) -> Response {
+    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+        return resp;
+    }
+    let page = q.page.unwrap_or(1).max(1);
+    let search = q.search.as_deref().unwrap_or("");
+    let offset = ((page - 1) * DOWNLOADS_PER_PAGE) as i64;
+
+    let conn = match get_connection(&state.db) {
+        Ok(c) => c,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    };
+
+    let (where_clause, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if search.is_empty() {
+        (String::new(), vec![])
+    } else {
+        (
+            "WHERE d.title LIKE ?1 OR COALESCE(d.author,'') LIKE ?1 OR COALESCE(u.username,'') LIKE ?1 OR CAST(d.user_id AS TEXT) LIKE ?1".to_string(),
+            vec![Box::new(format!("%{}%", search)) as Box<dyn rusqlite::types::ToSql>],
+        )
+    };
+
+    let count_sql = format!(
+        "SELECT COUNT(*) FROM download_history d LEFT JOIN users u ON u.telegram_id = d.user_id {}",
+        where_clause
+    );
+    let total: i64 = conn
+        .query_row(
+            &count_sql,
+            rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    let total_pages = ((total as f64) / DOWNLOADS_PER_PAGE as f64).ceil() as u32;
+
+    let query_sql = format!(
+        "SELECT d.id, COALESCE(d.title, ''), COALESCE(d.author, ''), \
+                COALESCE(u.username, CAST(d.user_id AS TEXT)), d.user_id, \
+                COALESCE(d.format, '?'), d.file_size, d.duration, \
+                COALESCE(d.video_quality, ''), COALESCE(d.audio_bitrate, ''), \
+                d.downloaded_at, COALESCE(d.url, '') \
+         FROM download_history d \
+         LEFT JOIN users u ON u.telegram_id = d.user_id \
+         {} \
+         ORDER BY d.downloaded_at DESC \
+         LIMIT {} OFFSET {}",
+        where_clause, DOWNLOADS_PER_PAGE, offset
+    );
+
+    let downloads: Vec<ApiDownload> = conn
+        .prepare(&query_sql)
+        .and_then(|mut s| {
+            let rows = s.query_map(rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())), |r| {
+                Ok(ApiDownload {
+                    id: r.get(0)?,
+                    title: r.get(1)?,
+                    author: r.get(2)?,
+                    user: r.get(3)?,
+                    user_id: r.get(4)?,
+                    format: r.get(5)?,
+                    file_size: r.get(6)?,
+                    duration: r.get(7)?,
+                    video_quality: r.get(8)?,
+                    audio_bitrate: r.get(9)?,
+                    downloaded_at: r.get(10)?,
+                    url: r.get(11)?,
+                })
+            })?;
+            Ok(rows.filter_map(|r| r.ok()).collect())
+        })
+        .unwrap_or_default();
+
+    Json(PaginatedResponse {
+        items: downloads,
+        total,
+        page,
+        per_page: DOWNLOADS_PER_PAGE,
+        total_pages,
+    })
+    .into_response()
+}
+
+// --- Admin Stats ---
+
+struct AdminStats {
+    // Overview
+    total_users: i64,
+    total_downloads: i64,
+    active_tasks: i64,
+    errors_today: i64,
+    downloads_today: i64,
+    new_users_today: i64,
+    // Downloads per day — (date_str, count), last 30 days, chronological order
+    downloads_per_day: Vec<(String, i64)>,
+    // Recent errors — (timestamp, error_type, error_message, url, user_id)
+    recent_errors: Vec<(String, String, String, String, String)>,
+    // Format distribution — (format, count)
+    format_dist: Vec<(String, i64)>,
+}
+
+fn fetch_admin_stats(db: &Arc<DbPool>) -> AdminStats {
+    let conn = match get_connection(db) {
+        Ok(c) => c,
+        Err(_) => {
+            return AdminStats {
+                total_users: 0,
+                total_downloads: 0,
+                active_tasks: 0,
+                errors_today: 0,
+                downloads_today: 0,
+                new_users_today: 0,
+                downloads_per_day: vec![],
+                recent_errors: vec![],
+                format_dist: vec![],
+            };
+        }
+    };
+
+    let total_users: i64 = conn
+        .query_row("SELECT COUNT(*) FROM users", [], |r| r.get(0))
+        .unwrap_or(0);
+
+    let total_downloads: i64 = conn
+        .query_row("SELECT COUNT(*) FROM download_history", [], |r| r.get(0))
+        .unwrap_or(0);
+
+    let active_tasks: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM task_queue WHERE status IN ('pending','processing')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    let errors_today: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM error_log WHERE date(timestamp) = date('now')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    let downloads_today: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM download_history WHERE date(downloaded_at) = date('now')",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    // users table has no created_at column; approximate via first download
+    let new_users_today: i64 = conn
+        .query_row(
+            "SELECT COUNT(DISTINCT user_id) FROM download_history \
+             WHERE date(downloaded_at) = date('now') \
+             AND user_id NOT IN (SELECT user_id FROM download_history WHERE date(downloaded_at) < date('now'))",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap_or(0);
+
+    // Downloads per day for last 30 days
+    let downloads_per_day = conn
+        .prepare(
+            "SELECT date(downloaded_at) AS day, COUNT(*) AS cnt \
+             FROM download_history \
+             WHERE downloaded_at >= date('now','-29 days') \
+             GROUP BY day \
+             ORDER BY day ASC",
+        )
+        .and_then(|mut s| {
+            let rows = s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+            Ok(rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+        })
+        .unwrap_or_default();
+
+    // Last 20 errors
+    let recent_errors = conn
+        .prepare(
+            "SELECT timestamp, \
+                    COALESCE(error_type, ''), \
+                    COALESCE(error_message, ''), \
+                    COALESCE(url, ''), \
+                    COALESCE(CAST(user_id AS TEXT), '') \
+             FROM error_log \
+             ORDER BY timestamp DESC \
+             LIMIT 20",
+        )
+        .and_then(|mut s| {
+            let rows = s.query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, String>(4)?,
+                ))
+            })?;
+            Ok(rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+        })
+        .unwrap_or_default();
+
+    // Format distribution
+    let format_dist = conn
+        .prepare(
+            "SELECT COALESCE(format, 'unknown') AS fmt, COUNT(*) AS cnt \
+             FROM download_history \
+             GROUP BY fmt \
+             ORDER BY cnt DESC",
+        )
+        .and_then(|mut s| {
+            let rows = s.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+            Ok(rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+        })
+        .unwrap_or_default();
+
+    AdminStats {
+        total_users,
+        total_downloads,
+        active_tasks,
+        errors_today,
+        downloads_today,
+        new_users_today,
+        downloads_per_day,
+        recent_errors,
+        format_dist,
+    }
+}
+
+/// Format an integer with thousands separators, e.g. 1234567 -> "1,234,567".
+fn fmt_num(n: i64) -> String {
+    let s = n.to_string();
+    let bytes = s.as_bytes();
+    let mut out = String::with_capacity(s.len() + s.len() / 3);
+    let offset = bytes.len() % 3;
+    for (i, &b) in bytes.iter().enumerate() {
+        if i != 0 && (i % 3 == offset) {
+            out.push(',');
+        }
+        out.push(b as char);
+    }
+    out
+}
+
+/// Truncate a string for display (adds … if needed).
+fn truncate(s: &str, max: usize) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    if chars.len() <= max {
+        s.to_owned()
+    } else {
+        chars[..max].iter().collect::<String>() + "…"
+    }
+}
+
+/// Return a colour class name for an error type.
+fn error_type_class(error_type: &str) -> &'static str {
+    let t = error_type.to_lowercase();
+    if t.contains("network") || t.contains("timeout") || t.contains("connect") {
+        "err-network"
+    } else if t.contains("auth") || t.contains("permission") || t.contains("forbidden") {
+        "err-auth"
+    } else if t.contains("download") || t.contains("yt") || t.contains("youtube") {
+        "err-download"
+    } else if t.contains("db") || t.contains("sql") || t.contains("database") {
+        "err-db"
+    } else {
+        "err-other"
+    }
+}
+
+fn render_admin_dashboard(stats: &AdminStats) -> String {
+    // --- Overview cards ---
+    let cards_html = format!(
+        r#"
+        <div class="stat-card">
+            <div class="stat-icon">👤</div>
+            <div class="stat-body">
+                <div class="stat-value">{total_users}</div>
+                <div class="stat-label">Total Users</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">⬇</div>
+            <div class="stat-body">
+                <div class="stat-value">{total_dl}</div>
+                <div class="stat-label">Total Downloads</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">⚙</div>
+            <div class="stat-body">
+                <div class="stat-value active-val">{active_tasks}</div>
+                <div class="stat-label">Active Tasks</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">⚡</div>
+            <div class="stat-body">
+                <div class="stat-value">{dl_today}</div>
+                <div class="stat-label">Downloads Today</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">🆕</div>
+            <div class="stat-body">
+                <div class="stat-value">{new_users}</div>
+                <div class="stat-label">New Users Today</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon">🔴</div>
+            <div class="stat-body">
+                <div class="stat-value {err_class}">{errors_today}</div>
+                <div class="stat-label">Errors Today</div>
+            </div>
+        </div>"#,
+        total_users = fmt_num(stats.total_users),
+        total_dl = fmt_num(stats.total_downloads),
+        active_tasks = fmt_num(stats.active_tasks),
+        dl_today = fmt_num(stats.downloads_today),
+        new_users = fmt_num(stats.new_users_today),
+        errors_today = fmt_num(stats.errors_today),
+        err_class = if stats.errors_today > 0 { "err-val" } else { "" },
+    );
+
+    // --- Downloads per day bar chart ---
+    let max_day_count = stats
+        .downloads_per_day
+        .iter()
+        .map(|(_, c)| *c)
+        .max()
+        .unwrap_or(1)
+        .max(1);
+    let mut chart_html = String::new();
+    // Fill gaps: build a map for quick lookup then iterate last 30 days
+    // We render whatever the DB returns (already ordered)
+    for (date, count) in &stats.downloads_per_day {
+        let pct = (*count as f64 / max_day_count as f64 * 100.0) as u64;
+        let short_date = date.get(5..).unwrap_or(date); // MM-DD
+        chart_html.push_str(&format!(
+            r#"<div class="bar-col">
+                <div class="bar-tip">{count}</div>
+                <div class="bar" style="height:{pct}%"></div>
+                <div class="bar-label">{date}</div>
+            </div>"#,
+            count = count,
+            pct = pct,
+            date = short_date,
+        ));
+    }
+    if chart_html.is_empty() {
+        chart_html = r#"<div class="empty-state">No download data yet.</div>"#.to_owned();
+    }
+
+    // --- Recent errors ---
+    let mut errors_html = String::new();
+    for (ts, error_type, msg, url, uid) in &stats.recent_errors {
+        let short_ts = ts.get(..16).unwrap_or(ts);
+        let ec = error_type_class(error_type);
+        let short_url = if url.chars().count() > 48 {
+            format!("{}…", url.chars().take(48).collect::<String>())
+        } else {
+            url.clone()
+        };
+        errors_html.push_str(&format!(
+            r#"<tr>
+                <td class="dim mono">{ts}</td>
+                <td><span class="err-badge {ec}">{etype}</span></td>
+                <td class="msg-cell">{msg}</td>
+                <td class="dim mono small">{url}</td>
+                <td class="dim mono">{uid}</td>
+            </tr>"#,
+            ts = html_escape(short_ts),
+            ec = ec,
+            etype = html_escape(error_type),
+            msg = html_escape(&truncate(msg, 80)),
+            url = html_escape(&short_url),
+            uid = html_escape(uid),
+        ));
+    }
+    if errors_html.is_empty() {
+        errors_html = r#"<tr><td colspan="5" class="empty-state">No errors. 🎉</td></tr>"#.to_owned();
+    }
+
+    // --- Format distribution ---
+    let total_fmt: i64 = stats.format_dist.iter().map(|(_, c)| c).sum::<i64>().max(1);
+    let mut fmt_html = String::new();
+    for (fmt, count) in &stats.format_dist {
+        let pct = (*count as f64 / total_fmt as f64 * 100.0) as u64;
+        let bar_class = match fmt.as_str() {
+            "mp3" => "fmt-mp3",
+            "mp4" | "mkv" | "webm" => "fmt-video",
+            "m4a" | "aac" => "fmt-aac",
+            "flac" | "wav" => "fmt-lossless",
+            _ => "fmt-other",
+        };
+        fmt_html.push_str(&format!(
+            r#"<div class="fmt-row">
+                <span class="fmt-name">{fmt}</span>
+                <div class="fmt-bar-track">
+                    <div class="fmt-bar {bar_class}" style="width:{pct}%"></div>
+                </div>
+                <span class="fmt-count">{count} ({pct}%)</span>
+            </div>"#,
+            fmt = html_escape(fmt),
+            bar_class = bar_class,
+            pct = pct,
+            count = fmt_num(*count),
+        ));
+    }
+    if fmt_html.is_empty() {
+        fmt_html = r#"<div class="empty-state">No data yet.</div>"#.to_owned();
+    }
+
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Dashboard — Doradura Admin</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+        :root {{
+            --bg:       #0d0d0d;
+            --surface:  #141414;
+            --card:     #1a1a1a;
+            --border:   #252525;
+            --border2:  #333;
+            --text:     #e8e8e8;
+            --muted:    #666;
+            --accent:   #7c6aff;
+            --green:    #22c55e;
+            --red:      #ef4444;
+            --yellow:   #f59e0b;
+            --blue:     #3b82f6;
+        }}
+
+        body {{
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            font-size: 14px;
+            line-height: 1.5;
+            min-height: 100vh;
+        }}
+
+        /* ── Layout ── */
+        .topbar {{
+            position: sticky; top: 0; z-index: 100;
+            background: rgba(13,13,13,0.85);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+            padding: 0 28px;
+            height: 56px;
+            display: flex; align-items: center; justify-content: space-between;
+        }}
+        .topbar-brand {{ font-weight: 700; font-size: 1.05rem; letter-spacing: -0.3px; }}
+        .topbar-brand span {{ color: var(--accent); }}
+        .topbar-right {{ display: flex; align-items: center; gap: 16px; }}
+        .logout {{
+            color: var(--muted); text-decoration: none; font-size: 0.82rem;
+            padding: 5px 12px; border: 1px solid var(--border2); border-radius: 8px;
+            transition: color .15s, border-color .15s;
+        }}
+        .logout:hover {{ color: var(--text); border-color: #555; }}
+
+        .page {{ max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }}
+
+        /* ── Tabs (CSS-only) ── */
+        .tabs-wrap {{ margin-bottom: 28px; }}
+        .tab-radio {{ display: none; }}
+
+        .tab-labels {{
+            display: flex; gap: 4px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 4px;
+            width: fit-content;
+        }}
+        .tab-label {{
+            padding: 7px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--muted);
+            transition: background .15s, color .15s;
+            user-select: none;
+        }}
+        .tab-label:hover {{ color: var(--text); }}
+
+        #tab-overview:checked ~ .tab-labels label[for="tab-overview"],
+        #tab-users:checked   ~ .tab-labels label[for="tab-users"],
+        #tab-dl:checked      ~ .tab-labels label[for="tab-dl"],
+        #tab-errors:checked  ~ .tab-labels label[for="tab-errors"] {{
+            background: var(--card);
+            color: var(--text);
+            border: 1px solid var(--border2);
+        }}
+
+        .tab-content {{ display: none; }}
+        #tab-overview:checked ~ .tab-contents #pane-overview,
+        #tab-users:checked   ~ .tab-contents #pane-users,
+        #tab-dl:checked      ~ .tab-contents #pane-dl,
+        #tab-errors:checked  ~ .tab-contents #pane-errors {{
+            display: block;
+        }}
+
+        /* ── Stat Cards ── */
+        .stats-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 32px;
+        }}
+        .stat-card {{
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 18px 20px;
+            display: flex; align-items: flex-start; gap: 14px;
+            transition: border-color .15s;
+        }}
+        .stat-card:hover {{ border-color: var(--border2); }}
+        .stat-icon {{ font-size: 1.4rem; opacity: 0.7; flex-shrink: 0; }}
+        .stat-value {{
+            font-size: 1.7rem; font-weight: 700;
+            line-height: 1.1; margin-bottom: 4px;
+            font-variant-numeric: tabular-nums;
+        }}
+        .stat-label {{ color: var(--muted); font-size: 0.8rem; }}
+        .active-val {{ color: var(--green); }}
+        .err-val    {{ color: var(--red); }}
+
+        /* ── Section headers ── */
+        .section-title {{
+            font-size: 0.78rem; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.08em;
+            color: var(--muted); margin-bottom: 14px;
+        }}
+
+        /* ── Cards / panels ── */
+        .panel {{
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            overflow: hidden;
+            margin-bottom: 28px;
+        }}
+        .panel-head {{
+            padding: 14px 20px;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.85rem; font-weight: 600; color: var(--muted);
+            text-transform: uppercase; letter-spacing: 0.06em;
+        }}
+
+        /* ── Tables ── */
+        .tbl-wrap {{ overflow-x: auto; }}
+        table {{ width: 100%; border-collapse: collapse; }}
+        th, td {{ padding: 11px 18px; text-align: left; border-bottom: 1px solid var(--border); }}
+        th {{ background: var(--surface); color: var(--muted); font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }}
+        tr:last-child td {{ border-bottom: none; }}
+        tr:hover td {{ background: rgba(255,255,255,0.02); }}
+
+        .mono  {{ font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace; font-size: 0.82rem; }}
+        .small {{ font-size: 0.78rem; }}
+        .dim   {{ color: var(--muted); }}
+        .title-cell {{ max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+        .msg-cell   {{ max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+        .empty-state {{ padding: 32px; text-align: center; color: var(--muted); font-size: 0.9rem; }}
+
+        /* ── Pills / badges ── */
+        .pill {{
+            display: inline-block; padding: 2px 9px; border-radius: 20px;
+            font-size: 0.75rem; font-weight: 600;
+        }}
+        .plan-free    {{ background: #232323; color: #888; }}
+        .plan-premium {{ background: rgba(124,106,255,0.18); color: #a799ff; }}
+        .plan-vip     {{ background: rgba(245,158,11,0.15); color: #f59e0b; }}
+
+        .fmt-badge {{
+            display: inline-block; padding: 1px 8px; border-radius: 6px;
+            font-size: 0.75rem; font-weight: 600;
+            background: rgba(255,255,255,0.07); color: #ccc;
+            font-family: 'SF Mono', ui-monospace, monospace;
+        }}
+
+        .err-badge {{
+            display: inline-block; padding: 2px 9px; border-radius: 6px;
+            font-size: 0.75rem; font-weight: 600;
+            font-family: 'SF Mono', ui-monospace, monospace;
+        }}
+        .err-network  {{ background: rgba(59,130,246,0.15); color: #60a5fa; }}
+        .err-auth     {{ background: rgba(245,158,11,0.15); color: #fbbf24; }}
+        .err-download {{ background: rgba(239,68,68,0.15);  color: #f87171; }}
+        .err-db       {{ background: rgba(168,85,247,0.15); color: #c084fc; }}
+        .err-other    {{ background: rgba(255,255,255,0.07); color: #999; }}
+
+        /* ── Rank ── */
+        .rank {{ display: inline-block; font-weight: 700; font-size: 0.82rem; width: 28px; text-align: center; }}
+        .rank-gold   {{ color: #f59e0b; }}
+        .rank-silver {{ color: #94a3b8; }}
+        .rank-bronze {{ color: #a16207; }}
+
+        /* ── Bar chart ── */
+        .chart-wrap {{
+            padding: 20px 16px 0;
+            height: 180px;
+            display: flex; align-items: flex-end; gap: 3px;
+            overflow-x: auto;
+        }}
+        .bar-col {{
+            display: flex; flex-direction: column; align-items: center;
+            flex: 1 1 0; min-width: 18px; max-width: 44px;
+            height: 100%;
+            position: relative;
+            justify-content: flex-end;
+        }}
+        .bar-tip {{
+            font-size: 0.6rem; color: var(--muted);
+            margin-bottom: 2px;
+            white-space: nowrap;
+        }}
+        .bar {{
+            width: 100%; background: var(--accent);
+            border-radius: 4px 4px 0 0;
+            min-height: 2px;
+            opacity: 0.75;
+            transition: opacity .15s;
+        }}
+        .bar:hover {{ opacity: 1; }}
+        .bar-label {{
+            font-size: 0.58rem; color: var(--muted);
+            margin-top: 4px; writing-mode: vertical-rl;
+            transform: rotate(180deg);
+            max-height: 40px; overflow: hidden;
+        }}
+        .chart-footer {{
+            padding: 8px 16px 16px;
+            font-size: 0.75rem; color: var(--muted);
+            text-align: right;
+        }}
+
+        /* ── Format bars ── */
+        .fmt-rows {{ padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }}
+        .fmt-row {{ display: flex; align-items: center; gap: 12px; }}
+        .fmt-name {{ width: 56px; font-family: 'SF Mono', ui-monospace, monospace; font-size: 0.8rem; color: var(--muted); flex-shrink: 0; }}
+        .fmt-bar-track {{
+            flex: 1; height: 8px; background: var(--border); border-radius: 99px; overflow: hidden;
+        }}
+        .fmt-bar {{ height: 100%; border-radius: 99px; transition: width .4s; }}
+        .fmt-mp3      {{ background: var(--accent); }}
+        .fmt-video    {{ background: var(--blue); }}
+        .fmt-aac      {{ background: var(--green); }}
+        .fmt-lossless {{ background: var(--yellow); }}
+        .fmt-other    {{ background: #555; }}
+        .fmt-count {{ font-size: 0.78rem; color: var(--muted); white-space: nowrap; width: 110px; text-align: right; }}
+
+        /* ── Toolbar / search / filters ── */
+        .toolbar {{
+            display: flex; align-items: center; gap: 12px;
+            margin-bottom: 16px; flex-wrap: wrap;
+        }}
+        .filter-group {{ display: flex; gap: 4px; }}
+        .filter-btn {{
+            padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border2);
+            background: transparent; color: var(--muted); font-size: 0.8rem; font-weight: 500;
+            cursor: pointer; transition: all .15s;
+        }}
+        .filter-btn:hover {{ color: var(--text); border-color: #555; }}
+        .filter-btn.active {{ background: var(--card); color: var(--text); border-color: var(--accent); }}
+        .search-input {{
+            padding: 7px 14px; border-radius: 8px; border: 1px solid var(--border2);
+            background: var(--surface); color: var(--text); font-size: 0.85rem;
+            outline: none; min-width: 220px; transition: border-color .15s;
+        }}
+        .search-input:focus {{ border-color: var(--accent); }}
+        .search-input::placeholder {{ color: #555; }}
+
+        /* ── Pagination ── */
+        .pagination {{
+            display: flex; align-items: center; justify-content: center;
+            gap: 8px; margin-top: 16px;
+        }}
+        .page-btn {{
+            padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border2);
+            background: transparent; color: var(--muted); font-size: 0.8rem;
+            cursor: pointer; transition: all .15s;
+        }}
+        .page-btn:hover {{ color: var(--text); border-color: #555; }}
+        .page-btn.active {{ background: var(--accent); color: #fff; border-color: var(--accent); }}
+        .page-btn:disabled {{ opacity: 0.3; cursor: default; }}
+        .page-info {{ color: var(--muted); font-size: 0.8rem; }}
+
+        /* ── Action buttons ── */
+        .action-group {{ display: flex; gap: 4px; }}
+        .act-btn {{
+            padding: 3px 8px; border-radius: 5px; border: 1px solid var(--border2);
+            background: transparent; color: var(--muted); font-size: 0.72rem; font-weight: 500;
+            cursor: pointer; transition: all .15s; white-space: nowrap;
+        }}
+        .act-btn:hover {{ color: var(--text); border-color: #555; }}
+        .act-btn.danger {{ border-color: rgba(239,68,68,0.3); color: #f87171; }}
+        .act-btn.danger:hover {{ background: rgba(239,68,68,0.1); }}
+        .act-btn.success {{ border-color: rgba(34,197,94,0.3); color: #22c55e; }}
+        .act-btn.success:hover {{ background: rgba(34,197,94,0.1); }}
+
+        /* ── Plan select dropdown ── */
+        .plan-select {{
+            padding: 3px 6px; border-radius: 5px; border: 1px solid var(--border2);
+            background: var(--surface); color: var(--text); font-size: 0.75rem;
+            cursor: pointer; outline: none;
+        }}
+
+        /* ── Modal ── */
+        .modal-overlay {{
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+            z-index: 200; justify-content: center; align-items: center;
+        }}
+        .modal-overlay.open {{ display: flex; }}
+        .modal {{
+            background: var(--card); border: 1px solid var(--border2);
+            border-radius: 16px; padding: 28px; min-width: 320px; max-width: 480px;
+        }}
+        .modal h3 {{ margin-bottom: 16px; font-size: 1rem; }}
+        .modal-actions {{ display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }}
+        .modal-btn {{
+            padding: 8px 18px; border-radius: 8px; border: none;
+            font-size: 0.85rem; font-weight: 500; cursor: pointer;
+        }}
+        .modal-btn.cancel {{ background: var(--surface); color: var(--muted); }}
+        .modal-btn.confirm {{ background: var(--accent); color: #fff; }}
+        .modal-btn.confirm.danger {{ background: var(--red); }}
+
+        /* ── Two-column layout ── */
+        .two-col {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }}
+        @media (max-width: 768px) {{
+            .two-col {{ grid-template-columns: 1fr; }}
+            .stats-grid {{ grid-template-columns: repeat(2, 1fr); }}
+        }}
+        @media (max-width: 480px) {{
+            .stats-grid {{ grid-template-columns: 1fr; }}
+            .tab-label {{ padding: 7px 12px; font-size: 0.78rem; }}
+        }}
+    </style>
+</head>
+<body>
+
+<div class="topbar">
+    <div class="topbar-brand">dora<span>dura</span></div>
+    <div class="topbar-right">
+        <span style="color:var(--muted);font-size:0.8rem;">Admin Dashboard</span>
+        <a href="/admin/login" class="logout">Logout</a>
+    </div>
+</div>
+
+<div class="page">
+
+    <!-- CSS-only tab switcher -->
+    <input type="radio" name="tab" id="tab-overview" class="tab-radio" checked>
+    <input type="radio" name="tab" id="tab-users"    class="tab-radio">
+    <input type="radio" name="tab" id="tab-dl"       class="tab-radio">
+    <input type="radio" name="tab" id="tab-errors"   class="tab-radio">
+
+    <div class="tabs-wrap">
+        <div class="tab-labels">
+            <label for="tab-overview" class="tab-label">Overview</label>
+            <label for="tab-users"    class="tab-label">Users</label>
+            <label for="tab-dl"       class="tab-label">Downloads</label>
+            <label for="tab-errors"   class="tab-label">Errors</label>
+        </div>
+    </div>
+
+    <div class="tab-contents">
+
+        <!-- ══════════════════════════════════════════
+             Pane: Overview
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-overview">
+
+            <div class="stats-grid">
+                {cards}
+            </div>
+
+            <!-- Downloads chart -->
+            <div class="panel">
+                <div class="panel-head">Downloads — last 30 days</div>
+                <div class="chart-wrap">
+                    {chart}
+                </div>
+                <div class="chart-footer">Each bar = one calendar day</div>
+            </div>
+
+            <!-- Two-col: format dist + system -->
+            <div class="two-col">
+                <div class="panel">
+                    <div class="panel-head">Format Distribution</div>
+                    <div class="fmt-rows">{fmt}</div>
+                </div>
+                <div class="panel">
+                    <div class="panel-head">System</div>
+                    <div style="padding:20px; display:flex; flex-direction:column; gap:14px;">
+                        <div style="display:flex;justify-content:space-between;">
+                            <span style="color:var(--muted);">Queue size</span>
+                            <strong>{active_tasks}</strong>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;">
+                            <span style="color:var(--muted);">Total users</span>
+                            <strong>{total_users}</strong>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;">
+                            <span style="color:var(--muted);">Total downloads</span>
+                            <strong>{total_dl}</strong>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;">
+                            <span style="color:var(--muted);">Downloads today</span>
+                            <strong>{dl_today}</strong>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;">
+                            <span style="color:var(--muted);">Errors today</span>
+                            <strong style="color:{err_color};">{errors_today}</strong>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div><!-- /pane-overview -->
+
+        <!-- ══════════════════════════════════════════
+             Pane: Users (dynamic via JS)
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-users">
+            <div class="toolbar">
+                <div class="filter-group">
+                    <button class="filter-btn active" data-filter="all">All</button>
+                    <button class="filter-btn" data-filter="free">Free</button>
+                    <button class="filter-btn" data-filter="premium">Premium</button>
+                    <button class="filter-btn" data-filter="vip">VIP</button>
+                    <button class="filter-btn" data-filter="blocked">Blocked</button>
+                </div>
+                <input type="text" id="user-search" class="search-input" placeholder="Search by username or ID...">
+            </div>
+            <div class="panel">
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Username</th>
+                                <th>Plan</th>
+                                <th>Downloads</th>
+                                <th>Lang</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="users-tbody"><tr><td colspan="7" class="empty-state">Loading...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+            <div id="users-pagination" class="pagination"></div>
+        </div><!-- /pane-users -->
+
+        <!-- ══════════════════════════════════════════
+             Pane: Downloads (dynamic via JS)
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-dl">
+            <div class="toolbar">
+                <input type="text" id="dl-search" class="search-input" placeholder="Search by title, author, or user...">
+            </div>
+            <div class="panel">
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Title / Author</th>
+                                <th>User</th>
+                                <th>Format</th>
+                                <th>Quality</th>
+                                <th>Size</th>
+                                <th>Duration</th>
+                                <th>Time</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dl-tbody"><tr><td colspan="7" class="empty-state">Loading...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+            <div id="dl-pagination" class="pagination"></div>
+        </div><!-- /pane-dl -->
+
+        <!-- ══════════════════════════════════════════
+             Pane: Errors
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-errors">
+            <div class="panel">
+                <div class="panel-head">Recent 20 Errors</div>
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Type</th>
+                                <th>Message</th>
+                                <th>URL</th>
+                                <th>User</th>
+                            </tr>
+                        </thead>
+                        <tbody>{errors}</tbody>
+                    </table>
+                </div>
+            </div>
+        </div><!-- /pane-errors -->
+
+    </div><!-- /tab-contents -->
+</div><!-- /page -->
+
+<!-- User action modal -->
+<div class="modal-overlay" id="modal">
+    <div class="modal">
+        <h3 id="modal-title">Confirm</h3>
+        <p id="modal-body" style="color:var(--muted);font-size:0.9rem;"></p>
+        <div class="modal-actions">
+            <button class="modal-btn cancel" onclick="closeModal()">Cancel</button>
+            <button class="modal-btn confirm" id="modal-confirm">Confirm</button>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {{
+    // --- State ---
+    let usersPage = 1, usersFilter = 'all', usersSearch = '';
+    let dlPage = 1, dlSearch = '';
+    let usersLoaded = false, dlLoaded = false;
+    let usersDebounce = null, dlDebounce = null;
+
+    // --- Helpers ---
+    const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    const fmtNum = n => n.toLocaleString();
+    const fmtSize = b => {{
+        if (!b) return '';
+        if (b < 1024) return b + ' B';
+        if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+        return (b/1048576).toFixed(1) + ' MB';
+    }};
+    const fmtDur = s => {{
+        if (!s) return '';
+        const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = s%60;
+        return h > 0 ? h+':'+(m<10?'0':'')+m+':'+(sec<10?'0':'')+sec : m+':'+(sec<10?'0':'')+sec;
+    }};
+    const fmtTime = ts => ts ? ts.substring(0, 16).replace('T',' ') : '';
+
+    async function api(url, opts) {{
+        const resp = await fetch(url, opts);
+        if (resp.status === 401) {{ window.location = '/admin/login'; return null; }}
+        if (!resp.ok) {{ const t = await resp.text(); alert('Error: ' + t); return null; }}
+        return resp.json();
+    }}
+
+    // --- Users ---
+    async function loadUsers() {{
+        const params = new URLSearchParams({{ page: usersPage, filter: usersFilter }});
+        if (usersSearch) params.set('search', usersSearch);
+        const data = await api('/admin/api/users?' + params);
+        if (!data) return;
+        renderUsers(data);
+    }}
+
+    function renderUsers(data) {{
+        const tb = document.getElementById('users-tbody');
+        if (!data.items.length) {{
+            tb.innerHTML = '<tr><td colspan="7" class="empty-state">No users found.</td></tr>';
+            document.getElementById('users-pagination').innerHTML = '';
+            return;
+        }}
+        tb.innerHTML = data.items.map(u => {{
+            const planCls = u.plan === 'vip' ? 'plan-vip' : u.plan === 'premium' ? 'plan-premium' : 'plan-free';
+            const statusBadge = u.is_blocked
+                ? '<span class="pill" style="background:rgba(239,68,68,0.15);color:#f87171;">Blocked</span>'
+                : '<span class="pill" style="background:rgba(34,197,94,0.12);color:#22c55e;">Active</span>';
+            return `<tr>
+                <td class="mono">${{u.telegram_id}}</td>
+                <td class="mono">${{u.username ? '@'+esc(u.username) : '<span class="dim">—</span>'}}</td>
+                <td>
+                    <select class="plan-select" onchange="changePlan(${{u.telegram_id}}, this.value)" data-uid="${{u.telegram_id}}">
+                        <option value="free" ${{u.plan==='free'?'selected':''}}>free</option>
+                        <option value="premium" ${{u.plan==='premium'?'selected':''}}>premium</option>
+                        <option value="vip" ${{u.plan==='vip'?'selected':''}}>vip</option>
+                    </select>
+                </td>
+                <td>${{fmtNum(u.download_count)}}</td>
+                <td class="dim">${{esc(u.language)}}</td>
+                <td>${{statusBadge}}</td>
+                <td>
+                    <div class="action-group">
+                        ${{u.is_blocked
+                            ? `<button class="act-btn success" onclick="toggleBlock(${{u.telegram_id}}, false)">Unblock</button>`
+                            : `<button class="act-btn danger" onclick="toggleBlock(${{u.telegram_id}}, true)">Block</button>`
+                        }}
+                    </div>
+                </td>
+            </tr>`;
+        }}).join('');
+        renderPagination('users-pagination', data, p => {{ usersPage = p; loadUsers(); }});
+    }}
+
+    // --- Downloads ---
+    async function loadDownloads() {{
+        const params = new URLSearchParams({{ page: dlPage }});
+        if (dlSearch) params.set('search', dlSearch);
+        const data = await api('/admin/api/downloads?' + params);
+        if (!data) return;
+        renderDownloads(data);
+    }}
+
+    function renderDownloads(data) {{
+        const tb = document.getElementById('dl-tbody');
+        if (!data.items.length) {{
+            tb.innerHTML = '<tr><td colspan="7" class="empty-state">No downloads found.</td></tr>';
+            document.getElementById('dl-pagination').innerHTML = '';
+            return;
+        }}
+        tb.innerHTML = data.items.map(d => {{
+            const titleLine = esc(d.title.length > 45 ? d.title.slice(0,45)+'…' : d.title);
+            const authorLine = d.author ? `<div class="dim small">${{esc(d.author)}}</div>` : '';
+            const quality = d.video_quality || d.audio_bitrate || '';
+            return `<tr>
+                <td class="title-cell">${{titleLine}}${{authorLine}}</td>
+                <td class="mono">@${{esc(d.user)}}</td>
+                <td><span class="fmt-badge">${{esc(d.format)}}</span></td>
+                <td class="dim">${{esc(quality)}}</td>
+                <td class="dim mono small">${{fmtSize(d.file_size)}}</td>
+                <td class="dim mono small">${{fmtDur(d.duration)}}</td>
+                <td class="dim small">${{fmtTime(d.downloaded_at)}}</td>
+            </tr>`;
+        }}).join('');
+        renderPagination('dl-pagination', data, p => {{ dlPage = p; loadDownloads(); }});
+    }}
+
+    // --- Pagination ---
+    function renderPagination(elId, data, onPage) {{
+        const el = document.getElementById(elId);
+        if (data.total_pages <= 1) {{ el.innerHTML = ''; return; }}
+        let html = `<span class="page-info">${{fmtNum(data.total)}} total — page ${{data.page}} of ${{data.total_pages}}</span>`;
+        html += `<button class="page-btn" ${{data.page<=1?'disabled':''}} onclick="void(0)">‹ Prev</button>`;
+        const start = Math.max(1, data.page - 2);
+        const end = Math.min(data.total_pages, data.page + 2);
+        for (let p = start; p <= end; p++) {{
+            html += `<button class="page-btn ${{p===data.page?'active':''}}" onclick="void(0)">${{p}}</button>`;
+        }}
+        html += `<button class="page-btn" ${{data.page>=data.total_pages?'disabled':''}} onclick="void(0)">Next ›</button>`;
+        el.innerHTML = html;
+        el.querySelectorAll('.page-btn').forEach(btn => {{
+            btn.addEventListener('click', () => {{
+                const t = btn.textContent.trim();
+                if (t === '‹ Prev' && data.page > 1) onPage(data.page - 1);
+                else if (t === 'Next ›' && data.page < data.total_pages) onPage(data.page + 1);
+                else {{ const n = parseInt(t); if (!isNaN(n)) onPage(n); }}
+            }});
+        }});
+    }}
+
+    // --- Actions ---
+    let modalCallback = null;
+    function openModal(title, body, btnText, isDanger, cb) {{
+        document.getElementById('modal-title').textContent = title;
+        document.getElementById('modal-body').textContent = body;
+        const btn = document.getElementById('modal-confirm');
+        btn.textContent = btnText;
+        btn.className = 'modal-btn confirm' + (isDanger ? ' danger' : '');
+        modalCallback = cb;
+        document.getElementById('modal').classList.add('open');
+    }}
+    window.closeModal = function() {{
+        document.getElementById('modal').classList.remove('open');
+        modalCallback = null;
+    }};
+    document.getElementById('modal-confirm').addEventListener('click', async () => {{
+        if (modalCallback) await modalCallback();
+        closeModal();
+    }});
+
+    window.changePlan = async function(uid, plan) {{
+        const data = await api(`/admin/api/users/${{uid}}/plan`, {{
+            method: 'POST',
+            headers: {{ 'Content-Type': 'application/json' }},
+            body: JSON.stringify({{ plan }})
+        }});
+        if (data && data.ok) loadUsers();
+    }};
+
+    window.toggleBlock = function(uid, block) {{
+        const action = block ? 'Block' : 'Unblock';
+        openModal(
+            action + ' User',
+            `Are you sure you want to ${{action.toLowerCase()}} user ${{uid}}?`,
+            action,
+            block,
+            async () => {{
+                const data = await api(`/admin/api/users/${{uid}}/block`, {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify({{ blocked: block }})
+                }});
+                if (data && data.ok) loadUsers();
+            }}
+        );
+    }};
+
+    // --- Tab switching: lazy load data ---
+    document.querySelectorAll('.tab-radio').forEach(radio => {{
+        radio.addEventListener('change', () => {{
+            if (radio.id === 'tab-users' && !usersLoaded) {{ usersLoaded = true; loadUsers(); }}
+            if (radio.id === 'tab-dl' && !dlLoaded) {{ dlLoaded = true; loadDownloads(); }}
+        }});
+    }});
+
+    // --- Filters ---
+    document.querySelectorAll('.filter-btn').forEach(btn => {{
+        btn.addEventListener('click', () => {{
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            usersFilter = btn.dataset.filter;
+            usersPage = 1;
+            loadUsers();
+        }});
+    }});
+
+    // --- Search with debounce ---
+    const userSearchEl = document.getElementById('user-search');
+    if (userSearchEl) {{
+        userSearchEl.addEventListener('input', () => {{
+            clearTimeout(usersDebounce);
+            usersDebounce = setTimeout(() => {{
+                usersSearch = userSearchEl.value.trim();
+                usersPage = 1;
+                loadUsers();
+            }}, 300);
+        }});
+    }}
+
+    const dlSearchEl = document.getElementById('dl-search');
+    if (dlSearchEl) {{
+        dlSearchEl.addEventListener('input', () => {{
+            clearTimeout(dlDebounce);
+            dlDebounce = setTimeout(() => {{
+                dlSearch = dlSearchEl.value.trim();
+                dlPage = 1;
+                loadDownloads();
+            }}, 300);
+        }});
+    }}
+}})();
+</script>
+
+</body>
+</html>"#,
+        cards = cards_html,
+        chart = chart_html,
+        fmt = fmt_html,
+        errors = errors_html,
+        active_tasks = fmt_num(stats.active_tasks),
+        total_users = fmt_num(stats.total_users),
+        total_dl = fmt_num(stats.total_downloads),
+        dl_today = fmt_num(stats.downloads_today),
+        errors_today = fmt_num(stats.errors_today),
+        err_color = if stats.errors_today > 0 { "#ef4444" } else { "inherit" },
+    )
+}
+
+/// Format seconds as MM:SS or H:MM:SS.
+fn format_duration(secs: i64) -> String {
+    if secs < 0 {
+        return String::new();
+    }
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    if h > 0 {
+        format!("{}:{:02}:{:02}", h, m, s)
+    } else {
+        format!("{}:{:02}", m, s)
+    }
+}
+
+/// Parse streaming links JSON into individual URLs.
+fn parse_streaming_links(json_str: &str) -> serde_json::Value {
+    serde_json::from_str(json_str).unwrap_or_default()
 }
 
 /// Render the share page HTML with ambilight UI.

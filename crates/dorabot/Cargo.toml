@@ -1,6 +1,6 @@
 [package]
 name = "doradura"
-version = "0.24.0"
+version = "0.26.0"
 edition = "2021"
 authors = ["Stan <iamjacke@gmail.com>"]
 description = "High-performance Telegram bot for downloading and converting media from multiple sources"
@@ -48,9 +48,7 @@ teloxide = { workspace = true }
 
 # Non-workspace deps (mirrored from core + bot-specific)
 shellexpand = "3.1.0"
-shell-escape = "0.1.5"
 select = "0.6.1"
-tokio-retry = "0.3"
 dotenvy = "0.15"
 urlencoding = "2.1"
 hmac = "0.12"

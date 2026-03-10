@@ -175,6 +175,13 @@ pub async fn handle_message(
         }
     }
 
+    // Ignore replies to bot's own messages (don't show "no links" for them)
+    if let Some(reply) = msg.reply_to_message() {
+        if reply.from.as_ref().is_some_and(|u| u.is_bot) {
+            return Ok(None);
+        }
+    }
+
     if let Some(text) = msg.text() {
         log::debug!("handle_message: {:?}", text);
         if text.starts_with("/start") || text.starts_with("/help") {
@@ -1059,6 +1066,7 @@ pub async fn handle_message(
             }
 
             bot.send_message(msg.chat.id, i18n::t(&lang, "commands.no_links"))
+                .parse_mode(ParseMode::MarkdownV2)
                 .await?;
         } else if text.eq_ignore_ascii_case("/exit") {
             // /exit command — stop player if active
@@ -1074,9 +1082,11 @@ pub async fn handle_message(
             }
             // No active player — treat as unknown command
             bot.send_message(msg.chat.id, i18n::t(&lang, "commands.no_links"))
+                .parse_mode(ParseMode::MarkdownV2)
                 .await?;
         } else {
             bot.send_message(msg.chat.id, i18n::t(&lang, "commands.no_links"))
+                .parse_mode(ParseMode::MarkdownV2)
                 .await?;
         }
     }

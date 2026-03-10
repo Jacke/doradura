@@ -24,16 +24,6 @@ pub enum Tab {
 }
 
 impl Tab {
-    #[allow(dead_code)]
-    pub fn from_index(i: usize) -> Option<Self> {
-        match i {
-            0 => Some(Tab::Downloads),
-            1 => Some(Tab::Lyrics),
-            2 => Some(Tab::Settings),
-            _ => None,
-        }
-    }
-
     pub fn label(&self) -> &'static str {
         match self {
             Tab::Downloads => "[1] ⬇  Downloads",

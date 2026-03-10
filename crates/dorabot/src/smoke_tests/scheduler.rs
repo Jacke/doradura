@@ -21,6 +21,8 @@ pub struct HealthCheckScheduler {
     config: SmokeTestConfig,
     interval_secs: u64,
     running: Arc<AtomicBool>,
+    /// Tracks whether the last health check passed (for avatar status transitions).
+    last_healthy: Arc<AtomicBool>,
 }
 
 impl HealthCheckScheduler {
@@ -36,6 +38,7 @@ impl HealthCheckScheduler {
             config: SmokeTestConfig::for_production(),
             interval_secs,
             running: Arc::new(AtomicBool::new(false)),
+            last_healthy: Arc::new(AtomicBool::new(true)),
         }
     }
 
@@ -46,6 +49,7 @@ impl HealthCheckScheduler {
             config,
             interval_secs,
             running: Arc::new(AtomicBool::new(false)),
+            last_healthy: Arc::new(AtomicBool::new(true)),
         }
     }
 
@@ -78,14 +82,31 @@ impl HealthCheckScheduler {
         self.update_metrics(&report);
 
         // Send alert if any tests failed
-        if !report.all_passed() {
+        let healthy = report.all_passed();
+        let was_healthy = self.last_healthy.swap(healthy, Ordering::SeqCst);
+
+        if !healthy {
             self.send_failure_alert(&report).await;
+
+            // Transition to unhealthy → set offline avatar
+            if was_healthy {
+                if let Err(e) = crate::telegram::avatar::set_offline_avatar(&self.bot).await {
+                    log::warn!("Failed to set offline avatar on health check failure: {}", e);
+                }
+            }
         } else {
             log::info!(
                 "Health check passed: {}/{} tests OK",
                 report.passed_count,
                 report.results.len()
             );
+
+            // Transition to healthy → set online avatar
+            if !was_healthy {
+                if let Err(e) = crate::telegram::avatar::set_online_avatar(&self.bot).await {
+                    log::warn!("Failed to set online avatar on health check recovery: {}", e);
+                }
+            }
         }
 
         report

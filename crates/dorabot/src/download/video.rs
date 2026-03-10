@@ -250,7 +250,21 @@ pub async fn download_and_send_video(
                                 if total_parts == 1 || first_part_db_id.is_none() {
                                     if let Some(metadata) = PREVIEW_CACHE.get(url.as_str()).await {
                                         if !metadata.timestamps.is_empty() {
-                                            if let Err(e) = save_video_timestamps(&conn, id, &metadata.timestamps) {
+                                            // Filter timestamps to time range if download was clipped
+                                            let ts_to_save = if let Some((ref start, ref end)) = *format.time_range() {
+                                                use doracore::timestamps::{
+                                                    filter_timestamps_for_range, parse_timestamp_to_secs,
+                                                };
+                                                match (parse_timestamp_to_secs(start), parse_timestamp_to_secs(end)) {
+                                                    (Some(s), Some(e)) => {
+                                                        filter_timestamps_for_range(&metadata.timestamps, s, e)
+                                                    }
+                                                    _ => metadata.timestamps.clone(),
+                                                }
+                                            } else {
+                                                metadata.timestamps.clone()
+                                            };
+                                            if let Err(e) = save_video_timestamps(&conn, id, &ts_to_save) {
                                                 log::warn!("Failed to save timestamps for download {}: {}", id, e);
                                             }
                                         }

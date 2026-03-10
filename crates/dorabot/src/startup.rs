@@ -65,6 +65,11 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
 
     setup_all_language_commands(&bot).await?;
 
+    // Set online avatar
+    if let Err(e) = crate::telegram::avatar::set_online_avatar(&bot).await {
+        log::warn!("Failed to set online avatar: {}", e);
+    }
+
     // Notify admin about startup
     {
         use crate::telegram::notifications::notify_admin_startup;
@@ -144,6 +149,7 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
     let handler = schema(handler_deps);
 
     // --- Run dispatcher ---
+    let bot_for_shutdown = bot.clone();
     let webhook_url = if use_webhook { config::WEBHOOK_URL.clone() } else { None };
 
     let result = if let Some(url) = webhook_url {
@@ -153,41 +159,83 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
         run_polling_mode(bot, handler, bot_init_start).await
     };
 
+    // Set offline avatar before shutdown
+    if let Err(e) = crate::telegram::avatar::set_offline_avatar(&bot_for_shutdown).await {
+        log::warn!("Failed to set offline avatar: {}", e);
+    }
+
+
     result
 }
 
-/// Connect to the Bot API with retry logic.
+/// Connect to the Bot API with retry logic, jitter, and a hard 10-minute deadline.
+///
+/// Uses exponential backoff (1s → 2s → 4s … capped at 15s) with random jitter.
+/// If Bot API is not reachable after 10 minutes, the process exits so the
+/// container orchestrator can restart it cleanly.
 async fn connect_to_bot_api(bot: &crate::telegram::Bot) -> Result<teloxide::types::Me> {
-    let startup_max_retries = 60; // Up to 5 minutes (60 * 5s)
-    let mut startup_retry = 0;
+    use rand::Rng;
+
+    const DEADLINE: Duration = Duration::from_secs(600); // 10 minutes
+    const BASE_DELAY: Duration = Duration::from_secs(1);
+    const MAX_DELAY: Duration = Duration::from_secs(15);
+
+    let start = std::time::Instant::now();
+    let mut attempt: u32 = 0;
 
     loop {
+        attempt += 1;
         match bot.get_me().await {
-            Ok(info) => return Ok(info),
+            Ok(info) => {
+                if attempt > 1 {
+                    log::info!(
+                        "Bot API connected after {} attempts ({:.1}s)",
+                        attempt,
+                        start.elapsed().as_secs_f64()
+                    );
+                }
+                return Ok(info);
+            }
             Err(e) => {
+                let elapsed = start.elapsed();
+                if elapsed >= DEADLINE {
+                    return Err(anyhow::anyhow!(
+                        "Bot API not reachable after {:.0}s ({} attempts)",
+                        elapsed.as_secs_f64(),
+                        attempt
+                    ));
+                }
+
                 let err_str = e.to_string();
                 let is_retryable = err_str.contains("restart")
                     || err_str.contains("network")
                     || err_str.contains("connection")
                     || err_str.contains("timed out")
-                    || err_str.contains("Connection refused");
+                    || err_str.contains("Connection refused")
+                    || err_str.contains("error sending request")
+                    || err_str.contains("hyper");
 
-                startup_retry += 1;
-                if startup_retry >= startup_max_retries || !is_retryable {
-                    return Err(anyhow::anyhow!(
-                        "Failed to connect to Bot API after {} retries: {}",
-                        startup_retry,
-                        e
-                    ));
+                if !is_retryable {
+                    return Err(anyhow::anyhow!("Bot API returned non-retryable error: {}", e));
                 }
 
+                // Exponential backoff with jitter: base * 2^attempt + random 0..500ms
+                let exp_delay = BASE_DELAY
+                    .saturating_mul(2u32.saturating_pow(attempt.min(10)))
+                    .min(MAX_DELAY);
+                let jitter = Duration::from_millis(rand::thread_rng().gen_range(0..500));
+                let delay = exp_delay + jitter;
+
+                let remaining = DEADLINE.saturating_sub(elapsed);
                 log::warn!(
-                    "Bot API not ready (attempt {}/{}): {}. Retrying in 5 seconds...",
-                    startup_retry,
-                    startup_max_retries,
-                    err_str
+                    "Bot API not ready (attempt {}, {:.0}s/{:.0}s): {}. Retry in {:.1}s",
+                    attempt,
+                    elapsed.as_secs_f64(),
+                    DEADLINE.as_secs_f64(),
+                    err_str,
+                    delay.as_secs_f64()
                 );
-                sleep(Duration::from_secs(5)).await;
+                sleep(delay.min(remaining)).await;
             }
         }
     }

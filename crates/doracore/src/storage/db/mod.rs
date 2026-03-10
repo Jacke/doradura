@@ -12,13 +12,13 @@
 //! | **Task Queue** | `TaskQueueEntry`…`mark_task_processing` | Download task queue |
 //! | **Sessions** | → `sessions` submodule | Audio effects, audio cut, video clip, cookies upload |
 //! | **Bot Assets** | `get_bot_asset`, `set_bot_asset` | Cached Telegram file IDs |
-//! | **Video Timestamps** | `VideoTimestamp`…`delete_video_timestamps` | Chapter markers |
+//! | **Video Timestamps** | `VideoTimestamp`…`get_video_timestamps` | Chapter markers |
 //! | **Cuts** | `CutEntry`…`get_cut_entry` | Audio/video clip history |
 //! | **Subscriptions** | `Subscription`…`cancel_subscription` | Plan & payment management |
 //! | **Charges** | `save_charge`…`get_charges_stats` | Telegram Stars payments |
-//! | **Feedback** | `FeedbackMessage`…`get_feedback_stats` | User feedback system |
+//! | **Feedback** | `save_feedback` | User feedback system |
 //! | **Error Log** | `ErrorLogEntry`…`cleanup_old_errors` | Error tracking |
-//! | **Lyrics Sessions** | `create_lyrics_session`…`delete_expired_lyrics_sessions` | Lyrics search sessions |
+//! | **Lyrics Sessions** | `create_lyrics_session`…`get_lyrics_session` | Lyrics search sessions |
 
 mod playlists;
 mod sessions;
@@ -105,20 +105,6 @@ pub struct Charge {
     pub subscription_expiration_date: Option<String>,
     pub payment_date: String,
     pub created_at: String,
-}
-
-/// Structure containing user feedback data.
-#[derive(Debug, Clone)]
-pub struct FeedbackMessage {
-    pub id: i64,
-    pub user_id: i64,
-    pub username: Option<String>,
-    pub first_name: String,
-    pub message: String,
-    pub status: String,
-    pub admin_reply: Option<String>,
-    pub created_at: String,
-    pub replied_at: Option<String>,
 }
 
 impl User {
@@ -751,26 +737,6 @@ pub fn get_user_download_subtitles(conn: &DbConnection, telegram_id: i64) -> Res
     }
 }
 
-/// Sets the subtitle download setting of the user.
-///
-/// # Arguments
-///
-/// * `conn` - Database connection
-/// * `telegram_id` - Telegram ID of the user
-/// * `enabled` - Enable (`true`) or disable (`false`) subtitle download
-///
-/// # Returns
-///
-/// Returns `Ok(())` on success or a database error.
-pub fn set_user_download_subtitles(conn: &DbConnection, telegram_id: i64, enabled: bool) -> Result<()> {
-    let value = if enabled { 1 } else { 0 };
-    conn.execute(
-        "UPDATE users SET download_subtitles = ?1 WHERE telegram_id = ?2",
-        [&value as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
-    )?;
-    Ok(())
-}
-
 /// Gets the subtitle burn-in setting for video.
 ///
 /// # Arguments
@@ -1168,10 +1134,10 @@ pub fn set_user_language(conn: &DbConnection, telegram_id: i64, language: &str) 
 pub fn get_user_counts(conn: &DbConnection) -> Result<UserCounts> {
     let mut counts = UserCounts::default();
     let mut stmt = conn.prepare(
-        "SELECT COALESCE(s.plan, u.plan) as plan, COALESCE(u.is_blocked, 0) as is_blocked, COUNT(*)
+        "SELECT COALESCE(s.plan, u.plan) as effective_plan, COALESCE(u.is_blocked, 0) as is_blocked, COUNT(*)
          FROM users u
          LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
-         GROUP BY plan, is_blocked",
+         GROUP BY effective_plan, is_blocked",
     )?;
     let rows = stmt.query_map([], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?, row.get::<_, usize>(2)?))
@@ -1996,15 +1962,6 @@ pub fn get_user_categories(conn: &DbConnection, user_id: i64) -> Result<Vec<Stri
     Ok(cats)
 }
 
-/// Deletes a user category. Existing download assignments keep their text value but won't be filterable.
-pub fn delete_user_category(conn: &DbConnection, user_id: i64, name: &str) -> Result<()> {
-    conn.execute(
-        "DELETE FROM user_categories WHERE user_id = ?1 AND name = ?2",
-        rusqlite::params![user_id, name],
-    )?;
-    Ok(())
-}
-
 /// Sets (or clears) the category on a download history entry.
 pub fn set_download_category(
     conn: &DbConnection,
@@ -2334,6 +2291,7 @@ fn retry_delay_seconds(retry_count: i32) -> i64 {
     let capped = retry_count.clamp(1, 6) as u32;
     30 * 2_i64.pow(capped - 1)
 }
+
 
 /// Gets a task by ID
 pub fn get_task_by_id(conn: &DbConnection, task_id: &str) -> Result<Option<TaskQueueEntry>> {
@@ -2668,6 +2626,7 @@ pub fn update_telegram_charge_id(conn: &DbConnection, telegram_id: i64, charge_i
     Ok(())
 }
 
+
 // ==================== Bot Assets ====================
 
 /// Get a cached bot asset file_id by key (e.g. "ringtone_instruction_iphone_1")
@@ -2733,12 +2692,6 @@ pub fn get_video_timestamps(conn: &DbConnection, download_id: i64) -> Result<Vec
     rows.collect()
 }
 
-/// Delete timestamps for a download entry
-pub fn delete_video_timestamps(conn: &DbConnection, download_id: i64) -> Result<()> {
-    conn.execute("DELETE FROM video_timestamps WHERE download_id = ?1", [download_id])?;
-    Ok(())
-}
-
 // ==================== Cuts ====================
 
 #[derive(Debug, Clone)]
@@ -2795,38 +2748,6 @@ pub fn create_cut(
         ],
     )?;
     Ok(conn.last_insert_rowid())
-}
-
-pub fn get_cuts(conn: &DbConnection, user_id: i64, limit: Option<i32>) -> Result<Vec<CutEntry>> {
-    let limit = limit.unwrap_or(50);
-    let mut stmt = conn.prepare(
-        "SELECT id, user_id, original_url, source_kind, source_id, output_kind, segments_json, segments_text,
-                title, created_at, file_id, file_size, duration, video_quality
-         FROM cuts
-         WHERE user_id = ?1
-         ORDER BY created_at DESC
-         LIMIT ?2",
-    )?;
-    let rows = stmt.query_map(rusqlite::params![user_id, limit], |row| {
-        Ok(CutEntry {
-            id: row.get(0)?,
-            user_id: row.get(1)?,
-            original_url: row.get(2)?,
-            source_kind: row.get(3)?,
-            source_id: row.get(4)?,
-            output_kind: row.get(5)?,
-            segments_json: row.get(6)?,
-            segments_text: row.get(7)?,
-            title: row.get(8)?,
-            created_at: row.get(9)?,
-            file_id: row.get(10)?,
-            file_size: row.get(11)?,
-            duration: row.get(12)?,
-            video_quality: row.get(13)?,
-        })
-    })?;
-
-    rows.collect::<Result<Vec<_>>>()
 }
 
 pub fn get_cuts_count(conn: &DbConnection, user_id: i64) -> Result<i64> {
@@ -3027,29 +2948,6 @@ pub fn cancel_subscription(conn: &DbConnection, telegram_id: i64) -> Result<()> 
         [&telegram_id as &dyn rusqlite::ToSql],
     )?;
     Ok(())
-}
-
-/// Gets the subscription status information for a user.
-///
-/// # Returns
-///
-/// Returns a tuple: (plan, expires_at, is_recurring, is_active)
-pub type SubscriptionStatus = (Plan, Option<String>, bool, bool);
-
-pub fn get_subscription_status(conn: &DbConnection, telegram_id: i64) -> Result<Option<SubscriptionStatus>> {
-    let subscription = get_subscription(conn, telegram_id)?;
-
-    if let Some(subscription) = subscription {
-        let is_active = is_subscription_active(conn, telegram_id)?;
-        Ok(Some((
-            subscription.plan,
-            subscription.expires_at,
-            subscription.is_recurring,
-            is_active,
-        )))
-    } else {
-        Ok(None)
-    }
 }
 
 /// Saves payment (charge) information to the database.
@@ -3275,164 +3173,6 @@ pub fn save_feedback(
     Ok(conn.last_insert_rowid())
 }
 
-/// Gets all feedback messages with optional status filtering.
-///
-/// # Arguments
-///
-/// * `conn` - Database connection
-/// * `status_filter` - Filter by status ("new", "read", "replied", None = all)
-/// * `limit` - Maximum number of records (None = all)
-/// * `offset` - Offset for pagination
-///
-/// # Returns
-///
-/// Returns `Result<Vec<FeedbackMessage>>` with a list of feedback messages.
-pub fn get_feedback_messages(
-    conn: &DbConnection,
-    status_filter: Option<&str>,
-    limit: Option<i64>,
-    offset: i64,
-) -> Result<Vec<FeedbackMessage>> {
-    let query = if let Some(status) = status_filter {
-        format!(
-            "SELECT id, user_id, username, first_name, message, status,
-                    admin_reply, created_at, replied_at
-             FROM feedback_messages
-             WHERE status = '{}'
-             ORDER BY created_at DESC
-             LIMIT {} OFFSET {}",
-            status,
-            limit.unwrap_or(-1),
-            offset
-        )
-    } else {
-        format!(
-            "SELECT id, user_id, username, first_name, message, status,
-                    admin_reply, created_at, replied_at
-             FROM feedback_messages
-             ORDER BY created_at DESC
-             LIMIT {} OFFSET {}",
-            limit.unwrap_or(-1),
-            offset
-        )
-    };
-
-    let mut stmt = conn.prepare(&query)?;
-
-    let messages = stmt.query_map([], |row| {
-        Ok(FeedbackMessage {
-            id: row.get(0)?,
-            user_id: row.get(1)?,
-            username: row.get(2)?,
-            first_name: row.get(3)?,
-            message: row.get(4)?,
-            status: row.get(5)?,
-            admin_reply: row.get(6)?,
-            created_at: row.get(7)?,
-            replied_at: row.get(8)?,
-        })
-    })?;
-
-    messages.collect()
-}
-
-/// Gets feedback messages for a specific user.
-///
-/// # Arguments
-///
-/// * `conn` - Database connection
-/// * `user_id` - Telegram ID of the user
-///
-/// # Returns
-///
-/// Returns `Result<Vec<FeedbackMessage>>` with a list of user feedback messages.
-pub fn get_user_feedback(conn: &DbConnection, user_id: i64) -> Result<Vec<FeedbackMessage>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, user_id, username, first_name, message, status,
-                admin_reply, created_at, replied_at
-         FROM feedback_messages
-         WHERE user_id = ?1
-         ORDER BY created_at DESC",
-    )?;
-
-    let messages = stmt.query_map([user_id], |row| {
-        Ok(FeedbackMessage {
-            id: row.get(0)?,
-            user_id: row.get(1)?,
-            username: row.get(2)?,
-            first_name: row.get(3)?,
-            message: row.get(4)?,
-            status: row.get(5)?,
-            admin_reply: row.get(6)?,
-            created_at: row.get(7)?,
-            replied_at: row.get(8)?,
-        })
-    })?;
-
-    messages.collect()
-}
-
-/// Updates the status of a feedback message.
-///
-/// # Arguments
-///
-/// * `conn` - Database connection
-/// * `feedback_id` - Feedback message ID
-/// * `status` - New status ("new", "read", "replied")
-///
-/// # Returns
-///
-/// Returns `Result<()>` or an error.
-pub fn update_feedback_status(conn: &DbConnection, feedback_id: i64, status: &str) -> Result<()> {
-    conn.execute(
-        "UPDATE feedback_messages SET status = ?1 WHERE id = ?2",
-        rusqlite::params![status, feedback_id],
-    )?;
-    Ok(())
-}
-
-/// Adds an admin reply to a feedback message.
-///
-/// # Arguments
-///
-/// * `conn` - Database connection
-/// * `feedback_id` - Feedback message ID
-/// * `reply` - Reply text
-///
-/// # Returns
-///
-/// Returns `Result<()>` or an error.
-pub fn add_feedback_reply(conn: &DbConnection, feedback_id: i64, reply: &str) -> Result<()> {
-    conn.execute(
-        "UPDATE feedback_messages
-         SET admin_reply = ?1, status = 'replied', replied_at = CURRENT_TIMESTAMP
-         WHERE id = ?2",
-        rusqlite::params![reply, feedback_id],
-    )?;
-    Ok(())
-}
-
-/// Gets feedback statistics.
-///
-/// # Arguments
-///
-/// * `conn` - Database connection
-///
-/// # Returns
-///
-/// Returns a tuple (total_feedback, new_count, read_count, replied_count).
-pub fn get_feedback_stats(conn: &DbConnection) -> Result<(i64, i64, i64, i64)> {
-    let mut stmt = conn.prepare(
-        "SELECT
-            COUNT(*) as total_feedback,
-            SUM(CASE WHEN status = 'new' THEN 1 ELSE 0 END) as new_count,
-            SUM(CASE WHEN status = 'read' THEN 1 ELSE 0 END) as read_count,
-            SUM(CASE WHEN status = 'replied' THEN 1 ELSE 0 END) as replied_count
-         FROM feedback_messages",
-    )?;
-
-    stmt.query_row([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
-}
 // ==================== Error Log ====================
 
 /// Error log entry
@@ -3465,12 +3205,6 @@ pub fn log_error(
         rusqlite::params![user_id, username, error_type, error_message, url, context],
     )?;
     Ok(conn.last_insert_rowid())
-}
-
-/// Marks an error as resolved
-pub fn mark_error_resolved(conn: &DbConnection, error_id: i64) -> Result<()> {
-    conn.execute("UPDATE error_log SET resolved = 1 WHERE id = ?1", [error_id])?;
-    Ok(())
 }
 
 /// Gets recent errors (last N hours)
@@ -3529,19 +3263,6 @@ pub fn get_error_stats(conn: &DbConnection, hours: i64) -> Result<Vec<(String, i
         stats.push(row);
     }
     Ok(stats)
-}
-
-/// Gets total error count for a period
-pub fn get_error_count(conn: &DbConnection, hours: i64) -> Result<i64> {
-    let since = chrono::Utc::now() - chrono::Duration::hours(hours);
-    let since_str = since.format("%Y-%m-%d %H:%M:%S").to_string();
-
-    let count = conn.query_row(
-        "SELECT COUNT(*) FROM error_log WHERE timestamp >= ?1",
-        [&since_str],
-        |row| row.get(0),
-    )?;
-    Ok(count)
 }
 
 /// Cleans up old error logs (older than N days)
@@ -3624,15 +3345,6 @@ pub fn get_lyrics_session(conn: &DbConnection, id: &str) -> Result<Option<(Strin
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(e),
     }
-}
-
-/// Delete expired lyrics sessions.
-pub fn delete_expired_lyrics_sessions(conn: &DbConnection) -> Result<usize> {
-    let deleted = conn.execute(
-        "DELETE FROM lyrics_sessions WHERE expires_at < ?1",
-        [chrono::Utc::now().to_rfc3339()],
-    )?;
-    Ok(deleted)
 }
 
 #[cfg(test)]
@@ -3792,16 +3504,6 @@ mod tests {
         create_user(&conn, 12351, None).unwrap();
 
         // Default is disabled
-        let enabled = get_user_download_subtitles(&conn, 12351).unwrap();
-        assert!(!enabled);
-
-        // Enable subtitles
-        set_user_download_subtitles(&conn, 12351, true).unwrap();
-        let enabled = get_user_download_subtitles(&conn, 12351).unwrap();
-        assert!(enabled);
-
-        // Disable subtitles
-        set_user_download_subtitles(&conn, 12351, false).unwrap();
         let enabled = get_user_download_subtitles(&conn, 12351).unwrap();
         assert!(!enabled);
     }
@@ -4618,24 +4320,6 @@ mod tests {
         assert!(!sub.is_recurring);
     }
 
-    #[test]
-    fn test_get_subscription_status() {
-        let pool = setup_test_db();
-        let conn = get_connection(&pool).unwrap();
-
-        create_user(&conn, 12402, None).unwrap();
-
-        update_subscription_data(&conn, 12402, "vip", "charge_789", "2099-12-31T23:59:59Z", false).unwrap();
-
-        let status = get_subscription_status(&conn, 12402).unwrap();
-        assert!(status.is_some());
-        let (plan, expires, recurring, active) = status.unwrap();
-        assert_eq!(plan, Plan::Vip);
-        assert!(expires.is_some());
-        assert!(!recurring);
-        assert!(active);
-    }
-
     // ==================== Charge Tests ====================
 
     #[test]
@@ -4733,55 +4417,6 @@ mod tests {
         assert_eq!(recurring, 1);
     }
 
-    // ==================== Feedback Tests ====================
-
-    #[test]
-    fn test_feedback_operations() {
-        let pool = setup_test_db();
-        let conn = get_connection(&pool).unwrap();
-
-        create_user(&conn, 12420, Some("testuser".to_string())).unwrap();
-
-        // Save feedback
-        let id = save_feedback(&conn, 12420, Some("testuser"), "John", "Great bot!").unwrap();
-        assert!(id > 0);
-
-        // Get feedback
-        let messages = get_feedback_messages(&conn, None, None, 0).unwrap();
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].message, "Great bot!");
-        assert_eq!(messages[0].status, "new");
-
-        // Update status
-        update_feedback_status(&conn, id, "read").unwrap();
-        let messages = get_feedback_messages(&conn, Some("read"), None, 0).unwrap();
-        assert_eq!(messages.len(), 1);
-
-        // Add reply
-        add_feedback_reply(&conn, id, "Thank you!").unwrap();
-        let messages = get_feedback_messages(&conn, Some("replied"), None, 0).unwrap();
-        assert_eq!(messages.len(), 1);
-        assert_eq!(messages[0].admin_reply, Some("Thank you!".to_string()));
-    }
-
-    #[test]
-    fn test_get_feedback_stats() {
-        let pool = setup_test_db();
-        let conn = get_connection(&pool).unwrap();
-
-        create_user(&conn, 12421, None).unwrap();
-
-        save_feedback(&conn, 12421, None, "User1", "Message 1").unwrap();
-        let id2 = save_feedback(&conn, 12421, None, "User2", "Message 2").unwrap();
-        update_feedback_status(&conn, id2, "read").unwrap();
-
-        let (total, new, read, replied) = get_feedback_stats(&conn).unwrap();
-        assert_eq!(total, 2);
-        assert_eq!(new, 1);
-        assert_eq!(read, 1);
-        assert_eq!(replied, 0);
-    }
-
     // ==================== Video Clip Session Tests ====================
 
     #[test]
@@ -4842,10 +4477,6 @@ mod tests {
         .unwrap();
 
         assert!(id > 0);
-
-        let cuts = get_cuts(&conn, 12440, Some(10)).unwrap();
-        assert_eq!(cuts.len(), 1);
-        assert_eq!(cuts[0].title, "My Cut");
 
         let entry = get_cut_entry(&conn, 12440, id).unwrap();
         assert!(entry.is_some());
@@ -5162,5 +4793,46 @@ mod tests {
         let cached: Vec<Option<String>> = vec![];
         let all_cached = total > 0 && cached.iter().all(|id| id.is_some());
         assert!(!all_cached, "all_cached with total=0 must be false");
+    }
+
+    #[test]
+    fn test_get_user_counts_no_ambiguous_column() {
+        let pool = setup_test_db();
+        let conn = get_connection(&pool).unwrap();
+
+        // Create a few users with different plans
+        create_user(&conn, 1001, Some("user_free".to_string())).unwrap();
+        create_user(&conn, 1002, Some("user_premium".to_string())).unwrap();
+        // Upgrade one user to premium via subscription
+        conn.execute(
+            "INSERT OR REPLACE INTO subscriptions (user_id, plan, expires_at)
+             VALUES (1002, 'premium', datetime('now', '+30 days'))",
+            [],
+        )
+        .unwrap();
+
+        // This used to crash with "ambiguous column name: plan"
+        let counts = get_user_counts(&conn).unwrap();
+        assert_eq!(counts.total, 2);
+        assert!(counts.free >= 1);
+        assert!(counts.premium >= 1);
+    }
+
+    #[test]
+    fn test_get_users_paginated_no_ambiguous_column() {
+        let pool = setup_test_db();
+        let conn = get_connection(&pool).unwrap();
+
+        create_user(&conn, 2001, Some("pag_user1".to_string())).unwrap();
+        create_user(&conn, 2002, Some("pag_user2".to_string())).unwrap();
+
+        // Should not crash with ambiguous column errors
+        let (users, total) = get_users_paginated(&conn, None, 0, 10).unwrap();
+        assert_eq!(total, 2);
+        assert_eq!(users.len(), 2);
+
+        let (filtered, count) = get_users_paginated(&conn, Some("free"), 0, 10).unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(filtered.len(), 2);
     }
 }

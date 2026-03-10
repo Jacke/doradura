@@ -981,8 +981,8 @@ pub async fn handle_pipeline_error(
             ytdlp_errors::YtDlpErrorType::DiskSpaceError => ("💾", "DISK FULL"),
             ytdlp_errors::YtDlpErrorType::Unknown => ("❓", "UNKNOWN"),
         };
-        let truncated_error = if error_str.len() > 300 {
-            format!("{}...", &error_str[..300])
+        let truncated_error = if error_str.chars().count() > 300 {
+            format!("{}...", error_str.chars().take(300).collect::<String>())
         } else {
             error_str.clone()
         };

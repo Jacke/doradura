@@ -66,6 +66,8 @@ pub struct DownloadTask {
     /// Carousel bitmask: which items to download from a multi-item post (e.g., Instagram carousel).
     /// Bit N = item N selected. None = download all items.
     pub carousel_mask: Option<u32>,
+    /// Whether to fetch and send lyrics highlights alongside the audio.
+    pub with_lyrics: bool,
 }
 
 impl DownloadTask {
@@ -150,6 +152,7 @@ impl DownloadTask {
             time_range,
             queue_message_id: None,
             carousel_mask: None,
+            with_lyrics: false,
         }
     }
 
@@ -679,6 +682,7 @@ impl DownloadQueue {
                 },
                 queue_message_id: None,
                 carousel_mask: entry.carousel_mask,
+                with_lyrics: false,
             };
 
             // Insert respecting priority order
@@ -774,6 +778,7 @@ impl DownloadQueue {
             },
             queue_message_id: None,
             carousel_mask: entry.carousel_mask,
+            with_lyrics: false,
         }
     }
 }
@@ -1063,6 +1068,7 @@ mod tests {
             time_range: None,
             queue_message_id: None,
             carousel_mask: None,
+            with_lyrics: false,
         };
         let new_task = DownloadTask::new(
             "http://example.com/new".to_string(),

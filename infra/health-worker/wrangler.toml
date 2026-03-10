@@ -1,0 +1,11 @@
+name = "doradura-health"
+main = "src/worker.js"
+compatibility_date = "2024-01-01"
+
+[triggers]
+crons = ["* * * * *"]  # every 1 minute
+
+[[rules]]
+type = "Data"
+globs = ["**/*.png"]
+fallthrough = false

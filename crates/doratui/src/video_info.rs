@@ -250,17 +250,6 @@ fn process_thumbnail(bytes: Vec<u8>) -> Option<ThumbnailArt> {
     })
 }
 
-// ── Quality helpers ───────────────────────────────────────────────────────────
-
-/// Returns the quality options as (display_label, height_or_none).
-/// `None` height = "best" (no height filter).
-#[allow(dead_code)]
-pub fn quality_list_heights(info: &VideoInfo) -> Vec<Option<u32>> {
-    let mut list: Vec<Option<u32>> = info.available_heights.iter().map(|&h| Some(h)).collect();
-    list.push(None); // "best"
-    list
-}
-
 // ── Formatting helpers (used by preview renderer) ─────────────────────────────
 
 pub fn fmt_duration(secs: u64) -> String {

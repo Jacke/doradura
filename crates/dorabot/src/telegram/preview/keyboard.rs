@@ -68,6 +68,11 @@ pub fn create_fallback_keyboard(
         )]);
     }
 
+    // Lyrics toggle button for audio downloads
+    if default_format == "mp3" || default_format == "mp4" || default_format == "mp4+mp3" {
+        rows.push(vec![crate::telegram::cb("☐ 📝 Lyrics", format!("dl:tl:{}", url_id))]);
+    }
+
     if (default_format == "mp4" || default_format == "mp4+mp3") && (is_youtube || burn_sub_lang.is_some()) {
         let label = match burn_sub_lang {
             Some(lang) => format!("🔤 Subs: {} ✓", lang),
@@ -229,6 +234,9 @@ pub fn create_video_format_keyboard(
         },
         format!("dl:tm:{}", url_id),
     )]);
+
+    // Lyrics toggle button (for MP3 downloads)
+    buttons.push(vec![crate::telegram::cb("☐ 📝 Lyrics", format!("dl:tl:{}", url_id))]);
 
     // Toggle button for send type (Media/Document)
     buttons.push(vec![crate::telegram::cb(

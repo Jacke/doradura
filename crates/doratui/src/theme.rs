@@ -187,18 +187,6 @@ impl LogoScheme {
 }
 
 // ── Legacy constants (Mocha) — used by logo.rs static palettes ────────────────
-#[allow(dead_code)]
-pub const CRUST: Color = Color::Rgb(17, 17, 27);
-#[allow(dead_code)]
-pub const BASE: Color = Color::Rgb(30, 30, 46);
-#[allow(dead_code)]
-pub const SURFACE0: Color = Color::Rgb(49, 50, 68);
-#[allow(dead_code)]
-pub const SURFACE1: Color = Color::Rgb(69, 71, 90);
-#[allow(dead_code)]
-pub const TEXT: Color = Color::Rgb(205, 214, 244);
-#[allow(dead_code)]
-pub const SUBTEXT: Color = Color::Rgb(166, 173, 200);
 pub const LAVENDER: Color = Color::Rgb(180, 190, 254);
 pub const GREEN: Color = Color::Rgb(166, 227, 161);
 pub const RED: Color = Color::Rgb(243, 139, 168);

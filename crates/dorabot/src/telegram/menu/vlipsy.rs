@@ -152,8 +152,8 @@ async fn show_results_page(
             .unwrap_or_else(|| title.to_string());
 
         // Truncate label to fit button display
-        let label = if source_label.len() > 45 {
-            format!("{}...", &source_label[..42])
+        let label = if source_label.chars().count() > 45 {
+            format!("{}...", source_label.chars().take(42).collect::<String>())
         } else {
             source_label
         };

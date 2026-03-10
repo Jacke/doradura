@@ -259,8 +259,8 @@ pub async fn notify_admin_new_user(
 
     if let Some(msg) = first_message {
         // Truncate long messages
-        let truncated = if msg.len() > 200 {
-            format!("{}...", &msg[..200])
+        let truncated = if msg.chars().count() > 200 {
+            format!("{}...", msg.chars().take(200).collect::<String>())
         } else {
             msg.to_string()
         };

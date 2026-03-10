@@ -741,14 +741,14 @@ impl AlertManager {
 
         metrics::record_alert("download_failure", "warning");
 
-        let truncated_url = if url.len() > 100 {
-            format!("{}...", &url[..100])
+        let truncated_url = if url.chars().count() > 100 {
+            format!("{}...", url.chars().take(100).collect::<String>())
         } else {
             url.to_string()
         };
 
-        let truncated_error = if error.len() > 500 {
-            format!("{}...", &error[..500])
+        let truncated_error = if error.chars().count() > 500 {
+            format!("{}...", error.chars().take(500).collect::<String>())
         } else {
             error.to_string()
         };
