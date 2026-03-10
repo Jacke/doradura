@@ -38,7 +38,7 @@ async fn main() -> Result<()> {
         }
         Some(Commands::RunStaging { webhook }) => {
             log::info!("Running bot in staging mode (webhook: {})", webhook);
-            if let Err(e) = dotenvy::from_filename(".env.staging") {
+            if let Err(e) = dotenvy::from_filename_override(".env.staging") {
                 log::warn!("Failed to load .env.staging: {}", e);
             }
             doradura::startup::run_bot(webhook).await

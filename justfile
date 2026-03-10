@@ -14,9 +14,9 @@ demo:
 run-bot:
     cargo run --package doradura
 
-# Run the bot with stage config
+# Run the bot with staging config (.env.staging)
 run-stage:
-    just --dotenv-path .env.stage run-bot
+    cargo run --package doradura -- run-staging
 
 # Build the whole project
 build:
