@@ -41,6 +41,8 @@ async fn main() -> Result<()> {
             if let Err(e) = dotenvy::from_filename_override(".env.staging") {
                 log::warn!("Failed to load .env.staging: {}", e);
             }
+            // Safety: runs before any concurrent access to env vars
+            unsafe { std::env::set_var("DORADURA_STAGING", "1") };
             doradura::startup::run_bot(webhook).await
         }
         Some(Commands::RunWithCookies { cookies, webhook }) => {

@@ -10,6 +10,7 @@ const OFFLINE_AVATAR: &[u8] = include_bytes!("../../../../assets/avatar/offline.
 
 const ONLINE_NAME: &str = "Dora – Downloader Youtube Instagram TikTok";
 const OFFLINE_NAME: &str = "Dora – Sleep";
+const STAGING_NAME: &str = "Dora at Rehearsal";
 
 /// Always use official Telegram API for profile methods — Local Bot API
 /// often doesn't support newer methods like setMyProfilePhoto (Bot API 8.2+).
@@ -75,10 +76,18 @@ async fn set_bot_name(bot: &Bot, name: &str) -> anyhow::Result<()> {
     }
 }
 
+/// Returns `true` if the bot is running in staging mode (`DORADURA_STAGING=1`).
+pub fn is_staging() -> bool {
+    std::env::var("DORADURA_STAGING").is_ok_and(|v| v == "1")
+}
+
 /// Set online avatar and name.
+///
+/// In staging mode, sets the name to "Dora at Rehearsal" instead of the production name.
 pub async fn set_online_avatar(bot: &Bot) -> anyhow::Result<()> {
     set_bot_avatar(bot, ONLINE_AVATAR).await?;
-    if let Err(e) = set_bot_name(bot, ONLINE_NAME).await {
+    let name = if is_staging() { STAGING_NAME } else { ONLINE_NAME };
+    if let Err(e) = set_bot_name(bot, name).await {
         log::warn!("Failed to set online bot name: {}", e);
     }
     Ok(())
