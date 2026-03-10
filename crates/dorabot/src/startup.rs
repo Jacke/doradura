@@ -11,7 +11,6 @@ use anyhow::Result;
 use std::sync::Arc;
 use std::time::Duration;
 use teloxide::prelude::*;
-use tokio::signal;
 use tokio::time::sleep;
 
 use crate::background_tasks;
@@ -21,6 +20,7 @@ use crate::download::DownloadQueue;
 use crate::downsub::DownsubGateway;
 use crate::queue_processor;
 use crate::storage::create_pool;
+use crate::storage::SharedStorage;
 use crate::telegram::handlers::HandlerError;
 use crate::telegram::{create_bot, schema, setup_all_language_commands, HandlerDeps};
 
@@ -81,28 +81,19 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
     let db_pool = Arc::new(
         create_pool(&config::DATABASE_PATH).map_err(|e| anyhow::anyhow!("Failed to create database pool: {}", e))?,
     );
+    let shared_storage = SharedStorage::from_sqlite_pool(Arc::clone(&db_pool))
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to create shared storage backend: {}", e))?;
 
     // Initialize core services
-    crate::core::error_logger::init_error_logger(Arc::clone(&db_pool));
-    crate::download::audio_effects::start_cleanup_task(Arc::clone(&db_pool));
+    crate::core::error_logger::init_error_logger(Arc::clone(&shared_storage));
+    crate::download::audio_effects::start_cleanup_task(Arc::clone(&shared_storage));
 
-    let rate_limiter = Arc::new(RateLimiter::new());
+    let rate_limiter =
+        Arc::new(RateLimiter::from_config().map_err(|e| anyhow::anyhow!("Failed to initialize rate limiter: {}", e))?);
     Arc::clone(&rate_limiter).spawn_cleanup_task(std::time::Duration::from_secs(300));
 
-    let download_queue = Arc::new(DownloadQueue::new());
-
-    // Recover pending/interrupted tasks from DB after restart
-    match crate::storage::db::get_connection(&db_pool) {
-        Ok(conn) => match crate::storage::db::get_and_reset_recoverable_tasks(&conn) {
-            Ok(entries) if !entries.is_empty() => {
-                let count = download_queue.recover_from_db(entries).await;
-                log::info!("Recovered {} task(s) from database after restart", count);
-            }
-            Ok(_) => log::debug!("No tasks to recover from database"),
-            Err(e) => log::warn!("Failed to recover tasks from database: {}", e),
-        },
-        Err(e) => log::warn!("Failed to get DB connection for task recovery: {}", e),
-    }
+    let download_queue = Arc::new(DownloadQueue::with_storage(Some(Arc::clone(&shared_storage))));
 
     let downsub_gateway = Arc::new(DownsubGateway::from_env());
     if downsub_gateway.is_available() {
@@ -115,28 +106,28 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
     }
 
     // --- Spawn background tasks ---
-    background_tasks::spawn_web_server(Arc::clone(&db_pool));
+    background_tasks::spawn_web_server(Arc::clone(&shared_storage));
     background_tasks::spawn_metrics_server();
 
-    let alert_manager = background_tasks::start_alert_monitor(bot.clone(), Arc::clone(&db_pool)).await;
+    let alert_manager = background_tasks::start_alert_monitor(bot.clone(), Arc::clone(&shared_storage)).await;
 
     let _disk_monitor_handle = crate::core::disk::start_disk_monitor_task(alert_manager.clone());
 
-    background_tasks::spawn_stats_reporter(bot.clone(), Arc::clone(&db_pool));
+    background_tasks::spawn_stats_reporter(bot.clone(), Arc::clone(&shared_storage)).await;
     background_tasks::spawn_health_checks(bot.clone());
 
     tokio::spawn(queue_processor::process_queue(
         bot.clone(),
         Arc::clone(&download_queue),
         Arc::clone(&rate_limiter),
-        Arc::clone(&db_pool),
+        Arc::clone(&shared_storage),
         alert_manager.clone(),
     ));
 
-    background_tasks::spawn_subscription_expiry_checker(Arc::clone(&db_pool));
-    background_tasks::spawn_cookies_checker(bot.clone());
-    background_tasks::spawn_content_watcher(bot.clone(), Arc::clone(&db_pool));
-    background_tasks::spawn_db_cleanup(Arc::clone(&db_pool));
+    background_tasks::spawn_subscription_expiry_checker(Arc::clone(&shared_storage)).await;
+    background_tasks::spawn_cookies_checker(bot.clone(), Arc::clone(&shared_storage)).await;
+    background_tasks::spawn_content_watcher(bot.clone(), Arc::clone(&db_pool), Arc::clone(&shared_storage)).await;
+    background_tasks::spawn_db_cleanup(Arc::clone(&db_pool), Arc::clone(&shared_storage)).await;
 
     // Create extension registry
     let extension_registry = Arc::new(crate::extension::ExtensionRegistry::default_registry());
@@ -150,6 +141,7 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
     // Create handler dependencies
     let handler_deps = HandlerDeps::new(
         Arc::clone(&db_pool),
+        Arc::clone(&shared_storage),
         Arc::clone(&download_queue),
         Arc::clone(&rate_limiter),
         Arc::clone(&downsub_gateway),
@@ -167,7 +159,8 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
     let webhook_url = if use_webhook { config::WEBHOOK_URL.clone() } else { None };
 
     let result = if let Some(url) = webhook_url {
-        run_webhook_mode(bot, &url).await
+        log::info!("Webhook mode requested with public URL {}", url);
+        crate::webhook::run_webhook_mode(bot, handler, Arc::clone(&shared_storage), bot_id, bot_init_start).await
     } else {
         run_polling_mode(bot, handler, bot_init_start).await
     };
@@ -175,12 +168,6 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
     // Set offline avatar before shutdown
     if let Err(e) = crate::telegram::avatar::set_offline_avatar(&bot_for_shutdown).await {
         log::warn!("Failed to set offline avatar: {}", e);
-    }
-
-    // Graceful shutdown: flush pending queue tasks to DB so they survive restart
-    let flushed = download_queue.flush_to_db(&db_pool).await;
-    if flushed > 0 {
-        log::info!("Graceful shutdown: saved {} pending task(s) to database", flushed);
     }
 
     result
@@ -257,27 +244,6 @@ async fn connect_to_bot_api(bot: &crate::telegram::Bot) -> Result<teloxide::type
             }
         }
     }
-}
-
-/// Run the bot in webhook mode.
-async fn run_webhook_mode(bot: crate::telegram::Bot, url: &str) -> Result<()> {
-    log::info!("Starting bot in webhook mode at {}", url);
-
-    let _ = bot.delete_webhook().await;
-    bot.set_webhook(url::Url::parse(url)?).await?;
-    log::info!("Webhook set successfully");
-
-    log::warn!("Webhook URL set to {}, but HTTP server is not implemented yet.", url);
-    log::warn!("Please set up an HTTP server to receive webhook updates, or use polling mode.");
-
-    tokio::select! {
-        _ = signal::ctrl_c() => {
-            log::info!("Shutting down gracefully...");
-            bot.delete_webhook().await?;
-        },
-    }
-
-    Ok(())
 }
 
 /// Run the bot in long polling mode with dispatcher retry logic.

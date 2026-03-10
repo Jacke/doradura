@@ -4,13 +4,13 @@
 
 use crate::core::config;
 use crate::download::source::instagram::InstagramSource;
-use crate::storage::db::{self, DbPool};
-use crate::storage::get_connection;
+use crate::storage::db::DbPool;
+use crate::storage::SharedStorage;
 use crate::telegram::cb;
 use crate::telegram::Bot;
-use crate::watcher::db as watcher_db;
 use crate::watcher::traits::WatchNotification;
 use crate::watcher::WatcherRegistry;
+use sqlx::{pool::PoolConnection, Postgres};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -32,17 +32,14 @@ fn max_subscriptions_for_plan(plan: &str) -> u32 {
 // ─── /subscriptions command ───
 
 /// Handle the /subscriptions command: show list of user's subscriptions.
-pub async fn handle_subscriptions_command(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbPool>) {
-    let conn = match get_connection(db_pool) {
-        Ok(c) => c,
-        Err(e) => {
-            log::error!("DB error in /subscriptions: {}", e);
-            let _ = bot.send_message(chat_id, "Database error").await;
-            return;
-        }
-    };
-
-    let subs = match watcher_db::get_user_subscriptions(&conn, chat_id.0) {
+pub async fn handle_subscriptions_command(
+    bot: &Bot,
+    chat_id: ChatId,
+    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
+) {
+    let _ = db_pool;
+    let subs = match shared_storage.get_user_content_subscriptions(chat_id.0).await {
         Ok(s) => s,
         Err(e) => {
             log::error!("Failed to get subscriptions: {}", e);
@@ -51,14 +48,14 @@ pub async fn handle_subscriptions_command(bot: &Bot, chat_id: ChatId, db_pool: &
         }
     };
 
-    // Get user plan for limit display
-    let plan = db::get_user(&conn, chat_id.0)
+    let plan = shared_storage
+        .get_user(chat_id.0)
+        .await
         .ok()
         .flatten()
         .map(|u| u.plan.to_string())
         .unwrap_or_else(|| "free".to_string());
     let max_subs = max_subscriptions_for_plan(&plan);
-    drop(conn);
 
     if subs.is_empty() {
         let text = format!(
@@ -126,6 +123,7 @@ pub async fn show_subscribe_confirm(
     chat_id: ChatId,
     username: &str,
     db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
     registry: &WatcherRegistry,
 ) {
     let watcher = match registry.get("instagram") {
@@ -136,25 +134,25 @@ pub async fn show_subscribe_confirm(
         }
     };
 
-    // Check subscription limit
-    let conn = match get_connection(db_pool) {
-        Ok(c) => c,
-        Err(_) => {
-            let _ = bot.send_message(chat_id, "Database error").await;
-            return;
-        }
-    };
-
-    let plan = db::get_user(&conn, chat_id.0)
+    let _ = db_pool;
+    let plan = shared_storage
+        .get_user(chat_id.0)
+        .await
         .ok()
         .flatten()
         .map(|u| u.plan.to_string())
         .unwrap_or_else(|| "free".to_string());
-    let current_count = watcher_db::count_user_subscriptions(&conn, chat_id.0).unwrap_or(0);
+    let current_count = shared_storage
+        .count_user_content_subscriptions(chat_id.0)
+        .await
+        .unwrap_or(0);
     let max_subs = max_subscriptions_for_plan(&plan);
 
     // Check if already subscribed
-    if let Ok(Some(existing)) = watcher_db::has_subscription(&conn, chat_id.0, "instagram", username) {
+    if let Ok(Some(existing)) = shared_storage
+        .has_content_subscription(chat_id.0, "instagram", username)
+        .await
+    {
         if existing.is_active {
             let _ = bot
                 .send_message(chat_id, format!("You're already subscribed to @{}!", username))
@@ -162,7 +160,6 @@ pub async fn show_subscribe_confirm(
             return;
         }
     }
-    drop(conn);
 
     if current_count >= max_subs {
         let _ = bot
@@ -226,6 +223,7 @@ pub async fn handle_subscription_callback(
     message_id: MessageId,
     data: &str,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     registry: &WatcherRegistry,
 ) {
     let _ = bot.answer_callback_query(callback_id.clone()).await;
@@ -250,6 +248,7 @@ pub async fn handle_subscription_callback(
                     source_id,
                     mask,
                     &db_pool,
+                    &shared_storage,
                     registry,
                 )
                 .await;
@@ -274,7 +273,7 @@ pub async fn handle_subscription_callback(
             // cw:manage:<id>
             if parts.len() >= 3 {
                 if let Ok(sub_id) = parts[2].parse::<i64>() {
-                    show_manage_subscription(bot, chat_id, message_id, sub_id, &db_pool).await;
+                    show_manage_subscription(bot, chat_id, message_id, sub_id, &db_pool, &shared_storage).await;
                 }
             }
         }
@@ -282,7 +281,7 @@ pub async fn handle_subscription_callback(
             // cw:unsub:<id>
             if parts.len() >= 3 {
                 if let Ok(sub_id) = parts[2].parse::<i64>() {
-                    handle_unsubscribe(bot, chat_id, message_id, sub_id, &db_pool).await;
+                    handle_unsubscribe(bot, chat_id, message_id, sub_id, &db_pool, &shared_storage).await;
                 }
             }
         }
@@ -290,13 +289,13 @@ pub async fn handle_subscription_callback(
             // cw:tog:<id>:<bit>
             if parts.len() >= 4 {
                 if let (Ok(sub_id), Ok(bit)) = (parts[2].parse::<i64>(), parts[3].parse::<u32>()) {
-                    handle_toggle_content_type(bot, chat_id, message_id, sub_id, bit, &db_pool).await;
+                    handle_toggle_content_type(bot, chat_id, message_id, sub_id, bit, &db_pool, &shared_storage).await;
                 }
             }
         }
         "list" => {
             let _ = bot.delete_message(chat_id, message_id).await;
-            handle_subscriptions_command(bot, chat_id, &db_pool).await;
+            handle_subscriptions_command(bot, chat_id, &db_pool, &shared_storage).await;
         }
         _ => {}
     }
@@ -310,6 +309,7 @@ async fn handle_confirm_subscribe(
     source_id: &str,
     mask: u32,
     db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
     registry: &WatcherRegistry,
 ) {
     let watcher = match registry.get(source_type) {
@@ -333,23 +333,18 @@ async fn handle_confirm_subscribe(
         }
     };
 
-    let conn = match get_connection(db_pool) {
-        Ok(c) => c,
-        Err(_) => {
-            let _ = bot.edit_message_text(chat_id, message_id, "Database error").await;
-            return;
-        }
-    };
-
-    match watcher_db::upsert_subscription(
-        &conn,
-        chat_id.0,
-        source_type,
-        source_id,
-        &display_name,
-        mask,
-        meta.as_ref(),
-    ) {
+    let _ = db_pool;
+    match shared_storage
+        .upsert_content_subscription(
+            chat_id.0,
+            source_type,
+            source_id,
+            display_name.as_str(),
+            mask,
+            meta.as_ref(),
+        )
+        .await
+    {
         Ok(_id) => {
             let types: Vec<&str> = {
                 let mut t = Vec::new();
@@ -426,13 +421,10 @@ async fn show_manage_subscription(
     message_id: MessageId,
     sub_id: i64,
     db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
 ) {
-    let conn = match get_connection(db_pool) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-
-    let sub = match watcher_db::get_subscription(&conn, sub_id) {
+    let _ = db_pool;
+    let sub = match shared_storage.get_content_subscription(sub_id).await {
         Ok(Some(s)) => s,
         _ => {
             let _ = bot
@@ -484,20 +476,24 @@ async fn show_manage_subscription(
         .await;
 }
 
-async fn handle_unsubscribe(bot: &Bot, chat_id: ChatId, message_id: MessageId, sub_id: i64, db_pool: &Arc<DbPool>) {
-    let conn = match get_connection(db_pool) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-
-    // Get sub info before deactivating
-    let display_name = watcher_db::get_subscription(&conn, sub_id)
+async fn handle_unsubscribe(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    sub_id: i64,
+    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
+) {
+    let _ = db_pool;
+    let display_name = shared_storage
+        .get_content_subscription(sub_id)
+        .await
         .ok()
         .flatten()
         .map(|s| s.display_name)
         .unwrap_or_default();
 
-    match watcher_db::deactivate_subscription(&conn, sub_id) {
+    match shared_storage.deactivate_content_subscription(sub_id).await {
         Ok(()) => {
             let text = format!("🔕 Unsubscribed from {}", display_name);
             let keyboard = InlineKeyboardMarkup::new(vec![vec![cb("📋 My Subscriptions", "cw:list".to_string())]]);
@@ -522,13 +518,10 @@ async fn handle_toggle_content_type(
     sub_id: i64,
     bit: u32,
     db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
 ) {
-    let conn = match get_connection(db_pool) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-
-    let sub = match watcher_db::get_subscription(&conn, sub_id) {
+    let _ = db_pool;
+    let sub = match shared_storage.get_content_subscription(sub_id).await {
         Ok(Some(s)) => s,
         _ => return,
     };
@@ -537,14 +530,13 @@ async fn handle_toggle_content_type(
     // Don't allow mask=0
     let new_mask = if new_mask == 0 { bit } else { new_mask };
 
-    if let Err(e) = watcher_db::update_watch_mask(&conn, sub_id, new_mask) {
+    if let Err(e) = shared_storage.update_content_watch_mask(sub_id, new_mask).await {
         log::error!("Failed to toggle content type: {}", e);
         return;
     }
-    drop(conn);
 
     // Refresh the manage view
-    show_manage_subscription(bot, chat_id, message_id, sub_id, db_pool).await;
+    show_manage_subscription(bot, chat_id, message_id, sub_id, db_pool, shared_storage).await;
 }
 
 // ─── Notification dispatcher ───
@@ -852,9 +844,12 @@ async fn send_text_notification(
 pub fn start_notification_dispatcher(
     bot: Bot,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     mut rx: mpsc::UnboundedReceiver<WatchNotification>,
+    lock_conn: Option<PoolConnection<Postgres>>,
 ) {
     tokio::spawn(async move {
+        let _lock_conn = lock_conn;
         let http_client = reqwest::Client::new();
         let ig_source = InstagramSource::new();
 
@@ -868,7 +863,7 @@ pub fn start_notification_dispatcher(
             };
 
             if let Err(e) = result {
-                handle_send_error(e, notification.user_id, &db_pool);
+                handle_send_error(e, notification.user_id, &db_pool, &shared_storage);
             }
 
             // Flood control between notifications
@@ -879,13 +874,22 @@ pub fn start_notification_dispatcher(
 }
 
 /// Handle send errors — deactivate subscriptions if bot is blocked.
-fn handle_send_error(err: teloxide::RequestError, user_id: i64, db_pool: &Arc<DbPool>) {
+fn handle_send_error(
+    err: teloxide::RequestError,
+    user_id: i64,
+    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
+) {
     let err_str = err.to_string();
     if err_str.contains("Forbidden") || err_str.contains("blocked") || err_str.contains("deactivated") {
         log::warn!("Bot blocked by user {}, deactivating all subscriptions", user_id);
-        if let Ok(conn) = get_connection(db_pool) {
-            let _ = watcher_db::deactivate_all_for_user(&conn, user_id);
-        }
+        let _ = db_pool;
+        let shared_storage = Arc::clone(shared_storage);
+        tokio::spawn(async move {
+            let _ = shared_storage
+                .deactivate_all_content_subscriptions_for_user(user_id)
+                .await;
+        });
     } else {
         log::error!("Failed to send notification to {}: {}", user_id, err);
     }

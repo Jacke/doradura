@@ -96,6 +96,30 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
+
+    /// Manage Telegram webhook outside the runtime process
+    Webhook {
+        #[command(subcommand)]
+        command: WebhookCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum WebhookCommand {
+    /// Register or update the webhook
+    Set {
+        /// Drop pending updates while setting the webhook
+        #[arg(long)]
+        drop_pending_updates: bool,
+    },
+    /// Remove the webhook
+    Delete {
+        /// Drop pending updates while deleting the webhook
+        #[arg(long)]
+        drop_pending_updates: bool,
+    },
+    /// Show current Telegram webhook info
+    Info,
 }
 
 impl Cli {

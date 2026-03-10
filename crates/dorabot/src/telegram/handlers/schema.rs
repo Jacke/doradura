@@ -10,8 +10,6 @@ use super::commands::{handle_cuts_command, handle_downloads_command, handle_star
 use super::types::{HandlerDeps, HandlerError};
 use super::uploads::media_upload_handler;
 use crate::i18n;
-use crate::storage::db::{create_user, get_user};
-use crate::storage::get_connection;
 use crate::telegram::bot::Command;
 use crate::telegram::Bot;
 
@@ -83,7 +81,9 @@ fn successful_payment_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> 
 
                 log::info!("Received successful_payment message");
 
-                if let Err(e) = subscription::handle_successful_payment(&bot, &msg, Arc::clone(&deps.db_pool)).await {
+                if let Err(e) =
+                    subscription::handle_successful_payment(&bot, &msg, Arc::clone(&deps.shared_storage)).await
+                {
                     log::error!("Failed to handle successful payment: {:?}", e);
                     notify_admin_text(
                         &bot,
@@ -113,8 +113,15 @@ fn update_cookies_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                 let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
                 let message_text = msg.text().unwrap_or_default();
 
-                if let Err(e) =
-                    handle_update_cookies_command(deps.db_pool.clone(), &bot, msg.chat.id, user_id, message_text).await
+                if let Err(e) = handle_update_cookies_command(
+                    deps.db_pool.clone(),
+                    deps.shared_storage.clone(),
+                    &bot,
+                    msg.chat.id,
+                    user_id,
+                    message_text,
+                )
+                .await
                 {
                     log::error!("❌ /update_cookies handler failed for user {}: {}", user_id, e);
                     let _ = bot
@@ -143,9 +150,15 @@ fn update_ig_cookies_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                 let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
                 let message_text = msg.text().unwrap_or_default();
 
-                if let Err(e) =
-                    handle_update_ig_cookies_command(deps.db_pool.clone(), &bot, msg.chat.id, user_id, message_text)
-                        .await
+                if let Err(e) = handle_update_ig_cookies_command(
+                    deps.db_pool.clone(),
+                    deps.shared_storage.clone(),
+                    &bot,
+                    msg.chat.id,
+                    user_id,
+                    message_text,
+                )
+                .await
                 {
                     log::error!("❌ /update_ig_cookies handler failed for user {}: {}", user_id, e);
                     let _ = bot
@@ -273,8 +286,15 @@ fn send_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                 let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
                 let message_text = msg.text().unwrap_or_default();
 
-                if let Err(e) =
-                    handle_send_command(&bot, msg.chat.id, user_id, message_text, deps.db_pool.clone()).await
+                if let Err(e) = handle_send_command(
+                    &bot,
+                    msg.chat.id,
+                    user_id,
+                    message_text,
+                    deps.db_pool.clone(),
+                    deps.shared_storage.clone(),
+                )
+                .await
                 {
                     log::error!("/send handler failed for user {}: {}", user_id, e);
                     let _ = bot.send_message(msg.chat.id, format!("Error: {}", e)).await;
@@ -296,8 +316,15 @@ fn broadcast_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                 let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
                 let message_text = msg.text().unwrap_or_default();
 
-                if let Err(e) =
-                    handle_broadcast_command(&bot, msg.chat.id, user_id, message_text, deps.db_pool.clone()).await
+                if let Err(e) = handle_broadcast_command(
+                    &bot,
+                    msg.chat.id,
+                    user_id,
+                    message_text,
+                    deps.db_pool.clone(),
+                    deps.shared_storage.clone(),
+                )
+                .await
                 {
                     log::error!("/broadcast handler failed for user {}: {}", user_id, e);
                     let _ = bot.send_message(msg.chat.id, format!("Error: {}", e)).await;
@@ -331,11 +358,19 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                         handle_start_command(&bot, &msg, &deps).await?;
                     }
                     Command::Settings => {
-                        let _ = show_main_menu(&bot, msg.chat.id, deps.db_pool.clone()).await;
+                        let _ =
+                            show_main_menu(&bot, msg.chat.id, deps.db_pool.clone(), deps.shared_storage.clone()).await;
                     }
                     Command::Info => {
                         log::info!("⚡ Command::Info matched, calling handle_info_command");
-                        match handle_info_command(bot.clone(), msg.clone(), deps.db_pool.clone()).await {
+                        match handle_info_command(
+                            bot.clone(),
+                            msg.clone(),
+                            deps.db_pool.clone(),
+                            deps.shared_storage.clone(),
+                        )
+                        .await
+                        {
                             Ok(_) => log::info!("✅ handle_info_command completed successfully"),
                             Err(e) => log::error!("❌ handle_info_command failed: {:?}", e),
                         }
@@ -345,13 +380,15 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                             bot.clone(),
                             msg.clone(),
                             deps.db_pool.clone(),
+                            deps.shared_storage.clone(),
                             deps.downsub_gateway.clone(),
                             deps.subtitle_cache.clone(),
                         )
                         .await;
                     }
                     Command::History => {
-                        let _ = show_history(&bot, msg.chat.id, deps.db_pool.clone()).await;
+                        let _ =
+                            show_history(&bot, msg.chat.id, deps.db_pool.clone(), deps.shared_storage.clone()).await;
                     }
                     Command::Downloads => {
                         handle_downloads_command(&bot, &msg, &deps).await?;
@@ -364,31 +401,54 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                     }
                     Command::Stats => {
                         log::info!("Stats command called for user {}", msg.chat.id);
-                        match show_user_stats(&bot, msg.chat.id, deps.db_pool.clone()).await {
+                        match show_user_stats(&bot, msg.chat.id, deps.db_pool.clone(), deps.shared_storage.clone())
+                            .await
+                        {
                             Ok(_) => log::info!("Stats sent successfully"),
                             Err(e) => log::error!("Failed to show user stats: {:?}", e),
                         }
                     }
                     Command::Export => {
-                        let _ = show_export_menu(&bot, msg.chat.id, deps.db_pool.clone()).await;
+                        let _ = show_export_menu(&bot, msg.chat.id, deps.db_pool.clone(), deps.shared_storage.clone())
+                            .await;
                     }
                     Command::Backup => {
                         let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
                         let _ = handle_backup_command(&bot, msg.chat.id, user_id).await;
                     }
                     Command::Plan => {
-                        let _ = show_subscription_info(&bot, msg.chat.id, deps.db_pool.clone()).await;
+                        let _ = show_subscription_info(
+                            &bot,
+                            msg.chat.id,
+                            deps.db_pool.clone(),
+                            deps.shared_storage.clone(),
+                        )
+                        .await;
                     }
                     Command::Users => {
                         let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
                         let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
-                        let _ = handle_users_command(&bot, msg.chat.id, username, user_id, deps.db_pool.clone()).await;
+                        let _ = handle_users_command(
+                            &bot,
+                            msg.chat.id,
+                            username,
+                            user_id,
+                            deps.db_pool.clone(),
+                            deps.shared_storage.clone(),
+                        )
+                        .await;
                     }
                     Command::Setplan => {
                         let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
                         let message_text = msg.text().unwrap_or("");
-                        let _ = handle_setplan_command(&bot, msg.chat.id, user_id, message_text, deps.db_pool.clone())
-                            .await;
+                        let _ = handle_setplan_command(
+                            &bot,
+                            msg.chat.id,
+                            user_id,
+                            message_text,
+                            deps.shared_storage.clone(),
+                        )
+                        .await;
                     }
                     Command::Transactions => {
                         let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
@@ -396,7 +456,9 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                     }
                     Command::Admin => {
                         let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
-                        if let Err(e) = handle_admin_command(&bot, msg.chat.id, user_id, deps.db_pool.clone()).await {
+                        if let Err(e) =
+                            handle_admin_command(&bot, msg.chat.id, user_id, deps.shared_storage.clone()).await
+                        {
                             log::error!("/admin command failed: {:#}", e);
                             let _ = bot.send_message(msg.chat.id, format!("❌ Admin error: {}", e)).await;
                         }
@@ -405,7 +467,8 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                         let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
                         let message_text = msg.text().unwrap_or("");
                         let args = message_text.strip_prefix("/charges").unwrap_or("").trim();
-                        let _ = handle_charges_command(&bot, msg.chat.id, user_id, deps.db_pool.clone(), args).await;
+                        let _ =
+                            handle_charges_command(&bot, msg.chat.id, user_id, deps.shared_storage.clone(), args).await;
                     }
                     Command::DownloadTg => {
                         let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
@@ -423,15 +486,28 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                             user_id,
                             username,
                             deps.db_pool.clone(),
+                            deps.shared_storage.clone(),
                             message_text,
                         )
                         .await;
                     }
                     Command::Analytics => {
-                        let _ = handle_analytics_command(bot.clone(), msg.clone(), deps.db_pool.clone()).await;
+                        let _ = handle_analytics_command(
+                            bot.clone(),
+                            msg.clone(),
+                            deps.db_pool.clone(),
+                            deps.shared_storage.clone(),
+                        )
+                        .await;
                     }
                     Command::Health => {
-                        let _ = handle_health_command(bot.clone(), msg.clone(), deps.db_pool.clone()).await;
+                        let _ = handle_health_command(
+                            bot.clone(),
+                            msg.clone(),
+                            deps.db_pool.clone(),
+                            deps.shared_storage.clone(),
+                        )
+                        .await;
                     }
                     Command::DownsubHealth => {
                         let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
@@ -439,10 +515,23 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                             .await;
                     }
                     Command::Metrics => {
-                        let _ = handle_metrics_command(bot.clone(), msg.clone(), deps.db_pool.clone(), None).await;
+                        let _ = handle_metrics_command(
+                            bot.clone(),
+                            msg.clone(),
+                            deps.db_pool.clone(),
+                            deps.shared_storage.clone(),
+                            None,
+                        )
+                        .await;
                     }
                     Command::Revenue => {
-                        let _ = handle_revenue_command(bot.clone(), msg.clone(), deps.db_pool.clone()).await;
+                        let _ = handle_revenue_command(
+                            bot.clone(),
+                            msg.clone(),
+                            deps.db_pool.clone(),
+                            deps.shared_storage.clone(),
+                        )
+                        .await;
                     }
                     Command::BotApiSpeed => {
                         let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
@@ -453,21 +542,38 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                         let _ = handle_version_command(&bot, msg.chat.id, user_id).await;
                     }
                     Command::Subscriptions => {
-                        crate::telegram::subscriptions::handle_subscriptions_command(&bot, msg.chat.id, &deps.db_pool)
-                            .await;
+                        crate::telegram::subscriptions::handle_subscriptions_command(
+                            &bot,
+                            msg.chat.id,
+                            &deps.db_pool,
+                            &deps.shared_storage,
+                        )
+                        .await;
                     }
                     Command::Player => {
-                        crate::telegram::menu::player::handle_player_command(&bot, msg.chat.id, &deps.db_pool).await;
+                        crate::telegram::menu::player::handle_player_command(
+                            &bot,
+                            msg.chat.id,
+                            &deps.db_pool,
+                            &deps.shared_storage,
+                        )
+                        .await;
                     }
                     Command::Playlists => {
-                        crate::telegram::menu::playlist::handle_playlists_command(&bot, msg.chat.id, &deps.db_pool)
-                            .await;
+                        crate::telegram::menu::playlist::handle_playlists_command(
+                            &bot,
+                            msg.chat.id,
+                            &deps.db_pool,
+                            &deps.shared_storage,
+                        )
+                        .await;
                     }
                     Command::PlaylistIntegrations => {
                         crate::telegram::menu::playlist_integrations::handle_playlist_integrations_command(
                             &bot,
                             msg.chat.id,
                             &deps.db_pool,
+                            &deps.shared_storage,
                         )
                         .await;
                     }
@@ -487,7 +593,7 @@ fn voice_message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
         .endpoint(move |bot: Bot, msg: Message| {
             let deps = deps.clone();
             async move {
-                if let Err(e) = handle_voice_message(bot, msg, deps.db_pool).await {
+                if let Err(e) = handle_voice_message(bot, msg, deps.db_pool, deps.shared_storage).await {
                     log::error!("Voice effects handler error: {:?}", e);
                 }
                 Ok(())
@@ -497,7 +603,6 @@ fn voice_message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
 
 /// Handler for regular messages (URLs, text)
 fn message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
-    use crate::storage::db::log_request;
     use crate::telegram::{handle_message, is_message_addressed_to_bot};
 
     let bot_username = deps.bot_username.clone();
@@ -515,6 +620,7 @@ fn message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                     deps.download_queue.clone(),
                     deps.rate_limiter.clone(),
                     deps.db_pool.clone(),
+                    deps.shared_storage.clone(),
                     deps.alert_manager.clone(),
                 )
                 .await;
@@ -523,51 +629,52 @@ fn message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                 if let Some(text) = msg.text() {
                     match &user_info_result {
                         Ok(Some(user)) => {
-                            if let Ok(conn) = get_connection(&deps.db_pool) {
-                                if let Err(e) = log_request(&conn, user.telegram_id(), text) {
-                                    log::error!("Failed to log request: {}", e);
-                                }
+                            if let Err(e) = deps.shared_storage.log_request(user.telegram_id(), text).await {
+                                log::error!("Failed to log request: {}", e);
                             }
                         }
                         Ok(None) | Err(_) => {
-                            if let Ok(conn) = get_connection(&deps.db_pool) {
-                                let chat_id = msg.chat.id.0;
-                                match get_user(&conn, chat_id) {
-                                    Ok(Some(user)) => {
-                                        if let Err(e) = log_request(&conn, user.telegram_id(), text) {
-                                            log::error!("Failed to log request: {}", e);
+                            let chat_id = msg.chat.id.0;
+                            match deps.shared_storage.get_user(chat_id).await {
+                                Ok(Some(user)) => {
+                                    if let Err(e) = deps.shared_storage.log_request(user.telegram_id(), text).await {
+                                        log::error!("Failed to log request: {}", e);
+                                    }
+                                }
+                                Ok(None) => {
+                                    let username = msg.from.as_ref().and_then(|u| u.username.clone());
+                                    let lang_code = msg.from.as_ref().and_then(|u| u.language_code.as_deref());
+                                    if let Err(e) = deps
+                                        .shared_storage
+                                        .create_user_with_language(chat_id, username.clone(), lang_code)
+                                        .await
+                                    {
+                                        log::error!("Failed to create user: {}", e);
+                                    } else {
+                                        if let Err(e) = deps.shared_storage.log_request(chat_id, text).await {
+                                            log::error!("Failed to log request for new user: {}", e);
                                         }
+                                        // Notify admins about new user
+                                        use crate::telegram::notifications::notify_admin_new_user;
+                                        let bot_notify = bot.clone();
+                                        let first_name = msg.from.as_ref().map(|u| u.first_name.clone());
+                                        let lang_code_owned = msg.from.as_ref().and_then(|u| u.language_code.clone());
+                                        let first_message = text.to_string();
+                                        tokio::spawn(async move {
+                                            notify_admin_new_user(
+                                                &bot_notify,
+                                                chat_id,
+                                                username.as_deref(),
+                                                first_name.as_deref(),
+                                                lang_code_owned.as_deref(),
+                                                Some(&first_message),
+                                            )
+                                            .await;
+                                        });
                                     }
-                                    Ok(None) => {
-                                        let username = msg.from.as_ref().and_then(|u| u.username.clone());
-                                        if let Err(e) = create_user(&conn, chat_id, username.clone()) {
-                                            log::error!("Failed to create user: {}", e);
-                                        } else {
-                                            if let Err(e) = log_request(&conn, chat_id, text) {
-                                                log::error!("Failed to log request for new user: {}", e);
-                                            }
-                                            // Notify admins about new user
-                                            use crate::telegram::notifications::notify_admin_new_user;
-                                            let bot_notify = bot.clone();
-                                            let first_name = msg.from.as_ref().map(|u| u.first_name.clone());
-                                            let lang_code = msg.from.as_ref().and_then(|u| u.language_code.clone());
-                                            let first_message = text.to_string();
-                                            tokio::spawn(async move {
-                                                notify_admin_new_user(
-                                                    &bot_notify,
-                                                    chat_id,
-                                                    username.as_deref(),
-                                                    first_name.as_deref(),
-                                                    lang_code.as_deref(),
-                                                    Some(&first_message),
-                                                )
-                                                .await;
-                                            });
-                                        }
-                                    }
-                                    Err(e) => {
-                                        log::error!("Failed to get user from database: {}", e);
-                                    }
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to get user from storage: {}", e);
                                 }
                             }
                         }
@@ -607,7 +714,7 @@ fn pre_checkout_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                 }
             } else {
                 // Reject unknown payment types
-                let lang = i18n::user_lang_from_pool(&deps.db_pool, user_id as i64);
+                let lang = i18n::user_lang_from_storage(&deps.shared_storage, user_id as i64).await;
                 match bot
                     .answer_pre_checkout_query(query_id.clone(), false)
                     .error_message(i18n::t(&lang, "payment.unknown_type"))
@@ -649,6 +756,7 @@ fn callback_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                 bot,
                 q,
                 deps.db_pool.clone(),
+                deps.shared_storage.clone(),
                 deps.download_queue.clone(),
                 deps.rate_limiter.clone(),
                 deps.extension_registry.clone(),

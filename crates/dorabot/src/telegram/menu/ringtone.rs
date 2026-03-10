@@ -1,5 +1,6 @@
 use crate::i18n;
 use crate::storage::db::{self, DbPool};
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -83,6 +84,7 @@ pub async fn handle_ringtone_callback(
     message_id: MessageId,
     data: &str,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
     let _ = bot.answer_callback_query(callback_id).await;
 
@@ -99,7 +101,7 @@ pub async fn handle_ringtone_callback(
             // Delete the button message (options menu)
             bot.delete_message(chat_id, message_id).await.ok();
 
-            send_platform_selector(bot, chat_id, source_kind, source_id, &db_pool).await?;
+            send_platform_selector(bot, chat_id, source_kind, source_id, &shared_storage).await?;
         }
         "platform" => {
             // ringtone:platform:{platform}:{source_kind}:{source_id}
@@ -112,7 +114,16 @@ pub async fn handle_ringtone_callback(
             // Delete the platform selector message
             bot.delete_message(chat_id, message_id).await.ok();
 
-            start_ringtone_session(bot, chat_id, platform, source_kind, source_id, &db_pool).await?;
+            start_ringtone_session(
+                bot,
+                chat_id,
+                platform,
+                source_kind,
+                source_id,
+                &db_pool,
+                &shared_storage,
+            )
+            .await?;
         }
         _ => {}
     }
@@ -126,7 +137,7 @@ pub async fn send_platform_selector(
     chat_id: ChatId,
     source_kind: &str,
     source_id: i64,
-    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
     let iphone_cb = format!("ringtone:platform:iphone:{}:{}", source_kind, source_id);
     let android_cb = format!("ringtone:platform:android:{}:{}", source_kind, source_id);
@@ -139,7 +150,7 @@ pub async fn send_platform_selector(
         vec![crate::telegram::cb("❌ Cancel", "downloads:clip_cancel")],
     ]);
 
-    let lang = i18n::user_lang_from_pool(db_pool, chat_id.0);
+    let lang = i18n::user_lang_from_storage(shared_storage, chat_id.0).await;
     let text = i18n::t(&lang, "ringtone-platform-select");
     bot.send_message(chat_id, text).reply_markup(keyboard).await?;
 
@@ -153,18 +164,20 @@ pub async fn start_ringtone_session(
     platform: Platform,
     source_kind: &str,
     source_id: i64,
-    db_pool: &Arc<DbPool>,
+    _db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
-    let conn = db::get_connection(db_pool)
-        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
     // Try to send audio/video preview so the user can identify the track
     let file_id = match source_kind {
-        "download" => db::get_download_history_entry(&conn, chat_id.0, source_id)
+        "download" => shared_storage
+            .get_download_history_entry(chat_id.0, source_id)
+            .await
             .ok()
             .flatten()
             .and_then(|d| d.file_id),
-        "cut" => db::get_cut_entry(&conn, chat_id.0, source_id)
+        "cut" => shared_storage
+            .get_cut_entry(chat_id.0, source_id)
+            .await
             .ok()
             .flatten()
             .and_then(|c| c.file_id),
@@ -192,11 +205,13 @@ pub async fn start_ringtone_session(
         subtitle_lang: None,
     };
 
-    db::upsert_video_clip_session(&conn, &session)
+    shared_storage
+        .upsert_video_clip_session(&session)
+        .await
         .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
     // Send prompt
-    let lang = i18n::user_lang_from_pool(db_pool, chat_id.0);
+    let lang = i18n::user_lang_from_storage(shared_storage, chat_id.0).await;
     let prompt_text = i18n::t(&lang, platform.prompt_key());
 
     let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb("❌ Cancel", "downloads:clip_cancel")]]);
@@ -221,9 +236,10 @@ pub async fn send_ringtone_instructions(
     bot: &Bot,
     chat_id: ChatId,
     platform: Platform,
-    db_pool: &Arc<DbPool>,
+    _db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
-    let lang = i18n::user_lang_from_pool(db_pool, chat_id.0);
+    let lang = i18n::user_lang_from_storage(shared_storage, chat_id.0).await;
     let instruction_text = i18n::t(&lang, platform.instructions_key());
 
     // Collect local image paths
@@ -248,18 +264,14 @@ pub async fn send_ringtone_instructions(
     }
 
     // Check if we have cached file_ids in DB for ALL steps
-    let conn = db::get_connection(db_pool)
-        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
     let key_prefix = platform.asset_key_prefix();
     let total = local_images.len();
 
-    let cached_ids: Vec<Option<String>> = (1..=total)
-        .map(|i| {
-            let key = format!("{}{}", key_prefix, i);
-            db::get_bot_asset(&conn, &key).ok().flatten()
-        })
-        .collect();
+    let mut cached_ids = Vec::with_capacity(total);
+    for i in 1..=total {
+        let key = format!("{}{}", key_prefix, i);
+        cached_ids.push(shared_storage.get_bot_asset(&key).await.ok().flatten());
+    }
 
     let all_cached = total > 0 && cached_ids.iter().all(|id| id.is_some());
 
@@ -310,7 +322,7 @@ pub async fn send_ringtone_instructions(
                     // The largest photo in each message
                     if let Some(photos) = msg.photo() {
                         if let Some(largest) = photos.iter().max_by_key(|p| p.width * p.height) {
-                            if let Err(e) = db::set_bot_asset(&conn, &key, &largest.file.id.0) {
+                            if let Err(e) = shared_storage.set_bot_asset(&key, &largest.file.id.0).await {
                                 log::warn!("Failed to cache ringtone instruction file_id: {}", e);
                             }
                         }

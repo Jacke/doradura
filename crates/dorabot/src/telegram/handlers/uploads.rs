@@ -4,14 +4,12 @@ use teloxide::prelude::*;
 use teloxide::types::Message;
 
 use super::types::{HandlerDeps, HandlerError};
-use crate::storage::db::{self, create_user, get_user};
-use crate::storage::get_connection;
 use crate::telegram::Bot;
 
 /// Handler for media uploads (photo/video/document) from premium/vip users
 pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::UpdateHandler<HandlerError> {
     use crate::core::subscription::PlanLimits;
-    use crate::storage::uploads::{find_duplicate_upload, save_upload, NewUpload};
+    use crate::storage::uploads::NewUpload;
     use teloxide::dispatching::UpdateFilterExt;
     use teloxide::types::ParseMode;
 
@@ -22,53 +20,69 @@ pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::
             // Only handle messages with media (photo, video, document, audio)
             msg.photo().is_some() || msg.video().is_some() || msg.document().is_some() || msg.audio().is_some()
         })
-        .filter(move |msg: Message| {
-            // Skip if user has active cookies upload session (let message_handler process it)
-            let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
-            if let Ok(conn) = get_connection(&deps_filter.db_pool) {
-                if let Ok(Some(_)) = db::get_active_cookies_upload_session(&conn, user_id) {
-                    log::info!(
-                        "📤 Filter: skipping media_upload_handler - user {} has active cookies session",
-                        user_id
-                    );
-                    return false; // Don't handle - let it fall through to message_handler
-                }
-                if let Ok(Some(_)) = db::get_active_ig_cookies_upload_session(&conn, user_id) {
-                    log::info!(
-                        "📤 Filter: skipping media_upload_handler - user {} has active IG cookies session",
-                        user_id
-                    );
-                    return false; // Don't handle - let it fall through to message_handler
-                }
-            }
-            true // Handle this message
+        .filter(move |_msg: Message| {
+            let _ = &deps_filter;
+            true
         })
         .endpoint(move |bot: Bot, msg: Message| {
             let deps = deps.clone();
             async move {
                 let chat_id = msg.chat.id;
+                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
 
-                // Get user and check plan
-                let conn = match get_connection(&deps.db_pool) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        log::error!("Failed to get DB connection: {}", e);
+                if let Some(document) = msg.document() {
+                    if deps
+                        .shared_storage
+                        .get_active_cookies_upload_session(user_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .is_some()
+                    {
+                        crate::telegram::handle_cookies_file_upload(
+                            deps.db_pool.clone(),
+                            deps.shared_storage.clone(),
+                            &bot,
+                            chat_id,
+                            user_id,
+                            document,
+                        )
+                        .await?;
                         return Ok(());
                     }
-                };
 
-                let user = match get_user(&conn, chat_id.0) {
+                    if deps
+                        .shared_storage
+                        .get_active_ig_cookies_upload_session(user_id)
+                        .await
+                        .ok()
+                        .flatten()
+                        .is_some()
+                    {
+                        crate::telegram::handle_ig_cookies_file_upload(
+                            deps.db_pool.clone(),
+                            deps.shared_storage.clone(),
+                            &bot,
+                            chat_id,
+                            user_id,
+                            document,
+                        )
+                        .await?;
+                        return Ok(());
+                    }
+                }
+
+                // Get user and check plan
+                let user = match deps.shared_storage.get_user(chat_id.0).await {
                     Ok(Some(u)) => u,
                     Ok(None) => {
-                        // User doesn't exist, create them
                         let username = msg.from.as_ref().and_then(|u| u.username.clone());
-                        if let Err(e) = create_user(&conn, chat_id.0, username) {
+                        if let Err(e) = deps.shared_storage.create_user(chat_id.0, username).await {
                             log::error!("Failed to create user: {}", e);
                             return Ok(());
                         }
 
-                        // Fetch the newly created user
-                        match get_user(&conn, chat_id.0) {
+                        match deps.shared_storage.get_user(chat_id.0).await {
                             Ok(Some(u)) => u,
                             _ => {
                                 log::error!("Failed to get created user");
@@ -199,7 +213,7 @@ pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::
 
                 // Check for duplicates
                 if let Some(ref unique_id) = file_unique_id {
-                    if let Ok(Some(existing)) = find_duplicate_upload(&conn, chat_id.0, unique_id) {
+                    if let Ok(Some(existing)) = deps.shared_storage.find_duplicate_upload(chat_id.0, unique_id).await {
                         bot.send_message(
                             chat_id,
                             format!(
@@ -277,7 +291,7 @@ pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::
                     thumbnail_file_id: thumbnail_file_id.as_deref(),
                 };
 
-                match save_upload(&conn, &upload) {
+                match deps.shared_storage.save_upload(&upload).await {
                     Ok(upload_id) => {
                         log::info!(
                             "Upload saved: id={}, user={}, type={}, title={}",

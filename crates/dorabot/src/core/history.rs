@@ -1,12 +1,11 @@
 use crate::core::escape_markdown;
-use crate::core::types::Plan;
-use crate::storage::db::{self, DbPool};
+use crate::storage::db::DbPool;
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use chrono::NaiveDateTime;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{CallbackQueryId, ChatId, InlineKeyboardMarkup, MessageId};
-use teloxide::RequestError;
 use url::Url;
 
 /// Formats a date for display
@@ -46,8 +45,13 @@ fn format_date(date_str: &str) -> String {
 const ITEMS_PER_PAGE: usize = 5;
 
 /// Shows the user's download history with pagination
-pub async fn show_history(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
-    show_history_page(bot, chat_id, db_pool, 0).await
+pub async fn show_history(
+    bot: &Bot,
+    chat_id: ChatId,
+    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<Message> {
+    show_history_page(bot, chat_id, db_pool, shared_storage, 0).await
 }
 
 /// Shows a specific page of the download history
@@ -55,15 +59,13 @@ pub async fn show_history_page(
     bot: &Bot,
     chat_id: ChatId,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     page: usize,
 ) -> ResponseResult<Message> {
-    let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
-
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+    let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     // Fetch all history entries to count pages
-    let all_entries = match db::get_download_history(&conn, chat_id.0, None) {
+    let all_entries = match shared_storage.get_download_history(chat_id.0, None).await {
         Ok(entries) => entries,
         Err(e) => {
             log::error!("Failed to get download history: {}", e);
@@ -121,7 +123,7 @@ pub async fn show_history_page(
         ));
 
         // Store URL in cache and get a short ID
-        let url_id = crate::storage::cache::store_url(&db_pool, &entry.url).await;
+        let url_id = crate::storage::cache::store_url(&db_pool, Some(shared_storage.as_ref()), &entry.url).await;
         let callback_data = format!("history:repeat:{}:{}", entry.id, url_id);
         let delete_callback = format!("history:delete:{}", entry.id);
 
@@ -193,10 +195,11 @@ pub async fn handle_history_callback(
     message_id: MessageId,
     data: &str,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     download_queue: Arc<crate::download::queue::DownloadQueue>,
     rate_limiter: Arc<crate::core::rate_limiter::RateLimiter>,
 ) -> ResponseResult<()> {
-    let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     let parts: Vec<&str> = data.splitn(3, ':').collect();
     if parts.len() < 3 {
@@ -225,7 +228,7 @@ pub async fn handle_history_callback(
                     }
 
                     // Show the new page
-                    show_history_page(bot, chat_id, db_pool, page).await?;
+                    show_history_page(bot, chat_id, db_pool, Arc::clone(&shared_storage), page).await?;
                 }
                 Err(e) => {
                     log::error!("Failed to parse page number: {}", e);
@@ -243,54 +246,52 @@ pub async fn handle_history_callback(
             // First try to resend by file_id if available
             let mut file_sent = false;
             if let Ok(entry_id) = entry_id_str.parse::<i64>() {
-                if let Ok(conn) = db::get_connection(&db_pool) {
-                    if let Ok(Some(entry)) = db::get_download_history_entry(&conn, chat_id.0, entry_id) {
-                        if let Some(file_id) = entry.file_id {
-                            log::info!("Found file_id for history entry {}: {}", entry_id, file_id);
+                if let Ok(Some(entry)) = shared_storage.get_download_history_entry(chat_id.0, entry_id).await {
+                    if let Some(file_id) = entry.file_id {
+                        log::info!("Found file_id for history entry {}: {}", entry_id, file_id);
 
-                            let result = match entry.format.as_str() {
-                                "mp3" => {
-                                    bot.send_audio(
-                                        chat_id,
-                                        teloxide::types::InputFile::file_id(teloxide::types::FileId(file_id.clone())),
-                                    )
-                                    .await
-                                }
-                                "mp4" => {
-                                    bot.send_video(
-                                        chat_id,
-                                        teloxide::types::InputFile::file_id(teloxide::types::FileId(file_id.clone())),
-                                    )
-                                    .await
-                                }
-                                _ => {
-                                    bot.send_document(
-                                        chat_id,
-                                        teloxide::types::InputFile::file_id(teloxide::types::FileId(file_id)),
-                                    )
-                                    .await
-                                }
-                            };
+                        let result = match entry.format.as_str() {
+                            "mp3" => {
+                                bot.send_audio(
+                                    chat_id,
+                                    teloxide::types::InputFile::file_id(teloxide::types::FileId(file_id.clone())),
+                                )
+                                .await
+                            }
+                            "mp4" => {
+                                bot.send_video(
+                                    chat_id,
+                                    teloxide::types::InputFile::file_id(teloxide::types::FileId(file_id.clone())),
+                                )
+                                .await
+                            }
+                            _ => {
+                                bot.send_document(
+                                    chat_id,
+                                    teloxide::types::InputFile::file_id(teloxide::types::FileId(file_id)),
+                                )
+                                .await
+                            }
+                        };
 
-                            match result {
-                                Ok(_) => {
-                                    log::info!("Successfully resent file using file_id for entry {}", entry_id);
-                                    bot.answer_callback_query(callback_id.clone())
-                                        .text(crate::i18n::t(&lang, "history.file_sent"))
-                                        .await?;
-                                    file_sent = true;
+                        match result {
+                            Ok(_) => {
+                                log::info!("Successfully resent file using file_id for entry {}", entry_id);
+                                bot.answer_callback_query(callback_id.clone())
+                                    .text(crate::i18n::t(&lang, "history.file_sent"))
+                                    .await?;
+                                file_sent = true;
 
-                                    // Delete the history message
-                                    if let Err(e) = bot.delete_message(chat_id, message_id).await {
-                                        log::warn!("Failed to delete history message: {:?}", e);
-                                    }
+                                // Delete the history message
+                                if let Err(e) = bot.delete_message(chat_id, message_id).await {
+                                    log::warn!("Failed to delete history message: {:?}", e);
                                 }
-                                Err(e) => {
-                                    log::warn!(
-                                        "Failed to resend file using file_id: {}. Falling back to re-download.",
-                                        e
-                                    );
-                                }
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "Failed to resend file using file_id: {}. Falling back to re-download.",
+                                    e
+                                );
                             }
                         }
                     }
@@ -302,53 +303,55 @@ pub async fn handle_history_callback(
             }
 
             // Get URL from cache (fallback)
-            match crate::storage::cache::get_url(&db_pool, url_id).await {
+            match crate::storage::cache::get_url(&db_pool, Some(shared_storage.as_ref()), url_id).await {
                 Some(url_str) => {
                     // URL found in cache
                     match Url::parse(&url_str) {
                         Ok(url) => {
                             // Get user plan for rate limiting
-                            let conn = db::get_connection(&db_pool).map_err(|e| {
-                                RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                            })?;
-                            let plan = match db::get_user(&conn, chat_id.0) {
-                                Ok(Some(ref user)) => user.plan,
-                                _ => Plan::default(),
-                            };
+                            let plan = shared_storage
+                                .get_user(chat_id.0)
+                                .await
+                                .ok()
+                                .flatten()
+                                .map(|user| user.plan)
+                                .unwrap_or_default();
 
-                            // Check rate limit
-                            if rate_limiter.is_rate_limited(chat_id, plan.as_str()).await {
-                                if let Some(remaining_time) = rate_limiter.get_remaining_time(chat_id).await {
+                            // Check and reserve rate limit atomically.
+                            match rate_limiter.check_and_update(chat_id, plan.as_str()).await {
+                                Ok(Some(remaining_time)) => {
                                     let remaining_seconds = remaining_time.as_secs();
                                     let mut args = fluent_templates::fluent_bundle::FluentArgs::new();
                                     args.set("seconds", remaining_seconds);
                                     bot.answer_callback_query(callback_id)
                                         .text(crate::i18n::t_args(&lang, "commands.wait_seconds", &args))
                                         .await?;
-                                } else {
+                                    return Ok(());
+                                }
+                                Ok(None) => {}
+                                Err(e) => {
+                                    log::error!("Rate limiter check failed for {}: {}", chat_id.0, e);
                                     bot.answer_callback_query(callback_id)
                                         .text(crate::i18n::t(&lang, "commands.wait"))
                                         .await?;
+                                    return Ok(());
                                 }
-                                return Ok(());
                             }
 
                             bot.answer_callback_query(callback_id.clone()).await?;
 
                             // Get format from history entry
                             let format = match entry_id_str.parse::<i64>() {
-                                Ok(id) => match db::get_download_history_entry(&conn, chat_id.0, id) {
+                                Ok(id) => match shared_storage.get_download_history_entry(chat_id.0, id).await {
                                     Ok(Some(entry)) => entry.format,
                                     _ => "mp3".to_string(),
                                 },
                                 Err(_) => "mp3".to_string(),
                             };
 
-                            rate_limiter.update_rate_limit(chat_id, plan.as_str()).await;
-
                             // Get user preferences for quality/bitrate
                             let video_quality = if format == "mp4" {
-                                match db::get_user_video_quality(&conn, chat_id.0) {
+                                match shared_storage.get_user_video_quality(chat_id.0).await {
                                     Ok(q) => Some(q),
                                     Err(_) => Some("best".to_string()),
                                 }
@@ -356,7 +359,7 @@ pub async fn handle_history_callback(
                                 None
                             };
                             let audio_bitrate = if format == "mp3" {
-                                match db::get_user_audio_bitrate(&conn, chat_id.0) {
+                                match shared_storage.get_user_audio_bitrate(chat_id.0).await {
                                     Ok(b) => Some(b),
                                     Err(_) => Some("320k".to_string()),
                                 }
@@ -405,15 +408,12 @@ pub async fn handle_history_callback(
 
             match entry_id_str.parse::<i64>() {
                 Ok(entry_id) => {
-                    let conn = db::get_connection(&db_pool)
-                        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-                    match db::delete_download_history_entry(&conn, chat_id.0, entry_id) {
+                    match shared_storage.delete_download_history_entry(chat_id.0, entry_id).await {
                         Ok(true) => {
                             bot.answer_callback_query(callback_id.clone()).await?;
 
                             // Refresh the history message
-                            show_history(bot, chat_id, db_pool).await?;
+                            show_history(bot, chat_id, db_pool, Arc::clone(&shared_storage)).await?;
 
                             // Delete the old message
                             if let Err(e) = bot.delete_message(chat_id, message_id).await {

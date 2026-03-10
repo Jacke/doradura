@@ -11,6 +11,7 @@ use crate::download::progress::{DownloadStatus, ProgressBarStyle, ProgressMessag
 use crate::download::send::send_error_with_sticker;
 use crate::download::ytdlp_errors::sanitize_user_error_message;
 use crate::storage::db::{self as db, DbPool};
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use chrono::{DateTime, Utc};
 use std::fs;
@@ -308,20 +309,30 @@ pub async fn download_and_send_subtitles(
     _created_timestamp: DateTime<Utc>,
     subtitle_format: String,
     db_pool: Option<Arc<DbPool>>,
+    shared_storage: Option<Arc<SharedStorage>>,
     message_id: Option<i32>,
     _alert_manager: Option<Arc<crate::core::alerts::AlertManager>>,
 ) -> ResponseResult<()> {
     let bot_clone = bot.clone();
     let _rate_limiter = Arc::clone(&rate_limiter);
     let db_pool_clone = db_pool.clone();
+    let shared_storage_clone = shared_storage.clone();
 
     tokio::spawn(async move {
-        let lang = db_pool_clone
-            .as_ref()
-            .map(|pool| crate::i18n::user_lang_from_pool(pool, chat_id.0))
-            .unwrap_or_else(|| crate::i18n::lang_from_code("ru"));
+        let lang = if let Some(storage) = shared_storage_clone.as_ref() {
+            crate::i18n::user_lang_from_storage(storage, chat_id.0).await
+        } else {
+            db_pool_clone
+                .as_ref()
+                .map(|pool| crate::i18n::user_lang_from_pool(pool, chat_id.0))
+                .unwrap_or_else(|| crate::i18n::lang_from_code("ru"))
+        };
         let mut progress_msg = ProgressMessage::new(chat_id, lang);
-        if let Some(ref pool) = db_pool_clone {
+        if let Some(storage) = shared_storage_clone.as_ref() {
+            if let Ok(style_str) = storage.get_user_progress_bar_style(chat_id.0).await {
+                progress_msg.style = ProgressBarStyle::parse(&style_str);
+            }
+        } else if let Some(ref pool) = db_pool_clone {
             if let Ok(conn) = db::get_connection(pool) {
                 if let Ok(style_str) = db::get_user_progress_bar_style(&conn, chat_id.0) {
                     progress_msg.style = ProgressBarStyle::parse(&style_str);
@@ -331,7 +342,15 @@ pub async fn download_and_send_subtitles(
         let start_time = std::time::Instant::now();
 
         // Get user plan for metrics
-        let user_plan = if let Some(ref pool) = db_pool_clone {
+        let user_plan = if let Some(storage) = shared_storage_clone.as_ref() {
+            storage
+                .get_user(chat_id.0)
+                .await
+                .ok()
+                .flatten()
+                .map(|u| u.plan)
+                .unwrap_or_default()
+        } else if let Some(ref pool) = db_pool_clone {
             if let Ok(conn) = db::get_connection(pool) {
                 db::get_user(&conn, chat_id.0)
                     .ok()

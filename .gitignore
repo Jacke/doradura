@@ -16,6 +16,7 @@ database.sqlite-wal
 .env
 .env.bot-api
 .env.staging
+.env.stage
 # YouTube cookies (contains sensitive auth tokens)
 youtube_cookies.txt
 *_cookies.txt

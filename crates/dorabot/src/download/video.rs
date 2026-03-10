@@ -19,7 +19,8 @@ use crate::download::pipeline::{self, DownloadPhaseResult, PipelineFormat};
 use crate::download::progress::{DownloadStatus, ProgressBarStyle, ProgressMessage};
 use crate::download::send::{send_error_with_sticker, send_video_with_retry};
 use crate::download::source::SourceRegistry;
-use crate::storage::db::{self as db, save_download_history, save_video_timestamps, DbPool};
+use crate::storage::db::DbPool;
+use crate::storage::SharedStorage;
 use crate::telegram::cache::PREVIEW_CACHE;
 use crate::telegram::Bot;
 use chrono::{DateTime, Utc};
@@ -42,6 +43,7 @@ pub async fn download_and_send_video(
     rate_limiter: Arc<RateLimiter>,
     _created_timestamp: DateTime<Utc>,
     db_pool: Option<Arc<DbPool>>,
+    shared_storage: Option<Arc<SharedStorage>>,
     video_quality: Option<String>,
     message_id: Option<i32>,
     alert_manager: Option<Arc<crate::core::alerts::AlertManager>>,
@@ -50,33 +52,31 @@ pub async fn download_and_send_video(
     let bot_clone = bot.clone();
     let _rate_limiter = rate_limiter;
     let db_pool_clone = db_pool.clone();
+    let shared_storage_clone = shared_storage.clone();
 
     tokio::spawn(async move {
-        let lang = db_pool_clone
-            .as_ref()
-            .map(|pool| crate::i18n::user_lang_from_pool(pool, chat_id.0))
-            .unwrap_or_else(|| crate::i18n::lang_from_code("ru"));
+        let lang = if let Some(ref storage) = shared_storage_clone {
+            crate::i18n::user_lang_from_storage(storage, chat_id.0).await
+        } else {
+            crate::i18n::lang_from_code("ru")
+        };
         let mut progress_msg = ProgressMessage::new(chat_id, lang);
-        if let Some(ref pool) = db_pool_clone {
-            if let Ok(conn) = db::get_connection(pool) {
-                if let Ok(style_str) = db::get_user_progress_bar_style(&conn, chat_id.0) {
-                    progress_msg.style = ProgressBarStyle::parse(&style_str);
-                }
+        if let Some(ref storage) = shared_storage_clone {
+            if let Ok(style_str) = storage.get_user_progress_bar_style(chat_id.0).await {
+                progress_msg.style = ProgressBarStyle::parse(&style_str);
             }
         }
         let start_time = std::time::Instant::now();
 
         // Metrics setup
-        let user_plan = if let Some(ref pool) = db_pool_clone {
-            if let Ok(conn) = db::get_connection(pool) {
-                db::get_user(&conn, chat_id.0)
-                    .ok()
-                    .flatten()
-                    .map(|u| u.plan)
-                    .unwrap_or_default()
-            } else {
-                Plan::default()
-            }
+        let user_plan = if let Some(ref storage) = shared_storage_clone {
+            storage
+                .get_user(chat_id.0)
+                .await
+                .ok()
+                .flatten()
+                .map(|u| u.plan)
+                .unwrap_or_default()
         } else {
             Plan::default()
         };
@@ -104,6 +104,7 @@ pub async fn download_and_send_video(
                 registry,
                 &mut progress_msg,
                 message_id,
+                shared_storage_clone.as_ref(),
             )
             .await
             .map_err(|e| e.into_app_error())?;
@@ -158,13 +159,21 @@ pub async fn download_and_send_video(
             }
 
             // Burn subtitles if user has the setting enabled
-            let actual_file_path = maybe_burn_subtitles(&actual_file_path, &url, &db_pool_clone, chat_id).await;
+            let actual_file_path = maybe_burn_subtitles(
+                &actual_file_path,
+                &url,
+                &db_pool_clone,
+                shared_storage_clone.as_ref(),
+                chat_id,
+            )
+            .await;
 
             // Get user preference for send_as_document
-            let send_as_document = if let Some(ref pool) = db_pool_clone {
-                db::get_connection(pool)
-                    .ok()
-                    .map(|conn| db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0) == 1)
+            let send_as_document = if let Some(ref storage) = shared_storage_clone {
+                storage
+                    .get_user_send_as_document(chat_id.0)
+                    .await
+                    .map(|value| value == 1)
                     .unwrap_or(false)
             } else {
                 false
@@ -210,23 +219,22 @@ pub async fn download_and_send_video(
                 .await?;
 
                 // Save to download history
-                if let Some(ref pool) = db_pool_clone {
-                    if let Ok(conn) = db::get_connection(pool) {
-                        let file_id = sent_message
-                            .video()
-                            .map(|v| v.file.id.0.clone())
-                            .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
+                if let Some(ref storage) = shared_storage_clone {
+                    let file_id = sent_message
+                        .video()
+                        .map(|v| v.file.id.0.clone())
+                        .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
 
-                        let author_opt = if !artist.trim().is_empty() {
-                            Some(artist.as_str())
-                        } else {
-                            None
-                        };
+                    let author_opt = if !artist.trim().is_empty() {
+                        Some(artist.as_str())
+                    } else {
+                        None
+                    };
 
-                        let duration = probe_video_metadata(part_path).map(|(d, _, _)| d as i64);
+                    let duration = probe_video_metadata(part_path).map(|(d, _, _)| d as i64);
 
-                        match save_download_history(
-                            &conn,
+                    match storage
+                        .save_download_history(
                             chat_id.0,
                             url.as_str(),
                             title.as_str(),
@@ -239,79 +247,80 @@ pub async fn download_and_send_video(
                             None,
                             first_part_db_id,
                             if total_parts > 1 { Some(part_index) } else { None },
-                        ) {
-                            Ok(id) => {
-                                let sent_msg_id = sent_message.id.0;
-                                if let Err(e) = db::update_download_message_id(&conn, id, sent_msg_id, chat_id.0) {
-                                    log::warn!("Failed to save message_id for download {}: {}", id, e);
-                                }
+                        )
+                        .await
+                    {
+                        Ok(id) => {
+                            let sent_msg_id = sent_message.id.0;
+                            if let Err(e) = storage.update_download_message_id(id, sent_msg_id, chat_id.0).await {
+                                log::warn!("Failed to save message_id for download {}: {}", id, e);
+                            }
 
-                                // Save video timestamps (first part or single)
-                                if total_parts == 1 || first_part_db_id.is_none() {
-                                    if let Some(metadata) = PREVIEW_CACHE.get(url.as_str()).await {
-                                        if !metadata.timestamps.is_empty() {
-                                            // Filter timestamps to time range if download was clipped
-                                            let ts_to_save = if let Some((ref start, ref end)) = *format.time_range() {
-                                                use doracore::timestamps::{
-                                                    filter_timestamps_for_range, parse_timestamp_to_secs,
-                                                };
-                                                match (parse_timestamp_to_secs(start), parse_timestamp_to_secs(end)) {
-                                                    (Some(s), Some(e)) => {
-                                                        filter_timestamps_for_range(&metadata.timestamps, s, e)
-                                                    }
-                                                    _ => metadata.timestamps.clone(),
-                                                }
-                                            } else {
-                                                metadata.timestamps.clone()
+                            // Save video timestamps (first part or single)
+                            if total_parts == 1 || first_part_db_id.is_none() {
+                                if let Some(metadata) = PREVIEW_CACHE.get(url.as_str()).await {
+                                    if !metadata.timestamps.is_empty() {
+                                        // Filter timestamps to time range if download was clipped
+                                        let ts_to_save = if let Some((ref start, ref end)) = *format.time_range() {
+                                            use doracore::timestamps::{
+                                                filter_timestamps_for_range, parse_timestamp_to_secs,
                                             };
-                                            if let Err(e) = save_video_timestamps(&conn, id, &ts_to_save) {
-                                                log::warn!("Failed to save timestamps for download {}: {}", id, e);
+                                            match (parse_timestamp_to_secs(start), parse_timestamp_to_secs(end)) {
+                                                (Some(s), Some(e)) => {
+                                                    filter_timestamps_for_range(&metadata.timestamps, s, e)
+                                                }
+                                                _ => metadata.timestamps.clone(),
                                             }
+                                        } else {
+                                            metadata.timestamps.clone()
+                                        };
+                                        if let Err(e) = storage.save_video_timestamps(id, &ts_to_save).await {
+                                            log::warn!("Failed to save timestamps for download {}: {}", id, e);
                                         }
                                     }
                                 }
-
-                                if first_part_db_id.is_none() && total_parts > 1 {
-                                    first_part_db_id = Some(id);
-                                }
-
-                                // Add post-download buttons for single-part videos (not for time_range clips)
-                                if total_parts == 1 && format.time_range().is_none() {
-                                    let bot_for_button = bot_clone.clone();
-                                    let msg_id = sent_message.id;
-                                    let url_str = url.as_str().to_string();
-                                    tokio::spawn(async move {
-                                        use teloxide::types::InlineKeyboardMarkup;
-                                        let mut rows = vec![vec![crate::telegram::cb(
-                                            "✂️ Cut Video",
-                                            format!("downloads:clip:{}", id),
-                                        )]];
-                                        // Add "Burn subtitles" for YouTube videos
-                                        let is_yt = url_str.contains("://youtube.com/")
-                                            || url_str.contains("://www.youtube.com/")
-                                            || url_str.contains("://m.youtube.com/")
-                                            || url_str.contains("://music.youtube.com/")
-                                            || url_str.contains("://youtu.be/");
-                                        if is_yt {
-                                            rows.push(vec![crate::telegram::cb(
-                                                "🔤 Burn subtitles",
-                                                format!("downloads:burn_subs:{}", id),
-                                            )]);
-                                        }
-                                        let keyboard = InlineKeyboardMarkup::new(rows);
-                                        if let Err(e) = bot_for_button
-                                            .edit_message_reply_markup(chat_id, msg_id)
-                                            .reply_markup(keyboard)
-                                            .await
-                                        {
-                                            log::warn!("Failed to add post-download buttons: {}", e);
-                                        }
-                                    });
-                                }
                             }
-                            Err(e) => {
-                                log::warn!("Failed to save history for part {}: {}", part_index, e);
+
+                            if first_part_db_id.is_none() && total_parts > 1 {
+                                first_part_db_id = Some(id);
                             }
+
+                            // Add post-download buttons for single-part videos (not for time_range clips)
+                            if total_parts == 1 && format.time_range().is_none() {
+                                let bot_for_button = bot_clone.clone();
+                                let msg_id = sent_message.id;
+                                let url_str = url.as_str().to_string();
+                                tokio::spawn(async move {
+                                    use teloxide::types::InlineKeyboardMarkup;
+                                    let mut rows = vec![vec![crate::telegram::cb(
+                                        "✂️ Cut Video",
+                                        format!("downloads:clip:{}", id),
+                                    )]];
+                                    // Add "Burn subtitles" for YouTube videos
+                                    let is_yt = url_str.contains("://youtube.com/")
+                                        || url_str.contains("://www.youtube.com/")
+                                        || url_str.contains("://m.youtube.com/")
+                                        || url_str.contains("://music.youtube.com/")
+                                        || url_str.contains("://youtu.be/");
+                                    if is_yt {
+                                        rows.push(vec![crate::telegram::cb(
+                                            "🔤 Burn subtitles",
+                                            format!("downloads:burn_subs:{}", id),
+                                        )]);
+                                    }
+                                    let keyboard = InlineKeyboardMarkup::new(rows);
+                                    if let Err(e) = bot_for_button
+                                        .edit_message_reply_markup(chat_id, msg_id)
+                                        .reply_markup(keyboard)
+                                        .await
+                                    {
+                                        log::warn!("Failed to add post-download buttons: {}", e);
+                                    }
+                                });
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to save download history: {}", e);
                         }
                     }
                 }
@@ -361,8 +370,8 @@ pub async fn download_and_send_video(
 
             // Share page: create after successful video send (YouTube only, fire-and-forget)
             if crate::core::share::is_youtube_url(url.as_str()) {
-                if let Some(ref pool) = db_pool_clone {
-                    let pool_share = Arc::clone(pool);
+                if let Some(ref storage) = shared_storage_clone {
+                    let storage_share = Arc::clone(storage);
                     let url_str = url.to_string();
                     let title_share = title.clone();
                     let artist_share = artist.clone();
@@ -377,7 +386,7 @@ pub async fn download_and_send_video(
                             Some(artist_share.as_str())
                         };
                         if let Some((share_url, streaming_links)) = crate::core::share::create_share_page(
-                            &pool_share,
+                            &storage_share,
                             &url_str,
                             &title_share,
                             artist_opt,
@@ -506,24 +515,35 @@ async fn get_thumbnail_url(url: &Url) -> Option<String> {
 /// 2. User DB settings (download_subtitles + burn_subtitles flags with "en,ru")
 ///
 /// Returns the final file path (with or without burned subtitles).
-async fn maybe_burn_subtitles(file_path: &str, url: &Url, db_pool: &Option<Arc<DbPool>>, chat_id: ChatId) -> String {
+async fn maybe_burn_subtitles(
+    file_path: &str,
+    url: &Url,
+    db_pool: &Option<Arc<DbPool>>,
+    shared_storage: Option<&Arc<SharedStorage>>,
+    chat_id: ChatId,
+) -> String {
     // Check for per-URL burn subtitle language (from preview button)
-    let cached_lang = crate::telegram::cache::get_burn_sub_lang(url.as_str()).await;
+    let cached_lang = if let Some(storage) = shared_storage {
+        storage
+            .get_preview_context(chat_id.0, url.as_str())
+            .await
+            .ok()
+            .flatten()
+            .and_then(|context| context.burn_sub_lang)
+    } else {
+        None
+    };
 
     let sub_lang = if let Some(lang) = cached_lang {
         log::info!("Using cached burn subtitle language '{}' for {}", lang, url.as_str());
         lang
     } else {
         // Fall through to existing DB settings check
-        let Some(ref pool) = db_pool else {
+        let Some(storage) = shared_storage else {
             return file_path.to_string();
         };
-        let Ok(conn) = db::get_connection(pool) else {
-            return file_path.to_string();
-        };
-
-        let download_subs = db::get_user_download_subtitles(&conn, chat_id.0).unwrap_or(false);
-        let burn_subs = db::get_user_burn_subtitles(&conn, chat_id.0).unwrap_or(false);
+        let download_subs = storage.get_user_download_subtitles(chat_id.0).await.unwrap_or(false);
+        let burn_subs = storage.get_user_burn_subtitles(chat_id.0).await.unwrap_or(false);
 
         if !(download_subs && burn_subs) {
             return file_path.to_string();
@@ -534,11 +554,12 @@ async fn maybe_burn_subtitles(file_path: &str, url: &Url, db_pool: &Option<Arc<D
     };
 
     // Fetch subtitle style from DB (use default if no pool or error)
-    let subtitle_style = db_pool
-        .as_ref()
-        .and_then(|pool| db::get_connection(pool).ok())
-        .and_then(|conn| db::get_user_subtitle_style(&conn, chat_id.0).ok())
-        .unwrap_or_default();
+    let subtitle_style = if let Some(storage) = shared_storage {
+        storage.get_user_subtitle_style(chat_id.0).await.unwrap_or_default()
+    } else {
+        let _ = db_pool;
+        Default::default()
+    };
 
     let safe_base = std::path::Path::new(file_path)
         .file_stem()

@@ -23,25 +23,13 @@ use crate::core::config;
 use crate::core::copyright::get_bot_username;
 use crate::i18n;
 use crate::storage::db::DbPool;
-use crate::storage::get_connection;
+use crate::storage::{get_connection, SharePageRecord, SharedStorage};
 
 /// Shared state for the web server.
 #[derive(Clone)]
 struct WebState {
-    db: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     bot_token: String,
-}
-
-/// Row fetched from the share_pages table.
-struct ShareRow {
-    id: String,
-    youtube_url: String,
-    title: String,
-    artist: Option<String>,
-    thumbnail_url: Option<String>,
-    duration_secs: Option<i64>,
-    streaming_links_json: Option<String>,
-    created_at: String,
 }
 
 /// Query parameters from Telegram Login Widget
@@ -117,10 +105,13 @@ struct PaginatedResponse<T: Serialize> {
 }
 
 /// Start the public web server.
-pub async fn start_web_server(port: u16, db: Arc<DbPool>) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn start_web_server(port: u16, shared_storage: Arc<SharedStorage>) -> Result<(), Box<dyn std::error::Error>> {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let bot_token = config::BOT_TOKEN.clone();
-    let state = WebState { db, bot_token };
+    let state = WebState {
+        shared_storage,
+        bot_token,
+    };
 
     let app = Router::new()
         .route("/s/:id", get(share_page_handler))
@@ -149,6 +140,26 @@ pub async fn start_web_server(port: u16, db: Arc<DbPool>) -> Result<(), Box<dyn 
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// Format seconds as MM:SS or H:MM:SS.
+fn format_duration(secs: i64) -> String {
+    if secs < 0 {
+        return String::new();
+    }
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    if h > 0 {
+        format!("{}:{:02}:{:02}", h, m, s)
+    } else {
+        format!("{}:{:02}", m, s)
+    }
+}
+
+/// Parse streaming links JSON into individual URLs.
+fn parse_streaming_links(json_str: &str) -> serde_json::Value {
+    serde_json::from_str(json_str).unwrap_or_default()
 }
 
 /// GET /privacy — renders the privacy policy HTML.
@@ -441,31 +452,9 @@ fn render_privacy_page(lang: &str) -> String {
     )
 }
 
-/// Fetch a share page row from DB by ID.
-fn fetch_share_row(db: &Arc<DbPool>, id: &str) -> Option<ShareRow> {
-    let conn = get_connection(db).ok()?;
-    conn.query_row(
-        "SELECT id, youtube_url, title, artist, thumbnail_url, duration_secs, streaming_links, created_at FROM share_pages WHERE id = ?1",
-        rusqlite::params![id],
-        |row| {
-            Ok(ShareRow {
-                id: row.get(0)?,
-                youtube_url: row.get(1)?,
-                title: row.get(2)?,
-                artist: row.get(3)?,
-                thumbnail_url: row.get(4)?,
-                duration_secs: row.get(5)?,
-                streaming_links_json: row.get(6)?,
-                created_at: row.get(7)?,
-            })
-        },
-    )
-    .ok()
-}
-
 /// GET /s/:id — renders the share page HTML.
 async fn share_page_handler(Path(id): Path<String>, State(state): State<WebState>) -> Response {
-    let Some(row) = fetch_share_row(&state.db, &id) else {
+    let Some(row) = state.shared_storage.get_share_page_record(&id).await.ok().flatten() else {
         return (StatusCode::NOT_FOUND, Html("<h1>Not found</h1>".to_string())).into_response();
     };
 
@@ -475,7 +464,7 @@ async fn share_page_handler(Path(id): Path<String>, State(state): State<WebState
 
 /// GET /api/s/:id — returns share page data as JSON.
 async fn share_api_handler(Path(id): Path<String>, State(state): State<WebState>) -> Response {
-    let Some(row) = fetch_share_row(&state.db, &id) else {
+    let Some(row) = state.shared_storage.get_share_page_record(&id).await.ok().flatten() else {
         return (StatusCode::NOT_FOUND, Json(json!({"error": "Not found"}))).into_response();
     };
 
@@ -666,7 +655,7 @@ async fn admin_dashboard_handler(State(state): State<WebState>, header_map: head
     }
 
     // 2. Fetch stats
-    let stats = fetch_admin_stats(&state.db);
+    let stats = fetch_admin_stats(&state.shared_storage.sqlite_pool());
 
     // 3. Render Dashboard
     let html = render_admin_dashboard(&stats);
@@ -757,7 +746,7 @@ async fn admin_api_users(State(state): State<WebState>, header_map: HeaderMap, Q
     let search = q.search.as_deref().unwrap_or("");
     let offset = ((page - 1) * USERS_PER_PAGE) as i64;
 
-    let conn = match get_connection(&state.db) {
+    let conn = match get_connection(&state.shared_storage.sqlite_pool()) {
         Ok(c) => c,
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
     };
@@ -850,7 +839,7 @@ async fn admin_api_user_plan(
     if !valid_plans.contains(&body.plan.as_str()) {
         return (StatusCode::BAD_REQUEST, "Invalid plan").into_response();
     }
-    let conn = match get_connection(&state.db) {
+    let conn = match get_connection(&state.shared_storage.sqlite_pool()) {
         Ok(c) => c,
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
     };
@@ -880,7 +869,7 @@ async fn admin_api_user_block(
     if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
         return resp;
     }
-    let conn = match get_connection(&state.db) {
+    let conn = match get_connection(&state.shared_storage.sqlite_pool()) {
         Ok(c) => c,
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
     };
@@ -918,7 +907,7 @@ async fn admin_api_downloads(
     let search = q.search.as_deref().unwrap_or("");
     let offset = ((page - 1) * DOWNLOADS_PER_PAGE) as i64;
 
-    let conn = match get_connection(&state.db) {
+    let conn = match get_connection(&state.shared_storage.sqlite_pool()) {
         Ok(c) => c,
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
     };
@@ -2085,28 +2074,8 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
     )
 }
 
-/// Format seconds as MM:SS or H:MM:SS.
-fn format_duration(secs: i64) -> String {
-    if secs < 0 {
-        return String::new();
-    }
-    let h = secs / 3600;
-    let m = (secs % 3600) / 60;
-    let s = secs % 60;
-    if h > 0 {
-        format!("{}:{:02}:{:02}", h, m, s)
-    } else {
-        format!("{}:{:02}", m, s)
-    }
-}
-
-/// Parse streaming links JSON into individual URLs.
-fn parse_streaming_links(json_str: &str) -> serde_json::Value {
-    serde_json::from_str(json_str).unwrap_or_default()
-}
-
 /// Render the share page HTML with ambilight UI.
-fn render_share_page(row: &ShareRow) -> String {
+fn render_share_page(row: &SharePageRecord) -> String {
     let title = html_escape(&row.title);
     let artist = row.artist.as_deref().map(html_escape).unwrap_or_default();
     let thumbnail_url = row.thumbnail_url.as_deref().unwrap_or("");
