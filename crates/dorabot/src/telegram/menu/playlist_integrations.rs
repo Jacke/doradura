@@ -450,7 +450,7 @@ async fn show_tracks_view(
         .unwrap_or("Unknown");
 
     let total_tracks = shared_storage.count_synced_tracks(playlist_id).await.unwrap_or(0);
-    let total_pages = ((total_tracks as i64) + TRACKS_PER_PAGE - 1) / TRACKS_PER_PAGE;
+    let total_pages = (total_tracks + TRACKS_PER_PAGE - 1) / TRACKS_PER_PAGE;
     let page = page.min(total_pages.saturating_sub(1)).max(0);
 
     let tracks = shared_storage
