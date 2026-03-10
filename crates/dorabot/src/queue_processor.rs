@@ -151,7 +151,7 @@ async fn process_single_task(
         Ok(p) => p,
         Err(e) => {
             log::error!("Failed to acquire semaphore permit for task {}: {}", task.id, e);
-            let _ = shared_storage
+            if let Err(db_err) = shared_storage
                 .mark_task_failed(
                     &task.id,
                     &worker_id,
@@ -159,7 +159,10 @@ async fn process_single_task(
                     false,
                     config::admin::MAX_TASK_RETRIES,
                 )
-                .await;
+                .await
+            {
+                log::error!("Failed to mark task {} as failed in DB: {}", task.id, db_err);
+            }
             queue_for_cleanup
                 .remove_active_task(&task.url, task.chat_id, &task.format)
                 .await;
@@ -207,9 +210,12 @@ async fn process_single_task(
         Err(e) => {
             log::error!("Invalid URL for task {}: {} - {}", task.id, task.url, e);
             let error_msg = format!("Invalid URL: {}", e);
-            let _ = shared_storage
+            if let Err(db_err) = shared_storage
                 .mark_task_failed(&task.id, &worker_id, &error_msg, false, config::admin::MAX_TASK_RETRIES)
-                .await;
+                .await
+            {
+                log::error!("Failed to mark task {} as failed in DB: {}", task.id, db_err);
+            }
             notify_admin_task_failed(
                 bot.clone(),
                 shared_storage.sqlite_pool(),

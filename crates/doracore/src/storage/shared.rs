@@ -697,7 +697,8 @@ impl SharedStorage {
                     .clone()
                     .ok_or_else(|| anyhow!("DATABASE_URL must be set when DATABASE_DRIVER=postgres"))?;
                 let pg_pool = PgPoolOptions::new()
-                    .max_connections(20)
+                    .max_connections(50)
+                    .min_connections(5)
                     .acquire_timeout(Duration::from_secs(3))
                     .connect(&database_url)
                     .await
@@ -3315,24 +3316,17 @@ impl SharedStorage {
             }
             Self::Postgres { pg_pool, .. } => {
                 let mut tx = pg_pool.begin().await.context("postgres add_playlist_item begin")?;
-                let row = sqlx::query(
-                    "SELECT COALESCE(MAX(position), -1) + 1 AS next_position
-                     FROM playlist_items
-                     WHERE playlist_id = $1",
-                )
-                .bind(playlist_id)
-                .fetch_one(&mut *tx)
-                .await
-                .context("postgres add_playlist_item next_position")?;
-                let next_position: i32 = row.get("next_position");
                 let inserted = sqlx::query(
                     "INSERT INTO playlist_items (
                         playlist_id, position, title, artist, url, duration_secs, file_id, source, added_at
-                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+                     ) VALUES (
+                        $1,
+                        (SELECT COALESCE(MAX(position), -1) + 1 FROM playlist_items WHERE playlist_id = $1 FOR UPDATE),
+                        $2, $3, $4, $5, $6, $7, NOW()
+                     )
                      RETURNING id",
                 )
                 .bind(playlist_id)
-                .bind(next_position)
                 .bind(title)
                 .bind(artist)
                 .bind(url)
@@ -6274,7 +6268,7 @@ impl SharedStorage {
     async fn delete_session_by_user<F>(
         &self,
         user_id: i64,
-        table_name: &str,
+        table_name: &'static str,
         sqlite_context: &'static str,
         sqlite_delete: F,
     ) -> Result<()>
