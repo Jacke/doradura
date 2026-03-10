@@ -2292,7 +2292,6 @@ fn retry_delay_seconds(retry_count: i32) -> i64 {
     30 * 2_i64.pow(capped - 1)
 }
 
-
 /// Gets a task by ID
 pub fn get_task_by_id(conn: &DbConnection, task_id: &str) -> Result<Option<TaskQueueEntry>> {
     let sql = format!("{} WHERE id = ?1", task_queue_select_sql());
@@ -2625,7 +2624,6 @@ pub fn update_telegram_charge_id(conn: &DbConnection, telegram_id: i64, charge_i
     )?;
     Ok(())
 }
-
 
 // ==================== Bot Assets ====================
 

@@ -108,7 +108,10 @@ struct PaginatedResponse<T: Serialize> {
 pub async fn start_web_server(port: u16, shared_storage: Arc<SharedStorage>) -> Result<(), Box<dyn std::error::Error>> {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let bot_token = config::BOT_TOKEN.clone();
-    let state = WebState { shared_storage, bot_token };
+    let state = WebState {
+        shared_storage,
+        bot_token,
+    };
 
     let app = Router::new()
         .route("/s/:id", get(share_page_handler))
@@ -158,7 +161,6 @@ fn format_duration(secs: i64) -> String {
 fn parse_streaming_links(json_str: &str) -> serde_json::Value {
     serde_json::from_str(json_str).unwrap_or_default()
 }
-
 
 /// GET /privacy — renders the privacy policy HTML.
 async fn privacy_handler(headers: HeaderMap, Query(params): Query<BTreeMap<String, String>>) -> Response {

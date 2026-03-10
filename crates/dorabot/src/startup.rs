@@ -170,7 +170,6 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
         log::warn!("Failed to set offline avatar: {}", e);
     }
 
-
     result
 }
 

@@ -456,7 +456,9 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                     }
                     Command::Admin => {
                         let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
-                        if let Err(e) = handle_admin_command(&bot, msg.chat.id, user_id, deps.shared_storage.clone()).await {
+                        if let Err(e) =
+                            handle_admin_command(&bot, msg.chat.id, user_id, deps.shared_storage.clone()).await
+                        {
                             log::error!("/admin command failed: {:#}", e);
                             let _ = bot.send_message(msg.chat.id, format!("❌ Admin error: {}", e)).await;
                         }
