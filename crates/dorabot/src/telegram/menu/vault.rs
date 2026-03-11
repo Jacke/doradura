@@ -26,6 +26,16 @@ pub async fn is_waiting_for_vault_setup(user_id: i64) -> bool {
 async fn set_waiting_for_vault_setup(user_id: i64, waiting: bool) {
     let mut states = VAULT_SETUP_STATES.write().await;
     if waiting {
+        // Evict expired entries (>5 min old) before inserting
+        states.retain(|_, ts| ts.elapsed().as_secs() < 300);
+        // Cap total size to prevent unbounded growth
+        if states.len() >= 10_000 {
+            log::warn!(
+                "VAULT_SETUP_STATES at capacity, rejecting new entry for user {}",
+                user_id
+            );
+            return;
+        }
         states.insert(user_id, Instant::now());
     } else {
         states.remove(&user_id);
@@ -219,7 +229,10 @@ pub async fn handle_vault_setup_input(bot: &Bot, msg: &teloxide::types::Message,
     }
 
     // Resolve @username via raw Telegram Bot API call
-    let chat_result = reqwest::Client::new()
+    let chat_result = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap_or_default()
         .get(format!(
             "https://api.telegram.org/bot{}/getChat",
             std::env::var("TELOXIDE_TOKEN")

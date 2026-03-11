@@ -1716,21 +1716,22 @@ pub async fn process_video_clip(
     };
 
     // Probe file for video stream
-    let probe_output = Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=codec_type",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-        ])
-        .arg(&actual_input_path)
-        .output()
-        .await
-        .map_err(AppError::from)?;
+    let probe_output = crate::core::process::run_with_timeout(
+        Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_type",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+            ])
+            .arg(&actual_input_path),
+        crate::core::process::FFPROBE_TIMEOUT,
+    )
+    .await?;
     let has_video = !probe_output.stdout.is_empty();
 
     if is_video_note && !has_video {
@@ -1970,9 +1971,12 @@ pub async fn process_video_clip(
         Err(_) => {
             log::error!("❌ ffmpeg timed out after {} seconds", ffmpeg_timeout.as_secs());
             bot.delete_message(chat_id, status.id).await.ok();
-            bot.send_message(chat_id, "❌ Video processing timed out (10 min limit). Try a shorter segment.")
-                .await
-                .ok();
+            bot.send_message(
+                chat_id,
+                "❌ Video processing timed out (10 min limit). Try a shorter segment.",
+            )
+            .await
+            .ok();
             tokio::fs::remove_file(&actual_input_path).await.ok();
             tokio::fs::remove_file(&output_path).await.ok();
             return Ok(());
@@ -1988,32 +1992,39 @@ pub async fn process_video_clip(
         if seek_offset > 0 {
             retry_cmd.arg("-ss").arg(format!("{}", seek_offset));
         }
-        let retry_output = match tokio::time::timeout(ffmpeg_timeout, retry_cmd
-            .arg("-i")
-            .arg(&actual_input_path)
-            .arg("-filter_complex")
-            .arg(&filter_v)
-            .arg("-map")
-            .arg(map_v_label)
-            .arg("-c:v")
-            .arg("libx264")
-            .arg("-preset")
-            .arg("ultrafast")
-            .arg("-crf")
-            .arg(crf)
-            .arg("-movflags")
-            .arg("+faststart")
-            .arg("-y")
-            .arg(&output_path)
-            .output())
-        .await {
+        let retry_output = match tokio::time::timeout(
+            ffmpeg_timeout,
+            retry_cmd
+                .arg("-i")
+                .arg(&actual_input_path)
+                .arg("-filter_complex")
+                .arg(&filter_v)
+                .arg("-map")
+                .arg(map_v_label)
+                .arg("-c:v")
+                .arg("libx264")
+                .arg("-preset")
+                .arg("ultrafast")
+                .arg("-crf")
+                .arg(crf)
+                .arg("-movflags")
+                .arg("+faststart")
+                .arg("-y")
+                .arg(&output_path)
+                .output(),
+        )
+        .await
+        {
             Ok(result) => result.map_err(AppError::from)?,
             Err(_) => {
                 log::error!("❌ ffmpeg retry timed out after {} seconds", ffmpeg_timeout.as_secs());
                 bot.delete_message(chat_id, status.id).await.ok();
-                bot.send_message(chat_id, "❌ Video processing timed out (10 min limit). Try a shorter segment.")
-                    .await
-                    .ok();
+                bot.send_message(
+                    chat_id,
+                    "❌ Video processing timed out (10 min limit). Try a shorter segment.",
+                )
+                .await
+                .ok();
                 tokio::fs::remove_file(&actual_input_path).await.ok();
                 tokio::fs::remove_file(&output_path).await.ok();
                 return Ok(());
@@ -2514,19 +2525,23 @@ async fn process_audio_cut(
         audio_cmd.arg("-ss").arg(format!("{}", audio_seek_offset));
     }
     let audio_timeout = std::time::Duration::from_secs(5 * 60); // 5 minutes for audio
-    let output = match tokio::time::timeout(audio_timeout, audio_cmd
-        .arg("-i")
-        .arg(&input_path)
-        .arg("-filter_complex")
-        .arg(&filter)
-        .arg("-map")
-        .arg("[a]")
-        .arg("-q:a")
-        .arg("0")
-        .arg("-y")
-        .arg(&output_path)
-        .output())
-    .await {
+    let output = match tokio::time::timeout(
+        audio_timeout,
+        audio_cmd
+            .arg("-i")
+            .arg(&input_path)
+            .arg("-filter_complex")
+            .arg(&filter)
+            .arg("-map")
+            .arg("[a]")
+            .arg("-q:a")
+            .arg("0")
+            .arg("-y")
+            .arg(&output_path)
+            .output(),
+    )
+    .await
+    {
         Ok(result) => result.map_err(AppError::from)?,
         Err(_) => {
             log::error!("❌ Audio ffmpeg timed out after {} seconds", audio_timeout.as_secs());

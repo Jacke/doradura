@@ -219,15 +219,24 @@ pub fn is_message_addressed_to_bot(msg: &Message, bot_username: Option<&str>, bo
     if let Some(text) = msg.text() {
         // Check entities for mentions
         if let Some(entities) = msg.entities() {
+            // Telegram entity offsets are UTF-16 code unit indices, not byte
+            // offsets, so we must decode via UTF-16 to avoid a panic on
+            // multi-byte (e.g. emoji) text that precedes the mention.
+            let utf16_units: Vec<u16> = text.encode_utf16().collect();
             for entity in entities {
                 if matches!(entity.kind, MessageEntityKind::Mention) {
-                    // Extract mention from text
-                    let mention = &text[entity.offset..entity.offset + entity.length];
-                    // Remove @ for comparison
-                    let mention_username = mention.strip_prefix('@').unwrap_or(mention);
-                    if let Some(username) = bot_username {
-                        if mention_username.eq_ignore_ascii_case(username) {
-                            return true;
+                    // Extract mention using UTF-16 offsets
+                    let start_utf16 = entity.offset;
+                    let end_utf16 = entity.offset + entity.length;
+                    if end_utf16 <= utf16_units.len() {
+                        if let Ok(mention) = String::from_utf16(&utf16_units[start_utf16..end_utf16]) {
+                            // Remove @ for comparison
+                            let mention_username = mention.strip_prefix('@').unwrap_or(&mention);
+                            if let Some(username) = bot_username {
+                                if mention_username.eq_ignore_ascii_case(username) {
+                                    return true;
+                                }
+                            }
                         }
                     }
                 }

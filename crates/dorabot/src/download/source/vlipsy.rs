@@ -10,9 +10,22 @@ use crate::download::source::{DownloadOutput, DownloadRequest, DownloadSource, M
 use async_trait::async_trait;
 use regex::Regex;
 use reqwest::Client;
-use std::io::Write;
+use std::sync::LazyLock;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use url::Url;
+
+// HIGH-13: Compile fixed-pattern regexes once at startup rather than on every
+// call to extract_duration. The patterns in extract_meta are NOT hoisted here
+// because they incorporate the `property` argument via format! and therefore
+// differ per call.
+
+/// Matches JSON-LD duration values like `"duration":5.39`.
+static DUR_JSON_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#""duration"\s*:\s*([0-9]+(?:\.[0-9]+)?)"#).expect("valid regex"));
+
+/// Matches description duration hints like `(6s)` or `(12s)`.
+static DUR_DESC_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\((\d+)s\)").expect("valid regex"));
 
 /// Download source for Vlipsy video clips (works without API key).
 pub struct VlipsySource {
@@ -95,16 +108,16 @@ fn html_decode(s: &str) -> String {
 /// Matches patterns like "(6s)" or "(12s)".
 fn extract_duration(html: &str) -> Option<u32> {
     // Try JSON-LD duration first: "duration":5.39
-    let dur_re = Regex::new(r#""duration"\s*:\s*([0-9]+(?:\.[0-9]+)?)"#).ok()?;
-    if let Some(caps) = dur_re.captures(html) {
+    // DUR_JSON_RE is a module-level LazyLock — compiled exactly once.
+    if let Some(caps) = DUR_JSON_RE.captures(html) {
         if let Ok(secs) = caps[1].parse::<f64>() {
             return Some(secs.ceil() as u32);
         }
     }
 
     // Fallback: description "(Xs)"
-    let desc_re = Regex::new(r"\((\d+)s\)").ok()?;
-    if let Some(caps) = desc_re.captures(html) {
+    // DUR_DESC_RE is a module-level LazyLock — compiled exactly once.
+    if let Some(caps) = DUR_DESC_RE.captures(html) {
         if let Ok(secs) = caps[1].parse::<u32>() {
             return Some(secs);
         }
@@ -210,11 +223,14 @@ impl DownloadSource for VlipsySource {
 
         // Ensure parent directory exists (DOWNLOAD_FOLDER may not exist yet)
         if let Some(parent) = std::path::Path::new(&request.output_path).parent() {
-            std::fs::create_dir_all(parent)
+            tokio::fs::create_dir_all(parent)
+                .await
                 .map_err(|e| AppError::Download(DownloadError::Vlipsy(format!("Failed to create directory: {}", e))))?;
         }
 
-        let mut file = std::fs::File::create(&request.output_path)
+        // LOW-05: use async I/O so the tokio executor thread is not blocked during writes.
+        let mut file = tokio::fs::File::create(&request.output_path)
+            .await
             .map_err(|e| AppError::Download(DownloadError::Vlipsy(format!("Failed to create file: {}", e))))?;
 
         let mut downloaded: u64 = 0;
@@ -228,6 +244,7 @@ impl DownloadSource for VlipsySource {
                 .map_err(|e| AppError::Download(DownloadError::Vlipsy(format!("Error reading chunk: {}", e))))?;
 
             file.write_all(&chunk)
+                .await
                 .map_err(|e| AppError::Download(DownloadError::Vlipsy(format!("Error writing file: {}", e))))?;
 
             downloaded += chunk.len() as u64;
@@ -255,6 +272,7 @@ impl DownloadSource for VlipsySource {
         }
 
         file.flush()
+            .await
             .map_err(|e| AppError::Download(DownloadError::Vlipsy(format!("Failed to flush file: {}", e))))?;
 
         let file_size = std::fs::metadata(&request.output_path)

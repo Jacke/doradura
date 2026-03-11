@@ -164,12 +164,17 @@ pub async fn handle_voice_effect_callback(
         }
     };
 
-    // Run ffmpeg
-    let ffmpeg_result = tokio::process::Command::new("ffmpeg").args(&ffmpeg_args).output().await;
+    // Run ffmpeg with a timeout to prevent hung processes
+    const FFMPEG_VOICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+    let ffmpeg_result = tokio::time::timeout(
+        FFMPEG_VOICE_TIMEOUT,
+        tokio::process::Command::new("ffmpeg").args(&ffmpeg_args).output(),
+    )
+    .await;
 
     match ffmpeg_result {
-        Ok(output) if output.status.success() => {}
-        Ok(output) => {
+        Ok(Ok(output)) if output.status.success() => {}
+        Ok(Ok(output)) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             log::error!("ffmpeg voice effect '{}' failed: {}", effect, stderr);
             // Extract the meaningful error line for the user
@@ -182,10 +187,27 @@ pub async fn handle_voice_effect_callback(
             cleanup(&[&input_path, &output_path]);
             return Ok(());
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             log::error!("Failed to run ffmpeg: {}", e);
             let _ = bot
                 .edit_message_text(chat_id, message_id, "ffmpeg not available.")
+                .await;
+            cleanup(&[&input_path, &output_path]);
+            return Ok(());
+        }
+        Err(_) => {
+            log::error!(
+                "ffmpeg voice effect '{}' timed out after {}s for chat {}",
+                effect,
+                FFMPEG_VOICE_TIMEOUT.as_secs(),
+                chat_id.0
+            );
+            let _ = bot
+                .edit_message_text(
+                    chat_id,
+                    message_id,
+                    "Voice effect processing timed out. Please try again.",
+                )
                 .await;
             cleanup(&[&input_path, &output_path]);
             return Ok(());

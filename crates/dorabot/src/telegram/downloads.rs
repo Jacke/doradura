@@ -276,6 +276,10 @@ pub async fn show_downloads_page(
         text.push_str(&format!("\n_Page {}/{}_", current_page + 1, total_pages));
     }
 
+    // Truncate search_text to 20 chars before embedding in callback_data to
+    // prevent Telegram's 64-byte callback_data overflow (CRIT-10).
+    let search_short: String = search_text.as_deref().unwrap_or("").chars().take(20).collect();
+
     // Build keyboard
     let mut keyboard_rows = Vec::new();
 
@@ -310,7 +314,7 @@ pub async fn show_downloads_page(
                 "downloads:page:{}:{}:{}",
                 current_page - 1,
                 file_type_filter.as_deref().unwrap_or("all"),
-                search_text.as_deref().unwrap_or("")
+                search_short
             ),
         ));
     }
@@ -322,7 +326,7 @@ pub async fn show_downloads_page(
                 "downloads:page:{}:{}:{}",
                 current_page,
                 file_type_filter.as_deref().unwrap_or("all"),
-                search_text.as_deref().unwrap_or("")
+                search_short
             ),
         ));
     }
@@ -334,7 +338,7 @@ pub async fn show_downloads_page(
                 "downloads:page:{}:{}:{}",
                 current_page + 1,
                 file_type_filter.as_deref().unwrap_or("all"),
-                search_text.as_deref().unwrap_or("")
+                search_short
             ),
         ));
     }
@@ -349,28 +353,28 @@ pub async fn show_downloads_page(
     if file_type_filter.as_deref() != Some("mp3") {
         filter_row.push(crate::telegram::cb(
             "🎵 MP3".to_string(),
-            format!("downloads:filter:mp3:{}", search_text.as_deref().unwrap_or("")),
+            format!("downloads:filter:mp3:{}", search_short),
         ));
     }
 
     if file_type_filter.as_deref() != Some("mp4") {
         filter_row.push(crate::telegram::cb(
             "🎬 MP4".to_string(),
-            format!("downloads:filter:mp4:{}", search_text.as_deref().unwrap_or("")),
+            format!("downloads:filter:mp4:{}", search_short),
         ));
     }
 
     if file_type_filter.as_deref() != Some("edit") {
         filter_row.push(crate::telegram::cb(
             "✂️ Clips".to_string(),
-            format!("downloads:filter:edit:{}", search_text.as_deref().unwrap_or("")),
+            format!("downloads:filter:edit:{}", search_short),
         ));
     }
 
     if file_type_filter.is_some() {
         filter_row.push(crate::telegram::cb(
             "🔄 All".to_string(),
-            format!("downloads:filter:all:{}", search_text.as_deref().unwrap_or("")),
+            format!("downloads:filter:all:{}", search_short),
         ));
     }
 
@@ -382,7 +386,6 @@ pub async fn show_downloads_page(
     let user_cats = db::get_user_categories(&conn, chat_id.0).unwrap_or_default();
     if !user_cats.is_empty() {
         let ft_str = file_type_filter.as_deref().unwrap_or("");
-        let search_str = search_text.as_deref().unwrap_or("");
         let mut cat_row: Vec<InlineKeyboardButton> = Vec::new();
         for cat in &user_cats {
             let active = category_filter.as_deref() == Some(cat.as_str());
@@ -400,7 +403,7 @@ pub async fn show_downloads_page(
                     "downloads:catfilter:{}:{}:{}",
                     urlencoding::encode(cat),
                     ft_str,
-                    search_str
+                    search_short
                 ),
             ));
             if cat_row.len() == 3 {
@@ -413,7 +416,7 @@ pub async fn show_downloads_page(
         if category_filter.is_some() {
             keyboard_rows.push(vec![crate::telegram::cb(
                 "📂 All".to_string(),
-                format!("downloads:catfilter::{}:{}", ft_str, search_str),
+                format!("downloads:catfilter::{}:{}", ft_str, search_short),
             )]);
         }
     }

@@ -829,6 +829,12 @@ async fn send_document_forced(
     }
 }
 
+/// Allowlist of valid playback speeds for `change_video_speed`.
+const VALID_SPEEDS: &[&str] = &["0.5", "0.75", "1.0", "1.25", "1.5", "2.0"];
+
+/// Timeout for ffmpeg speed-change operations (10 minutes).
+const FFMPEG_SPEED_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
+
 async fn change_video_speed(
     bot: &Bot,
     chat_id: ChatId,
@@ -840,6 +846,12 @@ async fn change_video_speed(
     use tokio::fs;
     use tokio::process::Command;
 
+    // Validate speed against allowlist before processing
+    let speed_str_repr = format!("{}", speed);
+    if !VALID_SPEEDS.contains(&speed_str_repr.as_str()) {
+        return Err(format!("Invalid speed value: {}. Allowed: {:?}", speed, VALID_SPEEDS).into());
+    }
+
     let temp_dir = PathBuf::from(crate::core::config::TEMP_FILES_DIR.as_str()).join("doradura_speed");
     fs::create_dir_all(&temp_dir).await?;
 
@@ -848,7 +860,12 @@ async fn change_video_speed(
         .await
         .map_err(|e| format!("Failed to download file from Telegram: {}", e))?;
 
-    let output_path = temp_dir.join(format!("output_{}_{}.mp4", chat_id.0, speed));
+    let output_path = temp_dir.join(format!(
+        "output_{}_{}_{}.mp4",
+        chat_id.0,
+        speed,
+        uuid::Uuid::new_v4().simple()
+    ));
 
     let atempo_filter = if speed > 2.0 {
         format!("atempo=2.0,atempo={}", speed / 2.0)
@@ -860,8 +877,8 @@ async fn change_video_speed(
 
     let filter_complex = format!("[0:v]setpts={}*PTS[v];[0:a]{}[a]", 1.0 / speed, atempo_filter);
 
-    let output = Command::new("ffmpeg")
-        .arg("-i")
+    let mut cmd = Command::new("ffmpeg");
+    cmd.arg("-i")
         .arg(&input_path)
         .arg("-filter_complex")
         .arg(&filter_complex)
@@ -880,9 +897,24 @@ async fn change_video_speed(
         .arg("-b:a")
         .arg("192k")
         .arg("-y")
-        .arg(&output_path)
-        .output()
-        .await?;
+        .arg(&output_path);
+
+    let output = match tokio::time::timeout(FFMPEG_SPEED_TIMEOUT, cmd.output()).await {
+        Ok(Ok(out)) => out,
+        Ok(Err(e)) => {
+            fs::remove_file(&input_path).await.ok();
+            return Err(format!("ffmpeg IO error: {}", e).into());
+        }
+        Err(_) => {
+            log::error!(
+                "ffmpeg speed change timed out after {}s for chat {}",
+                FFMPEG_SPEED_TIMEOUT.as_secs(),
+                chat_id.0
+            );
+            fs::remove_file(&input_path).await.ok();
+            return Err(format!("ffmpeg timed out after {} seconds", FFMPEG_SPEED_TIMEOUT.as_secs()).into());
+        }
+    };
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

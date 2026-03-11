@@ -31,6 +31,15 @@ use teloxide::prelude::*;
 use teloxide::types::Message;
 use url::Url;
 
+/// Sanitize a user-controlled string before including it in a log message.
+///
+/// Replaces newline and carriage-return characters with their escaped
+/// representations to prevent log-injection attacks where a malicious URL
+/// could forge additional log lines.
+fn sanitize_for_log(s: &str) -> String {
+    s.replace('\n', "\\n").replace('\r', "\\r")
+}
+
 /// The format a pipeline download should produce.
 #[derive(Debug, Clone)]
 pub enum PipelineFormat {
@@ -147,7 +156,11 @@ pub async fn download_phase(
             "Unsupported URL — no download source found".to_string(),
         )))
     })?;
-    log::info!("Pipeline: resolved source '{}' for URL: {}", source.name(), url);
+    log::info!(
+        "Pipeline: resolved source '{}' for URL: {}",
+        source.name(),
+        sanitize_for_log(url.as_str())
+    );
 
     // ── Step 2: Get metadata ──
     let MediaMetadata { title, artist } = match source.get_metadata(url).await {
@@ -209,7 +222,7 @@ pub async fn download_phase(
 
     // Livestream check
     if source.is_livestream(url).await {
-        log::warn!("Pipeline: rejected livestream URL: {}", url);
+        log::warn!("Pipeline: rejected livestream URL: {}", sanitize_for_log(url.as_str()));
         send_error_with_sticker_and_message(bot, chat_id, Some("❌ Live streams are not supported")).await;
         let _ = progress_msg
             .update(
@@ -427,7 +440,11 @@ pub async fn execute(
     if matches!(format, PipelineFormat::Audio { .. }) {
         if let Some(pool) = db_pool {
             if let Some(cached_fid) = crate::download::vault::check_vault_cache(pool, chat_id.0, url.as_str()) {
-                log::info!("Pipeline: vault cache hit for {} (chat {})", url, chat_id);
+                log::info!(
+                    "Pipeline: vault cache hit for {} (chat {})",
+                    sanitize_for_log(url.as_str()),
+                    chat_id
+                );
                 let input = teloxide::types::InputFile::file_id(teloxide::types::FileId(cached_fid));
                 match bot.send_audio(chat_id, input).await {
                     Ok(sent_message) => {
@@ -468,7 +485,11 @@ pub async fn execute(
                     PipelineFormat::Video { ref quality, .. } => (quality.as_deref(), None),
                 };
                 if let Ok(Some(cached_fid)) = db::find_cached_file_id(&conn, url.as_str(), format.label(), vq, ab) {
-                    log::info!("Pipeline: cross-user file_id cache hit for {} (chat {})", url, chat_id);
+                    log::info!(
+                        "Pipeline: cross-user file_id cache hit for {} (chat {})",
+                        sanitize_for_log(url.as_str()),
+                        chat_id
+                    );
                     let input = teloxide::types::InputFile::file_id(teloxide::types::FileId(cached_fid.clone()));
                     let send_result = match format {
                         PipelineFormat::Audio { .. } => bot.send_audio(chat_id, input).await,

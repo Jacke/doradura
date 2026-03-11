@@ -4,10 +4,20 @@
 //! and returns video results that can be sent inline.
 
 use crate::vlipsy::VlipsyClient;
+use std::collections::HashMap;
+use std::sync::LazyLock;
+use std::time::Instant;
 use teloxide::prelude::*;
 use teloxide::types::{InlineQueryResult, InlineQueryResultVideo};
+use tokio::sync::RwLock;
 
 const RESULTS_PER_PAGE: u32 = 10;
+
+/// Per-user rate limiter for inline queries.
+static INLINE_RATE: LazyLock<RwLock<HashMap<u64, Instant>>> = LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// Minimum milliseconds between inline query responses for the same user.
+const INLINE_COOLDOWN_MS: u128 = 500;
 
 /// Handle inline queries by searching Vlipsy for video reactions.
 ///
@@ -15,6 +25,20 @@ const RESULTS_PER_PAGE: u32 = 10;
 /// - Non-empty query → search
 /// - Pagination via `query.offset`
 pub async fn handle_inline_query(bot: crate::telegram::Bot, query: InlineQuery) -> ResponseResult<()> {
+    // Per-user rate limit: reject requests faster than INLINE_COOLDOWN_MS
+    {
+        let mut rates = INLINE_RATE.write().await;
+        // Evict entries older than 60 seconds to prevent unbounded map growth
+        rates.retain(|_, ts| ts.elapsed().as_millis() < 60_000);
+        if let Some(last) = rates.get(&query.from.id.0) {
+            if last.elapsed().as_millis() < INLINE_COOLDOWN_MS {
+                let _ = bot.answer_inline_query(query.id.clone(), vec![]).await;
+                return Ok(());
+            }
+        }
+        rates.insert(query.from.id.0, Instant::now());
+    }
+
     let client = match VlipsyClient::new() {
         Some(c) => c,
         None => {

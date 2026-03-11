@@ -2217,7 +2217,7 @@ pub async fn handle_update_ytdlp_command(bot: &Bot, chat_id: ChatId, user_id: i6
 pub async fn notify_admin_cookies_refresh(bot: &Bot, admin_id: i64, reason: &str) -> Result<()> {
     // Check cooldown period - don't spam admin with repeated notifications
     {
-        let mut last_notification = LAST_COOKIE_NOTIFICATION.lock().unwrap();
+        let mut last_notification = LAST_COOKIE_NOTIFICATION.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(last_time) = *last_notification {
             let elapsed = last_time.elapsed();
             if elapsed < COOKIE_NOTIFICATION_COOLDOWN {

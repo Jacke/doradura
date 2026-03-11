@@ -11,6 +11,7 @@ use crate::telegram::Bot;
 use crate::watcher::db as watcher_db;
 use crate::watcher::traits::WatchNotification;
 use crate::watcher::WatcherRegistry;
+use futures_util::StreamExt as _;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -105,7 +106,8 @@ pub async fn handle_subscriptions_command(bot: &Bot, chat_id: ChatId, db_pool: &
         ));
 
         if let Some(ref err) = sub.last_error {
-            text.push_str(&format!("\n   ⚠️ {}", &err[..err.len().min(50)]));
+            let truncated_err: String = err.chars().take(50).collect();
+            text.push_str(&format!("\n   ⚠️ {}", truncated_err));
         }
 
         buttons.push(vec![cb(
@@ -442,6 +444,16 @@ async fn show_manage_subscription(
         }
     };
 
+    if sub.user_id != chat_id.0 {
+        log::warn!(
+            "User {} attempted to access subscription {} owned by {}",
+            chat_id.0,
+            sub_id,
+            sub.user_id
+        );
+        return;
+    }
+
     let source_emoji = match sub.source_type.as_str() {
         "instagram" => "📸",
         _ => "🔗",
@@ -490,12 +502,20 @@ async fn handle_unsubscribe(bot: &Bot, chat_id: ChatId, message_id: MessageId, s
         Err(_) => return,
     };
 
-    // Get sub info before deactivating
-    let display_name = watcher_db::get_subscription(&conn, sub_id)
-        .ok()
-        .flatten()
-        .map(|s| s.display_name)
-        .unwrap_or_default();
+    // Get sub info before deactivating; verify ownership
+    let sub_info = watcher_db::get_subscription(&conn, sub_id).ok().flatten();
+    if let Some(ref sub) = sub_info {
+        if sub.user_id != chat_id.0 {
+            log::warn!(
+                "User {} attempted to access subscription {} owned by {}",
+                chat_id.0,
+                sub_id,
+                sub.user_id
+            );
+            return;
+        }
+    }
+    let display_name = sub_info.map(|s| s.display_name).unwrap_or_default();
 
     match watcher_db::deactivate_subscription(&conn, sub_id) {
         Ok(()) => {
@@ -532,6 +552,16 @@ async fn handle_toggle_content_type(
         Ok(Some(s)) => s,
         _ => return,
     };
+
+    if sub.user_id != chat_id.0 {
+        log::warn!(
+            "User {} attempted to access subscription {} owned by {}",
+            chat_id.0,
+            sub_id,
+            sub.user_id
+        );
+        return;
+    }
 
     let new_mask = sub.watch_mask ^ bit;
     // Don't allow mask=0
@@ -578,22 +608,39 @@ async fn download_media_to_temp(client: &reqwest::Client, url: &str, is_video: b
     let ext = if is_video { "mp4" } else { "jpg" };
     let temp_path = std::env::temp_dir().join(format!("dora_sub_{}_{}.{}", std::process::id(), next_temp_id(), ext));
 
-    let bytes = match resp.bytes().await {
-        Ok(b) => b,
+    // HIGH-11: Stream to disk with a running byte-count guard instead of
+    // buffering the entire response body in memory with `.bytes().await`.
+    // This bounds peak RSS to one chunk (~8 KiB) regardless of file size.
+    let mut file = match tokio::fs::File::create(&temp_path).await {
+        Ok(f) => f,
         Err(e) => {
-            log::warn!("Media download read failed: {}", e);
+            log::warn!("Failed to create temp media file: {}", e);
             return None;
         }
     };
 
-    if bytes.len() as u64 > MAX_SIZE {
-        log::warn!("Media too large ({} bytes), skipping", bytes.len());
-        return None;
-    }
-
-    if let Err(e) = tokio::fs::write(&temp_path, &bytes).await {
-        log::warn!("Failed to write temp media file: {}", e);
-        return None;
+    let mut total: u64 = 0;
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk_result) = stream.next().await {
+        let chunk = match chunk_result {
+            Ok(c) => c,
+            Err(e) => {
+                log::warn!("Media download read failed: {}", e);
+                tokio::fs::remove_file(&temp_path).await.ok();
+                return None;
+            }
+        };
+        total += chunk.len() as u64;
+        if total > MAX_SIZE {
+            log::warn!("Media too large (>{} bytes), skipping: {}", MAX_SIZE, url);
+            tokio::fs::remove_file(&temp_path).await.ok();
+            return None;
+        }
+        if let Err(e) = tokio::io::AsyncWriteExt::write_all(&mut file, &chunk).await {
+            log::warn!("Failed to write temp media chunk: {}", e);
+            tokio::fs::remove_file(&temp_path).await.ok();
+            return None;
+        }
     }
 
     Some(temp_path)
@@ -849,11 +896,7 @@ async fn send_text_notification(
 
 /// Start the notification dispatcher that receives WatchNotifications
 /// and sends formatted Telegram messages with media.
-pub fn start_notification_dispatcher(
-    bot: Bot,
-    db_pool: Arc<DbPool>,
-    mut rx: mpsc::UnboundedReceiver<WatchNotification>,
-) {
+pub fn start_notification_dispatcher(bot: Bot, db_pool: Arc<DbPool>, mut rx: mpsc::Receiver<WatchNotification>) {
     tokio::spawn(async move {
         let http_client = reqwest::Client::new();
         let ig_source = InstagramSource::new();

@@ -4,8 +4,10 @@
 //! Runs on WEB_PORT (default 3000) alongside the internal metrics server.
 
 use axum::{
-    extract::{Path, Query, State},
+    body::Body,
+    extract::{DefaultBodyLimit, Path, Query, Request, State},
     http::{header, HeaderMap, StatusCode},
+    middleware::{self, Next},
     response::{Html, IntoResponse, Json, Redirect, Response},
     routing::{get, post},
     Router,
@@ -14,16 +16,30 @@ use hmac::{Hmac, Mac};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use tokio::net::TcpListener;
+use tokio::sync::RwLock;
 
 use crate::core::config;
 use crate::core::copyright::get_bot_username;
 use crate::i18n;
 use crate::storage::db::DbPool;
 use crate::storage::get_connection;
+
+// --- Rate limiters ---
+
+static AUTH_RATE_LIMIT: LazyLock<RwLock<HashMap<String, (u32, std::time::Instant)>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+static SHARE_RATE_LIMIT: LazyLock<RwLock<HashMap<String, (u32, std::time::Instant)>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
+
+const AUTH_MAX_ATTEMPTS: u32 = 10;
+const AUTH_WINDOW_SECS: u64 = 300;
+const SHARE_MAX_PER_MIN: u32 = 60;
+const SHARE_WINDOW_SECS: u64 = 60;
 
 /// Shared state for the web server.
 #[derive(Clone)]
@@ -116,6 +132,36 @@ struct PaginatedResponse<T: Serialize> {
     total_pages: u32,
 }
 
+/// Constant-time byte-level string comparison to prevent timing side-channels.
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// Return true only for http(s) URLs; rejects javascript:, data:, etc.
+fn is_safe_url(url: &str) -> bool {
+    url.starts_with("https://") || url.starts_with("http://")
+}
+
+/// Middleware that injects standard security headers into every response.
+async fn security_headers(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    let headers = response.headers_mut();
+    headers.insert("X-Frame-Options", "DENY".parse().unwrap());
+    headers.insert("X-Content-Type-Options", "nosniff".parse().unwrap());
+    headers.insert("Referrer-Policy", "strict-origin-when-cross-origin".parse().unwrap());
+    headers.insert(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self' https://telegram.org 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; connect-src 'self'; frame-ancestors 'none'"
+            .parse()
+            .unwrap(),
+    );
+    headers.insert("Access-Control-Allow-Origin", "null".parse().unwrap());
+    response
+}
+
 /// Start the public web server.
 pub async fn start_web_server(port: u16, db: Arc<DbPool>) -> Result<(), Box<dyn std::error::Error>> {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
@@ -131,12 +177,15 @@ pub async fn start_web_server(port: u16, db: Arc<DbPool>) -> Result<(), Box<dyn 
         .route("/admin", get(admin_dashboard_handler))
         .route("/admin/login", get(admin_login_handler))
         .route("/admin/auth", get(admin_auth_handler))
+        .route("/admin/logout", get(admin_logout_handler))
         // Admin API
         .route("/admin/api/users", get(admin_api_users))
         .route("/admin/api/users/:id/plan", post(admin_api_user_plan))
         .route("/admin/api/users/:id/block", post(admin_api_user_block))
         .route("/admin/api/downloads", get(admin_api_downloads))
-        .with_state(state);
+        .with_state(state)
+        .layer(DefaultBodyLimit::max(1024 * 1024)) // 1 MB
+        .layer(middleware::from_fn(security_headers));
 
     log::info!("Starting web server on http://{}", addr);
     log::info!("  /s/:id      - Share page (HTML)");
@@ -463,10 +512,58 @@ fn fetch_share_row(db: &Arc<DbPool>, id: &str) -> Option<ShareRow> {
     .ok()
 }
 
+/// Extract best-effort IP string from request headers.
+fn extract_ip(header_map: &HeaderMap) -> String {
+    header_map
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .unwrap_or("unknown")
+        .trim()
+        .to_string()
+}
+
+/// Check and increment a rate-limit bucket. Returns `true` if the request is allowed.
+async fn check_rate_limit(
+    limiter: &RwLock<HashMap<String, (u32, std::time::Instant)>>,
+    ip: &str,
+    max: u32,
+    window_secs: u64,
+) -> bool {
+    {
+        let rates = limiter.read().await;
+        if let Some((count, since)) = rates.get(ip) {
+            if since.elapsed().as_secs() < window_secs && *count >= max {
+                return false;
+            }
+        }
+    }
+    {
+        let mut rates = limiter.write().await;
+        let entry = rates.entry(ip.to_string()).or_insert((0, std::time::Instant::now()));
+        if entry.1.elapsed().as_secs() >= window_secs {
+            *entry = (1, std::time::Instant::now());
+        } else {
+            entry.0 += 1;
+        }
+        rates.retain(|_, (_, since)| since.elapsed().as_secs() < window_secs * 2);
+    }
+    true
+}
+
 /// GET /s/:id — renders the share page HTML.
-async fn share_page_handler(Path(id): Path<String>, State(state): State<WebState>) -> Response {
-    let Some(row) = fetch_share_row(&state.db, &id) else {
-        return (StatusCode::NOT_FOUND, Html("<h1>Not found</h1>".to_string())).into_response();
+async fn share_page_handler(Path(id): Path<String>, State(state): State<WebState>, header_map: HeaderMap) -> Response {
+    let ip = extract_ip(&header_map);
+    if !check_rate_limit(&SHARE_RATE_LIMIT, &ip, SHARE_MAX_PER_MIN, SHARE_WINDOW_SECS).await {
+        return (StatusCode::TOO_MANY_REQUESTS, "Too many requests. Try again later.").into_response();
+    }
+
+    let db = state.db.clone();
+    let result = tokio::task::spawn_blocking(move || fetch_share_row(&db, &id)).await;
+    let row = match result {
+        Ok(Some(r)) => r,
+        Ok(None) => return (StatusCode::NOT_FOUND, Html("<h1>Not found</h1>".to_string())).into_response(),
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response(),
     };
 
     let html = render_share_page(&row);
@@ -474,9 +571,28 @@ async fn share_page_handler(Path(id): Path<String>, State(state): State<WebState
 }
 
 /// GET /api/s/:id — returns share page data as JSON.
-async fn share_api_handler(Path(id): Path<String>, State(state): State<WebState>) -> Response {
-    let Some(row) = fetch_share_row(&state.db, &id) else {
-        return (StatusCode::NOT_FOUND, Json(json!({"error": "Not found"}))).into_response();
+async fn share_api_handler(Path(id): Path<String>, State(state): State<WebState>, header_map: HeaderMap) -> Response {
+    let ip = extract_ip(&header_map);
+    if !check_rate_limit(&SHARE_RATE_LIMIT, &ip, SHARE_MAX_PER_MIN, SHARE_WINDOW_SECS).await {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({"error": "Too many requests"})),
+        )
+            .into_response();
+    }
+
+    let db = state.db.clone();
+    let result = tokio::task::spawn_blocking(move || fetch_share_row(&db, &id)).await;
+    let row = match result {
+        Ok(Some(r)) => r,
+        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({"error": "Not found"}))).into_response(),
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Internal error"})),
+            )
+                .into_response()
+        }
     };
 
     let streaming_links = row
@@ -607,22 +723,45 @@ async fn admin_login_handler(State(_state): State<WebState>) -> Response {
 }
 
 /// GET /admin/auth — Telegram authentication callback.
-async fn admin_auth_handler(State(state): State<WebState>, Query(auth): Query<TelegramAuth>) -> Response {
+async fn admin_auth_handler(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Query(auth): Query<TelegramAuth>,
+) -> Response {
+    // 0. Rate-limit by IP
+    let ip = extract_ip(&header_map);
+    if !check_rate_limit(&AUTH_RATE_LIMIT, &ip, AUTH_MAX_ATTEMPTS, AUTH_WINDOW_SECS).await {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many login attempts. Try again later.",
+        )
+            .into_response();
+    }
+
     // 1. Verify Telegram hash
     if !verify_telegram_hash(&auth, &state.bot_token) {
         return (StatusCode::UNAUTHORIZED, "Invalid hash").into_response();
     }
 
-    // 2. Check if user is admin
+    // 2. Reject stale auth data (must be within 5 minutes)
+    let now_unix = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    if now_unix - auth.auth_date > 300 {
+        return (StatusCode::UNAUTHORIZED, "Auth data expired. Please log in again.").into_response();
+    }
+
+    // 3. Check if user is admin
     let is_admin = config::admin::ADMIN_IDS.contains(&auth.id) || *config::admin::ADMIN_USER_ID == auth.id;
     if !is_admin {
         return (StatusCode::FORBIDDEN, "Not an admin").into_response();
     }
 
-    // 3. Set admin cookie
+    // 4. Set admin cookie (Path scoped to /admin, Secure flag required)
     let admin_token = generate_admin_token(auth.id, &state.bot_token);
     let cookie = format!(
-        "admin_token={}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400",
+        "admin_token={}; Path=/admin; HttpOnly; Secure; SameSite=Lax; Max-Age=86400",
         admin_token
     );
 
@@ -632,6 +771,18 @@ async fn admin_auth_handler(State(state): State<WebState>, Query(auth): Query<Te
         .header(header::LOCATION, "/admin")
         .body(axum::body::Body::empty())
         .unwrap()
+}
+
+/// GET /admin/logout — Clear admin cookie and redirect to login.
+async fn admin_logout_handler() -> Response {
+    let cookie = "admin_token=; Path=/admin; HttpOnly; Secure; SameSite=Lax; Max-Age=0";
+    Response::builder()
+        .status(StatusCode::FOUND)
+        .header("Location", "/admin/login")
+        .header("Set-Cookie", cookie)
+        .body(Body::empty())
+        .unwrap()
+        .into_response()
 }
 
 /// GET /admin — Admin Dashboard.
@@ -648,14 +799,17 @@ async fn admin_dashboard_handler(State(state): State<WebState>, header_map: head
 
         // Verify token (brute force check against admin IDs since it's a small list)
         for &admin_id in config::admin::ADMIN_IDS.iter() {
-            if generate_admin_token(admin_id, &state.bot_token) == token_val {
+            if constant_time_eq(&generate_admin_token(admin_id, &state.bot_token), token_val) {
                 authed_user_id = Some(admin_id);
                 break;
             }
         }
         if authed_user_id.is_none()
             && *config::admin::ADMIN_USER_ID != 0
-            && generate_admin_token(*config::admin::ADMIN_USER_ID, &state.bot_token) == token_val
+            && constant_time_eq(
+                &generate_admin_token(*config::admin::ADMIN_USER_ID, &state.bot_token),
+                token_val,
+            )
         {
             authed_user_id = Some(*config::admin::ADMIN_USER_ID);
         }
@@ -665,8 +819,12 @@ async fn admin_dashboard_handler(State(state): State<WebState>, header_map: head
         return Redirect::to("/admin/login").into_response();
     }
 
-    // 2. Fetch stats
-    let stats = fetch_admin_stats(&state.db);
+    // 2. Fetch stats (sync SQLite — offload to blocking thread pool)
+    let db = state.db.clone();
+    let stats = match tokio::task::spawn_blocking(move || fetch_admin_stats(&db)).await {
+        Ok(s) => s,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    };
 
     // 3. Render Dashboard
     let html = render_admin_dashboard(&stats);
@@ -706,7 +864,7 @@ fn verify_telegram_hash(auth: &TelegramAuth, bot_token: &str) -> bool {
     mac.update(data_check_string.as_bytes());
 
     let result = mac.finalize().into_bytes();
-    hex::encode(result) == auth.hash
+    constant_time_eq(&hex::encode(result), &auth.hash)
 }
 
 /// Generate a secure token for the admin cookie.
@@ -729,12 +887,15 @@ fn verify_admin(header_map: &HeaderMap, bot_token: &str) -> Result<i64, Response
     if let Some(token) = cookie_str.split(';').find(|s| s.trim().starts_with("admin_token=")) {
         let token_val = token.trim().strip_prefix("admin_token=").unwrap();
         for &admin_id in config::admin::ADMIN_IDS.iter() {
-            if generate_admin_token(admin_id, bot_token) == token_val {
+            if constant_time_eq(&generate_admin_token(admin_id, bot_token), token_val) {
                 return Ok(admin_id);
             }
         }
         if *config::admin::ADMIN_USER_ID != 0
-            && generate_admin_token(*config::admin::ADMIN_USER_ID, bot_token) == token_val
+            && constant_time_eq(
+                &generate_admin_token(*config::admin::ADMIN_USER_ID, bot_token),
+                token_val,
+            )
         {
             return Ok(*config::admin::ADMIN_USER_ID);
         }
@@ -753,87 +914,109 @@ async fn admin_api_users(State(state): State<WebState>, header_map: HeaderMap, Q
         return resp;
     }
     let page = q.page.unwrap_or(1).max(1);
-    let filter = q.filter.as_deref().unwrap_or("all");
-    let search = q.search.as_deref().unwrap_or("");
+    let filter = q.filter.unwrap_or_else(|| "all".to_string());
+    let search = q.search.unwrap_or_default();
     let offset = ((page - 1) * USERS_PER_PAGE) as i64;
+    let db = state.db.clone();
 
-    let conn = match get_connection(&state.db) {
-        Ok(c) => c,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
-    };
+    let result = tokio::task::spawn_blocking(move || -> Result<PaginatedResponse<ApiUser>, rusqlite::Error> {
+        let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
 
-    // Build WHERE clause
-    let mut conditions = Vec::new();
-    let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+        // Build WHERE clause with owned string parameters
+        let mut conditions = Vec::new();
 
-    match filter {
-        "free" => conditions.push("COALESCE(u.plan, 'free') = 'free'".to_string()),
-        "premium" => conditions.push("u.plan = 'premium'".to_string()),
-        "vip" => conditions.push("u.plan = 'vip'".to_string()),
-        "blocked" => conditions.push("u.is_blocked = 1".to_string()),
-        _ => {}
-    }
+        match filter.as_str() {
+            "free" => conditions.push("COALESCE(u.plan, 'free') = 'free'".to_string()),
+            "premium" => conditions.push("u.plan = 'premium'".to_string()),
+            "vip" => conditions.push("u.plan = 'vip'".to_string()),
+            "blocked" => conditions.push("u.is_blocked = 1".to_string()),
+            _ => {}
+        }
 
-    if !search.is_empty() {
-        conditions.push("(u.username LIKE ?1 OR CAST(u.telegram_id AS TEXT) LIKE ?1)".to_string());
-        params.push(Box::new(format!("%{}%", search)));
-    }
+        let search_param = if !search.is_empty() {
+            conditions.push("(u.username LIKE ?1 OR CAST(u.telegram_id AS TEXT) LIKE ?1)".to_string());
+            Some(format!("%{}%", search))
+        } else {
+            None
+        };
 
-    let where_clause = if conditions.is_empty() {
-        String::new()
-    } else {
-        format!("WHERE {}", conditions.join(" AND "))
-    };
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
 
-    let count_sql = format!("SELECT COUNT(*) FROM users u {}", where_clause);
-    let total: i64 = conn
-        .query_row(
-            &count_sql,
-            rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
-            |r| r.get(0),
-        )
-        .unwrap_or(0);
+        let count_sql = format!("SELECT COUNT(*) FROM users u {}", where_clause);
+        let total: i64 = if let Some(ref sp) = search_param {
+            conn.query_row(&count_sql, rusqlite::params![sp], |r| r.get(0))
+                .unwrap_or(0)
+        } else {
+            conn.query_row(&count_sql, [], |r| r.get(0)).unwrap_or(0)
+        };
 
-    let total_pages = ((total as f64) / USERS_PER_PAGE as f64).ceil() as u32;
+        let total_pages = ((total as f64) / USERS_PER_PAGE as f64).ceil() as u32;
 
-    let query_sql = format!(
-        "SELECT u.telegram_id, COALESCE(u.username, ''), COALESCE(u.plan, 'free'), \
-                COALESCE(u.is_blocked, 0), COALESCE(u.language, 'ru'), \
-                COUNT(d.id) AS dl_count \
-         FROM users u \
-         LEFT JOIN download_history d ON d.user_id = u.telegram_id \
-         {} \
-         GROUP BY u.telegram_id \
-         ORDER BY dl_count DESC \
-         LIMIT {} OFFSET {}",
-        where_clause, USERS_PER_PAGE, offset
-    );
+        let query_sql = format!(
+            "SELECT u.telegram_id, COALESCE(u.username, ''), COALESCE(u.plan, 'free'), \
+                    COALESCE(u.is_blocked, 0), COALESCE(u.language, 'ru'), \
+                    COUNT(d.id) AS dl_count \
+             FROM users u \
+             LEFT JOIN download_history d ON d.user_id = u.telegram_id \
+             {} \
+             GROUP BY u.telegram_id \
+             ORDER BY dl_count DESC \
+             LIMIT {} OFFSET {}",
+            where_clause, USERS_PER_PAGE, offset
+        );
 
-    let users: Vec<ApiUser> = conn
-        .prepare(&query_sql)
-        .and_then(|mut s| {
-            let rows = s.query_map(rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())), |r| {
-                Ok(ApiUser {
-                    telegram_id: r.get(0)?,
-                    username: r.get(1)?,
-                    plan: r.get(2)?,
-                    is_blocked: r.get::<_, i64>(3)? != 0,
-                    language: r.get(4)?,
-                    download_count: r.get(5)?,
+        let users: Vec<ApiUser> = if let Some(ref sp) = search_param {
+            conn.prepare(&query_sql)
+                .and_then(|mut s| {
+                    let rows = s.query_map(rusqlite::params![sp], |r| {
+                        Ok(ApiUser {
+                            telegram_id: r.get(0)?,
+                            username: r.get(1)?,
+                            plan: r.get(2)?,
+                            is_blocked: r.get::<_, i64>(3)? != 0,
+                            language: r.get(4)?,
+                            download_count: r.get(5)?,
+                        })
+                    })?;
+                    Ok(rows.filter_map(|r| r.ok()).collect())
                 })
-            })?;
-            Ok(rows.filter_map(|r| r.ok()).collect())
-        })
-        .unwrap_or_default();
+                .unwrap_or_default()
+        } else {
+            conn.prepare(&query_sql)
+                .and_then(|mut s| {
+                    let rows = s.query_map([], |r| {
+                        Ok(ApiUser {
+                            telegram_id: r.get(0)?,
+                            username: r.get(1)?,
+                            plan: r.get(2)?,
+                            is_blocked: r.get::<_, i64>(3)? != 0,
+                            language: r.get(4)?,
+                            download_count: r.get(5)?,
+                        })
+                    })?;
+                    Ok(rows.filter_map(|r| r.ok()).collect())
+                })
+                .unwrap_or_default()
+        };
 
-    Json(PaginatedResponse {
-        items: users,
-        total,
-        page,
-        per_page: USERS_PER_PAGE,
-        total_pages,
+        Ok(PaginatedResponse {
+            items: users,
+            total,
+            page,
+            per_page: USERS_PER_PAGE,
+            total_pages,
+        })
     })
-    .into_response()
+    .await;
+
+    match result {
+        Ok(Ok(data)) => Json(data).into_response(),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    }
 }
 
 /// POST /admin/api/users/:id/plan — change user plan.
@@ -843,30 +1026,36 @@ async fn admin_api_user_plan(
     Path(user_id): Path<i64>,
     Json(body): Json<PlanUpdateReq>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
-        return resp;
-    }
+    let admin_id = match verify_admin(&header_map, &state.bot_token) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
     let valid_plans = ["free", "premium", "vip"];
     if !valid_plans.contains(&body.plan.as_str()) {
         return (StatusCode::BAD_REQUEST, "Invalid plan").into_response();
     }
-    let conn = match get_connection(&state.db) {
-        Ok(c) => c,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
-    };
-    match conn.execute(
-        "UPDATE users SET plan = ?1 WHERE telegram_id = ?2",
-        rusqlite::params![body.plan, user_id],
-    ) {
-        Ok(0) => (StatusCode::NOT_FOUND, "User not found").into_response(),
-        Ok(_) => {
-            log::info!("Admin changed plan for user {} to {}", user_id, body.plan);
+    let db = state.db.clone();
+    let plan = body.plan.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.execute(
+            "UPDATE users SET plan = ?1 WHERE telegram_id = ?2",
+            rusqlite::params![plan, user_id],
+        )
+    })
+    .await;
+
+    match result {
+        Ok(Ok(0)) => (StatusCode::NOT_FOUND, "User not found").into_response(),
+        Ok(Ok(_)) => {
+            log::info!("Admin {} changed plan for user {} to {}", admin_id, user_id, body.plan);
             Json(json!({"ok": true, "plan": body.plan})).into_response()
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             log::error!("Failed to update plan: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response()
         }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
     }
 }
 
@@ -877,31 +1066,38 @@ async fn admin_api_user_block(
     Path(user_id): Path<i64>,
     Json(body): Json<BlockUpdateReq>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
-        return resp;
-    }
-    let conn = match get_connection(&state.db) {
-        Ok(c) => c,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    let admin_id = match verify_admin(&header_map, &state.bot_token) {
+        Ok(id) => id,
+        Err(resp) => return resp,
     };
-    let blocked_val: i64 = if body.blocked { 1 } else { 0 };
-    match conn.execute(
-        "UPDATE users SET is_blocked = ?1 WHERE telegram_id = ?2",
-        rusqlite::params![blocked_val, user_id],
-    ) {
-        Ok(0) => (StatusCode::NOT_FOUND, "User not found").into_response(),
-        Ok(_) => {
+    let db = state.db.clone();
+    let blocked = body.blocked;
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let blocked_val: i64 = if blocked { 1 } else { 0 };
+        conn.execute(
+            "UPDATE users SET is_blocked = ?1 WHERE telegram_id = ?2",
+            rusqlite::params![blocked_val, user_id],
+        )
+    })
+    .await;
+
+    match result {
+        Ok(Ok(0)) => (StatusCode::NOT_FOUND, "User not found").into_response(),
+        Ok(Ok(_)) => {
             log::info!(
-                "Admin {} user {}",
+                "Admin {} {} user {}",
+                admin_id,
                 if body.blocked { "blocked" } else { "unblocked" },
                 user_id
             );
             Json(json!({"ok": true, "blocked": body.blocked})).into_response()
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             log::error!("Failed to update block status: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response()
         }
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
     }
 }
 
@@ -915,82 +1111,92 @@ async fn admin_api_downloads(
         return resp;
     }
     let page = q.page.unwrap_or(1).max(1);
-    let search = q.search.as_deref().unwrap_or("");
+    let search = q.search.unwrap_or_default();
     let offset = ((page - 1) * DOWNLOADS_PER_PAGE) as i64;
+    let db = state.db.clone();
 
-    let conn = match get_connection(&state.db) {
-        Ok(c) => c,
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
-    };
+    let result = tokio::task::spawn_blocking(move || -> Result<PaginatedResponse<ApiDownload>, rusqlite::Error> {
+        let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
 
-    let (where_clause, params): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if search.is_empty() {
-        (String::new(), vec![])
-    } else {
-        (
-            "WHERE d.title LIKE ?1 OR COALESCE(d.author,'') LIKE ?1 OR COALESCE(u.username,'') LIKE ?1 OR CAST(d.user_id AS TEXT) LIKE ?1".to_string(),
-            vec![Box::new(format!("%{}%", search)) as Box<dyn rusqlite::types::ToSql>],
-        )
-    };
+        let search_param: Option<String> = if search.is_empty() {
+            None
+        } else {
+            Some(format!("%{}%", search))
+        };
 
-    let count_sql = format!(
-        "SELECT COUNT(*) FROM download_history d LEFT JOIN users u ON u.telegram_id = d.user_id {}",
-        where_clause
-    );
-    let total: i64 = conn
-        .query_row(
-            &count_sql,
-            rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())),
-            |r| r.get(0),
-        )
-        .unwrap_or(0);
+        let where_clause = if search_param.is_some() {
+            "WHERE d.title LIKE ?1 OR COALESCE(d.author,'') LIKE ?1 OR COALESCE(u.username,'') LIKE ?1 OR CAST(d.user_id AS TEXT) LIKE ?1"
+        } else {
+            ""
+        };
 
-    let total_pages = ((total as f64) / DOWNLOADS_PER_PAGE as f64).ceil() as u32;
+        let count_sql = format!(
+            "SELECT COUNT(*) FROM download_history d LEFT JOIN users u ON u.telegram_id = d.user_id {}",
+            where_clause
+        );
+        let total: i64 = if let Some(ref sp) = search_param {
+            conn.query_row(&count_sql, rusqlite::params![sp], |r| r.get(0)).unwrap_or(0)
+        } else {
+            conn.query_row(&count_sql, [], |r| r.get(0)).unwrap_or(0)
+        };
 
-    let query_sql = format!(
-        "SELECT d.id, COALESCE(d.title, ''), COALESCE(d.author, ''), \
-                COALESCE(u.username, CAST(d.user_id AS TEXT)), d.user_id, \
-                COALESCE(d.format, '?'), d.file_size, d.duration, \
-                COALESCE(d.video_quality, ''), COALESCE(d.audio_bitrate, ''), \
-                d.downloaded_at, COALESCE(d.url, '') \
-         FROM download_history d \
-         LEFT JOIN users u ON u.telegram_id = d.user_id \
-         {} \
-         ORDER BY d.downloaded_at DESC \
-         LIMIT {} OFFSET {}",
-        where_clause, DOWNLOADS_PER_PAGE, offset
-    );
+        let total_pages = ((total as f64) / DOWNLOADS_PER_PAGE as f64).ceil() as u32;
 
-    let downloads: Vec<ApiDownload> = conn
-        .prepare(&query_sql)
-        .and_then(|mut s| {
-            let rows = s.query_map(rusqlite::params_from_iter(params.iter().map(|p| p.as_ref())), |r| {
-                Ok(ApiDownload {
-                    id: r.get(0)?,
-                    title: r.get(1)?,
-                    author: r.get(2)?,
-                    user: r.get(3)?,
-                    user_id: r.get(4)?,
-                    format: r.get(5)?,
-                    file_size: r.get(6)?,
-                    duration: r.get(7)?,
-                    video_quality: r.get(8)?,
-                    audio_bitrate: r.get(9)?,
-                    downloaded_at: r.get(10)?,
-                    url: r.get(11)?,
+        let query_sql = format!(
+            "SELECT d.id, COALESCE(d.title, ''), COALESCE(d.author, ''), \
+                    COALESCE(u.username, CAST(d.user_id AS TEXT)), d.user_id, \
+                    COALESCE(d.format, '?'), d.file_size, d.duration, \
+                    COALESCE(d.video_quality, ''), COALESCE(d.audio_bitrate, ''), \
+                    d.downloaded_at, COALESCE(d.url, '') \
+             FROM download_history d \
+             LEFT JOIN users u ON u.telegram_id = d.user_id \
+             {} \
+             ORDER BY d.downloaded_at DESC \
+             LIMIT {} OFFSET {}",
+            where_clause, DOWNLOADS_PER_PAGE, offset
+        );
+
+        let map_row = |r: &rusqlite::Row<'_>| -> rusqlite::Result<ApiDownload> {
+            Ok(ApiDownload {
+                id: r.get(0)?,
+                title: r.get(1)?,
+                author: r.get(2)?,
+                user: r.get(3)?,
+                user_id: r.get(4)?,
+                format: r.get(5)?,
+                file_size: r.get(6)?,
+                duration: r.get(7)?,
+                video_quality: r.get(8)?,
+                audio_bitrate: r.get(9)?,
+                downloaded_at: r.get(10)?,
+                url: r.get(11)?,
+            })
+        };
+
+        let downloads: Vec<ApiDownload> = if let Some(ref sp) = search_param {
+            conn.prepare(&query_sql)
+                .and_then(|mut s| {
+                    let rows = s.query_map(rusqlite::params![sp], map_row)?;
+                    Ok(rows.filter_map(|r| r.ok()).collect())
                 })
-            })?;
-            Ok(rows.filter_map(|r| r.ok()).collect())
-        })
-        .unwrap_or_default();
+                .unwrap_or_default()
+        } else {
+            conn.prepare(&query_sql)
+                .and_then(|mut s| {
+                    let rows = s.query_map([], map_row)?;
+                    Ok(rows.filter_map(|r| r.ok()).collect())
+                })
+                .unwrap_or_default()
+        };
 
-    Json(PaginatedResponse {
-        items: downloads,
-        total,
-        page,
-        per_page: DOWNLOADS_PER_PAGE,
-        total_pages,
+        Ok(PaginatedResponse { items: downloads, total, page, per_page: DOWNLOADS_PER_PAGE, total_pages })
     })
-    .into_response()
+    .await;
+
+    match result {
+        Ok(Ok(data)) => Json(data).into_response(),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    }
 }
 
 // --- Admin Stats ---
@@ -1666,7 +1872,7 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
     <div class="topbar-brand">dora<span>dura</span></div>
     <div class="topbar-right">
         <span style="color:var(--muted);font-size:0.8rem;">Admin Dashboard</span>
-        <a href="/admin/login" class="logout">Logout</a>
+        <a href="/admin/logout" class="logout">Logout</a>
     </div>
 </div>
 
@@ -2109,7 +2315,8 @@ fn parse_streaming_links(json_str: &str) -> serde_json::Value {
 fn render_share_page(row: &ShareRow) -> String {
     let title = html_escape(&row.title);
     let artist = row.artist.as_deref().map(html_escape).unwrap_or_default();
-    let thumbnail_url = row.thumbnail_url.as_deref().unwrap_or("");
+    let raw_thumbnail = row.thumbnail_url.as_deref().unwrap_or("");
+    let thumbnail_url = if is_safe_url(raw_thumbnail) { raw_thumbnail } else { "" };
     let duration = row.duration_secs.map(format_duration).unwrap_or_default();
 
     let streaming_links = row
@@ -2215,47 +2422,61 @@ fn render_streaming_buttons(links: &serde_json::Value, youtube_url: &str) -> Str
     let mut btns = String::new();
 
     if let Some(url) = links.get("spotify").and_then(|v| v.as_str()) {
-        btns.push_str(&format!(
-            r#"<a href="{}" class="btn spotify" target="_blank" rel="noopener">Spotify</a>"#,
-            html_escape(url)
-        ));
+        if is_safe_url(url) {
+            btns.push_str(&format!(
+                r#"<a href="{}" class="btn spotify" target="_blank" rel="noopener">Spotify</a>"#,
+                html_escape(url)
+            ));
+        }
     }
     if let Some(url) = links.get("appleMusic").and_then(|v| v.as_str()) {
-        btns.push_str(&format!(
-            r#"<a href="{}" class="btn apple" target="_blank" rel="noopener">Apple Music</a>"#,
-            html_escape(url)
-        ));
+        if is_safe_url(url) {
+            btns.push_str(&format!(
+                r#"<a href="{}" class="btn apple" target="_blank" rel="noopener">Apple Music</a>"#,
+                html_escape(url)
+            ));
+        }
     }
     if let Some(url) = links.get("youtubeMusic").and_then(|v| v.as_str()) {
-        btns.push_str(&format!(
-            r#"<a href="{}" class="btn yt" target="_blank" rel="noopener">YouTube Music</a>"#,
-            html_escape(url)
-        ));
+        if is_safe_url(url) {
+            btns.push_str(&format!(
+                r#"<a href="{}" class="btn yt" target="_blank" rel="noopener">YouTube Music</a>"#,
+                html_escape(url)
+            ));
+        }
     }
     if let Some(url) = links.get("deezer").and_then(|v| v.as_str()) {
-        btns.push_str(&format!(
-            r#"<a href="{}" class="btn deezer" target="_blank" rel="noopener">Deezer</a>"#,
-            html_escape(url)
-        ));
+        if is_safe_url(url) {
+            btns.push_str(&format!(
+                r#"<a href="{}" class="btn deezer" target="_blank" rel="noopener">Deezer</a>"#,
+                html_escape(url)
+            ));
+        }
     }
     if let Some(url) = links.get("tidal").and_then(|v| v.as_str()) {
-        btns.push_str(&format!(
-            r#"<a href="{}" class="btn tidal" target="_blank" rel="noopener">Tidal</a>"#,
-            html_escape(url)
-        ));
+        if is_safe_url(url) {
+            btns.push_str(&format!(
+                r#"<a href="{}" class="btn tidal" target="_blank" rel="noopener">Tidal</a>"#,
+                html_escape(url)
+            ));
+        }
     }
     if let Some(url) = links.get("amazonMusic").and_then(|v| v.as_str()) {
-        btns.push_str(&format!(
-            r#"<a href="{}" class="btn amazon" target="_blank" rel="noopener">Amazon Music</a>"#,
-            html_escape(url)
-        ));
+        if is_safe_url(url) {
+            btns.push_str(&format!(
+                r#"<a href="{}" class="btn amazon" target="_blank" rel="noopener">Amazon Music</a>"#,
+                html_escape(url)
+            ));
+        }
     }
 
-    // Always show the original YouTube link
-    btns.push_str(&format!(
-        r#"<a href="{}" class="btn youtube-src" target="_blank" rel="noopener">YouTube</a>"#,
-        html_escape(youtube_url)
-    ));
+    // Always show the original YouTube link if it has a safe scheme
+    if is_safe_url(youtube_url) {
+        btns.push_str(&format!(
+            r#"<a href="{}" class="btn youtube-src" target="_blank" rel="noopener">YouTube</a>"#,
+            html_escape(youtube_url)
+        ));
+    }
 
     btns
 }

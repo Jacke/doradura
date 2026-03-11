@@ -114,10 +114,14 @@ pub fn update_playlist(conn: &DbConnection, playlist_id: i64, name: &str, descri
 }
 
 /// Rename a playlist (preserves description).
-pub fn rename_playlist(conn: &DbConnection, playlist_id: i64, name: &str) -> Result<()> {
+///
+/// The `user_id` parameter is checked in the WHERE clause so a user cannot
+/// rename another user's playlist even if they know the playlist ID.
+pub fn rename_playlist(conn: &DbConnection, playlist_id: i64, user_id: i64, name: &str) -> Result<()> {
+    // LOW-03: scope the UPDATE to the owning user to prevent IDOR.
     conn.execute(
-        "UPDATE playlists SET name = ?1, updated_at = datetime('now') WHERE id = ?2",
-        rusqlite::params![name, playlist_id],
+        "UPDATE playlists SET name = ?1, updated_at = datetime('now') WHERE id = ?2 AND user_id = ?3",
+        rusqlite::params![name, playlist_id, user_id],
     )?;
     Ok(())
 }

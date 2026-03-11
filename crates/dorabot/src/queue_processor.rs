@@ -8,7 +8,7 @@ use std::sync::Arc;
 use teloxide::prelude::*;
 use tokio::time::interval;
 
-use crate::core::{alerts, config, rate_limiter};
+use crate::core::{alerts, config, rate_limiter, subscription};
 use crate::download::queue::{self as queue};
 use crate::download::ytdlp_errors::sanitize_user_error_message;
 use crate::download::{download_and_send_audio, download_and_send_subtitles, download_and_send_video, DownloadQueue};
@@ -146,7 +146,12 @@ async fn process_single_task(
     let url = match url::Url::parse(&task.url) {
         Ok(u) => u,
         Err(e) => {
-            log::error!("Invalid URL for task {}: {} - {}", task.id, task.url, e);
+            log::error!(
+                "Invalid URL for task {}: {} - {}",
+                task.id,
+                task.url.replace('\n', "\\n").replace('\r', "\\r"),
+                e
+            );
             let error_msg = format!("Invalid URL: {}", e);
             if let Ok(conn) = db::get_connection(&db_pool) {
                 let _ = db::mark_task_failed(&conn, &task.id, &error_msg);
@@ -167,6 +172,58 @@ async fn process_single_task(
             return;
         }
     };
+
+    // HIGH-10: Enforce daily_download_limit before starting the download.
+    // Free-plan users have a 5-download-per-day cap; premium/vip are unlimited.
+    // We check here (at dispatch time) rather than at queue-add time so that
+    // limit changes or plan upgrades between queue and execution are respected.
+    {
+        let user_id = task.chat_id.0;
+        let limit_exceeded = if let Ok(conn) = db::get_connection(&db_pool) {
+            let plan = db::get_user(&conn, user_id)
+                .ok()
+                .flatten()
+                .map(|u| u.plan)
+                .unwrap_or_default();
+            let limits = subscription::PlanLimits::for_plan(plan);
+            if let Some(daily_limit) = limits.daily_download_limit {
+                let today_count = db::count_user_downloads_today(&conn, user_id).unwrap_or(0);
+                if today_count >= daily_limit {
+                    log::warn!(
+                        "User {} hit daily download limit ({}/{}), rejecting task {}",
+                        user_id,
+                        today_count,
+                        daily_limit,
+                        task.id
+                    );
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false // unlimited plan
+            }
+        } else {
+            false // fail open: if DB is unavailable, let the download proceed
+        };
+
+        if limit_exceeded {
+            let _ = bot
+                .send_message(
+                    task.chat_id,
+                    "You've reached your daily download limit. \
+                         Upgrade your plan or try again tomorrow.",
+                )
+                .await;
+            if let Ok(conn) = db::get_connection(&db_pool) {
+                let _ = db::mark_task_failed(&conn, &task.id, "Daily download limit exceeded");
+            }
+            queue_for_cleanup
+                .remove_active_task(&task.url, task.chat_id, &task.format)
+                .await;
+            return;
+        }
+    }
 
     // Delete the "Task added to queue" notification after a short delay
     // so the user has time to read the queue position message

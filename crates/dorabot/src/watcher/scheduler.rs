@@ -17,11 +17,8 @@ use tokio::time::{interval, Duration};
 ///
 /// Returns a receiver for `WatchNotification`s that should be consumed
 /// by the Telegram notification dispatcher.
-pub fn start_scheduler(
-    db_pool: Arc<DbPool>,
-    registry: Arc<WatcherRegistry>,
-) -> mpsc::UnboundedReceiver<WatchNotification> {
-    let (tx, rx) = mpsc::unbounded_channel();
+pub fn start_scheduler(db_pool: Arc<DbPool>, registry: Arc<WatcherRegistry>) -> mpsc::Receiver<WatchNotification> {
+    let (tx, rx) = mpsc::channel(1000); // bounded to 1000 pending notifications
 
     tokio::spawn(async move {
         let check_interval = Duration::from_secs(*config::watcher::CHECK_INTERVAL_SECS);
@@ -59,7 +56,7 @@ struct CycleSummary {
 async fn run_check_cycle(
     db_pool: &Arc<DbPool>,
     registry: &WatcherRegistry,
-    tx: &mpsc::UnboundedSender<WatchNotification>,
+    tx: &mpsc::Sender<WatchNotification>,
 ) -> Result<(), String> {
     let conn = get_connection(db_pool).map_err(|e| format!("DB connection error: {}", e))?;
     let groups = db::get_active_source_groups(&conn)?;
@@ -132,9 +129,17 @@ async fn run_check_cycle(
                                 subscription_id: sub.id,
                                 update: update.clone(),
                             };
-                            if tx.send(notification).is_err() {
-                                log::warn!("Notification channel closed, stopping scheduler");
-                                return Ok(());
+                            if let Err(e) = tx.try_send(notification) {
+                                use tokio::sync::mpsc::error::TrySendError;
+                                match e {
+                                    TrySendError::Closed(_) => {
+                                        log::warn!("Notification channel closed, stopping scheduler");
+                                        return Ok(());
+                                    }
+                                    TrySendError::Full(_) => {
+                                        log::warn!("Notification channel full, dropping notification");
+                                    }
+                                }
                             }
                         }
                     }

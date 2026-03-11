@@ -198,7 +198,7 @@ pub async fn handle_playlist_name_input(bot: &Bot, chat_id: ChatId, text: &str, 
             }
         }
         NameAction::Rename(pl_id) => {
-            if let Err(e) = db::rename_playlist(&conn, pl_id, text) {
+            if let Err(e) = db::rename_playlist(&conn, pl_id, chat_id.0, text) {
                 log::error!("Failed to rename playlist: {}", e);
                 let _ = bot.send_message(chat_id, "Failed to rename playlist.").await;
             } else {
@@ -812,9 +812,16 @@ pub async fn handle_clone_playlist(bot: &Bot, chat_id: ChatId, token: &str, db_p
 
     // Copy items in a transaction
     let items = db::get_playlist_items(&conn, source_pl.id).unwrap_or_default();
-    let _ = conn.execute_batch("BEGIN");
+    if let Err(e) = conn.execute_batch("BEGIN") {
+        log::error!("Failed to begin transaction for playlist clone: {}", e);
+        let _ = bot
+            .send_message(chat_id, "Failed to clone playlist (transaction error).")
+            .await;
+        return;
+    }
+    let mut failed = 0usize;
     for item in &items {
-        let _ = db::add_playlist_item(
+        if let Err(e) = db::add_playlist_item(
             &conn,
             new_pl_id,
             &item.title,
@@ -823,14 +830,29 @@ pub async fn handle_clone_playlist(bot: &Bot, chat_id: ChatId, token: &str, db_p
             item.duration_secs,
             item.file_id.as_deref(),
             &item.source,
+        ) {
+            log::warn!("Failed to clone playlist item '{}': {}", item.title, e);
+            failed += 1;
+        }
+    }
+    if let Err(e) = conn.execute_batch("COMMIT") {
+        log::error!("Failed to commit playlist clone transaction: {}", e);
+    }
+    if failed > 0 {
+        log::warn!(
+            "Playlist clone: {} items failed out of {} (new_pl_id={}, source={})",
+            failed,
+            items.len(),
+            new_pl_id,
+            source_pl.id
         );
     }
-    let _ = conn.execute_batch("COMMIT");
 
+    let success_count = items.len() - failed;
     let _ = bot
         .send_message(
             chat_id,
-            format!("📥 Cloned \"{}\" with {} tracks!", source_pl.name, items.len()),
+            format!("📥 Cloned \"{}\" with {} tracks!", source_pl.name, success_count),
         )
         .await;
 }

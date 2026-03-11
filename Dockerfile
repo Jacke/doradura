@@ -283,6 +283,10 @@ RUN touch /etc/s6-overlay/s6-rc.d/user/contents.d/init-data \
           /etc/s6-overlay/s6-rc.d/user/contents.d/doradura-bot \
           /etc/s6-overlay/s6-rc.d/user/contents.d/health-monitor
 
-EXPOSE 8080 8081 8082 9090
+# Only expose the external web server port (8080).
+# Ports 8081 (Bot API HTTP), 8082 (Bot API stats), and 9090 (metrics) are
+# internal services that must not be reachable from outside the container.
+# They are accessed only over the loopback interface within the same container.
+EXPOSE 8080
 
 ENTRYPOINT ["/init"]

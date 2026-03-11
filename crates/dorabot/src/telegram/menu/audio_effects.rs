@@ -340,6 +340,15 @@ pub async fn handle_audio_effects_callback(
 
             let session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
 
+            if session.user_id != chat_id.0 {
+                log::warn!(
+                    "User {} attempted to access audio effect session owned by {}",
+                    chat_id.0,
+                    session.user_id
+                );
+                return Ok(());
+            }
+
             if session.is_expired() {
                 bot.answer_callback_query(callback_id)
                     .text("❌ Session expired (24 hours). Please download the track again.")
@@ -365,6 +374,15 @@ pub async fn handle_audio_effects_callback(
             let pitch: i8 = pitch_str.parse().map_err(|_| "Invalid pitch")?;
 
             let mut session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+
+            if session.user_id != chat_id.0 {
+                log::warn!(
+                    "User {} attempted to access audio effect session owned by {}",
+                    chat_id.0,
+                    session.user_id
+                );
+                return Ok(());
+            }
 
             if session.processing {
                 bot.answer_callback_query(callback_id)
@@ -396,6 +414,15 @@ pub async fn handle_audio_effects_callback(
 
             let mut session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
 
+            if session.user_id != chat_id.0 {
+                log::warn!(
+                    "User {} attempted to access audio effect session owned by {}",
+                    chat_id.0,
+                    session.user_id
+                );
+                return Ok(());
+            }
+
             if session.processing {
                 bot.answer_callback_query(callback_id)
                     .text("⏳ Please wait, processing...")
@@ -426,6 +453,15 @@ pub async fn handle_audio_effects_callback(
 
             let mut session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
 
+            if session.user_id != chat_id.0 {
+                log::warn!(
+                    "User {} attempted to access audio effect session owned by {}",
+                    chat_id.0,
+                    session.user_id
+                );
+                return Ok(());
+            }
+
             if session.processing {
                 bot.answer_callback_query(callback_id)
                     .text("⏳ Please wait, processing...")
@@ -453,6 +489,15 @@ pub async fn handle_audio_effects_callback(
             let session_id = parts.get(2).ok_or("Missing session_id")?;
 
             let mut session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+
+            if session.user_id != chat_id.0 {
+                log::warn!(
+                    "User {} attempted to access audio effect session owned by {}",
+                    chat_id.0,
+                    session.user_id
+                );
+                return Ok(());
+            }
 
             if session.processing {
                 bot.answer_callback_query(callback_id)
@@ -499,6 +544,15 @@ pub async fn handle_audio_effects_callback(
             let session_id = parts.get(2).ok_or("Missing session_id")?;
 
             let session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+
+            if session.user_id != chat_id.0 {
+                log::warn!(
+                    "User {} attempted to access audio effect session owned by {}",
+                    chat_id.0,
+                    session.user_id
+                );
+                return Ok(());
+            }
 
             if session.processing {
                 bot.answer_callback_query(callback_id)
@@ -562,6 +616,15 @@ pub async fn handle_audio_effects_callback(
 
             let mut session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
 
+            if session.user_id != chat_id.0 {
+                log::warn!(
+                    "User {} attempted to access audio effect session owned by {}",
+                    chat_id.0,
+                    session.user_id
+                );
+                return Ok(());
+            }
+
             session.pitch_semitones = 0;
             session.tempo_factor = 1.0;
             session.bass_gain_db = 0;
@@ -595,6 +658,15 @@ pub async fn handle_audio_effects_callback(
             let session_id = parts.get(2).ok_or("Missing session_id")?;
 
             let session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+
+            if session.user_id != chat_id.0 {
+                log::warn!(
+                    "User {} attempted to access audio effect session owned by {}",
+                    chat_id.0,
+                    session.user_id
+                );
+                return Ok(());
+            }
 
             if session.is_expired() {
                 bot.answer_callback_query(callback_id)
@@ -647,6 +719,15 @@ pub async fn handle_audio_effects_callback(
             let session_id = parts.get(2).ok_or("Missing session_id")?;
 
             let session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+
+            if session.user_id != chat_id.0 {
+                log::warn!(
+                    "User {} attempted to access audio effect session owned by {}",
+                    chat_id.0,
+                    session.user_id
+                );
+                return Ok(());
+            }
 
             bot.answer_callback_query(callback_id).await?;
 

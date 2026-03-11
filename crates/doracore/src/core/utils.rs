@@ -174,8 +174,40 @@ pub fn truncate_for_telegram(text: &str) -> String {
 /// assert_eq!(sanitize_filename("song name.mp3"), "song_name.mp3");
 /// assert_eq!(sanitize_filename("Artist - Title.mp4"), "Artist_-_Title.mp4");
 /// ```
+/// Returns `true` for Unicode format and directional override characters that
+/// can be used to disguise a filename's apparent extension (e.g. U+202E RIGHT-TO-LEFT
+/// OVERRIDE makes `evil\u{202E}gpj.exe` render as though the extension were `.jpg`).
+///
+/// LOW-07: these characters have no legitimate use in a media filename and are
+/// stripped before passing names to ffmpeg/yt-dlp or displaying to users.
+#[inline]
+fn is_unicode_format_char(c: char) -> bool {
+    matches!(
+        c,
+        // Unicode directional overrides and isolates
+        '\u{202A}'  // LEFT-TO-RIGHT EMBEDDING
+        | '\u{202B}'  // RIGHT-TO-LEFT EMBEDDING
+        | '\u{202C}'  // POP DIRECTIONAL FORMATTING
+        | '\u{202D}'  // LEFT-TO-RIGHT OVERRIDE
+        | '\u{202E}'  // RIGHT-TO-LEFT OVERRIDE (the classic "evil extension" trick)
+        | '\u{2066}'  // LEFT-TO-RIGHT ISOLATE
+        | '\u{2067}'  // RIGHT-TO-LEFT ISOLATE
+        | '\u{2068}'  // FIRST STRONG ISOLATE
+        | '\u{2069}'  // POP DIRECTIONAL ISOLATE
+        | '\u{200B}'  // ZERO WIDTH SPACE
+        | '\u{200C}'  // ZERO WIDTH NON-JOINER
+        | '\u{200D}'  // ZERO WIDTH JOINER
+        | '\u{FEFF}'  // ZERO WIDTH NO-BREAK SPACE (BOM)
+        | '\u{200E}'  // LEFT-TO-RIGHT MARK
+        | '\u{200F}' // RIGHT-TO-LEFT MARK
+    )
+}
+
 pub fn sanitize_filename(filename: &str) -> String {
-    filename.replace(' ', "_")
+    // LOW-07: strip Unicode format/directional characters before space→underscore
+    // substitution so they cannot be used to spoof file extensions.
+    let cleaned: String = filename.chars().filter(|c| !is_unicode_format_char(*c)).collect();
+    cleaned.replace(' ', "_")
 }
 
 pub fn escape_filename(filename: &str) -> String {

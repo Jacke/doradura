@@ -207,9 +207,9 @@ pub fn init_error_logger(db_pool: Arc<DbPool>) {
     log::info!("Error logger initialized");
 }
 
-/// Gets the global error logger (panics if not initialized)
-pub fn get_error_logger() -> &'static ErrorLogger {
-    ERROR_LOGGER.get().expect("Error logger not initialized")
+/// Gets the global error logger, or `None` if not yet initialized.
+pub fn get_error_logger() -> Option<&'static ErrorLogger> {
+    try_get_error_logger()
 }
 
 /// Tries to get the global error logger (returns None if not initialized)

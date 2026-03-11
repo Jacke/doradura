@@ -67,7 +67,11 @@ impl RateLimiter {
     /// Checks whether a user is currently rate-limited.
     ///
     /// * `chat_id` - User chat ID
-    /// * `plan` - User plan ("free", "premium", "vip")
+    /// * `_plan` - User plan ("free", "premium", "vip") — accepted for API symmetry
+    ///   with [`update_rate_limit`] but not used here because the per-user cooldown
+    ///   deadline was already recorded with the plan-specific duration when
+    ///   `update_rate_limit` was last called. Checking the deadline directly is
+    ///   sufficient and avoids a second plan lookup. LOW-04: accepted design trade-off.
     ///
     /// Returns `true` if limited, otherwise `false`.
     pub async fn is_rate_limited(&self, chat_id: ChatId, _plan: &str) -> bool {

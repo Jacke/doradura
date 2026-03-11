@@ -260,6 +260,25 @@ async fn connect_to_bot_api(bot: &crate::telegram::Bot) -> Result<teloxide::type
 }
 
 /// Run the bot in webhook mode.
+///
+/// # Security TODO (MED-01)
+/// Add a `secret_token` to `set_webhook` to authenticate incoming updates from
+/// Telegram. Generate a 64-character random alphanumeric token at startup and
+/// pass it via `SetWebhook::secret_token()`. Store it in an env var or derive
+/// from a secret so the HTTP handler can verify the `X-Telegram-Bot-Api-Secret-Token`
+/// header on every incoming request before processing it.
+///
+/// ```text
+/// // Example with teloxide 0.x:
+/// let secret: String = rand::thread_rng()
+///     .sample_iter(&rand::distributions::Alphanumeric)
+///     .take(64)
+///     .map(char::from)
+///     .collect();
+/// bot.set_webhook(url::Url::parse(url)?)
+///     .secret_token(secret.clone())
+///     .await?;
+/// ```
 async fn run_webhook_mode(bot: crate::telegram::Bot, url: &str) -> Result<()> {
     log::info!("Starting bot in webhook mode at {}", url);
 
@@ -311,6 +330,13 @@ async fn run_polling_mode(
         }
     }
 
+    // Register SIGTERM handler once, before the retry loop.
+    #[cfg(unix)]
+    let mut sigterm = {
+        use tokio::signal::unix::{signal, SignalKind};
+        signal(SignalKind::terminate()).expect("Failed to register SIGTERM handler")
+    };
+
     loop {
         let bot_clone = bot.clone();
         let handler_clone = handler.clone();
@@ -332,7 +358,24 @@ async fn run_polling_mode(
                 .await
         });
 
-        match handle.await {
+        #[cfg(unix)]
+        let outcome = tokio::select! {
+            result = handle => Some(result),
+            _ = sigterm.recv() => {
+                log::info!("SIGTERM received, shutting down gracefully");
+                None
+            }
+        };
+
+        #[cfg(not(unix))]
+        let outcome = Some(handle.await);
+
+        let join_result = match outcome {
+            None => break, // SIGTERM received — exit the retry loop
+            Some(r) => r,
+        };
+
+        match join_result {
             Ok(()) => {
                 log::info!("Dispatcher shutdown gracefully");
                 break;

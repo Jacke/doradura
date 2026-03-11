@@ -52,6 +52,16 @@ pub async fn is_waiting_for_import_url(user_id: i64) -> bool {
 async fn set_waiting_for_import_url(user_id: i64, waiting: bool) {
     let mut states = IMPORT_URL_STATES.write().await;
     if waiting {
+        // Evict expired entries (>5 min old) before inserting
+        states.retain(|_, ts| ts.elapsed().as_secs() < 300);
+        // Cap total size to prevent unbounded growth
+        if states.len() >= 10_000 {
+            log::warn!(
+                "IMPORT_URL_STATES at capacity, rejecting new entry for user {}",
+                user_id
+            );
+            return;
+        }
         states.insert(user_id, Instant::now());
     } else {
         states.remove(&user_id);

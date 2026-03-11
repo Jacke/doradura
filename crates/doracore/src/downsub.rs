@@ -294,10 +294,17 @@ impl DownsubGateway {
 
         let mut grpc_request = Request::new(request);
         if let Some(ref key) = self.api_key {
-            grpc_request.metadata_mut().insert(
-                "authorization",
-                format!("Bearer {}", key).parse().expect("valid Bearer header"),
-            );
+            let header_value = match format!("Bearer {}", key).parse() {
+                Ok(val) => val,
+                Err(e) => {
+                    log::error!("Invalid DOWNSUB_API_KEY for gRPC metadata: {}", e);
+                    return Err(DownsubError::Status(Status::new(
+                        Code::Internal,
+                        "Invalid API key format",
+                    )));
+                }
+            };
+            grpc_request.metadata_mut().insert("authorization", header_value);
         }
 
         let response = timeout(self.timeout, client.get_summary(grpc_request))
@@ -352,10 +359,17 @@ impl DownsubGateway {
 
         let mut grpc_request = Request::new(request);
         if let Some(ref key) = self.api_key {
-            grpc_request.metadata_mut().insert(
-                "authorization",
-                format!("Bearer {}", key).parse().expect("valid Bearer header"),
-            );
+            let header_value = match format!("Bearer {}", key).parse() {
+                Ok(val) => val,
+                Err(e) => {
+                    log::error!("Invalid DOWNSUB_API_KEY for gRPC metadata: {}", e);
+                    return Err(DownsubError::Status(Status::new(
+                        Code::Internal,
+                        "Invalid API key format",
+                    )));
+                }
+            };
+            grpc_request.metadata_mut().insert("authorization", header_value);
         }
 
         let response = timeout(self.timeout, client.get_subtitles(grpc_request))

@@ -821,9 +821,9 @@ impl SubtitleStyle {
             text_color: "white".to_string(),
             outline_color: "black".to_string(),
             outline_width: 3,
-            shadow: 0,                       // no shadow, outline is enough
+            shadow: 0, // no shadow, outline is enough
             position: "bottom".to_string(),
-            margin_v: 90,                    // lift text above circle cutoff
+            margin_v: 90, // lift text above circle cutoff
             bold: 1,
         }
     }
@@ -1466,6 +1466,25 @@ pub fn save_download_history(
         ],
     )?;
     Ok(conn.last_insert_rowid())
+}
+
+/// Returns the number of downloads completed by `telegram_id` since UTC midnight today.
+///
+/// Used to enforce `daily_download_limit` for the Free plan. Counts rows in
+/// `download_history` whose `downloaded_at` timestamp falls within the current
+/// UTC calendar day. This is intentionally a cheap `COUNT(*)` with no joins.
+///
+/// # Errors
+///
+/// Returns a rusqlite error only if the prepared statement or query itself fails,
+/// which is extremely rare for a simple `COUNT` on an indexed column.
+pub fn count_user_downloads_today(conn: &DbConnection, telegram_id: i64) -> Result<u32> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM download_history \
+         WHERE user_id = ?1 AND DATE(downloaded_at) = DATE('now')",
+        [&telegram_id as &dyn rusqlite::ToSql],
+        |row| row.get::<_, u32>(0),
+    )
 }
 
 /// Finds a cached Telegram file_id for the given URL, format and quality/bitrate.

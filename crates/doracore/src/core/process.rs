@@ -20,6 +20,7 @@ pub const FFPROBE_TIMEOUT: Duration = Duration::from_secs(30);
 ///
 /// Returns the process Output on success, or an AppError on timeout/IO failure.
 pub async fn run_with_timeout(cmd: &mut Command, timeout: Duration) -> Result<Output, AppError> {
+    cmd.kill_on_drop(true);
     match tokio::time::timeout(timeout, cmd.output()).await {
         Ok(Ok(output)) => Ok(output),
         Ok(Err(e)) => Err(AppError::Io(e)),

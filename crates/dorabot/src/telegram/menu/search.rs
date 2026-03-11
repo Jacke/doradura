@@ -49,6 +49,13 @@ static SEARCH_SESSIONS: std::sync::LazyLock<Arc<RwLock<HashMap<i64, SearchSessio
 /// Store a search session for a user.
 pub async fn set_search_session(user_id: i64, session: SearchSession) {
     let mut sessions = SEARCH_SESSIONS.write().await;
+    // Evict expired entries (>TTL old) before inserting
+    sessions.retain(|_, s| s.created_at.elapsed().as_secs() <= SESSION_TTL_SECS);
+    // Cap total size to prevent unbounded growth
+    if sessions.len() >= 10_000 {
+        log::warn!("SEARCH_SESSIONS at capacity, rejecting new entry for user {}", user_id);
+        return;
+    }
     sessions.insert(user_id, session);
 }
 

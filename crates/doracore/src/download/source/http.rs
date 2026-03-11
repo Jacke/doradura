@@ -14,6 +14,7 @@ use crate::download::source::{DownloadOutput, DownloadRequest, DownloadSource, S
 use async_trait::async_trait;
 use reqwest::Client;
 use std::io::Write;
+use std::net::ToSocketAddrs;
 use tokio::sync::mpsc;
 use url::Url;
 
@@ -21,6 +22,58 @@ use url::Url;
 const DIRECT_FILE_EXTENSIONS: &[&str] = &[
     "mp3", "mp4", "wav", "flac", "ogg", "m4a", "webm", "avi", "mkv", "aac", "opus",
 ];
+
+/// Returns `true` when the IP address belongs to a private, loopback, link-local,
+/// or otherwise non-routable range that should never be reachable from the internet.
+///
+/// Used by the SSRF guard to prevent downloads from being redirected to internal
+/// infrastructure (e.g. cloud metadata endpoints, LAN hosts).
+fn is_private_ip(ip: &std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                // 169.254.x.x — cloud metadata services (AWS IMDSv1/v2, GCP, Azure)
+                || (v4.octets()[0] == 169 && v4.octets()[1] == 254)
+                || v4.is_broadcast()
+                || v4.is_unspecified()
+        }
+        std::net::IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified(),
+    }
+}
+
+/// Resolve the hostname in `url` and reject it if any resolved address is private.
+///
+/// Blocks SSRF attacks that use internal hostnames (e.g. `http://169.254.169.254/latest/meta-data/`).
+/// Returns an error if any resolved address falls in a private range.
+fn check_ssrf(url: &Url) -> Result<(), AppError> {
+    if let Some(host) = url.host_str() {
+        // Port 80 is used for resolution only; the actual port is irrelevant here.
+        match (host, 80u16).to_socket_addrs() {
+            Ok(addrs) => {
+                for addr in addrs {
+                    if is_private_ip(&addr.ip()) {
+                        log::warn!("SSRF blocked: URL {} resolves to private IP {}", url, addr.ip());
+                        return Err(AppError::Validation(format!(
+                            "URL resolves to a private/internal IP address ({}): blocked for security",
+                            addr.ip()
+                        )));
+                    }
+                }
+            }
+            Err(e) => {
+                // If the hostname cannot be resolved, refuse the request.
+                log::warn!("SSRF check: hostname resolution failed for {}: {}", host, e);
+                return Err(AppError::Validation(format!(
+                    "Could not resolve hostname '{}': {}",
+                    host, e
+                )));
+            }
+        }
+    }
+    Ok(())
+}
 
 /// Download source for direct HTTP file downloads.
 pub struct HttpSource {
@@ -134,6 +187,8 @@ impl DownloadSource for HttpSource {
     }
 
     async fn estimate_size(&self, url: &Url) -> Option<u64> {
+        // SSRF guard — silently return None for private addresses rather than panicking.
+        check_ssrf(url).ok()?;
         let response = tokio::time::timeout(
             std::time::Duration::from_secs(10),
             self.client.head(url.as_str()).send(),
@@ -154,6 +209,9 @@ impl DownloadSource for HttpSource {
         progress_tx: mpsc::UnboundedSender<SourceProgress>,
     ) -> Result<DownloadOutput, AppError> {
         log::info!("📥 HTTP direct download: {}", request.url);
+
+        // MED-02: SSRF guard — reject URLs that resolve to private/internal addresses.
+        check_ssrf(&request.url)?;
 
         // Check if we can resume (file already partially downloaded)
         let existing_size = std::fs::metadata(&request.output_path).map(|m| m.len()).unwrap_or(0);
@@ -338,5 +396,60 @@ mod tests {
             Some("video/mp4".to_string())
         );
         assert_eq!(HttpSource::mime_from_extension("file.xyz"), None);
+    }
+
+    // ── SSRF guard unit tests ──
+
+    #[test]
+    fn test_is_private_ip_loopback_v4() {
+        use std::net::IpAddr;
+        assert!(is_private_ip(&"127.0.0.1".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_loopback_v6() {
+        use std::net::IpAddr;
+        assert!(is_private_ip(&"::1".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_rfc1918() {
+        use std::net::IpAddr;
+        assert!(is_private_ip(&"10.0.0.1".parse::<IpAddr>().unwrap()));
+        assert!(is_private_ip(&"172.16.0.1".parse::<IpAddr>().unwrap()));
+        assert!(is_private_ip(&"192.168.1.1".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_metadata_service() {
+        use std::net::IpAddr;
+        // AWS/GCP/Azure instance metadata endpoint
+        assert!(is_private_ip(&"169.254.169.254".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_public_not_blocked() {
+        use std::net::IpAddr;
+        assert!(!is_private_ip(&"8.8.8.8".parse::<IpAddr>().unwrap()));
+        assert!(!is_private_ip(&"1.1.1.1".parse::<IpAddr>().unwrap()));
+        assert!(!is_private_ip(&"93.184.216.34".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn test_check_ssrf_rejects_localhost() {
+        let url = Url::parse("http://localhost/secret.mp3").unwrap();
+        assert!(check_ssrf(&url).is_err());
+    }
+
+    #[test]
+    fn test_check_ssrf_rejects_127_0_0_1() {
+        let url = Url::parse("http://127.0.0.1/file.mp3").unwrap();
+        assert!(check_ssrf(&url).is_err());
+    }
+
+    #[test]
+    fn test_check_ssrf_rejects_metadata_ip() {
+        let url = Url::parse("http://169.254.169.254/latest/meta-data/file.mp3").unwrap();
+        assert!(check_ssrf(&url).is_err());
     }
 }

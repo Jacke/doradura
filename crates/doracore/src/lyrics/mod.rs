@@ -268,15 +268,39 @@ async fn fetch_from_genius(artist: &str, title: &str, token: &str) -> Option<Ful
 
     log::info!("Lyrics: Genius scraping {}", song_url);
 
-    let html = client
+    // LOW-09: cap the response body to 5 MiB to prevent memory exhaustion if
+    // Genius returns an unexpectedly large or malicious response.
+    const MAX_GENIUS_HTML_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
+
+    let resp = client
         .get(&song_url)
         .header("Accept-Language", "en-US,en;q=0.9")
         .send()
         .await
-        .ok()?
-        .text()
-        .await
         .ok()?;
+
+    // Reject if Content-Length already signals an oversized body.
+    if let Some(content_length) = resp.content_length() {
+        if content_length as usize > MAX_GENIUS_HTML_BYTES {
+            log::warn!(
+                "Lyrics: Genius page too large ({} bytes), skipping {}",
+                content_length,
+                song_url
+            );
+            return None;
+        }
+    }
+
+    let bytes = resp.bytes().await.ok()?;
+    if bytes.len() > MAX_GENIUS_HTML_BYTES {
+        log::warn!(
+            "Lyrics: Genius page body too large ({} bytes), skipping {}",
+            bytes.len(),
+            song_url
+        );
+        return None;
+    }
+    let html = String::from_utf8_lossy(&bytes).into_owned();
 
     let lyrics = parse_genius_html(&html)?;
     Some((

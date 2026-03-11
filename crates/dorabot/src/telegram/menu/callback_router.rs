@@ -452,6 +452,11 @@ pub async fn handle_menu_callback(
                 }
             } else if let Some(quality) = data.strip_prefix("quality:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
+                const VALID_QUALITIES: &[&str] = &["best", "1080p", "720p", "480p", "360p"];
+                if !VALID_QUALITIES.contains(&quality) {
+                    log::warn!("Rejected invalid quality value from user {}: {:?}", chat_id.0, quality);
+                    return Ok(());
+                }
                 // Remove "quality:" prefix
                 let conn = db::get_connection(&db_pool)
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
@@ -571,6 +576,11 @@ pub async fn handle_menu_callback(
                 show_video_quality_menu(&bot, chat_id, message_id, Arc::clone(&db_pool), None).await?;
             } else if let Some(bitrate) = data.strip_prefix("bitrate:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
+                const VALID_BITRATES: &[&str] = &["128k", "192k", "256k", "320k"];
+                if !VALID_BITRATES.contains(&bitrate) {
+                    log::warn!("Rejected invalid bitrate value from user {}: {:?}", chat_id.0, bitrate);
+                    return Ok(());
+                }
                 // Remove "bitrate:" prefix
                 let conn = db::get_connection(&db_pool)
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
@@ -656,6 +666,16 @@ pub async fn handle_menu_callback(
                 show_subtitle_style_menu(&bot, chat_id, message_id, Arc::clone(&db_pool)).await?;
             } else if let Some(style_name) = data.strip_prefix("pbar_style:") {
                 let _ = bot.answer_callback_query(callback_id.clone()).await;
+                const VALID_PBAR_STYLES: &[&str] =
+                    &["classic", "gradient", "emoji", "dots", "runner", "rpg", "fire", "moon"];
+                if !VALID_PBAR_STYLES.contains(&style_name) {
+                    log::warn!(
+                        "Rejected invalid pbar_style value from user {}: {:?}",
+                        chat_id.0,
+                        style_name
+                    );
+                    return Ok(());
+                }
                 let conn = db::get_connection(&db_pool)
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
                 db::set_user_progress_bar_style(&conn, chat_id.0, style_name)
@@ -1341,6 +1361,19 @@ pub async fn handle_menu_callback(
                                 Some((l, u)) => (l.to_string(), u.to_string()),
                                 None => return Ok(()),
                             };
+
+                            const VALID_SUB_LANGS: &[&str] = &[
+                                "en", "ru", "uk", "es", "pt", "de", "fr", "ar", "fa", "hi", "ja", "ko", "zh", "it",
+                                "nl", "pl", "tr", "none",
+                            ];
+                            if !VALID_SUB_LANGS.contains(&lang_code.as_str()) {
+                                log::warn!(
+                                    "Rejected invalid sub lang value from user {}: {:?}",
+                                    chat_id.0,
+                                    lang_code
+                                );
+                                return Ok(());
+                            }
 
                             let url_str = match cache::get_url(&db_pool, &url_id).await {
                                 Some(u) => u,

@@ -643,6 +643,35 @@ pub async fn handle_successful_payment(
                 return Ok(());
             }
 
+            // HIGH-14: Validate payment amount matches expected price for plan
+            let expected_price: u32 = match plan {
+                "premium" => *crate::core::config::subscription::PREMIUM_PRICE_STARS,
+                "vip" => *crate::core::config::subscription::VIP_PRICE_STARS,
+                _ => {
+                    log::error!("❌ Unknown plan in payment payload: {}", plan);
+                    return Ok(());
+                }
+            };
+            #[allow(clippy::unnecessary_cast)]
+            if payment.total_amount as u32 != expected_price {
+                log::error!(
+                    "❌ Payment amount mismatch! Plan: {}, expected: {}, got: {}. Charge ID: {}",
+                    plan,
+                    expected_price,
+                    payment.total_amount,
+                    payment.telegram_payment_charge_id.0
+                );
+                crate::telegram::notifications::notify_admin_text(
+                    bot,
+                    &format!(
+                        "⚠️ PAYMENT AMOUNT MISMATCH\nPlan: {}\nExpected: {} Stars\nGot: {} Stars\nUser: {}\nCharge: {}",
+                        plan, expected_price, payment.total_amount, telegram_id, payment.telegram_payment_charge_id.0
+                    ),
+                )
+                .await;
+                return Ok(());
+            }
+
             let chat_id = msg.chat.id;
 
             // Process the subscription payment
@@ -682,7 +711,9 @@ pub async fn handle_successful_payment(
             log::info!("  • Is recurring: {}", is_recurring);
             log::info!("  • Is first recurring: {}", is_first_recurring);
 
-            // Save payment (charge) information to DB for accounting
+            // HIGH-15: Save payment (charge) information to DB for accounting.
+            // telegram_charge_id has a UNIQUE constraint — if this fails with a duplicate,
+            // it means this payment was already processed (replay attack). Do NOT activate.
             log::info!("💾 Saving charge data for accounting...");
             if let Err(e) = db::save_charge(
                 &conn,
@@ -697,11 +728,21 @@ pub async fn handle_successful_payment(
                 is_first_recurring,
                 Some(&subscription_expires_at),
             ) {
-                log::error!("❌ Failed to save charge data: {}", e);
-                // Continue execution as this is not a critical error
-            } else {
-                log::info!("✅ Charge data saved successfully");
+                log::error!(
+                    "❌ Failed to save charge data: {} (possible duplicate charge_id replay)",
+                    e
+                );
+                crate::telegram::notifications::notify_admin_text(
+                    bot,
+                    &format!(
+                        "⚠️ CHARGE SAVE FAILED (possible replay)\nCharge ID: {}\nUser: {}\nPlan: {}\nError: {}",
+                        charge_id_str, telegram_id, plan, e
+                    ),
+                )
+                .await;
+                return Ok(());
             }
+            log::info!("✅ Charge data saved successfully");
 
             // Track payment success metrics
             metrics::record_payment_success(plan, is_recurring);

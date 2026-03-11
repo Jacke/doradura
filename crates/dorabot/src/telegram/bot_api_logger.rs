@@ -46,7 +46,8 @@ impl<R> LoggedRequest<R> {
         }
 
         let base = self.api_url.trim_end_matches('/');
-        log::info!("BOT_API_URL request: {}/bot{}/{}", base, self.token, method);
+        let masked = self.token.split(':').next().unwrap_or("?");
+        log::debug!("Bot API → {}/bot{}:***/{}", base, masked, method);
     }
 }
 
