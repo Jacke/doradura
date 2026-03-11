@@ -791,6 +791,10 @@ pub struct SubtitleStyle {
     pub outline_width: i32,
     pub shadow: i32,
     pub position: String,
+    /// Bottom margin in pixels (keeps subs inside circle mask)
+    pub margin_v: i32,
+    /// Bold text (1=bold, 0=normal)
+    pub bold: i32,
 }
 
 impl Default for SubtitleStyle {
@@ -802,11 +806,28 @@ impl Default for SubtitleStyle {
             outline_width: 2,
             shadow: 1,
             position: "bottom".to_string(),
+            margin_v: 0,
+            bold: 0,
         }
     }
 }
 
 impl SubtitleStyle {
+    /// Style optimized for 640x640 circle video notes.
+    /// Larger font, bold, thick outline, and raised margin to stay inside the circular mask.
+    pub fn circle_default() -> Self {
+        Self {
+            font_size: "large".to_string(), // 32px — readable on small circle
+            text_color: "white".to_string(),
+            outline_color: "black".to_string(),
+            outline_width: 3,
+            shadow: 0,                       // no shadow, outline is enough
+            position: "bottom".to_string(),
+            margin_v: 90,                    // lift text above circle cutoff
+            bold: 1,
+        }
+    }
+
     /// Builds the ffmpeg force_style string from subtitle settings.
     pub fn to_force_style(&self) -> String {
         let font_size = match self.font_size.as_str() {
@@ -838,10 +859,19 @@ impl SubtitleStyle {
             _ => 2,
         };
 
-        format!(
+        let mut style = format!(
             "FontName=DejaVu Sans,FontSize={},PrimaryColour={},OutlineColour={},Outline={},Shadow={},Alignment={}",
             font_size, primary_colour, outline_colour, self.outline_width, self.shadow, alignment
-        )
+        );
+
+        if self.margin_v > 0 {
+            style.push_str(&format!(",MarginV={}", self.margin_v));
+        }
+        if self.bold != 0 {
+            style.push_str(&format!(",Bold={}", self.bold));
+        }
+
+        style
     }
 }
 
@@ -862,6 +892,8 @@ pub fn get_user_subtitle_style(conn: &DbConnection, telegram_id: i64) -> Result<
             outline_width: row.get(3).unwrap_or(2),
             shadow: row.get(4).unwrap_or(1),
             position: row.get(5).unwrap_or_else(|_| "bottom".to_string()),
+            margin_v: 0,
+            bold: 0,
         })
     } else {
         Ok(SubtitleStyle::default())
@@ -3170,6 +3202,27 @@ mod tests {
         set_user_burn_subtitles(&conn, 12352, true).unwrap();
         let enabled = get_user_burn_subtitles(&conn, 12352).unwrap();
         assert!(enabled);
+    }
+
+    #[test]
+    fn test_subtitle_style_force_style() {
+        // Default style: no MarginV, no Bold
+        let default = SubtitleStyle::default();
+        let style_str = default.to_force_style();
+        assert!(style_str.contains("FontSize=24"));
+        assert!(style_str.contains("Outline=2"));
+        assert!(style_str.contains("Shadow=1"));
+        assert!(!style_str.contains("MarginV"));
+        assert!(!style_str.contains("Bold"));
+
+        // Circle style: has MarginV and Bold
+        let circle = SubtitleStyle::circle_default();
+        let style_str = circle.to_force_style();
+        assert!(style_str.contains("FontSize=32"));
+        assert!(style_str.contains("Outline=3"));
+        assert!(style_str.contains("Shadow=0"));
+        assert!(style_str.contains("MarginV=90"));
+        assert!(style_str.contains("Bold=1"));
     }
 
     #[test]
