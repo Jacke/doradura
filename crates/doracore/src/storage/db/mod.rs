@@ -817,7 +817,7 @@ impl SubtitleStyle {
     /// Larger font, bold, thick outline, and raised margin to stay inside the circular mask.
     pub fn circle_default() -> Self {
         Self {
-            font_size: "large".to_string(), // 32px — readable on small circle
+            font_size: "small".to_string(), // 16px — compact for small circle
             text_color: "white".to_string(),
             outline_color: "black".to_string(),
             outline_width: 3,
