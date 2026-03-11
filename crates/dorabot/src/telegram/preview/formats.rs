@@ -40,11 +40,16 @@ fn parse_resolution_string(resolution: &str) -> Option<(u64, u64)> {
 
 fn quality_from_short_side(short_side: u64) -> Option<&'static str> {
     match short_side {
-        1080 => Some("1080p"),
-        720 => Some("720p"),
-        480 => Some("480p"),
-        360 => Some("360p"),
-        _ => None,
+        4320.. => Some("4320p"),
+        2160..=4319 => Some("2160p"),
+        1440..=2159 => Some("1440p"),
+        1080..=1439 => Some("1080p"),
+        720..=1079 => Some("720p"),
+        480..=719 => Some("480p"),
+        360..=479 => Some("360p"),
+        240..=359 => Some("240p"),
+        1..=239 => Some("144p"),
+        0 => None,
     }
 }
 
@@ -61,7 +66,14 @@ fn quality_from_dimensions(width: Option<u64>, height: Option<u64>) -> Option<&'
 
 fn quality_from_note(note: &str) -> Option<&'static str> {
     let lowered = note.to_ascii_lowercase();
-    if lowered.contains("1080") {
+    // Check from highest to lowest to avoid substring issues (e.g. "1440" before "144")
+    if lowered.contains("4320") {
+        Some("4320p")
+    } else if lowered.contains("2160") {
+        Some("2160p")
+    } else if lowered.contains("1440") {
+        Some("1440p")
+    } else if lowered.contains("1080") {
         Some("1080p")
     } else if lowered.contains("720") {
         Some("720p")
@@ -69,6 +81,11 @@ fn quality_from_note(note: &str) -> Option<&'static str> {
         Some("480p")
     } else if lowered.contains("360") {
         Some("360p")
+    } else if lowered.contains("240") {
+        Some("240p")
+    } else if lowered.contains("144p") {
+        // Use "144p" (not "144") to avoid matching "1440"
+        Some("144p")
     } else {
         None
     }
@@ -184,7 +201,9 @@ pub fn extract_video_formats_from_json(json: &Value) -> Vec<VideoFormatInfo> {
     }
 
     let mut ordered = Vec::new();
-    for quality in ["1080p", "720p", "480p", "360p"] {
+    for quality in [
+        "4320p", "2160p", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p",
+    ] {
         if let Some(info) = by_quality.remove(quality) {
             ordered.push(info);
         }
@@ -309,139 +328,49 @@ pub async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<Vid
     );
     let mut formats: Vec<VideoFormatInfo> = Vec::new();
 
-    // Search for formats at different resolutions
-    // Includes both landscape (standard video) and portrait (YouTube Shorts)
-    let quality_resolutions = vec![
-        ("1080p", vec!["1920x1080", "1080x1920"]), // Landscape and portrait (Shorts)
-        ("720p", vec!["1280x720", "720x1280"]),    // Landscape and portrait (Shorts)
-        ("480p", vec!["854x480", "640x480", "480x854", "480x640"]), // Landscape and portrait
-        ("360p", vec!["640x360", "360x640"]),      // Landscape and portrait
-    ];
+    // Universal format parser: detect quality from explicit labels (e.g. "240p") or resolution
+    let mut by_quality: HashMap<String, (Option<u64>, Option<String>)> = HashMap::new();
 
-    for (quality, resolutions) in quality_resolutions {
-        let mut max_size: Option<u64> = None;
-        let mut found_resolution: Option<String> = None;
-
-        for line in formats_output.lines() {
-            // Check whether the line contains the desired resolution
-            let matches_resolution = resolutions.iter().any(|&res| line.contains(res));
-
-            if matches_resolution {
-                // Skip only "audio only" — we need video formats (both combined and video-only)
-                let is_audio_only = line.contains("audio only");
-
-                if !is_audio_only {
-                    if found_resolution.is_none() {
-                        for &res in &resolutions {
-                            if line.contains(res) {
-                                found_resolution = Some(res.to_string());
-                                break;
-                            }
-                        }
-                    }
-
-                    // Extract size
-                    if let Some(mib_pos) = line.find("MiB") {
-                        let before_mib = &line[..mib_pos];
-                        let mut num_chars = Vec::new();
-                        let mut found_digit = false;
-
-                        for ch in before_mib.chars().rev() {
-                            if ch.is_ascii_digit() || ch == '.' {
-                                num_chars.push(ch);
-                                found_digit = true;
-                            } else if found_digit {
-                                break;
-                            }
-                        }
-
-                        if !num_chars.is_empty() {
-                            num_chars.reverse();
-                            let size_str: String = num_chars.into_iter().collect();
-                            let size_str = size_str.trim();
-
-                            if let Ok(size_mb) = size_str.parse::<f64>() {
-                                if size_mb > 0.0 && size_mb < 10000.0 {
-                                    let size_bytes = (size_mb * 1024.0 * 1024.0) as u64;
-
-                                    // Take the maximum size (best format)
-                                    if max_size.is_none_or(|current| size_bytes > current) {
-                                        max_size = Some(size_bytes);
-                                    }
-                                }
-                            }
-                        }
-                    } else if let Some(gib_pos) = line.find("GiB") {
-                        // Support sizes in gigabytes (yt-dlp reports them as GiB)
-                        let before_gib = &line[..gib_pos];
-                        let mut num_chars = Vec::new();
-                        let mut found_digit = false;
-
-                        for ch in before_gib.chars().rev() {
-                            if ch.is_ascii_digit() || ch == '.' {
-                                num_chars.push(ch);
-                                found_digit = true;
-                            } else if found_digit {
-                                break;
-                            }
-                        }
-
-                        if !num_chars.is_empty() {
-                            num_chars.reverse();
-                            let size_str: String = num_chars.into_iter().collect();
-                            let size_str = size_str.trim();
-
-                            if let Ok(size_gb) = size_str.parse::<f64>() {
-                                // Apply a reasonable upper bound to filter out garbage values
-                                if size_gb > 0.0 && size_gb < 10000.0 {
-                                    let size_bytes = (size_gb * 1024.0 * 1024.0 * 1024.0) as u64;
-
-                                    if max_size.is_none_or(|current| size_bytes > current) {
-                                        max_size = Some(size_bytes);
-                                    }
-                                }
-                            }
-                        }
-                    } else if let Some(kib_pos) = line.find("KiB") {
-                        // Also check for KiB
-                        let before_kib = &line[..kib_pos];
-                        let mut num_chars = Vec::new();
-                        let mut found_digit = false;
-
-                        for ch in before_kib.chars().rev() {
-                            if ch.is_ascii_digit() || ch == '.' {
-                                num_chars.push(ch);
-                                found_digit = true;
-                            } else if found_digit {
-                                break;
-                            }
-                        }
-
-                        if !num_chars.is_empty() {
-                            num_chars.reverse();
-                            let size_str: String = num_chars.into_iter().collect();
-                            let size_str = size_str.trim();
-
-                            if let Ok(size_kb) = size_str.parse::<f64>() {
-                                if size_kb > 0.0 && size_kb < 100000.0 {
-                                    let size_bytes = (size_kb * 1024.0) as u64;
-
-                                    if max_size.is_none_or(|current| size_bytes > current) {
-                                        max_size = Some(size_bytes);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    for line in formats_output.lines() {
+        // Skip non-format lines, audio-only, and storyboard
+        if line.contains("audio only") || line.contains("storyboard") || line.contains("images") {
+            continue;
         }
 
-        if max_size.is_some() || found_resolution.is_some() {
+        // Try to determine quality from the line
+        let quality = match detect_quality_from_text_line(line) {
+            Some(q) => q,
+            None => continue,
+        };
+
+        // Extract resolution (WxH pattern)
+        let resolution = extract_resolution_from_line(line);
+
+        // Extract file size
+        let size_bytes = extract_size_from_line(line);
+
+        let entry = by_quality.entry(quality.to_string()).or_insert((None, None));
+        // Keep the maximum size (best bitrate format)
+        if let Some(new_size) = size_bytes {
+            if entry.0.is_none_or(|current| new_size > current) {
+                entry.0 = Some(new_size);
+            }
+        }
+        if entry.1.is_none() {
+            entry.1 = resolution;
+        }
+    }
+
+    // Convert to VideoFormatInfo, ordered by quality
+    let quality_order = [
+        "4320p", "2160p", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p",
+    ];
+    for quality in quality_order {
+        if let Some((size_bytes, resolution)) = by_quality.remove(quality) {
             formats.push(VideoFormatInfo {
                 quality: quality.to_string(),
-                size_bytes: max_size,
-                resolution: found_resolution,
+                size_bytes,
+                resolution,
             });
         }
     }
@@ -501,10 +430,15 @@ pub async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<Vid
     // Sort formats by quality (best to worst)
     formats.sort_by(|a, b| {
         let order = |q: &str| match q {
-            "1080p" => 4,
-            "720p" => 3,
-            "480p" => 2,
-            "360p" => 1,
+            "4320p" => 9,
+            "2160p" => 8,
+            "1440p" => 7,
+            "1080p" => 6,
+            "720p" => 5,
+            "480p" => 4,
+            "360p" => 3,
+            "240p" => 2,
+            "144p" => 1,
             _ => 0,
         };
         order(&b.quality).cmp(&order(&a.quality))
@@ -518,6 +452,102 @@ pub async fn get_video_formats_list(url: &Url, ytdl_bin: &str) -> Result<Vec<Vid
     }
 
     Ok(formats)
+}
+
+/// Detect quality label from a --list-formats text line.
+/// First checks for explicit quality labels (e.g. "240p"), then falls back to resolution parsing.
+fn detect_quality_from_text_line(line: &str) -> Option<&'static str> {
+    // First: look for explicit quality labels like "240p", "1080p" in the line
+    // Check from highest to lowest to avoid substring issues (4320 before 432, 1440 before 144)
+    for (label, quality) in [
+        ("4320p", "4320p"),
+        ("2160p", "2160p"),
+        ("1440p", "1440p"),
+        ("1080p", "1080p"),
+        ("720p", "720p"),
+        ("480p", "480p"),
+        ("360p", "360p"),
+        ("240p", "240p"),
+        ("144p", "144p"),
+    ] {
+        if line.contains(label) {
+            return Some(quality);
+        }
+    }
+
+    // Fallback: parse WxH resolution and classify by short side
+    if let Some((w, h)) = extract_dimensions_from_line(line) {
+        let short_side = w.min(h);
+        return quality_from_short_side(short_side);
+    }
+
+    None
+}
+
+/// Extract WxH dimensions from a text line (e.g. "1920x1080" or "202x360")
+fn extract_dimensions_from_line(line: &str) -> Option<(u64, u64)> {
+    let bytes = line.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+    while i < len {
+        if bytes[i].is_ascii_digit() {
+            let start = i;
+            while i < len && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i < len && bytes[i] == b'x' {
+                let width_str = &line[start..i];
+                i += 1; // skip 'x'
+                let h_start = i;
+                while i < len && bytes[i].is_ascii_digit() {
+                    i += 1;
+                }
+                if i > h_start {
+                    let height_str = &line[h_start..i];
+                    if let (Ok(w), Ok(h)) = (width_str.parse::<u64>(), height_str.parse::<u64>()) {
+                        if w > 0 && h > 0 && w <= 10000 && h <= 10000 {
+                            return Some((w, h));
+                        }
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Extract resolution string from a text line (returns the "WxH" portion)
+fn extract_resolution_from_line(line: &str) -> Option<String> {
+    extract_dimensions_from_line(line).map(|(w, h)| format!("{}x{}", w, h))
+}
+
+/// Extract file size in bytes from a text line (supports KiB, MiB, GiB)
+fn extract_size_from_line(line: &str) -> Option<u64> {
+    for (suffix, multiplier) in [
+        ("GiB", 1024.0 * 1024.0 * 1024.0),
+        ("MiB", 1024.0 * 1024.0),
+        ("KiB", 1024.0),
+    ] {
+        if let Some(pos) = line.find(suffix) {
+            let before = &line[..pos];
+            let num_str: String = before
+                .chars()
+                .rev()
+                .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '\u{2248}' || *c == '~')
+                .collect::<String>()
+                .chars()
+                .rev()
+                .filter(|c| c.is_ascii_digit() || *c == '.')
+                .collect();
+            if let Ok(size) = num_str.parse::<f64>() {
+                if size > 0.0 && size < 100_000.0 {
+                    return Some((size * multiplier) as u64);
+                }
+            }
+        }
+    }
+    None
 }
 
 #[cfg(test)]
@@ -553,16 +583,34 @@ mod tests {
 
     #[test]
     fn test_quality_from_short_side_standard() {
+        assert_eq!(quality_from_short_side(4320), Some("4320p"));
+        assert_eq!(quality_from_short_side(2160), Some("2160p"));
+        assert_eq!(quality_from_short_side(1440), Some("1440p"));
         assert_eq!(quality_from_short_side(1080), Some("1080p"));
         assert_eq!(quality_from_short_side(720), Some("720p"));
         assert_eq!(quality_from_short_side(480), Some("480p"));
         assert_eq!(quality_from_short_side(360), Some("360p"));
+        assert_eq!(quality_from_short_side(240), Some("240p"));
+        assert_eq!(quality_from_short_side(144), Some("144p"));
     }
 
     #[test]
-    fn test_quality_from_short_side_unknown() {
-        assert_eq!(quality_from_short_side(1440), None);
-        assert_eq!(quality_from_short_side(240), None);
+    fn test_quality_from_short_side_ranges() {
+        // Non-standard resolutions should map to the appropriate bucket
+        assert_eq!(quality_from_short_side(202), Some("144p")); // 202x360 video, short_side=202
+        assert_eq!(quality_from_short_side(100), Some("144p"));
+        assert_eq!(quality_from_short_side(300), Some("240p"));
+        assert_eq!(quality_from_short_side(500), Some("480p"));
+        assert_eq!(quality_from_short_side(600), Some("480p"));
+        assert_eq!(quality_from_short_side(900), Some("720p"));
+        assert_eq!(quality_from_short_side(1200), Some("1080p"));
+        assert_eq!(quality_from_short_side(1800), Some("1440p"));
+        assert_eq!(quality_from_short_side(3000), Some("2160p"));
+        assert_eq!(quality_from_short_side(5000), Some("4320p"));
+    }
+
+    #[test]
+    fn test_quality_from_short_side_zero() {
         assert_eq!(quality_from_short_side(0), None);
     }
 
@@ -609,10 +657,19 @@ mod tests {
     }
 
     #[test]
+    fn test_quality_from_note_extended() {
+        assert_eq!(quality_from_note("4320p"), Some("4320p"));
+        assert_eq!(quality_from_note("2160p"), Some("2160p"));
+        assert_eq!(quality_from_note("1440p"), Some("1440p"));
+        assert_eq!(quality_from_note("240p"), Some("240p"));
+        assert_eq!(quality_from_note("144p"), Some("144p"));
+    }
+
+    #[test]
     fn test_quality_from_note_no_match() {
         assert_eq!(quality_from_note(""), None);
         assert_eq!(quality_from_note("audio only"), None);
-        assert_eq!(quality_from_note("240p"), None);
+        assert_eq!(quality_from_note("unknown"), None);
     }
 
     // ==================== escape_markdown tests ====================
@@ -717,5 +774,133 @@ mod tests {
     #[test]
     fn test_max_video_format_size() {
         assert_eq!(MAX_VIDEO_FORMAT_SIZE_BYTES, 2 * 1024 * 1024 * 1024); // 2GB
+    }
+
+    // ==================== detect_quality_from_text_line tests ====================
+
+    #[test]
+    fn test_detect_quality_from_text_line_explicit_label() {
+        let line =
+            "134 mp4   202x360     25    |  5.36MiB 200k https | avc1.4d400d 200k video only          240p, mp4_dash";
+        assert_eq!(detect_quality_from_text_line(line), Some("240p"));
+    }
+
+    #[test]
+    fn test_detect_quality_from_text_line_1080p() {
+        let line =
+            "137 mp4   1920x1080   30    | 100.00MiB 5000k https | avc1.640028 5000k video only       1080p, mp4_dash";
+        assert_eq!(detect_quality_from_text_line(line), Some("1080p"));
+    }
+
+    #[test]
+    fn test_detect_quality_from_text_line_no_label_uses_resolution() {
+        // Line with resolution but no explicit quality label
+        let line = "999 mp4   1920x1080   30    | 100.00MiB 5000k https | avc1.640028";
+        assert_eq!(detect_quality_from_text_line(line), Some("1080p"));
+    }
+
+    #[test]
+    fn test_detect_quality_from_text_line_audio_only_skipped_by_caller() {
+        // This function itself does not skip audio only; the caller does
+        let line = "140 m4a   audio only        |  3.50MiB 128k https | mp4a.40.2 128k audio only";
+        // It would match dimensions if any, or return None
+        assert_eq!(detect_quality_from_text_line(line), None);
+    }
+
+    // ==================== extract_dimensions_from_line tests ====================
+
+    #[test]
+    fn test_extract_dimensions_standard() {
+        assert_eq!(extract_dimensions_from_line("1920x1080"), Some((1920, 1080)));
+        assert_eq!(extract_dimensions_from_line("202x360"), Some((202, 360)));
+        assert_eq!(extract_dimensions_from_line("256x144"), Some((256, 144)));
+    }
+
+    #[test]
+    fn test_extract_dimensions_in_context() {
+        let line = "134 mp4   202x360     25    |  5.36MiB";
+        assert_eq!(extract_dimensions_from_line(line), Some((202, 360)));
+    }
+
+    #[test]
+    fn test_extract_dimensions_none() {
+        assert_eq!(extract_dimensions_from_line("audio only"), None);
+        assert_eq!(extract_dimensions_from_line("no dimensions"), None);
+    }
+
+    // ==================== extract_size_from_line tests ====================
+
+    #[test]
+    fn test_extract_size_mib() {
+        let line = "134 mp4   202x360     25    |  5.36MiB 200k";
+        let size = extract_size_from_line(line).unwrap();
+        assert!((size as f64 - 5.36 * 1024.0 * 1024.0).abs() < 1024.0);
+    }
+
+    #[test]
+    fn test_extract_size_gib() {
+        let line = "137 mp4   1920x1080   30    |  1.50GiB 5000k";
+        let size = extract_size_from_line(line).unwrap();
+        assert!((size as f64 - 1.5 * 1024.0 * 1024.0 * 1024.0).abs() < 1024.0 * 1024.0);
+    }
+
+    #[test]
+    fn test_extract_size_kib() {
+        let line = "999 mp4   256x144     15    | 500.00KiB 50k";
+        let size = extract_size_from_line(line).unwrap();
+        assert!((size as f64 - 500.0 * 1024.0).abs() < 1024.0);
+    }
+
+    #[test]
+    fn test_extract_size_none() {
+        assert_eq!(extract_size_from_line("no size info here"), None);
+    }
+
+    // ==================== 202x360 end-to-end test ====================
+
+    #[test]
+    fn test_202x360_video_detected_as_240p() {
+        // Simulate yt-dlp --list-formats output for a video with 202x360 resolution
+        let output = r#"[info] Available formats for SxnSmmhRXoI:
+ID  EXT   RESOLUTION FPS CH │    FILESIZE   TBR PROTO │ VCODEC          VBR ACODEC      ABR ASR MORE INFO
+──────────────────────────────────────────────────────────────────────────────────────────────────────────
+sb0 mhtml 48x48          │                    mhtml │ images                                  storyboard
+233 mp4   audio only        │                    m3u8  │ audio only          mp4a.40.5    31k 22k ultralow, m3u8_native, en
+599 webm  audio only        │                    m3u8  │ audio only          opus          31k 48k ultralow, m3u8_native, en
+139 m4a   audio only      2 │    1.28MiB   48k https │ audio only          mp4a.40.5    48k 22k low, m4a_dash
+134 mp4   202x360     25    │    5.36MiB  200k https │ avc1.4d400d   200k video only          240p, mp4_dash
+18  mp4   202x360     25  2 │ ≈  8.77MiB  326k https │ avc1.42001E         mp4a.40.2       44k [ru] 240p
+"#;
+
+        // Parse using the text parser logic
+        let mut by_quality: HashMap<String, (Option<u64>, Option<String>)> = HashMap::new();
+        for line in output.lines() {
+            if line.contains("audio only") || line.contains("storyboard") || line.contains("images") {
+                continue;
+            }
+            let quality = match detect_quality_from_text_line(line) {
+                Some(q) => q,
+                None => continue,
+            };
+            let resolution = extract_resolution_from_line(line);
+            let size_bytes = extract_size_from_line(line);
+            let entry = by_quality.entry(quality.to_string()).or_insert((None, None));
+            if let Some(new_size) = size_bytes {
+                if entry.0.is_none_or(|current| new_size > current) {
+                    entry.0 = Some(new_size);
+                }
+            }
+            if entry.1.is_none() {
+                entry.1 = resolution;
+            }
+        }
+
+        assert!(
+            by_quality.contains_key("240p"),
+            "Should detect 240p quality from 202x360 video"
+        );
+        let (size, resolution) = by_quality.get("240p").unwrap();
+        assert!(size.is_some(), "Should extract file size for 240p");
+        assert_eq!(resolution.as_deref(), Some("202x360"));
     }
 }

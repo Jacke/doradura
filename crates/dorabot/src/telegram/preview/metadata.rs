@@ -228,10 +228,15 @@ pub(super) fn get_json_value(json: &Value, key: &str) -> Option<String> {
 /// Tries to get the file size for a specific video quality from JSON
 pub(super) fn get_video_filesize_from_json(json: &Value, quality: &str) -> Option<u64> {
     let target_height = match quality {
+        "4320p" => 4320,
+        "2160p" => 2160,
+        "1440p" => 1440,
         "1080p" => 1080,
         "720p" => 720,
         "480p" => 480,
         "360p" => 360,
+        "240p" => 240,
+        "144p" => 144,
         _ => return None,
     };
 
