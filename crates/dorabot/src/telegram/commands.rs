@@ -2793,7 +2793,9 @@ pub async fn handle_info_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>) -
                     response.push_str("📹 *Video formats \\(MP4\\):*\n");
 
                     // Filter and sort formats by quality
-                    let quality_order = ["1080p", "720p", "480p", "360p"];
+                    let quality_order = [
+                        "4320p", "2160p", "1440p", "1080p", "720p", "480p", "360p", "240p", "144p",
+                    ];
                     let available_formats: Vec<_> = quality_order
                         .iter()
                         .filter_map(|&quality| formats.iter().find(|f| f.quality == quality))
