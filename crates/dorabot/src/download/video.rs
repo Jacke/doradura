@@ -56,7 +56,7 @@ pub async fn download_and_send_video(
             .as_ref()
             .map(|pool| crate::i18n::user_lang_from_pool(pool, chat_id.0))
             .unwrap_or_else(|| crate::i18n::lang_from_code("ru"));
-        let mut progress_msg = ProgressMessage::new(chat_id, lang);
+        let mut progress_msg = ProgressMessage::new(chat_id, lang.clone());
         if let Some(ref pool) = db_pool_clone {
             if let Ok(conn) = db::get_connection(pool) {
                 if let Ok(style_str) = db::get_user_progress_bar_style(&conn, chat_id.0) {
@@ -436,6 +436,11 @@ pub async fn download_and_send_video(
                 log::info!("Video download completed successfully for chat {}", chat_id);
                 timer.observe_duration();
                 metrics::record_download_success("mp4", quality);
+                let signoff = crate::i18n::random_signoff(&lang);
+                let _ = bot_clone
+                    .send_message(chat_id, signoff)
+                    .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                    .await;
             }
             Err(e) => {
                 e.track_with_operation("video_download");

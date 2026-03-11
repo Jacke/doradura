@@ -114,6 +114,15 @@ pub fn t_args(lang: &LanguageIdentifier, key: &str, args: &FluentArgs) -> String
     text.replace("\\n", "\n")
 }
 
+/// Returns a randomly selected sign-off quote (localized).
+/// Used after successful downloads to show a Dora-themed message.
+pub fn random_signoff(lang: &LanguageIdentifier) -> String {
+    use rand::Rng;
+    let n = rand::thread_rng().gen_range(1..=5_u8);
+    let signoff_key = format!("commands.signoff_{n}");
+    t(lang, &signoff_key)
+}
+
 /// Finds a human-friendly name for a language code.
 pub fn language_name(code: &str) -> &str {
     SUPPORTED_LANGS
