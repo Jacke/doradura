@@ -12,6 +12,7 @@
 pub mod audio;
 pub mod document;
 pub mod image;
+pub mod smartcrop;
 pub mod video;
 
 use std::path::Path;
@@ -46,6 +47,9 @@ pub enum ConversionError {
 
     #[error("Invalid input: {0}")]
     InvalidInput(String),
+
+    #[error("ONNX inference error: {0}")]
+    OnnxError(String),
 }
 
 pub type ConversionResult<T> = Result<T, ConversionError>;

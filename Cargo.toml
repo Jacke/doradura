@@ -42,6 +42,9 @@ unic-langid = "0.9"
 
 # gRPC
 tonic = { version = "0.10", features = ["transport"] }
+# ONNX Runtime for ML inference
+ort = { version = "2.0.0-rc.12", features = ["download-binaries"] }
+ndarray = "0.16"
 prost = "0.12"
 bytes = "1.5"
 http = "0.2"

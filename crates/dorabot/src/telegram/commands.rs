@@ -1772,11 +1772,31 @@ pub async fn process_video_clip(
         String::new()
     };
 
+    // Smart crop: analyze for face detection (single circles only)
+    let smart_crop_filter = if is_video_note && !video_note_needs_split {
+        let sc_duration = effective_len.max(1) as f64;
+        let sc_start = if seek_offset > 0 {
+            Some(seek_offset as f64)
+        } else {
+            None
+        };
+        crate::conversion::smartcrop::compute_smart_crop(
+            std::path::Path::new(&actual_input_path),
+            sc_duration,
+            sc_start,
+        )
+        .await
+        .map(|plan| crate::conversion::smartcrop::ffmpeg::plan_to_filter(&plan))
+    } else {
+        None
+    };
+
     // Apply speed modification if requested
     // For multi-circle video notes, don't apply circle formatting here - it will be done in split step
     let (filter_av, filter_v, map_v_label, map_a_label, crf) = if is_video_note && !video_note_needs_split {
         // Single circle - apply video note formatting in ffmpeg
-        let video_note_post = "scale=640:640:force_original_aspect_ratio=increase,crop=640:640,format=yuv420p";
+        let default_vnp = "scale=640:640:force_original_aspect_ratio=increase,crop=640:640,format=yuv420p";
+        let video_note_post = smart_crop_filter.as_deref().unwrap_or(default_vnp);
 
         if let Some(spd) = speed {
             let setpts_factor = 1.0 / spd;

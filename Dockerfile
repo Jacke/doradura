@@ -24,7 +24,8 @@ RUN apk add --no-cache \
   openssl-libs-static \
   sqlite-dev \
   sqlite-static \
-  build-base
+  build-base \
+  cmake
 
 COPY --from=planner /app/recipe.json recipe.json
 # Build dependencies - this is the caching layer
@@ -51,7 +52,8 @@ FROM aiogram/telegram-bot-api:latest AS bgutil-builder
 USER root
 RUN apk add --no-cache \
   nodejs npm git \
-  build-base pkgconfig \
+  build-base \
+  cmake pkgconfig \
   cairo-dev pango-dev jpeg-dev giflib-dev pixman-dev python3
 
 WORKDIR /opt/bgutil
@@ -74,7 +76,8 @@ RUN tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz && \
     tar -C / -Jxpf /tmp/s6-overlay-x86_64.tar.xz && \
     rm /tmp/s6-overlay-*.tar.xz
 
-# Runtime dependencies only (no build-base, no *-dev)
+# Runtime dependencies only (no build-base \
+  cmake, no *-dev)
 # hadolint ignore=DL3018
 RUN apk add --no-cache \
   ca-certificates musl libssl3 libcrypto3 \
