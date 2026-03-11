@@ -793,6 +793,8 @@ pub struct SubtitleStyle {
     pub position: String,
     /// Bottom margin in pixels (keeps subs inside circle mask)
     pub margin_v: i32,
+    /// Horizontal margin in pixels (MarginL + MarginR, keeps subs inside circle)
+    pub margin_h: i32,
     /// Bold text (1=bold, 0=normal)
     pub bold: i32,
 }
@@ -807,6 +809,7 @@ impl Default for SubtitleStyle {
             shadow: 1,
             position: "bottom".to_string(),
             margin_v: 0,
+            margin_h: 0,
             bold: 0,
         }
     }
@@ -814,16 +817,18 @@ impl Default for SubtitleStyle {
 
 impl SubtitleStyle {
     /// Style optimized for 640x640 circle video notes.
-    /// Larger font, bold, thick outline, and raised margin to stay inside the circular mask.
+    /// Small font, bold, thick outline, with horizontal + vertical margins
+    /// to keep text inside the circular mask.
     pub fn circle_default() -> Self {
         Self {
             font_size: "small".to_string(), // 16px — compact for small circle
             text_color: "white".to_string(),
             outline_color: "black".to_string(),
-            outline_width: 3,
-            shadow: 0, // no shadow, outline is enough
+            outline_width: 2,
+            shadow: 0,
             position: "bottom".to_string(),
-            margin_v: 90, // lift text above circle cutoff
+            margin_v: 60,  // lift above bottom circle cutoff
+            margin_h: 100, // keep text within circle width at this height
             bold: 1,
         }
     }
@@ -867,6 +872,9 @@ impl SubtitleStyle {
         if self.margin_v > 0 {
             style.push_str(&format!(",MarginV={}", self.margin_v));
         }
+        if self.margin_h > 0 {
+            style.push_str(&format!(",MarginL={},MarginR={}", self.margin_h, self.margin_h));
+        }
         if self.bold != 0 {
             style.push_str(&format!(",Bold={}", self.bold));
         }
@@ -893,6 +901,7 @@ pub fn get_user_subtitle_style(conn: &DbConnection, telegram_id: i64) -> Result<
             shadow: row.get(4).unwrap_or(1),
             position: row.get(5).unwrap_or_else(|_| "bottom".to_string()),
             margin_v: 0,
+            margin_h: 0,
             bold: 0,
         })
     } else {
