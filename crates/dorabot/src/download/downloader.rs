@@ -719,7 +719,7 @@ pub async fn split_video_into_parts(path: &str, target_part_size_bytes: u64) -> 
 /// 1. Removes consecutive entries with identical text (YouTube "builds up" captions)
 /// 2. Trims end times so entry N-1 ends when entry N starts (no overlap)
 /// 3. Re-numbers entries sequentially
-fn clean_srt_overlaps(path: &str) {
+pub fn clean_srt_overlaps(path: &str) {
     let content = match fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) => {

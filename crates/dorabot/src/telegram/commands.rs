@@ -1692,28 +1692,24 @@ pub async fn process_video_clip(
     }
     let _ = download_result.map_err(AppError::from)?;
 
-    // --- Subtitle burning (if requested for circle) ---
-    let actual_input_path = if is_video_note {
+    // --- Subtitle handling for circles ---
+    // For circles: download SRT only (don't burn yet) — subs will be burned
+    // AFTER scale+crop in the ffmpeg filter chain so they render at 640x640.
+    let circle_srt_path: Option<std::path::PathBuf> = if is_video_note {
         if let Some(ref sub_lang) = session.subtitle_lang {
-            match burn_circle_subtitles(
-                &session.original_url,
-                sub_lang,
-                &input_path,
-                &temp_dir,
-                chat_id.0,
-                session.source_id,
-            )
-            .await
+            match download_circle_subtitles(&session.original_url, sub_lang, &temp_dir, chat_id.0, session.source_id)
+                .await
             {
-                BurnSubsResult::Burned(path) => path,
-                BurnSubsResult::NotFound | BurnSubsResult::Failed(_) => input_path.clone(),
+                BurnSubsResult::SubtitleReady(srt) => Some(srt),
+                _ => None,
             }
         } else {
-            input_path.clone()
+            None
         }
     } else {
-        input_path.clone()
+        None
     };
+    let actual_input_path = input_path.clone();
 
     // Probe file for video stream
     let probe_output = crate::core::process::run_with_timeout(
@@ -1791,12 +1787,37 @@ pub async fn process_video_clip(
         None
     };
 
+    // Build subtitle filter fragment for post-crop burning (640x640 coordinates)
+    let circle_sub_filter = circle_srt_path.as_ref().map(|srt_path| {
+        let escaped = srt_path
+            .to_string_lossy()
+            .replace('\\', "\\\\\\\\")
+            .replace(':', "\\\\:")
+            .replace('\'', "\\\\'");
+        let style = db::SubtitleStyle::circle_default();
+        let force_style = style.to_force_style();
+        format!("subtitles='{escaped}':force_style='{force_style}'")
+    });
+
     // Apply speed modification if requested
     // For multi-circle video notes, don't apply circle formatting here - it will be done in split step
     let (filter_av, filter_v, map_v_label, map_a_label, crf) = if is_video_note && !video_note_needs_split {
         // Single circle - apply video note formatting in ffmpeg
-        let default_vnp = "scale=640:640:force_original_aspect_ratio=increase,crop=640:640,format=yuv420p";
-        let video_note_post = smart_crop_filter.as_deref().unwrap_or(default_vnp);
+        // Subtitles are burned AFTER scale+crop so they render at 640x640 coordinates
+        let video_note_post = if let Some(ref sc_filter) = smart_crop_filter {
+            // Smart crop filter already includes scale+crop+format
+            // Insert subtitles before format=yuv420p
+            if let Some(ref sub_filter) = circle_sub_filter {
+                sc_filter.replace(",format=yuv420p", &format!(",{sub_filter},format=yuv420p"))
+            } else {
+                sc_filter.clone()
+            }
+        } else if let Some(ref sub_filter) = circle_sub_filter {
+            format!("scale=640:640:force_original_aspect_ratio=increase,crop=640:640,{sub_filter},format=yuv420p")
+        } else {
+            "scale=640:640:force_original_aspect_ratio=increase,crop=640:640,format=yuv420p".to_string()
+        };
+        let video_note_post = video_note_post.as_str();
 
         if let Some(spd) = speed {
             let setpts_factor = 1.0 / spd;
@@ -2361,26 +2382,30 @@ pub async fn process_video_clip(
 
     tokio::fs::remove_file(&actual_input_path).await.ok();
     tokio::fs::remove_file(&output_path).await.ok();
+    if let Some(srt) = &circle_srt_path {
+        tokio::fs::remove_file(srt).await.ok();
+    }
 
     Ok(())
 }
 
-/// Download SRT subtitles via yt-dlp and burn them into the source video.
-/// Returns the path to the video with burned subtitles, or the original path on failure.
-/// Result of a subtitle burn attempt.
+/// Result of a subtitle operation.
 pub enum BurnSubsResult {
     /// Subtitles were burned successfully; contains the new video path.
     Burned(std::path::PathBuf),
+    /// SRT file downloaded and ready for post-crop burning; contains the SRT path.
+    SubtitleReady(std::path::PathBuf),
     /// No subtitles available for the requested language.
     NotFound,
     /// Subtitles exist but download/burn failed (rate-limit, network, ffmpeg error, etc.).
     Failed(String),
 }
 
-pub async fn burn_circle_subtitles(
+/// Download SRT subtitles via yt-dlp without burning them into the video.
+/// Returns the SRT file path for post-crop burning in the circle filter chain.
+pub async fn download_circle_subtitles(
     url: &str,
     lang: &str,
-    input_path: &std::path::Path,
     temp_dir: &std::path::Path,
     chat_id: i64,
     source_id: i64,
@@ -2390,7 +2415,6 @@ pub async fn burn_circle_subtitles(
     let srt_base = temp_dir.join(format!("subs_{}_{}", chat_id, source_id));
     let srt_base_str = srt_base.to_string_lossy().to_string();
 
-    // Download subtitles via yt-dlp
     let ytdl_bin = &*config::YTDL_BIN;
     let mut cmd = TokioCommand::new(ytdl_bin);
     let mut args: Vec<&str> = vec![
@@ -2415,7 +2439,6 @@ pub async fn burn_circle_subtitles(
 
     match sub_result {
         Ok(output) if output.status.success() => {
-            // Find actual SRT file (yt-dlp adds lang suffix like "subs.en.srt")
             let srt_dir = temp_dir.to_string_lossy().to_string();
             let srt_stem = format!("subs_{}_{}", chat_id, source_id);
             let srt_file = std::fs::read_dir(&srt_dir).ok().and_then(|entries| {
@@ -2430,34 +2453,10 @@ pub async fn burn_circle_subtitles(
             });
 
             if let Some(sub_path) = srt_file {
-                log::info!("🔤 Downloaded subtitles for circle: {:?}", sub_path);
-
-                let output_with_subs = temp_dir.join(format!("input_subs_{}_{}.mp4", chat_id, source_id));
-                let circle_style = db::SubtitleStyle::circle_default();
-                match crate::download::downloader::burn_subtitles_into_video(
-                    input_path.to_str().unwrap_or_default(),
-                    sub_path.to_str().unwrap_or_default(),
-                    output_with_subs.to_str().unwrap_or_default(),
-                    &circle_style,
-                )
-                .await
-                {
-                    Ok(()) => {
-                        log::info!("🔥 Burned subtitles into circle source");
-                        tokio::fs::remove_file(input_path).await.ok();
-                        tokio::fs::remove_file(&sub_path).await.ok();
-                        BurnSubsResult::Burned(output_with_subs)
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "Failed to burn subs into circle source: {}. Continuing without subs.",
-                            e
-                        );
-                        tokio::fs::remove_file(&sub_path).await.ok();
-                        tokio::fs::remove_file(&output_with_subs).await.ok();
-                        BurnSubsResult::Failed(format!("ffmpeg error: {e}"))
-                    }
-                }
+                log::info!("Downloaded subtitles for circle: {:?}", sub_path);
+                // Clean overlapping timestamps from YouTube auto-captions
+                crate::download::downloader::clean_srt_overlaps(sub_path.to_str().unwrap_or_default());
+                BurnSubsResult::SubtitleReady(sub_path)
             } else {
                 log::warn!("Subtitle file not found after yt-dlp download for circle");
                 BurnSubsResult::NotFound
@@ -2466,7 +2465,6 @@ pub async fn burn_circle_subtitles(
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             log::warn!("yt-dlp subtitle download failed for circle: {}", stderr);
-            // Distinguish "no subs" from download errors (429, network, etc.)
             if stderr.contains("has no subtitles") || stderr.contains("no subtitles") {
                 return BurnSubsResult::NotFound;
             }
@@ -2476,6 +2474,46 @@ pub async fn burn_circle_subtitles(
             log::warn!("Failed to execute yt-dlp for circle subtitles: {}", e);
             BurnSubsResult::Failed(format!("{e}"))
         }
+    }
+}
+
+/// Legacy: Download subtitles and burn them at original resolution.
+/// Used by downloads.rs for non-circle subtitle burning.
+pub async fn burn_circle_subtitles(
+    url: &str,
+    lang: &str,
+    input_path: &std::path::Path,
+    temp_dir: &std::path::Path,
+    chat_id: i64,
+    source_id: i64,
+) -> BurnSubsResult {
+    match download_circle_subtitles(url, lang, temp_dir, chat_id, source_id).await {
+        BurnSubsResult::SubtitleReady(sub_path) => {
+            let output_with_subs = temp_dir.join(format!("input_subs_{}_{}.mp4", chat_id, source_id));
+            let circle_style = db::SubtitleStyle::circle_default();
+            match crate::download::downloader::burn_subtitles_into_video(
+                input_path.to_str().unwrap_or_default(),
+                sub_path.to_str().unwrap_or_default(),
+                output_with_subs.to_str().unwrap_or_default(),
+                &circle_style,
+            )
+            .await
+            {
+                Ok(()) => {
+                    log::info!("Burned subtitles into video source");
+                    tokio::fs::remove_file(input_path).await.ok();
+                    tokio::fs::remove_file(&sub_path).await.ok();
+                    BurnSubsResult::Burned(output_with_subs)
+                }
+                Err(e) => {
+                    log::warn!("Failed to burn subs: {}. Continuing without.", e);
+                    tokio::fs::remove_file(&sub_path).await.ok();
+                    tokio::fs::remove_file(&output_with_subs).await.ok();
+                    BurnSubsResult::Failed(format!("ffmpeg error: {e}"))
+                }
+            }
+        }
+        other => other,
     }
 }
 

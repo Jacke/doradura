@@ -817,18 +817,21 @@ impl Default for SubtitleStyle {
 
 impl SubtitleStyle {
     /// Style optimized for 640x640 circle video notes.
-    /// Small font, bold, thick outline, with horizontal + vertical margins
-    /// to keep text inside the circular mask.
+    /// Subtitles are burned AFTER scale+crop, so these values are in 640×640 coordinates.
+    /// Small font, bold, thick outline, with margins to keep text inside circular mask.
+    ///
+    /// Circle geometry at MarginV=55: chord width ≈ 390px → MarginH=125 each side
+    /// keeps text safely within the visible circle area.
     pub fn circle_default() -> Self {
         Self {
-            font_size: "small".to_string(), // 16px — compact for small circle
+            font_size: "small".to_string(), // 16px — compact for 640×640
             text_color: "white".to_string(),
             outline_color: "black".to_string(),
             outline_width: 2,
             shadow: 0,
             position: "bottom".to_string(),
-            margin_v: 60,  // lift above bottom circle cutoff
-            margin_h: 100, // keep text within circle width at this height
+            margin_v: 55,  // lift above bottom circle cutoff (640×640 coords)
+            margin_h: 125, // keep text within circle chord at this height
             bold: 1,
         }
     }

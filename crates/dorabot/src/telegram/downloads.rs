@@ -1781,6 +1781,11 @@ pub async fn handle_downloads_callback(
 
                         let actual_path = match burn_result {
                             BurnSubsResult::Burned(path) => path,
+                            BurnSubsResult::SubtitleReady(_) => {
+                                // Legacy path: should not happen since burn_circle_subtitles
+                                // always returns Burned, not SubtitleReady
+                                input_path.clone()
+                            }
                             BurnSubsResult::NotFound => {
                                 bot.edit_message_text(
                                     chat_id,
