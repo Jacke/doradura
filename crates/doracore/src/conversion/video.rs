@@ -107,6 +107,7 @@ pub async fn to_video_note<P: AsRef<Path>>(
     let output_path = temp_output_path("video_note", "mp4");
 
     // Smart crop: detect faces and compute tracking filter, or fallback to center crop
+    #[cfg(feature = "smartcrop")]
     let smart_crop_filter = if options.smart_crop {
         let dur = options
             .duration
@@ -123,6 +124,8 @@ pub async fn to_video_note<P: AsRef<Path>>(
     } else {
         None
     };
+    #[cfg(not(feature = "smartcrop"))]
+    let smart_crop_filter: Option<String> = None;
     let video_filter = smart_crop_filter
         .as_deref()
         .unwrap_or("scale=640:640:force_original_aspect_ratio=increase,crop=640:640,format=yuv420p");

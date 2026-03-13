@@ -1769,6 +1769,7 @@ pub async fn process_video_clip(
     };
 
     // Smart crop: analyze for face detection (single circles only)
+    #[cfg(feature = "smartcrop")]
     let smart_crop_filter = if is_video_note && !video_note_needs_split {
         let sc_duration = effective_len.max(1) as f64;
         let sc_start = if seek_offset > 0 {
@@ -1786,6 +1787,8 @@ pub async fn process_video_clip(
     } else {
         None
     };
+    #[cfg(not(feature = "smartcrop"))]
+    let smart_crop_filter: Option<String> = None;
 
     // Build subtitle filter fragment for post-crop burning (640x640 coordinates)
     let circle_sub_filter = circle_srt_path.as_ref().map(|srt_path| {

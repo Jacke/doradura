@@ -3249,10 +3249,10 @@ mod tests {
         // Circle style: has MarginV and Bold
         let circle = SubtitleStyle::circle_default();
         let style_str = circle.to_force_style();
-        assert!(style_str.contains("FontSize=32"));
-        assert!(style_str.contains("Outline=3"));
+        assert!(style_str.contains("FontSize=16"));
+        assert!(style_str.contains("Outline=2"));
         assert!(style_str.contains("Shadow=0"));
-        assert!(style_str.contains("MarginV=90"));
+        assert!(style_str.contains("MarginV=55"));
         assert!(style_str.contains("Bold=1"));
     }
 
