@@ -29,27 +29,49 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use url::Url;
 
-/// Known domains handled by yt-dlp (non-exhaustive, used for `supports_url`).
+/// Allowlist of domains that yt-dlp is permitted to handle.
+/// Only these domains are accepted — arbitrary URLs are rejected for security.
 const YTDLP_DOMAINS: &[&str] = &[
+    // YouTube
     "youtube.com",
     "youtu.be",
     "music.youtube.com",
+    // Audio platforms
     "soundcloud.com",
+    "bandcamp.com",
+    "audiomack.com",
+    "mixcloud.com",
+    // Video platforms
     "vimeo.com",
+    "dailymotion.com",
+    "rutube.ru",
+    "bilibili.com",
+    "nicovideo.jp",
+    // Social media
     "tiktok.com",
     "twitter.com",
     "x.com",
     "facebook.com",
-    "twitch.tv",
-    "dailymotion.com",
-    "bandcamp.com",
     "reddit.com",
-    "bilibili.com",
-    "nicovideo.jp",
-    "rutube.ru",
     "ok.ru",
     "vk.com",
+    // Streaming / clips
+    "twitch.tv",
     "clips.twitch.tv",
+    // Music services
+    "music.apple.com",
+    "deezer.com",
+    "open.spotify.com",
+    // Other
+    "vlipsy.com",
+    "streamable.com",
+    "coub.com",
+    "rumble.com",
+    "odysee.com",
+    "lbry.tv",
+    "piped.video",
+    "invidio.us",
+    "yewtu.be",
 ];
 
 /// Download source powered by yt-dlp for extracting media from supported sites.
@@ -86,22 +108,7 @@ impl DownloadSource for YtDlpSource {
     }
 
     fn supports_url(&self, url: &Url) -> bool {
-        // Support known domains, plus any non-direct-file URL as a fallback
-        // (yt-dlp supports 1000+ sites)
-        if Self::is_known_domain(url) {
-            return true;
-        }
-        // If it's http(s) but doesn't look like a direct file link, yt-dlp might handle it
-        let scheme = url.scheme();
-        if scheme != "http" && scheme != "https" {
-            return false;
-        }
-        let path = url.path().to_lowercase();
-        // Reject obvious direct file URLs (handled by HttpSource)
-        !matches!(
-            path.rsplit('.').next(),
-            Some("mp3" | "mp4" | "wav" | "flac" | "ogg" | "m4a" | "webm" | "avi" | "mkv" | "zip" | "rar" | "pdf")
-        )
+        Self::is_known_domain(url)
     }
 
     async fn get_metadata(&self, url: &Url) -> Result<crate::download::source::MediaMetadata, AppError> {
