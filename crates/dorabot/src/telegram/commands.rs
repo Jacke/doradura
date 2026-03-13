@@ -563,6 +563,13 @@ pub async fn handle_message(
                         }
                     }
 
+                    // Check URL against source allowlist
+                    let registry = crate::download::source::SourceRegistry::global();
+                    if registry.resolve(&url).is_none() {
+                        log::warn!("Rejected unsupported URL in group: {}", url);
+                        continue;
+                    }
+
                     crate::telegram::cache::store_link_message_id(url.as_str(), msg.id.0).await;
                     valid_urls.push(url);
                 }
@@ -877,6 +884,15 @@ pub async fn handle_message(
                 if let Some(ref tr) = time_range {
                     log::info!("Parsed time range for {}: {} - {}", url, tr.0, tr.1);
                     crate::telegram::cache::store_time_range(url.as_str(), tr.clone()).await;
+                }
+
+                // Check URL against source allowlist before any processing
+                let registry = crate::download::source::SourceRegistry::global();
+                if registry.resolve(&url).is_none() {
+                    log::warn!("Rejected unsupported URL: {}", url);
+                    bot.send_message(msg.chat.id, i18n::t(&lang, "commands.unsupported_url"))
+                        .await?;
+                    return Ok(user_info);
                 }
 
                 // Send "processing" message

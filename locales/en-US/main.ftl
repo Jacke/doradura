@@ -82,6 +82,7 @@ commands =
     .processing = ⏳ Fetching info...
     .audio_too_large = ❌ Audio file is too large (~{$size} MB). Max size: {$max} MB.
     .preview_failed = Couldn't show the preview 😢 Try again or ping the admin.
+    .unsupported_url = ❌ This website is not supported. I work with YouTube, SoundCloud, TikTok, Instagram, and other popular platforms.
     .channel_extract_failed = Couldn't extract a track from this channel/profile 😢 Try sending a direct track link instead.
     .preview_info_failed = Couldn't fetch track info 😢 Try again or ping the admin.
     .audio_cut_cancelled = ✂️ Audio cut cancelled.

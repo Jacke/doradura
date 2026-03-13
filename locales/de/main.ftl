@@ -77,6 +77,7 @@ commands =
     .processing = ⏳ Hole Infos...
     .audio_too_large = ❌ Die Audiodatei ist zu groß (ca. {$size} MB). Maximalgröße: {$max} MB.
     .preview_failed = Ich konnte die Vorschau nicht anzeigen 😢 Versuche es erneut oder schreibe an den Admin.
+    .unsupported_url = ❌ Diese Website wird nicht unterstützt. Ich arbeite mit YouTube, SoundCloud, TikTok, Instagram und anderen beliebten Plattformen.
     .channel_extract_failed = Ich konnte keinen Track aus diesem Kanal/Profil extrahieren 😢 Versuche einen direkten Track-Link zu senden.
     .preview_info_failed = Ich konnte die Informationen zum Titel nicht abrufen 😢 Versuche es erneut oder schreibe an den Admin.
     .audio_cut_cancelled = ✂️ Audio-Schnitt abgebrochen.
