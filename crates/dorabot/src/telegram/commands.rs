@@ -564,7 +564,7 @@ pub async fn handle_message(
                     }
 
                     // Check URL against source allowlist
-                    let registry = crate::download::source::SourceRegistry::global();
+                    let registry = crate::download::source::bot_global();
                     if registry.resolve(&url).is_none() {
                         log::warn!("Rejected unsupported URL in group: {}", url);
                         continue;
@@ -887,7 +887,7 @@ pub async fn handle_message(
                 }
 
                 // Check URL against source allowlist before any processing
-                let registry = crate::download::source::SourceRegistry::global();
+                let registry = crate::download::source::bot_global();
                 if registry.resolve(&url).is_none() {
                     log::warn!("Rejected unsupported URL: {}", url);
                     bot.send_message(msg.chat.id, i18n::t(&lang, "commands.unsupported_url"))

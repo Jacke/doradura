@@ -659,16 +659,27 @@ pub fn find_actual_downloaded_file(expected_path: &str) -> Result<String, AppErr
     Ok(actual_path)
 }
 
+/// Callback for notifying administrators about yt-dlp errors.
+///
+/// Used by the bot to send error details via Telegram. The core library
+/// logs errors at `error` level; callers that want richer notification
+/// (e.g., sending a Telegram message) can supply this callback.
+pub type ErrorNotifyFn =
+    Box<dyn Fn(String) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> + Send + Sync>;
+
 /// Fetches metadata (title, artist) from yt-dlp for the given URL.
 ///
 /// Checks the in-memory cache before invoking yt-dlp. When a yt-dlp error
-/// requires administrator attention, the details are logged at `error` level
-/// instead of being sent to a Telegram admin chat.
+/// requires administrator attention, the optional `error_notifier` callback
+/// is invoked (in addition to logging at `error` level).
 ///
 /// # Returns
 ///
 /// `Ok((title, artist))` on success.
-pub async fn get_metadata_from_ytdlp(url: &Url) -> Result<(String, String), AppError> {
+pub async fn get_metadata_from_ytdlp(
+    url: &Url,
+    error_notifier: Option<&ErrorNotifyFn>,
+) -> Result<(String, String), AppError> {
     // Check cache; ignore "Unknown Track" or empty/NA artist entries
     if let Some((title, artist)) = cache::get_cached_metadata(url).await {
         if title.trim() != "Unknown Track" && !title.trim().is_empty() {
@@ -765,6 +776,18 @@ pub async fn get_metadata_from_ytdlp(url: &Url) -> Result<(String, String), AppE
                 command_str,
                 stderr,
             );
+
+            if let Some(notifier) = error_notifier {
+                let mut text = String::new();
+                text.push_str("YTDLP ERROR (metadata)\n");
+                text.push_str(&format!("url: {}\n", url));
+                text.push_str(&format!("error_type: {:?}\n\n", error_type));
+                text.push_str("command:\n");
+                text.push_str(&command_str);
+                text.push_str("\n\nstderr:\n");
+                text.push_str(&stderr);
+                notifier(text).await;
+            }
         }
 
         return Err(AppError::Download(DownloadError::YtDlp(get_error_message(&error_type))));

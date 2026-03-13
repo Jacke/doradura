@@ -1,10 +1,15 @@
+// ── Re-export shared download utilities from doracore ─────────────────────────
+pub use doracore::download::downloader::{
+    cleanup_partial_download, generate_file_name, generate_file_name_with_ext, parse_progress,
+};
+
 use crate::core::config;
 use crate::core::error::AppError;
 use crate::core::error_logger::{self, ErrorType, UserContext};
 use crate::core::metrics;
 use crate::core::process::{run_with_timeout, FFMPEG_TIMEOUT};
 use crate::core::rate_limiter::RateLimiter;
-use crate::core::utils::{escape_filename, sanitize_filename};
+use crate::core::utils::escape_filename;
 use crate::download::error::DownloadError;
 use crate::download::metadata::{add_cookies_args, get_metadata_from_ytdlp, probe_video_metadata};
 use crate::download::progress::{DownloadStatus, ProgressBarStyle, ProgressMessage};
@@ -22,59 +27,6 @@ use teloxide::prelude::*;
 use teloxide::types::InputFile;
 use tokio::process::Command as TokioCommand;
 use url::Url;
-
-/// Cleans up all partial/temporary files created by yt-dlp for a download path
-///
-/// yt-dlp creates various intermediate files during download:
-/// - `.part` - partial download
-/// - `.ytdl` - download state
-/// - `.temp.{ext}` - temporary merge files
-/// - `.f{N}.{ext}` - format-specific fragments
-/// - `.info.json` - metadata cache
-///
-/// This function removes all of them to prevent disk space leaks.
-pub fn cleanup_partial_download(base_path: &str) {
-    let base = Path::new(base_path);
-    let parent = base.parent().unwrap_or(Path::new("."));
-    let filename = base.file_name().and_then(|n| n.to_str()).unwrap_or("");
-
-    // Remove exact known patterns
-    let patterns = [".part", ".ytdl", ".temp.mp4", ".temp.webm", ".info.json"];
-    for pattern in patterns {
-        let path = format!("{}{}", base_path, pattern);
-        if let Err(e) = fs::remove_file(&path) {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                log::debug!("Failed to remove {}: {}", path, e);
-            }
-        }
-    }
-
-    // Remove fragment files (.f{N}.{ext}) using glob pattern
-    // These are created when yt-dlp downloads separate audio/video streams
-    if let Ok(entries) = fs::read_dir(parent) {
-        let base_name = filename
-            .trim_end_matches(".mp4")
-            .trim_end_matches(".mp3")
-            .trim_end_matches(".webm");
-        for entry in entries.flatten() {
-            if let Some(name) = entry.file_name().to_str() {
-                // Match patterns like: basename.f123.mp4, basename.f456.webm, etc.
-                if name.starts_with(base_name)
-                    && (name.contains(".f") || name.ends_with(".part") || name.ends_with(".ytdl"))
-                {
-                    let path = entry.path();
-                    if let Err(e) = fs::remove_file(&path) {
-                        if e.kind() != std::io::ErrorKind::NotFound {
-                            log::debug!("Failed to remove fragment {}: {}", path.display(), e);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    log::debug!("Cleaned up partial files for: {}", base_path);
-}
 
 /// Legacy alias for backward compatibility
 /// Use AppError instead
@@ -124,164 +76,6 @@ pub fn spawn_downloader_with_fallback(ytdl_bin: &str, args: &[&str]) -> Result<s
                 ))))
             }
         })
-}
-
-/// Parses progress from yt-dlp output line into a `SourceProgress`.
-///
-/// Example: "[download]  45.2% of 10.00MiB at 500.00KiB/s ETA 00:10"
-pub fn parse_progress(line: &str) -> Option<crate::download::source::SourceProgress> {
-    use crate::download::source::SourceProgress;
-
-    // Check basic requirements
-    if !line.contains("[download]") {
-        return None;
-    }
-
-    // For debugging: log all lines with [download]
-    if !line.contains("%") {
-        // This may be a different message, e.g. "[download] Destination: ..."
-        log::trace!("Download line without percent: {}", line);
-        return None;
-    }
-
-    let mut percent = None;
-    let mut speed_bytes_sec = None;
-    let mut eta_seconds = None;
-    let mut downloaded_bytes = None;
-    let mut total_bytes = None;
-
-    // Parse without Vec allocation — use peek iterator
-    let mut parts = line.split_whitespace().peekable();
-    while let Some(part) = parts.next() {
-        // Parse percent
-        if part.ends_with('%') {
-            if let Ok(p) = part.trim_end_matches('%').parse::<f32>() {
-                // Clamp to sane bounds to avoid jumping to 100% on garbage data
-                let clamped = p.clamp(0.0, 100.0) as u8;
-                percent = Some(clamped);
-            }
-        }
-
-        // Parse size: "of 10.00MiB"
-        if part == "of" {
-            if let Some(&next) = parts.peek() {
-                if let Some(size_bytes) = parse_size(next) {
-                    total_bytes = Some(size_bytes);
-                }
-            }
-        }
-
-        // Parse speed: "at 500.00KiB/s" or "at 2.3MiB/s"
-        if part == "at" {
-            if let Some(&next) = parts.peek() {
-                if let Some(speed) = parse_size(next) {
-                    // Keep speed in bytes/sec (canonical unit)
-                    speed_bytes_sec = Some(speed as f64);
-                }
-            }
-        }
-
-        // Parse ETA: "ETA 00:10" or "ETA 1:23"
-        if part == "ETA" {
-            if let Some(&next) = parts.peek() {
-                if let Some(eta) = parse_eta(next) {
-                    eta_seconds = Some(eta);
-                }
-            }
-        }
-    }
-
-    // If we have a percent, return SourceProgress
-    if let Some(p) = percent {
-        // Calculate current size based on percent
-        if let Some(total) = total_bytes {
-            downloaded_bytes = Some((total as f64 * (p as f64 / 100.0)) as u64);
-        }
-
-        log::debug!(
-            "Progress parsed successfully: {}% (speed: {:?} B/s, eta: {:?}s)",
-            p,
-            speed_bytes_sec,
-            eta_seconds
-        );
-
-        Some(SourceProgress {
-            percent: p,
-            speed_bytes_sec,
-            eta_seconds,
-            downloaded_bytes,
-            total_bytes,
-        })
-    } else {
-        log::debug!("Could not parse percent from line: {}", line);
-        None
-    }
-}
-
-/// Parses a size from a string like "10.00MiB" or "500.00KiB"
-fn parse_size(size_str: &str) -> Option<u64> {
-    let size_str = size_str.trim_end_matches("/s"); // Strip "/s" suffix if present
-    if size_str.ends_with("MiB") {
-        if let Ok(mb) = size_str.trim_end_matches("MiB").parse::<f64>() {
-            return Some((mb * 1024.0 * 1024.0) as u64);
-        }
-    } else if size_str.ends_with("KiB") {
-        if let Ok(kb) = size_str.trim_end_matches("KiB").parse::<f64>() {
-            return Some((kb * 1024.0) as u64);
-        }
-    } else if size_str.ends_with("GiB") {
-        if let Ok(gb) = size_str.trim_end_matches("GiB").parse::<f64>() {
-            return Some((gb * 1024.0 * 1024.0 * 1024.0) as u64);
-        }
-    }
-    None
-}
-
-/// Parses ETA from a string like "00:10" or "1:23"
-fn parse_eta(eta_str: &str) -> Option<u64> {
-    // Use split_once to avoid Vec allocation
-    let (minutes_str, seconds_str) = eta_str.split_once(':')?;
-    let minutes: u64 = minutes_str.parse().ok()?;
-    let seconds: u64 = seconds_str.parse().ok()?;
-    Some(minutes * 60 + seconds)
-}
-
-// download_and_send_audio moved to audio.rs
-
-// send_file_with_retry, send_audio_with_retry, send_video_with_retry moved to send.rs
-pub fn generate_file_name(title: &str, artist: &str) -> String {
-    generate_file_name_with_ext(title, artist, "mp3")
-}
-
-pub fn generate_file_name_with_ext(title: &str, artist: &str, extension: &str) -> String {
-    let title_trimmed = title.trim();
-    let artist_trimmed = artist.trim();
-
-    log::debug!(
-        "Generating filename: title='{}' (len={}), artist='{}' (len={}), ext='{}'",
-        title,
-        title.len(),
-        artist,
-        artist.len(),
-        extension
-    );
-
-    let filename = if artist_trimmed.is_empty() && title_trimmed.is_empty() {
-        log::warn!("Both title and artist are empty, using 'Unknown.{}'", extension);
-        format!("Unknown.{}", extension)
-    } else if artist_trimmed.is_empty() {
-        log::debug!("Using title only: '{}.{}'", title_trimmed, extension);
-        format!("{}.{}", title_trimmed, extension)
-    } else if title_trimmed.is_empty() {
-        log::debug!("Using artist only: '{}.{}'", artist_trimmed, extension);
-        format!("{}.{}", artist_trimmed, extension)
-    } else {
-        log::debug!("Using both: '{} - {}.{}'", artist_trimmed, title_trimmed, extension);
-        format!("{} - {}.{}", artist_trimmed, title_trimmed, extension)
-    };
-
-    // Replace spaces with underscores before returning
-    sanitize_filename(&filename)
 }
 
 /// Download subtitles file (SRT or TXT format) and send it to user
@@ -356,7 +150,14 @@ pub async fn download_and_send_subtitles(
 
         let result: Result<(), AppError> = async {
             // Step 1: Get metadata
-            let (title, _) = match get_metadata_from_ytdlp(Some(&bot_clone), Some(chat_id), &url).await {
+            let notifier_bot = bot_clone.clone();
+            let notifier: crate::download::metadata::ErrorNotifyFn = Box::new(move |text| {
+                let bot = notifier_bot.clone();
+                Box::pin(async move {
+                    crate::telegram::notifications::notify_admin_text(&bot, &text).await;
+                })
+            });
+            let (title, _) = match get_metadata_from_ytdlp(&url, Some(&notifier)).await {
                 Ok(meta) => meta,
                 Err(e) => {
                     log::error!("Failed to get metadata: {:?}", e);

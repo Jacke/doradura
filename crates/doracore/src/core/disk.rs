@@ -8,8 +8,15 @@ use crate::core::error::AppError;
 use crate::core::metrics;
 use crate::download::error::DownloadError;
 use std::path::Path;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
+
+/// Async callback for sending disk-space alerts (e.g., Telegram admin notification).
+/// Arguments: `(available_gb, threshold_gb)`.
+pub type DiskAlertFn =
+    Arc<dyn Fn(f64, f64) -> Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>> + Send + Sync>;
 
 /// Minimum required disk space for downloads (500 MB)
 pub const MIN_DISK_SPACE_BYTES: u64 = 500 * 1024 * 1024;
@@ -170,8 +177,8 @@ pub fn check_disk_space_for_download() -> Result<DiskSpaceInfo, AppError> {
 /// Check disk space and log status.
 ///
 /// This function is meant to be called periodically to monitor disk space.
-/// Low-disk conditions are reported via `log::warn!` / `log::error!`.
-pub async fn check_and_log_disk_space() {
+/// If an `on_alert` callback is provided, it is invoked with `(available_gb, threshold_gb)`.
+pub async fn check_and_log_disk_space(on_alert: Option<&DiskAlertFn>) {
     let download_folder = &*config::DOWNLOAD_FOLDER;
 
     match get_disk_space(download_folder) {
@@ -183,22 +190,26 @@ pub async fn check_and_log_disk_space() {
                     info.used_percent
                 );
                 metrics::record_error("system", "disk_space_critical");
-                log::warn!(
-                    "LOW DISK SPACE: {:.2} GB available, threshold {:.2} GB",
-                    info.available_gb(),
-                    CRITICAL_DISK_SPACE_BYTES as f64 / (1024.0 * 1024.0 * 1024.0),
-                );
+
+                if let Some(cb) = on_alert {
+                    let threshold_gb = CRITICAL_DISK_SPACE_BYTES as f64 / (1024.0 * 1024.0 * 1024.0);
+                    if let Err(e) = cb(info.available_gb(), threshold_gb).await {
+                        log::error!("Failed to send disk space alert: {}", e);
+                    }
+                }
             } else if info.is_warning() {
                 log::warn!(
                     "Disk space warning: {:.2} GB available ({:.1}% used)",
                     info.available_gb(),
                     info.used_percent
                 );
-                log::warn!(
-                    "LOW DISK SPACE: {:.2} GB available, threshold {:.2} GB",
-                    info.available_gb(),
-                    WARNING_DISK_SPACE_BYTES as f64 / (1024.0 * 1024.0 * 1024.0),
-                );
+
+                if let Some(cb) = on_alert {
+                    let threshold_gb = WARNING_DISK_SPACE_BYTES as f64 / (1024.0 * 1024.0 * 1024.0);
+                    if let Err(e) = cb(info.available_gb(), threshold_gb).await {
+                        log::error!("Failed to send disk space alert: {}", e);
+                    }
+                }
             } else {
                 log::debug!(
                     "Disk space OK: {:.2} GB available ({:.1}% used)",
@@ -216,8 +227,9 @@ pub async fn check_and_log_disk_space() {
 /// Start background disk space monitoring task.
 ///
 /// Checks disk space every N minutes and logs warnings if space is low.
+/// If `on_alert` is provided, it is called with `(available_gb, threshold_gb)` on low-disk events.
 /// Returns a `JoinHandle` that can be awaited or checked for panics.
-pub fn start_disk_monitor_task() -> tokio::task::JoinHandle<()> {
+pub fn start_disk_monitor_task(on_alert: Option<DiskAlertFn>) -> tokio::task::JoinHandle<()> {
     STOP_DISK_MONITOR.store(false, Ordering::SeqCst);
 
     tokio::spawn(async move {
@@ -229,7 +241,7 @@ pub fn start_disk_monitor_task() -> tokio::task::JoinHandle<()> {
         );
 
         // Initial check
-        check_and_log_disk_space().await;
+        check_and_log_disk_space(on_alert.as_ref()).await;
 
         loop {
             tokio::time::sleep(interval).await;
@@ -239,7 +251,7 @@ pub fn start_disk_monitor_task() -> tokio::task::JoinHandle<()> {
                 break;
             }
 
-            check_and_log_disk_space().await;
+            check_and_log_disk_space(on_alert.as_ref()).await;
         }
     })
 }

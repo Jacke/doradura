@@ -16,7 +16,7 @@ use crate::download::playlist_sync::{self, resolver::Platform};
 use crate::download::progress::ProgressMessage;
 use crate::download::search::format_duration;
 use crate::download::send::send_audio_with_retry;
-use crate::download::source::SourceRegistry;
+use crate::download::source::bot_global;
 use crate::storage::db::{self, DbPool};
 use crate::telegram::notifications::notify_admin_text;
 use crate::telegram::Bot;
@@ -600,7 +600,7 @@ async fn play_all(bot: &Bot, chat_id: ChatId, message_id: MessageId, playlist_id
                 Err(_) => continue,
             };
 
-            let registry = SourceRegistry::global();
+            let registry = bot_global();
             let format = PipelineFormat::Audio {
                 bitrate: None,
                 time_range: None,
@@ -881,7 +881,7 @@ async fn download_single_track(bot: &Bot, chat_id: ChatId, playlist_id: i64, tra
         }
     };
 
-    let registry = SourceRegistry::global();
+    let registry = bot_global();
     let format = PipelineFormat::Audio {
         bitrate: None,
         time_range: None,

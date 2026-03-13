@@ -112,7 +112,7 @@ impl DownloadSource for YtDlpSource {
     }
 
     async fn get_metadata(&self, url: &Url) -> Result<crate::download::source::MediaMetadata, AppError> {
-        let (title, artist) = get_metadata_from_ytdlp(url).await?;
+        let (title, artist) = get_metadata_from_ytdlp(url, None).await?;
         Ok(crate::download::source::MediaMetadata { title, artist })
     }
 
@@ -945,6 +945,27 @@ mod tests {
         assert!(!YtDlpSource::is_known_domain(
             &Url::parse("https://example.com/page").unwrap()
         ));
+    }
+
+    #[test]
+    fn test_supports_url_soundcloud_artist() {
+        let source = YtDlpSource::new();
+        let url = Url::parse("https://soundcloud.com/artist").unwrap();
+        assert!(source.supports_url(&url));
+    }
+
+    #[test]
+    fn test_supports_url_soundcloud_track() {
+        let source = YtDlpSource::new();
+        let url = Url::parse("https://soundcloud.com/artist/track-name").unwrap();
+        assert!(source.supports_url(&url));
+    }
+
+    #[test]
+    fn test_supports_url_soundcloud_set() {
+        let source = YtDlpSource::new();
+        let url = Url::parse("https://soundcloud.com/artist/sets/album").unwrap();
+        assert!(source.supports_url(&url));
     }
 
     #[test]

@@ -120,7 +120,15 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
 
     let alert_manager = background_tasks::start_alert_monitor(bot.clone(), Arc::clone(&db_pool)).await;
 
-    let _disk_monitor_handle = crate::core::disk::start_disk_monitor_task(alert_manager.clone());
+    let disk_alert_fn: Option<crate::core::disk::DiskAlertFn> = alert_manager.as_ref().map(|am| {
+        let am = Arc::clone(am);
+        std::sync::Arc::new(move |available_gb: f64, threshold_gb: f64| {
+            let am = am.clone();
+            Box::pin(async move { am.alert_low_disk_space(available_gb, threshold_gb).await })
+                as std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>
+        }) as crate::core::disk::DiskAlertFn
+    });
+    let _disk_monitor_handle = crate::core::disk::start_disk_monitor_task(disk_alert_fn);
 
     background_tasks::spawn_stats_reporter(bot.clone(), Arc::clone(&db_pool));
     background_tasks::spawn_health_checks(bot.clone());

@@ -20,8 +20,7 @@ pub use doracore::core::utils;
 pub use doracore::core::validation;
 pub use doracore::core::web_server;
 
-// ── Bot-specific: disk with AlertManager integration ─────────────────────────
-pub mod disk;
+pub use doracore::core::disk;
 
 // ── Bot-only modules ──────────────────────────────────────────────────────────
 pub mod alerts;

@@ -18,7 +18,7 @@ use crate::download::metadata::{
 use crate::download::pipeline::{self, DownloadPhaseResult, PipelineFormat};
 use crate::download::progress::{DownloadStatus, ProgressBarStyle, ProgressMessage};
 use crate::download::send::{send_error_with_sticker, send_video_with_retry};
-use crate::download::source::SourceRegistry;
+use crate::download::source::bot_global;
 use crate::storage::db::{self as db, save_download_history, save_video_timestamps, DbPool};
 use crate::telegram::cache::PREVIEW_CACHE;
 use crate::telegram::Bot;
@@ -91,7 +91,7 @@ pub async fn download_and_send_video(
             quality: video_quality.clone(),
             time_range,
         };
-        let registry = SourceRegistry::global();
+        let registry = bot_global();
 
         // Global timeout for entire operation
         let result: Result<(), AppError> = match timeout(config::download::global_timeout(), async {

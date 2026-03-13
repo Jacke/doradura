@@ -13,7 +13,7 @@ use crate::download::pipeline::{self, PipelineFormat};
 use crate::download::progress::ProgressMessage;
 use crate::download::search::format_duration;
 use crate::download::send::send_audio_with_retry;
-use crate::download::source::SourceRegistry;
+use crate::download::source::bot_global;
 use crate::storage::db::{self, DbPool, PlaylistItem};
 use crate::telegram::notifications::notify_admin_text;
 use crate::telegram::Bot;
@@ -437,7 +437,7 @@ async fn download_player_track(
         // Fall through if send fails (expired file_id)
     }
 
-    let registry = SourceRegistry::global();
+    let registry = bot_global();
     let format = PipelineFormat::Audio {
         bitrate: None,
         time_range: None,

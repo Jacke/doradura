@@ -16,12 +16,12 @@ pub use doracore::download::ytdlp;
 pub use doracore::download::ytdlp_errors;
 
 // ── Local modules (use dorabot-local DownloadRequest / source types) ─────────
-pub mod builder; // DownloadRequest builder (uses local source::DownloadRequest)
+pub use doracore::download::builder; // DownloadRequest builder (shared with doracore)
 
 // ── Bot-specific modules ──────────────────────────────────────────────────────
 pub mod audio; // Telegram audio download + send pipeline
 pub mod downloader; // Full download logic with Telegram upload
-pub mod metadata; // Metadata fetching with admin notifications
+pub use doracore::download::metadata; // Metadata fetching (shared with doracore)
 pub mod pipeline; // Orchestration pipeline for bot flows
 pub mod playlist_import; // External playlist import (YouTube, Spotify)
 pub mod playlist_sync;

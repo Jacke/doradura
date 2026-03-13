@@ -11,7 +11,7 @@ use crate::core::types::Plan;
 use crate::download::error::DownloadError;
 use crate::download::pipeline::{self, PipelineFormat, PipelineResult};
 use crate::download::progress::{ProgressBarStyle, ProgressMessage};
-use crate::download::source::SourceRegistry;
+use crate::download::source::bot_global;
 use crate::storage::db::{self as db, DbPool};
 use crate::telegram::Bot;
 use chrono::{DateTime, Utc};
@@ -74,7 +74,7 @@ pub async fn download_and_send_audio(
             bitrate: audio_bitrate.clone(),
             time_range,
         };
-        let registry = SourceRegistry::global();
+        let registry = bot_global();
 
         // Create progress_msg BEFORE timeout so we can clean it up if timeout fires
         let lang = db_pool_clone
