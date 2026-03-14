@@ -2,6 +2,10 @@
 //!
 //! Changes the bot's profile photo and display name to reflect online/offline status.
 //! Uses raw Bot API calls since teloxide doesn't support `setMyProfilePhoto` / `setMyName`.
+//!
+//! NOTE: Avatar/name transitions are primarily managed by the external health-monitor
+//! s6 service. The bot only sets online status at startup. If rate-limited, it logs
+//! a warning and continues — health-monitor will retry later.
 
 use super::Bot;
 
@@ -17,6 +21,18 @@ const TELEGRAM_API: &str = "https://api.telegram.org";
 
 fn api_url(bot: &Bot, method: &str) -> String {
     format!("{}/bot{}/{}", TELEGRAM_API, bot.token(), method)
+}
+
+/// Parse `retry_after` seconds from Telegram error description.
+fn parse_retry_after(description: &str) -> Option<u64> {
+    if description.contains("retry after") {
+        description
+            .rsplit("retry after ")
+            .next()
+            .and_then(|s| s.trim().parse::<u64>().ok())
+    } else {
+        None
+    }
 }
 
 /// Set bot profile photo from PNG bytes.
@@ -49,7 +65,15 @@ async fn set_bot_avatar(bot: &Bot, photo_bytes: &[u8]) -> anyhow::Result<()> {
             .get("description")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown error");
-        Err(anyhow::anyhow!("Bot API error: {}", desc))
+        if let Some(retry_after) = parse_retry_after(desc) {
+            Err(anyhow::anyhow!(
+                "Rate-limited for {}s ({:.1}h) — health-monitor will handle it",
+                retry_after,
+                retry_after as f64 / 3600.0
+            ))
+        } else {
+            Err(anyhow::anyhow!("Bot API error: {}", desc))
+        }
     }
 }
 
@@ -71,24 +95,36 @@ async fn set_bot_name(bot: &Bot, name: &str) -> anyhow::Result<()> {
             .get("description")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown error");
-        Err(anyhow::anyhow!("setMyName error: {}", desc))
+        if let Some(retry_after) = parse_retry_after(desc) {
+            Err(anyhow::anyhow!(
+                "Rate-limited for {}s ({:.1}h) — health-monitor will handle it",
+                retry_after,
+                retry_after as f64 / 3600.0
+            ))
+        } else {
+            Err(anyhow::anyhow!("setMyName error: {}", desc))
+        }
     }
 }
 
 /// Set online avatar and name.
+///
+/// Name is set first (lightweight, less rate-limited).
+/// If avatar fails due to rate limit, name may still succeed.
 pub async fn set_online_avatar(bot: &Bot) -> anyhow::Result<()> {
-    set_bot_avatar(bot, ONLINE_AVATAR).await?;
+    // Name first — it's what users actually see, and is less rate-limited
     if let Err(e) = set_bot_name(bot, ONLINE_NAME).await {
         log::warn!("Failed to set online bot name: {}", e);
     }
+    set_bot_avatar(bot, ONLINE_AVATAR).await?;
     Ok(())
 }
 
 /// Set offline avatar and name.
 pub async fn set_offline_avatar(bot: &Bot) -> anyhow::Result<()> {
-    set_bot_avatar(bot, OFFLINE_AVATAR).await?;
     if let Err(e) = set_bot_name(bot, OFFLINE_NAME).await {
         log::warn!("Failed to set offline bot name: {}", e);
     }
+    set_bot_avatar(bot, OFFLINE_AVATAR).await?;
     Ok(())
 }
