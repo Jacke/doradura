@@ -364,6 +364,15 @@ impl AlertManager {
             return Err(format!("Failed to send alert: {:?}", e));
         }
 
+        // Record alert metric
+        {
+            let severity_str = match alert.severity {
+                Severity::Critical => "critical",
+                Severity::Warning => "warning",
+            };
+            crate::core::metrics::record_alert(alert.alert_type.as_str(), severity_str);
+        }
+
         // Update last alert time
         {
             let mut last_times = self.last_alert_time.lock().await;

@@ -33,20 +33,6 @@ use url::Url;
 #[deprecated(note = "Use AppError instead")]
 pub type CommandError = AppError;
 
-// extract_retry_after, is_timeout_or_network_error, truncate_tail_utf8 are now imported from crate::core
-
-// UploadProgress, ProgressReader, input_file_with_progress, read_log_tail, log_bot_api_speed_for_file moved to send.rs
-
-// is_local_bot_api is now in crate::core::config::bot_api
-
-// validate_cookies_file_format and add_cookies_args moved to metadata.rs
-
-// probe_duration_seconds, has_both_video_and_audio, probe_video_metadata,
-// build_telegram_safe_format, find_actual_downloaded_file, get_metadata_from_ytdlp
-// moved to metadata.rs
-
-// send_error_with_sticker, send_error_with_sticker_and_message moved to send.rs
-
 pub fn spawn_downloader_with_fallback(ytdl_bin: &str, args: &[&str]) -> Result<std::process::Child, AppError> {
     Command::new(ytdl_bin)
         .args(args)
@@ -433,6 +419,7 @@ pub async fn download_and_send_subtitles(
 /// Splits a large video file into playable segments using ffmpeg.
 /// This is used when the file exceeds Telegram's upload limits.
 pub async fn split_video_into_parts(path: &str, target_part_size_bytes: u64) -> Result<Vec<String>, AppError> {
+    let split_start = std::time::Instant::now();
     log::info!("Checking if video needs splitting: {}", path);
     let file_size = fs::metadata(path)
         .map_err(|e| AppError::Download(DownloadError::Other(format!("Failed to get file size: {}", e))))?
@@ -444,6 +431,9 @@ pub async fn split_video_into_parts(path: &str, target_part_size_bytes: u64) -> 
             file_size,
             target_part_size_bytes
         );
+        doracore::core::metrics::VIDEO_ENCODING_DURATION_SECONDS
+            .with_label_values(&["split"])
+            .observe(split_start.elapsed().as_secs_f64());
         return Ok(vec![path.to_string()]);
     }
 
@@ -485,6 +475,9 @@ pub async fn split_video_into_parts(path: &str, target_part_size_bytes: u64) -> 
     let output = run_with_timeout(&mut cmd, FFMPEG_TIMEOUT).await?;
 
     if !output.status.success() {
+        doracore::core::metrics::VIDEO_ENCODING_DURATION_SECONDS
+            .with_label_values(&["split"])
+            .observe(split_start.elapsed().as_secs_f64());
         return Err(AppError::Download(DownloadError::Ffmpeg(format!(
             "ffmpeg split failed: {}",
             String::from_utf8_lossy(&output.stderr)
@@ -509,6 +502,9 @@ pub async fn split_video_into_parts(path: &str, target_part_size_bytes: u64) -> 
     parts.sort();
 
     log::info!("Successfully split video into {} parts", parts.len());
+    doracore::core::metrics::VIDEO_ENCODING_DURATION_SECONDS
+        .with_label_values(&["split"])
+        .observe(split_start.elapsed().as_secs_f64());
     Ok(parts)
 }
 
@@ -612,6 +608,7 @@ pub async fn burn_subtitles_into_video(
     output_path: &str,
     style: &db::SubtitleStyle,
 ) -> Result<(), AppError> {
+    let encoding_start = std::time::Instant::now();
     log::info!(
         "🔥 Burning subtitles into video: {} + {} -> {}",
         video_path,
@@ -621,12 +618,18 @@ pub async fn burn_subtitles_into_video(
 
     // Verify source files exist
     if !std::path::Path::new(video_path).exists() {
+        doracore::core::metrics::VIDEO_ENCODING_DURATION_SECONDS
+            .with_label_values(&["burn_subtitles"])
+            .observe(encoding_start.elapsed().as_secs_f64());
         return Err(AppError::Download(DownloadError::FileNotFound(format!(
             "Video file not found: {}",
             video_path
         ))));
     }
     if !std::path::Path::new(subtitle_path).exists() {
+        doracore::core::metrics::VIDEO_ENCODING_DURATION_SECONDS
+            .with_label_values(&["burn_subtitles"])
+            .observe(encoding_start.elapsed().as_secs_f64());
         return Err(AppError::Download(DownloadError::FileNotFound(format!(
             "Subtitle file not found: {}",
             subtitle_path
@@ -677,6 +680,9 @@ pub async fn burn_subtitles_into_video(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         log::error!("❌ ffmpeg failed to burn subtitles: {}", stderr);
+        doracore::core::metrics::VIDEO_ENCODING_DURATION_SECONDS
+            .with_label_values(&["burn_subtitles"])
+            .observe(encoding_start.elapsed().as_secs_f64());
         return Err(AppError::Download(DownloadError::Ffmpeg(format!(
             "ffmpeg failed to burn subtitles: {}",
             stderr
@@ -685,6 +691,9 @@ pub async fn burn_subtitles_into_video(
 
     // Verify that the output file was created
     if !std::path::Path::new(output_path).exists() {
+        doracore::core::metrics::VIDEO_ENCODING_DURATION_SECONDS
+            .with_label_values(&["burn_subtitles"])
+            .observe(encoding_start.elapsed().as_secs_f64());
         return Err(AppError::Download(DownloadError::FileNotFound(format!(
             "Output video file was not created: {}",
             output_path
@@ -692,6 +701,9 @@ pub async fn burn_subtitles_into_video(
     }
 
     log::info!("✅ Successfully burned subtitles into video: {}", output_path);
+    doracore::core::metrics::VIDEO_ENCODING_DURATION_SECONDS
+        .with_label_values(&["burn_subtitles"])
+        .observe(encoding_start.elapsed().as_secs_f64());
     Ok(())
 }
 

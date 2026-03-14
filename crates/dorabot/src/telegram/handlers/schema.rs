@@ -325,6 +325,7 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
             let deps = deps.clone();
             async move {
                 log::info!("🎯 Received command: {:?} from chat {}", cmd, msg.chat.id);
+                crate::core::metrics::record_command(&format!("{:?}", cmd).to_lowercase());
 
                 match cmd {
                     Command::Start => {

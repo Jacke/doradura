@@ -80,6 +80,7 @@ pub async fn notify_admin_feedback(
     message_text: &str,
     db_pool: std::sync::Arc<crate::storage::db::DbPool>,
 ) -> ResponseResult<()> {
+    crate::core::metrics::record_user_feedback("neutral");
     log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     log::info!("💬 FEEDBACK RECEIVED");
     log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");

@@ -64,6 +64,7 @@ pub async fn download_and_send_audio(
         };
 
         metrics::record_format_request("mp3", user_plan.as_str());
+        metrics::record_platform_download(metrics::extract_platform(url.as_str()));
 
         let quality = audio_bitrate.as_deref().unwrap_or("default");
         let timer = metrics::DOWNLOAD_DURATION_SECONDS
@@ -105,6 +106,8 @@ pub async fn download_and_send_audio(
             )
             .await
             .map_err(|e| e.into_app_error())?;
+
+            metrics::record_file_size("mp3", pipeline_result.file_size);
 
             // Audio-specific: add effects button
             add_audio_effects_button(&bot_clone, chat_id, &pipeline_result, db_pool_clone.as_ref()).await;

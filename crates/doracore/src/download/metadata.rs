@@ -695,6 +695,7 @@ pub async fn get_metadata_from_ytdlp(
     }
 
     log::debug!("Metadata cache miss for URL: {}", url);
+    let metadata_start = std::time::Instant::now();
     let ytdl_bin = &*config::YTDL_BIN;
     log::debug!("Using downloader binary: {}", ytdl_bin);
 
@@ -734,11 +735,13 @@ pub async fn get_metadata_from_ytdlp(
             config::download::YTDLP_TIMEOUT_SECS
         );
         metrics::record_error("download", "metadata_timeout");
+        metrics::METADATA_FETCH_DURATION_SECONDS.observe(metadata_start.elapsed().as_secs_f64());
         AppError::Download(DownloadError::YtDlp("yt-dlp command timed out".to_string()))
     })?
     .map_err(|e| {
         log::error!("Failed to execute {}: {}", ytdl_bin, e);
         metrics::record_error("download", "metadata_spawn");
+        metrics::METADATA_FETCH_DURATION_SECONDS.observe(metadata_start.elapsed().as_secs_f64());
         AppError::Download(DownloadError::YtDlp(format!("Failed to get title: {}", e)))
     })?;
 
@@ -790,6 +793,7 @@ pub async fn get_metadata_from_ytdlp(
             }
         }
 
+        metrics::METADATA_FETCH_DURATION_SECONDS.observe(metadata_start.elapsed().as_secs_f64());
         return Err(AppError::Download(DownloadError::YtDlp(get_error_message(&error_type))));
     }
 
@@ -798,6 +802,7 @@ pub async fn get_metadata_from_ytdlp(
     if title.is_empty() {
         log::error!("yt-dlp returned empty title for URL: {}", url);
         metrics::record_error("download", "metadata_empty_title");
+        metrics::METADATA_FETCH_DURATION_SECONDS.observe(metadata_start.elapsed().as_secs_f64());
         return Err(AppError::Download(DownloadError::YtDlp(
             "Failed to get video title. Video might be unavailable or private.".to_string(),
         )));
@@ -893,6 +898,7 @@ pub async fn get_metadata_from_ytdlp(
     }
 
     log::info!("Got metadata from yt-dlp: title='{}', artist='{}'", title, artist);
+    metrics::METADATA_FETCH_DURATION_SECONDS.observe(metadata_start.elapsed().as_secs_f64());
     Ok((title, artist))
 }
 

@@ -183,6 +183,9 @@ pub async fn check_and_log_disk_space(on_alert: Option<&DiskAlertFn>) {
 
     match get_disk_space(download_folder) {
         Ok(info) => {
+            metrics::DISK_AVAILABLE_BYTES.set(info.available_bytes as f64);
+            metrics::DISK_USED_PERCENT.set(info.used_percent);
+
             if info.is_critical() {
                 log::error!(
                     "CRITICAL: Disk space critically low: {:.2} GB available ({:.1}% used)",

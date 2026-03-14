@@ -4,6 +4,7 @@
 //! Reports include download counts, message counts, success/failure rates,
 //! and file type breakdown.
 
+use crate::core::metrics;
 use crate::storage::db::{self, DbPool};
 use crate::telegram::admin;
 use crate::telegram::Bot;
@@ -273,6 +274,65 @@ impl StatsReporter {
         let conn = db::get_connection(&self.db_pool).map_err(|e| format!("DB error: {}", e))?;
 
         let stats = get_period_stats(&conn, hours).map_err(|e| format!("Stats error: {}", e))?;
+
+        // Update user engagement gauges
+        if let Ok(total) = conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get::<_, i64>(0)) {
+            metrics::TOTAL_USERS.set(total as f64);
+        }
+        if let Ok(dau) = conn.query_row(
+            "SELECT COUNT(DISTINCT user_id) FROM download_history WHERE downloaded_at >= datetime('now', '-1 day')",
+            [],
+            |row| row.get::<_, i64>(0),
+        ) {
+            metrics::DAILY_ACTIVE_USERS.set(dau as f64);
+        }
+        if let Ok(mau) = conn.query_row(
+            "SELECT COUNT(DISTINCT user_id) FROM download_history WHERE downloaded_at >= datetime('now', '-30 day')",
+            [],
+            |row| row.get::<_, i64>(0),
+        ) {
+            metrics::MONTHLY_ACTIVE_USERS.set(mau as f64);
+        }
+
+        // Update users by plan
+        if let Ok(mut stmt) = conn.prepare("SELECT COALESCE(plan, 'free') as p, COUNT(*) FROM users GROUP BY p") {
+            if let Ok(rows) = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))) {
+                for row in rows.flatten() {
+                    metrics::USERS_BY_PLAN.with_label_values(&[&row.0]).set(row.1 as f64);
+                }
+            }
+        }
+
+        // Update active subscriptions (non-free, non-expired)
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT COALESCE(plan, 'free') as p, COUNT(*) FROM users \
+             WHERE plan IS NOT NULL AND plan != 'free' \
+             AND (subscription_expires_at IS NULL OR subscription_expires_at > datetime('now')) \
+             GROUP BY p",
+        ) {
+            // Reset all plans to 0 first, then set actual values
+            metrics::ACTIVE_SUBSCRIPTIONS.with_label_values(&["premium"]).set(0.0);
+            metrics::ACTIVE_SUBSCRIPTIONS.with_label_values(&["vip"]).set(0.0);
+            if let Ok(rows) = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))) {
+                for row in rows.flatten() {
+                    metrics::ACTIVE_SUBSCRIPTIONS
+                        .with_label_values(&[&row.0])
+                        .set(row.1 as f64);
+                }
+            }
+        }
+
+        // Update language distribution
+        if let Ok(mut stmt) = conn.prepare("SELECT COALESCE(language, 'ru') as lang, COUNT(*) FROM users GROUP BY lang")
+        {
+            if let Ok(rows) = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))) {
+                for row in rows.flatten() {
+                    metrics::USER_LANGUAGE_DISTRIBUTION
+                        .with_label_values(&[&row.0])
+                        .set(row.1 as f64);
+                }
+            }
+        }
 
         // Skip if no activity
         if stats.total_downloads == 0 && stats.failed_downloads == 0 {

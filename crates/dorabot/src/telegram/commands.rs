@@ -6,6 +6,7 @@ use crate::core::alerts::AlertManager;
 use crate::core::config;
 use crate::core::error::AppError;
 use crate::core::escape_markdown;
+use crate::core::metrics;
 use crate::core::rate_limiter::RateLimiter;
 use crate::core::utils::pluralize_seconds;
 use crate::download::queue::DownloadQueue;
@@ -54,6 +55,7 @@ pub async fn handle_rate_limit(
 ) -> ResponseResult<bool> {
     let lang = i18n::user_lang_from_pool(db_pool, msg.chat.id.0);
     if rate_limiter.is_rate_limited(msg.chat.id, plan).await {
+        metrics::record_rate_limit_hit(plan);
         if let Some(remaining_time) = rate_limiter.get_remaining_time(msg.chat.id).await {
             let remaining_seconds = remaining_time.as_secs();
             let unit = if lang.language.as_str() == "ru" {
@@ -116,6 +118,7 @@ pub async fn handle_message(
 
     // Handle document upload (for cookies file)
     if let Some(document) = msg.document() {
+        metrics::record_message_type("document");
         if let Some(user) = msg.from.as_ref() {
             let user_id = user.id.0 as i64;
             // Check if user has active cookies upload session
@@ -462,6 +465,7 @@ pub async fn handle_message(
         let urls: Vec<&str> = URL_REGEX.find_iter(text).map(|m| m.as_str()).collect();
 
         if !urls.is_empty() {
+            metrics::record_message_type("url");
             // Mark the user's link message as "seen"
             crate::telegram::try_set_reaction(
                 &bot,
@@ -1081,6 +1085,7 @@ pub async fn handle_message(
                 }
             }
 
+            metrics::record_message_type("text");
             bot.send_message(msg.chat.id, i18n::t(&lang, "commands.no_links"))
                 .parse_mode(ParseMode::MarkdownV2)
                 .await?;
@@ -1101,6 +1106,7 @@ pub async fn handle_message(
                 .parse_mode(ParseMode::MarkdownV2)
                 .await?;
         } else {
+            metrics::record_message_type("text");
             bot.send_message(msg.chat.id, i18n::t(&lang, "commands.no_links"))
                 .parse_mode(ParseMode::MarkdownV2)
                 .await?;

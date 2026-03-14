@@ -52,12 +52,26 @@ impl MetadataCache {
             if let Some(cached) = cache.get(url_str) {
                 if Instant::now().duration_since(cached.cached_at) < self.ttl {
                     self.hit_count.fetch_add(1, Ordering::Relaxed);
+                    let total = self.hit_count.load(Ordering::Relaxed) + self.miss_count.load(Ordering::Relaxed);
+                    if total > 0 {
+                        let ratio = self.hit_count.load(Ordering::Relaxed) as f64 / total as f64;
+                        crate::core::metrics::CACHE_HIT_RATIO
+                            .with_label_values(&["metadata"])
+                            .set(ratio);
+                    }
                     return Some((cached.title.clone(), cached.artist.clone()));
                 }
                 // Entry expired - need write lock to remove it
             } else {
                 // Entry not found
                 self.miss_count.fetch_add(1, Ordering::Relaxed);
+                let total = self.hit_count.load(Ordering::Relaxed) + self.miss_count.load(Ordering::Relaxed);
+                if total > 0 {
+                    let ratio = self.hit_count.load(Ordering::Relaxed) as f64 / total as f64;
+                    crate::core::metrics::CACHE_HIT_RATIO
+                        .with_label_values(&["metadata"])
+                        .set(ratio);
+                }
                 return None;
             }
         }
@@ -69,12 +83,26 @@ impl MetadataCache {
             if Instant::now().duration_since(cached.cached_at) < self.ttl {
                 // Another thread may have updated it
                 self.hit_count.fetch_add(1, Ordering::Relaxed);
+                let total = self.hit_count.load(Ordering::Relaxed) + self.miss_count.load(Ordering::Relaxed);
+                if total > 0 {
+                    let ratio = self.hit_count.load(Ordering::Relaxed) as f64 / total as f64;
+                    crate::core::metrics::CACHE_HIT_RATIO
+                        .with_label_values(&["metadata"])
+                        .set(ratio);
+                }
                 return Some((cached.title.clone(), cached.artist.clone()));
             }
             cache.remove(url_str);
         }
 
         self.miss_count.fetch_add(1, Ordering::Relaxed);
+        let total = self.hit_count.load(Ordering::Relaxed) + self.miss_count.load(Ordering::Relaxed);
+        if total > 0 {
+            let ratio = self.hit_count.load(Ordering::Relaxed) as f64 / total as f64;
+            crate::core::metrics::CACHE_HIT_RATIO
+                .with_label_values(&["metadata"])
+                .set(ratio);
+        }
         None
     }
 

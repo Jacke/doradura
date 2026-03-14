@@ -8,7 +8,7 @@ use std::time::Duration;
 use teloxide::prelude::*;
 use tokio::time::interval;
 
-use crate::core::{alerts, config, stats_reporter};
+use crate::core::{alerts, config, metrics, stats_reporter};
 use crate::storage::db::{self, DbPool};
 use crate::telegram::Bot;
 
@@ -48,6 +48,7 @@ pub fn spawn_cookies_checker(bot: Bot) {
             log::debug!("Running periodic cookies validation check");
 
             if let Some(reason) = cookies::needs_refresh().await {
+                metrics::update_cookies_status(false);
                 log::warn!("🔴 Cookies need refresh: {}", reason);
 
                 let admin_ids = config::admin::ADMIN_IDS.clone();
@@ -67,6 +68,8 @@ pub fn spawn_cookies_checker(bot: Bot) {
                         log::error!("Failed to notify primary admin {} about cookies: {}", primary_admin, e);
                     }
                 }
+            } else {
+                metrics::update_cookies_status(true);
             }
         }
     });
@@ -115,6 +118,7 @@ pub fn spawn_metrics_server() {
             loop {
                 interval.tick().await;
                 crate::core::metrics::BOT_UPTIME_SECONDS.inc_by(60.0);
+                crate::core::metrics::update_process_memory();
             }
         });
     } else {

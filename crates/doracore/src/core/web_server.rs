@@ -183,6 +183,7 @@ pub async fn start_web_server(port: u16, db: Arc<DbPool>) -> Result<(), Box<dyn 
         .route("/admin/api/users/:id/plan", post(admin_api_user_plan))
         .route("/admin/api/users/:id/block", post(admin_api_user_block))
         .route("/admin/api/downloads", get(admin_api_downloads))
+        .route("/metrics", get(metrics_handler))
         .with_state(state)
         .layer(DefaultBodyLimit::max(1024 * 1024)) // 1 MB
         .layer(middleware::from_fn(security_headers));
@@ -193,11 +194,39 @@ pub async fn start_web_server(port: u16, db: Arc<DbPool>) -> Result<(), Box<dyn 
     log::info!("  /privacy    - Privacy Policy");
     log::info!("  /admin      - Admin Dashboard");
     log::info!("  /health     - Health check");
+    log::info!("  /metrics    - Prometheus metrics (Bearer auth)");
 
     let listener = TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// GET /metrics — Prometheus metrics endpoint, protected by Bearer token.
+///
+/// Returns 404 if METRICS_AUTH_TOKEN is not set (disabled).
+/// Returns 401 if the Authorization header doesn't match.
+async fn metrics_handler(headers: HeaderMap) -> Response {
+    let token = match std::env::var("METRICS_AUTH_TOKEN") {
+        Ok(t) if !t.is_empty() => t,
+        _ => return (StatusCode::NOT_FOUND, "Not Found").into_response(),
+    };
+
+    let auth = headers.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("");
+    let expected = format!("Bearer {}", token);
+    if !constant_time_eq(auth, &expected) {
+        return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
+    }
+
+    let encoder = prometheus::TextEncoder::new();
+    let metric_families = prometheus::gather();
+    let output = encoder.encode_to_string(&metric_families).unwrap_or_default();
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "text/plain; version=0.0.4; charset=utf-8")],
+        output,
+    )
+        .into_response()
 }
 
 /// GET /privacy — renders the privacy policy HTML.

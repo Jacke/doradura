@@ -287,6 +287,7 @@ pub async fn apply_audio_effects(
     output_path: &str,
     settings: &AudioEffectSettings,
 ) -> Result<(), AppError> {
+    let effects_start = std::time::Instant::now();
     // Validate settings
     validate_settings(settings)?;
 
@@ -349,10 +350,17 @@ pub async fn apply_audio_effects(
         Ok(())
     })
     .await
-    .map_err(|e| AppError::AudioEffect(AudioEffectError::FFmpegError(format!("Task join error: {}", e))))??;
+    .map_err(|e| {
+        crate::core::metrics::AUDIO_EFFECTS_DURATION_SECONDS.observe(effects_start.elapsed().as_secs_f64());
+        AppError::AudioEffect(AudioEffectError::FFmpegError(format!("Task join error: {}", e)))
+    })?
+    .inspect_err(|_| {
+        crate::core::metrics::AUDIO_EFFECTS_DURATION_SECONDS.observe(effects_start.elapsed().as_secs_f64());
+    })?;
 
     // Verify output file exists
     if !std::path::Path::new(output_path).exists() {
+        crate::core::metrics::AUDIO_EFFECTS_DURATION_SECONDS.observe(effects_start.elapsed().as_secs_f64());
         return Err(AppError::AudioEffect(AudioEffectError::FFmpegError(
             "Output file not created".to_string(),
         )));
@@ -373,6 +381,7 @@ pub async fn apply_audio_effects(
     if file_size > max_size {
         // Clean up oversized file
         let _ = tokio::fs::remove_file(output_path).await;
+        crate::core::metrics::AUDIO_EFFECTS_DURATION_SECONDS.observe(effects_start.elapsed().as_secs_f64());
         return Err(AppError::AudioEffect(AudioEffectError::FileTooLarge(
             file_size as f64 / (1024.0 * 1024.0),
             50.0,
@@ -385,6 +394,7 @@ pub async fn apply_audio_effects(
         file_size as f64 / (1024.0 * 1024.0)
     );
 
+    crate::core::metrics::AUDIO_EFFECTS_DURATION_SECONDS.observe(effects_start.elapsed().as_secs_f64());
     Ok(())
 }
 

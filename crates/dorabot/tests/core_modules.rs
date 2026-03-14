@@ -248,8 +248,8 @@ mod metrics_tests {
         metrics::record_format_request("mp3", "free");
         metrics::update_queue_depth("high", 5);
         metrics::update_queue_depth_total(10);
-        metrics::record_operation_success("download", "mp3");
-        metrics::record_operation_failure("upload", "mp4", "network");
+        metrics::record_proxy_request("warp", "success");
+        metrics::record_message_type("url");
         metrics::record_file_size("mp3", 1_000_000);
         metrics::record_platform_download("youtube");
         metrics::update_cookies_status(true);

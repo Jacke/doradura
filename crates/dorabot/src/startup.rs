@@ -41,6 +41,9 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
 
     // Initialize metrics registry
     crate::core::metrics::init_metrics();
+    crate::core::metrics::BUILD_INFO
+        .with_label_values(&[env!("CARGO_PKG_VERSION")])
+        .set(1.0);
 
     // Log cookies configuration at startup
     log_cookies_configuration();
@@ -399,6 +402,7 @@ async fn run_polling_mode(
 
                     if retry_count < max_retries {
                         retry_count += 1;
+                        crate::core::metrics::DISPATCHER_RECONNECTIONS_TOTAL.inc();
                         log::info!(
                             "Retrying dispatcher connection after panic (attempt {}/{})...",
                             retry_count,

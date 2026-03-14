@@ -8,7 +8,7 @@ use std::sync::Arc;
 use teloxide::prelude::*;
 use tokio::time::interval;
 
-use crate::core::{alerts, config, rate_limiter, subscription};
+use crate::core::{alerts, config, metrics, rate_limiter, subscription};
 use crate::download::queue::{self as queue};
 use crate::download::ytdlp_errors::sanitize_user_error_message;
 use crate::download::{download_and_send_audio, download_and_send_subtitles, download_and_send_video, DownloadQueue};
@@ -52,6 +52,7 @@ pub async fn process_queue(
 
     loop {
         interval.tick().await;
+        let _loop_timer = metrics::QUEUE_PROCESSING_DURATION_SECONDS.start_timer();
         if let Some(task) = queue.get_task().await {
             log::info!("Got task {} from queue", task.id);
             let bot = bot.clone();
@@ -102,13 +103,27 @@ async fn process_single_task(
             queue_for_cleanup
                 .remove_active_task(&task.url, task.chat_id, &task.format)
                 .await;
-            return;
+            return; // No permit acquired, no CONCURRENT_DOWNLOADS.inc() happened
         }
     };
+    if semaphore.available_permits() == 0 {
+        metrics::SEMAPHORE_FULL_TOTAL.inc();
+    }
+    metrics::CONCURRENT_DOWNLOADS.inc();
+    let wait_secs = (chrono::Utc::now() - task.created_timestamp).num_milliseconds() as f64 / 1000.0;
+    let priority_label = match task.priority {
+        queue::TaskPriority::Low => "low",
+        queue::TaskPriority::Medium => "medium",
+        queue::TaskPriority::High => "high",
+    };
+    metrics::QUEUE_WAIT_TIME_SECONDS
+        .with_label_values(&[priority_label])
+        .observe(wait_secs);
     log::info!(
-        "Processing task {} (permits available: {})",
+        "Processing task {} (permits available: {}, queue wait: {:.1}s)",
         task.id,
-        semaphore.available_permits()
+        semaphore.available_permits(),
+        wait_secs
     );
 
     // Enforce global delay between download starts.
@@ -169,6 +184,7 @@ async fn process_single_task(
             queue_for_cleanup
                 .remove_active_task(&task.url, task.chat_id, &task.format)
                 .await;
+            metrics::CONCURRENT_DOWNLOADS.dec();
             return;
         }
     };
@@ -221,6 +237,7 @@ async fn process_single_task(
             queue_for_cleanup
                 .remove_active_task(&task.url, task.chat_id, &task.format)
                 .await;
+            metrics::CONCURRENT_DOWNLOADS.dec();
             return;
         }
     }
@@ -377,5 +394,6 @@ async fn process_single_task(
         }
     }
 
+    metrics::CONCURRENT_DOWNLOADS.dec();
     log::info!("Task {} processing finished, permit released", task_id);
 }

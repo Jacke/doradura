@@ -10,7 +10,8 @@ use std::sync::LazyLock;
 
 use prometheus::{
     register_counter, register_counter_vec, register_gauge, register_gauge_vec, register_histogram,
-    register_histogram_vec, Counter, CounterVec, Gauge, GaugeVec, Histogram, HistogramVec,
+    register_histogram_vec, register_int_counter_vec, register_int_gauge, Counter, CounterVec, Gauge, GaugeVec,
+    Histogram, HistogramVec, IntCounterVec, IntGauge,
 };
 
 // ======================
@@ -265,40 +266,6 @@ pub static DISPATCHER_RECONNECTIONS_TOTAL: LazyLock<Counter> = LazyLock::new(|| 
     .expect("Failed to register DISPATCHER_RECONNECTIONS_TOTAL metric")
 });
 
-/// Operation duration by type
-/// Labels: operation_type (download/upload/processing), format
-pub static OPERATION_DURATION_SECONDS: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register_histogram_vec!(
-        "doradura_operation_duration_seconds",
-        "Duration of operations by type and format",
-        &["operation_type", "format"],
-        vec![1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0]
-    )
-    .expect("Failed to register OPERATION_DURATION_SECONDS metric")
-});
-
-/// Operation success count
-/// Labels: operation_type, format
-pub static OPERATION_SUCCESS_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
-        "doradura_operation_success_total",
-        "Total number of successful operations",
-        &["operation_type", "format"]
-    )
-    .expect("Failed to register OPERATION_SUCCESS_TOTAL metric")
-});
-
-/// Operation failure count
-/// Labels: operation_type, format, error_category
-pub static OPERATION_FAILURE_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
-        "doradura_operation_failure_total",
-        "Total number of failed operations",
-        &["operation_type", "format", "error_category"]
-    )
-    .expect("Failed to register OPERATION_FAILURE_TOTAL metric")
-});
-
 /// File size distribution
 /// Labels: format
 pub static FILE_SIZE_BYTES: LazyLock<HistogramVec> = LazyLock::new(|| {
@@ -439,6 +406,146 @@ pub static USERS_BY_PLAN: LazyLock<GaugeVec> = LazyLock::new(|| {
         &["plan"]
     )
     .expect("Failed to register USERS_BY_PLAN metric")
+});
+
+// ======================
+// PIPELINE & EXTERNAL API METRICS
+// ======================
+
+/// Build information gauge (always 1, labels carry version info)
+/// Labels: version, commit
+pub static BUILD_INFO: LazyLock<GaugeVec> = LazyLock::new(|| {
+    register_gauge_vec!("doradura_build_info", "Build information (always 1)", &["version"])
+        .expect("Failed to register BUILD_INFO metric")
+});
+
+/// Proxy request outcomes
+/// Labels: proxy_type (warp/tailscale/direct), result (success/failure/timeout)
+pub static PROXY_REQUESTS_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
+    register_counter_vec!(
+        "doradura_proxy_requests_total",
+        "Proxy request outcomes",
+        &["proxy_type", "result"]
+    )
+    .expect("Failed to register PROXY_REQUESTS_TOTAL metric")
+});
+
+/// Metadata fetch duration via yt-dlp
+pub static METADATA_FETCH_DURATION_SECONDS: LazyLock<Histogram> = LazyLock::new(|| {
+    register_histogram!(
+        "doradura_metadata_fetch_duration_seconds",
+        "Duration of yt-dlp metadata extraction",
+        vec![0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0]
+    )
+    .expect("Failed to register METADATA_FETCH_DURATION_SECONDS metric")
+});
+
+/// Audio effects processing duration
+pub static AUDIO_EFFECTS_DURATION_SECONDS: LazyLock<Histogram> = LazyLock::new(|| {
+    register_histogram!(
+        "doradura_audio_effects_duration_seconds",
+        "Duration of audio effects processing (ffmpeg)",
+        vec![1.0, 5.0, 10.0, 30.0, 60.0, 120.0]
+    )
+    .expect("Failed to register AUDIO_EFFECTS_DURATION_SECONDS metric")
+});
+
+/// Video encoding duration (subtitle burning, splitting)
+/// Labels: operation (burn_subtitles/split)
+pub static VIDEO_ENCODING_DURATION_SECONDS: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register_histogram_vec!(
+        "doradura_video_encoding_duration_seconds",
+        "Duration of video encoding operations",
+        &["operation"],
+        vec![1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0]
+    )
+    .expect("Failed to register VIDEO_ENCODING_DURATION_SECONDS metric")
+});
+
+/// Metadata cache hit ratio
+/// Labels: cache_type (metadata/preview)
+pub static CACHE_HIT_RATIO: LazyLock<GaugeVec> = LazyLock::new(|| {
+    register_gauge_vec!("doradura_cache_hit_ratio", "Cache hit ratio (0.0-1.0)", &["cache_type"])
+        .expect("Failed to register CACHE_HIT_RATIO metric")
+});
+
+/// Process resident memory in bytes (RSS)
+pub static PROCESS_RESIDENT_MEMORY_BYTES: LazyLock<Gauge> = LazyLock::new(|| {
+    register_gauge!(
+        "doradura_process_resident_memory_bytes",
+        "Process resident set size (RSS) in bytes"
+    )
+    .expect("Failed to register PROCESS_RESIDENT_MEMORY_BYTES metric")
+});
+
+/// Semaphore full events (concurrent download limit reached)
+pub static SEMAPHORE_FULL_TOTAL: LazyLock<Counter> = LazyLock::new(|| {
+    register_counter!(
+        "doradura_semaphore_full_total",
+        "Number of times download semaphore was at capacity"
+    )
+    .expect("Failed to register SEMAPHORE_FULL_TOTAL metric")
+});
+
+// ======================
+// DISK METRICS
+// ======================
+
+/// Available disk space in bytes
+pub static DISK_AVAILABLE_BYTES: LazyLock<Gauge> = LazyLock::new(|| {
+    register_gauge!("doradura_disk_available_bytes", "Available disk space in bytes")
+        .expect("Failed to register DISK_AVAILABLE_BYTES metric")
+});
+
+/// Disk used percentage (0-100)
+pub static DISK_USED_PERCENT: LazyLock<Gauge> = LazyLock::new(|| {
+    register_gauge!("doradura_disk_used_percent", "Disk used percentage (0-100)")
+        .expect("Failed to register DISK_USED_PERCENT metric")
+});
+
+// ======================
+// NEW HIGH-VALUE METRICS
+// ======================
+
+/// yt-dlp fallback tier attempts
+/// Labels: tier (tier1_no_cookies/tier2_cookies/tier3_fixup_never), result (success/failure)
+pub static YTDLP_TIER_ATTEMPTS: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    register_int_counter_vec!(
+        "doradura_ytdlp_tier_attempts_total",
+        "yt-dlp fallback tier attempts",
+        &["tier", "result"]
+    )
+    .expect("Failed to register YTDLP_TIER_ATTEMPTS metric")
+});
+
+/// Number of downloads currently in progress
+pub static CONCURRENT_DOWNLOADS: LazyLock<IntGauge> = LazyLock::new(|| {
+    register_int_gauge!(
+        "doradura_concurrent_downloads",
+        "Number of downloads currently in progress"
+    )
+    .expect("Failed to register CONCURRENT_DOWNLOADS metric")
+});
+
+/// Instagram rate limiter window size
+pub static INSTAGRAM_RATE_LIMITER_QUEUE: LazyLock<IntGauge> = LazyLock::new(|| {
+    register_int_gauge!(
+        "doradura_instagram_rate_limiter_queue_size",
+        "Current Instagram rate limiter window size"
+    )
+    .expect("Failed to register INSTAGRAM_RATE_LIMITER_QUEUE metric")
+});
+
+/// Telegram file send duration
+/// Labels: file_type (audio/video)
+pub static TELEGRAM_SEND_DURATION_SECONDS: LazyLock<HistogramVec> = LazyLock::new(|| {
+    register_histogram_vec!(
+        "doradura_telegram_send_duration_seconds",
+        "Telegram file send duration",
+        &["file_type"],
+        vec![1.0, 5.0, 10.0, 30.0, 60.0, 120.0]
+    )
+    .expect("Failed to register TELEGRAM_SEND_DURATION_SECONDS metric")
 });
 
 // ======================
@@ -616,21 +723,12 @@ pub fn init_metrics() {
     // Set yt-dlp status to healthy by default
     YTDLP_HEALTH_STATUS.set(1.0);
 
-    // Initialize new operation metrics
-    let _ = &*OPERATION_DURATION_SECONDS;
-    let _ = &*OPERATION_SUCCESS_TOTAL;
-    let _ = &*OPERATION_FAILURE_TOTAL;
+    // Initialize remaining system health metrics
     let _ = &*FILE_SIZE_BYTES;
     let _ = &*COOKIES_STATUS;
     let _ = &*PLATFORM_DOWNLOADS_TOTAL;
     let _ = &*USER_FEEDBACK_TOTAL;
     let _ = &*ALERTS_TOTAL;
-
-    // Initialize operation metrics with common labels
-    OPERATION_SUCCESS_TOTAL.with_label_values(&["download", "mp3"]);
-    OPERATION_SUCCESS_TOTAL.with_label_values(&["download", "mp4"]);
-    OPERATION_SUCCESS_TOTAL.with_label_values(&["upload", "mp3"]);
-    OPERATION_SUCCESS_TOTAL.with_label_values(&["upload", "mp4"]);
 
     // Initialize platform metrics
     PLATFORM_DOWNLOADS_TOTAL.with_label_values(&["youtube"]);
@@ -640,6 +738,48 @@ pub fn init_metrics() {
 
     // Set cookies status to valid by default
     COOKIES_STATUS.set(1.0);
+
+    // Initialize disk metrics
+    let _ = &*DISK_AVAILABLE_BYTES;
+    let _ = &*DISK_USED_PERCENT;
+
+    // Initialize new high-value metrics
+    let _ = &*YTDLP_TIER_ATTEMPTS;
+    let _ = &*CONCURRENT_DOWNLOADS;
+    let _ = &*INSTAGRAM_RATE_LIMITER_QUEUE;
+    let _ = &*TELEGRAM_SEND_DURATION_SECONDS;
+
+    YTDLP_TIER_ATTEMPTS.with_label_values(&["tier1_no_cookies", "success"]);
+    YTDLP_TIER_ATTEMPTS.with_label_values(&["tier1_no_cookies", "failure"]);
+    YTDLP_TIER_ATTEMPTS.with_label_values(&["tier2_cookies", "success"]);
+    YTDLP_TIER_ATTEMPTS.with_label_values(&["tier2_cookies", "failure"]);
+    YTDLP_TIER_ATTEMPTS.with_label_values(&["tier3_fixup_never", "success"]);
+    YTDLP_TIER_ATTEMPTS.with_label_values(&["tier3_fixup_never", "failure"]);
+
+    TELEGRAM_SEND_DURATION_SECONDS.with_label_values(&["audio"]);
+    TELEGRAM_SEND_DURATION_SECONDS.with_label_values(&["video"]);
+
+    // Initialize pipeline & external API metrics
+    let _ = &*BUILD_INFO;
+    let _ = &*PROXY_REQUESTS_TOTAL;
+    let _ = &*METADATA_FETCH_DURATION_SECONDS;
+    let _ = &*AUDIO_EFFECTS_DURATION_SECONDS;
+    let _ = &*VIDEO_ENCODING_DURATION_SECONDS;
+    let _ = &*CACHE_HIT_RATIO;
+    let _ = &*SEMAPHORE_FULL_TOTAL;
+
+    let _ = &*PROCESS_RESIDENT_MEMORY_BYTES;
+
+    PROXY_REQUESTS_TOTAL.with_label_values(&["warp", "success"]);
+    PROXY_REQUESTS_TOTAL.with_label_values(&["warp", "failure"]);
+    PROXY_REQUESTS_TOTAL.with_label_values(&["direct", "success"]);
+    PROXY_REQUESTS_TOTAL.with_label_values(&["direct", "failure"]);
+
+    VIDEO_ENCODING_DURATION_SECONDS.with_label_values(&["burn_subtitles"]);
+    VIDEO_ENCODING_DURATION_SECONDS.with_label_values(&["split"]);
+
+    CACHE_HIT_RATIO.with_label_values(&["metadata"]);
+    CACHE_HIT_RATIO.with_label_values(&["preview"]);
 
     // Initialize health check / smoke test metrics
     let _ = &*HEALTH_CHECK_STATUS;
@@ -724,27 +864,6 @@ pub fn record_revenue(plan: &str, amount: f64) {
     REVENUE_BY_PLAN.with_label_values(&[plan]).inc_by(amount);
 }
 
-/// Helper function to record operation start (returns timer)
-pub fn start_operation_timer(operation_type: &str, format: &str) -> prometheus::HistogramTimer {
-    OPERATION_DURATION_SECONDS
-        .with_label_values(&[operation_type, format])
-        .start_timer()
-}
-
-/// Helper function to record operation success
-pub fn record_operation_success(operation_type: &str, format: &str) {
-    OPERATION_SUCCESS_TOTAL
-        .with_label_values(&[operation_type, format])
-        .inc();
-}
-
-/// Helper function to record operation failure
-pub fn record_operation_failure(operation_type: &str, format: &str, error_category: &str) {
-    OPERATION_FAILURE_TOTAL
-        .with_label_values(&[operation_type, format, error_category])
-        .inc();
-}
-
 /// Helper function to record file size
 pub fn record_file_size(format: &str, size_bytes: u64) {
     FILE_SIZE_BYTES.with_label_values(&[format]).observe(size_bytes as f64);
@@ -768,6 +887,36 @@ pub fn record_user_feedback(sentiment: &str) {
 /// Helper function to record alert
 pub fn record_alert(alert_type: &str, severity: &str) {
     ALERTS_TOTAL.with_label_values(&[alert_type, severity]).inc();
+}
+
+/// Helper function to record yt-dlp tier attempt
+pub fn record_tier_attempt(tier: &str, success: bool) {
+    YTDLP_TIER_ATTEMPTS
+        .with_label_values(&[tier, if success { "success" } else { "failure" }])
+        .inc();
+}
+
+/// Helper function to record proxy request outcome
+pub fn record_proxy_request(proxy_type: &str, result: &str) {
+    PROXY_REQUESTS_TOTAL.with_label_values(&[proxy_type, result]).inc();
+}
+
+/// Helper function to record message type
+pub fn record_message_type(message_type: &str) {
+    MESSAGE_TYPES_TOTAL.with_label_values(&[message_type]).inc();
+}
+
+/// Update process resident memory from /proc/self/statm (Linux only — Railway runs Linux)
+pub fn update_process_memory() {
+    if let Ok(statm) = std::fs::read_to_string("/proc/self/statm") {
+        // Fields: size resident shared text lib data dt (in pages)
+        if let Some(rss_pages) = statm.split_whitespace().nth(1) {
+            if let Ok(pages) = rss_pages.parse::<u64>() {
+                let page_size = 4096u64; // standard Linux page size
+                PROCESS_RESIDENT_MEMORY_BYTES.set((pages * page_size) as f64);
+            }
+        }
+    }
 }
 
 /// Extract platform from URL for metrics

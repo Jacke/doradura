@@ -368,6 +368,7 @@ where
     let max_attempts = config::retry::MAX_ATTEMPTS;
     let download_path = download_path.to_string();
     let mut timeout_retry_used = false;
+    let send_start = std::time::Instant::now();
 
     // Validate file size before sending
     let file_size = fs::metadata(&download_path)
@@ -679,6 +680,9 @@ where
                 // Will be updated to Success/Completed in the main function
                 log::debug!("File sent successfully, progress message will be updated by caller");
 
+                metrics::TELEGRAM_SEND_DURATION_SECONDS
+                    .with_label_values(&[file_type])
+                    .observe(send_start.elapsed().as_secs_f64());
                 return Ok((msg, file_size));
             }
             Err(e) if attempt < max_attempts => {

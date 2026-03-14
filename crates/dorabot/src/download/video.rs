@@ -81,6 +81,7 @@ pub async fn download_and_send_video(
             Plan::default()
         };
         metrics::record_format_request("mp4", user_plan.as_str());
+        metrics::record_platform_download(metrics::extract_platform(url.as_str()));
 
         let quality = video_quality.as_deref().unwrap_or("default");
         let timer = metrics::DOWNLOAD_DURATION_SECONDS
@@ -172,6 +173,7 @@ pub async fn download_and_send_video(
 
             // Split video if Local Bot API is used and file exceeds 1.9GB
             let final_file_size = fs::metadata(&actual_file_path).map(|m| m.len()).unwrap_or(0);
+            metrics::record_file_size("mp4", final_file_size);
             let is_local_bot_api = std::env::var("BOT_API_URL")
                 .map(|u| !u.contains("api.telegram.org"))
                 .unwrap_or(false);

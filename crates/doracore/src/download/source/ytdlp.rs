@@ -586,6 +586,16 @@ where
             .map(|p| p.name.clone())
             .unwrap_or_else(|| "Direct (no proxy)".to_string());
 
+        let proxy_label = if proxy_name.contains("WARP") || proxy_name.contains("warp") {
+            "warp"
+        } else if proxy_name.contains("Geonode") {
+            "geonode"
+        } else if proxy_name.contains("Direct") {
+            "direct"
+        } else {
+            "custom"
+        };
+
         log::info!(
             "📡 {} download attempt {}/{} using [{}]",
             media_type,
@@ -612,6 +622,10 @@ where
             &tier1_args_fn,
         ) {
             Ok(()) => {
+                crate::core::metrics::record_tier_attempt("tier1_no_cookies", true);
+                crate::core::metrics::PROXY_REQUESTS_TOTAL
+                    .with_label_values(&[proxy_label, "success"])
+                    .inc();
                 log::info!(
                     "✅ {} download succeeded using [{}] (attempt {}/{})",
                     media_type,
@@ -622,6 +636,7 @@ where
                 return Ok(probe_duration_seconds(download_path));
             }
             Err((error_type, stderr_text)) => {
+                crate::core::metrics::record_tier_attempt("tier1_no_cookies", false);
                 let error_msg = get_error_message(&error_type);
                 log::error!(
                     "❌ Download failed with [{}]: {:?} - {}",
@@ -640,6 +655,9 @@ where
                         attempt + 2,
                         total_proxies
                     );
+                    crate::core::metrics::PROXY_REQUESTS_TOTAL
+                        .with_label_values(&[proxy_label, "failure"])
+                        .inc();
                     last_error = Some(AppError::Download(DownloadError::YtDlp(error_msg)));
                     continue;
                 }
@@ -667,18 +685,27 @@ where
                         &tier2_args_fn,
                         &runtime_handle,
                     ) {
-                        Tier2Outcome::Success => return Ok(probe_duration_seconds(download_path)),
+                        Tier2Outcome::Success => {
+                            crate::core::metrics::record_tier_attempt("tier2_cookies", true);
+                            crate::core::metrics::PROXY_REQUESTS_TOTAL
+                                .with_label_values(&[proxy_label, "success"])
+                                .inc();
+                            return Ok(probe_duration_seconds(download_path));
+                        }
                         Tier2Outcome::CookieRefreshed => {
+                            crate::core::metrics::record_tier_attempt("tier2_cookies", false);
                             last_error = Some(AppError::Download(DownloadError::YtDlp(error_msg.clone())));
                             continue;
                         }
-                        Tier2Outcome::Failed => {}
+                        Tier2Outcome::Failed => {
+                            crate::core::metrics::record_tier_attempt("tier2_cookies", false);
+                        }
                     }
                 }
 
                 // ── Tier 3: Fixup never (postprocessing errors) ──
-                if error_type == YtDlpErrorType::PostprocessingError
-                    && try_tier3(
+                if error_type == YtDlpErrorType::PostprocessingError {
+                    let tier3_ok = try_tier3(
                         ytdl_bin,
                         download_path,
                         url_str,
@@ -688,9 +715,14 @@ where
                         proxy_option.as_ref(),
                         progress_tx,
                         &tier3_args_fn,
-                    )
-                {
-                    return Ok(probe_duration_seconds(download_path));
+                    );
+                    crate::core::metrics::record_tier_attempt("tier3_fixup_never", tier3_ok);
+                    if tier3_ok {
+                        crate::core::metrics::PROXY_REQUESTS_TOTAL
+                            .with_label_values(&[proxy_label, "success"])
+                            .inc();
+                        return Ok(probe_duration_seconds(download_path));
+                    }
                 }
 
                 // Record metrics
@@ -705,6 +737,10 @@ where
                     YtDlpErrorType::Unknown => "ytdlp_unknown",
                 };
                 crate::core::metrics::record_error("download", &format!("{}_download:{}", media_type, error_category));
+
+                crate::core::metrics::PROXY_REQUESTS_TOTAL
+                    .with_label_values(&[proxy_label, "failure"])
+                    .inc();
 
                 if attempt + 1 < total_proxies {
                     log::warn!(
@@ -799,6 +835,7 @@ fn run_ytdlp_with_progress(
     args: &[&str],
     progress_tx: &mpsc::UnboundedSender<SourceProgress>,
 ) -> Result<(), (YtDlpErrorType, String)> {
+    let ytdlp_start = std::time::Instant::now();
     let child_result = Command::new(ytdl_bin)
         .args(args)
         .stdout(Stdio::piped())
@@ -809,6 +846,9 @@ fn run_ytdlp_with_progress(
         Ok(c) => c,
         Err(e) => {
             log::error!("Failed to spawn yt-dlp: {}", e);
+            crate::core::metrics::YTDLP_EXECUTION_DURATION_SECONDS
+                .with_label_values(&["download"])
+                .observe(ytdlp_start.elapsed().as_secs_f64());
             return Err((YtDlpErrorType::Unknown, format!("Failed to spawn yt-dlp: {}", e)));
         }
     };
@@ -866,6 +906,9 @@ fn run_ytdlp_with_progress(
                     log::error!("yt-dlp process timed out after {}s, killing", ytdlp_timeout.as_secs());
                     let _ = child.kill();
                     let _ = child.wait();
+                    crate::core::metrics::YTDLP_EXECUTION_DURATION_SECONDS
+                        .with_label_values(&["download"])
+                        .observe(ytdlp_start.elapsed().as_secs_f64());
                     return Err((
                         YtDlpErrorType::Unknown,
                         format!("yt-dlp process timed out after {}s", ytdlp_timeout.as_secs()),
@@ -876,12 +919,18 @@ fn run_ytdlp_with_progress(
             }
             Err(e) => {
                 log::error!("Downloader process failed: {}", e);
+                crate::core::metrics::YTDLP_EXECUTION_DURATION_SECONDS
+                    .with_label_values(&["download"])
+                    .observe(ytdlp_start.elapsed().as_secs_f64());
                 return Err((YtDlpErrorType::Unknown, format!("downloader process failed: {}", e)));
             }
         }
     };
 
     if status.success() {
+        crate::core::metrics::YTDLP_EXECUTION_DURATION_SECONDS
+            .with_label_values(&["download"])
+            .observe(ytdlp_start.elapsed().as_secs_f64());
         return Ok(());
     }
 
@@ -892,6 +941,9 @@ fn run_ytdlp_with_progress(
     };
 
     let error_type = analyze_ytdlp_error(&stderr_text);
+    crate::core::metrics::YTDLP_EXECUTION_DURATION_SECONDS
+        .with_label_values(&["download"])
+        .observe(ytdlp_start.elapsed().as_secs_f64());
     Err((error_type, stderr_text))
 }
 

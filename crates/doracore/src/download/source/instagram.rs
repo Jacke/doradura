@@ -81,6 +81,7 @@ impl RateLimiter {
             return false;
         }
         ts.push(Instant::now());
+        crate::core::metrics::INSTAGRAM_RATE_LIMITER_QUEUE.set(ts.len() as i64);
         true
     }
 }
