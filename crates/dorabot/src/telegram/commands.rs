@@ -1657,23 +1657,20 @@ pub async fn process_video_clip(
 
     let status = bot.send_message(chat_id, status_msg).await?;
 
-    let temp_dir = std::path::PathBuf::from(crate::core::config::TEMP_FILES_DIR.as_str()).join("doradura_clip");
-    if let Err(e) = tokio::fs::create_dir_all(&temp_dir).await {
-        log::error!("❌ Failed to create temp directory {:?}: {}", temp_dir, e);
-        bot.send_message(chat_id, "❌ Failed to create temporary directory")
-            .await
-            .ok();
-        return Err(AppError::Io(e));
-    }
-    log::info!("📂 Temp directory ready: {:?}", temp_dir);
+    let mut guard = crate::core::utils::TempDirGuard::new("doradura_clip")
+        .await
+        .map_err(AppError::Io)?;
+    log::info!("📂 Temp directory ready: {:?}", guard.path());
 
-    let input_path = temp_dir.join(format!("input_{}_{}.mp4", chat_id.0, session.source_id));
+    let input_path = guard
+        .path()
+        .join(format!("input_{}_{}.mp4", chat_id.0, session.source_id));
     let output_path = if is_ringtone {
         let safe_title = crate::download::ringtone::sanitize_filename(&base_title);
         let ext = if is_iphone_ringtone { "m4r" } else { "mp3" };
-        temp_dir.join(format!("{}_ringtone.{}", safe_title, ext))
+        guard.path().join(format!("{}_ringtone.{}", safe_title, ext))
     } else {
-        temp_dir.join(format!(
+        guard.path().join(format!(
             "{}_{}_{}{}",
             if is_video_note { "circle" } else { "cut" },
             chat_id.0,
@@ -1719,8 +1716,14 @@ pub async fn process_video_clip(
     // AFTER scale+crop in the ffmpeg filter chain so they render at 640x640.
     let circle_srt_path: Option<std::path::PathBuf> = if is_video_note {
         if let Some(ref sub_lang) = session.subtitle_lang {
-            match download_circle_subtitles(&session.original_url, sub_lang, &temp_dir, chat_id.0, session.source_id)
-                .await
+            match download_circle_subtitles(
+                &session.original_url,
+                sub_lang,
+                guard.path(),
+                chat_id.0,
+                session.source_id,
+            )
+            .await
             {
                 BurnSubsResult::SubtitleReady(srt) => Some(srt),
                 _ => None,
@@ -1757,7 +1760,6 @@ pub async fn process_video_clip(
         bot.send_message(chat_id, i18n::t(&lang, "commands.video_note_requires_video"))
             .await
             .ok();
-        tokio::fs::remove_file(&actual_input_path).await.ok();
         return Ok(());
     }
 
@@ -2043,8 +2045,6 @@ pub async fn process_video_clip(
             )
             .await
             .ok();
-            tokio::fs::remove_file(&actual_input_path).await.ok();
-            tokio::fs::remove_file(&output_path).await.ok();
             return Ok(());
         }
     };
@@ -2091,8 +2091,6 @@ pub async fn process_video_clip(
                 )
                 .await
                 .ok();
-                tokio::fs::remove_file(&actual_input_path).await.ok();
-                tokio::fs::remove_file(&output_path).await.ok();
                 return Ok(());
             }
         };
@@ -2106,8 +2104,6 @@ pub async fn process_video_clip(
             bot.send_message(chat_id, i18n::t_args(&lang, "commands.ffmpeg_error_dual", &args))
                 .await
                 .ok();
-            tokio::fs::remove_file(&actual_input_path).await.ok();
-            tokio::fs::remove_file(&output_path).await.ok();
             return Ok(());
         }
     }
@@ -2157,7 +2153,6 @@ pub async fn process_video_clip(
         bot.send_message(chat_id, i18n::t(&lang, "commands.output_file_missing"))
             .await
             .ok();
-        tokio::fs::remove_file(&actual_input_path).await.ok();
         return Ok(());
     }
 
@@ -2179,6 +2174,10 @@ pub async fn process_video_clip(
         // Use effective_total_len (speed-adjusted) since ffmpeg already applied speed
         match to_video_notes_split(&output_path, effective_total_len as u64, None).await {
             Ok(circle_paths) => {
+                // Track circle files for automatic cleanup by guard
+                for path in &circle_paths {
+                    guard.track_file(path.clone());
+                }
                 let total_circles = circle_paths.len();
                 log::info!("📤 Sending {} video notes (circles)", total_circles);
 
@@ -2220,21 +2219,9 @@ pub async fn process_video_clip(
                                 i18n::t_args(&lang, "commands.video_note_send_failed", &args)
                             };
                             bot.send_message(chat_id, msg).await.ok();
-
-                            // Clean up all circle files
-                            for path in &circle_paths {
-                                tokio::fs::remove_file(path).await.ok();
-                            }
-                            tokio::fs::remove_file(&actual_input_path).await.ok();
-                            tokio::fs::remove_file(&output_path).await.ok();
                             return Ok(());
                         }
                     }
-                }
-
-                // Clean up circle files
-                for path in &circle_paths {
-                    tokio::fs::remove_file(path).await.ok();
                 }
 
                 // Delete status message after successful send
@@ -2242,10 +2229,6 @@ pub async fn process_video_clip(
 
                 // Send clip title as separate message
                 bot.send_message(chat_id, &clip_title).await.ok();
-
-                // Clean up
-                tokio::fs::remove_file(&actual_input_path).await.ok();
-                tokio::fs::remove_file(&output_path).await.ok();
 
                 // Skip the rest of the function since we handled everything
                 // Save to history not needed for multi-circle (complex structure)
@@ -2259,8 +2242,6 @@ pub async fn process_video_clip(
                 bot.send_message(chat_id, i18n::t_args(&lang, "commands.video_note_split_failed", &args))
                     .await
                     .ok();
-                tokio::fs::remove_file(&actual_input_path).await.ok();
-                tokio::fs::remove_file(&output_path).await.ok();
                 return Ok(());
             }
         }
@@ -2284,8 +2265,6 @@ pub async fn process_video_clip(
                     i18n::t_args(&lang, "commands.video_note_send_failed", &args)
                 };
                 bot.send_message(chat_id, msg).await.ok();
-                tokio::fs::remove_file(&actual_input_path).await.ok();
-                tokio::fs::remove_file(&output_path).await.ok();
                 return Ok(());
             }
         }
@@ -2305,8 +2284,6 @@ pub async fn process_video_clip(
                 bot.send_message(chat_id, i18n::t_args(&lang, "commands.ringtone_send_failed", &args))
                     .await
                     .ok();
-                tokio::fs::remove_file(&actual_input_path).await.ok();
-                tokio::fs::remove_file(&output_path).await.ok();
                 return Ok(());
             }
         };
@@ -2323,8 +2300,6 @@ pub async fn process_video_clip(
         }
         // Clean up files and return early (don't fall through to clip_title logic below)
         bot.delete_message(chat_id, status.id).await.ok();
-        tokio::fs::remove_file(&actual_input_path).await.ok();
-        tokio::fs::remove_file(&output_path).await.ok();
         return Ok(());
     } else if has_video {
         match bot
@@ -2340,8 +2315,6 @@ pub async fn process_video_clip(
                 bot.send_message(chat_id, i18n::t_args(&lang, "commands.clip_send_failed", &args))
                     .await
                     .ok();
-                tokio::fs::remove_file(&actual_input_path).await.ok();
-                tokio::fs::remove_file(&output_path).await.ok();
                 return Ok(());
             }
         }
@@ -2359,8 +2332,6 @@ pub async fn process_video_clip(
                 bot.send_message(chat_id, i18n::t_args(&lang, "commands.audio_send_failed", &args))
                     .await
                     .ok();
-                tokio::fs::remove_file(&actual_input_path).await.ok();
-                tokio::fs::remove_file(&output_path).await.ok();
                 return Ok(());
             }
         }
@@ -2405,12 +2376,7 @@ pub async fn process_video_clip(
         );
     }
 
-    tokio::fs::remove_file(&actual_input_path).await.ok();
-    tokio::fs::remove_file(&output_path).await.ok();
-    if let Some(srt) = &circle_srt_path {
-        tokio::fs::remove_file(srt).await.ok();
-    }
-
+    // guard drops here, cleaning up the temp dir and tracked files
     Ok(())
 }
 
@@ -2575,13 +2541,13 @@ async fn process_audio_cut(
         .send_message(chat_id, i18n::t_args(&lang, "commands.audio_cut_processing", &args))
         .await?;
 
-    let temp_dir = std::path::PathBuf::from(crate::core::config::TEMP_FILES_DIR.as_str()).join("doradura_audio_cut");
-    if let Err(e) = tokio::fs::create_dir_all(&temp_dir).await {
-        log::error!("❌ Failed to create temp directory {:?}: {}", temp_dir, e);
-        return Err(AppError::Io(e));
-    }
+    let guard = crate::core::utils::TempDirGuard::new("doradura_audio_cut")
+        .await
+        .map_err(AppError::Io)?;
 
-    let output_path = temp_dir.join(format!("cut_audio_{}_{}.mp3", chat_id.0, uuid::Uuid::new_v4()));
+    let output_path = guard
+        .path()
+        .join(format!("cut_audio_{}_{}.mp3", chat_id.0, uuid::Uuid::new_v4()));
 
     // Fast seek for audio cuts
     let audio_seek_offset = segments
@@ -2632,7 +2598,6 @@ async fn process_audio_cut(
             bot.send_message(chat_id, "❌ Audio processing timed out. Try a shorter segment.")
                 .await
                 .ok();
-            tokio::fs::remove_file(&output_path).await.ok();
             return Ok(());
         }
     };
@@ -2645,7 +2610,6 @@ async fn process_audio_cut(
         bot.send_message(chat_id, i18n::t_args(&lang, "commands.ffmpeg_error_single", &args))
             .await
             .ok();
-        tokio::fs::remove_file(&output_path).await.ok();
         return Ok(());
     }
 
@@ -2663,7 +2627,6 @@ async fn process_audio_cut(
         bot.send_message(chat_id, i18n::t(&lang, "commands.audio_too_large_for_telegram"))
             .await
             .ok();
-        tokio::fs::remove_file(&output_path).await.ok();
         return Ok(());
     }
 
@@ -2689,12 +2652,11 @@ async fn process_audio_cut(
         bot.send_message(chat_id, i18n::t_args(&lang, "commands.audio_send_failed", &args))
             .await
             .ok();
-        tokio::fs::remove_file(&output_path).await.ok();
         return Ok(());
     }
 
     bot.delete_message(chat_id, status.id).await.ok();
-    tokio::fs::remove_file(&output_path).await.ok();
+    // guard drops here, cleaning up the temp dir
     Ok(())
 }
 

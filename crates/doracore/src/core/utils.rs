@@ -617,6 +617,81 @@ impl Drop for DownloadGuard {
     }
 }
 
+/// RAII guard for a temporary directory.
+///
+/// Creates a per-operation UUID subdirectory under `TEMP_FILES_DIR/{category}/`
+/// and removes the entire directory (plus any tracked external files) on drop.
+/// This guarantees cleanup on every code path: success, error, early return, or panic.
+pub struct TempDirGuard {
+    path: Option<std::path::PathBuf>,
+    extra_files: Vec<std::path::PathBuf>,
+}
+
+impl TempDirGuard {
+    /// Creates `TEMP_FILES_DIR/{category}/{uuid}/` and returns a guard that will
+    /// `remove_dir_all` on drop.
+    pub async fn new(category: &str) -> std::io::Result<Self> {
+        let dir = std::path::PathBuf::from(crate::core::config::TEMP_FILES_DIR.as_str())
+            .join(category)
+            .join(uuid::Uuid::new_v4().to_string());
+        tokio::fs::create_dir_all(&dir).await?;
+        log::debug!("TempDirGuard: created {}", dir.display());
+        Ok(Self {
+            path: Some(dir),
+            extra_files: Vec::new(),
+        })
+    }
+
+    /// Guard an existing directory path (e.g. archive session dirs with custom names).
+    pub async fn from_path(dir: std::path::PathBuf) -> std::io::Result<Self> {
+        tokio::fs::create_dir_all(&dir).await?;
+        Ok(Self {
+            path: Some(dir),
+            extra_files: Vec::new(),
+        })
+    }
+
+    /// Returns the guarded directory path.
+    pub fn path(&self) -> &std::path::Path {
+        self.path.as_deref().expect("TempDirGuard: path taken after keep()")
+    }
+
+    /// Register an external file for cleanup on drop (e.g. split output files
+    /// created outside the guarded directory).
+    pub fn track_file<P: Into<std::path::PathBuf>>(&mut self, path: P) {
+        self.extra_files.push(path.into());
+    }
+
+    /// Prevent cleanup on drop — the directory and files will be kept.
+    pub fn keep(mut self) {
+        self.path = None;
+        self.extra_files.clear();
+    }
+}
+
+impl Drop for TempDirGuard {
+    fn drop(&mut self) {
+        // Clean up tracked external files first
+        for path in &self.extra_files {
+            if let Err(e) = std::fs::remove_file(path) {
+                if path.exists() {
+                    log::debug!("TempDirGuard: failed to remove extra file {}: {}", path.display(), e);
+                }
+            }
+        }
+        // Remove the entire directory
+        if let Some(ref dir) = self.path {
+            if dir.exists() {
+                if let Err(e) = std::fs::remove_dir_all(dir) {
+                    log::warn!("TempDirGuard: failed to remove {}: {}", dir.display(), e);
+                } else {
+                    log::debug!("TempDirGuard: cleaned up {}", dir.display());
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{escape_filename, escape_markdown_v2, format_media_caption, pluralize_seconds, sanitize_filename};

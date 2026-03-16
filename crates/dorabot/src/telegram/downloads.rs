@@ -421,6 +421,12 @@ pub async fn show_downloads_page(
         }
     }
 
+    // Archive button
+    keyboard_rows.push(vec![crate::telegram::cb(
+        "📦 Create Archive".to_string(),
+        "arc:new".to_string(),
+    )]);
+
     // Close button
     keyboard_rows.push(vec![crate::telegram::cb(
         "❌ Close".to_string(),
@@ -1733,17 +1739,20 @@ pub async fn handle_downloads_callback(
                     let username = username.clone();
 
                     tokio::spawn(async move {
-                        let temp_dir = std::path::PathBuf::from(crate::core::config::TEMP_FILES_DIR.as_str())
-                            .join("doradura_burn_subs");
-                        if let Err(e) = tokio::fs::create_dir_all(&temp_dir).await {
-                            log::error!("Failed to create burn_subs temp dir: {}", e);
-                            bot.edit_message_text(chat_id, processing_msg.id, "❌ Internal error")
-                                .await
-                                .ok();
-                            return;
-                        }
+                        let guard = match crate::core::utils::TempDirGuard::new("doradura_burn_subs").await {
+                            Ok(g) => g,
+                            Err(e) => {
+                                log::error!("Failed to create burn_subs temp dir: {}", e);
+                                bot.edit_message_text(chat_id, processing_msg.id, "❌ Internal error")
+                                    .await
+                                    .ok();
+                                return;
+                            }
+                        };
 
-                        let input_path = temp_dir.join(format!("input_{}_{}.mp4", chat_id.0, uuid::Uuid::new_v4()));
+                        let input_path = guard
+                            .path()
+                            .join(format!("input_{}_{}.mp4", chat_id.0, uuid::Uuid::new_v4()));
 
                         // Download video from Telegram
                         let download_result = crate::telegram::download_file_with_fallback(
@@ -1773,7 +1782,7 @@ pub async fn handle_downloads_callback(
                             &url,
                             &lang_code,
                             &input_path,
-                            &temp_dir,
+                            guard.path(),
                             chat_id.0,
                             download_id,
                         )
@@ -1794,7 +1803,6 @@ pub async fn handle_downloads_callback(
                                 )
                                 .await
                                 .ok();
-                                tokio::fs::remove_file(&input_path).await.ok();
                                 return;
                             }
                             BurnSubsResult::Failed(reason) => {
@@ -1815,7 +1823,6 @@ pub async fn handle_downloads_callback(
                                 )
                                 .await
                                 .ok();
-                                tokio::fs::remove_file(&input_path).await.ok();
                                 return;
                             }
                         };
@@ -1895,11 +1902,7 @@ pub async fn handle_downloads_callback(
                             }
                         }
 
-                        // Cleanup temp files
-                        tokio::fs::remove_file(&actual_path).await.ok();
-                        if actual_path != input_path {
-                            tokio::fs::remove_file(&input_path).await.ok();
-                        }
+                        // guard drops here, cleaning up the temp dir
                     });
                 }
             }
@@ -2282,11 +2285,10 @@ async fn send_document_forced(
     // If Telegram still renders it as media, try to force a re-upload as a document.
     // Important: do NOT delete the first message unless the re-upload succeeds, otherwise user gets nothing.
 
-    let temp_dir = std::path::PathBuf::from(crate::core::config::TEMP_FILES_DIR.as_str()).join("doradura_telegram");
-    tokio::fs::create_dir_all(&temp_dir)
+    let guard = crate::core::utils::TempDirGuard::new("doradura_telegram")
         .await
         .map_err(|e| request_error_from_text(e.to_string()))?;
-    let temp_path = temp_dir.join(format!("{}_{}", chat_id.0, upload_file_name));
+    let temp_path = guard.path().join(format!("{}_{}", chat_id.0, upload_file_name));
 
     match crate::telegram::download_file_from_telegram(bot, telegram_file_id, Some(temp_path.clone())).await {
         Ok(_) => {}
@@ -2295,10 +2297,8 @@ async fn send_document_forced(
             if let Some(notice) = forced_document_unavailable_notice(&msg) {
                 log::warn!("Forced document re-upload is not possible: {}", msg);
                 bot.send_message(chat_id, notice).await.ok();
-                tokio::fs::remove_file(&temp_path).await.ok();
                 return Ok(first_msg);
             }
-            tokio::fs::remove_file(&temp_path).await.ok();
             return Err(request_error_from_text(msg));
         }
     }
@@ -2308,8 +2308,6 @@ async fn send_document_forced(
         .disable_content_type_detection(true)
         .caption(caption)
         .await;
-
-    tokio::fs::remove_file(&temp_path).await.ok();
 
     match result {
         Ok(msg) => {
@@ -2339,22 +2337,19 @@ async fn change_video_speed(
     speed: f32,
     title: &str,
 ) -> Result<(teloxide::types::Message, i64), Box<dyn std::error::Error + Send + Sync>> {
-    use std::path::PathBuf;
     use tokio::fs;
     use tokio::process::Command;
 
-    // Create temp directory
-    let temp_dir = PathBuf::from(crate::core::config::TEMP_FILES_DIR.as_str()).join("doradura_speed");
-    fs::create_dir_all(&temp_dir).await?;
+    let guard = crate::core::utils::TempDirGuard::new("doradura_speed").await?;
 
-    // Save input file
-    let input_path = temp_dir.join(format!("input_{}_{}.mp4", chat_id.0, uuid::Uuid::new_v4()));
+    let input_path = guard
+        .path()
+        .join(format!("input_{}_{}.mp4", chat_id.0, uuid::Uuid::new_v4()));
     crate::telegram::download_file_from_telegram(bot, file_id, Some(input_path.clone()))
         .await
         .map_err(|e| format!("Failed to download file from Telegram: {}", e))?;
 
-    // Output file path
-    let output_path = temp_dir.join(format!("output_{}_{}.mp4", chat_id.0, speed));
+    let output_path = guard.path().join(format!("output_{}_{}.mp4", chat_id.0, speed));
 
     // Calculate audio tempo (pitch correction)
     let atempo = speed;
@@ -2406,10 +2401,7 @@ async fn change_video_speed(
         .caption(format!("{} (speed {}x)", title, speed))
         .await?;
 
-    // Cleanup temp files
-    fs::remove_file(&input_path).await.ok();
-    fs::remove_file(&output_path).await.ok();
-
+    // guard drops here, cleaning up the temp dir
     Ok((sent, file_size))
 }
 

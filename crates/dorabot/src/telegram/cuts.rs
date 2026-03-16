@@ -780,11 +780,10 @@ async fn send_document_forced(
 
     // Don't delete the first message unless the forced re-upload succeeds.
 
-    let temp_dir = std::path::PathBuf::from(crate::core::config::TEMP_FILES_DIR.as_str()).join("doradura_telegram");
-    tokio::fs::create_dir_all(&temp_dir)
+    let guard = crate::core::utils::TempDirGuard::new("doradura_telegram")
         .await
         .map_err(|e| request_error_from_text(e.to_string()))?;
-    let temp_path = temp_dir.join(format!("{}_{}", chat_id.0, upload_file_name));
+    let temp_path = guard.path().join(format!("{}_{}", chat_id.0, upload_file_name));
 
     match crate::telegram::download_file_from_telegram(bot, telegram_file_id, Some(temp_path.clone())).await {
         Ok(_) => {}
@@ -793,10 +792,8 @@ async fn send_document_forced(
             if let Some(notice) = forced_document_unavailable_notice(&msg) {
                 log::warn!("Forced document re-upload is not possible: {}", msg);
                 bot.send_message(chat_id, notice).await.ok();
-                tokio::fs::remove_file(&temp_path).await.ok();
                 return Ok(first_msg);
             }
-            tokio::fs::remove_file(&temp_path).await.ok();
             return Err(request_error_from_text(msg));
         }
     }
@@ -806,8 +803,6 @@ async fn send_document_forced(
         .disable_content_type_detection(true)
         .caption(caption)
         .await;
-
-    tokio::fs::remove_file(&temp_path).await.ok();
 
     match result {
         Ok(msg) => {
@@ -842,7 +837,6 @@ async fn change_video_speed(
     speed: f32,
     title: &str,
 ) -> Result<(teloxide::types::Message, i64), Box<dyn std::error::Error + Send + Sync>> {
-    use std::path::PathBuf;
     use tokio::fs;
     use tokio::process::Command;
 
@@ -852,15 +846,16 @@ async fn change_video_speed(
         return Err(format!("Invalid speed value: {}. Allowed: {:?}", speed, VALID_SPEEDS).into());
     }
 
-    let temp_dir = PathBuf::from(crate::core::config::TEMP_FILES_DIR.as_str()).join("doradura_speed");
-    fs::create_dir_all(&temp_dir).await?;
+    let guard = crate::core::utils::TempDirGuard::new("doradura_speed").await?;
 
-    let input_path = temp_dir.join(format!("input_{}_{}.mp4", chat_id.0, uuid::Uuid::new_v4()));
+    let input_path = guard
+        .path()
+        .join(format!("input_{}_{}.mp4", chat_id.0, uuid::Uuid::new_v4()));
     crate::telegram::download_file_from_telegram(bot, file_id, Some(input_path.clone()))
         .await
         .map_err(|e| format!("Failed to download file from Telegram: {}", e))?;
 
-    let output_path = temp_dir.join(format!(
+    let output_path = guard.path().join(format!(
         "output_{}_{}_{}.mp4",
         chat_id.0,
         speed,
@@ -902,7 +897,6 @@ async fn change_video_speed(
     let output = match tokio::time::timeout(FFMPEG_SPEED_TIMEOUT, cmd.output()).await {
         Ok(Ok(out)) => out,
         Ok(Err(e)) => {
-            fs::remove_file(&input_path).await.ok();
             return Err(format!("ffmpeg IO error: {}", e).into());
         }
         Err(_) => {
@@ -911,7 +905,6 @@ async fn change_video_speed(
                 FFMPEG_SPEED_TIMEOUT.as_secs(),
                 chat_id.0
             );
-            fs::remove_file(&input_path).await.ok();
             return Err(format!("ffmpeg timed out after {} seconds", FFMPEG_SPEED_TIMEOUT.as_secs()).into());
         }
     };
@@ -927,8 +920,6 @@ async fn change_video_speed(
         .await?;
     let file_size = fs::metadata(&output_path).await.map(|m| m.len() as i64).unwrap_or(0);
 
-    fs::remove_file(&input_path).await.ok();
-    fs::remove_file(&output_path).await.ok();
-
+    // guard drops here, cleaning up the temp dir
     Ok((sent, file_size))
 }

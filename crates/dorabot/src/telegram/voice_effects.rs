@@ -4,7 +4,6 @@
 //! Pressing a button downloads the voice, applies an ffmpeg filter, and sends
 //! the result back as a new voice message.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use teloxide::prelude::*;
@@ -85,15 +84,22 @@ pub async fn handle_voice_effect_callback(
     let _ = bot.edit_message_text(chat_id, message_id, "⏳ Processing...").await;
 
     // Download voice file
-    let input_path = PathBuf::from(format!("/tmp/vfx_{file_hash}_{}_input.ogg", chat_id.0));
-    let output_path = PathBuf::from(format!("/tmp/vfx_{file_hash}_{}_output.ogg", chat_id.0));
+    let guard = match crate::core::utils::TempDirGuard::new("doradura_vfx").await {
+        Ok(g) => g,
+        Err(e) => {
+            log::error!("Failed to create vfx temp dir: {}", e);
+            let _ = bot.edit_message_text(chat_id, message_id, "Internal error.").await;
+            return Ok(());
+        }
+    };
+    let input_path = guard.path().join(format!("vfx_{file_hash}_{}_input.ogg", chat_id.0));
+    let output_path = guard.path().join(format!("vfx_{file_hash}_{}_output.ogg", chat_id.0));
 
     if let Err(e) = download_file_from_telegram(bot, &file_id, Some(input_path.clone())).await {
         log::error!("Failed to download voice file: {}", e);
         let _ = bot
             .edit_message_text(chat_id, message_id, "Failed to download voice file.")
             .await;
-        cleanup(&[&input_path, &output_path]);
         return Ok(());
     }
 
@@ -159,7 +165,6 @@ pub async fn handle_voice_effect_callback(
         }
         _ => {
             log::warn!("Unknown voice effect: {}", effect);
-            cleanup(&[&input_path]);
             return Ok(());
         }
     };
@@ -184,7 +189,6 @@ pub async fn handle_voice_effect_callback(
                 .map(|l| format!("ffmpeg error: {}", l))
                 .unwrap_or_else(|| "ffmpeg processing failed.".into());
             let _ = bot.edit_message_text(chat_id, message_id, user_msg).await;
-            cleanup(&[&input_path, &output_path]);
             return Ok(());
         }
         Ok(Err(e)) => {
@@ -192,7 +196,6 @@ pub async fn handle_voice_effect_callback(
             let _ = bot
                 .edit_message_text(chat_id, message_id, "ffmpeg not available.")
                 .await;
-            cleanup(&[&input_path, &output_path]);
             return Ok(());
         }
         Err(_) => {
@@ -209,7 +212,6 @@ pub async fn handle_voice_effect_callback(
                     "Voice effect processing timed out. Please try again.",
                 )
                 .await;
-            cleanup(&[&input_path, &output_path]);
             return Ok(());
         }
     }
@@ -232,12 +234,6 @@ pub async fn handle_voice_effect_callback(
     // Delete the processing message
     let _ = bot.delete_message(chat_id, message_id).await;
 
-    cleanup(&[&input_path, &output_path]);
+    // guard drops here, cleaning up the temp dir
     Ok(())
-}
-
-fn cleanup(paths: &[&PathBuf]) {
-    for path in paths {
-        let _ = std::fs::remove_file(path);
-    }
 }
