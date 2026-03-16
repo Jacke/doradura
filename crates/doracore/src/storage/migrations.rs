@@ -25,19 +25,17 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
     conn.busy_timeout(Duration::from_secs(30))
         .context("set SQLite busy timeout")?;
 
-    // Try to apply any columns that might be missing before refinery runs,
-    // so that refinery's V36 doesn't fail on "duplicate column".
-    // This handles the case where s6 init script already applied V36 via raw sqlite3.
+    // Pre-apply columns that might already exist from init scripts,
+    // so that refinery doesn't fail on "duplicate column" and roll back
+    // the entire migration batch (which would skip later migrations like V38).
     let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN is_blocked INTEGER NOT NULL DEFAULT 0;");
 
     match embedded::migrations::runner().run(conn).map(|_| ()) {
         Ok(()) => {
             log::info!("Database migrations applied successfully");
-            Ok(())
         }
         Err(e) => {
             let msg = format!("{:#}", e);
-            // Log the full error for debugging
             log::error!("Migration error (full): {}", msg);
 
             // If error is about duplicate column or already applied schema,
@@ -47,10 +45,42 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
                 || msg.contains("table users already exists")
             {
                 log::warn!("Migration error is about existing schema, continuing: {}", msg);
-                Ok(())
             } else {
-                Err(e).context("apply migrations")
+                return Err(e).context("apply migrations");
             }
+        }
+    }
+
+    // Ensure tables from later migrations exist even if an earlier migration
+    // error caused the entire batch to roll back (e.g. V19 "duplicate column"
+    // rolls back V38's CREATE TABLE).
+    ensure_tables(conn);
+
+    Ok(())
+}
+
+/// Idempotently create tables that may have been lost to a migration rollback.
+fn ensure_tables(conn: &Connection) {
+    let stmts = [
+        // V38: archive sessions
+        "CREATE TABLE IF NOT EXISTS archive_sessions (
+            id          TEXT PRIMARY KEY,
+            user_id     INTEGER NOT NULL,
+            status      TEXT NOT NULL DEFAULT 'selecting',
+            created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+            expires_at  TEXT NOT NULL
+        )",
+        "CREATE TABLE IF NOT EXISTS archive_session_items (
+            session_id  TEXT NOT NULL REFERENCES archive_sessions(id) ON DELETE CASCADE,
+            download_id INTEGER NOT NULL,
+            UNIQUE(session_id, download_id)
+        )",
+        "CREATE INDEX IF NOT EXISTS idx_archive_sessions_user ON archive_sessions(user_id, status)",
+        "CREATE INDEX IF NOT EXISTS idx_archive_items_session ON archive_session_items(session_id)",
+    ];
+    for sql in &stmts {
+        if let Err(e) = conn.execute_batch(sql) {
+            log::warn!("ensure_tables: {}", e);
         }
     }
 }

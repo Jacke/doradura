@@ -674,19 +674,17 @@ impl Drop for TempDirGuard {
         // Clean up tracked external files first
         for path in &self.extra_files {
             if let Err(e) = std::fs::remove_file(path) {
-                if path.exists() {
+                if e.kind() != std::io::ErrorKind::NotFound {
                     log::debug!("TempDirGuard: failed to remove extra file {}: {}", path.display(), e);
                 }
             }
         }
         // Remove the entire directory
         if let Some(ref dir) = self.path {
-            if dir.exists() {
-                if let Err(e) = std::fs::remove_dir_all(dir) {
-                    log::warn!("TempDirGuard: failed to remove {}: {}", dir.display(), e);
-                } else {
-                    log::debug!("TempDirGuard: cleaned up {}", dir.display());
-                }
+            match std::fs::remove_dir_all(dir) {
+                Ok(()) => log::debug!("TempDirGuard: cleaned up {}", dir.display()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => log::warn!("TempDirGuard: failed to remove {}: {}", dir.display(), e),
             }
         }
     }
