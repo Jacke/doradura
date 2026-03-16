@@ -39,14 +39,16 @@ pub fn init_logger(log_file_path: &str) -> Result<()> {
         .with_ansi(false)
         .with_writer(std::sync::Mutex::new(log_file));
 
-    // Bridge `log` crate → tracing (so existing log::info! calls inherit span context)
-    tracing_log::LogTracer::init().map_err(|e| anyhow::anyhow!("LogTracer init: {}", e))?;
+    // Bridge `log` crate → tracing (so existing log::info! calls inherit span context).
+    // Use try_init to avoid panic if another component already set a logger.
+    let _ = tracing_log::LogTracer::init();
 
     tracing_subscriber::registry()
         .with(env_filter)
         .with(console_layer)
         .with(file_layer)
-        .init();
+        .try_init()
+        .map_err(|e| anyhow::anyhow!("Failed to initialize tracing subscriber: {}", e))?;
 
     Ok(())
 }
