@@ -13,7 +13,7 @@ use crate::core::config;
 /// Initialize logger for both console and file output using `tracing-subscriber`.
 ///
 /// All existing `log::info!` / `log::warn!` / `log::error!` calls are
-/// automatically bridged into the tracing system via `tracing-log`.
+/// automatically bridged into the tracing system via `tracing-subscriber`.
 /// Spans (e.g. `task{op=...}`) propagate context to every log line inside them.
 pub fn init_logger(log_file_path: &str) -> Result<()> {
     use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
@@ -39,12 +39,9 @@ pub fn init_logger(log_file_path: &str) -> Result<()> {
         .with_ansi(false)
         .with_writer(std::sync::Mutex::new(log_file));
 
-    // Bridge `log` crate → tracing so existing log::info! calls inherit span context.
-    // Ignore errors — if something already set a logger, log calls still work.
-    let _ = tracing_log::LogTracer::init();
-
-    // try_init: never panic, never fail fatally. If subscriber is already set
-    // (shouldn't happen, but safety first), the bot still starts.
+    // init() sets both the tracing global subscriber AND the log bridge
+    // (log::info! → tracing events). Do NOT call LogTracer::init() separately —
+    // it conflicts because both try to call log::set_logger().
     if let Err(e) = tracing_subscriber::registry()
         .with(env_filter)
         .with(console_layer)
