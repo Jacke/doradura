@@ -284,29 +284,37 @@ async fn main() {
     let mut actual_name = ActualState::Unknown;
     let mut actual_avatar = ActualState::Unknown;
 
-    // ── Startup: set offline name (skip avatar to conserve rate limit) ──
-    info!("Setting OFFLINE name on startup (bot not ready yet)");
-    if try_set_name(&client, &config.bot_token, OFFLINE_NAME, &mut rate_limit_until).await {
-        actual_name = ActualState::Offline;
-    }
-    // Try avatar too, but don't block on failure
-    if !is_rate_limited(rate_limit_until)
-        && try_set_avatar(
-            &client,
-            &config.bot_api_url,
-            &config.bot_token,
-            OFFLINE_AVATAR,
-            &mut rate_limit_until,
-        )
-        .await
-    {
-        actual_avatar = ActualState::Offline;
-    }
-
-    // Wait for bot to start up before monitoring
+    // ── Startup: wait for bot, only set "Sleep" if it's actually down ──
+    // Previous behavior: unconditionally set "Sleep" on every restart, which
+    // burns the setMyName rate limit (~22h cooldown). Then when the bot comes
+    // up 30s later, we can't switch to "Awake" for hours.
     info!("Waiting {}s for bot startup...", config.startup_delay.as_secs());
     tokio::time::sleep(config.startup_delay).await;
-    info!("Startup delay complete, beginning health checks");
+
+    if check_health(&client, &config.health_url).await {
+        info!("Bot is already healthy after startup delay, skipping offline name");
+        // Assume name is correct (online) from previous run; loop will fix if not.
+        actual_name = ActualState::Online;
+        actual_avatar = ActualState::Online;
+    } else {
+        info!("Bot not healthy after startup, setting OFFLINE name");
+        if try_set_name(&client, &config.bot_token, OFFLINE_NAME, &mut rate_limit_until).await {
+            actual_name = ActualState::Offline;
+        }
+        if !is_rate_limited(rate_limit_until)
+            && try_set_avatar(
+                &client,
+                &config.bot_api_url,
+                &config.bot_token,
+                OFFLINE_AVATAR,
+                &mut rate_limit_until,
+            )
+            .await
+        {
+            actual_avatar = ActualState::Offline;
+        }
+    }
+    info!("Startup complete, beginning health checks");
 
     let mut failures: u32 = config.fail_threshold; // start assuming bot is down
 
