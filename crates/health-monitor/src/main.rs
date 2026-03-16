@@ -107,21 +107,37 @@ async fn set_avatar(client: &Client, _api_url: &str, token: &str, photo: &[u8]) 
 
     let url = format!("{}/bot{}/setMyProfilePhoto", TELEGRAM_API_URL, token);
 
-    let resp: serde_json::Value = match client
+    info!("[API] POST setMyProfilePhoto (photo_size={}B)", photo.len());
+
+    let resp_result = client
         .post(&url)
         .multipart(form)
         .timeout(Duration::from_secs(30))
         .send()
-        .await
-    {
-        Ok(r) => match r.json().await {
-            Ok(j) => j,
-            Err(e) => return ApiResult::Error(format!("json parse failed: {e}")),
-        },
-        Err(e) => return ApiResult::Error(format!("request failed: {e}")),
+        .await;
+
+    let resp = match resp_result {
+        Ok(r) => {
+            let status = r.status();
+            let body = r.text().await.unwrap_or_else(|e| format!("<read error: {e}>"));
+            info!(
+                "[API] setMyProfilePhoto response: HTTP {} | body: {}",
+                status,
+                truncate(&body, 500)
+            );
+            match serde_json::from_str::<serde_json::Value>(&body) {
+                Ok(j) => j,
+                Err(_) => return ApiResult::Error(format!("json parse failed, HTTP {status}, body: {body}")),
+            }
+        }
+        Err(e) => {
+            error!("[API] setMyProfilePhoto request failed: {e}");
+            return ApiResult::Error(format!("request failed: {e}"));
+        }
     };
 
     if resp.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+        info!("[API] setMyProfilePhoto: success");
         return ApiResult::Ok;
     }
 
@@ -129,10 +145,26 @@ async fn set_avatar(client: &Client, _api_url: &str, token: &str, photo: &[u8]) 
         .get("description")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown error");
+    let error_code = resp.get("error_code").and_then(|v| v.as_i64()).unwrap_or(0);
+    let retry_after_field = resp
+        .get("parameters")
+        .and_then(|p| p.get("retry_after"))
+        .and_then(|v| v.as_u64());
 
-    if let Some(retry_after) = parse_retry_after(desc) {
-        ApiResult::RateLimited(retry_after)
+    if let Some(retry_secs) = retry_after_field.or_else(|| parse_retry_after(desc)) {
+        warn!(
+            "[API] setMyProfilePhoto: HTTP 429 | retry_after={}s ({:.1}h) | error_code={} | description=\"{}\"",
+            retry_secs,
+            retry_secs as f64 / 3600.0,
+            error_code,
+            desc
+        );
+        ApiResult::RateLimited(retry_secs)
     } else {
+        error!(
+            "[API] setMyProfilePhoto: error_code={} | description=\"{}\"",
+            error_code, desc
+        );
         ApiResult::Error(format!("Bot API error: {desc}"))
     }
 }
@@ -140,21 +172,37 @@ async fn set_avatar(client: &Client, _api_url: &str, token: &str, photo: &[u8]) 
 async fn set_bot_name(client: &Client, token: &str, name: &str) -> ApiResult {
     let url = format!("{}/bot{}/setMyName", TELEGRAM_API_URL, token);
 
-    let resp: serde_json::Value = match client
+    info!("[API] POST setMyName name=\"{}\"", name);
+
+    let resp_result = client
         .post(&url)
         .json(&serde_json::json!({ "name": name }))
         .timeout(Duration::from_secs(10))
         .send()
-        .await
-    {
-        Ok(r) => match r.json().await {
-            Ok(j) => j,
-            Err(e) => return ApiResult::Error(format!("json parse failed: {e}")),
-        },
-        Err(e) => return ApiResult::Error(format!("request failed: {e}")),
+        .await;
+
+    let resp = match resp_result {
+        Ok(r) => {
+            let status = r.status();
+            let body = r.text().await.unwrap_or_else(|e| format!("<read error: {e}>"));
+            info!(
+                "[API] setMyName response: HTTP {} | body: {}",
+                status,
+                truncate(&body, 500)
+            );
+            match serde_json::from_str::<serde_json::Value>(&body) {
+                Ok(j) => j,
+                Err(_) => return ApiResult::Error(format!("json parse failed, HTTP {status}, body: {body}")),
+            }
+        }
+        Err(e) => {
+            error!("[API] setMyName request failed: {e}");
+            return ApiResult::Error(format!("request failed: {e}"));
+        }
     };
 
     if resp.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+        info!("[API] setMyName: success");
         return ApiResult::Ok;
     }
 
@@ -162,10 +210,23 @@ async fn set_bot_name(client: &Client, token: &str, name: &str) -> ApiResult {
         .get("description")
         .and_then(|v| v.as_str())
         .unwrap_or("unknown error");
+    let error_code = resp.get("error_code").and_then(|v| v.as_i64()).unwrap_or(0);
+    let retry_after_field = resp
+        .get("parameters")
+        .and_then(|p| p.get("retry_after"))
+        .and_then(|v| v.as_u64());
 
-    if let Some(retry_after) = parse_retry_after(desc) {
-        ApiResult::RateLimited(retry_after)
+    if let Some(retry_secs) = retry_after_field.or_else(|| parse_retry_after(desc)) {
+        warn!(
+            "[API] setMyName: HTTP 429 | retry_after={}s ({:.1}h) | error_code={} | description=\"{}\"",
+            retry_secs,
+            retry_secs as f64 / 3600.0,
+            error_code,
+            desc
+        );
+        ApiResult::RateLimited(retry_secs)
     } else {
+        error!("[API] setMyName: error_code={} | description=\"{}\"", error_code, desc);
         ApiResult::Error(format!("setMyName error: {desc}"))
     }
 }
@@ -243,6 +304,15 @@ async fn check_health(client: &Client, health_url: &str) -> bool {
             Err(_) => false,
         },
         _ => false,
+    }
+}
+
+/// Truncate a string for logging (avoid flooding logs with huge API responses).
+fn truncate(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        s
+    } else {
+        &s[..max]
     }
 }
 
@@ -454,5 +524,12 @@ mod tests {
         assert!(is_rate_limited(Some(Instant::now() + Duration::from_secs(100))));
         // Past deadline = not limited
         assert!(!is_rate_limited(Some(Instant::now() - Duration::from_secs(1))));
+    }
+
+    #[test]
+    fn test_truncate() {
+        assert_eq!(truncate("hello", 10), "hello");
+        assert_eq!(truncate("hello world", 5), "hello");
+        assert_eq!(truncate("", 5), "");
     }
 }
