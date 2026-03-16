@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use teloxide::prelude::*;
 use tokio::time::interval;
+use tracing::Instrument;
 
 use crate::core::{alerts, config, metrics, rate_limiter, subscription};
 use crate::download::queue::{self as queue};
@@ -63,19 +64,25 @@ pub async fn process_queue(
             let alert_manager = alert_manager.clone();
             let queue_for_cleanup = Arc::clone(&queue);
 
-            tokio::spawn(async move {
-                process_single_task(
-                    bot,
-                    task,
-                    semaphore,
-                    db_pool,
-                    rate_limiter,
-                    last_download_start,
-                    alert_manager,
-                    queue_for_cleanup,
-                )
-                .await;
-            });
+            // Short op ID for grepping: first 8 hex chars of UUID
+            let op = &task.id[..8.min(task.id.len())];
+            let span = tracing::info_span!("task", op = %op, chat = %task.chat_id.0, fmt = %task.format);
+            tokio::spawn(
+                async move {
+                    process_single_task(
+                        bot,
+                        task,
+                        semaphore,
+                        db_pool,
+                        rate_limiter,
+                        last_download_start,
+                        alert_manager,
+                        queue_for_cleanup,
+                    )
+                    .await;
+                }
+                .instrument(span),
+            );
         }
     }
 }

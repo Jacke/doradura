@@ -18,6 +18,7 @@ use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use teloxide::prelude::*;
 use tokio::time::timeout;
+use tracing::Instrument;
 use url::Url;
 
 /// Download audio file and send it to user
@@ -47,181 +48,192 @@ pub async fn download_and_send_audio(
     let _rate_limiter = rate_limiter;
     let db_pool_clone = db_pool.clone();
 
-    tokio::spawn(async move {
-        // Get user plan for metrics
-        let user_plan = if let Some(ref pool) = db_pool_clone {
-            if let Ok(conn) = db::get_connection(pool) {
-                db::get_user(&conn, chat_id.0)
-                    .ok()
-                    .flatten()
-                    .map(|u| u.plan)
-                    .unwrap_or_default()
+    // Inherit the parent span (from queue_processor) so all audio logs carry op=...
+    let span = tracing::Span::current();
+    tokio::spawn(
+        async move {
+            // Get user plan for metrics
+            let user_plan = if let Some(ref pool) = db_pool_clone {
+                if let Ok(conn) = db::get_connection(pool) {
+                    db::get_user(&conn, chat_id.0)
+                        .ok()
+                        .flatten()
+                        .map(|u| u.plan)
+                        .unwrap_or_default()
+                } else {
+                    Plan::default()
+                }
             } else {
                 Plan::default()
-            }
-        } else {
-            Plan::default()
-        };
+            };
 
-        metrics::record_format_request("mp3", user_plan.as_str());
-        metrics::record_platform_download(metrics::extract_platform(url.as_str()));
+            metrics::record_format_request("mp3", user_plan.as_str());
+            metrics::record_platform_download(metrics::extract_platform(url.as_str()));
 
-        let quality = audio_bitrate.as_deref().unwrap_or("default");
-        let timer = metrics::DOWNLOAD_DURATION_SECONDS
-            .with_label_values(&["mp3", quality])
-            .start_timer();
+            let quality = audio_bitrate.as_deref().unwrap_or("default");
+            let timer = metrics::DOWNLOAD_DURATION_SECONDS
+                .with_label_values(&["mp3", quality])
+                .start_timer();
 
-        let format = PipelineFormat::Audio {
-            bitrate: audio_bitrate.clone(),
-            time_range,
-        };
-        let registry = bot_global();
+            let format = PipelineFormat::Audio {
+                bitrate: audio_bitrate.clone(),
+                time_range,
+            };
+            let registry = bot_global();
 
-        // Create progress_msg BEFORE timeout so we can clean it up if timeout fires
-        let lang = db_pool_clone
-            .as_ref()
-            .map(|pool| crate::i18n::user_lang_from_pool(pool, chat_id.0))
-            .unwrap_or_else(|| crate::i18n::lang_from_code("ru"));
-        let mut progress_msg = ProgressMessage::new(chat_id, lang.clone());
-        if let Some(ref pool) = db_pool_clone {
-            if let Ok(conn) = db::get_connection(pool) {
-                if let Ok(style_str) = db::get_user_progress_bar_style(&conn, chat_id.0) {
-                    progress_msg.style = ProgressBarStyle::parse(&style_str);
-                }
-            }
-        }
-
-        // Global timeout for entire download operation
-        let result: Result<(), AppError> = match timeout(config::download::global_timeout(), async {
-            let pipeline_result = pipeline::execute(
-                &bot_clone,
-                chat_id,
-                &url,
-                &format,
-                db_pool_clone.as_ref(),
-                message_id,
-                alert_manager.as_ref(),
-                registry,
-                &mut progress_msg,
-            )
-            .await
-            .map_err(|e| e.into_app_error())?;
-
-            metrics::record_file_size("mp3", pipeline_result.file_size);
-
-            // Audio-specific: add effects button
-            add_audio_effects_button(&bot_clone, chat_id, &pipeline_result, db_pool_clone.as_ref()).await;
-
-            // Lyrics highlights: fetch lyrics + LLM highlight in background, send as reply
-            if with_lyrics {
-                let bot_lyr = bot_clone.clone();
-                let title_lyr = pipeline_result.title.clone();
-                let artist_lyr = pipeline_result.artist.clone();
-                let sent_msg_id = pipeline_result.sent_message.id;
-                tokio::spawn(async move {
-                    send_lyrics_highlights(&bot_lyr, chat_id, sent_msg_id, &artist_lyr, &title_lyr).await;
-                });
-            }
-
-            // Share page: create after successful audio send (YouTube only, fire-and-forget)
-            if crate::core::share::is_youtube_url(url.as_str()) {
-                if let Some(ref pool) = db_pool_clone {
-                    let pool_share = std::sync::Arc::clone(pool);
-                    let url_str = url.to_string();
-                    let title_share = pipeline_result.title.clone();
-                    let artist_share = pipeline_result.artist.clone();
-                    let duration_share = pipeline_result.duration;
-                    let bot_share = bot_clone.clone();
-                    tokio::spawn(async move {
-                        let thumb = crate::core::share::youtube_thumbnail_url(&url_str);
-                        let artist_opt = if artist_share.trim().is_empty() {
-                            None
-                        } else {
-                            Some(artist_share.as_str())
-                        };
-                        if let Some((share_url, streaming_links)) = crate::core::share::create_share_page(
-                            &pool_share,
-                            &url_str,
-                            &title_share,
-                            artist_opt,
-                            thumb.as_deref(),
-                            Some(duration_share as u64),
-                        )
-                        .await
-                        {
-                            send_share_message(&bot_share, chat_id, &title_share, &share_url, streaming_links.as_ref())
-                                .await;
-                        }
-                    });
-                }
-            }
-
-            // Schedule file cleanup (including any carousel extras)
-            let extra_paths: Vec<String> = pipeline_result
-                .output
-                .additional_files
+            // Create progress_msg BEFORE timeout so we can clean it up if timeout fires
+            let lang = db_pool_clone
                 .as_ref()
-                .map(|files| files.iter().map(|f| f.file_path.clone()).collect())
-                .unwrap_or_default();
-            pipeline::schedule_cleanup_with_extras(pipeline_result.download_path.clone(), extra_paths);
-
-            Ok(())
-        })
-        .await
-        {
-            Ok(inner) => inner,
-            Err(_) => {
-                log::error!(
-                    "🚨 Audio download timed out after {} seconds",
-                    config::download::GLOBAL_TIMEOUT_SECS
-                );
-                Err(AppError::Download(DownloadError::Timeout(format!(
-                    "Download timed out (exceeded {} minutes)",
-                    config::download::GLOBAL_TIMEOUT_SECS / 60
-                ))))
-            }
-        };
-
-        match result {
-            Ok(()) => {
-                log::info!("Audio download completed successfully for chat {}", chat_id);
-                timer.observe_duration();
-                metrics::record_download_success("mp3", quality);
-                let signoff = crate::i18n::random_signoff(&lang);
-                let _ = bot_clone
-                    .send_message(chat_id, signoff)
-                    .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-                    .await;
-            }
-            Err(e) => {
-                e.track_with_operation("audio_download");
-                log::error!(
-                    "An error occurred during audio download for chat {} ({}): {:?}",
-                    chat_id,
-                    url,
-                    e
-                );
-                timer.observe_duration();
-
-                // Delete hanging ⏳ progress message so it doesn't stay on screen forever
-                if let Some(msg_id) = progress_msg.message_id {
-                    let _ = bot_clone.delete_message(chat_id, msg_id).await;
+                .map(|pool| crate::i18n::user_lang_from_pool(pool, chat_id.0))
+                .unwrap_or_else(|| crate::i18n::lang_from_code("ru"));
+            let mut progress_msg = ProgressMessage::new(chat_id, lang.clone());
+            if let Some(ref pool) = db_pool_clone {
+                if let Ok(conn) = db::get_connection(pool) {
+                    if let Ok(style_str) = db::get_user_progress_bar_style(&conn, chat_id.0) {
+                        progress_msg.style = ProgressBarStyle::parse(&style_str);
+                    }
                 }
+            }
 
-                let pipeline_error = pipeline::PipelineError::Operational(e);
-                pipeline::handle_pipeline_error(
+            // Global timeout for entire download operation
+            let result: Result<(), AppError> = match timeout(config::download::global_timeout(), async {
+                let pipeline_result = pipeline::execute(
                     &bot_clone,
                     chat_id,
                     &url,
-                    &pipeline_error,
                     &format,
-                    alert_manager.as_ref(),
+                    db_pool_clone.as_ref(),
                     message_id,
+                    alert_manager.as_ref(),
+                    registry,
+                    &mut progress_msg,
                 )
-                .await;
+                .await
+                .map_err(|e| e.into_app_error())?;
+
+                metrics::record_file_size("mp3", pipeline_result.file_size);
+
+                // Audio-specific: add effects button
+                add_audio_effects_button(&bot_clone, chat_id, &pipeline_result, db_pool_clone.as_ref()).await;
+
+                // Lyrics highlights: fetch lyrics + LLM highlight in background, send as reply
+                if with_lyrics {
+                    let bot_lyr = bot_clone.clone();
+                    let title_lyr = pipeline_result.title.clone();
+                    let artist_lyr = pipeline_result.artist.clone();
+                    let sent_msg_id = pipeline_result.sent_message.id;
+                    tokio::spawn(async move {
+                        send_lyrics_highlights(&bot_lyr, chat_id, sent_msg_id, &artist_lyr, &title_lyr).await;
+                    });
+                }
+
+                // Share page: create after successful audio send (YouTube only, fire-and-forget)
+                if crate::core::share::is_youtube_url(url.as_str()) {
+                    if let Some(ref pool) = db_pool_clone {
+                        let pool_share = std::sync::Arc::clone(pool);
+                        let url_str = url.to_string();
+                        let title_share = pipeline_result.title.clone();
+                        let artist_share = pipeline_result.artist.clone();
+                        let duration_share = pipeline_result.duration;
+                        let bot_share = bot_clone.clone();
+                        tokio::spawn(async move {
+                            let thumb = crate::core::share::youtube_thumbnail_url(&url_str);
+                            let artist_opt = if artist_share.trim().is_empty() {
+                                None
+                            } else {
+                                Some(artist_share.as_str())
+                            };
+                            if let Some((share_url, streaming_links)) = crate::core::share::create_share_page(
+                                &pool_share,
+                                &url_str,
+                                &title_share,
+                                artist_opt,
+                                thumb.as_deref(),
+                                Some(duration_share as u64),
+                            )
+                            .await
+                            {
+                                send_share_message(
+                                    &bot_share,
+                                    chat_id,
+                                    &title_share,
+                                    &share_url,
+                                    streaming_links.as_ref(),
+                                )
+                                .await;
+                            }
+                        });
+                    }
+                }
+
+                // Schedule file cleanup (including any carousel extras)
+                let extra_paths: Vec<String> = pipeline_result
+                    .output
+                    .additional_files
+                    .as_ref()
+                    .map(|files| files.iter().map(|f| f.file_path.clone()).collect())
+                    .unwrap_or_default();
+                pipeline::schedule_cleanup_with_extras(pipeline_result.download_path.clone(), extra_paths);
+
+                Ok(())
+            })
+            .await
+            {
+                Ok(inner) => inner,
+                Err(_) => {
+                    log::error!(
+                        "🚨 Audio download timed out after {} seconds",
+                        config::download::GLOBAL_TIMEOUT_SECS
+                    );
+                    Err(AppError::Download(DownloadError::Timeout(format!(
+                        "Download timed out (exceeded {} minutes)",
+                        config::download::GLOBAL_TIMEOUT_SECS / 60
+                    ))))
+                }
+            };
+
+            match result {
+                Ok(()) => {
+                    log::info!("Audio download completed successfully for chat {}", chat_id);
+                    timer.observe_duration();
+                    metrics::record_download_success("mp3", quality);
+                    let signoff = crate::i18n::random_signoff(&lang);
+                    let _ = bot_clone
+                        .send_message(chat_id, signoff)
+                        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
+                        .await;
+                }
+                Err(e) => {
+                    e.track_with_operation("audio_download");
+                    log::error!(
+                        "An error occurred during audio download for chat {} ({}): {:?}",
+                        chat_id,
+                        url,
+                        e
+                    );
+                    timer.observe_duration();
+
+                    // Delete hanging ⏳ progress message so it doesn't stay on screen forever
+                    if let Some(msg_id) = progress_msg.message_id {
+                        let _ = bot_clone.delete_message(chat_id, msg_id).await;
+                    }
+
+                    let pipeline_error = pipeline::PipelineError::Operational(e);
+                    pipeline::handle_pipeline_error(
+                        &bot_clone,
+                        chat_id,
+                        &url,
+                        &pipeline_error,
+                        &format,
+                        alert_manager.as_ref(),
+                        message_id,
+                    )
+                    .await;
+                }
             }
         }
-    });
+        .instrument(span),
+    );
 
     Ok(())
 }

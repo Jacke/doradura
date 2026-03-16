@@ -1,5 +1,5 @@
 use crate::core::config::admin::{ADMIN_IDS, ADMIN_USER_ID};
-use crate::storage::db::DbPool;
+use crate::storage::db::{self as db, DbPool};
 use crate::telegram::Bot;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -99,7 +99,7 @@ pub async fn notify_admin_video_error(bot: &Bot, user_id: i64, username: Option<
 /// * `error_message` - Error message
 pub async fn notify_admin_task_failed(
     bot: Bot,
-    _db_pool: Arc<DbPool>,
+    db_pool: Arc<DbPool>,
     task_id: &str,
     user_id: i64,
     url: &str,
@@ -112,19 +112,31 @@ pub async fn notify_admin_task_failed(
         return;
     }
 
+    // Look up username from DB
+    let username = db::get_connection(&db_pool)
+        .ok()
+        .and_then(|conn| db::get_user(&conn, user_id).ok().flatten())
+        .and_then(|u| u.username);
+
+    // Short op ID for quick identification
+    let op = &task_id[..8.min(task_id.len())];
+
     for chat_id in admin_chat_ids {
-        // Escape special characters for MarkdownV2
         let escaped_error = crate::telegram::admin::escape_markdown(error_message);
         let escaped_url = crate::telegram::admin::escape_markdown(url);
+        let user_display = match &username {
+            Some(name) => format!("@{} \\({}\\)", crate::telegram::admin::escape_markdown(name), user_id),
+            None => format!("`{}`", user_id),
+        };
 
         let message = format!(
             "⚠️ *Task error*\n\n\
-            Task ID: `{}`\n\
-            User ID: `{}`\n\
+            Op: `{}`\n\
+            User: {}\n\
             URL: {}\n\
             Error: {}\n\n\
             The task will be retried automatically\\.",
-            task_id, user_id, escaped_url, escaped_error
+            op, user_display, escaped_url, escaped_error
         );
 
         if let Err(e) = bot
@@ -138,7 +150,7 @@ pub async fn notify_admin_task_failed(
         }
 
         if let Some(details) = details {
-            let details_message = format!("Details for task {} (user {}):\n{}", task_id, user_id, details);
+            let details_message = format!("Details for op={} (user {}):\n{}", op, user_id, details);
             send_plain_text_chunks(&bot, chat_id, &details_message).await;
         }
     }

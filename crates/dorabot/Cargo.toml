@@ -30,6 +30,7 @@ refinery = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
+tracing = { workspace = true }
 chrono = { workspace = true }
 url = { workspace = true }
 regex = { workspace = true }
@@ -61,7 +62,6 @@ tower = "0.4"
 tower-http = { version = "0.5", features = ["fs", "cors"] }
 axum = "0.7"
 pretty_env_logger = "0.5"
-simplelog = "0.11"
 reqwest = { workspace = true }
 mime = "0.3"
 zip = { workspace = true }

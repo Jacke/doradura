@@ -25,6 +25,9 @@ anyhow = "1.0.66"
 
 # Logging
 log = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-log = "0.2"
 
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }
@@ -58,6 +61,9 @@ clap = { version = "4.5", features = ["derive", "cargo"] }
 
 # Telegram
 teloxide = { version = "0.17", features = ["macros"] }
+
+# Archive
+zip = "2"
 
 # TUI
 ratatui = "0.30"
