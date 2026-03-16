@@ -10,27 +10,23 @@ use std::fs::File;
 
 use crate::core::config;
 
-/// Initialize logger for both console and file output using `tracing-subscriber`.
+/// Initialize logger for both console and file output.
 ///
-/// All existing `log::info!` / `log::warn!` / `log::error!` calls are
-/// automatically bridged into the tracing system via `tracing-subscriber`.
-/// Spans (e.g. `task{op=...}`) propagate context to every log line inside them.
+/// Uses `tracing-subscriber` with log bridge so that both `tracing::info!`
+/// spans and legacy `log::info!` calls are captured.
 pub fn init_logger(log_file_path: &str) -> Result<()> {
-    use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+    use tracing_subscriber::{fmt, layer::SubscriberExt, EnvFilter};
 
     let log_file = File::create(log_file_path).map_err(|e| anyhow::anyhow!("Failed to create log file: {}", e))?;
 
-    // Environment filter: default INFO, overridable via RUST_LOG
     let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
-    // Console layer — compact, with span context
     let console_layer = fmt::layer()
         .with_target(true)
         .with_thread_ids(false)
         .with_file(false)
         .with_line_number(false);
 
-    // File layer — same format, writes to log file
     let file_layer = fmt::layer()
         .with_target(true)
         .with_thread_ids(false)
@@ -39,36 +35,30 @@ pub fn init_logger(log_file_path: &str) -> Result<()> {
         .with_ansi(false)
         .with_writer(std::sync::Mutex::new(log_file));
 
-    // init() sets both the tracing global subscriber AND the log bridge
-    // (log::info! → tracing events). Do NOT call LogTracer::init() separately —
-    // it conflicts because both try to call log::set_logger().
-    if let Err(e) = tracing_subscriber::registry()
+    let subscriber = tracing_subscriber::registry()
         .with(env_filter)
         .with(console_layer)
-        .with(file_layer)
-        .try_init()
-    {
-        eprintln!(
-            "Warning: tracing subscriber init failed: {}. Logging may be degraded.",
-            e
-        );
-    }
+        .with(file_layer);
+
+    // set_global_default sets ONLY the tracing subscriber, does NOT touch log::set_logger.
+    // This avoids the "logger already initialized" conflict that try_init() causes
+    // (because try_init internally calls log::set_logger via tracing-log compat).
+    tracing::subscriber::set_global_default(subscriber)
+        .map_err(|e| anyhow::anyhow!("Failed to set tracing subscriber: {}", e))?;
+
+    // Now explicitly set the log→tracing bridge.
+    // This must happen AFTER set_global_default so events have somewhere to go.
+    let _ = tracing_log::LogTracer::init();
 
     Ok(())
 }
 
 /// Logs cookies configuration at application startup
-///
-/// Validates and logs:
-/// - YTDL_COOKIES_FILE existence and path
-/// - YTDL_COOKIES_BROWSER configuration
-/// - Provides troubleshooting guidance if cookies are not configured
 pub fn log_cookies_configuration() {
     log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     log::info!("🍪 Cookies Configuration Check");
     log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
 
-    // Check cookies file
     if let Some(ref cookies_file) = *config::YTDL_COOKIES_FILE {
         if !cookies_file.is_empty() {
             let cookies_path = if std::path::Path::new(cookies_file).is_absolute() {
@@ -101,7 +91,6 @@ pub fn log_cookies_configuration() {
         log::warn!("⚠️  YTDL_COOKIES_FILE: not set");
     }
 
-    // Check browser cookies
     let browser = config::YTDL_COOKIES_BROWSER.as_str();
     if !browser.is_empty() {
         log::info!("✅ YTDL_COOKIES_BROWSER: {}", browser);
@@ -110,7 +99,6 @@ pub fn log_cookies_configuration() {
         log::warn!("⚠️  YTDL_COOKIES_BROWSER: not set");
     }
 
-    // Final status
     if let Some(ref cookies_file) = *config::YTDL_COOKIES_FILE {
         if !cookies_file.is_empty() {
             let cookies_path = if std::path::Path::new(cookies_file).is_absolute() {
@@ -160,24 +148,12 @@ mod tests {
 
     #[test]
     fn test_log_file_creation() {
-        // init_logger sets a global tracing subscriber which panics if already
-        // set (e.g. another test ran first). We only verify that the log file
-        // is created — the subscriber init is tested implicitly by the binary.
         let temp_file = NamedTempFile::new().unwrap();
         assert!(temp_file.path().exists());
     }
 
     #[test]
     fn test_log_cookies_configuration_runs() {
-        // Note: We don't actually call log_cookies_configuration() here
-        // because it reads from static Lazy config that's initialized once
-        // and we can't mock it in unit tests.
-        //
-        // The function is tested indirectly through integration tests
-        // where the environment is properly set up.
-        //
-        // This test just verifies the function exists and compiles.
-        // We use a simple check that always passes to satisfy clippy.
         let _ = std::env::var("YTDL_COOKIES_FILE");
     }
 }
