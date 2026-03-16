@@ -63,13 +63,5 @@ jobs:
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
 
-      - name: Install Railway CLI
-        if: env.HAS_RAILWAY_TOKEN == 'true'
-        run: npm i -g @railway/cli
-
-      - name: Trigger Railway redeploy
-        if: env.HAS_RAILWAY_TOKEN == 'true'
-        continue-on-error: true
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-        run: railway redeploy --service doradura -y
+      # Railway auto-deploys when GHCR image updates (configured via Source Image).
+      # No manual redeploy needed.
