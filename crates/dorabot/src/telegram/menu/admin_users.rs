@@ -1,48 +1,36 @@
-use crate::storage::db::{self, DbPool};
+use crate::storage::SharedStorage;
 use crate::telegram::admin;
 use crate::telegram::Bot;
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardMarkup, MessageId};
-use tokio::sync::RwLock;
 
 const PAGE_SIZE: usize = 8;
+const ADMIN_SEARCH_PROMPT_KIND: &str = "admin_user_search";
+const ADMIN_SEARCH_TTL_SECS: i64 = 60;
 
 // --- Search sessions ---
 
-struct AdminSearchSession {
-    created_at: Instant,
-}
-
-static ADMIN_SEARCH_SESSIONS: std::sync::LazyLock<Arc<RwLock<HashMap<i64, AdminSearchSession>>>> =
-    std::sync::LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
-
 /// Check if an admin is currently in search mode.
-pub async fn is_admin_searching(admin_id: i64) -> bool {
-    let sessions = ADMIN_SEARCH_SESSIONS.read().await;
-    sessions
-        .get(&admin_id)
-        .map(|s| s.created_at.elapsed().as_secs() < 60)
-        .unwrap_or(false)
+pub async fn is_admin_searching(shared_storage: &Arc<SharedStorage>, admin_id: i64) -> bool {
+    shared_storage
+        .get_prompt_session(admin_id, ADMIN_SEARCH_PROMPT_KIND)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
 }
 
-async fn set_admin_searching(admin_id: i64) {
-    let mut sessions = ADMIN_SEARCH_SESSIONS.write().await;
-    // Evict expired sessions while we have the write lock
-    sessions.retain(|_, s| s.created_at.elapsed().as_secs() < 60);
-    sessions.insert(
-        admin_id,
-        AdminSearchSession {
-            created_at: Instant::now(),
-        },
-    );
+async fn set_admin_searching(shared_storage: &Arc<SharedStorage>, admin_id: i64) {
+    let _ = shared_storage
+        .upsert_prompt_session(admin_id, ADMIN_SEARCH_PROMPT_KIND, "", ADMIN_SEARCH_TTL_SECS)
+        .await;
 }
 
-async fn clear_admin_searching(admin_id: i64) {
-    let mut sessions = ADMIN_SEARCH_SESSIONS.write().await;
-    sessions.remove(&admin_id);
+async fn clear_admin_searching(shared_storage: &Arc<SharedStorage>, admin_id: i64) {
+    let _ = shared_storage
+        .delete_prompt_session(admin_id, ADMIN_SEARCH_PROMPT_KIND)
+        .await;
 }
 
 fn preserves_search_mode(action: Option<&str>) -> bool {
@@ -97,14 +85,14 @@ fn cb(label: impl Into<String>, data: impl Into<String>) -> teloxide::types::Inl
     crate::telegram::cb(label, data)
 }
 
-fn username_display(user: &db::User) -> String {
+fn username_display(user: &crate::storage::db::User) -> String {
     user.username
         .as_ref()
         .map(|u| format!("@{}", u))
         .unwrap_or_else(|| format!("ID:{}", user.telegram_id))
 }
 
-fn username_short(user: &db::User) -> String {
+fn username_short(user: &crate::storage::db::User) -> String {
     user.username
         .as_deref()
         .map(|u| format!("@{}", u))
@@ -117,15 +105,16 @@ pub async fn show_user_list(
     bot: &Bot,
     chat_id: ChatId,
     msg_id: Option<MessageId>,
-    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
     page: usize,
     filter: Filter,
 ) -> anyhow::Result<()> {
-    let conn = db::get_connection(db_pool)?;
-    let counts = db::get_user_counts(&conn)?;
+    let counts = shared_storage.get_user_counts().await?;
 
     let offset = page * PAGE_SIZE;
-    let (page_users, filtered_total) = db::get_users_paginated(&conn, filter.db_filter(), offset, PAGE_SIZE)?;
+    let (page_users, filtered_total) = shared_storage
+        .get_users_paginated(filter.db_filter(), offset, PAGE_SIZE)
+        .await?;
 
     let total_pages = filtered_total.max(1).div_ceil(PAGE_SIZE);
     let page = page.min(total_pages.saturating_sub(1));
@@ -212,11 +201,10 @@ async fn show_user_detail(
     bot: &Bot,
     chat_id: ChatId,
     msg_id: MessageId,
-    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
     target_uid: i64,
 ) -> anyhow::Result<()> {
-    let conn = db::get_connection(db_pool)?;
-    let user = match db::get_user(&conn, target_uid)? {
+    let user = match shared_storage.get_user(target_uid).await? {
         Some(u) => u,
         None => {
             log::warn!("Admin: user {} not found", target_uid);
@@ -280,7 +268,7 @@ async fn handle_set_plan(
     bot: &Bot,
     chat_id: ChatId,
     msg_id: MessageId,
-    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
     uid: i64,
     plan_code: &str,
 ) -> anyhow::Result<()> {
@@ -292,10 +280,9 @@ async fn handle_set_plan(
     };
 
     if plan == "free" {
-        let conn = db::get_connection(db_pool)?;
-        db::update_user_plan(&conn, uid, plan)?;
+        shared_storage.update_user_plan_with_expiry(uid, plan, None).await?;
         notify_user_plan_change(bot, uid, plan).await;
-        show_user_detail(bot, chat_id, msg_id, db_pool, uid).await?;
+        show_user_detail(bot, chat_id, msg_id, shared_storage, uid).await?;
         return Ok(());
     }
 
@@ -333,7 +320,7 @@ async fn handle_set_expiry(
     bot: &Bot,
     chat_id: ChatId,
     msg_id: MessageId,
-    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
     uid: i64,
     plan_code: &str,
     days: i32,
@@ -344,12 +331,11 @@ async fn handle_set_expiry(
         _ => return Ok(()),
     };
 
-    let conn = db::get_connection(db_pool)?;
     let days_opt = if days == 0 { None } else { Some(days) };
-    db::update_user_plan_with_expiry(&conn, uid, plan, days_opt)?;
+    shared_storage.update_user_plan_with_expiry(uid, plan, days_opt).await?;
 
     notify_user_plan_change(bot, uid, plan).await;
-    show_user_detail(bot, chat_id, msg_id, db_pool, uid).await?;
+    show_user_detail(bot, chat_id, msg_id, shared_storage, uid).await?;
     Ok(())
 }
 
@@ -374,7 +360,7 @@ async fn handle_toggle_block(
     bot: &Bot,
     chat_id: ChatId,
     msg_id: MessageId,
-    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
     uid: i64,
     confirmed: bool,
 ) -> anyhow::Result<()> {
@@ -392,12 +378,11 @@ async fn handle_toggle_block(
         return Ok(());
     }
 
-    let conn = db::get_connection(db_pool)?;
-    let currently_blocked = db::is_user_blocked(&conn, uid)?;
+    let currently_blocked = shared_storage.is_user_blocked(uid).await?;
 
     if currently_blocked {
-        db::set_user_blocked(&conn, uid, false)?;
-        show_user_detail(bot, chat_id, msg_id, db_pool, uid).await?;
+        shared_storage.set_user_blocked(uid, false).await?;
+        show_user_detail(bot, chat_id, msg_id, shared_storage, uid).await?;
         return Ok(());
     }
 
@@ -417,8 +402,8 @@ async fn handle_toggle_block(
         return Ok(());
     }
 
-    db::set_user_blocked(&conn, uid, true)?;
-    show_user_detail(bot, chat_id, msg_id, db_pool, uid).await?;
+    shared_storage.set_user_blocked(uid, true).await?;
+    show_user_detail(bot, chat_id, msg_id, shared_storage, uid).await?;
     Ok(())
 }
 
@@ -434,11 +419,10 @@ async fn show_settings_menu(
     bot: &Bot,
     chat_id: ChatId,
     msg_id: MessageId,
-    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
     uid: i64,
 ) -> anyhow::Result<()> {
-    let conn = db::get_connection(db_pool)?;
-    let user = match db::get_user(&conn, uid)? {
+    let user = match shared_storage.get_user(uid).await? {
         Some(u) => u,
         None => return Ok(()),
     };
@@ -506,7 +490,7 @@ async fn handle_change_setting(
     bot: &Bot,
     chat_id: ChatId,
     msg_id: MessageId,
-    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
     uid: i64,
     key: &str,
     val: &str,
@@ -516,26 +500,29 @@ async fn handle_change_setting(
         return Ok(());
     }
 
-    let conn = db::get_connection(db_pool)?;
     match key {
-        "fmt" => db::set_user_download_format(&conn, uid, val)?,
-        "vid" => db::set_user_video_quality(&conn, uid, val)?,
-        "aud" => db::set_user_audio_bitrate(&conn, uid, val)?,
-        "lang" => db::set_user_language(&conn, uid, val)?,
-        "prog" => db::set_user_progress_bar_style(&conn, uid, val)?,
+        "fmt" => shared_storage.set_user_download_format(uid, val).await?,
+        "vid" => shared_storage.set_user_video_quality(uid, val).await?,
+        "aud" => shared_storage.set_user_audio_bitrate(uid, val).await?,
+        "lang" => shared_storage.set_user_language(uid, val).await?,
+        "prog" => shared_storage.set_user_progress_bar_style(uid, val).await?,
         _ => return Ok(()),
     }
-    show_settings_menu(bot, chat_id, msg_id, db_pool, uid).await?;
+    show_settings_menu(bot, chat_id, msg_id, shared_storage, uid).await?;
     Ok(())
 }
 
 // --- Admin search ---
 
-pub async fn handle_admin_search(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbPool>, query: &str) -> anyhow::Result<()> {
-    clear_admin_searching(chat_id.0).await;
+pub async fn handle_admin_search(
+    bot: &Bot,
+    chat_id: ChatId,
+    shared_storage: &Arc<SharedStorage>,
+    query: &str,
+) -> anyhow::Result<()> {
+    clear_admin_searching(shared_storage, chat_id.0).await;
 
-    let conn = db::get_connection(db_pool)?;
-    let users = db::search_users(&conn, query)?;
+    let users = shared_storage.search_users(query).await?;
 
     if users.is_empty() {
         bot.send_message(chat_id, format!("🔍 No users found for: {}", query))
@@ -581,7 +568,7 @@ pub async fn handle_callback(
     bot: &Bot,
     chat_id: ChatId,
     msg_id: MessageId,
-    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
     data: &str,
 ) -> anyhow::Result<()> {
     let rest = match data.strip_prefix("au:") {
@@ -592,23 +579,23 @@ pub async fn handle_callback(
     let parts: Vec<&str> = rest.splitn(5, ':').collect();
 
     if !preserves_search_mode(parts.first().copied()) {
-        clear_admin_searching(chat_id.0).await;
+        clear_admin_searching(shared_storage, chat_id.0).await;
     }
 
     match parts.first().copied() {
         Some("l") => {
             let page = parts.get(1).and_then(|p| p.parse().ok()).unwrap_or(0);
             let filter = parts.get(2).map(|f| Filter::from_code(f)).unwrap_or(Filter::All);
-            show_user_list(bot, chat_id, Some(msg_id), db_pool, page, filter).await?;
+            show_user_list(bot, chat_id, Some(msg_id), shared_storage, page, filter).await?;
         }
         Some("u") => {
             if let Some(uid) = parts.get(1).and_then(|p| p.parse().ok()) {
-                show_user_detail(bot, chat_id, msg_id, db_pool, uid).await?;
+                show_user_detail(bot, chat_id, msg_id, shared_storage, uid).await?;
             }
         }
         Some("sp") => {
             if let (Some(uid), Some(plan_code)) = (parts.get(1).and_then(|p| p.parse().ok()), parts.get(2)) {
-                handle_set_plan(bot, chat_id, msg_id, db_pool, uid, plan_code).await?;
+                handle_set_plan(bot, chat_id, msg_id, shared_storage, uid, plan_code).await?;
             }
         }
         Some("se") => {
@@ -617,22 +604,22 @@ pub async fn handle_callback(
                 parts.get(2).copied(),
                 parts.get(3).and_then(|p| p.parse().ok()),
             ) {
-                handle_set_expiry(bot, chat_id, msg_id, db_pool, uid, plan_code, days).await?;
+                handle_set_expiry(bot, chat_id, msg_id, shared_storage, uid, plan_code, days).await?;
             }
         }
         Some("b") => {
             if let Some(uid) = parts.get(1).and_then(|p| p.parse().ok()) {
-                handle_toggle_block(bot, chat_id, msg_id, db_pool, uid, false).await?;
+                handle_toggle_block(bot, chat_id, msg_id, shared_storage, uid, false).await?;
             }
         }
         Some("cb") => {
             if let Some(uid) = parts.get(1).and_then(|p| p.parse().ok()) {
-                handle_toggle_block(bot, chat_id, msg_id, db_pool, uid, true).await?;
+                handle_toggle_block(bot, chat_id, msg_id, shared_storage, uid, true).await?;
             }
         }
         Some("st") => {
             if let Some(uid) = parts.get(1).and_then(|p| p.parse().ok()) {
-                show_settings_menu(bot, chat_id, msg_id, db_pool, uid).await?;
+                show_settings_menu(bot, chat_id, msg_id, shared_storage, uid).await?;
             }
         }
         Some("cs") => {
@@ -641,11 +628,11 @@ pub async fn handle_callback(
                 parts.get(2).copied(),
                 parts.get(3).copied(),
             ) {
-                handle_change_setting(bot, chat_id, msg_id, db_pool, uid, key, val).await?;
+                handle_change_setting(bot, chat_id, msg_id, shared_storage, uid, key, val).await?;
             }
         }
         Some("s") => {
-            set_admin_searching(chat_id.0).await;
+            set_admin_searching(shared_storage, chat_id.0).await;
             if let Err(e) = bot
                 .edit_message_text(chat_id, msg_id, "🔍 Send a username or user ID to search:")
                 .reply_markup(InlineKeyboardMarkup::new(vec![vec![cb("🔙 Cancel", "au:l:0:a")]]))

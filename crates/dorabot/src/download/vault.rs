@@ -1,25 +1,28 @@
 //! Vault cache: check for cached file_ids and send downloads to user's vault channel.
 
-use crate::storage::db::{self, DbPool};
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{ChatId, FileId, InputFile};
 
 /// Check vault cache for a cached file_id. Returns `Some(file_id)` if found.
-pub fn check_vault_cache(db_pool: &Arc<DbPool>, user_id: i64, url: &str) -> Option<String> {
-    let conn = db::get_connection(db_pool).ok()?;
-    let vault = db::get_user_vault(&conn, user_id).ok()??;
+pub async fn check_vault_cache(shared_storage: &Arc<SharedStorage>, user_id: i64, url: &str) -> Option<String> {
+    let vault = shared_storage.get_user_vault(user_id).await.ok()??;
     if !vault.is_active {
         return None;
     }
-    db::get_vault_cached_file_id(&conn, user_id, url)
+    shared_storage
+        .get_vault_cached_file_id(user_id, url)
+        .await
+        .ok()
+        .flatten()
 }
 
 /// Fire-and-forget: send audio to user's vault channel and save cache entry.
 pub fn send_to_vault_background(
     bot: Bot,
-    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     user_id: i64,
     url: String,
     file_id: String,
@@ -29,17 +32,19 @@ pub fn send_to_vault_background(
     file_size: Option<i64>,
 ) {
     tokio::spawn(async move {
-        let conn = match db::get_connection(&db_pool) {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-        let vault = match db::get_user_vault(&conn, user_id) {
+        let vault = match shared_storage.get_user_vault(user_id).await {
             Ok(Some(v)) if v.is_active => v,
             _ => return,
         };
 
         // Already cached? Skip sending again.
-        if db::get_vault_cached_file_id(&conn, user_id, &url).is_some() {
+        if shared_storage
+            .get_vault_cached_file_id(user_id, &url)
+            .await
+            .ok()
+            .flatten()
+            .is_some()
+        {
             return;
         }
 
@@ -60,17 +65,18 @@ pub fn send_to_vault_background(
         match result {
             Ok(msg) => {
                 let msg_id = msg.id.0 as i64;
-                let _ = db::save_vault_cache_entry(
-                    &conn,
-                    user_id,
-                    &url,
-                    title.as_deref(),
-                    artist.as_deref(),
-                    duration_secs,
-                    &file_id,
-                    Some(msg_id),
-                    file_size,
-                );
+                let _ = shared_storage
+                    .save_vault_cache_entry(
+                        user_id,
+                        &url,
+                        title.as_deref(),
+                        artist.as_deref(),
+                        duration_secs,
+                        &file_id,
+                        Some(msg_id),
+                        file_size,
+                    )
+                    .await;
             }
             Err(e) => {
                 let err_str = e.to_string();
@@ -79,7 +85,7 @@ pub fn send_to_vault_background(
                     || err_str.contains("not enough rights")
                 {
                     log::warn!("Vault send failed (deactivating): {}", err_str);
-                    let _ = db::deactivate_user_vault(&conn, user_id);
+                    let _ = shared_storage.deactivate_user_vault(user_id).await;
                 } else {
                     log::warn!("Vault send failed: {}", err_str);
                 }

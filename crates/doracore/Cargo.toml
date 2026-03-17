@@ -21,6 +21,7 @@ rusqlite = { workspace = true }
 r2d2 = { workspace = true }
 r2d2_sqlite = { workspace = true }
 refinery = { workspace = true }
+sqlx = { workspace = true }
 reqwest = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
@@ -57,7 +58,7 @@ sha2 = "0.10"
 hex = "0.4"
 tower = "0.4"
 tower-http = { version = "0.5", features = ["fs", "cors"] }
-axum = "0.7"
+axum = { workspace = true }
 
 [build-dependencies]
 tonic-build = "0.10"

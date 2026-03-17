@@ -9,6 +9,7 @@ use once_cell::sync::Lazy;
 use unic_langid::LanguageIdentifier;
 
 use crate::storage::db;
+use crate::storage::SharedStorage;
 
 static_loader! {
     static LOCALES = {
@@ -58,6 +59,14 @@ pub fn user_lang_from_pool(db_pool: &Arc<db::DbPool>, telegram_id: i64) -> Langu
         return user_lang(&conn, telegram_id);
     }
     DEFAULT_LANG.clone()
+}
+
+/// Resolves the language for a user via the backend-aware shared storage client.
+pub async fn user_lang_from_storage(storage: &Arc<SharedStorage>, telegram_id: i64) -> LanguageIdentifier {
+    match storage.get_user_language(telegram_id).await {
+        Ok(lang_code) => lang_from_code(&lang_code),
+        Err(_) => DEFAULT_LANG.clone(),
+    }
 }
 
 /// Resolves the language for a user, falling back to Telegram locale when DB is default.

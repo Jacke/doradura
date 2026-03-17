@@ -5,7 +5,8 @@
 
 use crate::core::escape_markdown;
 use crate::core::metrics;
-use crate::storage::db::{self, DbPool};
+use crate::storage::db::DbPool;
+use crate::storage::SharedStorage;
 use crate::telegram::admin;
 use crate::telegram::Bot;
 use std::sync::Arc;
@@ -19,7 +20,12 @@ use teloxide::types::{InlineKeyboardMarkup, ParseMode};
 /// - Business (revenue, active subscriptions, new subscribers)
 /// - System Health (queue depth, error rate)
 /// - User Engagement (DAU, command usage, popular formats)
-pub async fn handle_analytics_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>) -> ResponseResult<()> {
+pub async fn handle_analytics_command(
+    bot: Bot,
+    msg: Message,
+    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
     let chat_id = msg.chat.id;
 
     // Check if user is admin
@@ -33,7 +39,7 @@ pub async fn handle_analytics_command(bot: Bot, msg: Message, db_pool: Arc<DbPoo
     log::info!("📊 Analytics command from admin: {}", chat_id.0);
 
     // Gather metrics for the dashboard
-    let dashboard = generate_analytics_dashboard(&db_pool).await;
+    let dashboard = generate_analytics_dashboard(&db_pool, &shared_storage).await;
 
     // Create keyboard with action buttons
     let keyboard = InlineKeyboardMarkup::new(vec![
@@ -60,7 +66,12 @@ pub async fn handle_analytics_command(bot: Bot, msg: Message, db_pool: Arc<DbPoo
 /// - Error rates
 /// - Database connection pool status
 /// - Recent performance metrics
-pub async fn handle_health_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>) -> ResponseResult<()> {
+pub async fn handle_health_command(
+    bot: Bot,
+    msg: Message,
+    db_pool: Arc<DbPool>,
+    _shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
     let chat_id = msg.chat.id;
 
     // Check if user is admin
@@ -93,6 +104,7 @@ pub async fn handle_metrics_command(
     bot: Bot,
     msg: Message,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     category: Option<String>,
 ) -> ResponseResult<()> {
     let chat_id = msg.chat.id;
@@ -110,10 +122,10 @@ pub async fn handle_metrics_command(
 
     let metrics_report = match category {
         "performance" => generate_performance_metrics(&db_pool).await,
-        "business" => generate_business_metrics(&db_pool).await,
-        "engagement" => generate_engagement_metrics(&db_pool).await,
+        "business" => generate_business_metrics(&db_pool, &shared_storage).await,
+        "engagement" => generate_engagement_metrics(&db_pool, &shared_storage).await,
         "system" => generate_system_metrics(&db_pool).await,
-        _ => generate_all_metrics(&db_pool).await,
+        _ => generate_all_metrics(&db_pool, &shared_storage).await,
     };
 
     bot.send_message(chat_id, metrics_report)
@@ -130,7 +142,12 @@ pub async fn handle_metrics_command(
 /// - Revenue breakdown by plan (free/premium/vip)
 /// - Subscription metrics (active, new, churned)
 /// - Conversion funnel
-pub async fn handle_revenue_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>) -> ResponseResult<()> {
+pub async fn handle_revenue_command(
+    bot: Bot,
+    msg: Message,
+    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
     let chat_id = msg.chat.id;
 
     // Check if user is admin
@@ -143,7 +160,7 @@ pub async fn handle_revenue_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>
 
     log::info!("💰 Revenue command from admin: {}", chat_id.0);
 
-    let revenue_report = generate_revenue_report(&db_pool).await;
+    let revenue_report = generate_revenue_report(&db_pool, &shared_storage).await;
 
     bot.send_message(chat_id, revenue_report)
         .parse_mode(ParseMode::MarkdownV2)
@@ -152,19 +169,26 @@ pub async fn handle_revenue_command(bot: Bot, msg: Message, db_pool: Arc<DbPool>
     Ok(())
 }
 
-pub(crate) async fn generate_metrics_report(db_pool: &Arc<DbPool>, category: Option<String>) -> String {
+pub(crate) async fn generate_metrics_report(
+    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
+    category: Option<String>,
+) -> String {
     let category = category.as_deref().unwrap_or("all");
     match category {
         "performance" => generate_performance_metrics(db_pool).await,
-        "business" => generate_business_metrics(db_pool).await,
-        "engagement" => generate_engagement_metrics(db_pool).await,
+        "business" => generate_business_metrics(db_pool, shared_storage).await,
+        "engagement" => generate_engagement_metrics(db_pool, shared_storage).await,
         "system" => generate_system_metrics(db_pool).await,
-        _ => generate_all_metrics(db_pool).await,
+        _ => generate_all_metrics(db_pool, shared_storage).await,
     }
 }
 
 /// Generates the main analytics dashboard text
-pub(crate) async fn generate_analytics_dashboard(db_pool: &Arc<DbPool>) -> String {
+pub(crate) async fn generate_analytics_dashboard(
+    _db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
+) -> String {
     let mut text = String::from("📊 *Analytics Dashboard*\n\n");
 
     // Performance section (last 24h)
@@ -203,8 +227,7 @@ pub(crate) async fn generate_analytics_dashboard(db_pool: &Arc<DbPool>) -> Strin
     ));
 
     // Get active subscriptions count from database
-    if let Ok(conn) = db::get_connection(db_pool) {
-        let active_subs = count_active_subscriptions(&conn);
+    if let Ok(active_subs) = shared_storage.count_active_subscriptions().await {
         text.push_str(&format!("• Active subs: {}\n", active_subs));
     }
 
@@ -237,8 +260,7 @@ pub(crate) async fn generate_analytics_dashboard(db_pool: &Arc<DbPool>) -> Strin
 
     // Engagement section
     text.push_str("👥 *Engagement*\n");
-    if let Ok(conn) = db::get_connection(db_pool) {
-        let dau = count_daily_active_users(&conn);
+    if let Ok(dau) = shared_storage.count_daily_active_users().await {
         text.push_str(&format!("• DAU: {}\n", dau));
     }
     text.push_str("• Commands: \\-\\-\n");
@@ -341,7 +363,7 @@ async fn generate_performance_metrics(_db_pool: &Arc<DbPool>) -> String {
 }
 
 /// Generates business metrics report
-async fn generate_business_metrics(db_pool: &Arc<DbPool>) -> String {
+async fn generate_business_metrics(_db_pool: &Arc<DbPool>, shared_storage: &Arc<SharedStorage>) -> String {
     let mut text = String::from("💰 *Business Metrics*\n\n");
 
     text.push_str("💵 *Revenue*\n");
@@ -368,8 +390,7 @@ async fn generate_business_metrics(db_pool: &Arc<DbPool>) -> String {
     // Subscriptions
     text.push_str("\n📈 *Subscriptions*\n");
 
-    if let Ok(conn) = db::get_connection(db_pool) {
-        let active = count_active_subscriptions(&conn);
+    if let Ok(active) = shared_storage.count_active_subscriptions().await {
         text.push_str(&format!("• Active: {}\n", active));
     }
 
@@ -399,13 +420,13 @@ async fn generate_business_metrics(db_pool: &Arc<DbPool>) -> String {
 }
 
 /// Generates engagement metrics report
-async fn generate_engagement_metrics(db_pool: &Arc<DbPool>) -> String {
+async fn generate_engagement_metrics(_db_pool: &Arc<DbPool>, shared_storage: &Arc<SharedStorage>) -> String {
     let mut text = String::from("👥 *User Engagement*\n\n");
 
-    if let Ok(conn) = db::get_connection(db_pool) {
-        let dau = count_daily_active_users(&conn);
-        let mau = count_monthly_active_users(&conn);
-
+    if let (Ok(dau), Ok(mau)) = (
+        shared_storage.count_daily_active_users().await,
+        shared_storage.count_monthly_active_users().await,
+    ) {
         text.push_str("📊 *Active Users*\n");
         text.push_str(&format!("• Daily \\(DAU\\): {}\n", dau));
         text.push_str(&format!("• Monthly \\(MAU\\): {}\n\n", mau));
@@ -455,20 +476,20 @@ async fn generate_system_metrics(_db_pool: &Arc<DbPool>) -> String {
 }
 
 /// Generates all metrics report
-async fn generate_all_metrics(db_pool: &Arc<DbPool>) -> String {
+async fn generate_all_metrics(db_pool: &Arc<DbPool>, shared_storage: &Arc<SharedStorage>) -> String {
     let mut text = String::new();
 
     text.push_str(&generate_performance_metrics(db_pool).await);
     text.push_str("\n\n");
-    text.push_str(&generate_business_metrics(db_pool).await);
+    text.push_str(&generate_business_metrics(db_pool, shared_storage).await);
     text.push_str("\n\n");
-    text.push_str(&generate_engagement_metrics(db_pool).await);
+    text.push_str(&generate_engagement_metrics(db_pool, shared_storage).await);
 
     text
 }
 
 /// Generates revenue report
-async fn generate_revenue_report(db_pool: &Arc<DbPool>) -> String {
+async fn generate_revenue_report(_db_pool: &Arc<DbPool>, shared_storage: &Arc<SharedStorage>) -> String {
     let mut text = String::from("💰 *Revenue Report*\n\n");
 
     let total_revenue = get_counter_total(&metrics::REVENUE_TOTAL_STARS);
@@ -518,8 +539,7 @@ async fn generate_revenue_report(db_pool: &Arc<DbPool>) -> String {
 
     text.push_str("\n📈 *Subscriptions*\n");
 
-    if let Ok(conn) = db::get_connection(db_pool) {
-        let active = count_active_subscriptions(&conn);
+    if let Ok(active) = shared_storage.count_active_subscriptions().await {
         text.push_str(&format!("• Active: {}\n", active));
     }
 
@@ -603,36 +623,6 @@ fn get_gauge_total(gauge: &prometheus::Gauge) -> f64 {
         }
     }
     0.0
-}
-
-/// Counts active subscriptions from database
-fn count_active_subscriptions(conn: &rusqlite::Connection) -> i64 {
-    conn.query_row(
-        "SELECT COUNT(*) FROM subscriptions WHERE expires_at > datetime('now')",
-        [],
-        |row| row.get(0),
-    )
-    .unwrap_or(0)
-}
-
-/// Counts daily active users from database
-fn count_daily_active_users(conn: &rusqlite::Connection) -> i64 {
-    conn.query_row(
-        "SELECT COUNT(DISTINCT user_id) FROM user_activity WHERE activity_date = date('now')",
-        [],
-        |row| row.get(0),
-    )
-    .unwrap_or(0)
-}
-
-/// Counts monthly active users from database
-fn count_monthly_active_users(conn: &rusqlite::Connection) -> i64 {
-    conn.query_row(
-        "SELECT COUNT(DISTINCT user_id) FROM user_activity WHERE activity_date >= date('now', '-30 days')",
-        [],
-        |row| row.get(0),
-    )
-    .unwrap_or(0)
 }
 
 /// Formats duration in seconds to human-readable string

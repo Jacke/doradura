@@ -27,6 +27,7 @@ pub mod startup;
 pub mod telegram;
 pub mod vlipsy;
 pub mod watcher;
+pub mod webhook;
 
 // ── Shared modules — re-exported from doracore ───────────────────────────────
 pub use doracore::conversion;
@@ -46,7 +47,7 @@ pub mod smoke_tests;
 // ── Re-exports for convenience ────────────────────────────────────────────────
 pub use core::{config, BotError};
 pub use download::{download_and_send_audio, download_and_send_subtitles, download_and_send_video, DownloadQueue};
-pub use storage::{create_pool, get_connection, DbConnection, DbPool};
+pub use storage::{create_pool, get_connection, DbConnection, DbPool, QueueTaskInput, SharedStorage};
 pub use telegram::{
     handle_menu_callback, handle_message, show_main_menu, Completed, InProgress, MarkdownV2Formatter, MessageFormatter,
     NotStarted, Operation, OperationBuilder, OperationError, OperationInfo, OperationStatus, PlainTextFormatter,

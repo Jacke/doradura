@@ -1,5 +1,6 @@
 use crate::core::escape_markdown;
-use crate::storage::db::{self, DbPool};
+use crate::storage::db::{self};
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -11,7 +12,11 @@ use super::helpers::edit_caption_or_text;
 
 // ==================== Audio Cut ====================
 
-pub(crate) async fn handle_audio_cut_callback(bot: Bot, q: CallbackQuery, db_pool: Arc<DbPool>) -> ResponseResult<()> {
+pub(crate) async fn handle_audio_cut_callback(
+    bot: Bot,
+    q: CallbackQuery,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
     let callback_id = q.id.clone();
     let data = q.data.clone().unwrap_or_default();
     let chat_id = q.message.as_ref().map(|m| m.chat().id);
@@ -25,11 +30,11 @@ pub(crate) async fn handle_audio_cut_callback(bot: Bot, q: CallbackQuery, db_poo
         }
 
         let action = parts[1];
-        let conn = db::get_connection(&db_pool)
+        let user = shared_storage
+            .get_user(chat_id.0)
+            .await
             .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-        if !db::is_premium_or_vip(&conn, chat_id.0)
-            .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
-        {
+        if !user.map(|u| u.plan.is_paid()).unwrap_or(false) {
             bot.answer_callback_query(callback_id)
                 .text("⭐ This feature is available in Premium for ~$6/month → /plan")
                 .show_alert(true)
@@ -47,7 +52,9 @@ pub(crate) async fn handle_audio_cut_callback(bot: Bot, q: CallbackQuery, db_poo
                         .await?;
                     return Ok(());
                 };
-                let session = match db::get_audio_effect_session(&conn, session_id)
+                let session = match shared_storage
+                    .get_audio_effect_session(session_id)
+                    .await
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
                 {
                     Some(session) => session,
@@ -76,7 +83,9 @@ pub(crate) async fn handle_audio_cut_callback(bot: Bot, q: CallbackQuery, db_poo
                     created_at: now,
                     expires_at: now + chrono::Duration::minutes(10),
                 };
-                db::upsert_audio_cut_session(&conn, &cut_session)
+                shared_storage
+                    .upsert_audio_cut_session(&cut_session)
+                    .await
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
                 bot.answer_callback_query(callback_id).await?;
@@ -99,7 +108,9 @@ pub(crate) async fn handle_audio_cut_callback(bot: Bot, q: CallbackQuery, db_poo
                 .await?;
             }
             "cancel" => {
-                db::delete_audio_cut_session_by_user(&conn, chat_id.0)
+                shared_storage
+                    .delete_audio_cut_session_by_user(chat_id.0)
+                    .await
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
                 bot.answer_callback_query(callback_id).await?;
                 let _ = bot.delete_message(chat_id, message_id).await;
@@ -304,10 +315,8 @@ pub(crate) async fn update_audio_effects_editor(
 pub async fn handle_audio_effects_callback(
     bot: Bot,
     q: CallbackQuery,
-    db_pool: Arc<crate::storage::db::DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    use crate::storage::db;
-
     let callback_id = q.id.clone();
     let data = q.data.clone().ok_or("No callback data")?;
 
@@ -325,8 +334,12 @@ pub async fn handle_audio_effects_callback(
     let action = parts[1];
 
     // Check Premium/VIP access
-    let conn = db::get_connection(&db_pool)?;
-    if !db::is_premium_or_vip(&conn, chat_id.0)? {
+    if !shared_storage
+        .get_user(chat_id.0)
+        .await?
+        .map(|u| u.plan.is_paid())
+        .unwrap_or(false)
+    {
         bot.answer_callback_query(callback_id)
             .text("⭐ This feature is available in Premium for ~$6/month → /plan")
             .show_alert(true)
@@ -338,7 +351,10 @@ pub async fn handle_audio_effects_callback(
         "open" => {
             let session_id = parts.get(2).ok_or("Missing session_id")?;
 
-            let session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+            let session = shared_storage
+                .get_audio_effect_session(session_id)
+                .await?
+                .ok_or("Session not found")?;
 
             if session.user_id != chat_id.0 {
                 log::warn!(
@@ -373,7 +389,10 @@ pub async fn handle_audio_effects_callback(
             let pitch_str = parts.get(3).ok_or("Missing pitch value")?;
             let pitch: i8 = pitch_str.parse().map_err(|_| "Invalid pitch")?;
 
-            let mut session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+            let mut session = shared_storage
+                .get_audio_effect_session(session_id)
+                .await?
+                .ok_or("Session not found")?;
 
             if session.user_id != chat_id.0 {
                 log::warn!(
@@ -392,16 +411,17 @@ pub async fn handle_audio_effects_callback(
             }
 
             session.pitch_semitones = pitch;
-            db::update_audio_effect_session(
-                &conn,
-                session_id,
-                pitch,
-                session.tempo_factor,
-                session.bass_gain_db,
-                session.morph_profile.as_str(),
-                &session.current_file_path,
-                session.version,
-            )?;
+            shared_storage
+                .update_audio_effect_session(
+                    session_id,
+                    pitch,
+                    session.tempo_factor,
+                    session.bass_gain_db,
+                    session.morph_profile.as_str(),
+                    &session.current_file_path,
+                    session.version,
+                )
+                .await?;
 
             bot.answer_callback_query(callback_id).await?;
             update_audio_effects_editor(&bot, chat_id, message_id, &session).await?;
@@ -412,7 +432,10 @@ pub async fn handle_audio_effects_callback(
             let tempo_str = parts.get(3).ok_or("Missing tempo value")?;
             let tempo: f32 = tempo_str.parse().map_err(|_| "Invalid tempo")?;
 
-            let mut session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+            let mut session = shared_storage
+                .get_audio_effect_session(session_id)
+                .await?
+                .ok_or("Session not found")?;
 
             if session.user_id != chat_id.0 {
                 log::warn!(
@@ -431,16 +454,17 @@ pub async fn handle_audio_effects_callback(
             }
 
             session.tempo_factor = tempo;
-            db::update_audio_effect_session(
-                &conn,
-                session_id,
-                session.pitch_semitones,
-                tempo,
-                session.bass_gain_db,
-                session.morph_profile.as_str(),
-                &session.current_file_path,
-                session.version,
-            )?;
+            shared_storage
+                .update_audio_effect_session(
+                    session_id,
+                    session.pitch_semitones,
+                    tempo,
+                    session.bass_gain_db,
+                    session.morph_profile.as_str(),
+                    &session.current_file_path,
+                    session.version,
+                )
+                .await?;
 
             bot.answer_callback_query(callback_id).await?;
             update_audio_effects_editor(&bot, chat_id, message_id, &session).await?;
@@ -451,7 +475,10 @@ pub async fn handle_audio_effects_callback(
             let bass_str = parts.get(3).ok_or("Missing bass value")?;
             let bass: i8 = bass_str.parse().map_err(|_| "Invalid bass")?;
 
-            let mut session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+            let mut session = shared_storage
+                .get_audio_effect_session(session_id)
+                .await?
+                .ok_or("Session not found")?;
 
             if session.user_id != chat_id.0 {
                 log::warn!(
@@ -470,16 +497,17 @@ pub async fn handle_audio_effects_callback(
             }
 
             session.bass_gain_db = bass;
-            db::update_audio_effect_session(
-                &conn,
-                session_id,
-                session.pitch_semitones,
-                session.tempo_factor,
-                bass,
-                session.morph_profile.as_str(),
-                &session.current_file_path,
-                session.version,
-            )?;
+            shared_storage
+                .update_audio_effect_session(
+                    session_id,
+                    session.pitch_semitones,
+                    session.tempo_factor,
+                    bass,
+                    session.morph_profile.as_str(),
+                    &session.current_file_path,
+                    session.version,
+                )
+                .await?;
 
             bot.answer_callback_query(callback_id).await?;
             update_audio_effects_editor(&bot, chat_id, message_id, &session).await?;
@@ -488,7 +516,10 @@ pub async fn handle_audio_effects_callback(
         "morph" => {
             let session_id = parts.get(2).ok_or("Missing session_id")?;
 
-            let mut session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+            let mut session = shared_storage
+                .get_audio_effect_session(session_id)
+                .await?
+                .ok_or("Session not found")?;
 
             if session.user_id != chat_id.0 {
                 log::warn!(
@@ -525,16 +556,17 @@ pub async fn handle_audio_effects_callback(
                 }
             };
 
-            db::update_audio_effect_session(
-                &conn,
-                session_id,
-                session.pitch_semitones,
-                session.tempo_factor,
-                session.bass_gain_db,
-                session.morph_profile.as_str(),
-                &session.current_file_path,
-                session.version,
-            )?;
+            shared_storage
+                .update_audio_effect_session(
+                    session_id,
+                    session.pitch_semitones,
+                    session.tempo_factor,
+                    session.bass_gain_db,
+                    session.morph_profile.as_str(),
+                    &session.current_file_path,
+                    session.version,
+                )
+                .await?;
 
             bot.answer_callback_query(callback_id).await?;
             update_audio_effects_editor(&bot, chat_id, message_id, &session).await?;
@@ -543,7 +575,10 @@ pub async fn handle_audio_effects_callback(
         "apply" => {
             let session_id = parts.get(2).ok_or("Missing session_id")?;
 
-            let session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+            let session = shared_storage
+                .get_audio_effect_session(session_id)
+                .await?
+                .ok_or("Session not found")?;
 
             if session.user_id != chat_id.0 {
                 log::warn!(
@@ -564,7 +599,9 @@ pub async fn handle_audio_effects_callback(
             bot.answer_callback_query(callback_id).await?;
 
             // Set processing flag
-            db::set_session_processing(&conn, session_id, true)?;
+            shared_storage
+                .set_audio_effect_session_processing(session_id, true)
+                .await?;
 
             // Show processing message
             edit_caption_or_text(
@@ -600,11 +637,11 @@ pub async fn handle_audio_effects_callback(
 
             // Spawn processing task
             let bot_clone = bot.clone();
-            let db_pool_clone = Arc::clone(&db_pool);
+            let shared_storage_clone = Arc::clone(&shared_storage);
             let session_clone = session.clone();
             tokio::spawn(async move {
                 if let Err(e) =
-                    process_audio_effects(bot_clone, chat_id, message_id, session_clone, db_pool_clone).await
+                    process_audio_effects(bot_clone, chat_id, message_id, session_clone, shared_storage_clone).await
                 {
                     log::error!("Failed to process audio effects: {}", e);
                 }
@@ -614,7 +651,10 @@ pub async fn handle_audio_effects_callback(
         "reset" => {
             let session_id = parts.get(2).ok_or("Missing session_id")?;
 
-            let mut session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+            let mut session = shared_storage
+                .get_audio_effect_session(session_id)
+                .await?
+                .ok_or("Session not found")?;
 
             if session.user_id != chat_id.0 {
                 log::warn!(
@@ -629,16 +669,17 @@ pub async fn handle_audio_effects_callback(
             session.tempo_factor = 1.0;
             session.bass_gain_db = 0;
             session.morph_profile = crate::download::audio_effects::MorphProfile::None;
-            db::update_audio_effect_session(
-                &conn,
-                session_id,
-                0,
-                1.0,
-                0,
-                crate::download::audio_effects::MorphProfile::None.as_str(),
-                &session.current_file_path,
-                session.version,
-            )?;
+            shared_storage
+                .update_audio_effect_session(
+                    session_id,
+                    0,
+                    1.0,
+                    0,
+                    crate::download::audio_effects::MorphProfile::None.as_str(),
+                    &session.current_file_path,
+                    session.version,
+                )
+                .await?;
 
             bot.answer_callback_query(callback_id).await?;
             update_audio_effects_editor(&bot, chat_id, message_id, &session).await?;
@@ -657,7 +698,10 @@ pub async fn handle_audio_effects_callback(
         "again" => {
             let session_id = parts.get(2).ok_or("Missing session_id")?;
 
-            let session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+            let session = shared_storage
+                .get_audio_effect_session(session_id)
+                .await?
+                .ok_or("Session not found")?;
 
             if session.user_id != chat_id.0 {
                 log::warn!(
@@ -718,7 +762,10 @@ pub async fn handle_audio_effects_callback(
         "original" => {
             let session_id = parts.get(2).ok_or("Missing session_id")?;
 
-            let session = db::get_audio_effect_session(&conn, session_id)?.ok_or("Session not found")?;
+            let session = shared_storage
+                .get_audio_effect_session(session_id)
+                .await?
+                .ok_or("Session not found")?;
 
             if session.user_id != chat_id.0 {
                 log::warn!(
@@ -758,10 +805,9 @@ pub(crate) async fn process_audio_effects(
     chat_id: ChatId,
     editor_message_id: MessageId,
     session: crate::download::audio_effects::AudioEffectSession,
-    db_pool: Arc<crate::storage::db::DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use crate::core::config;
-    use crate::storage::db;
     use std::path::Path;
 
     let session_id = session.id.clone();
@@ -781,8 +827,9 @@ pub(crate) async fn process_audio_effects(
         crate::download::audio_effects::apply_audio_effects(&session.original_file_path, &output_path, &settings).await;
 
     // Clear processing flag
-    let conn = db::get_connection(&db_pool)?;
-    db::set_session_processing(&conn, &session_id, false)?;
+    shared_storage
+        .set_audio_effect_session_processing(&session_id, false)
+        .await?;
 
     match result {
         Ok(_) => {
@@ -821,16 +868,17 @@ pub(crate) async fn process_audio_effects(
                 .await?;
 
             // Update session in DB
-            db::update_audio_effect_session(
-                &conn,
-                &session_id,
-                session.pitch_semitones,
-                session.tempo_factor,
-                session.bass_gain_db,
-                session.morph_profile.as_str(),
-                &output_path,
-                new_version,
-            )?;
+            shared_storage
+                .update_audio_effect_session(
+                    &session_id,
+                    session.pitch_semitones,
+                    session.tempo_factor,
+                    session.bass_gain_db,
+                    session.morph_profile.as_str(),
+                    &output_path,
+                    new_version,
+                )
+                .await?;
 
             // Delete old version file if exists
             if session.version > 0 && session.current_file_path != session.original_file_path {

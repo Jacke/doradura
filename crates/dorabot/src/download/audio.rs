@@ -12,7 +12,8 @@ use crate::download::error::DownloadError;
 use crate::download::pipeline::{self, PipelineFormat, PipelineResult};
 use crate::download::progress::{ProgressBarStyle, ProgressMessage};
 use crate::download::source::bot_global;
-use crate::storage::db::{self as db, DbPool};
+use crate::storage::db::DbPool;
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
@@ -33,6 +34,7 @@ pub async fn download_and_send_audio(
     rate_limiter: Arc<RateLimiter>,
     _created_timestamp: DateTime<Utc>,
     db_pool: Option<Arc<DbPool>>,
+    shared_storage: Option<Arc<SharedStorage>>,
     audio_bitrate: Option<String>,
     message_id: Option<i32>,
     alert_manager: Option<Arc<crate::core::alerts::AlertManager>>,
@@ -47,22 +49,21 @@ pub async fn download_and_send_audio(
     let bot_clone = bot.clone();
     let _rate_limiter = rate_limiter;
     let db_pool_clone = db_pool.clone();
+    let shared_storage_clone = shared_storage.clone();
 
     // Inherit the parent span (from queue_processor) so all audio logs carry op=...
     let span = tracing::Span::current();
     tokio::spawn(
         async move {
             // Get user plan for metrics
-            let user_plan = if let Some(ref pool) = db_pool_clone {
-                if let Ok(conn) = db::get_connection(pool) {
-                    db::get_user(&conn, chat_id.0)
-                        .ok()
-                        .flatten()
-                        .map(|u| u.plan)
-                        .unwrap_or_default()
-                } else {
-                    Plan::default()
-                }
+            let user_plan = if let Some(ref storage) = shared_storage_clone {
+                storage
+                    .get_user(chat_id.0)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|u| u.plan)
+                    .unwrap_or_default()
             } else {
                 Plan::default()
             };
@@ -82,16 +83,15 @@ pub async fn download_and_send_audio(
             let registry = bot_global();
 
             // Create progress_msg BEFORE timeout so we can clean it up if timeout fires
-            let lang = db_pool_clone
-                .as_ref()
-                .map(|pool| crate::i18n::user_lang_from_pool(pool, chat_id.0))
-                .unwrap_or_else(|| crate::i18n::lang_from_code("ru"));
+            let lang = if let Some(ref storage) = shared_storage_clone {
+                crate::i18n::user_lang_from_storage(storage, chat_id.0).await
+            } else {
+                crate::i18n::lang_from_code("ru")
+            };
             let mut progress_msg = ProgressMessage::new(chat_id, lang.clone());
-            if let Some(ref pool) = db_pool_clone {
-                if let Ok(conn) = db::get_connection(pool) {
-                    if let Ok(style_str) = db::get_user_progress_bar_style(&conn, chat_id.0) {
-                        progress_msg.style = ProgressBarStyle::parse(&style_str);
-                    }
+            if let Some(ref storage) = shared_storage_clone {
+                if let Ok(style_str) = storage.get_user_progress_bar_style(chat_id.0).await {
+                    progress_msg.style = ProgressBarStyle::parse(&style_str);
                 }
             }
 
@@ -103,6 +103,7 @@ pub async fn download_and_send_audio(
                     &url,
                     &format,
                     db_pool_clone.as_ref(),
+                    shared_storage_clone.as_ref(),
                     message_id,
                     alert_manager.as_ref(),
                     registry,
@@ -114,7 +115,7 @@ pub async fn download_and_send_audio(
                 metrics::record_file_size("mp3", pipeline_result.file_size);
 
                 // Audio-specific: add effects button
-                add_audio_effects_button(&bot_clone, chat_id, &pipeline_result, db_pool_clone.as_ref()).await;
+                add_audio_effects_button(&bot_clone, chat_id, &pipeline_result, shared_storage_clone.as_ref()).await;
 
                 // Lyrics highlights: fetch lyrics + LLM highlight in background, send as reply
                 if with_lyrics {
@@ -129,8 +130,8 @@ pub async fn download_and_send_audio(
 
                 // Share page: create after successful audio send (YouTube only, fire-and-forget)
                 if crate::core::share::is_youtube_url(url.as_str()) {
-                    if let Some(ref pool) = db_pool_clone {
-                        let pool_share = std::sync::Arc::clone(pool);
+                    if let Some(ref storage) = shared_storage_clone {
+                        let storage_share = std::sync::Arc::clone(storage);
                         let url_str = url.to_string();
                         let title_share = pipeline_result.title.clone();
                         let artist_share = pipeline_result.artist.clone();
@@ -144,7 +145,7 @@ pub async fn download_and_send_audio(
                                 Some(artist_share.as_str())
                             };
                             if let Some((share_url, streaming_links)) = crate::core::share::create_share_page(
-                                &pool_share,
+                                &storage_share,
                                 &url_str,
                                 &title_share,
                                 artist_opt,
@@ -242,17 +243,15 @@ pub async fn download_and_send_audio(
 ///
 /// Creates an AudioEffectSession, copies the downloaded file for effects processing,
 /// and adds inline keyboard buttons to the sent message.
-async fn add_audio_effects_button(bot: &Bot, chat_id: ChatId, result: &PipelineResult, db_pool: Option<&Arc<DbPool>>) {
-    let Some(pool) = db_pool else {
+async fn add_audio_effects_button(
+    bot: &Bot,
+    chat_id: ChatId,
+    result: &PipelineResult,
+    shared_storage: Option<&Arc<SharedStorage>>,
+) {
+    let Some(storage) = shared_storage else {
         return;
     };
-    let Ok(conn) = db::get_connection(pool) else {
-        log::warn!("Audio effects: failed to get DB connection");
-        return;
-    };
-
-    // TODO: Re-enable premium check after testing
-    // if !db::is_premium_or_vip(&conn, chat_id.0).unwrap_or(false) { return; }
 
     use crate::download::audio_effects::{self, AudioEffectSession};
 
@@ -273,7 +272,7 @@ async fn add_audio_effects_button(bot: &Bot, chat_id: ChatId, result: &PipelineR
                 result.duration,
             );
 
-            match db::create_audio_effect_session(&conn, &session) {
+            match storage.create_audio_effect_session(&session).await {
                 Ok(_) => {
                     log::info!("Audio effects: session created with id {}", session_id);
                     let bot_for_button = bot.clone();

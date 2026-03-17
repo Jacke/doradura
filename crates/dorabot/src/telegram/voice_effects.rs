@@ -11,19 +11,25 @@ use teloxide::types::{ChatId, InlineKeyboardMarkup, InputFile, Message, MessageI
 
 use crate::storage::cache;
 use crate::storage::db::DbPool;
+use crate::storage::SharedStorage;
 use crate::telegram::cb;
 use crate::telegram::download_file_from_telegram;
 use crate::telegram::Bot;
 
 /// Handle an incoming voice message: cache the file_id and show the effects keyboard.
-pub async fn handle_voice_message(bot: Bot, msg: Message, db_pool: Arc<DbPool>) -> ResponseResult<()> {
+pub async fn handle_voice_message(
+    bot: Bot,
+    msg: Message,
+    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
     let voice = match msg.voice() {
         Some(v) => v,
         None => return Ok(()),
     };
 
     let file_id = &voice.file.id.0;
-    let file_hash = cache::store_url(&db_pool, file_id).await;
+    let file_hash = cache::store_url(&db_pool, Some(shared_storage.as_ref()), file_id).await;
     let duration = voice.duration.seconds();
 
     let keyboard = build_voice_effects_keyboard(&file_hash, duration);
@@ -52,6 +58,7 @@ pub async fn handle_voice_effect_callback(
     message_id: MessageId,
     data: &str,
     db_pool: &DbPool,
+    shared_storage: &SharedStorage,
 ) -> Result<(), teloxide::RequestError> {
     // vfx:cancel
     if data == "vfx:cancel" {
@@ -69,7 +76,7 @@ pub async fn handle_voice_effect_callback(
     let file_hash = parts[2];
     let duration: u32 = parts[3].parse().unwrap_or(0);
 
-    let file_id = match cache::get_url(db_pool, file_hash).await {
+    let file_id = match cache::get_url(db_pool, Some(shared_storage), file_hash).await {
         Some(id) => id,
         None => {
             log::warn!("Voice file_id not found in cache for hash: {}", file_hash);

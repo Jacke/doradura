@@ -2,26 +2,46 @@ use crate::core::config::admin::ADMIN_USERNAME;
 use crate::core::escape_markdown;
 use crate::core::types::Plan;
 use crate::i18n;
-use crate::storage::db::{self, DbPool};
+use crate::storage::db::DbPool;
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use fluent_templates::fluent_bundle::FluentArgs;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardMarkup, MessageId};
-use teloxide::RequestError;
 use unic_langid::LanguageIdentifier;
 
 use super::helpers::edit_caption_or_text;
 
+async fn load_menu_user_state(shared_storage: &SharedStorage, chat_id: ChatId) -> (String, String, String, Plan) {
+    let user = shared_storage.get_user(chat_id.0).await.ok().flatten();
+    let format = user
+        .as_ref()
+        .map(|user| user.download_format.clone())
+        .unwrap_or_else(|| "mp3".to_string());
+    let video_quality = user
+        .as_ref()
+        .map(|user| user.video_quality.clone())
+        .unwrap_or_else(|| "best".to_string());
+    let audio_bitrate = user
+        .as_ref()
+        .map(|user| user.audio_bitrate.clone())
+        .unwrap_or_else(|| "320k".to_string());
+    let plan = user.map(|user| user.plan).unwrap_or_default();
+    (format, video_quality, audio_bitrate, plan)
+}
+
 /// Shows the main settings menu for the download mode.
 ///
 /// Displays inline buttons for video quality, audio bitrate, and supported services.
-pub async fn show_main_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-    let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
-    let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
-    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+pub async fn show_main_menu(
+    bot: &Bot,
+    chat_id: ChatId,
+    _db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<Message> {
+    let (_, video_quality, audio_bitrate, _) = load_menu_user_state(&shared_storage, chat_id).await;
+    let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     let quality_emoji = match video_quality.as_str() {
         "1080p" => "🎬 1080p",
@@ -125,15 +145,13 @@ pub(crate) async fn edit_main_menu(
     bot: &Bot,
     chat_id: ChatId,
     message_id: MessageId,
-    db_pool: Arc<DbPool>,
+    _db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     url_id: Option<&str>,
     _preview_msg_id: Option<MessageId>,
 ) -> ResponseResult<()> {
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-    let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
-    let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
-    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let (_, video_quality, audio_bitrate, _) = load_menu_user_state(&shared_storage, chat_id).await;
+    let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     let quality_emoji = match video_quality.as_str() {
         "1080p" => "🎬 1080p",
@@ -217,15 +235,13 @@ pub(crate) async fn edit_main_menu(
 pub async fn send_main_menu_as_new(
     bot: &Bot,
     chat_id: ChatId,
-    db_pool: Arc<DbPool>,
+    _db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     url_id: Option<&str>,
     preview_msg_id: Option<MessageId>,
 ) -> ResponseResult<()> {
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-    let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
-    let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
-    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let (_, video_quality, audio_bitrate, _) = load_menu_user_state(&shared_storage, chat_id).await;
+    let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     let quality_emoji = match video_quality.as_str() {
         "1080p" => "🎬 1080p",
@@ -317,29 +333,14 @@ pub async fn send_main_menu_as_new(
 /// Shows the enhanced main menu with user's current settings and main action buttons.
 ///
 /// This is the improved main menu that replaces the old /start handler.
-pub async fn show_enhanced_main_menu(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
-    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
-    let (format, video_quality, audio_bitrate, plan) = match db::get_connection(&db_pool) {
-        Ok(conn) => {
-            let format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
-            let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
-            let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
-            let plan = match db::get_user(&conn, chat_id.0) {
-                Ok(Some(user)) => user.plan,
-                _ => Plan::default(),
-            };
-            (format, video_quality, audio_bitrate, plan)
-        }
-        Err(e) => {
-            log::error!("Failed to get DB connection for enhanced menu: {}", e);
-            (
-                "mp3".to_string(),
-                "best".to_string(),
-                "320k".to_string(),
-                Plan::default(),
-            )
-        }
-    };
+pub async fn show_enhanced_main_menu(
+    bot: &Bot,
+    chat_id: ChatId,
+    _db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<Message> {
+    let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
+    let (format, video_quality, audio_bitrate, plan) = load_menu_user_state(&shared_storage, chat_id).await;
 
     // Format emoji
     let format_emoji = match format.as_str() {
@@ -398,30 +399,11 @@ pub(crate) async fn edit_enhanced_main_menu(
     bot: &Bot,
     chat_id: ChatId,
     message_id: MessageId,
-    db_pool: Arc<DbPool>,
+    _db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> ResponseResult<()> {
-    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
-    let (format, video_quality, audio_bitrate, plan) = match db::get_connection(&db_pool) {
-        Ok(conn) => {
-            let format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
-            let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
-            let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
-            let plan = match db::get_user(&conn, chat_id.0) {
-                Ok(Some(user)) => user.plan,
-                _ => Plan::default(),
-            };
-            (format, video_quality, audio_bitrate, plan)
-        }
-        Err(e) => {
-            log::error!("Failed to get DB connection for enhanced menu: {}", e);
-            (
-                "mp3".to_string(),
-                "best".to_string(),
-                "320k".to_string(),
-                Plan::default(),
-            )
-        }
-    };
+    let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
+    let (format, video_quality, audio_bitrate, plan) = load_menu_user_state(&shared_storage, chat_id).await;
 
     let format_emoji = match format.as_str() {
         "mp3" => "🎵 MP3",
@@ -475,20 +457,25 @@ pub(crate) async fn show_current_settings_detail(
     chat_id: ChatId,
     message_id: MessageId,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> ResponseResult<()> {
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-    let format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
-    let video_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
-    let audio_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
-    let send_as_document = db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0);
-    let send_audio_as_document = db::get_user_send_audio_as_document(&conn, chat_id.0).unwrap_or(0);
-
-    let plan = match db::get_user(&conn, chat_id.0) {
-        Ok(Some(user)) => user.plan,
-        _ => Plan::default(),
-    };
+    let _ = db_pool;
+    let user = shared_storage.get_user(chat_id.0).await.ok().flatten();
+    let format = user
+        .as_ref()
+        .map(|user| user.download_format.clone())
+        .unwrap_or_else(|| "mp3".to_string());
+    let video_quality = user
+        .as_ref()
+        .map(|user| user.video_quality.clone())
+        .unwrap_or_else(|| "best".to_string());
+    let audio_bitrate = user
+        .as_ref()
+        .map(|user| user.audio_bitrate.clone())
+        .unwrap_or_else(|| "320k".to_string());
+    let send_as_document = user.as_ref().map(|user| user.send_as_document).unwrap_or(0);
+    let send_audio_as_document = user.as_ref().map(|user| user.send_audio_as_document).unwrap_or(0);
+    let plan = user.map(|user| user.plan).unwrap_or_else(Plan::default);
 
     let format_emoji = match format.as_str() {
         "mp3" => "🎵 MP3",

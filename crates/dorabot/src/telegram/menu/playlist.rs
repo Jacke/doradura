@@ -20,17 +20,17 @@
 use crate::core::types::Plan;
 use crate::download::search::format_duration;
 use crate::storage::db::{self, DbPool};
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
 use teloxide::prelude::*;
 use teloxide::types::{CallbackQueryId, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId};
-use tokio::sync::RwLock;
 
 const TRACKS_PER_PAGE: usize = 8;
 const PLAYLISTS_PER_PAGE: usize = 5;
 const SESSION_TTL_SECS: u64 = 300; // 5 minutes
+const PLAYLIST_NAME_PROMPT_KIND: &str = "playlist_name";
+const PLAYLIST_IMPORT_PROMPT_KIND: &str = "playlist_import_url";
 
 /// Truncate a string to `max_chars` characters safely (no panic on multi-byte).
 fn truncate_str(s: &str, max_chars: usize) -> &str {
@@ -69,75 +69,111 @@ pub enum NameAction {
 #[derive(Debug, Clone)]
 pub struct PlaylistNameSession {
     pub action: NameAction,
-    pub created_at: Instant,
 }
 
-static PLAYLIST_NAME_STATES: std::sync::LazyLock<Arc<RwLock<HashMap<i64, PlaylistNameSession>>>> =
-    std::sync::LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
-
-/// Import URL input session: (playlist_id, created_at).
-#[allow(clippy::type_complexity)]
-static IMPORT_URL_STATES: std::sync::LazyLock<Arc<RwLock<HashMap<i64, (i64, Instant)>>>> =
-    std::sync::LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
-
-pub async fn is_waiting_for_playlist_name(user_id: i64) -> bool {
-    get_playlist_name_session(user_id).await.is_some()
-}
-
-pub async fn get_playlist_name_session(user_id: i64) -> Option<PlaylistNameSession> {
-    let states = PLAYLIST_NAME_STATES.read().await;
-    let session = states.get(&user_id)?;
-    if session.created_at.elapsed().as_secs() > SESSION_TTL_SECS {
-        drop(states);
-        clear_playlist_name_session(user_id).await;
-        return None;
+fn encode_playlist_name_session(session: &PlaylistNameSession) -> String {
+    match session.action {
+        NameAction::Create => "create".to_string(),
+        NameAction::Rename(playlist_id) => format!("rename:{playlist_id}"),
     }
-    Some(session.clone())
 }
 
-pub async fn set_playlist_name_session(user_id: i64, session: PlaylistNameSession) {
-    let mut states = PLAYLIST_NAME_STATES.write().await;
-    states.insert(user_id, session);
-}
-
-pub async fn clear_playlist_name_session(user_id: i64) {
-    let mut states = PLAYLIST_NAME_STATES.write().await;
-    states.remove(&user_id);
-}
-
-pub async fn is_waiting_for_import_url(user_id: i64) -> bool {
-    get_import_playlist_id(user_id).await.is_some()
-}
-
-pub async fn get_import_playlist_id(user_id: i64) -> Option<i64> {
-    let states = IMPORT_URL_STATES.read().await;
-    let (pl_id, created_at) = states.get(&user_id)?;
-    if created_at.elapsed().as_secs() > SESSION_TTL_SECS {
-        drop(states);
-        clear_import_url_session(user_id).await;
-        return None;
+fn decode_playlist_name_session(payload: &str) -> Option<PlaylistNameSession> {
+    if payload == "create" {
+        Some(PlaylistNameSession {
+            action: NameAction::Create,
+        })
+    } else {
+        payload
+            .strip_prefix("rename:")
+            .and_then(|v| v.parse::<i64>().ok())
+            .map(|playlist_id| PlaylistNameSession {
+                action: NameAction::Rename(playlist_id),
+            })
     }
-    Some(*pl_id)
 }
 
-pub async fn set_import_url_session(user_id: i64, playlist_id: i64) {
-    let mut states = IMPORT_URL_STATES.write().await;
-    states.insert(user_id, (playlist_id, Instant::now()));
+pub async fn is_waiting_for_playlist_name(shared_storage: &Arc<SharedStorage>, user_id: i64) -> bool {
+    get_playlist_name_session(shared_storage, user_id).await.is_some()
 }
 
-pub async fn clear_import_url_session(user_id: i64) {
-    let mut states = IMPORT_URL_STATES.write().await;
-    states.remove(&user_id);
+pub async fn get_playlist_name_session(
+    shared_storage: &Arc<SharedStorage>,
+    user_id: i64,
+) -> Option<PlaylistNameSession> {
+    let payload = shared_storage
+        .get_prompt_session(user_id, PLAYLIST_NAME_PROMPT_KIND)
+        .await
+        .ok()
+        .flatten()?;
+    decode_playlist_name_session(&payload)
+}
+
+pub async fn set_playlist_name_session(
+    shared_storage: &Arc<SharedStorage>,
+    user_id: i64,
+    session: PlaylistNameSession,
+) {
+    let _ = shared_storage
+        .upsert_prompt_session(
+            user_id,
+            PLAYLIST_NAME_PROMPT_KIND,
+            &encode_playlist_name_session(&session),
+            SESSION_TTL_SECS as i64,
+        )
+        .await;
+}
+
+pub async fn clear_playlist_name_session(shared_storage: &Arc<SharedStorage>, user_id: i64) {
+    let _ = shared_storage
+        .delete_prompt_session(user_id, PLAYLIST_NAME_PROMPT_KIND)
+        .await;
+}
+
+pub async fn is_waiting_for_import_url(shared_storage: &Arc<SharedStorage>, user_id: i64) -> bool {
+    get_import_playlist_id(shared_storage, user_id).await.is_some()
+}
+
+pub async fn get_import_playlist_id(shared_storage: &Arc<SharedStorage>, user_id: i64) -> Option<i64> {
+    shared_storage
+        .get_prompt_session(user_id, PLAYLIST_IMPORT_PROMPT_KIND)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|payload| payload.parse::<i64>().ok())
+}
+
+pub async fn set_import_url_session(shared_storage: &Arc<SharedStorage>, user_id: i64, playlist_id: i64) {
+    let _ = shared_storage
+        .upsert_prompt_session(
+            user_id,
+            PLAYLIST_IMPORT_PROMPT_KIND,
+            &playlist_id.to_string(),
+            SESSION_TTL_SECS as i64,
+        )
+        .await;
+}
+
+pub async fn clear_import_url_session(shared_storage: &Arc<SharedStorage>, user_id: i64) {
+    let _ = shared_storage
+        .delete_prompt_session(user_id, PLAYLIST_IMPORT_PROMPT_KIND)
+        .await;
 }
 
 // ── Handle text input for playlist name ───────────────────────────────────
 
-pub async fn handle_playlist_name_input(bot: &Bot, chat_id: ChatId, text: &str, db_pool: Arc<DbPool>) {
-    let session = match get_playlist_name_session(chat_id.0).await {
+pub async fn handle_playlist_name_input(
+    bot: &Bot,
+    chat_id: ChatId,
+    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+    text: &str,
+) {
+    let session = match get_playlist_name_session(&shared_storage, chat_id.0).await {
         Some(s) => s,
         None => return,
     };
-    clear_playlist_name_session(chat_id.0).await;
+    clear_playlist_name_session(&shared_storage, chat_id.0).await;
 
     let text = text.trim();
     if text.eq_ignore_ascii_case("cancel") {
@@ -152,23 +188,17 @@ pub async fn handle_playlist_name_input(bot: &Bot, chat_id: ChatId, text: &str, 
         return;
     }
 
-    let conn = match db::get_connection(&db_pool) {
-        Ok(c) => c,
-        Err(_) => {
-            let _ = bot.send_message(chat_id, "Database error").await;
-            return;
-        }
-    };
-
     match session.action {
         NameAction::Create => {
             // Check plan limits
-            let plan = db::get_user(&conn, chat_id.0)
+            let plan = shared_storage
+                .get_user(chat_id.0)
+                .await
                 .ok()
                 .flatten()
                 .map(|u| u.plan)
                 .unwrap_or(Plan::Free);
-            let count = db::count_user_playlists(&conn, chat_id.0).unwrap_or(0);
+            let count = shared_storage.count_user_playlists(chat_id.0).await.unwrap_or(0);
             if count >= max_playlists(plan) {
                 let _ = bot
                     .send_message(
@@ -183,13 +213,13 @@ pub async fn handle_playlist_name_input(bot: &Bot, chat_id: ChatId, text: &str, 
                 return;
             }
 
-            match db::create_playlist(&conn, chat_id.0, text, None) {
+            match shared_storage.create_playlist(chat_id.0, text, None).await {
                 Ok(id) => {
                     let _ = bot
                         .send_message(chat_id, format!("📋 Playlist \"{}\" created!", text))
                         .await;
                     // Show the new playlist
-                    let _ = show_playlist_view(bot, chat_id, id, 0, &db_pool).await;
+                    let _ = show_playlist_view(bot, chat_id, id, 0, &db_pool, &shared_storage).await;
                 }
                 Err(e) => {
                     log::error!("Failed to create playlist: {}", e);
@@ -198,13 +228,14 @@ pub async fn handle_playlist_name_input(bot: &Bot, chat_id: ChatId, text: &str, 
             }
         }
         NameAction::Rename(pl_id) => {
-            if let Err(e) = db::rename_playlist(&conn, pl_id, chat_id.0, text) {
+            if let Err(e) = shared_storage.rename_playlist(pl_id, text).await {
                 log::error!("Failed to rename playlist: {}", e);
                 let _ = bot.send_message(chat_id, "Failed to rename playlist.").await;
             } else {
                 let _ = bot
                     .send_message(chat_id, format!("✏️ Playlist renamed to \"{}\"", text))
                     .await;
+                let _ = show_playlist_view(bot, chat_id, pl_id, 0, &db_pool, &shared_storage).await;
             }
         }
     }
@@ -212,8 +243,13 @@ pub async fn handle_playlist_name_input(bot: &Bot, chat_id: ChatId, text: &str, 
 
 // ── /playlists command ────────────────────────────────────────────────────
 
-pub async fn handle_playlists_command(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbPool>) {
-    let _ = show_playlists_list(bot, chat_id, 0, db_pool).await;
+pub async fn handle_playlists_command(
+    bot: &Bot,
+    chat_id: ChatId,
+    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
+) {
+    let _ = show_playlists_list(bot, chat_id, 0, db_pool, shared_storage).await;
 }
 
 async fn show_playlists_list(
@@ -221,17 +257,13 @@ async fn show_playlists_list(
     chat_id: ChatId,
     page: usize,
     db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
-    let conn = match db::get_connection(db_pool) {
-        Ok(c) => c,
-        Err(_) => {
-            let _ = bot.send_message(chat_id, "Database error").await;
-            return Ok(());
-        }
-    };
-
-    let playlists = db::get_user_playlists(&conn, chat_id.0).unwrap_or_default();
-    let plan = db::get_user(&conn, chat_id.0)
+    let _ = db_pool;
+    let playlists = shared_storage.get_user_playlists(chat_id.0).await.unwrap_or_default();
+    let plan = shared_storage
+        .get_user(chat_id.0)
+        .await
         .ok()
         .flatten()
         .map(|u| u.plan)
@@ -259,7 +291,7 @@ async fn show_playlists_list(
     let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
 
     for (i, pl) in page_playlists.iter().enumerate() {
-        let count = db::count_playlist_items(&conn, pl.id).unwrap_or(0);
+        let count = shared_storage.count_playlist_items(pl.id).await.unwrap_or(0);
         let public_icon = if pl.is_public { " 🌍" } else { "" };
         text.push_str(&format!(
             "{}. {} — {} tracks{}\n",
@@ -298,13 +330,10 @@ async fn show_playlist_view(
     playlist_id: i64,
     page: usize,
     db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
-    let conn = match db::get_connection(db_pool) {
-        Ok(c) => c,
-        Err(_) => return Ok(()),
-    };
-
-    let pl = match db::get_playlist(&conn, playlist_id) {
+    let _ = db_pool;
+    let pl = match shared_storage.get_playlist(playlist_id).await {
         Ok(Some(pl)) => pl,
         _ => {
             let _ = bot.send_message(chat_id, "Playlist not found.").await;
@@ -312,9 +341,12 @@ async fn show_playlist_view(
         }
     };
 
-    let total_items = db::count_playlist_items(&conn, playlist_id).unwrap_or(0);
+    let total_items = shared_storage.count_playlist_items(playlist_id).await.unwrap_or(0);
     let offset = (page * TRACKS_PER_PAGE) as i64;
-    let items = db::get_playlist_items_page(&conn, playlist_id, offset, TRACKS_PER_PAGE as i64).unwrap_or_default();
+    let items = shared_storage
+        .get_playlist_items_page(playlist_id, offset, TRACKS_PER_PAGE as i64)
+        .await
+        .unwrap_or_default();
 
     let public_icon = if pl.is_public { " 🌍" } else { "" };
     let mut text = format!("📋 {}{} ({} tracks)\n\n", pl.name, public_icon, total_items);
@@ -447,8 +479,8 @@ fn generate_share_token() -> String {
 // ── Ownership check ──────────────────────────────────────────────────────
 
 /// Verify the user owns the playlist. Returns the playlist if owned.
-fn verify_ownership(conn: &db::DbConnection, playlist_id: i64, user_id: i64) -> Option<db::Playlist> {
-    match db::get_playlist(conn, playlist_id) {
+async fn verify_ownership(shared_storage: &Arc<SharedStorage>, playlist_id: i64, user_id: i64) -> Option<db::Playlist> {
+    match shared_storage.get_playlist(playlist_id).await {
         Ok(Some(pl)) if pl.user_id == user_id => Some(pl),
         _ => None,
     }
@@ -463,21 +495,17 @@ pub async fn handle_playlist_callback(
     message_id: MessageId,
     data: &str,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
     let _ = bot.answer_callback_query(callback_id).await;
-
-    let conn = match db::get_connection(&db_pool) {
-        Ok(c) => c,
-        Err(_) => return Ok(()),
-    };
 
     // pl:new — create
     if data == "pl:new" {
         set_playlist_name_session(
+            &shared_storage,
             chat_id.0,
             PlaylistNameSession {
                 action: NameAction::Create,
-                created_at: Instant::now(),
             },
         )
         .await;
@@ -491,7 +519,7 @@ pub async fn handle_playlist_callback(
     if let Some(page_str) = data.strip_prefix("pl:list:") {
         let page = page_str.parse::<usize>().unwrap_or(0);
         let _ = bot.delete_message(chat_id, message_id).await;
-        let _ = show_playlists_list(bot, chat_id, page, &db_pool).await;
+        let _ = show_playlists_list(bot, chat_id, page, &db_pool, &shared_storage).await;
         return Ok(());
     }
 
@@ -501,12 +529,12 @@ pub async fn handle_playlist_callback(
         if parts.len() == 2 {
             if let (Ok(pl_id), Ok(page)) = (parts[0].parse::<i64>(), parts[1].parse::<usize>()) {
                 // Allow viewing own playlists or public playlists
-                match db::get_playlist(&conn, pl_id) {
+                match shared_storage.get_playlist(pl_id).await {
                     Ok(Some(pl)) if pl.user_id == chat_id.0 || pl.is_public => {}
                     _ => return Ok(()),
                 }
                 let _ = bot.delete_message(chat_id, message_id).await;
-                let _ = show_playlist_view(bot, chat_id, pl_id, page, &db_pool).await;
+                let _ = show_playlist_view(bot, chat_id, pl_id, page, &db_pool, &shared_storage).await;
             }
         }
         return Ok(());
@@ -515,14 +543,14 @@ pub async fn handle_playlist_callback(
     // pl:ren:{pl_id}
     if let Some(pl_id_str) = data.strip_prefix("pl:ren:") {
         if let Ok(pl_id) = pl_id_str.parse::<i64>() {
-            if verify_ownership(&conn, pl_id, chat_id.0).is_none() {
+            if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
                 return Ok(());
             }
             set_playlist_name_session(
+                &shared_storage,
                 chat_id.0,
                 PlaylistNameSession {
                     action: NameAction::Rename(pl_id),
-                    created_at: Instant::now(),
                 },
             )
             .await;
@@ -536,7 +564,7 @@ pub async fn handle_playlist_callback(
     // pl:del:{pl_id} — confirm
     if let Some(pl_id_str) = data.strip_prefix("pl:del:") {
         if let Ok(pl_id) = pl_id_str.parse::<i64>() {
-            let pl = match verify_ownership(&conn, pl_id, chat_id.0) {
+            let pl = match verify_ownership(&shared_storage, pl_id, chat_id.0).await {
                 Some(p) => p,
                 None => return Ok(()),
             };
@@ -560,13 +588,13 @@ pub async fn handle_playlist_callback(
     // pl:delok:{pl_id}
     if let Some(pl_id_str) = data.strip_prefix("pl:delok:") {
         if let Ok(pl_id) = pl_id_str.parse::<i64>() {
-            if verify_ownership(&conn, pl_id, chat_id.0).is_none() {
+            if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
                 return Ok(());
             }
-            let _ = db::delete_playlist(&conn, pl_id);
+            let _ = shared_storage.delete_playlist(pl_id).await;
             let _ = bot.delete_message(chat_id, message_id).await;
             let _ = bot.send_message(chat_id, "🗑 Playlist deleted.").await;
-            let _ = show_playlists_list(bot, chat_id, 0, &db_pool).await;
+            let _ = show_playlists_list(bot, chat_id, 0, &db_pool, &shared_storage).await;
         }
         return Ok(());
     }
@@ -576,12 +604,12 @@ pub async fn handle_playlist_callback(
         let parts: Vec<&str> = rest.splitn(2, ':').collect();
         if parts.len() == 2 {
             if let (Ok(pl_id), Ok(val)) = (parts[0].parse::<i64>(), parts[1].parse::<i32>()) {
-                if verify_ownership(&conn, pl_id, chat_id.0).is_none() {
+                if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
                     return Ok(());
                 }
-                let _ = db::set_playlist_public(&conn, pl_id, val != 0);
+                let _ = shared_storage.set_playlist_public(pl_id, val != 0).await;
                 let _ = bot.delete_message(chat_id, message_id).await;
-                let _ = show_playlist_view(bot, chat_id, pl_id, 0, &db_pool).await;
+                let _ = show_playlist_view(bot, chat_id, pl_id, 0, &db_pool, &shared_storage).await;
             }
         }
         return Ok(());
@@ -590,7 +618,7 @@ pub async fn handle_playlist_callback(
     // pl:share:{pl_id}
     if let Some(pl_id_str) = data.strip_prefix("pl:share:") {
         if let Ok(pl_id) = pl_id_str.parse::<i64>() {
-            let pl = match verify_ownership(&conn, pl_id, chat_id.0) {
+            let pl = match verify_ownership(&shared_storage, pl_id, chat_id.0).await {
                 Some(p) => p,
                 None => return Ok(()),
             };
@@ -598,15 +626,15 @@ pub async fn handle_playlist_callback(
                 t
             } else {
                 let t = generate_share_token();
-                let _ = db::set_playlist_share_token(&conn, pl_id, &t);
-                let _ = db::set_playlist_public(&conn, pl_id, true);
+                let _ = shared_storage.set_playlist_share_token(pl_id, &t).await;
+                let _ = shared_storage.set_playlist_public(pl_id, true).await;
                 t
             };
 
             // Get cached bot username for deep link
             let bot_username = crate::core::copyright::get_bot_username().unwrap_or("bot");
             let link = format!("https://t.me/{}?start=pl_{}", bot_username, token);
-            let count = db::count_playlist_items(&conn, pl_id).unwrap_or(0);
+            let count = shared_storage.count_playlist_items(pl_id).await.unwrap_or(0);
 
             let text = format!(
                 "🔗 Share Link\n━━━━━━━━━━━━━━\n{}\n{} tracks\n\n{}",
@@ -620,7 +648,7 @@ pub async fn handle_playlist_callback(
     // pl:add:{pl_id}
     if let Some(pl_id_str) = data.strip_prefix("pl:add:") {
         if let Ok(pl_id) = pl_id_str.parse::<i64>() {
-            if verify_ownership(&conn, pl_id, chat_id.0).is_none() {
+            if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
                 return Ok(());
             }
             let _ = bot.delete_message(chat_id, message_id).await;
@@ -634,7 +662,7 @@ pub async fn handle_playlist_callback(
         let parts: Vec<&str> = rest.splitn(2, ':').collect();
         if parts.len() == 2 {
             if let Ok(pl_id) = parts[0].parse::<i64>() {
-                if verify_ownership(&conn, pl_id, chat_id.0).is_none() {
+                if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
                     return Ok(());
                 }
                 let _ = bot.delete_message(chat_id, message_id).await;
@@ -645,9 +673,10 @@ pub async fn handle_playlist_callback(
                         // Set search context
                         use super::search::{set_search_session, SearchContext, SearchSession};
                         // We store the context for future search handling
-                        set_search_session(
+                        let _ = set_search_session(
+                            &shared_storage,
                             chat_id.0,
-                            SearchSession {
+                            &SearchSession {
                                 query: String::new(),
                                 results: vec![],
                                 source: if parts[1] == "y" {
@@ -656,14 +685,13 @@ pub async fn handle_playlist_callback(
                                     crate::download::search::SearchSource::SoundCloud
                                 },
                                 context: SearchContext::AddToPlaylist { playlist_id: pl_id },
-                                created_at: Instant::now(),
                             },
                         )
                         .await;
                     }
                     "h" => {
                         // Show download history for adding
-                        let _ = show_history_for_add(bot, chat_id, pl_id, 0, &db_pool).await;
+                        let _ = show_history_for_add(bot, chat_id, pl_id, 0, &shared_storage).await;
                     }
                     _ => {}
                 }
@@ -677,12 +705,12 @@ pub async fn handle_playlist_callback(
         let parts: Vec<&str> = rest.splitn(2, ':').collect();
         if parts.len() == 2 {
             if let (Ok(pl_id), Ok(item_id)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>()) {
-                if verify_ownership(&conn, pl_id, chat_id.0).is_none() {
+                if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
                     return Ok(());
                 }
-                let _ = db::remove_playlist_item(&conn, item_id);
+                let _ = shared_storage.remove_playlist_item(item_id).await;
                 let _ = bot.delete_message(chat_id, message_id).await;
-                let _ = show_playlist_view(bot, chat_id, pl_id, 0, &db_pool).await;
+                let _ = show_playlist_view(bot, chat_id, pl_id, 0, &db_pool, &shared_storage).await;
             }
         }
         return Ok(());
@@ -693,7 +721,7 @@ pub async fn handle_playlist_callback(
         let parts: Vec<&str> = rest.splitn(3, ':').collect();
         if parts.len() == 3 {
             if let (Ok(pl_id), Ok(item_id)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>()) {
-                if verify_ownership(&conn, pl_id, chat_id.0).is_none() {
+                if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
                     return Ok(());
                 }
                 let direction = match parts[2] {
@@ -702,10 +730,10 @@ pub async fn handle_playlist_callback(
                     _ => 0,
                 };
                 if direction != 0 {
-                    let _ = db::reorder_playlist_item(&conn, item_id, direction);
+                    let _ = shared_storage.reorder_playlist_item(item_id, direction).await;
                 }
                 let _ = bot.delete_message(chat_id, message_id).await;
-                let _ = show_playlist_view(bot, chat_id, pl_id, 0, &db_pool).await;
+                let _ = show_playlist_view(bot, chat_id, pl_id, 0, &db_pool, &shared_storage).await;
             }
         }
         return Ok(());
@@ -714,10 +742,10 @@ pub async fn handle_playlist_callback(
     // pl:imp:{pl_id}
     if let Some(pl_id_str) = data.strip_prefix("pl:imp:") {
         if let Ok(pl_id) = pl_id_str.parse::<i64>() {
-            if verify_ownership(&conn, pl_id, chat_id.0).is_none() {
+            if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
                 return Ok(());
             }
-            set_import_url_session(chat_id.0, pl_id).await;
+            set_import_url_session(&shared_storage, chat_id.0, pl_id).await;
             let _ = bot
                 .send_message(
                     chat_id,
@@ -733,21 +761,22 @@ pub async fn handle_playlist_callback(
         let parts: Vec<&str> = rest.splitn(3, ':').collect();
         if parts.len() >= 2 {
             if let (Ok(pl_id), Ok(entry_id)) = (parts[0].parse::<i64>(), parts[1].parse::<i64>()) {
-                if verify_ownership(&conn, pl_id, chat_id.0).is_none() {
+                if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
                     return Ok(());
                 }
-                if let Ok(Some(entry)) = db::get_download_history_entry(&conn, chat_id.0, entry_id) {
+                if let Ok(Some(entry)) = shared_storage.get_download_history_entry(chat_id.0, entry_id).await {
                     let source = crate::download::search::source_name_from_url(&entry.url);
-                    let _ = db::add_playlist_item(
-                        &conn,
-                        pl_id,
-                        &entry.title,
-                        entry.author.as_deref(),
-                        &entry.url,
-                        entry.duration.map(|d| d as i32),
-                        entry.file_id.as_deref(),
-                        source,
-                    );
+                    let _ = shared_storage
+                        .add_playlist_item(
+                            pl_id,
+                            &entry.title,
+                            entry.author.as_deref(),
+                            &entry.url,
+                            entry.duration.map(|d| d as i32),
+                            entry.file_id.as_deref(),
+                            source,
+                        )
+                        .await;
                     let _ = bot
                         .send_message(chat_id, format!("➕ Added \"{}\" to playlist", entry.title))
                         .await;
@@ -759,7 +788,7 @@ pub async fn handle_playlist_callback(
 
     // pl:clone:{token}
     if let Some(token) = data.strip_prefix("pl:clone:") {
-        handle_clone_playlist(bot, chat_id, token, &db_pool).await;
+        handle_clone_playlist(bot, chat_id, token, &db_pool, &shared_storage).await;
         return Ok(());
     }
 
@@ -768,16 +797,16 @@ pub async fn handle_playlist_callback(
 
 // ── Clone shared playlist ─────────────────────────────────────────────────
 
-pub async fn handle_clone_playlist(bot: &Bot, chat_id: ChatId, token: &str, db_pool: &Arc<DbPool>) {
-    let conn = match db::get_connection(db_pool) {
-        Ok(c) => c,
-        Err(_) => {
-            let _ = bot.send_message(chat_id, "Database error").await;
-            return;
-        }
-    };
+pub async fn handle_clone_playlist(
+    bot: &Bot,
+    chat_id: ChatId,
+    token: &str,
+    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
+) {
+    let _ = db_pool;
 
-    let source_pl = match db::get_playlist_by_share_token(&conn, token) {
+    let source_pl = match shared_storage.get_playlist_by_share_token(token).await {
         Ok(Some(pl)) => pl,
         _ => {
             let _ = bot.send_message(chat_id, "Playlist not found or link expired.").await;
@@ -786,12 +815,14 @@ pub async fn handle_clone_playlist(bot: &Bot, chat_id: ChatId, token: &str, db_p
     };
 
     // Check plan limits
-    let plan = db::get_user(&conn, chat_id.0)
+    let plan = shared_storage
+        .get_user(chat_id.0)
+        .await
         .ok()
         .flatten()
         .map(|u| u.plan)
         .unwrap_or(Plan::Free);
-    let count = db::count_user_playlists(&conn, chat_id.0).unwrap_or(0);
+    let count = shared_storage.count_user_playlists(chat_id.0).await.unwrap_or(0);
     if count >= max_playlists(plan) {
         let _ = bot
             .send_message(chat_id, "Playlist limit reached. Upgrade your plan for more.")
@@ -801,7 +832,10 @@ pub async fn handle_clone_playlist(bot: &Bot, chat_id: ChatId, token: &str, db_p
 
     // Create new playlist
     let new_name = format!("{} (copy)", source_pl.name);
-    let new_pl_id = match db::create_playlist(&conn, chat_id.0, &new_name, source_pl.description.as_deref()) {
+    let new_pl_id = match shared_storage
+        .create_playlist(chat_id.0, &new_name, source_pl.description.as_deref())
+        .await
+    {
         Ok(id) => id,
         Err(e) => {
             log::error!("Failed to clone playlist: {}", e);
@@ -811,32 +845,27 @@ pub async fn handle_clone_playlist(bot: &Bot, chat_id: ChatId, token: &str, db_p
     };
 
     // Copy items in a transaction
-    let items = db::get_playlist_items(&conn, source_pl.id).unwrap_or_default();
-    if let Err(e) = conn.execute_batch("BEGIN") {
-        log::error!("Failed to begin transaction for playlist clone: {}", e);
-        let _ = bot
-            .send_message(chat_id, "Failed to clone playlist (transaction error).")
-            .await;
-        return;
-    }
+    let items = shared_storage
+        .get_playlist_items(source_pl.id)
+        .await
+        .unwrap_or_default();
     let mut failed = 0usize;
     for item in &items {
-        if let Err(e) = db::add_playlist_item(
-            &conn,
-            new_pl_id,
-            &item.title,
-            item.artist.as_deref(),
-            &item.url,
-            item.duration_secs,
-            item.file_id.as_deref(),
-            &item.source,
-        ) {
+        if let Err(e) = shared_storage
+            .add_playlist_item(
+                new_pl_id,
+                &item.title,
+                item.artist.as_deref(),
+                &item.url,
+                item.duration_secs,
+                item.file_id.as_deref(),
+                &item.source,
+            )
+            .await
+        {
             log::warn!("Failed to clone playlist item '{}': {}", item.title, e);
             failed += 1;
         }
-    }
-    if let Err(e) = conn.execute_batch("COMMIT") {
-        log::error!("Failed to commit playlist clone transaction: {}", e);
     }
     if failed > 0 {
         log::warn!(
@@ -864,15 +893,13 @@ async fn show_history_for_add(
     chat_id: ChatId,
     playlist_id: i64,
     page: usize,
-    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
-    let conn = match db::get_connection(db_pool) {
-        Ok(c) => c,
-        Err(_) => return Ok(()),
-    };
-
     // Get recent downloads
-    let history = db::get_download_history(&conn, chat_id.0, Some(10)).unwrap_or_default();
+    let history = shared_storage
+        .get_download_history(chat_id.0, Some(10))
+        .await
+        .unwrap_or_default();
 
     if history.is_empty() {
         let _ = bot.send_message(chat_id, "No download history.").await;

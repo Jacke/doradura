@@ -32,7 +32,7 @@ pub use vault::*;
 use crate::core::types::Plan;
 use r2d2::{Pool, PooledConnection};
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{Connection, Result};
+use rusqlite::{Connection, OptionalExtension, Result};
 use std::time::Duration;
 
 use crate::storage::migrations;
@@ -2191,16 +2191,73 @@ pub struct TaskQueueEntry {
     pub id: String,
     pub user_id: i64,
     pub url: String,
+    pub message_id: Option<i32>,
     pub format: String,
     pub is_video: bool,
     pub video_quality: Option<String>,
     pub audio_bitrate: Option<String>,
+    pub time_range_start: Option<String>,
+    pub time_range_end: Option<String>,
+    pub carousel_mask: Option<u32>,
     pub priority: i32,
     pub status: String,
     pub error_message: Option<String>,
     pub retry_count: i32,
+    pub idempotency_key: Option<String>,
+    pub worker_id: Option<String>,
+    pub leased_at: Option<String>,
+    pub lease_expires_at: Option<String>,
+    pub last_heartbeat_at: Option<String>,
+    pub execute_at: Option<String>,
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+/// Result of attempting to enqueue a task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnqueueResult {
+    Enqueued,
+    Duplicate,
+}
+
+fn map_task_queue_entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<TaskQueueEntry> {
+    Ok(TaskQueueEntry {
+        id: row.get(0)?,
+        user_id: row.get(1)?,
+        url: row.get(2)?,
+        message_id: row.get(3)?,
+        format: row.get(4)?,
+        is_video: row.get::<_, i32>(5)? == 1,
+        video_quality: row.get(6)?,
+        audio_bitrate: row.get(7)?,
+        time_range_start: row.get(8)?,
+        time_range_end: row.get(9)?,
+        carousel_mask: row.get(10)?,
+        priority: row.get(11)?,
+        status: row.get(12)?,
+        error_message: row.get(13)?,
+        retry_count: row.get(14)?,
+        idempotency_key: row.get(15)?,
+        worker_id: row.get(16)?,
+        leased_at: row.get(17)?,
+        lease_expires_at: row.get(18)?,
+        last_heartbeat_at: row.get(19)?,
+        execute_at: row.get(20)?,
+        started_at: row.get(21)?,
+        finished_at: row.get(22)?,
+        created_at: row.get(23)?,
+        updated_at: row.get(24)?,
+    })
+}
+
+fn task_queue_select_sql() -> &'static str {
+    "SELECT id, user_id, url, message_id, format, is_video, video_quality, audio_bitrate,
+            time_range_start, time_range_end, carousel_mask, priority, status, error_message,
+            retry_count, idempotency_key, worker_id, leased_at, lease_expires_at,
+            last_heartbeat_at, execute_at, started_at, finished_at, created_at, updated_at
+     FROM task_queue"
 }
 
 /// Saves a task to the DB queue
@@ -2210,71 +2267,99 @@ pub fn save_task_to_queue(
     task_id: &str,
     user_id: i64,
     url: &str,
+    message_id: Option<i32>,
     format: &str,
     is_video: bool,
     video_quality: Option<&str>,
     audio_bitrate: Option<&str>,
+    time_range_start: Option<&str>,
+    time_range_end: Option<&str>,
+    carousel_mask: Option<u32>,
     priority: i32,
-) -> Result<()> {
-    conn.execute(
-        "INSERT INTO task_queue (id, user_id, url, format, is_video, video_quality, audio_bitrate, priority, status)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 'pending')
+    idempotency_key: &str,
+) -> Result<EnqueueResult> {
+    let changed = conn.execute(
+        "INSERT INTO task_queue (
+             id, user_id, url, message_id, format, is_video, video_quality, audio_bitrate,
+             time_range_start, time_range_end, carousel_mask, priority, status, retry_count, idempotency_key
+         )
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'pending', 0, ?13)
          ON CONFLICT(id) DO UPDATE SET
-         status = 'pending',
-         updated_at = CURRENT_TIMESTAMP,
-         retry_count = 0,
-         error_message = NULL",
+             status = 'pending',
+             updated_at = CURRENT_TIMESTAMP,
+             retry_count = 0,
+             error_message = NULL,
+             worker_id = NULL,
+             leased_at = NULL,
+             lease_expires_at = NULL,
+             last_heartbeat_at = NULL,
+             execute_at = NULL,
+             started_at = NULL,
+             finished_at = NULL,
+             idempotency_key = excluded.idempotency_key",
         [
             &task_id as &dyn rusqlite::ToSql,
             &user_id as &dyn rusqlite::ToSql,
             &url as &dyn rusqlite::ToSql,
+            &message_id as &dyn rusqlite::ToSql,
             &format as &dyn rusqlite::ToSql,
             &(if is_video { 1 } else { 0 }) as &dyn rusqlite::ToSql,
             &video_quality as &dyn rusqlite::ToSql,
             &audio_bitrate as &dyn rusqlite::ToSql,
+            &time_range_start as &dyn rusqlite::ToSql,
+            &time_range_end as &dyn rusqlite::ToSql,
+            &carousel_mask as &dyn rusqlite::ToSql,
             &priority as &dyn rusqlite::ToSql,
+            &idempotency_key as &dyn rusqlite::ToSql,
+        ],
+    )?;
+    Ok(if changed == 0 {
+        EnqueueResult::Duplicate
+    } else {
+        EnqueueResult::Enqueued
+    })
+}
+
+/// Updates the status of a task
+pub fn update_task_status(conn: &DbConnection, task_id: &str, status: &str, error_message: Option<&str>) -> Result<()> {
+    conn.execute(
+        "UPDATE task_queue
+         SET status = ?1,
+             error_message = ?2,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?3",
+        [
+            &status as &dyn rusqlite::ToSql,
+            &error_message as &dyn rusqlite::ToSql,
+            &task_id as &dyn rusqlite::ToSql,
         ],
     )?;
     Ok(())
 }
 
-/// Increments the retry counter and updates the status to failed
-pub fn mark_task_failed(conn: &DbConnection, task_id: &str, error_message: &str) -> Result<()> {
+pub fn mark_task_uploading(conn: &DbConnection, task_id: &str, worker_id: &str) -> Result<()> {
     conn.execute(
         "UPDATE task_queue
-         SET status = 'failed',
-             error_message = ?1,
-             retry_count = retry_count + 1,
+         SET status = 'uploading',
              updated_at = CURRENT_TIMESTAMP
-         WHERE id = ?2",
-        [&error_message as &dyn rusqlite::ToSql, &task_id as &dyn rusqlite::ToSql],
+         WHERE id = ?1
+           AND worker_id = ?2
+           AND status IN ('leased', 'processing', 'uploading')",
+        [&task_id as &dyn rusqlite::ToSql, &worker_id as &dyn rusqlite::ToSql],
     )?;
     Ok(())
 }
 
+fn retry_delay_seconds(retry_count: i32) -> i64 {
+    let capped = retry_count.clamp(1, 6) as u32;
+    30 * 2_i64.pow(capped - 1)
+}
+
 /// Gets a task by ID
 pub fn get_task_by_id(conn: &DbConnection, task_id: &str) -> Result<Option<TaskQueueEntry>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, user_id, url, format, is_video, video_quality, audio_bitrate, priority, status, error_message, retry_count, created_at, updated_at
-         FROM task_queue WHERE id = ?1"
-    )?;
-    let mut rows = stmt.query_map([&task_id as &dyn rusqlite::ToSql], |row| {
-        Ok(TaskQueueEntry {
-            id: row.get(0)?,
-            user_id: row.get(1)?,
-            url: row.get(2)?,
-            format: row.get(3)?,
-            is_video: row.get::<_, i32>(4)? == 1,
-            video_quality: row.get(5)?,
-            audio_bitrate: row.get(6)?,
-            priority: row.get(7)?,
-            status: row.get(8)?,
-            error_message: row.get(9)?,
-            retry_count: row.get(10)?,
-            created_at: row.get(11)?,
-            updated_at: row.get(12)?,
-        })
-    })?;
+    let sql = format!("{} WHERE id = ?1", task_queue_select_sql());
+    let mut stmt = conn.prepare(&sql)?;
+    let mut rows = stmt.query_map([&task_id as &dyn rusqlite::ToSql], map_task_queue_entry)?;
 
     if let Some(row) = rows.next() {
         Ok(Some(row?))
@@ -2283,66 +2368,324 @@ pub fn get_task_by_id(conn: &DbConnection, task_id: &str) -> Result<Option<TaskQ
     }
 }
 
-/// Marks a task as completed
-pub fn mark_task_completed(conn: &DbConnection, task_id: &str) -> Result<()> {
-    conn.execute(
-        "UPDATE task_queue SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
-        [&task_id as &dyn rusqlite::ToSql],
-    )?;
-    Ok(())
+/// Claims the next runnable task using an SQLite immediate transaction.
+pub fn claim_next_task(conn: &DbConnection, worker_id: &str, lease_seconds: i64) -> Result<Option<TaskQueueEntry>> {
+    conn.execute_batch("BEGIN IMMEDIATE TRANSACTION")?;
+
+    let result = (|| -> Result<Option<TaskQueueEntry>> {
+        let sql = format!(
+            "{} WHERE id = (
+                SELECT id
+                FROM task_queue
+                WHERE status = 'pending'
+                  AND (execute_at IS NULL OR execute_at <= CURRENT_TIMESTAMP)
+                ORDER BY priority DESC, created_at ASC
+                LIMIT 1
+            )",
+            task_queue_select_sql()
+        );
+        let mut stmt = conn.prepare(&sql)?;
+        let next_task = stmt.query_row([], map_task_queue_entry).optional()?;
+
+        let Some(task) = next_task else {
+            return Ok(None);
+        };
+
+        conn.execute(
+            "UPDATE task_queue
+             SET status = 'leased',
+                 worker_id = ?1,
+                 leased_at = CURRENT_TIMESTAMP,
+                 lease_expires_at = datetime('now', ?2),
+                 last_heartbeat_at = CURRENT_TIMESTAMP,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?3",
+            rusqlite::params![worker_id, format!("+{} seconds", lease_seconds), task.id],
+        )?;
+
+        get_task_by_id(conn, &task.id)
+    })();
+
+    match result {
+        Ok(task) => {
+            conn.execute_batch("COMMIT")?;
+            Ok(task)
+        }
+        Err(err) => {
+            let _ = conn.execute_batch("ROLLBACK");
+            Err(err)
+        }
+    }
 }
 
 /// Marks a task as processing
-pub fn mark_task_processing(conn: &DbConnection, task_id: &str) -> Result<()> {
+pub fn mark_task_processing(conn: &DbConnection, task_id: &str, worker_id: &str) -> Result<()> {
     conn.execute(
-        "UPDATE task_queue SET status = 'processing', updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
-        [&task_id as &dyn rusqlite::ToSql],
+        "UPDATE task_queue
+         SET status = 'processing',
+             started_at = COALESCE(started_at, CURRENT_TIMESTAMP),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?1
+           AND worker_id = ?2
+           AND status IN ('leased', 'processing', 'uploading')",
+        [&task_id as &dyn rusqlite::ToSql, &worker_id as &dyn rusqlite::ToSql],
     )?;
     Ok(())
 }
 
-/// Gets all recoverable tasks — pending or processing (interrupted by restart).
-/// Resets their status to 'pending' atomically and returns them ordered by priority.
-pub fn get_and_reset_recoverable_tasks(conn: &DbConnection) -> Result<Vec<TaskQueueEntry>> {
-    // First reset processing → pending (these were interrupted mid-download)
-    // Only consider tasks created within the last 24 hours
+pub fn heartbeat_worker_leases(conn: &DbConnection, worker_id: &str, lease_seconds: i64) -> Result<usize> {
     conn.execute(
-        "UPDATE task_queue SET status = 'pending', updated_at = CURRENT_TIMESTAMP
-         WHERE status = 'processing'
-         AND created_at > datetime('now', '-1 day')",
-        [],
+        "UPDATE task_queue
+         SET lease_expires_at = datetime('now', ?1),
+             last_heartbeat_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE worker_id = ?2
+           AND status IN ('leased', 'processing', 'uploading')",
+        rusqlite::params![format!("+{} seconds", lease_seconds), worker_id],
+    )
+}
+
+pub fn release_task(conn: &DbConnection, task_id: &str, worker_id: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE task_queue
+         SET status = 'pending',
+             error_message = NULL,
+             worker_id = NULL,
+             leased_at = NULL,
+             lease_expires_at = NULL,
+             last_heartbeat_at = NULL,
+             execute_at = NULL,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?1
+           AND worker_id = ?2
+           AND status IN ('leased', 'processing', 'uploading')",
+        [&task_id as &dyn rusqlite::ToSql, &worker_id as &dyn rusqlite::ToSql],
+    )?;
+    Ok(())
+}
+
+pub fn mark_task_completed(conn: &DbConnection, task_id: &str, worker_id: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE task_queue
+         SET status = 'completed',
+             worker_id = NULL,
+             leased_at = NULL,
+             lease_expires_at = NULL,
+             last_heartbeat_at = NULL,
+             finished_at = CURRENT_TIMESTAMP,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?1
+           AND worker_id = ?2
+           AND status IN ('leased', 'processing', 'uploading')",
+        [&task_id as &dyn rusqlite::ToSql, &worker_id as &dyn rusqlite::ToSql],
+    )?;
+    Ok(())
+}
+
+pub fn mark_task_failed(
+    conn: &DbConnection,
+    task_id: &str,
+    worker_id: &str,
+    error_message: &str,
+    retryable: bool,
+    max_retries: i32,
+) -> Result<bool> {
+    let next_retry_count: i32 = conn.query_row(
+        "SELECT retry_count + 1 FROM task_queue WHERE id = ?1",
+        [&task_id as &dyn rusqlite::ToSql],
+        |row| row.get(0),
     )?;
 
-    let mut stmt = conn.prepare(
-        "SELECT id, user_id, url, format, is_video, video_quality, audio_bitrate, priority, status, error_message, retry_count, created_at, updated_at
-         FROM task_queue
-         WHERE status = 'pending'
-         AND created_at > datetime('now', '-1 day')
-         ORDER BY priority DESC, created_at ASC"
+    if !retryable || next_retry_count >= max_retries {
+        conn.execute(
+            "UPDATE task_queue
+             SET status = 'dead_letter',
+                 error_message = ?1,
+                 retry_count = retry_count + 1,
+                 worker_id = NULL,
+                 leased_at = NULL,
+                 lease_expires_at = NULL,
+                 last_heartbeat_at = NULL,
+                 finished_at = CURRENT_TIMESTAMP,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = ?2
+               AND worker_id = ?3",
+            [
+                &error_message as &dyn rusqlite::ToSql,
+                &task_id as &dyn rusqlite::ToSql,
+                &worker_id as &dyn rusqlite::ToSql,
+            ],
+        )?;
+        return Ok(false);
+    }
+
+    let delay_seconds = retry_delay_seconds(next_retry_count);
+    conn.execute(
+        "UPDATE task_queue
+         SET status = 'pending',
+             error_message = ?1,
+             retry_count = retry_count + 1,
+             worker_id = NULL,
+             leased_at = NULL,
+             lease_expires_at = NULL,
+             last_heartbeat_at = NULL,
+             execute_at = datetime('now', ?2),
+             updated_at = CURRENT_TIMESTAMP
+         WHERE id = ?3
+           AND worker_id = ?4",
+        rusqlite::params![error_message, format!("+{} seconds", delay_seconds), task_id, worker_id],
     )?;
-    let rows = stmt.query_map([], |row| {
-        Ok(TaskQueueEntry {
-            id: row.get(0)?,
-            user_id: row.get(1)?,
-            url: row.get(2)?,
-            format: row.get(3)?,
-            is_video: row.get::<_, i32>(4)? == 1,
-            video_quality: row.get(5)?,
-            audio_bitrate: row.get(6)?,
-            priority: row.get(7)?,
-            status: row.get(8)?,
-            error_message: row.get(9)?,
-            retry_count: row.get(10)?,
-            created_at: row.get(11)?,
-            updated_at: row.get(12)?,
-        })
-    })?;
+    Ok(true)
+}
+
+pub fn recover_expired_leases(conn: &DbConnection, max_retries: i32) -> Result<usize> {
+    conn.execute(
+        "UPDATE task_queue
+         SET status = CASE
+                WHEN retry_count + 1 >= ?1 THEN 'dead_letter'
+                ELSE 'pending'
+             END,
+             retry_count = retry_count + 1,
+             error_message = COALESCE(error_message, 'Lease expired'),
+             worker_id = NULL,
+             leased_at = NULL,
+             lease_expires_at = NULL,
+             last_heartbeat_at = NULL,
+             execute_at = CASE
+                WHEN retry_count + 1 >= ?1 THEN execute_at
+                ELSE datetime('now', '+30 seconds')
+             END,
+             finished_at = CASE
+                WHEN retry_count + 1 >= ?1 THEN CURRENT_TIMESTAMP
+                ELSE finished_at
+             END,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE status IN ('leased', 'processing', 'uploading')
+           AND lease_expires_at IS NOT NULL
+           AND lease_expires_at <= CURRENT_TIMESTAMP",
+        [&max_retries as &dyn rusqlite::ToSql],
+    )
+}
+
+pub fn count_active_tasks(conn: &DbConnection) -> Result<usize> {
+    conn.query_row(
+        "SELECT COUNT(*) FROM task_queue WHERE status IN ('pending', 'leased', 'processing', 'uploading')",
+        [],
+        |row| row.get(0),
+    )
+}
+
+pub fn get_queue_position(conn: &DbConnection, user_id: i64) -> Result<Option<usize>> {
+    let task = conn
+        .query_row(
+            "SELECT priority, created_at
+             FROM task_queue
+             WHERE user_id = ?1
+               AND status = 'pending'
+             ORDER BY priority DESC, created_at ASC
+             LIMIT 1",
+            [&user_id as &dyn rusqlite::ToSql],
+            |row| Ok((row.get::<_, i32>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+
+    let Some((priority, created_at)) = task else {
+        return Ok(None);
+    };
+
+    let ahead: usize = conn.query_row(
+        "SELECT COUNT(*) FROM task_queue
+         WHERE status = 'pending'
+           AND (
+                priority > ?1 OR
+                (priority = ?1 AND created_at < ?2)
+           )",
+        rusqlite::params![priority, created_at],
+        |row| row.get(0),
+    )?;
+    Ok(Some(ahead + 1))
+}
+
+pub fn get_pending_tasks_for_user(conn: &DbConnection, user_id: i64) -> Result<Vec<TaskQueueEntry>> {
+    let sql = format!(
+        "{} WHERE user_id = ?1
+           AND status = 'pending'
+           ORDER BY priority DESC, created_at ASC",
+        task_queue_select_sql()
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([&user_id as &dyn rusqlite::ToSql], map_task_queue_entry)?;
 
     let mut tasks = Vec::new();
     for row in rows {
         tasks.push(row?);
     }
     Ok(tasks)
+}
+
+/// Gets terminally failed tasks for inspection.
+pub fn get_failed_tasks(conn: &DbConnection, max_retries: i32) -> Result<Vec<TaskQueueEntry>> {
+    let sql = format!(
+        "{} WHERE status = 'dead_letter'
+           AND retry_count >= ?1
+           ORDER BY priority DESC, created_at ASC",
+        task_queue_select_sql()
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([&max_retries as &dyn rusqlite::ToSql], map_task_queue_entry)?;
+
+    let mut tasks = Vec::new();
+    for row in rows {
+        tasks.push(row?);
+    }
+    Ok(tasks)
+}
+
+/// Legacy helper kept for compatibility with older startup/tests.
+pub fn get_and_reset_recoverable_tasks(conn: &DbConnection) -> Result<Vec<TaskQueueEntry>> {
+    recover_expired_leases(conn, i32::MAX)?;
+    let sql = format!(
+        "{} WHERE status = 'pending'
+           AND created_at > datetime('now', '-1 day')
+           ORDER BY priority DESC, created_at ASC",
+        task_queue_select_sql()
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map([], map_task_queue_entry)?;
+
+    let mut tasks = Vec::new();
+    for row in rows {
+        tasks.push(row?);
+    }
+    Ok(tasks)
+}
+
+pub fn register_processed_update(conn: &DbConnection, bot_id: i64, update_id: i64) -> Result<bool> {
+    let changed = conn.execute(
+        "INSERT INTO processed_updates (bot_id, update_id) VALUES (?1, ?2)
+         ON CONFLICT(bot_id, update_id) DO NOTHING",
+        rusqlite::params![bot_id, update_id],
+    )?;
+    Ok(changed == 1)
+}
+
+/// Updates the telegram_charge_id of a user (used for subscription management)
+///
+/// # Arguments
+///
+/// * `conn` - Database connection
+/// * `telegram_id` - Telegram ID of the user
+/// * `charge_id` - Telegram payment charge ID from a successful payment
+///
+/// # Returns
+///
+/// Returns `Ok(())` on success or a database error.
+pub fn update_telegram_charge_id(conn: &DbConnection, telegram_id: i64, charge_id: Option<&str>) -> Result<()> {
+    conn.execute(
+        "UPDATE users SET telegram_charge_id = ?1 WHERE telegram_id = ?2",
+        [&charge_id as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
+    )?;
+    Ok(())
 }
 
 // ==================== Bot Assets ====================
@@ -2997,11 +3340,19 @@ pub fn cleanup_old_errors(conn: &DbConnection, days: i64) -> Result<usize> {
 pub fn cleanup_old_tasks(conn: &DbConnection, days: i64) -> Result<usize> {
     let deleted = conn.execute(
         "DELETE FROM task_queue
-         WHERE status IN ('completed', 'failed')
+         WHERE status IN ('completed', 'dead_letter')
          AND updated_at < datetime('now', ?1)",
         [&format!("-{} days", days)],
     )?;
     Ok(deleted)
+}
+
+pub fn cleanup_old_processed_updates(conn: &DbConnection, hours: i64) -> Result<usize> {
+    conn.execute(
+        "DELETE FROM processed_updates
+         WHERE created_at < datetime('now', ?1)",
+        [&format!("-{} hours", hours)],
+    )
 }
 
 // ==================== Lyrics Sessions ====================
@@ -3754,11 +4105,16 @@ mod tests {
             "task-001",
             12380,
             "https://example.com",
+            None,
             "mp3",
             false,
             None,
             Some("320k"),
+            None,
+            None,
+            None,
             0,
+            "12380:https://example.com:mp3:-:320k:audio",
         )
         .unwrap();
 
@@ -3771,12 +4127,17 @@ mod tests {
         assert!(!task.is_video);
 
         // Mark processing
-        mark_task_processing(&conn, "task-001").unwrap();
+        conn.execute(
+            "UPDATE task_queue SET worker_id = 'worker-1', status = 'leased' WHERE id = 'task-001'",
+            [],
+        )
+        .unwrap();
+        mark_task_processing(&conn, "task-001", "worker-1").unwrap();
         let task = get_task_by_id(&conn, "task-001").unwrap().unwrap();
         assert_eq!(task.status, "processing");
 
         // Mark completed
-        mark_task_completed(&conn, "task-001").unwrap();
+        mark_task_completed(&conn, "task-001", "worker-1").unwrap();
         let task = get_task_by_id(&conn, "task-001").unwrap().unwrap();
         assert_eq!(task.status, "completed");
     }
@@ -3793,20 +4154,105 @@ mod tests {
             "task-002",
             12381,
             "https://example.com",
+            None,
             "mp4",
             true,
             Some("720p"),
             None,
+            None,
+            None,
+            None,
             1,
+            "12381:https://example.com:mp4:720p:-:video",
         )
         .unwrap();
 
         // Mark failed
-        mark_task_failed(&conn, "task-002", "Download error").unwrap();
+        conn.execute(
+            "UPDATE task_queue SET worker_id = 'worker-2', status = 'processing' WHERE id = 'task-002'",
+            [],
+        )
+        .unwrap();
+        let will_retry = mark_task_failed(&conn, "task-002", "worker-2", "Download error", true, 5).unwrap();
         let task = get_task_by_id(&conn, "task-002").unwrap().unwrap();
-        assert_eq!(task.status, "failed");
+        assert!(will_retry);
+        assert_eq!(task.status, "pending");
         assert_eq!(task.error_message, Some("Download error".to_string()));
         assert_eq!(task.retry_count, 1);
+    }
+
+    #[test]
+    fn test_update_task_status() {
+        let pool = setup_test_db();
+        let conn = get_connection(&pool).unwrap();
+
+        create_user(&conn, 12382, None).unwrap();
+
+        save_task_to_queue(
+            &conn,
+            "task-003",
+            12382,
+            "https://example.com",
+            None,
+            "mp3",
+            false,
+            None,
+            None,
+            None,
+            None,
+            None,
+            0,
+            "12382:https://example.com:mp3:-:-:audio",
+        )
+        .unwrap();
+
+        update_task_status(&conn, "task-003", "custom_status", Some("Custom error")).unwrap();
+        let task = get_task_by_id(&conn, "task-003").unwrap().unwrap();
+        assert_eq!(task.status, "custom_status");
+        assert_eq!(task.error_message, Some("Custom error".to_string()));
+    }
+
+    #[test]
+    fn test_claim_next_task_uses_db_queue() {
+        let pool = setup_test_db();
+        let conn = get_connection(&pool).unwrap();
+
+        create_user(&conn, 12383, None).unwrap();
+        save_task_to_queue(
+            &conn,
+            "task-004",
+            12383,
+            "https://example.com/a",
+            Some(99),
+            "mp4",
+            true,
+            Some("720p"),
+            None,
+            Some("00:10"),
+            Some("00:20"),
+            Some(3),
+            2,
+            "12383:https://example.com/a:mp4:720p:-:video",
+        )
+        .unwrap();
+
+        let claimed = claim_next_task(&conn, "worker-claim", 60).unwrap().unwrap();
+        assert_eq!(claimed.status, "leased");
+        assert_eq!(claimed.worker_id.as_deref(), Some("worker-claim"));
+        assert_eq!(claimed.message_id, Some(99));
+        assert_eq!(claimed.time_range_start.as_deref(), Some("00:10"));
+        assert_eq!(claimed.time_range_end.as_deref(), Some("00:20"));
+        assert_eq!(claimed.carousel_mask, Some(3));
+    }
+
+    #[test]
+    fn test_register_processed_update_deduplicates() {
+        let pool = setup_test_db();
+        let conn = get_connection(&pool).unwrap();
+
+        assert!(register_processed_update(&conn, 42, 1001).unwrap());
+        assert!(!register_processed_update(&conn, 42, 1001).unwrap());
+        assert!(register_processed_update(&conn, 43, 1001).unwrap());
     }
 
     // ==================== User Statistics Tests ====================

@@ -1,12 +1,11 @@
 use crate::core::escape_markdown;
 use crate::i18n;
-use crate::storage::db::{self, DbPool};
+use crate::storage::{DbPool, SharedStorage};
 use crate::telegram::Bot;
 use fluent_templates::fluent_bundle::FluentArgs;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardMarkup, MessageId};
-use teloxide::RequestError;
 
 use super::helpers::edit_caption_or_text;
 
@@ -18,13 +17,19 @@ pub async fn show_download_type_menu(
     chat_id: ChatId,
     message_id: MessageId,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     url_id: Option<&str>,
     preview_msg_id: Option<MessageId>,
 ) -> ResponseResult<()> {
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-    let current_format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
-    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let _ = db_pool;
+    let current_format = shared_storage
+        .get_user(chat_id.0)
+        .await
+        .ok()
+        .flatten()
+        .map(|user| user.download_format)
+        .unwrap_or_else(|| "mp3".to_string());
+    let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     // Build callback data with url_id and preview_msg_id when they are present
     let format_callback = |format: &str| {
@@ -133,13 +138,19 @@ pub async fn send_download_type_menu_as_new(
     bot: &Bot,
     chat_id: ChatId,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     url_id: Option<&str>,
     preview_msg_id: Option<MessageId>,
 ) -> ResponseResult<()> {
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-    let current_format = db::get_user_download_format(&conn, chat_id.0).unwrap_or_else(|_| "mp3".to_string());
-    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let _ = db_pool;
+    let current_format = shared_storage
+        .get_user(chat_id.0)
+        .await
+        .ok()
+        .flatten()
+        .map(|user| user.download_format)
+        .unwrap_or_else(|| "mp3".to_string());
+    let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     // Build callback data with url_id and preview_msg_id when they are present
     let format_callback = |format: &str| {
@@ -243,15 +254,21 @@ pub async fn show_video_quality_menu(
     chat_id: ChatId,
     message_id: MessageId,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     url_id: Option<&str>,
 ) -> ResponseResult<()> {
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-    let current_quality = db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string());
-    let send_as_document = db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0);
-    let download_subs = db::get_user_download_subtitles(&conn, chat_id.0).unwrap_or(false);
-    let burn_subs = db::get_user_burn_subtitles(&conn, chat_id.0).unwrap_or(false);
-    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let _ = db_pool;
+    let current_quality = shared_storage
+        .get_user_video_quality(chat_id.0)
+        .await
+        .unwrap_or_else(|_| "best".to_string());
+    let send_as_document = shared_storage.get_user_send_as_document(chat_id.0).await.unwrap_or(0);
+    let download_subs = shared_storage
+        .get_user_download_subtitles(chat_id.0)
+        .await
+        .unwrap_or(false);
+    let burn_subs = shared_storage.get_user_burn_subtitles(chat_id.0).await.unwrap_or(false);
+    let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     let mut keyboard_rows = vec![
         vec![
@@ -374,13 +391,19 @@ pub async fn show_audio_bitrate_menu(
     chat_id: ChatId,
     message_id: MessageId,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     url_id: Option<&str>,
 ) -> ResponseResult<()> {
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-    let current_bitrate = db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
-    let send_audio_as_document = db::get_user_send_audio_as_document(&conn, chat_id.0).unwrap_or(0);
-    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let _ = db_pool;
+    let current_bitrate = shared_storage
+        .get_user_audio_bitrate(chat_id.0)
+        .await
+        .unwrap_or_else(|_| "320k".to_string());
+    let send_audio_as_document = shared_storage
+        .get_user_send_audio_as_document(chat_id.0)
+        .await
+        .unwrap_or(0);
+    let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     let keyboard = InlineKeyboardMarkup::new(vec![
         vec![
@@ -466,11 +489,14 @@ pub async fn show_language_menu(
     chat_id: ChatId,
     message_id: MessageId,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     url_id: Option<&str>,
 ) -> ResponseResult<()> {
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-    let current_lang_code = db::get_user_language(&conn, chat_id.0).unwrap_or_else(|_| "ru".to_string());
+    let _ = db_pool;
+    let current_lang_code = shared_storage
+        .get_user_language(chat_id.0)
+        .await
+        .unwrap_or_else(|_| "ru".to_string());
     let lang = i18n::lang_from_code(&current_lang_code);
 
     let mut buttons = Vec::new();
@@ -548,11 +574,14 @@ pub async fn show_subtitle_style_menu(
     chat_id: ChatId,
     message_id: MessageId,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> ResponseResult<()> {
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-    let style = db::get_user_subtitle_style(&conn, chat_id.0).unwrap_or_default();
-    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let _ = db_pool;
+    let style = shared_storage
+        .get_user_subtitle_style(chat_id.0)
+        .await
+        .unwrap_or_default();
+    let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     let size_label = match style.font_size.as_str() {
         "small" => i18n::t(&lang, "menu.subtitle_size_small"),
@@ -643,13 +672,16 @@ pub async fn show_progress_bar_style_menu(
     chat_id: ChatId,
     message_id: MessageId,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> ResponseResult<()> {
     use crate::download::progress::ProgressBarStyle;
 
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-    let current_style = db::get_user_progress_bar_style(&conn, chat_id.0).unwrap_or_else(|_| "classic".to_string());
-    let lang = i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let _ = db_pool;
+    let current_style = shared_storage
+        .get_user_progress_bar_style(chat_id.0)
+        .await
+        .unwrap_or_else(|_| "classic".to_string());
+    let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     let mut buttons = Vec::new();
     for style in ProgressBarStyle::all() {

@@ -7,8 +7,8 @@ use crate::conversion::video::{
     to_video_notes_split, CompressionOptions, GifOptions, VideoNoteOptions, VIDEO_NOTE_MAX_DURATION,
 };
 use crate::core::escape_markdown;
-use crate::storage::uploads::{delete_upload, get_upload_by_id, get_uploads_filtered, UploadEntry};
-use crate::storage::{db, DbPool};
+use crate::storage::uploads::UploadEntry;
+use crate::storage::{DbPool, SharedStorage};
 use crate::telegram::{download_file_from_telegram, Bot};
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -69,15 +69,15 @@ pub async fn show_videos_page(
     bot: &Bot,
     chat_id: ChatId,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     page: usize,
     media_type_filter: Option<String>,
     search_text: Option<String>,
 ) -> ResponseResult<Message> {
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-    // Get filtered uploads
-    let all_uploads = get_uploads_filtered(&conn, chat_id.0, media_type_filter.as_deref(), search_text.as_deref())
+    let _ = db_pool;
+    let all_uploads = shared_storage
+        .get_uploads_filtered(chat_id.0, media_type_filter.as_deref(), search_text.as_deref())
+        .await
         .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
     if all_uploads.is_empty() {
@@ -403,6 +403,7 @@ pub async fn handle_videos_callback(
     message_id: MessageId,
     data: &str,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> ResponseResult<()> {
     log::info!("📂 handle_videos_callback called with data: {}", data);
     bot.answer_callback_query(callback_id).await?;
@@ -433,7 +434,16 @@ pub async fn handle_videos_callback(
             };
 
             bot.delete_message(chat_id, message_id).await?;
-            show_videos_page(bot, chat_id, db_pool.clone(), page, filter, search).await?;
+            show_videos_page(
+                bot,
+                chat_id,
+                db_pool.clone(),
+                shared_storage.clone(),
+                page,
+                filter,
+                search,
+            )
+            .await?;
         }
         "filter" => {
             if parts.len() < 4 {
@@ -451,7 +461,7 @@ pub async fn handle_videos_callback(
             };
 
             bot.delete_message(chat_id, message_id).await?;
-            show_videos_page(bot, chat_id, db_pool.clone(), 0, filter, search).await?;
+            show_videos_page(bot, chat_id, db_pool.clone(), shared_storage.clone(), 0, filter, search).await?;
         }
         "open" => {
             if parts.len() < 3 {
@@ -459,10 +469,9 @@ pub async fn handle_videos_callback(
             }
             let upload_id = parts[2].parse::<i64>().unwrap_or(0);
 
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-            if let Some(upload) = get_upload_by_id(&conn, chat_id.0, upload_id)
+            if let Some(upload) = shared_storage
+                .get_upload_by_id(chat_id.0, upload_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 let text = build_upload_info_text(&upload);
@@ -493,10 +502,9 @@ pub async fn handle_videos_callback(
             let submenu_type = parts[2];
             let upload_id = parts[3].parse::<i64>().unwrap_or(0);
 
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-            if let Some(upload) = get_upload_by_id(&conn, chat_id.0, upload_id)
+            if let Some(upload) = shared_storage
+                .get_upload_by_id(chat_id.0, upload_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 let (text, keyboard) = match submenu_type {
@@ -526,10 +534,9 @@ pub async fn handle_videos_callback(
             let send_type = parts[2];
             let upload_id = parts[3].parse::<i64>().unwrap_or(0);
 
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-            if let Some(upload) = get_upload_by_id(&conn, chat_id.0, upload_id)
+            if let Some(upload) = shared_storage
+                .get_upload_by_id(chat_id.0, upload_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 let file_id = teloxide::types::FileId(upload.file_id.clone());
@@ -584,9 +591,6 @@ pub async fn handle_videos_callback(
             }
             let upload_id = parts[2].parse::<i64>().unwrap_or(0);
 
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
             // Confirm deletion
             let keyboard = InlineKeyboardMarkup::new(vec![vec![
                 crate::telegram::cb(
@@ -596,7 +600,9 @@ pub async fn handle_videos_callback(
                 crate::telegram::cb("❌ Cancel".to_string(), "videos:cancel".to_string()),
             ]]);
 
-            if let Some(upload) = get_upload_by_id(&conn, chat_id.0, upload_id)
+            if let Some(upload) = shared_storage
+                .get_upload_by_id(chat_id.0, upload_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 bot.edit_message_text(
@@ -615,19 +621,17 @@ pub async fn handle_videos_callback(
             }
             let upload_id = parts[2].parse::<i64>().unwrap_or(0);
 
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-            match delete_upload(&conn, chat_id.0, upload_id) {
-                Ok(true) => {
-                    bot.delete_message(chat_id, message_id).await.ok();
-                    bot.send_message(chat_id, "✅ File deleted").await?;
-                }
-                Ok(false) => {
+            match shared_storage
+                .delete_upload(chat_id.0, upload_id)
+                .await
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+            {
+                false => {
                     bot.send_message(chat_id, "❌ File not found").await?;
                 }
-                Err(e) => {
-                    bot.send_message(chat_id, format!("❌ Error deleting: {}", e)).await?;
+                true => {
+                    bot.delete_message(chat_id, message_id).await.ok();
+                    bot.send_message(chat_id, "✅ File deleted").await?;
                 }
             }
         }
@@ -638,10 +642,9 @@ pub async fn handle_videos_callback(
             let convert_type = parts[2];
             let upload_id = parts[3].parse::<i64>().unwrap_or(0);
 
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-            if let Some(upload) = get_upload_by_id(&conn, chat_id.0, upload_id)
+            if let Some(upload) = shared_storage
+                .get_upload_by_id(chat_id.0, upload_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 match convert_type {
@@ -725,7 +728,8 @@ pub async fn handle_videos_callback(
                         // Route to working conversion handler
                         let upload_id = parts.get(3).unwrap_or(&"0");
                         let convert_data = format!("convert:{}:{}", convert_type, upload_id);
-                        handle_convert_callback(bot, chat_id, message_id, &convert_data, db_pool.clone()).await?;
+                        handle_convert_callback(bot, chat_id, message_id, &convert_data, shared_storage.clone())
+                            .await?;
                     }
                     _ => {}
                 }
@@ -784,7 +788,7 @@ pub async fn handle_videos_callback(
 
     // Handle convert: prefix callbacks (e.g., convert:circle:123:30)
     if data.starts_with("convert:") {
-        handle_convert_callback(bot, chat_id, message_id, data, db_pool).await?;
+        handle_convert_callback(bot, chat_id, message_id, data, shared_storage).await?;
     }
 
     Ok(())
@@ -796,7 +800,7 @@ async fn handle_convert_callback(
     chat_id: ChatId,
     message_id: MessageId,
     data: &str,
-    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> ResponseResult<()> {
     let parts: Vec<&str> = data.split(':').collect();
     if parts.len() < 3 {
@@ -805,9 +809,6 @@ async fn handle_convert_callback(
 
     let convert_type = parts[1];
     log::info!("📼 Convert callback: type={}, data={}", convert_type, data);
-
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
     match convert_type {
         "circle" => {
@@ -819,7 +820,9 @@ async fn handle_convert_callback(
             let duration = parts[3].parse::<u64>().unwrap_or(30);
             let speed: Option<f64> = parts.get(4).and_then(|s| s.parse().ok()).filter(|&s: &f64| s != 1.0);
 
-            if let Some(upload) = get_upload_by_id(&conn, chat_id.0, upload_id)
+            if let Some(upload) = shared_storage
+                .get_upload_by_id(chat_id.0, upload_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 bot.delete_message(chat_id, message_id).await.ok();
@@ -980,7 +983,9 @@ async fn handle_convert_callback(
             }
             let upload_id = parts[2].parse::<i64>().unwrap_or(0);
 
-            if let Some(upload) = get_upload_by_id(&conn, chat_id.0, upload_id)
+            if let Some(upload) = shared_storage
+                .get_upload_by_id(chat_id.0, upload_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 bot.delete_message(chat_id, message_id).await.ok();
@@ -1056,7 +1061,9 @@ async fn handle_convert_callback(
             }
             let upload_id = parts[2].parse::<i64>().unwrap_or(0);
 
-            if let Some(upload) = get_upload_by_id(&conn, chat_id.0, upload_id)
+            if let Some(upload) = shared_storage
+                .get_upload_by_id(chat_id.0, upload_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 bot.delete_message(chat_id, message_id).await.ok();
@@ -1122,7 +1129,9 @@ async fn handle_convert_callback(
             }
             let upload_id = parts[2].parse::<i64>().unwrap_or(0);
 
-            if let Some(upload) = get_upload_by_id(&conn, chat_id.0, upload_id)
+            if let Some(upload) = shared_storage
+                .get_upload_by_id(chat_id.0, upload_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 bot.delete_message(chat_id, message_id).await.ok();

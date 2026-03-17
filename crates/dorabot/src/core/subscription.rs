@@ -1,6 +1,6 @@
 use crate::core::metrics;
 use crate::core::types::Plan;
-use crate::storage::db::{self, DbPool};
+use crate::storage::{DbPool, SharedStorage};
 use crate::telegram::Bot;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -87,45 +87,46 @@ fn format_subscription_period_for_log(period: &Seconds) -> String {
 }
 
 /// Shows information about the user's current plan and available subscriptions
-pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>) -> ResponseResult<Message> {
+pub async fn show_subscription_info(
+    bot: &Bot,
+    chat_id: ChatId,
+    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<Message> {
     log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     log::info!("📊 SHOW SUBSCRIPTION INFO REQUEST");
     log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     log::info!("  • User ID: {}", chat_id.0);
 
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+    let _ = db_pool;
 
-    let user = match db::get_user(&conn, chat_id.0) {
-        Ok(Some(u)) => u,
+    let user = match shared_storage.get_user(chat_id.0).await {
+        Ok(Some(user)) => user,
         Ok(None) => {
-            // Create user if not found
-            if let Err(e) = db::create_user(&conn, chat_id.0, None) {
+            if let Err(e) = shared_storage.create_user(chat_id.0, None).await {
                 log::error!("Failed to create user: {}", e);
             }
-            // Try to fetch again
-            db::get_user(&conn, chat_id.0)
+            shared_storage
+                .get_user(chat_id.0)
+                .await
                 .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
-                .unwrap_or_else(|| {
-                    // Fallback to free plan
-                    crate::storage::db::User {
-                        telegram_id: chat_id.0,
-                        username: None,
-                        plan: Plan::Free,
-                        download_format: "mp3".to_string(),
-                        download_subtitles: 0,
-                        video_quality: "best".to_string(),
-                        language: "ru".to_string(),
-                        send_as_document: 0,
-                        send_audio_as_document: 0,
-                        audio_bitrate: "320k".to_string(),
-                        subscription_expires_at: None,
-                        telegram_charge_id: None,
-                        is_recurring: false,
-                        burn_subtitles: 0,
-                        progress_bar_style: "classic".to_string(),
-                        is_blocked: false,
-                    }
+                .unwrap_or_else(|| crate::storage::db::User {
+                    telegram_id: chat_id.0,
+                    username: None,
+                    plan: Plan::Free,
+                    download_format: "mp3".to_string(),
+                    download_subtitles: 0,
+                    video_quality: "best".to_string(),
+                    language: "ru".to_string(),
+                    send_as_document: 0,
+                    send_audio_as_document: 0,
+                    audio_bitrate: "320k".to_string(),
+                    subscription_expires_at: None,
+                    telegram_charge_id: None,
+                    is_recurring: false,
+                    burn_subtitles: 0,
+                    progress_bar_style: "classic".to_string(),
+                    is_blocked: false,
                 })
         }
         Err(e) => {
@@ -136,21 +137,19 @@ pub async fn show_subscription_info(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbP
         }
     };
 
-    let subscription = db::get_subscription(&conn, chat_id.0).ok().flatten();
-    let is_subscription_active = db::is_subscription_active(&conn, chat_id.0).unwrap_or(false);
-    let subscription_plan = subscription.as_ref().map(|s| s.plan).unwrap_or(user.plan);
-    let subscription_expires_at = subscription
-        .as_ref()
-        .and_then(|s| s.expires_at.clone())
-        .or_else(|| user.subscription_expires_at.clone());
-    let subscription_charge_id = subscription
-        .as_ref()
-        .and_then(|s| s.telegram_charge_id.clone())
-        .or_else(|| user.telegram_charge_id.clone());
-    let subscription_is_recurring = subscription
-        .as_ref()
-        .map(|s| s.is_recurring)
-        .unwrap_or(user.is_recurring);
+    let is_subscription_active = if user.plan == Plan::Free {
+        false
+    } else if let Some(ref expires_at) = user.subscription_expires_at {
+        chrono::NaiveDateTime::parse_from_str(expires_at, "%Y-%m-%d %H:%M:%S")
+            .map(|dt| chrono::Utc::now().naive_utc() < dt)
+            .unwrap_or(true)
+    } else {
+        true
+    };
+    let subscription_plan = user.plan;
+    let subscription_expires_at = user.subscription_expires_at.clone();
+    let subscription_charge_id = user.telegram_charge_id.clone();
+    let subscription_is_recurring = user.is_recurring;
 
     log::info!("📋 User data from database:");
     log::info!("  • Plan: {}", subscription_plan);
@@ -568,15 +567,14 @@ pub async fn create_subscription_invoice(bot: &Bot, chat_id: ChatId, plan: &str)
 
 /// Activates a subscription for a user
 pub async fn activate_subscription(
-    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     telegram_id: i64,
     plan: &str,
     days: i32,
 ) -> Result<(), String> {
-    let conn = db::get_connection(&db_pool).map_err(|e| format!("Failed to get connection: {}", e))?;
-
-    // Update the user's plan with an expiry date
-    db::update_user_plan_with_expiry(&conn, telegram_id, plan, Some(days))
+    shared_storage
+        .update_user_plan_with_expiry(telegram_id, plan, Some(days))
+        .await
         .map_err(|e| format!("Failed to update plan: {}", e))?;
 
     log::info!(
@@ -602,7 +600,7 @@ pub async fn activate_subscription(
 pub async fn handle_successful_payment(
     bot: &Bot,
     msg: &teloxide::types::Message,
-    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> ResponseResult<()> {
     if let Some(payment) = msg.successful_payment() {
         log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -681,10 +679,6 @@ pub async fn handle_successful_payment(
                 plan
             );
 
-            // Get database connection
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
             // Save charge_id from payment (convert to string)
             let charge_id_str = payment.telegram_payment_charge_id.0.clone();
 
@@ -715,19 +709,21 @@ pub async fn handle_successful_payment(
             // telegram_charge_id has a UNIQUE constraint — if this fails with a duplicate,
             // it means this payment was already processed (replay attack). Do NOT activate.
             log::info!("💾 Saving charge data for accounting...");
-            if let Err(e) = db::save_charge(
-                &conn,
-                telegram_id,
-                plan,
-                &charge_id_str,
-                Some(&payment.provider_payment_charge_id),
-                &payment.currency,
-                payment.total_amount as i64,
-                &payment.invoice_payload,
-                is_recurring,
-                is_first_recurring,
-                Some(&subscription_expires_at),
-            ) {
+            if let Err(e) = shared_storage
+                .save_charge(
+                    telegram_id,
+                    plan,
+                    &charge_id_str,
+                    Some(&payment.provider_payment_charge_id),
+                    &payment.currency,
+                    payment.total_amount as i64,
+                    &payment.invoice_payload,
+                    is_recurring,
+                    is_first_recurring,
+                    Some(&subscription_expires_at),
+                )
+                .await
+            {
                 log::error!(
                     "❌ Failed to save charge data: {} (possible duplicate charge_id replay)",
                     e
@@ -758,14 +754,16 @@ pub async fn handle_successful_payment(
 
             // Update subscription data in the DB
             log::info!("💾 Updating subscription data in database...");
-            if let Err(e) = db::update_subscription_data(
-                &conn,
-                telegram_id,
-                plan,
-                &charge_id_str,
-                &subscription_expires_at,
-                is_recurring,
-            ) {
+            if let Err(e) = shared_storage
+                .update_subscription_data(
+                    telegram_id,
+                    plan,
+                    &charge_id_str,
+                    &subscription_expires_at,
+                    is_recurring,
+                )
+                .await
+            {
                 log::error!("❌ Failed to update subscription data: {}", e);
 
                 // Track payment failure (database error)
@@ -863,20 +861,21 @@ pub async fn handle_successful_payment(
 /// # Returns
 ///
 /// Returns `Result<(), String>` or an error if cancellation fails.
-pub async fn cancel_subscription(bot: &Bot, telegram_id: i64, db_pool: Arc<DbPool>) -> Result<(), String> {
+pub async fn cancel_subscription(
+    bot: &Bot,
+    telegram_id: i64,
+    shared_storage: Arc<SharedStorage>,
+) -> Result<(), String> {
     log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     log::info!("🚫 SUBSCRIPTION CANCELLATION REQUEST");
     log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     log::info!("  • User ID: {}", telegram_id);
 
-    let conn = db::get_connection(&db_pool).map_err(|e| {
-        log::error!("❌ Failed to get database connection: {}", e);
-        format!("Failed to get connection: {}", e)
-    })?;
-
     // Get the user's charge_id
     log::info!("📋 Fetching user data...");
-    let user = db::get_user(&conn, telegram_id)
+    let user = shared_storage
+        .get_user(telegram_id)
+        .await
         .map_err(|e| {
             log::error!("❌ Failed to get user: {}", e);
             format!("Failed to get user: {}", e)
@@ -928,7 +927,7 @@ pub async fn cancel_subscription(bot: &Bot, telegram_id: i64, db_pool: Arc<DbPoo
 
     // Update the is_recurring flag in the DB (user retains access until expiry date)
     log::info!("💾 Updating database (removing recurring flag)...");
-    db::cancel_subscription(&conn, telegram_id).map_err(|e| {
+    shared_storage.cancel_subscription(telegram_id).await.map_err(|e| {
         log::error!("❌ Failed to update subscription status in DB: {}", e);
         format!("Failed to update subscription status: {}", e)
     })?;
@@ -951,11 +950,15 @@ pub async fn cancel_subscription(bot: &Bot, telegram_id: i64, db_pool: Arc<DbPoo
 /// # Returns
 ///
 /// Returns `Result<(), String>` or an error if restoration fails.
-pub async fn restore_subscription(bot: &Bot, telegram_id: i64, db_pool: Arc<DbPool>) -> Result<(), String> {
-    let conn = db::get_connection(&db_pool).map_err(|e| format!("Failed to get connection: {}", e))?;
-
+pub async fn restore_subscription(
+    bot: &Bot,
+    telegram_id: i64,
+    shared_storage: Arc<SharedStorage>,
+) -> Result<(), String> {
     // Get the user's charge_id
-    let user = db::get_user(&conn, telegram_id)
+    let user = shared_storage
+        .get_user(telegram_id)
+        .await
         .map_err(|e| format!("Failed to get user: {}", e))?
         .ok_or_else(|| "User not found".to_string())?;
 

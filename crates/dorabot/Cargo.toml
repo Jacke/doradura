@@ -1,6 +1,6 @@
 [package]
 name = "doradura"
-version = "0.30.1"
+version = "0.24.0"
 edition = "2021"
 authors = ["Stan <iamjacke@gmail.com>"]
 description = "High-performance Telegram bot for downloading and converting media from multiple sources"
@@ -14,9 +14,6 @@ default-run = "doradura"
 [package.metadata.dist]
 dist = false
 
-[features]
-smartcrop = ["doracore/smartcrop"]
-
 [dependencies]
 doracore = { path = "../doracore", features = ["telegram"] }
 
@@ -27,10 +24,10 @@ rusqlite = { workspace = true }
 r2d2 = { workspace = true }
 r2d2_sqlite = { workspace = true }
 refinery = { workspace = true }
+sqlx = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 log = { workspace = true }
-tracing = { workspace = true }
 chrono = { workspace = true }
 url = { workspace = true }
 regex = { workspace = true }
@@ -52,7 +49,9 @@ teloxide = { workspace = true }
 
 # Non-workspace deps (mirrored from core + bot-specific)
 shellexpand = "3.1.0"
+shell-escape = "0.1.5"
 select = "0.6.1"
+tokio-retry = "0.3"
 dotenvy = "0.15"
 urlencoding = "2.1"
 hmac = "0.12"
@@ -60,11 +59,12 @@ sha2 = "0.10"
 hex = "0.4"
 tower = "0.4"
 tower-http = { version = "0.5", features = ["fs", "cors"] }
-axum = "0.7"
+axum = { workspace = true }
 pretty_env_logger = "0.5"
+simplelog = "0.11"
 reqwest = { workspace = true }
 mime = "0.3"
-zip = { workspace = true }
+redis = { workspace = true }
 
 # MTProto support via grammers
 grammers-client = "0.6"
