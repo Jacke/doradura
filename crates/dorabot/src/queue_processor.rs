@@ -304,9 +304,15 @@ async fn process_single_task(
                          Upgrade your plan or try again tomorrow.",
                 )
                 .await;
-            if let Ok(conn) = db::get_connection(&db_pool) {
-                let _ = db::mark_task_failed(&conn, &task.id, "Daily download limit exceeded");
-            }
+            let _ = shared_storage
+                .mark_task_failed(
+                    &task.id,
+                    &worker_id,
+                    "Daily download limit exceeded",
+                    false,
+                    config::admin::MAX_TASK_RETRIES,
+                )
+                .await;
             queue_for_cleanup
                 .remove_active_task(&task.url, task.chat_id, &task.format)
                 .await;
