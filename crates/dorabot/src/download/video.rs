@@ -267,14 +267,11 @@ pub async fn download_and_send_video(
                                     if let Some(metadata) = PREVIEW_CACHE.get(url.as_str()).await {
                                         if !metadata.timestamps.is_empty() {
                                             // Filter timestamps to time range if download was clipped
-                                            let ts_to_save = if let Some((ref start, ref end)) =
-                                                *format.time_range()
-                                            {
+                                            let ts_to_save = if let Some((ref start, ref end)) = *format.time_range() {
                                                 use doracore::timestamps::{
                                                     filter_timestamps_for_range, parse_timestamp_to_secs,
                                                 };
-                                                match (parse_timestamp_to_secs(start), parse_timestamp_to_secs(end))
-                                                {
+                                                match (parse_timestamp_to_secs(start), parse_timestamp_to_secs(end)) {
                                                     (Some(s), Some(e)) => {
                                                         filter_timestamps_for_range(&metadata.timestamps, s, e)
                                                     }

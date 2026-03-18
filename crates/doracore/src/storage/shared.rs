@@ -3158,11 +3158,11 @@ impl SharedStorage {
         }
     }
 
-    pub async fn rename_playlist(&self, playlist_id: i64, name: &str) -> Result<()> {
+    pub async fn rename_playlist(&self, playlist_id: i64, user_id: i64, name: &str) -> Result<()> {
         match self {
             Self::Sqlite { db_pool } => {
                 let conn = db::get_connection(db_pool).context("sqlite rename_playlist connection")?;
-                db::rename_playlist(&conn, playlist_id, name).context("sqlite rename_playlist")
+                db::rename_playlist(&conn, playlist_id, user_id, name).context("sqlite rename_playlist")
             }
             Self::Postgres { pg_pool, .. } => {
                 sqlx::query(
@@ -6436,6 +6436,9 @@ fn map_pg_subtitle_style(row: sqlx::postgres::PgRow) -> SubtitleStyle {
         outline_width: row.get("subtitle_outline_width"),
         shadow: row.get("subtitle_shadow"),
         position: row.get("subtitle_position"),
+        margin_v: row.try_get("subtitle_margin_v").unwrap_or(0),
+        margin_h: row.try_get("subtitle_margin_h").unwrap_or(0),
+        bold: row.try_get("subtitle_bold").unwrap_or(0),
     }
 }
 

@@ -498,11 +498,7 @@ async fn handle_unsubscribe(
 ) {
     let _ = db_pool;
     // Get sub info before deactivating; verify ownership
-    let sub_info = shared_storage
-        .get_content_subscription(sub_id)
-        .await
-        .ok()
-        .flatten();
+    let sub_info = shared_storage.get_content_subscription(sub_id).await.ok().flatten();
     if let Some(ref sub) = sub_info {
         if sub.user_id != chat_id.0 {
             log::warn!(

@@ -240,7 +240,6 @@ fn parse_streaming_links(json_str: &str) -> serde_json::Value {
     serde_json::from_str(json_str).unwrap_or_default()
 }
 
-
 /// GET /privacy — renders the privacy policy HTML.
 async fn privacy_handler(headers: HeaderMap, Query(params): Query<BTreeMap<String, String>>) -> Response {
     // 1. Detect language (Query param > Accept-Language > Fallback RU)
@@ -569,7 +568,6 @@ async fn check_rate_limit(
     }
     true
 }
-
 
 /// GET /s/:id — renders the share page HTML.
 async fn share_page_handler(Path(id): Path<String>, State(state): State<WebState>, header_map: HeaderMap) -> Response {

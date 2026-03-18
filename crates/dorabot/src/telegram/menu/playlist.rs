@@ -228,7 +228,7 @@ pub async fn handle_playlist_name_input(
             }
         }
         NameAction::Rename(pl_id) => {
-            if let Err(e) = shared_storage.rename_playlist(pl_id, text).await {
+            if let Err(e) = shared_storage.rename_playlist(pl_id, chat_id.0, text).await {
                 log::error!("Failed to rename playlist: {}", e);
                 let _ = bot.send_message(chat_id, "Failed to rename playlist.").await;
             } else {
