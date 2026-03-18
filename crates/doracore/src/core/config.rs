@@ -10,14 +10,21 @@ pub enum DatabaseDriver {
 
 impl DatabaseDriver {
     pub fn from_env() -> Self {
-        match env::var("DATABASE_DRIVER")
-            .unwrap_or_else(|_| "sqlite".to_string())
-            .trim()
-            .to_ascii_lowercase()
-            .as_str()
-        {
+        let raw = env::var("DATABASE_DRIVER").unwrap_or_else(|_| "sqlite".to_string());
+        let value = raw.trim().to_ascii_lowercase();
+        match value.as_str() {
+            "sqlite" | "" => Self::Sqlite,
             "postgres" | "postgresql" => Self::Postgres,
-            _ => Self::Sqlite,
+            other => {
+                log::error!(
+                    "Invalid DATABASE_DRIVER value '{}'. Supported values: 'sqlite', 'postgres'. Aborting.",
+                    other
+                );
+                panic!(
+                    "Invalid DATABASE_DRIVER value '{}'. Supported values: 'sqlite', 'postgres'.",
+                    other
+                );
+            }
         }
     }
 }

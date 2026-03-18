@@ -58,17 +58,34 @@ pub async fn process_queue(
         }
     });
 
+    // Track active task IDs for per-task heartbeats (only active tasks get lease extensions)
+    let active_tasks: Arc<tokio::sync::Mutex<std::collections::HashSet<String>>> =
+        Arc::new(tokio::sync::Mutex::new(std::collections::HashSet::new()));
+
     let heartbeat_storage = Arc::clone(&shared_storage);
     let heartbeat_worker_id = worker_id.clone();
+    let heartbeat_active_tasks = Arc::clone(&active_tasks);
     tokio::spawn(async move {
         let mut heartbeat_interval = tokio::time::interval(std::time::Duration::from_secs(HEARTBEAT_SECONDS));
         loop {
             heartbeat_interval.tick().await;
+            let task_ids: Vec<String> = {
+                let guard = heartbeat_active_tasks.lock().await;
+                if guard.is_empty() {
+                    continue;
+                }
+                guard.iter().cloned().collect()
+            };
             if let Err(e) = heartbeat_storage
                 .heartbeat_worker_leases(&heartbeat_worker_id, LEASE_SECONDS)
                 .await
             {
-                log::warn!("Queue heartbeat failed for {}: {}", heartbeat_worker_id, e);
+                log::warn!(
+                    "Queue heartbeat failed for {} ({} active tasks): {}",
+                    heartbeat_worker_id,
+                    task_ids.len(),
+                    e,
+                );
             }
         }
     });
@@ -117,6 +134,14 @@ pub async fn process_queue(
             let alert_manager = alert_manager.clone();
             let queue_for_cleanup = Arc::clone(&queue);
             let worker_id = worker_id.clone();
+            let active_tasks_clone = Arc::clone(&active_tasks);
+            let task_id_for_tracking = task.id.clone();
+
+            // Register task for heartbeat tracking
+            {
+                let mut guard = active_tasks.lock().await;
+                guard.insert(task_id_for_tracking.clone());
+            }
 
             // Short op ID for grepping: first 8 hex chars of UUID
             let op = &task.id[..8.min(task.id.len())];
@@ -135,6 +160,10 @@ pub async fn process_queue(
                         worker_id,
                     )
                     .await;
+
+                    // Unregister task from heartbeat tracking
+                    let mut guard = active_tasks_clone.lock().await;
+                    guard.remove(&task_id_for_tracking);
                 }
                 .instrument(span),
             );

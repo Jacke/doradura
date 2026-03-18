@@ -178,9 +178,16 @@ async fn enter_player_mode(
     }
 
     // 4. Create player session (sticker_message_id stores the PINNED message for unpin)
-    let _ = shared_storage
+    if let Err(e) = shared_storage
         .create_player_session(chat_id.0, playlist_id, None, banner_msg_id.map(|m| m.0))
-        .await;
+        .await
+    {
+        log::error!("Failed to create player session for user {}: {}", chat_id.0, e);
+        bot.send_message(chat_id, "❌ Failed to start player mode. Please try again.")
+            .await
+            .ok();
+        return;
+    }
 
     // 5. Send player menu
     let menu_msg = send_player_menu(bot, chat_id, playlist_name, items, false, None).await;

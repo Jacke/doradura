@@ -440,7 +440,7 @@ This may take a few minutes\\.",
                             .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
 
                         if let Some(fid) = new_file_id {
-                            let _ = shared_storage
+                            if let Err(e) = shared_storage
                                 .create_cut(
                                     chat_id.0,
                                     &cut.original_url,
@@ -455,7 +455,10 @@ This may take a few minutes\\.",
                                     new_duration,
                                     cut.video_quality.as_deref(),
                                 )
-                                .await;
+                                .await
+                            {
+                                log::error!("Failed to persist cut record for user {}: {}", chat_id.0, e);
+                            }
                         }
                     }
                     Err(e) => {

@@ -71,7 +71,14 @@ pub async fn get_period_stats(shared_storage: &Arc<SharedStorage>, hours: i64) -
                     category: row.get(15)?,
                 })
             })?;
-            rows.flatten().collect()
+            rows.filter_map(|r| match r {
+                Ok(entry) => Some(entry),
+                Err(e) => {
+                    log::warn!("Skipping malformed download_history row: {}", e);
+                    None
+                }
+            })
+            .collect()
         }
         SharedStorage::Postgres { pg_pool, .. } => {
             let rows = sqlx::query(
@@ -150,8 +157,20 @@ pub async fn get_period_stats(shared_storage: &Arc<SharedStorage>, hours: i64) -
         .await?,
     };
 
-    let errors_by_type = shared_storage.get_error_stats(hours).await.unwrap_or_default();
-    let recent_errors = shared_storage.get_recent_errors(hours, 5).await.unwrap_or_default();
+    let errors_by_type = match shared_storage.get_error_stats(hours).await {
+        Ok(v) => v,
+        Err(e) => {
+            log::error!("Failed to fetch error stats: {}", e);
+            Vec::new()
+        }
+    };
+    let recent_errors = match shared_storage.get_recent_errors(hours, 5).await {
+        Ok(v) => v,
+        Err(e) => {
+            log::error!("Failed to fetch recent errors: {}", e);
+            Vec::new()
+        }
+    };
 
     Ok(PeriodStats {
         total_downloads,

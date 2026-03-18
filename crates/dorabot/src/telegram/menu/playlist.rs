@@ -114,20 +114,26 @@ pub async fn set_playlist_name_session(
     user_id: i64,
     session: PlaylistNameSession,
 ) {
-    let _ = shared_storage
+    if let Err(e) = shared_storage
         .upsert_prompt_session(
             user_id,
             PLAYLIST_NAME_PROMPT_KIND,
             &encode_playlist_name_session(&session),
             SESSION_TTL_SECS as i64,
         )
-        .await;
+        .await
+    {
+        log::error!("Failed to set playlist name session for user {}: {}", user_id, e);
+    }
 }
 
 pub async fn clear_playlist_name_session(shared_storage: &Arc<SharedStorage>, user_id: i64) {
-    let _ = shared_storage
+    if let Err(e) = shared_storage
         .delete_prompt_session(user_id, PLAYLIST_NAME_PROMPT_KIND)
-        .await;
+        .await
+    {
+        log::error!("Failed to clear playlist name session for user {}: {}", user_id, e);
+    }
 }
 
 pub async fn is_waiting_for_import_url(shared_storage: &Arc<SharedStorage>, user_id: i64) -> bool {
@@ -144,20 +150,26 @@ pub async fn get_import_playlist_id(shared_storage: &Arc<SharedStorage>, user_id
 }
 
 pub async fn set_import_url_session(shared_storage: &Arc<SharedStorage>, user_id: i64, playlist_id: i64) {
-    let _ = shared_storage
+    if let Err(e) = shared_storage
         .upsert_prompt_session(
             user_id,
             PLAYLIST_IMPORT_PROMPT_KIND,
             &playlist_id.to_string(),
             SESSION_TTL_SECS as i64,
         )
-        .await;
+        .await
+    {
+        log::error!("Failed to set import URL session for user {}: {}", user_id, e);
+    }
 }
 
 pub async fn clear_import_url_session(shared_storage: &Arc<SharedStorage>, user_id: i64) {
-    let _ = shared_storage
+    if let Err(e) = shared_storage
         .delete_prompt_session(user_id, PLAYLIST_IMPORT_PROMPT_KIND)
-        .await;
+        .await
+    {
+        log::error!("Failed to clear import URL session for user {}: {}", user_id, e);
+    }
 }
 
 // ── Handle text input for playlist name ───────────────────────────────────
@@ -591,10 +603,17 @@ pub async fn handle_playlist_callback(
             if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
                 return Ok(());
             }
-            let _ = shared_storage.delete_playlist(pl_id).await;
-            let _ = bot.delete_message(chat_id, message_id).await;
-            let _ = bot.send_message(chat_id, "🗑 Playlist deleted.").await;
-            let _ = show_playlists_list(bot, chat_id, 0, &db_pool, &shared_storage).await;
+            match shared_storage.delete_playlist(pl_id).await {
+                Ok(_) => {
+                    let _ = bot.delete_message(chat_id, message_id).await;
+                    let _ = bot.send_message(chat_id, "🗑 Playlist deleted.").await;
+                    let _ = show_playlists_list(bot, chat_id, 0, &db_pool, &shared_storage).await;
+                }
+                Err(e) => {
+                    log::error!("Failed to delete playlist {}: {}", pl_id, e);
+                    let _ = bot.send_message(chat_id, "Failed to delete playlist.").await;
+                }
+            }
         }
         return Ok(());
     }
@@ -607,7 +626,11 @@ pub async fn handle_playlist_callback(
                 if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
                     return Ok(());
                 }
-                let _ = shared_storage.set_playlist_public(pl_id, val != 0).await;
+                if let Err(e) = shared_storage.set_playlist_public(pl_id, val != 0).await {
+                    log::error!("Failed to set playlist {} public={}: {}", pl_id, val != 0, e);
+                    let _ = bot.send_message(chat_id, "Failed to update playlist visibility.").await;
+                    return Ok(());
+                }
                 let _ = bot.delete_message(chat_id, message_id).await;
                 let _ = show_playlist_view(bot, chat_id, pl_id, 0, &db_pool, &shared_storage).await;
             }
@@ -708,7 +731,11 @@ pub async fn handle_playlist_callback(
                 if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
                     return Ok(());
                 }
-                let _ = shared_storage.remove_playlist_item(item_id).await;
+                if let Err(e) = shared_storage.remove_playlist_item(item_id).await {
+                    log::error!("Failed to remove playlist item {}: {}", item_id, e);
+                    let _ = bot.send_message(chat_id, "Failed to remove track.").await;
+                    return Ok(());
+                }
                 let _ = bot.delete_message(chat_id, message_id).await;
                 let _ = show_playlist_view(bot, chat_id, pl_id, 0, &db_pool, &shared_storage).await;
             }
@@ -730,7 +757,9 @@ pub async fn handle_playlist_callback(
                     _ => 0,
                 };
                 if direction != 0 {
-                    let _ = shared_storage.reorder_playlist_item(item_id, direction).await;
+                    if let Err(e) = shared_storage.reorder_playlist_item(item_id, direction).await {
+                        log::error!("Failed to reorder playlist item {}: {}", item_id, e);
+                    }
                 }
                 let _ = bot.delete_message(chat_id, message_id).await;
                 let _ = show_playlist_view(bot, chat_id, pl_id, 0, &db_pool, &shared_storage).await;

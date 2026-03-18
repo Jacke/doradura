@@ -52,7 +52,7 @@ pub async fn download_and_send_video(
 ) -> ResponseResult<()> {
     let bot_clone = bot.clone();
     let _rate_limiter = rate_limiter;
-    let db_pool_clone = db_pool.clone();
+    let _db_pool = db_pool; // kept for API compatibility; subtitles now use SharedStorage
     let shared_storage_clone = shared_storage.clone();
 
     // Inherit the parent span (from queue_processor) so all video logs carry op=...
@@ -164,14 +164,8 @@ pub async fn download_and_send_video(
                 }
 
                 // Burn subtitles if user has the setting enabled
-                let actual_file_path = maybe_burn_subtitles(
-                    &actual_file_path,
-                    &url,
-                    &db_pool_clone,
-                    shared_storage_clone.as_ref(),
-                    chat_id,
-                )
-                .await;
+                let actual_file_path =
+                    maybe_burn_subtitles(&actual_file_path, &url, shared_storage_clone.as_ref(), chat_id).await;
 
                 // Get user preference for send_as_document
                 let send_as_document = if let Some(ref storage) = shared_storage_clone {
@@ -537,7 +531,6 @@ async fn get_thumbnail_url(url: &Url) -> Option<String> {
 async fn maybe_burn_subtitles(
     file_path: &str,
     url: &Url,
-    db_pool: &Option<Arc<DbPool>>,
     shared_storage: Option<&Arc<SharedStorage>>,
     chat_id: ChatId,
 ) -> String {
@@ -576,7 +569,6 @@ async fn maybe_burn_subtitles(
     let subtitle_style = if let Some(storage) = shared_storage {
         storage.get_user_subtitle_style(chat_id.0).await.unwrap_or_default()
     } else {
-        let _ = db_pool;
         Default::default()
     };
 

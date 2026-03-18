@@ -69,6 +69,33 @@ pub async fn user_lang_from_storage(storage: &Arc<SharedStorage>, telegram_id: i
     }
 }
 
+/// Resolves the language for a user via shared storage, falling back to Telegram locale when DB is default.
+pub async fn user_lang_from_storage_with_fallback(
+    storage: &Arc<SharedStorage>,
+    telegram_id: i64,
+    telegram_lang_code: Option<&str>,
+) -> LanguageIdentifier {
+    match storage.get_user_language(telegram_id).await {
+        Ok(lang_code) => {
+            // If user has default "ru" but Telegram says otherwise, adopt Telegram locale
+            if let Some(telegram_code) = telegram_lang_code.and_then(is_language_supported) {
+                if lang_code == "ru" && telegram_code != "ru" {
+                    let _ = storage.set_user_language(telegram_id, telegram_code).await;
+                    return lang_from_code(telegram_code);
+                }
+            }
+            lang_from_code(&lang_code)
+        }
+        Err(_) => {
+            // No DB record — try Telegram locale before falling back to default
+            if let Some(telegram_code) = telegram_lang_code.and_then(is_language_supported) {
+                return lang_from_code(telegram_code);
+            }
+            DEFAULT_LANG.clone()
+        }
+    }
+}
+
 /// Resolves the language for a user, falling back to Telegram locale when DB is default.
 pub fn user_lang_from_pool_with_fallback(
     db_pool: &Arc<db::DbPool>,

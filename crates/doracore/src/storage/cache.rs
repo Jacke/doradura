@@ -329,7 +329,7 @@ pub async fn store_url(db_pool: &DbPool, shared_storage: Option<&SharedStorage>,
 
     if let Some(storage) = shared_storage {
         if let Err(e) = storage.store_cached_url(&id, url, &expires_at_str).await {
-            log::warn!("Failed to store URL in shared cache: {}", e);
+            log::error!("Failed to store URL in shared cache: {}", e);
         } else {
             log::debug!("Stored URL in shared cache: {} -> {}", id, url);
         }
@@ -367,11 +367,11 @@ pub async fn get_url(db_pool: &DbPool, shared_storage: Option<&SharedStorage>, i
             }
             Ok(None) => {
                 log::debug!("URL not found in shared cache for ID: {}", id);
-                return None;
+                // Fall through to SQLite lookup below
             }
             Err(e) => {
-                log::warn!("Failed to get URL from shared cache: {}", e);
-                return None;
+                log::warn!("Failed to get URL from shared cache: {}, falling back to SQLite", e);
+                // Fall through to SQLite lookup below
             }
         }
     }

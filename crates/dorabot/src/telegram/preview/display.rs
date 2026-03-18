@@ -191,8 +191,16 @@ pub async fn send_preview(
     let url_id = cache::store_url(&db_pool, Some(shared_storage.as_ref()), url.as_str()).await;
     log::debug!("Stored URL {} with ID: {}", url.as_str(), url_id);
 
-    // Look up per-URL burn subtitle language from cache
-    let burn_sub_lang = crate::telegram::cache::get_burn_sub_lang(url.as_str()).await;
+    // Look up per-URL burn subtitle language from in-memory cache, falling back to persistent storage
+    let burn_sub_lang = match crate::telegram::cache::get_burn_sub_lang(url.as_str()).await {
+        Some(lang) => Some(lang),
+        None => shared_storage
+            .get_preview_context(chat_id.0, url.as_str())
+            .await
+            .ok()
+            .flatten()
+            .and_then(|context| context.burn_sub_lang),
+    };
 
     let is_youtube = {
         let u = url.as_str();

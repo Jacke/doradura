@@ -1723,7 +1723,7 @@ dependencies = [
 
 [[package]]
 name = "doradura"
-version = "0.24.0"
+version = "0.31.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1779,6 +1779,7 @@ dependencies = [
  "tonic",
  "tower 0.4.13",
  "tower-http 0.5.2",
+ "tracing",
  "unic-langid",
  "url",
  "urlencoding",

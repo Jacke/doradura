@@ -106,18 +106,11 @@ async fn run_check_cycle(
             .await
         {
             Ok(result) => {
-                // Update DB state for all subscriptions of this source
-                shared_storage
-                    .update_content_check_success(
-                        &group.source_type,
-                        &group.source_id,
-                        &result.new_state,
-                        result.new_meta.as_ref(),
-                    )
-                    .await
-                    .map_err(|e| e.to_string())?;
-
-                // Fan out notifications to all subscribers
+                // Fan out notifications to all subscribers BEFORE persisting state.
+                // If we persisted first and the channel was closed, updates would be
+                // silently dropped — the new_state would mark them as "seen" while
+                // no notification was actually delivered.
+                let mut all_sent = true;
                 for update in &result.updates {
                     for sub in &group.subscriptions {
                         // Only notify if the subscriber watches this content type
@@ -144,11 +137,32 @@ async fn run_check_cycle(
                                     }
                                     TrySendError::Full(_) => {
                                         log::warn!("Notification channel full, dropping notification");
+                                        all_sent = false;
                                     }
                                 }
                             }
                         }
                     }
+                }
+
+                // Only persist new state after notifications were successfully queued,
+                // so dropped notifications can be retried on the next cycle.
+                if all_sent || result.updates.is_empty() {
+                    shared_storage
+                        .update_content_check_success(
+                            &group.source_type,
+                            &group.source_id,
+                            &result.new_state,
+                            result.new_meta.as_ref(),
+                        )
+                        .await
+                        .map_err(|e| e.to_string())?;
+                } else {
+                    log::warn!(
+                        "Watcher: skipping state persist for {}:{} — not all notifications delivered",
+                        group.source_type,
+                        group.source_id
+                    );
                 }
 
                 summary.checked += 1;

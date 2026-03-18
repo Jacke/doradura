@@ -142,7 +142,14 @@ pub async fn show_subscription_info(
     } else if let Some(ref expires_at) = user.subscription_expires_at {
         chrono::NaiveDateTime::parse_from_str(expires_at, "%Y-%m-%d %H:%M:%S")
             .map(|dt| chrono::Utc::now().naive_utc() < dt)
-            .unwrap_or(true)
+            .unwrap_or_else(|e| {
+                log::warn!(
+                    "Malformed subscription expiry timestamp '{}': {}. Treating as expired.",
+                    expires_at,
+                    e
+                );
+                false
+            })
     } else {
         true
     };

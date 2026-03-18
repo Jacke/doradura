@@ -2278,25 +2278,12 @@ pub fn save_task_to_queue(
     priority: i32,
     idempotency_key: &str,
 ) -> Result<EnqueueResult> {
-    let changed = conn.execute(
+    let result = conn.execute(
         "INSERT INTO task_queue (
              id, user_id, url, message_id, format, is_video, video_quality, audio_bitrate,
              time_range_start, time_range_end, carousel_mask, priority, status, retry_count, idempotency_key
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'pending', 0, ?13)
-         ON CONFLICT(id) DO UPDATE SET
-             status = 'pending',
-             updated_at = CURRENT_TIMESTAMP,
-             retry_count = 0,
-             error_message = NULL,
-             worker_id = NULL,
-             leased_at = NULL,
-             lease_expires_at = NULL,
-             last_heartbeat_at = NULL,
-             execute_at = NULL,
-             started_at = NULL,
-             finished_at = NULL,
-             idempotency_key = excluded.idempotency_key",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, 'pending', 0, ?13)",
         [
             &task_id as &dyn rusqlite::ToSql,
             &user_id as &dyn rusqlite::ToSql,
@@ -2312,12 +2299,14 @@ pub fn save_task_to_queue(
             &priority as &dyn rusqlite::ToSql,
             &idempotency_key as &dyn rusqlite::ToSql,
         ],
-    )?;
-    Ok(if changed == 0 {
-        EnqueueResult::Duplicate
-    } else {
-        EnqueueResult::Enqueued
-    })
+    );
+    match result {
+        Ok(_) => Ok(EnqueueResult::Enqueued),
+        Err(rusqlite::Error::SqliteFailure(err, _)) if err.code == rusqlite::ffi::ErrorCode::ConstraintViolation => {
+            Ok(EnqueueResult::Duplicate)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// Updates the status of a task
@@ -2682,7 +2671,7 @@ pub fn register_processed_update(conn: &DbConnection, bot_id: i64, update_id: i6
 /// Returns `Ok(())` on success or a database error.
 pub fn update_telegram_charge_id(conn: &DbConnection, telegram_id: i64, charge_id: Option<&str>) -> Result<()> {
     conn.execute(
-        "UPDATE users SET telegram_charge_id = ?1 WHERE telegram_id = ?2",
+        "UPDATE subscriptions SET telegram_charge_id = ?1, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?2",
         [&charge_id as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
     )?;
     Ok(())

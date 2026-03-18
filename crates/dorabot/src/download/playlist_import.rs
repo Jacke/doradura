@@ -1,7 +1,6 @@
 //! Playlist import from external URLs (YouTube, Spotify) using yt-dlp.
 
 use crate::download::search::{append_proxy_args, source_name_from_url, YtdlpFlatEntry};
-use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use std::sync::Arc;
@@ -19,7 +18,6 @@ pub async fn handle_import_url(
     chat_id: ChatId,
     url: &str,
     playlist_id: i64,
-    db_pool: Arc<DbPool>,
     shared_storage: Arc<SharedStorage>,
 ) {
     let status_msg = bot.send_message(chat_id, "📥 Importing playlist...").await;
@@ -75,7 +73,6 @@ pub async fn handle_import_url(
     }
 
     // Check plan limits
-    let _ = db_pool;
     let plan = shared_storage
         .get_user(chat_id.0)
         .await
@@ -84,7 +81,14 @@ pub async fn handle_import_url(
         .map(|u| u.plan)
         .unwrap_or(crate::core::types::Plan::Free);
     let max_tracks = crate::telegram::menu::playlist::max_tracks_per_playlist(plan);
-    let current_count = shared_storage.count_playlist_items(playlist_id).await.unwrap_or(0);
+    let current_count = match shared_storage.count_playlist_items(playlist_id).await {
+        Ok(count) => count,
+        Err(e) => {
+            log::error!("Failed to count playlist items for playlist {}: {}", playlist_id, e);
+            let _ = bot.send_message(chat_id, "Failed to check playlist limits.").await;
+            return;
+        }
+    };
     let available = (max_tracks - current_count).max(0) as usize;
 
     let to_import = entries.len().min(available);

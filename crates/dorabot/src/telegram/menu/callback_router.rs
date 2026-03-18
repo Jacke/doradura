@@ -414,6 +414,10 @@ pub async fn handle_menu_callback(
                         .await
                     {
                         log::warn!("Failed to create user with language: {}", e);
+                        let _ = bot
+                            .answer_callback_query(callback_id.clone())
+                            .text("Failed to save language. Please try again.")
+                            .await;
                     } else {
                         log::info!(
                             "New user created with language: chat_id={}, language={}",
@@ -437,28 +441,29 @@ pub async fn handle_menu_callback(
                             )
                             .await;
                         });
+
+                        let new_lang = i18n::lang_from_code(lang_code);
+                        if let Err(e) = setup_chat_bot_commands(&bot, chat_id, &new_lang).await {
+                            log::warn!("Failed to set chat-specific commands for lang {}: {}", lang_code, e);
+                        }
+                        let _ = bot
+                            .answer_callback_query(callback_id.clone())
+                            .text(i18n::t(&new_lang, "menu.language_saved"))
+                            .await;
+
+                        // Delete language selection message and show main menu
+                        let _ = bot.delete_message(chat_id, message_id).await;
+                        let _ =
+                            show_enhanced_main_menu(&bot, chat_id, Arc::clone(&db_pool), Arc::clone(&shared_storage))
+                                .await;
+
+                        // Send random voice message in background
+                        let bot_voice = bot.clone();
+                        let chat_id_voice = chat_id;
+                        tokio::spawn(async move {
+                            crate::telegram::voice::send_random_voice_message(bot_voice, chat_id_voice).await;
+                        });
                     }
-
-                    let new_lang = i18n::lang_from_code(lang_code);
-                    if let Err(e) = setup_chat_bot_commands(&bot, chat_id, &new_lang).await {
-                        log::warn!("Failed to set chat-specific commands for lang {}: {}", lang_code, e);
-                    }
-                    let _ = bot
-                        .answer_callback_query(callback_id.clone())
-                        .text(i18n::t(&new_lang, "menu.language_saved"))
-                        .await;
-
-                    // Delete language selection message and show main menu
-                    let _ = bot.delete_message(chat_id, message_id).await;
-                    let _ =
-                        show_enhanced_main_menu(&bot, chat_id, Arc::clone(&db_pool), Arc::clone(&shared_storage)).await;
-
-                    // Send random voice message in background
-                    let bot_voice = bot.clone();
-                    let chat_id_voice = chat_id;
-                    tokio::spawn(async move {
-                        crate::telegram::voice::send_random_voice_message(bot_voice, chat_id_voice).await;
-                    });
                 } else {
                     let fallback_lang = i18n::lang_from_code("ru");
                     bot.answer_callback_query(callback_id)

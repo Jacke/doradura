@@ -80,13 +80,17 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
         notify_admin_startup(&bot, bot_username).await;
     }
 
-    // Create database connection pool
+    // Create database connection pool.
+    // SQLite pool is always created (used for legacy operations).
+    // If DATABASE_DRIVER=postgres, SharedStorage also connects to Postgres.
     let db_pool = Arc::new(
-        create_pool(&config::DATABASE_PATH).map_err(|e| anyhow::anyhow!("Failed to create database pool: {}", e))?,
+        create_pool(&config::DATABASE_PATH).map_err(|e| anyhow::anyhow!("Failed to create SQLite pool: {}", e))?,
     );
+    let driver = *config::DATABASE_DRIVER;
+    log::info!("Database driver: {:?}", driver);
     let shared_storage = SharedStorage::from_sqlite_pool(Arc::clone(&db_pool))
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to create shared storage backend: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to create shared storage backend ({:?}): {}", driver, e))?;
 
     // Initialize core services
     crate::core::error_logger::init_error_logger(Arc::clone(&shared_storage));

@@ -2348,8 +2348,10 @@ pub async fn handle_cookies_file_upload(
                             // Delete temp file
                             let _ = tokio::fs::remove_file(&file_path).await;
 
-                            // Delete session
-                            shared_storage.delete_cookies_upload_session_by_user(user_id).await?;
+                            // Delete session (best-effort — don't block cookies refresh on cleanup failure)
+                            if let Err(e) = shared_storage.delete_cookies_upload_session_by_user(user_id).await {
+                                log::warn!("Failed to delete cookies upload session for user {}: {}", user_id, e);
+                            }
 
                             // Delete processing message
                             let _ = bot.delete_message(chat_id, processing_msg.id).await;

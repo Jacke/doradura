@@ -23,13 +23,19 @@ pub async fn is_waiting_for_vault_setup(shared_storage: &Arc<SharedStorage>, use
 
 async fn set_waiting_for_vault_setup(shared_storage: &Arc<SharedStorage>, user_id: i64, waiting: bool) {
     if waiting {
-        let _ = shared_storage
+        if let Err(e) = shared_storage
             .upsert_prompt_session(user_id, VAULT_SETUP_PROMPT_KIND, "", VAULT_SETUP_TTL_SECS)
-            .await;
+            .await
+        {
+            log::error!("Failed to set vault setup prompt for user {}: {}", user_id, e);
+        }
     } else {
-        let _ = shared_storage
+        if let Err(e) = shared_storage
             .delete_prompt_session(user_id, VAULT_SETUP_PROMPT_KIND)
-            .await;
+            .await
+        {
+            log::error!("Failed to clear vault setup prompt for user {}: {}", user_id, e);
+        }
     }
 }
 

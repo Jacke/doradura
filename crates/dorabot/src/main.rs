@@ -39,7 +39,7 @@ async fn main() -> Result<()> {
         Some(Commands::RunStaging { webhook }) => {
             log::info!("Running bot in staging mode (webhook: {})", webhook);
             if let Err(e) = dotenvy::from_filename_override(".env.staging") {
-                log::warn!("Failed to load .env.staging: {}", e);
+                anyhow::bail!("Failed to load .env.staging: {}", e);
             }
             // Safety: runs before any concurrent access to env vars
             unsafe { std::env::set_var("DORADURA_STAGING", "1") };

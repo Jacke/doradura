@@ -210,8 +210,12 @@ pub async fn handle_import_url_input(
                     )
                     .await
                 {
+                    log::error!("Failed to save synced track '{}': {}", track.title, e);
+                    // Roll back: delete partially-inserted tracks and the playlist
+                    let _ = shared_storage_clone.delete_synced_tracks(playlist_id).await;
+                    let _ = shared_storage_clone.delete_synced_playlist(playlist_id).await;
                     let _ = bot_clone
-                        .send_message(chat_id, format!("Failed to save track: {}", e))
+                        .send_message(chat_id, format!("Import aborted — failed to save track: {}", e))
                         .await;
                     return;
                 }
@@ -761,6 +765,15 @@ async fn resync_playlist(
 
             if let Err(e) = shared_storage_clone.delete_synced_tracks(playlist_id).await {
                 log::error!("Resync delete tracks failed: {}", e);
+                let kb = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+                    "◀ Back",
+                    format!("pi:view:{}:0", playlist_id),
+                )]]);
+                let _ = bot_clone
+                    .edit_message_text(chat_id, message_id, format!("❌ Re-sync failed: {}", e))
+                    .reply_markup(kb)
+                    .await;
+                return;
             }
             for (i, track) in resolved.tracks.iter().enumerate() {
                 if let Err(e) = shared_storage_clone
@@ -777,7 +790,20 @@ async fn resync_playlist(
                     )
                     .await
                 {
-                    log::error!("Resync add track failed: {}", e);
+                    log::error!("Resync add track failed at position {}: {}", i, e);
+                    let kb = InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
+                        "◀ Back",
+                        format!("pi:view:{}:0", playlist_id),
+                    )]]);
+                    let _ = bot_clone
+                        .edit_message_text(
+                            chat_id,
+                            message_id,
+                            format!("❌ Re-sync aborted at track {}: {}", i + 1, e),
+                        )
+                        .reply_markup(kb)
+                        .await;
+                    return;
                 }
             }
             if let Err(e) = shared_storage_clone
@@ -1067,10 +1093,13 @@ async fn retry_not_found(
 
             if let Ok(results) = result {
                 if let Some(first) = results.first() {
-                    let _ = shared_storage_clone
+                    match shared_storage_clone
                         .update_synced_track_status(*track_id, "matched", Some(&first.url))
-                        .await;
-                    found += 1;
+                        .await
+                    {
+                        Ok(_) => found += 1,
+                        Err(e) => log::error!("Failed to update synced track {} status: {}", track_id, e),
+                    }
                 }
             }
 

@@ -215,14 +215,33 @@ pub async fn handle_message(
                 } else {
                     // Truncate to 32 chars for callback data safety
                     let name: String = name.chars().take(32).collect();
-                    let _ = shared_storage.create_user_category(msg.chat.id.0, &name).await;
-                    let _ = shared_storage
+                    if let Err(e) = shared_storage.create_user_category(msg.chat.id.0, &name).await {
+                        log::error!("Failed to create user category '{}': {}", name, e);
+                        bot.send_message(msg.chat.id, "❌ Failed to create category. Please try again.")
+                            .await
+                            .ok();
+                    } else if let Err(e) = shared_storage
                         .set_download_category(msg.chat.id.0, download_id, Some(&name))
-                        .await;
-                    let _ = shared_storage.delete_new_category_session(msg.chat.id.0).await;
-                    bot.send_message(msg.chat.id, format!("✅ Category «{}» created and assigned", name))
+                        .await
+                    {
+                        log::error!(
+                            "Failed to assign category '{}' to download {}: {}",
+                            name,
+                            download_id,
+                            e
+                        );
+                        bot.send_message(
+                            msg.chat.id,
+                            "❌ Category created but failed to assign. Please try again.",
+                        )
                         .await
                         .ok();
+                    } else {
+                        let _ = shared_storage.delete_new_category_session(msg.chat.id.0).await;
+                        bot.send_message(msg.chat.id, format!("✅ Category «{}» created and assigned", name))
+                            .await
+                            .ok();
+                    }
                 }
                 return Ok(None);
             }
@@ -426,7 +445,6 @@ pub async fn handle_message(
             crate::telegram::menu::playlist::clear_import_url_session(&shared_storage, msg.chat.id.0).await;
             // Handle import in background
             let bot_clone = bot.clone();
-            let db_pool_clone = db_pool.clone();
             let shared_storage_clone = shared_storage.clone();
             let url_text = text.trim().to_string();
             tokio::spawn(async move {
@@ -435,7 +453,6 @@ pub async fn handle_message(
                     msg.chat.id,
                     &url_text,
                     pl_id,
-                    db_pool_clone,
                     shared_storage_clone,
                 )
                 .await;
@@ -800,6 +817,15 @@ pub async fn handle_message(
                                 track_url
                             );
                             url = Url::parse(&track_url).unwrap_or(url);
+                            // Re-persist preview context for the resolved track URL
+                            let _ = shared_storage
+                                .upsert_preview_link_message(
+                                    msg.chat.id.0,
+                                    url.as_str(),
+                                    msg.id.0,
+                                    PREVIEW_CONTEXT_TTL_SECS,
+                                )
+                                .await;
                         }
                         Err(e) => {
                             log::error!("Failed to extract latest track from channel: {}", e);
@@ -2347,7 +2373,7 @@ pub async fn process_video_clip(
 
     if let Some(fid) = sent_file_id {
         let segments_json = serde_json::to_string(&segments).unwrap_or_else(|_| "[]".to_string());
-        let _ = shared_storage
+        if let Err(e) = shared_storage
             .create_cut(
                 chat_id.0,
                 &original_url,
@@ -2362,7 +2388,10 @@ pub async fn process_video_clip(
                 Some(actual_total_len.max(1)),
                 video_quality.as_deref(),
             )
-            .await;
+            .await
+        {
+            log::error!("Failed to persist cut record for user {}: {}", chat_id.0, e);
+        }
     }
 
     // guard drops here, cleaning up the temp dir and tracked files

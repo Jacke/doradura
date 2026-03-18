@@ -238,7 +238,10 @@ pub async fn start_alert_monitor(bot: Bot, shared_storage: Arc<SharedStorage>) -
     let lock_conn = match shared_storage.as_ref() {
         SharedStorage::Sqlite { .. } => None,
         SharedStorage::Postgres { .. } => {
-            try_acquire_pg_singleton_lock(&shared_storage, LOCK_ALERT_MONITOR, "alert monitor").await
+            match try_acquire_pg_singleton_lock(&shared_storage, LOCK_ALERT_MONITOR, "alert monitor").await {
+                Some(conn) => Some(conn),
+                None => return None,
+            }
         }
     };
 

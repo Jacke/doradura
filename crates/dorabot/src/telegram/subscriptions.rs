@@ -144,10 +144,19 @@ pub async fn show_subscribe_confirm(
         .flatten()
         .map(|u| u.plan.to_string())
         .unwrap_or_else(|| "free".to_string());
-    let current_count = shared_storage
-        .count_user_content_subscriptions(chat_id.0)
-        .await
-        .unwrap_or(0);
+    let current_count = match shared_storage.count_user_content_subscriptions(chat_id.0).await {
+        Ok(count) => count,
+        Err(e) => {
+            log::error!("Failed to count subscriptions for user {}: {}", chat_id.0, e);
+            let _ = bot
+                .send_message(
+                    chat_id,
+                    "❌ Could not check your subscription count. Please try again later.",
+                )
+                .await;
+            return;
+        }
+    };
     let max_subs = max_subscriptions_for_plan(&plan);
 
     // Check if already subscribed

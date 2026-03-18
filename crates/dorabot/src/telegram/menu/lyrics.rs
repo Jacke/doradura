@@ -94,7 +94,7 @@ async fn handle_fetch_lyrics(
                 // Save session and show section picker keyboard
                 let session_id = Uuid::new_v4().to_string();
                 let sections_json = serde_json::to_string(&lyr.sections).map_err(json_err)?;
-                shared_storage
+                match shared_storage
                     .create_lyrics_session(
                         &session_id,
                         user_id,
@@ -104,8 +104,18 @@ async fn handle_fetch_lyrics(
                         lyr.has_structure,
                     )
                     .await
-                    .map_err(db_err)?;
-                send_section_picker(bot, chat_id, &artist, &song_title, &session_id, &lyr.sections).await?;
+                {
+                    Ok(_) => {
+                        send_section_picker(bot, chat_id, &artist, &song_title, &session_id, &lyr.sections).await?;
+                    }
+                    Err(e) => {
+                        log::error!("Failed to persist lyrics session, falling back to full text: {}", e);
+                        // Fall back to sending the full lyrics text
+                        let text = lyr.all_text();
+                        let header = format!("🎵 {} – {}\n\n", artist, song_title);
+                        send_chunked(bot, chat_id, &format!("{}{}", header, text)).await?;
+                    }
+                }
             }
         }
     }
