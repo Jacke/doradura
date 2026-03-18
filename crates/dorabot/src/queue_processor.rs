@@ -14,6 +14,7 @@ use crate::core::{alerts, config, metrics, rate_limiter, subscription};
 use crate::download::queue::{self as queue};
 use crate::download::ytdlp_errors::sanitize_user_error_message;
 use crate::download::{download_and_send_audio, download_and_send_subtitles, download_and_send_video, DownloadQueue};
+use crate::storage::db::{self as db};
 use crate::storage::SharedStorage;
 use crate::telegram::notifications::notify_admin_task_failed;
 use crate::telegram::Bot;
@@ -267,7 +268,7 @@ async fn process_single_task(
     // limit changes or plan upgrades between queue and execution are respected.
     {
         let user_id = task.chat_id.0;
-        let limit_exceeded = if let Ok(conn) = db::get_connection(&db_pool) {
+        let limit_exceeded = if let Ok(conn) = db::get_connection(&shared_storage.sqlite_pool()) {
             let plan = db::get_user(&conn, user_id)
                 .ok()
                 .flatten()
