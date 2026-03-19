@@ -23,8 +23,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_task_queue_active_idempotency
       AND status IN ('pending', 'leased', 'processing', 'uploading');
 
 CREATE TABLE IF NOT EXISTS processed_updates (
-    bot_id INTEGER NOT NULL,
-    update_id INTEGER NOT NULL,
+    bot_id BIGINT NOT NULL,
+    update_id BIGINT NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (bot_id, update_id)
 );

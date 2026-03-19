@@ -118,7 +118,15 @@ impl ErrorLogger {
         let context = context.map(str::to_string);
         let user_id = user.user_id;
 
-        tokio::spawn(async move {
+        // Use Handle::try_current to avoid panic if called outside tokio runtime
+        let handle = match tokio::runtime::Handle::try_current() {
+            Ok(h) => h,
+            Err(_) => {
+                log::debug!("ErrorLogger: no tokio runtime, skipping async error log");
+                return;
+            }
+        };
+        handle.spawn(async move {
             if let Err(e) = shared_storage
                 .log_error(
                     user_id,
