@@ -26,7 +26,7 @@ use crate::core::config;
 use crate::core::copyright::get_bot_username;
 use crate::i18n;
 use crate::storage::db::DbPool;
-use crate::storage::get_connection;
+use crate::storage::{get_connection, SharePageRecord, SharedStorage};
 
 // --- Rate limiters ---
 
@@ -44,20 +44,8 @@ const SHARE_WINDOW_SECS: u64 = 60;
 /// Shared state for the web server.
 #[derive(Clone)]
 struct WebState {
-    db: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     bot_token: String,
-}
-
-/// Row fetched from the share_pages table.
-struct ShareRow {
-    id: String,
-    youtube_url: String,
-    title: String,
-    artist: Option<String>,
-    thumbnail_url: Option<String>,
-    duration_secs: Option<i64>,
-    streaming_links_json: Option<String>,
-    created_at: String,
 }
 
 /// Query parameters from Telegram Login Widget
@@ -163,10 +151,13 @@ async fn security_headers(request: Request, next: Next) -> Response {
 }
 
 /// Start the public web server.
-pub async fn start_web_server(port: u16, db: Arc<DbPool>) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn start_web_server(port: u16, shared_storage: Arc<SharedStorage>) -> Result<(), Box<dyn std::error::Error>> {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let bot_token = config::BOT_TOKEN.clone();
-    let state = WebState { db, bot_token };
+    let state = WebState {
+        shared_storage,
+        bot_token,
+    };
 
     let app = Router::new()
         .route("/s/:id", get(share_page_handler))
@@ -227,6 +218,26 @@ async fn metrics_handler(headers: HeaderMap) -> Response {
         output,
     )
         .into_response()
+}
+
+/// Format seconds as MM:SS or H:MM:SS.
+fn format_duration(secs: i64) -> String {
+    if secs < 0 {
+        return String::new();
+    }
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    if h > 0 {
+        format!("{}:{:02}:{:02}", h, m, s)
+    } else {
+        format!("{}:{:02}", m, s)
+    }
+}
+
+/// Parse streaming links JSON into individual URLs.
+fn parse_streaming_links(json_str: &str) -> serde_json::Value {
+    serde_json::from_str(json_str).unwrap_or_default()
 }
 
 /// GET /privacy — renders the privacy policy HTML.
@@ -519,28 +530,6 @@ fn render_privacy_page(lang: &str) -> String {
     )
 }
 
-/// Fetch a share page row from DB by ID.
-fn fetch_share_row(db: &Arc<DbPool>, id: &str) -> Option<ShareRow> {
-    let conn = get_connection(db).ok()?;
-    conn.query_row(
-        "SELECT id, youtube_url, title, artist, thumbnail_url, duration_secs, streaming_links, created_at FROM share_pages WHERE id = ?1",
-        rusqlite::params![id],
-        |row| {
-            Ok(ShareRow {
-                id: row.get(0)?,
-                youtube_url: row.get(1)?,
-                title: row.get(2)?,
-                artist: row.get(3)?,
-                thumbnail_url: row.get(4)?,
-                duration_secs: row.get(5)?,
-                streaming_links_json: row.get(6)?,
-                created_at: row.get(7)?,
-            })
-        },
-    )
-    .ok()
-}
-
 /// Extract best-effort IP string from request headers.
 fn extract_ip(header_map: &HeaderMap) -> String {
     header_map
@@ -587,12 +576,8 @@ async fn share_page_handler(Path(id): Path<String>, State(state): State<WebState
         return (StatusCode::TOO_MANY_REQUESTS, "Too many requests. Try again later.").into_response();
     }
 
-    let db = state.db.clone();
-    let result = tokio::task::spawn_blocking(move || fetch_share_row(&db, &id)).await;
-    let row = match result {
-        Ok(Some(r)) => r,
-        Ok(None) => return (StatusCode::NOT_FOUND, Html("<h1>Not found</h1>".to_string())).into_response(),
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "Internal error").into_response(),
+    let Some(row) = state.shared_storage.get_share_page_record(&id).await.ok().flatten() else {
+        return (StatusCode::NOT_FOUND, Html("<h1>Not found</h1>".to_string())).into_response();
     };
 
     let html = render_share_page(&row);
@@ -610,18 +595,8 @@ async fn share_api_handler(Path(id): Path<String>, State(state): State<WebState>
             .into_response();
     }
 
-    let db = state.db.clone();
-    let result = tokio::task::spawn_blocking(move || fetch_share_row(&db, &id)).await;
-    let row = match result {
-        Ok(Some(r)) => r,
-        Ok(None) => return (StatusCode::NOT_FOUND, Json(json!({"error": "Not found"}))).into_response(),
-        Err(_) => {
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({"error": "Internal error"})),
-            )
-                .into_response()
-        }
+    let Some(row) = state.shared_storage.get_share_page_record(&id).await.ok().flatten() else {
+        return (StatusCode::NOT_FOUND, Json(json!({"error": "Not found"}))).into_response();
     };
 
     let streaming_links = row
@@ -849,7 +824,7 @@ async fn admin_dashboard_handler(State(state): State<WebState>, header_map: head
     }
 
     // 2. Fetch stats (sync SQLite — offload to blocking thread pool)
-    let db = state.db.clone();
+    let db = state.shared_storage.sqlite_pool();
     let stats = match tokio::task::spawn_blocking(move || fetch_admin_stats(&db)).await {
         Ok(s) => s,
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
@@ -946,7 +921,7 @@ async fn admin_api_users(State(state): State<WebState>, header_map: HeaderMap, Q
     let filter = q.filter.unwrap_or_else(|| "all".to_string());
     let search = q.search.unwrap_or_default();
     let offset = ((page - 1) * USERS_PER_PAGE) as i64;
-    let db = state.db.clone();
+    let db = state.shared_storage.sqlite_pool();
 
     let result = tokio::task::spawn_blocking(move || -> Result<PaginatedResponse<ApiUser>, rusqlite::Error> {
         let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
@@ -1063,7 +1038,7 @@ async fn admin_api_user_plan(
     if !valid_plans.contains(&body.plan.as_str()) {
         return (StatusCode::BAD_REQUEST, "Invalid plan").into_response();
     }
-    let db = state.db.clone();
+    let db = state.shared_storage.sqlite_pool();
     let plan = body.plan.clone();
     let result = tokio::task::spawn_blocking(move || {
         let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
@@ -1099,7 +1074,7 @@ async fn admin_api_user_block(
         Ok(id) => id,
         Err(resp) => return resp,
     };
-    let db = state.db.clone();
+    let db = state.shared_storage.sqlite_pool();
     let blocked = body.blocked;
     let result = tokio::task::spawn_blocking(move || {
         let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
@@ -1142,7 +1117,7 @@ async fn admin_api_downloads(
     let page = q.page.unwrap_or(1).max(1);
     let search = q.search.unwrap_or_default();
     let offset = ((page - 1) * DOWNLOADS_PER_PAGE) as i64;
-    let db = state.db.clone();
+    let db = state.shared_storage.sqlite_pool();
 
     let result = tokio::task::spawn_blocking(move || -> Result<PaginatedResponse<ApiDownload>, rusqlite::Error> {
         let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
@@ -2320,28 +2295,8 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
     )
 }
 
-/// Format seconds as MM:SS or H:MM:SS.
-fn format_duration(secs: i64) -> String {
-    if secs < 0 {
-        return String::new();
-    }
-    let h = secs / 3600;
-    let m = (secs % 3600) / 60;
-    let s = secs % 60;
-    if h > 0 {
-        format!("{}:{:02}:{:02}", h, m, s)
-    } else {
-        format!("{}:{:02}", m, s)
-    }
-}
-
-/// Parse streaming links JSON into individual URLs.
-fn parse_streaming_links(json_str: &str) -> serde_json::Value {
-    serde_json::from_str(json_str).unwrap_or_default()
-}
-
 /// Render the share page HTML with ambilight UI.
-fn render_share_page(row: &ShareRow) -> String {
+fn render_share_page(row: &SharePageRecord) -> String {
     let title = html_escape(&row.title);
     let artist = row.artist.as_deref().map(html_escape).unwrap_or_default();
     let raw_thumbnail = row.thumbnail_url.as_deref().unwrap_or("");

@@ -3,35 +3,38 @@
 //! This module handles user feedback collection and admin notifications.
 
 use crate::core::escape_markdown;
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
-use std::collections::HashMap;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::ParseMode;
-use tokio::sync::RwLock;
 
 use crate::core::config::admin::ADMIN_USER_ID;
 use crate::i18n;
 
-/// State management for feedback collection
-/// Maps user_id -> waiting for feedback
-/// Uses RwLock for better concurrent read performance (read-heavy workload)
-static FEEDBACK_STATES: once_cell::sync::Lazy<Arc<RwLock<HashMap<i64, bool>>>> =
-    once_cell::sync::Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
+const FEEDBACK_PROMPT_KIND: &str = "feedback";
+const FEEDBACK_PROMPT_TTL_SECS: i64 = 300;
 
 /// Check if user is waiting to provide feedback
-pub async fn is_waiting_for_feedback(user_id: i64) -> bool {
-    let states = FEEDBACK_STATES.read().await;
-    states.get(&user_id).copied().unwrap_or(false)
+pub async fn is_waiting_for_feedback(shared_storage: &Arc<SharedStorage>, user_id: i64) -> bool {
+    shared_storage
+        .get_prompt_session(user_id, FEEDBACK_PROMPT_KIND)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
 }
 
 /// Set user feedback waiting state
-pub async fn set_waiting_for_feedback(user_id: i64, waiting: bool) {
-    let mut states = FEEDBACK_STATES.write().await;
+pub async fn set_waiting_for_feedback(shared_storage: &Arc<SharedStorage>, user_id: i64, waiting: bool) {
     if waiting {
-        states.insert(user_id, true);
+        let _ = shared_storage
+            .upsert_prompt_session(user_id, FEEDBACK_PROMPT_KIND, "", FEEDBACK_PROMPT_TTL_SECS)
+            .await;
     } else {
-        states.remove(&user_id);
+        let _ = shared_storage
+            .delete_prompt_session(user_id, FEEDBACK_PROMPT_KIND)
+            .await;
     }
 }
 
@@ -40,6 +43,7 @@ pub async fn send_feedback_prompt(
     bot: &Bot,
     chat_id: ChatId,
     lang: &unic_langid::LanguageIdentifier,
+    shared_storage: &Arc<SharedStorage>,
 ) -> ResponseResult<()> {
     let message = i18n::t(lang, "feedback.prompt");
 
@@ -48,7 +52,7 @@ pub async fn send_feedback_prompt(
         .await?;
 
     // Set state: waiting for feedback
-    set_waiting_for_feedback(chat_id.0, true).await;
+    set_waiting_for_feedback(shared_storage, chat_id.0, true).await;
 
     Ok(())
 }
@@ -58,6 +62,7 @@ pub async fn send_feedback_confirmation(
     bot: &Bot,
     chat_id: ChatId,
     lang: &unic_langid::LanguageIdentifier,
+    shared_storage: &Arc<SharedStorage>,
 ) -> ResponseResult<()> {
     let message = i18n::t(lang, "feedback.sent");
 
@@ -66,7 +71,7 @@ pub async fn send_feedback_confirmation(
         .await?;
 
     // Clear state
-    set_waiting_for_feedback(chat_id.0, false).await;
+    set_waiting_for_feedback(shared_storage, chat_id.0, false).await;
 
     Ok(())
 }
@@ -78,7 +83,7 @@ pub async fn notify_admin_feedback(
     username: Option<&str>,
     first_name: &str,
     message_text: &str,
-    db_pool: std::sync::Arc<crate::storage::db::DbPool>,
+    shared_storage: &Arc<SharedStorage>,
 ) -> ResponseResult<()> {
     crate::core::metrics::record_user_feedback("neutral");
     log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -91,17 +96,15 @@ pub async fn notify_admin_feedback(
 
     // Save feedback to database
     log::info!("💾 Saving feedback to database...");
-    match crate::storage::db::get_connection(&db_pool) {
-        Ok(conn) => match crate::storage::db::save_feedback(&conn, user_id, username, first_name, message_text) {
-            Ok(feedback_id) => {
-                log::info!("✅ Feedback saved successfully with ID: {}", feedback_id);
-            }
-            Err(e) => {
-                log::error!("❌ Failed to save feedback to database: {}", e);
-            }
-        },
+    match shared_storage
+        .save_feedback(user_id, username, first_name, message_text)
+        .await
+    {
+        Ok(feedback_id) => {
+            log::info!("✅ Feedback saved successfully with ID: {}", feedback_id);
+        }
         Err(e) => {
-            log::error!("❌ Failed to get database connection: {}", e);
+            log::error!("❌ Failed to save feedback to database: {}", e);
         }
     }
 

@@ -3,7 +3,7 @@
 //! Provides centralized error logging with user context.
 //! Errors are stored in the database for monitoring and reporting.
 
-use crate::storage::db::{self, DbPool};
+use crate::storage::SharedStorage;
 use std::sync::Arc;
 
 /// Error types for categorization
@@ -92,13 +92,13 @@ impl UserContext {
 /// Error logger that stores errors in the database
 #[derive(Clone)]
 pub struct ErrorLogger {
-    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 }
 
 impl ErrorLogger {
     /// Creates a new error logger
-    pub fn new(db_pool: Arc<DbPool>) -> Self {
-        Self { db_pool }
+    pub fn new(shared_storage: Arc<SharedStorage>) -> Self {
+        Self { shared_storage }
     }
 
     /// Logs an error to the database
@@ -110,32 +110,44 @@ impl ErrorLogger {
         url: Option<&str>,
         context: Option<&str>,
     ) {
-        let conn = match db::get_connection(&self.db_pool) {
-            Ok(c) => c,
-            Err(e) => {
-                log::error!("Failed to get DB connection for error logging: {}", e);
+        let shared_storage = Arc::clone(&self.shared_storage);
+        let username = user.username.clone();
+        let error_type_str = error_type.as_str().to_string();
+        let error_message = error_message.to_string();
+        let url = url.map(str::to_string);
+        let context = context.map(str::to_string);
+        let user_id = user.user_id;
+
+        // Use Handle::try_current to avoid panic if called outside tokio runtime
+        let handle = match tokio::runtime::Handle::try_current() {
+            Ok(h) => h,
+            Err(_) => {
+                log::debug!("ErrorLogger: no tokio runtime, skipping async error log");
                 return;
             }
         };
-
-        if let Err(e) = db::log_error(
-            &conn,
-            user.user_id,
-            user.username.as_deref(),
-            error_type.as_str(),
-            error_message,
-            url,
-            context,
-        ) {
-            log::error!("Failed to log error to database: {}", e);
-        } else {
-            log::debug!(
-                "Logged error: type={}, user={:?}, message={}",
-                error_type.as_str(),
-                user.user_id,
-                error_message
-            );
-        }
+        handle.spawn(async move {
+            if let Err(e) = shared_storage
+                .log_error(
+                    user_id,
+                    username.as_deref(),
+                    &error_type_str,
+                    &error_message,
+                    url.as_deref(),
+                    context.as_deref(),
+                )
+                .await
+            {
+                log::error!("Failed to log error to database: {}", e);
+            } else {
+                log::debug!(
+                    "Logged error: type={}, user={:?}, message={}",
+                    error_type_str,
+                    user_id,
+                    error_message
+                );
+            }
+        });
     }
 
     /// Logs a download failure
@@ -202,8 +214,8 @@ impl ErrorLogger {
 static ERROR_LOGGER: std::sync::OnceLock<ErrorLogger> = std::sync::OnceLock::new();
 
 /// Initializes the global error logger
-pub fn init_error_logger(db_pool: Arc<DbPool>) {
-    let _ = ERROR_LOGGER.set(ErrorLogger::new(db_pool));
+pub fn init_error_logger(shared_storage: Arc<SharedStorage>) {
+    let _ = ERROR_LOGGER.set(ErrorLogger::new(shared_storage));
     log::info!("Error logger initialized");
 }
 

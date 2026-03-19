@@ -1,5 +1,5 @@
 use crate::core::escape_markdown;
-use crate::storage::{cache, db::DbPool};
+use crate::storage::{cache, db::DbPool, SharedStorage};
 use crate::telegram::types::{PreviewMetadata, VideoFormatInfo};
 use crate::telegram::Bot;
 use std::sync::Arc;
@@ -75,9 +75,10 @@ pub async fn send_preview(
     default_quality: Option<&str>,
     old_preview_msg_id: Option<MessageId>,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     time_range: Option<&(String, String)>,
 ) -> ResponseResult<Message> {
-    let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     // Override format for photo posts (Instagram photos shouldn't show MP3 button)
     let default_format = if metadata.is_photo { "photo" } else { default_format };
@@ -187,11 +188,19 @@ pub async fn send_preview(
 
     // Build inline keyboard
     // Store URL in cache and get a short ID (instead of base64)
-    let url_id = cache::store_url(&db_pool, url.as_str()).await;
+    let url_id = cache::store_url(&db_pool, Some(shared_storage.as_ref()), url.as_str()).await;
     log::debug!("Stored URL {} with ID: {}", url.as_str(), url_id);
 
-    // Look up per-URL burn subtitle language from cache
-    let burn_sub_lang = crate::telegram::cache::get_burn_sub_lang(url.as_str()).await;
+    // Look up per-URL burn subtitle language from in-memory cache, falling back to persistent storage
+    let burn_sub_lang = match crate::telegram::cache::get_burn_sub_lang(url.as_str()).await {
+        Some(lang) => Some(lang),
+        None => shared_storage
+            .get_preview_context(chat_id.0, url.as_str())
+            .await
+            .ok()
+            .flatten()
+            .and_then(|context| context.burn_sub_lang),
+    };
 
     let is_youtube = {
         let u = url.as_str();
@@ -202,22 +211,15 @@ pub async fn send_preview(
             || u.contains("://youtu.be/")
     };
 
-    let (send_as_document, audio_bitrate) = match crate::storage::db::get_connection(&db_pool) {
-        Ok(conn) => {
-            let send_as_document = if has_video_formats {
-                crate::storage::db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0)
-            } else {
-                0
-            };
-            let audio_bitrate =
-                crate::storage::db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
-            (send_as_document, audio_bitrate)
-        }
-        Err(e) => {
-            log::warn!("Failed to get db connection for preview settings: {}", e);
-            (0, "320k".to_string())
-        }
+    let send_as_document = if has_video_formats {
+        shared_storage.get_user_send_as_document(chat_id.0).await.unwrap_or(0)
+    } else {
+        0
     };
+    let audio_bitrate = shared_storage
+        .get_user_audio_bitrate(chat_id.0)
+        .await
+        .unwrap_or_else(|_| "320k".to_string());
 
     // Carousel photo selector: show toggle keyboard instead of standard photo/video buttons
     let keyboard = if metadata.carousel_count > 1 {
@@ -420,9 +422,10 @@ pub async fn update_preview_message(
     default_format: &str,
     default_quality: Option<&str>,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     time_range: Option<&(String, String)>,
 ) -> ResponseResult<()> {
-    let lang = crate::i18n::user_lang_from_pool(&db_pool, chat_id.0);
+    let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     // Override format for photo posts (Instagram photos shouldn't show MP3 button)
     let default_format = if metadata.is_photo { "photo" } else { default_format };
@@ -525,10 +528,15 @@ pub async fn update_preview_message(
 
     // Build inline keyboard
     // Store URL in cache and get a short ID
-    let url_id = cache::store_url(&db_pool, url.as_str()).await;
+    let url_id = cache::store_url(&db_pool, Some(shared_storage.as_ref()), url.as_str()).await;
 
     // Look up per-URL burn subtitle language from cache
-    let burn_sub_lang = crate::telegram::cache::get_burn_sub_lang(url.as_str()).await;
+    let burn_sub_lang = shared_storage
+        .get_preview_context(chat_id.0, url.as_str())
+        .await
+        .ok()
+        .flatten()
+        .and_then(|context| context.burn_sub_lang);
 
     let is_youtube = {
         let u = url.as_str();
@@ -540,25 +548,21 @@ pub async fn update_preview_message(
     };
 
     let mut resolved_quality = default_quality.map(|q| q.to_string());
-    let mut audio_bitrate = "320k".to_string();
+    let audio_bitrate = shared_storage
+        .get_user_audio_bitrate(chat_id.0)
+        .await
+        .unwrap_or_else(|_| "320k".to_string());
     let mut send_as_document = 0;
-    match crate::storage::db::get_connection(&db_pool) {
-        Ok(conn) => {
-            audio_bitrate =
-                crate::storage::db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string());
-            if has_video_formats {
-                if resolved_quality.is_none() {
-                    resolved_quality = Some(
-                        crate::storage::db::get_user_video_quality(&conn, chat_id.0)
-                            .unwrap_or_else(|_| "best".to_string()),
-                    );
-                }
-                send_as_document = crate::storage::db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0);
-            }
+    if has_video_formats {
+        if resolved_quality.is_none() {
+            resolved_quality = Some(
+                shared_storage
+                    .get_user_video_quality(chat_id.0)
+                    .await
+                    .unwrap_or_else(|_| "best".to_string()),
+            );
         }
-        Err(e) => {
-            log::warn!("Failed to get db connection for preview settings: {}", e);
-        }
+        send_as_document = shared_storage.get_user_send_as_document(chat_id.0).await.unwrap_or(0);
     }
 
     let keyboard = if metadata.carousel_count > 1 {

@@ -4,11 +4,12 @@
 //! Reports include download counts, message counts, success/failure rates,
 //! and file type breakdown.
 
-use crate::core::metrics;
-use crate::storage::db::{self, DbPool};
+use crate::storage::db::{self};
+use crate::storage::SharedStorage;
 use crate::telegram::admin;
 use crate::telegram::Bot;
 use chrono::{Duration, Utc};
+use sqlx::{pool::PoolConnection, Postgres, Row};
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{ChatId, ParseMode};
@@ -34,92 +35,146 @@ pub struct PeriodStats {
     pub recent_errors: Vec<db::ErrorLogEntry>,
 }
 
-/// Helper to log database query errors and return default value
-fn query_with_logging<T: Default>(result: Result<T, rusqlite::Error>, query_name: &str) -> T {
-    match result {
-        Ok(value) => value,
-        Err(e) => {
-            log::warn!("Stats query '{}' failed: {}", query_name, e);
-            T::default()
-        }
-    }
-}
-
 /// Gets statistics for the last N hours
-pub fn get_period_stats(conn: &db::DbConnection, hours: i64) -> anyhow::Result<PeriodStats> {
-    let since = Utc::now() - Duration::hours(hours);
-    let since_str = since.format("%Y-%m-%d %H:%M:%S").to_string();
+pub async fn get_period_stats(shared_storage: &Arc<SharedStorage>, hours: i64) -> anyhow::Result<PeriodStats> {
+    let cutoff = Utc::now() - Duration::hours(hours);
+    let cutoff_rfc3339 = cutoff.to_rfc3339();
 
-    // Total downloads in period
-    let total_downloads: i64 = query_with_logging(
-        conn.query_row(
-            "SELECT COUNT(*) FROM download_history WHERE downloaded_at >= ?",
-            [&since_str],
-            |row| row.get(0),
-        ),
-        "total_downloads",
-    );
+    let download_entries: Vec<db::DownloadHistoryEntry> = match shared_storage.as_ref() {
+        SharedStorage::Sqlite { db_pool } => {
+            let conn = db::get_connection(db_pool)?;
+            let mut stmt = conn.prepare(
+                "SELECT id, url, title, format, downloaded_at, file_id, author,
+                        file_size, duration, video_quality, audio_bitrate, bot_api_url, bot_api_is_local,
+                        source_id, part_index, category
+                 FROM download_history
+                 WHERE downloaded_at >= ?1
+                 ORDER BY downloaded_at DESC",
+            )?;
+            let rows = stmt.query_map([&cutoff_rfc3339], |row| {
+                Ok(db::DownloadHistoryEntry {
+                    id: row.get(0)?,
+                    url: row.get(1)?,
+                    title: row.get(2)?,
+                    format: row.get(3)?,
+                    downloaded_at: row.get(4)?,
+                    file_id: row.get(5)?,
+                    author: row.get(6)?,
+                    file_size: row.get(7)?,
+                    duration: row.get(8)?,
+                    video_quality: row.get(9)?,
+                    audio_bitrate: row.get(10)?,
+                    bot_api_url: row.get(11)?,
+                    bot_api_is_local: row.get(12)?,
+                    source_id: row.get(13)?,
+                    part_index: row.get(14)?,
+                    category: row.get(15)?,
+                })
+            })?;
+            rows.filter_map(|r| match r {
+                Ok(entry) => Some(entry),
+                Err(e) => {
+                    log::warn!("Skipping malformed download_history row: {}", e);
+                    None
+                }
+            })
+            .collect()
+        }
+        SharedStorage::Postgres { pg_pool, .. } => {
+            let rows = sqlx::query(
+                "SELECT id, url, title, format, downloaded_at::text AS downloaded_at, file_id, author,
+                        file_size, duration, video_quality, audio_bitrate, bot_api_url, bot_api_is_local,
+                        source_id, part_index, category
+                 FROM download_history
+                 WHERE downloaded_at >= $1::timestamptz
+                 ORDER BY downloaded_at DESC",
+            )
+            .bind(&cutoff_rfc3339)
+            .fetch_all(pg_pool)
+            .await?;
+            rows.into_iter()
+                .map(|row| db::DownloadHistoryEntry {
+                    id: row.get("id"),
+                    url: row.get("url"),
+                    title: row.get("title"),
+                    format: row.get("format"),
+                    downloaded_at: row.get("downloaded_at"),
+                    file_id: row.get("file_id"),
+                    author: row.get("author"),
+                    file_size: row.get("file_size"),
+                    duration: row.get("duration"),
+                    video_quality: row.get("video_quality"),
+                    audio_bitrate: row.get("audio_bitrate"),
+                    bot_api_url: row.get("bot_api_url"),
+                    bot_api_is_local: row.get("bot_api_is_local"),
+                    source_id: row.get("source_id"),
+                    part_index: row.get("part_index"),
+                    category: row.get("category"),
+                })
+                .collect()
+        }
+    };
 
-    // Unique users
-    let unique_users: i64 = query_with_logging(
-        conn.query_row(
-            "SELECT COUNT(DISTINCT user_id) FROM download_history WHERE downloaded_at >= ?",
-            [&since_str],
-            |row| row.get(0),
-        ),
-        "unique_users",
-    );
-
-    // Total size
-    let total_size: i64 = query_with_logging(
-        conn.query_row(
-            "SELECT COALESCE(SUM(file_size), 0) FROM download_history WHERE downloaded_at >= ?",
-            [&since_str],
-            |row| row.get(0),
-        ),
-        "total_size",
-    );
-
-    // By format
-    let mut stmt = conn.prepare(
-        "SELECT format, COUNT(*) as cnt FROM download_history
-         WHERE downloaded_at >= ?
-         GROUP BY format ORDER BY cnt DESC",
-    )?;
-    let rows = stmt.query_map([&since_str], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
-    })?;
-
-    let mut by_format = Vec::new();
-    for row in rows.flatten() {
-        by_format.push(row);
+    let total_downloads = download_entries.len() as i64;
+    let unique_users =
+        match shared_storage.as_ref() {
+            SharedStorage::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool)?;
+                conn.query_row(
+                    "SELECT COUNT(DISTINCT user_id) FROM download_history WHERE downloaded_at >= ?1",
+                    [&cutoff_rfc3339],
+                    |row| row.get(0),
+                )?
+            }
+            SharedStorage::Postgres { pg_pool, .. } => sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(DISTINCT user_id)::bigint FROM download_history WHERE downloaded_at >= $1::timestamptz",
+            )
+            .bind(&cutoff_rfc3339)
+            .fetch_one(pg_pool)
+            .await?,
+        };
+    let total_size = download_entries.iter().map(|entry| entry.file_size.unwrap_or(0)).sum();
+    let mut by_format_map = std::collections::BTreeMap::<String, i64>::new();
+    for entry in &download_entries {
+        *by_format_map.entry(entry.format.clone()).or_default() += 1;
     }
+    let by_format = by_format_map.into_iter().collect::<Vec<_>>();
 
-    // Failed downloads from task_queue
-    let failed_downloads: i64 = query_with_logging(
-        conn.query_row(
-            "SELECT COUNT(*) FROM task_queue WHERE status = 'failed' AND updated_at >= ?",
-            [&since_str],
-            |row| row.get(0),
-        ),
-        "failed_downloads",
-    );
+    let failed_downloads = match shared_storage.as_ref() {
+        SharedStorage::Sqlite { db_pool } => {
+            let conn = db::get_connection(db_pool)?;
+            conn.query_row(
+                "SELECT COUNT(*) FROM task_queue WHERE status = 'dead_letter' AND updated_at >= ?1",
+                [&cutoff_rfc3339],
+                |row| row.get(0),
+            )?
+        }
+        SharedStorage::Postgres { pg_pool, .. } => sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*)::bigint FROM task_queue WHERE status = 'dead_letter' AND updated_at >= $1::timestamptz",
+        )
+        .bind(&cutoff_rfc3339)
+        .fetch_one(pg_pool)
+        .await?,
+    };
 
-    // Get errors by type from error_log
-    let errors_by_type = db::get_error_stats(conn, hours).unwrap_or_else(|e| {
-        log::warn!("Stats query 'errors_by_type' failed: {}", e);
-        Vec::new()
-    });
-
-    // Get recent errors (last 5)
-    let recent_errors = db::get_recent_errors(conn, hours, 5).unwrap_or_else(|e| {
-        log::warn!("Stats query 'recent_errors' failed: {}", e);
-        Vec::new()
-    });
+    let errors_by_type = match shared_storage.get_error_stats(hours).await {
+        Ok(v) => v,
+        Err(e) => {
+            log::error!("Failed to fetch error stats: {}", e);
+            Vec::new()
+        }
+    };
+    let recent_errors = match shared_storage.get_recent_errors(hours, 5).await {
+        Ok(v) => v,
+        Err(e) => {
+            log::error!("Failed to fetch recent errors: {}", e);
+            Vec::new()
+        }
+    };
 
     Ok(PeriodStats {
         total_downloads,
-        successful_downloads: total_downloads, // download_history only has successful ones
+        successful_downloads: total_downloads,
         failed_downloads,
         unique_users,
         by_format,
@@ -254,85 +309,26 @@ fn format_stats_message(stats: &PeriodStats, hours: i64) -> String {
 pub struct StatsReporter {
     bot: Bot,
     admin_chat_id: ChatId,
-    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     interval_hours: u64,
 }
 
 impl StatsReporter {
     /// Creates a new stats reporter
-    pub fn new(bot: Bot, admin_chat_id: ChatId, db_pool: Arc<DbPool>, interval_hours: u64) -> Self {
+    pub fn new(bot: Bot, admin_chat_id: ChatId, shared_storage: Arc<SharedStorage>, interval_hours: u64) -> Self {
         Self {
             bot,
             admin_chat_id,
-            db_pool,
+            shared_storage,
             interval_hours,
         }
     }
 
     /// Sends a stats report for the last N hours
     pub async fn send_report(&self, hours: i64) -> Result<(), String> {
-        let conn = db::get_connection(&self.db_pool).map_err(|e| format!("DB error: {}", e))?;
-
-        let stats = get_period_stats(&conn, hours).map_err(|e| format!("Stats error: {}", e))?;
-
-        // Update user engagement gauges
-        if let Ok(total) = conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get::<_, i64>(0)) {
-            metrics::TOTAL_USERS.set(total as f64);
-        }
-        if let Ok(dau) = conn.query_row(
-            "SELECT COUNT(DISTINCT user_id) FROM download_history WHERE downloaded_at >= datetime('now', '-1 day')",
-            [],
-            |row| row.get::<_, i64>(0),
-        ) {
-            metrics::DAILY_ACTIVE_USERS.set(dau as f64);
-        }
-        if let Ok(mau) = conn.query_row(
-            "SELECT COUNT(DISTINCT user_id) FROM download_history WHERE downloaded_at >= datetime('now', '-30 day')",
-            [],
-            |row| row.get::<_, i64>(0),
-        ) {
-            metrics::MONTHLY_ACTIVE_USERS.set(mau as f64);
-        }
-
-        // Update users by plan
-        if let Ok(mut stmt) = conn.prepare("SELECT COALESCE(plan, 'free') as p, COUNT(*) FROM users GROUP BY p") {
-            if let Ok(rows) = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))) {
-                for row in rows.flatten() {
-                    metrics::USERS_BY_PLAN.with_label_values(&[&row.0]).set(row.1 as f64);
-                }
-            }
-        }
-
-        // Update active subscriptions (non-free, non-expired)
-        if let Ok(mut stmt) = conn.prepare(
-            "SELECT COALESCE(plan, 'free') as p, COUNT(*) FROM users \
-             WHERE plan IS NOT NULL AND plan != 'free' \
-             AND (subscription_expires_at IS NULL OR subscription_expires_at > datetime('now')) \
-             GROUP BY p",
-        ) {
-            // Reset all plans to 0 first, then set actual values
-            metrics::ACTIVE_SUBSCRIPTIONS.with_label_values(&["premium"]).set(0.0);
-            metrics::ACTIVE_SUBSCRIPTIONS.with_label_values(&["vip"]).set(0.0);
-            if let Ok(rows) = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))) {
-                for row in rows.flatten() {
-                    metrics::ACTIVE_SUBSCRIPTIONS
-                        .with_label_values(&[&row.0])
-                        .set(row.1 as f64);
-                }
-            }
-        }
-
-        // Update language distribution
-        if let Ok(mut stmt) = conn.prepare("SELECT COALESCE(language, 'ru') as lang, COUNT(*) FROM users GROUP BY lang")
-        {
-            if let Ok(rows) = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))) {
-                for row in rows.flatten() {
-                    metrics::USER_LANGUAGE_DISTRIBUTION
-                        .with_label_values(&[&row.0])
-                        .set(row.1 as f64);
-                }
-            }
-        }
+        let stats = get_period_stats(&self.shared_storage, hours)
+            .await
+            .map_err(|e| format!("Stats error: {}", e))?;
 
         // Skip if no activity
         if stats.total_downloads == 0 && stats.failed_downloads == 0 {
@@ -370,13 +366,15 @@ impl StatsReporter {
 pub fn start_stats_reporter(
     bot: Bot,
     admin_chat_id: ChatId,
-    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     interval_hours: u64,
+    lock_conn: Option<PoolConnection<Postgres>>,
 ) -> Arc<StatsReporter> {
-    let reporter = Arc::new(StatsReporter::new(bot, admin_chat_id, db_pool, interval_hours));
+    let reporter = Arc::new(StatsReporter::new(bot, admin_chat_id, shared_storage, interval_hours));
 
     let reporter_clone = Arc::clone(&reporter);
     tokio::spawn(async move {
+        let _lock_conn = lock_conn;
         let interval_secs = interval_hours * 3600;
         let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(interval_secs));
 

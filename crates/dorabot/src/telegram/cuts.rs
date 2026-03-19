@@ -1,5 +1,5 @@
 use crate::core::config;
-use crate::storage::{db, DbPool};
+use crate::storage::{db, DbPool, SharedStorage};
 use crate::telegram::commands::{process_video_clip, CutSegment};
 use crate::telegram::Bot;
 use crate::timestamps::format_timestamp;
@@ -77,11 +77,16 @@ fn format_duration_short(seconds: i64) -> String {
     format!("{}:{:02}", mins, secs)
 }
 
-pub async fn show_cuts_page(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>, page: usize) -> ResponseResult<Message> {
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-    let total_items = db::get_cuts_count(&conn, chat_id.0)
+pub async fn show_cuts_page(
+    bot: &Bot,
+    chat_id: ChatId,
+    _db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+    page: usize,
+) -> ResponseResult<Message> {
+    let total_items = shared_storage
+        .get_cuts_count(chat_id.0)
+        .await
         .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
         as usize;
 
@@ -98,7 +103,9 @@ pub async fn show_cuts_page(bot: &Bot, chat_id: ChatId, db_pool: Arc<DbPool>, pa
     let current_page = page.min(total_pages.saturating_sub(1));
     let offset = (current_page * ITEMS_PER_PAGE) as i64;
 
-    let cuts = db::get_cuts_page(&conn, chat_id.0, ITEMS_PER_PAGE as i64, offset)
+    let cuts = shared_storage
+        .get_cuts_page(chat_id.0, ITEMS_PER_PAGE as i64, offset)
+        .await
         .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
     let mut text = String::from("✂️ *Your clips*\n\n");
@@ -194,6 +201,7 @@ pub async fn handle_cuts_callback(
     message_id: MessageId,
     data: &str,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     username: Option<String>,
 ) -> ResponseResult<()> {
     bot.answer_callback_query(callback_id).await?;
@@ -210,16 +218,16 @@ pub async fn handle_cuts_callback(
             }
             let page = parts[2].parse::<usize>().unwrap_or(0);
             bot.delete_message(chat_id, message_id).await.ok();
-            show_cuts_page(bot, chat_id, db_pool, page).await?;
+            show_cuts_page(bot, chat_id, db_pool, shared_storage.clone(), page).await?;
         }
         "open" => {
             if parts.len() < 3 {
                 return Ok(());
             }
             let cut_id = parts[2].parse::<i64>().unwrap_or(0);
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id)
+            if let Some(cut) = shared_storage
+                .get_cut_entry(chat_id.0, cut_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 let mut options = Vec::new();
@@ -262,9 +270,9 @@ pub async fn handle_cuts_callback(
             let send_type = parts[2];
             let cut_id = parts[3].parse::<i64>().unwrap_or(0);
 
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id)
+            if let Some(cut) = shared_storage
+                .get_cut_entry(chat_id.0, cut_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 let Some(telegram_file_id) = cut.file_id.clone() else {
@@ -351,9 +359,9 @@ pub async fn handle_cuts_callback(
                 return Ok(());
             }
             let cut_id = parts[2].parse::<i64>().unwrap_or(0);
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id)
+            if let Some(cut) = shared_storage
+                .get_cut_entry(chat_id.0, cut_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 let rows = vec![
@@ -392,9 +400,9 @@ pub async fn handle_cuts_callback(
             let cut_id = parts[3].parse::<i64>().unwrap_or(0);
             let speed: f32 = speed_str.parse().unwrap_or(1.0);
 
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id)
+            if let Some(cut) = shared_storage
+                .get_cut_entry(chat_id.0, cut_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 let Some(file_id) = cut.file_id.clone() else {
@@ -432,21 +440,25 @@ This may take a few minutes\\.",
                             .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
 
                         if let Some(fid) = new_file_id {
-                            let _ = db::create_cut(
-                                &conn,
-                                chat_id.0,
-                                &cut.original_url,
-                                "cut",
-                                cut_id,
-                                "clip",
-                                &cut.segments_json,
-                                &cut.segments_text,
-                                &new_title,
-                                Some(&fid),
-                                Some(file_size),
-                                new_duration,
-                                cut.video_quality.as_deref(),
-                            );
+                            if let Err(e) = shared_storage
+                                .create_cut(
+                                    chat_id.0,
+                                    &cut.original_url,
+                                    "cut",
+                                    cut_id,
+                                    "clip",
+                                    &cut.segments_json,
+                                    &cut.segments_text,
+                                    &new_title,
+                                    Some(&fid),
+                                    Some(file_size),
+                                    new_duration,
+                                    cut.video_quality.as_deref(),
+                                )
+                                .await
+                            {
+                                log::error!("Failed to persist cut record for user {}: {}", chat_id.0, e);
+                            }
                         }
                     }
                     Err(e) => {
@@ -475,9 +487,9 @@ This may take a few minutes\\.",
                 return Ok(());
             }
             let cut_id = parts[2].parse::<i64>().unwrap_or(0);
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id)
+            if let Some(cut) = shared_storage
+                .get_cut_entry(chat_id.0, cut_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 if cut.file_id.is_none() {
@@ -498,9 +510,13 @@ This may take a few minutes\\.",
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
                 };
-                db::upsert_video_clip_session(&conn, &session).map_err(|e| {
-                    teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
+                shared_storage
+                    .clone()
+                    .upsert_video_clip_session(&session)
+                    .await
+                    .map_err(|e| {
+                        teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+                    })?;
 
                 let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
                     "❌ Cancel".to_string(),
@@ -526,9 +542,9 @@ This may take a few minutes\\.",
                 return Ok(());
             }
             let cut_id = parts[2].parse::<i64>().unwrap_or(0);
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id)
+            if let Some(cut) = shared_storage
+                .get_cut_entry(chat_id.0, cut_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 if cut.file_id.is_none() {
@@ -549,12 +565,16 @@ This may take a few minutes\\.",
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
                 };
-                db::upsert_video_clip_session(&conn, &session).map_err(|e| {
-                    teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                })?;
+                shared_storage
+                    .clone()
+                    .upsert_video_clip_session(&session)
+                    .await
+                    .map_err(|e| {
+                        teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+                    })?;
 
                 // Get user language for localization
-                let lang = crate::i18n::user_lang(&conn, chat_id.0);
+                let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
                 // Build keyboard: duration buttons + cancel button
                 let mut keyboard_rows = build_duration_buttons_for_cut(cut_id, &lang);
@@ -577,9 +597,11 @@ This may take a few minutes\\.",
             }
         }
         "clip_cancel" => {
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-            db::delete_video_clip_session_by_user(&conn, chat_id.0).ok();
+            shared_storage
+                .clone()
+                .delete_video_clip_session_by_user(chat_id.0)
+                .await
+                .ok();
             bot.delete_message(chat_id, message_id).await.ok();
         }
         // Handle duration button clicks: cuts:dur:{position}:{cut_id}:{seconds}
@@ -596,10 +618,9 @@ This may take a few minutes\\.",
                 60 // default for "full"
             };
 
-            let conn = db::get_connection(&db_pool)
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-
-            if let Some(cut) = db::get_cut_entry(&conn, chat_id.0, cut_id)
+            if let Some(cut) = shared_storage
+                .get_cut_entry(chat_id.0, cut_id)
+                .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
                 if cut.file_id.is_none() {
@@ -652,7 +673,11 @@ This may take a few minutes\\.",
                 };
 
                 // Delete any existing session first
-                db::delete_video_clip_session_by_user(&conn, chat_id.0).ok();
+                shared_storage
+                    .clone()
+                    .delete_video_clip_session_by_user(chat_id.0)
+                    .await
+                    .ok();
 
                 // Create segment
                 let segment = CutSegment { start_secs, end_secs };
@@ -665,6 +690,7 @@ This may take a few minutes\\.",
                     if let Err(e) = process_video_clip(
                         bot_clone,
                         db_pool_clone,
+                        shared_storage.clone(),
                         chat_id,
                         session,
                         vec![segment],

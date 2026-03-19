@@ -2,6 +2,33 @@ use once_cell::sync::Lazy;
 use std::env;
 use std::time::Duration;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DatabaseDriver {
+    Sqlite,
+    Postgres,
+}
+
+impl DatabaseDriver {
+    pub fn from_env() -> Self {
+        let raw = env::var("DATABASE_DRIVER").unwrap_or_else(|_| "sqlite".to_string());
+        let value = raw.trim().to_ascii_lowercase();
+        match value.as_str() {
+            "sqlite" | "" => Self::Sqlite,
+            "postgres" | "postgresql" => Self::Postgres,
+            other => {
+                log::error!(
+                    "Invalid DATABASE_DRIVER value '{}'. Supported values: 'sqlite', 'postgres'. Aborting.",
+                    other
+                );
+                panic!(
+                    "Invalid DATABASE_DRIVER value '{}'. Supported values: 'sqlite', 'postgres'.",
+                    other
+                );
+            }
+        }
+    }
+}
+
 /// Configuration constants for the bot
 /// Cached yt-dlp binary path
 /// Read once at startup from YTDL_BIN environment variable or defaults to "yt-dlp"
@@ -60,6 +87,19 @@ pub static TEMP_FILES_DIR: Lazy<String> =
 pub static DATABASE_PATH: Lazy<String> =
     Lazy::new(|| env::var("DATABASE_PATH").unwrap_or_else(|_| "database.sqlite".to_string()));
 
+/// Database driver
+/// Read from DATABASE_DRIVER environment variable
+/// Default: sqlite
+pub static DATABASE_DRIVER: Lazy<DatabaseDriver> = Lazy::new(DatabaseDriver::from_env);
+
+/// PostgreSQL connection string for shared multi-instance state
+/// Read from DATABASE_URL environment variable
+pub static DATABASE_URL: Lazy<Option<String>> = Lazy::new(|| env::var("DATABASE_URL").ok());
+
+/// Redis connection string for distributed cooldowns and cache coordination
+/// Read from REDIS_URL environment variable
+pub static REDIS_URL: Lazy<Option<String>> = Lazy::new(|| env::var("REDIS_URL").ok());
+
 /// Log file path
 /// Read from LOG_FILE_PATH environment variable
 /// Default: app.log
@@ -77,6 +117,25 @@ pub static BOT_TOKEN: Lazy<String> = Lazy::new(|| {
 /// Webhook URL for Telegram updates
 /// Read from WEBHOOK_URL environment variable
 pub static WEBHOOK_URL: Lazy<Option<String>> = Lazy::new(|| env::var("WEBHOOK_URL").ok());
+
+/// Secret token expected in Telegram webhook requests.
+/// Must match the token passed when calling setWebhook.
+pub static WEBHOOK_SECRET_TOKEN: Lazy<Option<String>> = Lazy::new(|| env::var("WEBHOOK_SECRET_TOKEN").ok());
+
+/// Fixed webhook path exposed by the application.
+pub static WEBHOOK_PATH: Lazy<String> =
+    Lazy::new(|| env::var("WEBHOOK_PATH").unwrap_or_else(|_| "/telegram/webhook".to_string()));
+
+/// Local listen address for the webhook HTTP server.
+pub static WEBHOOK_LISTEN_ADDR: Lazy<String> =
+    Lazy::new(|| env::var("WEBHOOK_LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string()));
+
+/// Optional Telegram webhook max_connections setting (1-100).
+pub static WEBHOOK_MAX_CONNECTIONS: Lazy<Option<u8>> = Lazy::new(|| {
+    env::var("WEBHOOK_MAX_CONNECTIONS")
+        .ok()
+        .and_then(|value| value.parse::<u8>().ok())
+});
 
 /// Genius API client access token for structured lyrics fetching (optional).
 /// Read from GENIUS_CLIENT_TOKEN environment variable.
@@ -840,15 +899,28 @@ pub fn validate() -> ConfigValidation {
         errors.push("BOT_TOKEN is not set. The bot cannot start without a valid token.".to_string());
     }
 
-    // DATABASE_PATH — check parent directory exists
-    {
-        let db_path = std::path::Path::new(DATABASE_PATH.as_str());
-        if let Some(parent) = db_path.parent() {
-            if !parent.as_os_str().is_empty() && !parent.exists() {
-                errors.push(format!(
-                    "DATABASE_PATH parent directory does not exist: {}",
-                    parent.display()
-                ));
+    match *DATABASE_DRIVER {
+        DatabaseDriver::Sqlite => {
+            let db_path = std::path::Path::new(DATABASE_PATH.as_str());
+            if let Some(parent) = db_path.parent() {
+                if !parent.as_os_str().is_empty() && !parent.exists() {
+                    errors.push(format!(
+                        "DATABASE_PATH parent directory does not exist: {}",
+                        parent.display()
+                    ));
+                }
+            }
+        }
+        DatabaseDriver::Postgres => {
+            if DATABASE_URL
+                .as_ref()
+                .map(|value| value.trim().is_empty())
+                .unwrap_or(true)
+            {
+                errors.push("DATABASE_URL must be set when DATABASE_DRIVER=postgres.".to_string());
+            }
+            if REDIS_URL.as_ref().map(|value| value.trim().is_empty()).unwrap_or(true) {
+                errors.push("REDIS_URL must be set when DATABASE_DRIVER=postgres.".to_string());
             }
         }
     }

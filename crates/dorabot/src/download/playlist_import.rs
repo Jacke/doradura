@@ -1,7 +1,7 @@
 //! Playlist import from external URLs (YouTube, Spotify) using yt-dlp.
 
 use crate::download::search::{append_proxy_args, source_name_from_url, YtdlpFlatEntry};
-use crate::storage::db::{self, DbPool};
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use std::sync::Arc;
 use std::time::Duration;
@@ -13,7 +13,13 @@ use tokio::time::timeout;
 const IMPORT_TIMEOUT_SECS: u64 = 120;
 
 /// Handle a URL import into a playlist.
-pub async fn handle_import_url(bot: &Bot, chat_id: ChatId, url: &str, playlist_id: i64, db_pool: Arc<DbPool>) {
+pub async fn handle_import_url(
+    bot: &Bot,
+    chat_id: ChatId,
+    url: &str,
+    playlist_id: i64,
+    shared_storage: Arc<SharedStorage>,
+) {
     let status_msg = bot.send_message(chat_id, "📥 Importing playlist...").await;
 
     let ytdl_bin = &*crate::core::config::YTDL_BIN;
@@ -66,29 +72,29 @@ pub async fn handle_import_url(bot: &Bot, chat_id: ChatId, url: &str, playlist_i
         return;
     }
 
-    let conn = match db::get_connection(&db_pool) {
-        Ok(c) => c,
-        Err(_) => {
-            let _ = bot.send_message(chat_id, "Database error").await;
-            return;
-        }
-    };
-
     // Check plan limits
-    let plan = db::get_user(&conn, chat_id.0)
+    let plan = shared_storage
+        .get_user(chat_id.0)
+        .await
         .ok()
         .flatten()
         .map(|u| u.plan)
         .unwrap_or(crate::core::types::Plan::Free);
     let max_tracks = crate::telegram::menu::playlist::max_tracks_per_playlist(plan);
-    let current_count = db::count_playlist_items(&conn, playlist_id).unwrap_or(0);
+    let current_count = match shared_storage.count_playlist_items(playlist_id).await {
+        Ok(count) => count,
+        Err(e) => {
+            log::error!("Failed to count playlist items for playlist {}: {}", playlist_id, e);
+            let _ = bot.send_message(chat_id, "Failed to check playlist limits.").await;
+            return;
+        }
+    };
     let available = (max_tracks - current_count).max(0) as usize;
 
     let to_import = entries.len().min(available);
 
     let mut added = 0;
     // Wrap in a transaction for atomic bulk insert
-    let _ = conn.execute_batch("BEGIN");
     for entry in entries.iter().take(to_import) {
         let title = entry.title.as_deref().unwrap_or("Unknown");
         if title.is_empty() {
@@ -101,22 +107,22 @@ pub async fn handle_import_url(bot: &Bot, chat_id: ChatId, url: &str, playlist_i
 
         let source = source_name_from_url(url);
 
-        if db::add_playlist_item(
-            &conn,
-            playlist_id,
-            title,
-            entry.artist(),
-            url,
-            entry.duration.map(|d| d as i32),
-            None,
-            source,
-        )
-        .is_ok()
+        if shared_storage
+            .add_playlist_item(
+                playlist_id,
+                title,
+                entry.artist(),
+                url,
+                entry.duration.map(|d| d as i32),
+                None,
+                source,
+            )
+            .await
+            .is_ok()
         {
             added += 1;
         }
     }
-    let _ = conn.execute_batch("COMMIT");
 
     // Delete status message
     if let Ok(msg) = &status_msg {

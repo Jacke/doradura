@@ -1,16 +1,14 @@
 use crate::core::rate_limiter::RateLimiter;
-use crate::core::types::Plan;
 use crate::download::queue::{DownloadQueue, DownloadTask};
 use crate::i18n;
 use crate::storage::cache;
-use crate::storage::db::{self, DbPool};
-use crate::telegram::cache as tg_cache;
+use crate::storage::db::DbPool;
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use fluent_templates::fluent_bundle::FluentArgs;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{CallbackQueryId, InlineKeyboardMarkup, MessageId, ParseMode};
-use teloxide::RequestError;
 use url::Url;
 
 /// Edit caption if present, else fallback to editing text.
@@ -55,10 +53,11 @@ pub(crate) async fn start_download_from_preview(
     format: &str,
     selected_quality: Option<String>,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     download_queue: Arc<DownloadQueue>,
     rate_limiter: Arc<RateLimiter>,
 ) -> ResponseResult<()> {
-    let url_str = match cache::get_url(&db_pool, url_id).await {
+    let url_str = match cache::get_url(&db_pool, Some(shared_storage.as_ref()), url_id).await {
         Some(url_str) => url_str,
         None => {
             log::warn!("URL not found in cache for ID: {} (expired or invalid)", url_id);
@@ -80,14 +79,20 @@ pub(crate) async fn start_download_from_preview(
         }
     };
 
-    let original_message_id = tg_cache::get_link_message_id(&url_str).await;
-    let time_range = tg_cache::get_time_range(&url_str).await;
-    let conn = db::get_connection(&db_pool)
-        .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-    let plan = match db::get_user(&conn, chat_id.0) {
-        Ok(Some(ref user)) => user.plan,
-        _ => Plan::default(),
-    };
+    let preview_context = shared_storage
+        .get_preview_context(chat_id.0, &url_str)
+        .await
+        .ok()
+        .flatten();
+    let original_message_id = preview_context.as_ref().and_then(|context| context.original_message_id);
+    let time_range = preview_context.and_then(|context| context.time_range);
+    let plan = shared_storage
+        .get_user(chat_id.0)
+        .await
+        .ok()
+        .flatten()
+        .map(|user| user.plan)
+        .unwrap_or_default();
 
     // Rate limit disabled
     let _ = (rate_limiter, &plan);
@@ -112,7 +117,12 @@ pub(crate) async fn start_download_from_preview(
         let video_quality = if let Some(quality) = selected_quality {
             Some(quality)
         } else {
-            Some(db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string()))
+            Some(
+                shared_storage
+                    .get_user_video_quality(chat_id.0)
+                    .await
+                    .unwrap_or_else(|_| "best".to_string()),
+            )
         };
         let mut task_mp4 = DownloadTask::from_plan(
             url.as_str().to_string(),
@@ -127,7 +137,12 @@ pub(crate) async fn start_download_from_preview(
         task_mp4.time_range = time_range.clone();
         download_queue.add_task(task_mp4, Some(Arc::clone(&db_pool))).await;
 
-        let audio_bitrate = Some(db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string()));
+        let audio_bitrate = Some(
+            shared_storage
+                .get_user_audio_bitrate(chat_id.0)
+                .await
+                .unwrap_or_else(|_| "320k".to_string()),
+        );
         let mut task_mp3 = DownloadTask::from_plan(
             url.as_str().to_string(),
             chat_id,
@@ -145,13 +160,23 @@ pub(crate) async fn start_download_from_preview(
             if let Some(quality) = selected_quality {
                 Some(quality)
             } else {
-                Some(db::get_user_video_quality(&conn, chat_id.0).unwrap_or_else(|_| "best".to_string()))
+                Some(
+                    shared_storage
+                        .get_user_video_quality(chat_id.0)
+                        .await
+                        .unwrap_or_else(|_| "best".to_string()),
+                )
             }
         } else {
             None
         };
         let audio_bitrate = if format == "mp3" {
-            Some(db::get_user_audio_bitrate(&conn, chat_id.0).unwrap_or_else(|_| "320k".to_string()))
+            Some(
+                shared_storage
+                    .get_user_audio_bitrate(chat_id.0)
+                    .await
+                    .unwrap_or_else(|_| "320k".to_string()),
+            )
         } else {
             None
         };
@@ -172,7 +197,9 @@ pub(crate) async fn start_download_from_preview(
     }
 
     // Send queue position notification and store message ID for later deletion
-    if let Some(msg_id) = send_queue_position_message(bot, chat_id, plan.as_str(), &download_queue, &db_pool).await {
+    if let Some(msg_id) =
+        send_queue_position_message(bot, chat_id, plan.as_str(), &download_queue, &db_pool, &shared_storage).await
+    {
         download_queue.set_queue_message_id(chat_id, msg_id.0).await;
     }
 
@@ -189,10 +216,12 @@ pub(crate) async fn send_queue_position_message(
     plan: &str,
     download_queue: &Arc<DownloadQueue>,
     db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
 ) -> Option<MessageId> {
     let queue_size = download_queue.size().await;
     let position = download_queue.get_queue_position(chat_id).await;
-    let lang = i18n::user_lang_from_pool(db_pool, chat_id.0);
+    let _ = db_pool;
+    let lang = i18n::user_lang_from_storage(shared_storage, chat_id.0).await;
 
     let message = if queue_size > 0 {
         // Show position in queue

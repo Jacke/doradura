@@ -15,9 +15,12 @@ rusqlite = { version = "0.32.0", features = ["bundled"] }
 r2d2 = "0.8"
 r2d2_sqlite = "0.25"
 refinery = { version = "0.8", features = ["rusqlite"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid"] }
+redis = { version = "0.27", default-features = false, features = ["aio", "tokio-comp", "script"] }
 
 # HTTP
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "socks", "stream", "rustls-tls"] }
+axum = "0.8"
 
 # Error handling
 thiserror = "1.0"
@@ -60,7 +63,7 @@ prometheus = "0.14"
 clap = { version = "4.5", features = ["derive", "cargo"] }
 
 # Telegram
-teloxide = { version = "0.17", features = ["macros"] }
+teloxide = { version = "0.17", features = ["macros", "webhooks-axum"] }
 
 # Archive
 zip = "2"

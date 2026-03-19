@@ -1,5 +1,5 @@
 use crate::core::error::AppError;
-use crate::storage::db::DbPool;
+use crate::storage::SharedStorage;
 use chrono::{DateTime, Duration, Utc};
 use std::process::Command;
 use std::sync::Arc;
@@ -409,13 +409,8 @@ pub fn get_modified_file_path(session_id: &str, version: u32, download_folder: &
 }
 
 /// Cleanup expired audio effect sessions
-pub async fn cleanup_expired_sessions(db_pool: Arc<DbPool>) -> Result<usize, AppError> {
-    use crate::storage::db;
-
-    let conn = db::get_connection(&db_pool)?;
-
-    // Get expired sessions
-    let expired_sessions = db::delete_expired_audio_sessions(&conn)?;
+pub async fn cleanup_expired_sessions(shared_storage: Arc<SharedStorage>) -> Result<usize, AppError> {
+    let expired_sessions = shared_storage.delete_expired_audio_sessions().await?;
 
     let count = expired_sessions.len();
 
@@ -446,12 +441,12 @@ pub async fn cleanup_expired_sessions(db_pool: Arc<DbPool>) -> Result<usize, App
 }
 
 /// Start background cleanup task for expired sessions
-pub fn start_cleanup_task(db_pool: Arc<DbPool>) {
+pub fn start_cleanup_task(shared_storage: Arc<SharedStorage>) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600)); // 1 hour
         loop {
             interval.tick().await;
-            match cleanup_expired_sessions(Arc::clone(&db_pool)).await {
+            match cleanup_expired_sessions(Arc::clone(&shared_storage)).await {
                 Ok(count) if count > 0 => {
                     log::info!("Audio effects cleanup: removed {} session(s)", count);
                 }

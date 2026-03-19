@@ -23,7 +23,8 @@ use crate::download::send::{
     send_audio_with_retry, send_error_with_sticker, send_error_with_sticker_and_message, send_video_with_retry,
 };
 use crate::download::source::{DownloadOutput, DownloadSource, MediaMetadata, SourceProgress, SourceRegistry};
-use crate::storage::db::{self as db, save_download_history, DbPool};
+use crate::storage::db::{self as db, DbPool};
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use std::fs;
 use std::sync::Arc;
@@ -147,6 +148,7 @@ pub async fn download_phase(
     registry: &SourceRegistry,
     progress_msg: &mut ProgressMessage,
     message_id: Option<i32>,
+    _shared_storage: Option<&Arc<SharedStorage>>,
 ) -> Result<DownloadPhaseResult, PipelineError> {
     let file_format_str = format.label().to_string();
 
@@ -428,6 +430,7 @@ pub async fn execute(
     url: &Url,
     format: &PipelineFormat,
     db_pool: Option<&Arc<DbPool>>,
+    shared_storage: Option<&Arc<SharedStorage>>,
     message_id: Option<i32>,
     _alert_manager: Option<&Arc<crate::core::alerts::AlertManager>>,
     registry: &SourceRegistry,
@@ -438,8 +441,10 @@ pub async fn execute(
 
     // ── Vault cache lookup (audio only) ──
     if matches!(format, PipelineFormat::Audio { .. }) {
-        if let Some(pool) = db_pool {
-            if let Some(cached_fid) = crate::download::vault::check_vault_cache(pool, chat_id.0, url.as_str()) {
+        if let Some(shared_storage) = shared_storage {
+            if let Some(cached_fid) =
+                crate::download::vault::check_vault_cache(shared_storage, chat_id.0, url.as_str()).await
+            {
                 log::info!(
                     "Pipeline: vault cache hit for {} (chat {})",
                     sanitize_for_log(url.as_str()),
@@ -478,65 +483,88 @@ pub async fn execute(
     // ── Cross-user file_id dedup (skip re-download if someone already downloaded this) ──
     // Only for full downloads (no time_range = no cuts), where we can guarantee identical output.
     if format.time_range().is_none() {
-        if let Some(pool) = db_pool {
+        let (vq, ab) = match format {
+            PipelineFormat::Audio { ref bitrate, .. } => (None, bitrate.as_deref()),
+            PipelineFormat::Video { ref quality, .. } => (quality.as_deref(), None),
+        };
+        let cached_fid = if let Some(storage) = shared_storage {
+            storage
+                .find_cached_file_id(url.as_str(), format.label(), vq, ab)
+                .await
+                .ok()
+                .flatten()
+        } else if let Some(pool) = db_pool {
             if let Ok(conn) = db::get_connection(pool) {
-                let (vq, ab) = match format {
-                    PipelineFormat::Audio { ref bitrate, .. } => (None, bitrate.as_deref()),
-                    PipelineFormat::Video { ref quality, .. } => (quality.as_deref(), None),
-                };
-                if let Ok(Some(cached_fid)) = db::find_cached_file_id(&conn, url.as_str(), format.label(), vq, ab) {
-                    log::info!(
-                        "Pipeline: cross-user file_id cache hit for {} (chat {})",
-                        sanitize_for_log(url.as_str()),
-                        chat_id
-                    );
-                    let input = teloxide::types::InputFile::file_id(teloxide::types::FileId(cached_fid.clone()));
-                    let send_result = match format {
-                        PipelineFormat::Audio { .. } => bot.send_audio(chat_id, input).await,
-                        PipelineFormat::Video { .. } => bot.send_video(chat_id, input).await,
+                db::find_cached_file_id(&conn, url.as_str(), format.label(), vq, ab)
+                    .ok()
+                    .flatten()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(cached_fid) = cached_fid {
+            log::info!(
+                "Pipeline: cross-user file_id cache hit for {} (chat {})",
+                sanitize_for_log(url.as_str()),
+                chat_id
+            );
+            let input = teloxide::types::InputFile::file_id(teloxide::types::FileId(cached_fid.clone()));
+            let send_result = match format {
+                PipelineFormat::Audio { .. } => bot.send_audio(chat_id, input).await,
+                PipelineFormat::Video { .. } => bot.send_video(chat_id, input).await,
+            };
+            match send_result {
+                Ok(sent_message) => {
+                    let (file_size, duration) = match format {
+                        PipelineFormat::Audio { .. } => (
+                            sent_message.audio().map(|a| a.file.size).unwrap_or(0) as u64,
+                            sent_message.audio().map(|a| a.duration.seconds()).unwrap_or(0),
+                        ),
+                        PipelineFormat::Video { .. } => (
+                            sent_message.video().map(|v| v.file.size).unwrap_or(0) as u64,
+                            sent_message.video().map(|v| v.duration.seconds()).unwrap_or(0),
+                        ),
                     };
-                    match send_result {
-                        Ok(sent_message) => {
-                            let (file_size, duration) = match format {
-                                PipelineFormat::Audio { .. } => (
-                                    sent_message.audio().map(|a| a.file.size).unwrap_or(0) as u64,
-                                    sent_message.audio().map(|a| a.duration.seconds()).unwrap_or(0),
-                                ),
-                                PipelineFormat::Video { .. } => (
-                                    sent_message.video().map(|v| v.file.size).unwrap_or(0) as u64,
-                                    sent_message.video().map(|v| v.duration.seconds()).unwrap_or(0),
-                                ),
-                            };
-                            return Ok(PipelineResult {
-                                sent_message,
-                                file_size,
-                                duration,
-                                title: String::new(),
-                                artist: String::new(),
-                                display_title: Arc::from("(cached)"),
-                                download_path: String::new(),
-                                output: DownloadOutput {
-                                    file_path: String::new(),
-                                    file_size: 0,
-                                    duration_secs: Some(duration),
-                                    mime_hint: None,
-                                    additional_files: None,
-                                },
-                            });
-                        }
-                        Err(e) => {
-                            log::warn!(
-                                "Pipeline: file_id cache send failed (file_id may be expired), falling through: {}",
-                                e
-                            );
-                        }
-                    }
+                    return Ok(PipelineResult {
+                        sent_message,
+                        file_size,
+                        duration,
+                        title: String::new(),
+                        artist: String::new(),
+                        display_title: Arc::from("(cached)"),
+                        download_path: String::new(),
+                        output: DownloadOutput {
+                            file_path: String::new(),
+                            file_size: 0,
+                            duration_secs: Some(duration),
+                            mime_hint: None,
+                            additional_files: None,
+                        },
+                    });
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Pipeline: file_id cache send failed (file_id may be expired), falling through: {}",
+                        e
+                    );
                 }
             }
         }
     }
 
-    let phase = download_phase(bot, chat_id, url, format, registry, progress_msg, message_id).await?;
+    let phase = download_phase(
+        bot,
+        chat_id,
+        url,
+        format,
+        registry,
+        progress_msg,
+        message_id,
+        shared_storage,
+    )
+    .await?;
     let DownloadPhaseResult {
         output: download_output,
         title,
@@ -576,13 +604,18 @@ pub async fn execute(
     // ── Step 8: Send to Telegram ──
     let duration = download_output.duration_secs.unwrap_or(0);
 
-    let send_as_document = if let Some(pool) = db_pool {
-        match db::get_connection(pool) {
-            Ok(conn) => match format {
-                PipelineFormat::Audio { .. } => db::get_user_send_audio_as_document(&conn, chat_id.0).unwrap_or(0) == 1,
-                PipelineFormat::Video { .. } => db::get_user_send_as_document(&conn, chat_id.0).unwrap_or(0) == 1,
-            },
-            Err(_) => false,
+    let send_as_document = if let Some(storage) = shared_storage {
+        match format {
+            PipelineFormat::Audio { .. } => storage
+                .get_user_send_audio_as_document(chat_id.0)
+                .await
+                .map(|value| value == 1)
+                .unwrap_or(false),
+            PipelineFormat::Video { .. } => storage
+                .get_user_send_as_document(chat_id.0)
+                .await
+                .map(|value| value == 1)
+                .unwrap_or(false),
         }
     } else {
         false
@@ -709,32 +742,31 @@ pub async fn execute(
         .await;
 
     // ── Step 10: Save to download history ──
-    if let Some(pool) = db_pool {
-        if let Ok(conn) = db::get_connection(pool) {
-            let file_id = match format {
-                PipelineFormat::Audio { .. } => sent_message
-                    .audio()
-                    .map(|a| a.file.id.0.clone())
-                    .or_else(|| sent_message.document().map(|d| d.file.id.0.clone())),
-                PipelineFormat::Video { .. } => sent_message
-                    .video()
-                    .map(|v| v.file.id.0.clone())
-                    .or_else(|| sent_message.document().map(|d| d.file.id.0.clone())),
-            };
+    if let Some(storage) = shared_storage {
+        let file_id = match format {
+            PipelineFormat::Audio { .. } => sent_message
+                .audio()
+                .map(|a| a.file.id.0.clone())
+                .or_else(|| sent_message.document().map(|d| d.file.id.0.clone())),
+            PipelineFormat::Video { .. } => sent_message
+                .video()
+                .map(|v| v.file.id.0.clone())
+                .or_else(|| sent_message.document().map(|d| d.file.id.0.clone())),
+        };
 
-            let author_opt = if !artist.trim().is_empty() {
-                Some(artist.as_str())
-            } else {
-                None
-            };
+        let author_opt = if !artist.trim().is_empty() {
+            Some(artist.as_str())
+        } else {
+            None
+        };
 
-            let (video_quality_opt, audio_bitrate_opt) = match format {
-                PipelineFormat::Audio { ref bitrate, .. } => (None, bitrate.as_deref().or(Some("320k"))),
-                PipelineFormat::Video { ref quality, .. } => (quality.as_deref(), None),
-            };
+        let (video_quality_opt, audio_bitrate_opt) = match format {
+            PipelineFormat::Audio { ref bitrate, .. } => (None, bitrate.as_deref().or(Some("320k"))),
+            PipelineFormat::Video { ref quality, .. } => (quality.as_deref(), None),
+        };
 
-            match save_download_history(
-                &conn,
+        match storage
+            .save_download_history(
                 chat_id.0,
                 url.as_str(),
                 title.as_str(),
@@ -747,49 +779,46 @@ pub async fn execute(
                 audio_bitrate_opt,
                 None,
                 None,
-            ) {
-                Ok(db_id) => {
-                    let sent_msg_id = sent_message.id.0;
-                    if let Err(e) = db::update_download_message_id(&conn, db_id, sent_msg_id, chat_id.0) {
-                        log::warn!("Failed to save message_id for download {}: {}", db_id, e);
+            )
+            .await
+        {
+            Ok(db_id) => {
+                let sent_msg_id = sent_message.id.0;
+                if let Err(e) = storage.update_download_message_id(db_id, sent_msg_id, chat_id.0).await {
+                    log::warn!("Failed to save message_id for download {}: {}", db_id, e);
+                }
+                // Auto-categorize in background if user has categories and API key is set
+                let storage_c = Arc::clone(storage);
+                let title_c = title.clone();
+                let artist_c = artist.clone();
+                let user_id_c = chat_id.0;
+                tokio::spawn(async move {
+                    let Ok(cats) = storage_c.get_user_categories(user_id_c).await else {
+                        return;
+                    };
+                    if cats.is_empty() {
+                        return;
                     }
-                    // Auto-categorize in background if user has categories and API key is set
-                    let db_pool_c = Arc::clone(pool);
-                    let title_c = title.clone();
-                    let artist_c = artist.clone();
-                    let user_id_c = chat_id.0;
-                    tokio::spawn(async move {
-                        let Ok(conn_c) = db::get_connection(&db_pool_c) else {
-                            return;
-                        };
-                        let Ok(cats) = db::get_user_categories(&conn_c, user_id_c) else {
-                            return;
-                        };
-                        if cats.is_empty() {
-                            return;
-                        }
-                        let Some(category) =
-                            crate::core::categorizer::suggest_category(&cats, &title_c, &artist_c).await
-                        else {
-                            return;
-                        };
-                        if let Err(e) = db::set_download_category(&conn_c, user_id_c, db_id, Some(&category)) {
-                            log::warn!("Failed to auto-set category for download {}: {}", db_id, e);
-                        } else {
-                            log::info!("auto-categorized download {} → '{}'", db_id, category);
-                        }
-                    });
-                }
-                Err(e) => {
-                    log::warn!("Failed to save download history: {}", e);
-                }
+                    let Some(category) = crate::core::categorizer::suggest_category(&cats, &title_c, &artist_c).await
+                    else {
+                        return;
+                    };
+                    if let Err(e) = storage_c.set_download_category(user_id_c, db_id, Some(&category)).await {
+                        log::warn!("Failed to auto-set category for download {}: {}", db_id, e);
+                    } else {
+                        log::info!("auto-categorized download {} → '{}'", db_id, category);
+                    }
+                });
+            }
+            Err(e) => {
+                log::warn!("Failed to save download history: {}", e);
             }
         }
     }
 
     // ── Step 10b: Send to vault (audio only, fire-and-forget) ──
     if matches!(format, PipelineFormat::Audio { .. }) {
-        if let Some(pool) = db_pool {
+        if let Some(shared_storage) = shared_storage {
             let file_id_for_vault = sent_message
                 .audio()
                 .map(|a| a.file.id.0.clone())
@@ -797,7 +826,7 @@ pub async fn execute(
             if let Some(fid) = file_id_for_vault {
                 crate::download::vault::send_to_vault_background(
                     bot.clone(),
-                    Arc::clone(pool),
+                    Arc::clone(shared_storage),
                     chat_id.0,
                     url.to_string(),
                     fid,

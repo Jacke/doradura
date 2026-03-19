@@ -2,43 +2,40 @@
 //!
 //! Callback prefix: `vault:`
 
-use crate::storage::db::{self, DbPool};
+use crate::storage::db::DbPool;
+use crate::storage::SharedStorage;
 use crate::telegram::Bot;
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
 use teloxide::prelude::*;
 use teloxide::types::{CallbackQueryId, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId};
-use tokio::sync::RwLock;
 
-static VAULT_SETUP_STATES: std::sync::LazyLock<Arc<RwLock<HashMap<i64, Instant>>>> =
-    std::sync::LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
+const VAULT_SETUP_PROMPT_KIND: &str = "vault_setup";
+const VAULT_SETUP_TTL_SECS: i64 = 300;
 
-pub async fn is_waiting_for_vault_setup(user_id: i64) -> bool {
-    let states = VAULT_SETUP_STATES.read().await;
-    if let Some(ts) = states.get(&user_id) {
-        ts.elapsed().as_secs() < 300
-    } else {
-        false
-    }
+pub async fn is_waiting_for_vault_setup(shared_storage: &Arc<SharedStorage>, user_id: i64) -> bool {
+    shared_storage
+        .get_prompt_session(user_id, VAULT_SETUP_PROMPT_KIND)
+        .await
+        .ok()
+        .flatten()
+        .is_some()
 }
 
-async fn set_waiting_for_vault_setup(user_id: i64, waiting: bool) {
-    let mut states = VAULT_SETUP_STATES.write().await;
+async fn set_waiting_for_vault_setup(shared_storage: &Arc<SharedStorage>, user_id: i64, waiting: bool) {
     if waiting {
-        // Evict expired entries (>5 min old) before inserting
-        states.retain(|_, ts| ts.elapsed().as_secs() < 300);
-        // Cap total size to prevent unbounded growth
-        if states.len() >= 10_000 {
-            log::warn!(
-                "VAULT_SETUP_STATES at capacity, rejecting new entry for user {}",
-                user_id
-            );
-            return;
+        if let Err(e) = shared_storage
+            .upsert_prompt_session(user_id, VAULT_SETUP_PROMPT_KIND, "", VAULT_SETUP_TTL_SECS)
+            .await
+        {
+            log::error!("Failed to set vault setup prompt for user {}: {}", user_id, e);
         }
-        states.insert(user_id, Instant::now());
     } else {
-        states.remove(&user_id);
+        if let Err(e) = shared_storage
+            .delete_prompt_session(user_id, VAULT_SETUP_PROMPT_KIND)
+            .await
+        {
+            log::error!("Failed to clear vault setup prompt for user {}: {}", user_id, e);
+        }
     }
 }
 
@@ -49,13 +46,14 @@ pub async fn handle_vault_callback(
     message_id: MessageId,
     data: &str,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
     let suffix = data.strip_prefix("vault:").unwrap_or(data);
 
     match suffix {
-        "menu" => show_vault_menu(bot, chat_id, message_id, &db_pool).await,
+        "menu" => show_vault_menu(bot, chat_id, message_id, &db_pool, &shared_storage).await,
         "setup" => {
-            set_waiting_for_vault_setup(chat_id.0, true).await;
+            set_waiting_for_vault_setup(&shared_storage, chat_id.0, true).await;
             let text = "\
 \u{1f5c4} *Vault Setup*\n\n\
 Steps:\n\
@@ -74,21 +72,15 @@ _Or send the channel @username or t\\.me/username link_";
                 .await;
         }
         "disable" => {
-            if let Ok(conn) = db::get_connection(&db_pool) {
-                let _ = db::deactivate_user_vault(&conn, chat_id.0);
-            }
-            show_vault_menu(bot, chat_id, message_id, &db_pool).await;
+            let _ = shared_storage.deactivate_user_vault(chat_id.0).await;
+            show_vault_menu(bot, chat_id, message_id, &db_pool, &shared_storage).await;
         }
         "enable" => {
-            if let Ok(conn) = db::get_connection(&db_pool) {
-                let _ = db::activate_user_vault(&conn, chat_id.0);
-            }
-            show_vault_menu(bot, chat_id, message_id, &db_pool).await;
+            let _ = shared_storage.activate_user_vault(chat_id.0).await;
+            show_vault_menu(bot, chat_id, message_id, &db_pool, &shared_storage).await;
         }
         "clear" => {
-            if let Ok(conn) = db::get_connection(&db_pool) {
-                let _ = db::clear_vault_cache(&conn, chat_id.0);
-            }
+            let _ = shared_storage.clear_vault_cache(chat_id.0).await;
             let _ = bot
                 .edit_message_text(chat_id, message_id, "\u{1f5d1} Cache cleared.")
                 .reply_markup(InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
@@ -98,10 +90,8 @@ _Or send the channel @username or t\\.me/username link_";
                 .await;
         }
         "disconnect" => {
-            if let Ok(conn) = db::get_connection(&db_pool) {
-                let _ = db::clear_vault_cache(&conn, chat_id.0);
-                let _ = db::delete_user_vault(&conn, chat_id.0);
-            }
+            let _ = shared_storage.clear_vault_cache(chat_id.0).await;
+            let _ = shared_storage.delete_user_vault(chat_id.0).await;
             let _ = bot
                 .edit_message_text(chat_id, message_id, "\u{2705} Vault disconnected.")
                 .reply_markup(InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
@@ -116,19 +106,21 @@ _Or send the channel @username or t\\.me/username link_";
     Ok(())
 }
 
-async fn show_vault_menu(bot: &Bot, chat_id: ChatId, message_id: MessageId, db_pool: &Arc<DbPool>) {
-    set_waiting_for_vault_setup(chat_id.0, false).await;
+async fn show_vault_menu(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
+) {
+    set_waiting_for_vault_setup(shared_storage, chat_id.0, false).await;
 
-    let conn = match db::get_connection(db_pool) {
-        Ok(c) => c,
-        Err(_) => return,
-    };
-
-    let vault = db::get_user_vault(&conn, chat_id.0).ok().flatten();
+    let _ = db_pool;
+    let vault = shared_storage.get_user_vault(chat_id.0).await.ok().flatten();
 
     match vault {
         Some(v) => {
-            let (count, total_bytes) = db::get_vault_cache_stats(&conn, chat_id.0);
+            let (count, total_bytes) = shared_storage.get_vault_cache_stats(chat_id.0).await.unwrap_or((0, 0));
             let size_mb = total_bytes as f64 / (1024.0 * 1024.0);
             let channel_name = v.channel_title.as_deref().unwrap_or("Unknown");
             let status = if v.is_active {
@@ -189,15 +181,28 @@ async fn show_vault_menu(bot: &Bot, chat_id: ChatId, message_id: MessageId, db_p
 }
 
 /// Handle vault setup input: forwarded message or channel link.
-pub async fn handle_vault_setup_input(bot: &Bot, msg: &teloxide::types::Message, db_pool: &Arc<DbPool>) {
-    set_waiting_for_vault_setup(msg.chat.id.0, false).await;
+pub async fn handle_vault_setup_input(
+    bot: &Bot,
+    msg: &teloxide::types::Message,
+    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
+) {
+    set_waiting_for_vault_setup(shared_storage, msg.chat.id.0, false).await;
     let chat_id = msg.chat.id;
 
     // Try forwarded message first
     if let Some(teloxide::types::MessageOrigin::Channel { chat, .. }) = msg.forward_origin() {
         let channel_id = chat.id.0;
         let channel_title = chat.title().map(|s| s.to_string());
-        if let Err(reason) = verify_and_save_vault(bot, db_pool, chat_id.0, channel_id, channel_title.as_deref()).await
+        if let Err(reason) = verify_and_save_vault(
+            bot,
+            db_pool,
+            shared_storage,
+            chat_id.0,
+            channel_id,
+            channel_title.as_deref(),
+        )
+        .await
         {
             let _ = bot.send_message(chat_id, reason).await;
         }
@@ -253,8 +258,15 @@ pub async fn handle_vault_setup_input(bot: &Bot, msg: &teloxide::types::Message,
                         let _ = bot.send_message(chat_id, "\u{274c} Could not resolve channel").await;
                         return;
                     }
-                    if let Err(reason) =
-                        verify_and_save_vault(bot, db_pool, chat_id.0, channel_id, channel_title.as_deref()).await
+                    if let Err(reason) = verify_and_save_vault(
+                        bot,
+                        db_pool,
+                        shared_storage,
+                        chat_id.0,
+                        channel_id,
+                        channel_title.as_deref(),
+                    )
+                    .await
                     {
                         let _ = bot.send_message(chat_id, reason).await;
                     }
@@ -277,6 +289,7 @@ pub async fn handle_vault_setup_input(bot: &Bot, msg: &teloxide::types::Message,
 async fn verify_and_save_vault(
     bot: &Bot,
     db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
     user_id: i64,
     channel_id: i64,
     channel_title: Option<&str>,
@@ -297,8 +310,11 @@ async fn verify_and_save_vault(
     let _ = bot.delete_message(channel_chat_id, test_msg.id).await;
 
     // Save vault
-    let conn = db::get_connection(db_pool).map_err(|e| format!("DB error: {}", e))?;
-    db::set_user_vault(&conn, user_id, channel_id, channel_title).map_err(|e| format!("DB error: {}", e))?;
+    let _ = db_pool;
+    shared_storage
+        .set_user_vault(user_id, channel_id, channel_title)
+        .await
+        .map_err(|e| format!("DB error: {}", e))?;
 
     let title = channel_title.unwrap_or("your channel");
     let _ = bot

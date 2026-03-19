@@ -30,7 +30,8 @@ use crate::download::ytdlp;
 
 use crate::core::config::admin::{ADMIN_IDS, ADMIN_USER_ID};
 use crate::storage::backup::{create_backup, list_backups};
-use crate::storage::db::{get_all_users, get_connection, update_user_plan, update_user_plan_with_expiry, DbPool};
+use crate::storage::db::DbPool;
+use crate::storage::SharedStorage;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::net::TcpStream;
@@ -801,6 +802,7 @@ pub async fn handle_users_command(
     username: Option<&str>,
     user_id: i64,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> Result<()> {
     log::debug!("Users command: username={:?}, is_admin={}", username, is_admin(user_id));
 
@@ -811,8 +813,8 @@ pub async fn handle_users_command(
         return Ok(());
     }
 
-    let conn = get_connection(&db_pool)?;
-    let users = get_all_users(&conn)?;
+    let _ = db_pool;
+    let users = shared_storage.get_all_users().await?;
 
     log::debug!("Found {} users in database", users.len());
 
@@ -943,7 +945,7 @@ pub async fn handle_setplan_command(
     chat_id: ChatId,
     user_id: i64,
     message_text: &str,
-    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> Result<()> {
     if !is_admin(user_id) {
         bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
@@ -1008,19 +1010,10 @@ pub async fn handle_setplan_command(
         None
     };
 
-    let conn = get_connection(&db_pool)?;
-
-    // Update plan with optional expiry date
-    if let Some(days_count) = days {
-        update_user_plan_with_expiry(&conn, user_id, plan, Some(days_count))?;
-    } else {
-        // For free plan, clear expiry; for paid plans without days, set as unlimited
-        if plan == "free" {
-            update_user_plan_with_expiry(&conn, user_id, plan, None)?;
-        } else {
-            update_user_plan(&conn, user_id, plan)?;
-        }
-    }
+    let expiry_days = if plan == "free" { None } else { days };
+    shared_storage
+        .update_user_plan_with_expiry(user_id, plan, expiry_days)
+        .await?;
 
     let (plan_emoji, plan_name) = match plan {
         "premium" => ("⭐", "Premium"),
@@ -1075,15 +1068,21 @@ pub async fn handle_setplan_command(
 /// * `bot` - Bot instance
 /// * `chat_id` - Chat ID where to send response
 /// * `user_id` - Telegram user ID of the requester
-/// * `db_pool` - Database connection pool
-pub async fn handle_admin_command(bot: &Bot, chat_id: ChatId, user_id: i64, db_pool: Arc<DbPool>) -> Result<()> {
+/// * `shared_storage` - Shared runtime storage
+pub async fn handle_admin_command(
+    bot: &Bot,
+    chat_id: ChatId,
+    user_id: i64,
+    shared_storage: Arc<SharedStorage>,
+) -> Result<()> {
     if !is_admin(user_id) {
         bot.send_message(chat_id, "❌ You don't have permission to execute this command.")
             .await?;
         return Ok(());
     }
 
-    crate::telegram::menu::admin_users::show_user_list(bot, chat_id, None, &db_pool, 0, Default::default()).await?;
+    crate::telegram::menu::admin_users::show_user_list(bot, chat_id, None, &shared_storage, 0, Default::default())
+        .await?;
     Ok(())
 }
 
@@ -1135,7 +1134,7 @@ pub async fn handle_charges_command(
     bot: &Bot,
     chat_id: ChatId,
     user_id: i64,
-    db_pool: std::sync::Arc<crate::storage::db::DbPool>,
+    shared_storage: Arc<SharedStorage>,
     args: &str,
 ) -> Result<()> {
     if !is_admin(user_id) {
@@ -1144,20 +1143,11 @@ pub async fn handle_charges_command(
         return Ok(());
     }
 
-    let conn = match crate::storage::db::get_connection(&db_pool) {
-        Ok(c) => c,
-        Err(e) => {
-            bot.send_message(chat_id, format!("❌ DB connection error: {}", e))
-                .await?;
-            return Ok(());
-        }
-    };
-
     let args_trimmed = args.trim();
 
     // Handle stats request
     if args_trimmed == "stats" {
-        match crate::storage::db::get_charges_stats(&conn) {
+        match shared_storage.get_charges_stats().await {
             Ok((total_charges, total_amount, premium_count, vip_count, recurring_count)) => {
                 let text = format!(
                     "📊 *Payment Statistics*\n\n\
@@ -1206,9 +1196,9 @@ pub async fn handle_charges_command(
 
     // Get charges
     let charges = if let Some(user_id) = user_filter {
-        crate::storage::db::get_user_charges(&conn, user_id)
+        shared_storage.get_user_charges(user_id).await
     } else {
-        crate::storage::db::get_all_charges(&conn, plan_filter, Some(20), 0)
+        shared_storage.get_all_charges(plan_filter, Some(20), 0).await
     };
 
     match charges {
@@ -1947,10 +1937,9 @@ pub async fn handle_sent_files_command(
     user_id: i64,
     username: Option<&str>,
     db_pool: std::sync::Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
     message_text: &str,
 ) -> Result<()> {
-    use crate::storage::db::{get_connection, get_sent_files};
-
     // Check admin permissions
     if !is_admin(user_id) {
         bot.send_message(chat_id, "❌ This command is only available to administrators.")
@@ -1972,11 +1961,9 @@ pub async fn handle_sent_files_command(
         limit
     );
 
-    // Get connection from pool
-    let conn = get_connection(&db_pool)?;
+    let _ = db_pool;
 
-    // Retrieve sent files
-    match get_sent_files(&conn, limit) {
+    match shared_storage.get_sent_files(limit).await {
         Ok(files) => {
             if files.is_empty() {
                 bot.send_message(
@@ -2114,7 +2101,8 @@ pub async fn handle_diagnose_cookies_command(bot: &Bot, chat_id: ChatId, user_id
 /// User sends: `/update_cookies`
 /// Bot responds: `📤 Send your cookies file`
 pub async fn handle_update_cookies_command(
-    db_pool: Arc<crate::storage::db::DbPool>,
+    _db_pool: Arc<crate::storage::db::DbPool>,
+    shared_storage: Arc<SharedStorage>,
     bot: &Bot,
     chat_id: ChatId,
     user_id: i64,
@@ -2138,8 +2126,6 @@ pub async fn handle_update_cookies_command(
 
     // Create cookies upload session
 
-    let conn = crate::storage::db::get_connection(&db_pool)?;
-
     let session = crate::storage::db::CookiesUploadSession {
         id: uuid::Uuid::new_v4().to_string(),
         user_id,
@@ -2147,7 +2133,7 @@ pub async fn handle_update_cookies_command(
         expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
     };
 
-    crate::storage::db::upsert_cookies_upload_session(&conn, &session)?;
+    shared_storage.upsert_cookies_upload_session(&session).await?;
 
     log::info!("✅ Created cookies upload session for admin {}", user_id);
 
@@ -2305,7 +2291,8 @@ pub async fn notify_admin_cookies_refresh(bot: &Bot, admin_id: i64, reason: &str
 }
 
 pub async fn handle_cookies_file_upload(
-    db_pool: Arc<crate::storage::db::DbPool>,
+    _db_pool: Arc<crate::storage::db::DbPool>,
+    shared_storage: Arc<SharedStorage>,
     bot: &Bot,
     chat_id: ChatId,
     user_id: i64,
@@ -2320,9 +2307,7 @@ pub async fn handle_cookies_file_upload(
 
     // Check if there's an active cookies upload session
 
-    let conn = crate::storage::db::get_connection(&db_pool)?;
-
-    let session = crate::storage::db::get_active_cookies_upload_session(&conn, user_id)?;
+    let session = shared_storage.get_active_cookies_upload_session(user_id).await?;
     if session.is_none() {
         log::warn!("❌ No active cookies upload session for user {}", user_id);
         return Ok(()); // Silently ignore if no session
@@ -2363,8 +2348,10 @@ pub async fn handle_cookies_file_upload(
                             // Delete temp file
                             let _ = tokio::fs::remove_file(&file_path).await;
 
-                            // Delete session
-                            crate::storage::db::delete_cookies_upload_session_by_user(&conn, user_id)?;
+                            // Delete session (best-effort — don't block cookies refresh on cleanup failure)
+                            if let Err(e) = shared_storage.delete_cookies_upload_session_by_user(user_id).await {
+                                log::warn!("Failed to delete cookies upload session for user {}: {}", user_id, e);
+                            }
 
                             // Delete processing message
                             let _ = bot.delete_message(chat_id, processing_msg.id).await;
@@ -2455,7 +2442,7 @@ pub async fn handle_cookies_file_upload(
                             log::error!("❌ Failed to update cookies file: {}", e);
                             let _ = tokio::fs::remove_file(&file_path).await;
                             let _ = bot.delete_message(chat_id, processing_msg.id).await;
-                            crate::storage::db::delete_cookies_upload_session_by_user(&conn, user_id)?;
+                            shared_storage.delete_cookies_upload_session_by_user(user_id).await?;
 
                             let error_message = format!(
                                 "❌ *Error updating cookies:*\n\n{}\n\n\
@@ -2476,7 +2463,7 @@ pub async fn handle_cookies_file_upload(
                     log::error!("❌ Failed to read cookies file: {}", e);
                     let _ = tokio::fs::remove_file(&file_path).await;
                     let _ = bot.delete_message(chat_id, processing_msg.id).await;
-                    crate::storage::db::delete_cookies_upload_session_by_user(&conn, user_id)?;
+                    shared_storage.delete_cookies_upload_session_by_user(user_id).await?;
 
                     bot.send_message(
                         chat_id,
@@ -2490,7 +2477,7 @@ pub async fn handle_cookies_file_upload(
         Err(e) => {
             log::error!("❌ Failed to download cookies file: {}", e);
             let _ = bot.delete_message(chat_id, processing_msg.id).await;
-            crate::storage::db::delete_cookies_upload_session_by_user(&conn, user_id)?;
+            shared_storage.delete_cookies_upload_session_by_user(user_id).await?;
 
             bot.send_message(
                 chat_id,
@@ -2510,7 +2497,8 @@ pub async fn handle_cookies_file_upload(
 ///
 /// Creates a short-lived upload session for Instagram cookies file.
 pub async fn handle_update_ig_cookies_command(
-    db_pool: Arc<crate::storage::db::DbPool>,
+    _db_pool: Arc<crate::storage::db::DbPool>,
+    shared_storage: Arc<SharedStorage>,
     bot: &Bot,
     chat_id: ChatId,
     user_id: i64,
@@ -2529,8 +2517,6 @@ pub async fn handle_update_ig_cookies_command(
         return Ok(());
     }
 
-    let conn = crate::storage::db::get_connection(&db_pool)?;
-
     let session = crate::storage::db::CookiesUploadSession {
         id: uuid::Uuid::new_v4().to_string(),
         user_id,
@@ -2538,7 +2524,7 @@ pub async fn handle_update_ig_cookies_command(
         expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
     };
 
-    crate::storage::db::upsert_ig_cookies_upload_session(&conn, &session)?;
+    shared_storage.upsert_ig_cookies_upload_session(&session).await?;
 
     log::info!("✅ Created IG cookies upload session for admin {}", user_id);
 
@@ -2562,7 +2548,8 @@ pub async fn handle_update_ig_cookies_command(
 
 /// Handles Instagram cookies file upload after /update_ig_cookies command
 pub async fn handle_ig_cookies_file_upload(
-    db_pool: Arc<crate::storage::db::DbPool>,
+    _db_pool: Arc<crate::storage::db::DbPool>,
+    shared_storage: Arc<SharedStorage>,
     bot: &Bot,
     chat_id: ChatId,
     user_id: i64,
@@ -2575,9 +2562,7 @@ pub async fn handle_ig_cookies_file_upload(
         document.file.id
     );
 
-    let conn = crate::storage::db::get_connection(&db_pool)?;
-
-    let session = crate::storage::db::get_active_ig_cookies_upload_session(&conn, user_id)?;
+    let session = shared_storage.get_active_ig_cookies_upload_session(user_id).await?;
     if session.is_none() {
         log::warn!("❌ No active IG cookies upload session for user {}", user_id);
         return Ok(());
@@ -2604,7 +2589,7 @@ pub async fn handle_ig_cookies_file_upload(
                 match cookies::update_ig_cookies_from_content(&content).await {
                     Ok(path) => {
                         let _ = tokio::fs::remove_file(&file_path).await;
-                        crate::storage::db::delete_ig_cookies_upload_session_by_user(&conn, user_id)?;
+                        shared_storage.delete_ig_cookies_upload_session_by_user(user_id).await?;
                         let _ = bot.delete_message(chat_id, processing_msg.id).await;
 
                         let diagnostic_report = diagnostic.format_report();
@@ -2668,7 +2653,7 @@ pub async fn handle_ig_cookies_file_upload(
                         log::error!("❌ Failed to update IG cookies file: {}", e);
                         let _ = tokio::fs::remove_file(&file_path).await;
                         let _ = bot.delete_message(chat_id, processing_msg.id).await;
-                        crate::storage::db::delete_ig_cookies_upload_session_by_user(&conn, user_id)?;
+                        shared_storage.delete_ig_cookies_upload_session_by_user(user_id).await?;
 
                         let error_message = format!(
                             "❌ *Error updating Instagram cookies:*\n\n{}\n\n\
@@ -2688,7 +2673,7 @@ pub async fn handle_ig_cookies_file_upload(
                 log::error!("❌ Failed to read IG cookies file: {}", e);
                 let _ = tokio::fs::remove_file(&file_path).await;
                 let _ = bot.delete_message(chat_id, processing_msg.id).await;
-                crate::storage::db::delete_ig_cookies_upload_session_by_user(&conn, user_id)?;
+                shared_storage.delete_ig_cookies_upload_session_by_user(user_id).await?;
 
                 bot.send_message(
                     chat_id,
@@ -2701,7 +2686,7 @@ pub async fn handle_ig_cookies_file_upload(
         Err(e) => {
             log::error!("❌ Failed to download IG cookies file: {}", e);
             let _ = bot.delete_message(chat_id, processing_msg.id).await;
-            crate::storage::db::delete_ig_cookies_upload_session_by_user(&conn, user_id)?;
+            shared_storage.delete_ig_cookies_upload_session_by_user(user_id).await?;
 
             bot.send_message(
                 chat_id,
@@ -3286,6 +3271,7 @@ pub async fn handle_send_command(
     user_id: i64,
     message_text: &str,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> Result<()> {
     if !is_admin(user_id) {
         bot.send_message(chat_id, "Access denied.").await?;
@@ -3314,8 +3300,8 @@ pub async fn handle_send_command(
     let text = parts[2].trim();
 
     // Check that user exists in DB
-    let conn = get_connection(&db_pool)?;
-    if crate::storage::db::get_user(&conn, target_id)?.is_none() {
+    let _ = db_pool;
+    if shared_storage.get_user(target_id).await?.is_none() {
         bot.send_message(chat_id, format!("User {} not found in database.", target_id))
             .await?;
         return Ok(());
@@ -3350,6 +3336,7 @@ pub async fn handle_broadcast_command(
     user_id: i64,
     message_text: &str,
     db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
 ) -> Result<()> {
     if !is_admin(user_id) {
         bot.send_message(chat_id, "Access denied.").await?;
@@ -3368,8 +3355,8 @@ pub async fn handle_broadcast_command(
         }
     };
 
-    let conn = get_connection(&db_pool)?;
-    let users = get_all_users(&conn)?;
+    let _ = db_pool;
+    let users = shared_storage.get_all_users().await?;
     let total = users.len();
 
     bot.send_message(chat_id, format!("Broadcasting to {} users...", total))

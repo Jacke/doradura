@@ -302,6 +302,7 @@ pub async fn cleanup_cache() -> usize {
 }
 
 use crate::storage::db::{get_connection, DbPool};
+use crate::storage::SharedStorage;
 
 /// Generates a short ID from a URL (first 12 characters of hash)
 fn generate_url_id(url: &str) -> String {
@@ -318,7 +319,7 @@ fn generate_url_id(url: &str) -> String {
 ///
 /// The URL is stored in the url_cache table with a 7-day TTL.
 /// This allows buttons to work even after a bot restart.
-pub async fn store_url(db_pool: &DbPool, url: &str) -> String {
+pub async fn store_url(db_pool: &DbPool, shared_storage: Option<&SharedStorage>, url: &str) -> String {
     let id = generate_url_id(url);
     let ttl_seconds = 7 * 24 * 60 * 60; // 7 days - long enough for buttons to work after restart
 
@@ -326,7 +327,15 @@ pub async fn store_url(db_pool: &DbPool, url: &str) -> String {
     let expires_at = chrono::Utc::now() + chrono::Duration::seconds(ttl_seconds);
     let expires_at_str = expires_at.format("%Y-%m-%d %H:%M:%S").to_string();
 
-    // Save to DB (INSERT OR REPLACE to update existing records)
+    if let Some(storage) = shared_storage {
+        if let Err(e) = storage.store_cached_url(&id, url, &expires_at_str).await {
+            log::error!("Failed to store URL in shared cache: {}", e);
+        } else {
+            log::debug!("Stored URL in shared cache: {} -> {}", id, url);
+        }
+        return id;
+    }
+
     match get_connection(db_pool) {
         Ok(conn) => {
             if let Err(e) = conn.execute(
@@ -349,7 +358,24 @@ pub async fn store_url(db_pool: &DbPool, url: &str) -> String {
 /// Gets a URL by its short ID from the DB
 ///
 /// Returns None if the ID is not found or the record has expired.
-pub async fn get_url(db_pool: &DbPool, id: &str) -> Option<String> {
+pub async fn get_url(db_pool: &DbPool, shared_storage: Option<&SharedStorage>, id: &str) -> Option<String> {
+    if let Some(storage) = shared_storage {
+        match storage.get_cached_url(id).await {
+            Ok(Some(url)) => {
+                log::debug!("Retrieved URL from shared cache: {} -> {}", id, url);
+                return Some(url);
+            }
+            Ok(None) => {
+                log::debug!("URL not found in shared cache for ID: {}", id);
+                // Fall through to SQLite lookup below
+            }
+            Err(e) => {
+                log::warn!("Failed to get URL from shared cache: {}, falling back to SQLite", e);
+                // Fall through to SQLite lookup below
+            }
+        }
+    }
+
     match get_connection(db_pool) {
         Ok(conn) => {
             let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();

@@ -10,7 +10,7 @@
 use anyhow::Result;
 use dotenvy::dotenv;
 
-use doradura::cli::{Cli, Commands};
+use doradura::cli::{Cli, Commands, WebhookCommand};
 use doradura::core::{config, init_logger};
 
 #[tokio::main]
@@ -38,9 +38,11 @@ async fn main() -> Result<()> {
         }
         Some(Commands::RunStaging { webhook }) => {
             log::info!("Running bot in staging mode (webhook: {})", webhook);
-            if let Err(e) = dotenvy::from_filename(".env.staging") {
-                log::warn!("Failed to load .env.staging: {}", e);
+            if let Err(e) = dotenvy::from_filename_override(".env.staging") {
+                anyhow::bail!("Failed to load .env.staging: {}", e);
             }
+            // Safety: runs before any concurrent access to env vars
+            unsafe { std::env::set_var("DORADURA_STAGING", "1") };
             doradura::startup::run_bot(webhook).await
         }
         Some(Commands::RunWithCookies { cookies, webhook }) => {
@@ -77,6 +79,18 @@ async fn main() -> Result<()> {
             verbose,
         }) => doradura::cli_commands::run_cli_download(url, format, quality, bitrate, output, verbose).await,
         Some(Commands::Info { url, json }) => doradura::cli_commands::run_cli_info(url, json).await,
+        Some(Commands::Webhook { command }) => {
+            let bot = doradura::telegram::create_bot()?;
+            match command {
+                WebhookCommand::Set { drop_pending_updates } => {
+                    doradura::webhook::set_webhook(&bot, drop_pending_updates).await
+                }
+                WebhookCommand::Delete { drop_pending_updates } => {
+                    doradura::webhook::delete_webhook(&bot, drop_pending_updates).await
+                }
+                WebhookCommand::Info => doradura::webhook::print_webhook_info(&bot).await,
+            }
+        }
         None => {
             log::info!("No command specified, running bot in default mode");
             doradura::startup::run_bot(false).await

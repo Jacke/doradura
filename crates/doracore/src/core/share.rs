@@ -4,8 +4,7 @@
 //! Odesli streaming links and an ambilight UI.
 
 use crate::core::odesli::{self, StreamingLinks};
-use crate::storage::db::DbPool;
-use crate::storage::get_connection;
+use crate::storage::SharedStorage;
 use std::sync::Arc;
 
 /// Data stored and returned for a share page.
@@ -25,7 +24,7 @@ pub struct SharePageData {
 /// - The URL is not a YouTube URL
 /// - DB insertion fails
 pub async fn create_share_page(
-    db: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
     youtube_url: &str,
     title: &str,
     artist: Option<&str>,
@@ -67,22 +66,18 @@ pub async fn create_share_page(
         serde_json::Value::Object(map).to_string()
     });
 
-    // Insert into DB
-    let conn = get_connection(db).ok()?;
-    let result = conn.execute(
-        "INSERT INTO share_pages (id, youtube_url, title, artist, thumbnail_url, duration_secs, streaming_links) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        rusqlite::params![
-            id,
+    if let Err(e) = shared_storage
+        .create_share_page_record(
+            &id,
             youtube_url,
             title,
             artist,
             thumbnail_url,
             duration_secs.map(|d| d as i64),
-            links_json,
-        ],
-    );
-
-    if let Err(e) = result {
+            links_json.as_deref(),
+        )
+        .await
+    {
         log::warn!("Failed to insert share page into DB: {}", e);
         return None;
     }
