@@ -70,6 +70,25 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
 
 /// Idempotently create tables that may have been lost to a migration rollback.
 fn ensure_tables(conn: &Connection) {
+    // V39: task_queue columns FIRST (SQLite has no ADD COLUMN IF NOT EXISTS)
+    let alter_stmts = [
+        "ALTER TABLE task_queue ADD COLUMN idempotency_key TEXT",
+        "ALTER TABLE task_queue ADD COLUMN worker_id TEXT",
+        "ALTER TABLE task_queue ADD COLUMN leased_at DATETIME",
+        "ALTER TABLE task_queue ADD COLUMN lease_expires_at DATETIME",
+        "ALTER TABLE task_queue ADD COLUMN last_heartbeat_at DATETIME",
+        "ALTER TABLE task_queue ADD COLUMN execute_at DATETIME",
+        "ALTER TABLE task_queue ADD COLUMN started_at DATETIME",
+        "ALTER TABLE task_queue ADD COLUMN finished_at DATETIME",
+        "ALTER TABLE task_queue ADD COLUMN message_id INTEGER",
+        "ALTER TABLE task_queue ADD COLUMN time_range_start TEXT",
+        "ALTER TABLE task_queue ADD COLUMN time_range_end TEXT",
+        "ALTER TABLE task_queue ADD COLUMN carousel_mask INTEGER",
+    ];
+    for sql in &alter_stmts {
+        let _ = conn.execute_batch(sql); // ignore "duplicate column" errors
+    }
+
     let stmts = [
         // V38: archive sessions
         "CREATE TABLE IF NOT EXISTS archive_sessions (
@@ -94,7 +113,7 @@ fn ensure_tables(conn: &Connection) {
             PRIMARY KEY (bot_id, update_id)
         )",
         "CREATE INDEX IF NOT EXISTS idx_processed_updates_created_at ON processed_updates(created_at)",
-        // V39: task_queue indexes
+        // V39: task_queue indexes (columns already added above)
         "CREATE INDEX IF NOT EXISTS idx_task_queue_runnable ON task_queue(status, priority DESC, created_at ASC)",
         "CREATE INDEX IF NOT EXISTS idx_task_queue_lease_expiry ON task_queue(status, lease_expires_at)",
         "CREATE INDEX IF NOT EXISTS idx_task_queue_user_pending ON task_queue(user_id, status, created_at ASC)",
@@ -103,25 +122,6 @@ fn ensure_tables(conn: &Connection) {
         if let Err(e) = conn.execute_batch(sql) {
             log::warn!("ensure_tables: {}", e);
         }
-    }
-
-    // V39: task_queue columns (SQLite has no ADD COLUMN IF NOT EXISTS)
-    let alter_stmts = [
-        "ALTER TABLE task_queue ADD COLUMN idempotency_key TEXT",
-        "ALTER TABLE task_queue ADD COLUMN worker_id TEXT",
-        "ALTER TABLE task_queue ADD COLUMN leased_at DATETIME",
-        "ALTER TABLE task_queue ADD COLUMN lease_expires_at DATETIME",
-        "ALTER TABLE task_queue ADD COLUMN last_heartbeat_at DATETIME",
-        "ALTER TABLE task_queue ADD COLUMN execute_at DATETIME",
-        "ALTER TABLE task_queue ADD COLUMN started_at DATETIME",
-        "ALTER TABLE task_queue ADD COLUMN finished_at DATETIME",
-        "ALTER TABLE task_queue ADD COLUMN message_id INTEGER",
-        "ALTER TABLE task_queue ADD COLUMN time_range_start TEXT",
-        "ALTER TABLE task_queue ADD COLUMN time_range_end TEXT",
-        "ALTER TABLE task_queue ADD COLUMN carousel_mask INTEGER",
-    ];
-    for sql in &alter_stmts {
-        let _ = conn.execute_batch(sql); // ignore "duplicate column" errors
     }
 
     // V39: unique index on idempotency_key (partial index)
