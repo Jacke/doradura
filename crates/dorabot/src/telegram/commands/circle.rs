@@ -1,0 +1,1953 @@
+use crate::conversion::video::{
+    calculate_video_note_split, is_too_long_for_split, to_video_notes_split, VIDEO_NOTE_MAX_DURATION,
+    VIDEO_NOTE_MAX_PARTS,
+};
+use crate::core::config;
+use crate::core::error::AppError;
+use crate::core::escape_markdown;
+use crate::i18n;
+use crate::storage::db::{self, DbPool};
+use crate::storage::SharedStorage;
+use crate::telegram::Bot;
+use fluent_templates::fluent_bundle::FluentArgs;
+use std::sync::Arc;
+use teloxide::prelude::*;
+use teloxide::types::ParseMode;
+
+use super::subtitles::{download_circle_subtitles, BurnSubsResult};
+
+/// Segment of video to cut
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct CutSegment {
+    pub start_secs: i64,
+    pub end_secs: i64,
+}
+
+pub fn parse_command_segment(text: &str, video_duration: Option<i64>) -> Option<(i64, i64, String)> {
+    let normalized = text.trim().to_lowercase();
+
+    // Strip speed modifiers if present (e.g., "first30 2x", "full speed1.5")
+    // We'll just parse the segment here, speed will be handled separately
+    let segment_part = normalized.split_whitespace().next().unwrap_or(&normalized);
+
+    // full - entire video
+    if segment_part == "full" {
+        let duration = video_duration?;
+        let end = duration.min(60); // Max 60 seconds for video notes
+        return Some((0, end, format!("00:00-{}", format_timestamp(end))));
+    }
+
+    // first<N> - first N seconds (first30, first15, etc.)
+    if let Some(num_str) = segment_part.strip_prefix("first") {
+        if let Ok(secs) = num_str.parse::<i64>() {
+            if secs > 0 && secs <= 60 {
+                return Some((0, secs, format!("00:00-{}", format_timestamp(secs))));
+            }
+        }
+    }
+
+    // last<N> - last N seconds (last30, last15, etc.)
+    if let Some(num_str) = segment_part.strip_prefix("last") {
+        if let Ok(secs) = num_str.parse::<i64>() {
+            let duration = video_duration?;
+            if secs > 0 && secs <= 60 && secs <= duration {
+                let start = (duration - secs).max(0);
+                return Some((
+                    start,
+                    duration,
+                    format!("{}-{}", format_timestamp(start), format_timestamp(duration)),
+                ));
+            }
+        }
+    }
+
+    // middle<N> - N seconds from the middle (middle30, middle15, etc.)
+    if let Some(num_str) = segment_part.strip_prefix("middle") {
+        if let Ok(secs) = num_str.parse::<i64>() {
+            let duration = video_duration?;
+            if secs > 0 && secs <= 60 && secs <= duration {
+                let start = ((duration - secs) / 2).max(0);
+                let end = start + secs;
+                return Some((
+                    start,
+                    end,
+                    format!("{}-{}", format_timestamp(start), format_timestamp(end)),
+                ));
+            }
+        }
+    }
+
+    None
+}
+
+/// Parse time range from text following a URL.
+/// Accepts "HH:MM:SS-HH:MM:SS" or "MM:SS-MM:SS" after the URL.
+pub fn parse_download_time_range(text: &str, url_text: &str) -> Option<(String, String)> {
+    let after = text.split(url_text).nth(1)?.trim();
+    let range_text = after.split_whitespace().next()?;
+    if range_text.is_empty() {
+        return None;
+    }
+    let normalized = range_text.replace(['—', '–', '−'], "-");
+    let (start_str, end_str) = normalized.split_once('-')?;
+    let start_secs = parse_timestamp_secs(start_str)?;
+    let end_secs = parse_timestamp_secs(end_str)?;
+    if end_secs <= start_secs {
+        return None;
+    }
+    Some((start_str.to_string(), end_str.to_string()))
+}
+
+pub fn parse_time_range_secs(text: &str) -> Option<(i64, i64)> {
+    let normalized = text.trim().replace(['—', '–', '−'], "-");
+    // Strip trailing speed modifier (e.g., "2:40:53-2:42:19 2x" -> "2:40:53-2:42:19")
+    let timestamp_part = normalized
+        .rsplit_once(' ')
+        .and_then(|(before, after)| {
+            let lower = after.to_lowercase();
+            if lower.ends_with('x') || lower.starts_with('x') || lower.starts_with("speed") {
+                Some(before)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(&normalized);
+    let cleaned = timestamp_part.replace(' ', "");
+    let (start_str, end_str) = cleaned.split_once('-')?;
+    let start = parse_timestamp_secs(start_str)?;
+    let end = parse_timestamp_secs(end_str)?;
+    if end <= start {
+        return None;
+    }
+    Some((start, end))
+}
+
+pub fn parse_timestamp_secs(text: &str) -> Option<i64> {
+    let parts: Vec<&str> = text.split(':').collect();
+    match parts.len() {
+        2 => {
+            let minutes: i64 = parts[0].parse().ok()?;
+            let seconds: i64 = parts[1].parse().ok()?;
+            if minutes < 0 || !(0..60).contains(&seconds) {
+                return None;
+            }
+            Some(minutes * 60 + seconds)
+        }
+        3 => {
+            let hours: i64 = parts[0].parse().ok()?;
+            let minutes: i64 = parts[1].parse().ok()?;
+            let seconds: i64 = parts[2].parse().ok()?;
+            if hours < 0 || minutes < 0 || !(0..60).contains(&minutes) || !(0..60).contains(&seconds) {
+                return None;
+            }
+            Some(hours * 3600 + minutes * 60 + seconds)
+        }
+        _ => None,
+    }
+}
+
+pub fn format_timestamp(secs: i64) -> String {
+    let secs = secs.max(0);
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    if h > 0 {
+        format!("{h:02}:{m:02}:{s:02}")
+    } else {
+        format!("{m:02}:{s:02}")
+    }
+}
+
+pub fn parse_segments_spec(text: &str, video_duration: Option<i64>) -> Option<(Vec<CutSegment>, String, Option<f32>)> {
+    let normalized = text.trim().replace(['—', '–', '−'], "-");
+
+    // Extract speed modifier from anywhere in the text (e.g., "first30 2x", "1.5x full", "speed2 middle30")
+    let speed = parse_speed_modifier(&normalized);
+
+    let raw_parts: Vec<&str> = normalized
+        .split([',', ';', '\n'])
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if raw_parts.is_empty() {
+        return None;
+    }
+
+    let mut segments = Vec::new();
+    let mut pretty_parts = Vec::new();
+    for part in raw_parts {
+        // Try parsing as command first (full, first30, last30, etc.)
+        if let Some((start_secs, end_secs, pretty)) = parse_command_segment(part, video_duration) {
+            segments.push(CutSegment { start_secs, end_secs });
+            pretty_parts.push(pretty);
+        } else if let Some((start_secs, end_secs)) = parse_time_range_secs(part) {
+            // Fall back to time range parsing
+            segments.push(CutSegment { start_secs, end_secs });
+            pretty_parts.push(format!(
+                "{}-{}",
+                format_timestamp(start_secs),
+                format_timestamp(end_secs)
+            ));
+        } else {
+            return None; // Invalid format
+        }
+    }
+
+    Some((segments, pretty_parts.join(", "), speed))
+}
+
+pub fn parse_audio_segments_spec(text: &str, audio_duration: Option<i64>) -> Option<(Vec<CutSegment>, String)> {
+    let normalized = text.trim();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    let raw_parts: Vec<&str> = normalized
+        .split([',', ';', '\n'])
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+        .collect();
+    if raw_parts.is_empty() {
+        return None;
+    }
+
+    let mut segments = Vec::new();
+    let mut pretty_parts = Vec::new();
+    for part in raw_parts {
+        if let Some((start_secs, end_secs, pretty)) = parse_audio_command_segment(part, audio_duration) {
+            segments.push(CutSegment { start_secs, end_secs });
+            pretty_parts.push(pretty);
+        } else if let Some((start_secs, end_secs)) = parse_time_range_secs(part) {
+            segments.push(CutSegment { start_secs, end_secs });
+            pretty_parts.push(format!(
+                "{}-{}",
+                format_timestamp(start_secs),
+                format_timestamp(end_secs)
+            ));
+        } else {
+            return None;
+        }
+    }
+
+    Some((segments, pretty_parts.join(", ")))
+}
+
+pub fn parse_speed_modifier(text: &str) -> Option<f32> {
+    let lower = text.to_lowercase();
+
+    // Look for patterns like: "2x", "1.5x", "speed2", "speed1.5", "x2", "x1.5"
+    for word in lower.split_whitespace() {
+        // "2x", "1.5x"
+        if let Some(num_str) = word.strip_suffix('x') {
+            if let Ok(speed) = num_str.parse::<f32>() {
+                if speed > 0.0 && speed <= 2.0 {
+                    return Some(speed);
+                }
+            }
+        }
+        // "x2", "x1.5"
+        if let Some(num_str) = word.strip_prefix('x') {
+            if let Ok(speed) = num_str.parse::<f32>() {
+                if speed > 0.0 && speed <= 2.0 {
+                    return Some(speed);
+                }
+            }
+        }
+        // "speed2", "speed1.5"
+        if let Some(num_str) = word.strip_prefix("speed") {
+            if let Ok(speed) = num_str.parse::<f32>() {
+                if speed > 0.0 && speed <= 2.0 {
+                    return Some(speed);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn parse_audio_command_segment(text: &str, audio_duration: Option<i64>) -> Option<(i64, i64, String)> {
+    let normalized = text.trim().to_lowercase();
+    let segment_part = normalized.split_whitespace().next().unwrap_or(&normalized);
+    let duration = audio_duration?;
+
+    if segment_part == "full" {
+        return Some((0, duration, format!("00:00-{}", format_timestamp(duration))));
+    }
+
+    if let Some(num_str) = segment_part.strip_prefix("first") {
+        if let Ok(secs) = num_str.parse::<i64>() {
+            if secs > 0 {
+                let end = secs.min(duration);
+                return Some((0, end, format!("00:00-{}", format_timestamp(end))));
+            }
+        }
+    }
+
+    if let Some(num_str) = segment_part.strip_prefix("last") {
+        if let Ok(secs) = num_str.parse::<i64>() {
+            if secs > 0 && secs <= duration {
+                let start = (duration - secs).max(0);
+                return Some((
+                    start,
+                    duration,
+                    format!("{}-{}", format_timestamp(start), format_timestamp(duration)),
+                ));
+            }
+        }
+    }
+
+    if let Some(num_str) = segment_part.strip_prefix("middle") {
+        if let Ok(secs) = num_str.parse::<i64>() {
+            if secs > 0 && secs <= duration {
+                let start = ((duration - secs) / 2).max(0);
+                let end = start + secs;
+                return Some((
+                    start,
+                    end,
+                    format!("{}-{}", format_timestamp(start), format_timestamp(end)),
+                ));
+            }
+        }
+    }
+
+    None
+}
+
+/// Process video clip/circle creation
+pub async fn process_video_clip(
+    bot: Bot,
+    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+    chat_id: ChatId,
+    session: db::VideoClipSession,
+    segments: Vec<CutSegment>,
+    segments_text: String,
+    speed: Option<f32>,
+) -> Result<(), AppError> {
+    use tokio::process::Command;
+
+    let _ = db_pool;
+    let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
+    let total_len: i64 = segments.iter().map(|s| (s.end_secs - s.start_secs).max(0)).sum();
+    let is_video_note = session.output_kind == "video_note";
+    let is_iphone_ringtone = session.output_kind == "iphone_ringtone";
+    let is_android_ringtone = session.output_kind == "android_ringtone";
+    let is_ringtone = is_iphone_ringtone || is_android_ringtone;
+
+    // Effective duration accounting for speed (e.g., 86s at 2x = 43s)
+    let effective_len = if let Some(spd) = speed {
+        (total_len as f32 / spd).ceil() as i64
+    } else {
+        total_len
+    };
+
+    // For video notes, determine if we need multi-circle split (using effective duration)
+    let video_note_needs_split =
+        is_video_note && effective_len > VIDEO_NOTE_MAX_DURATION as i64 && !is_too_long_for_split(effective_len as u64);
+
+    // Check if video note is too long for splitting (> 360s)
+    if is_video_note && is_too_long_for_split(effective_len as u64) {
+        let mut args = FluentArgs::new();
+        args.set("max_minutes", VIDEO_NOTE_MAX_PARTS as i64);
+        bot.send_message(
+            chat_id,
+            i18n::t_args(&lang, "commands.video_note_too_long_for_split", &args),
+        )
+        .await
+        .ok();
+        return Ok(());
+    }
+
+    let max_len_secs = if is_video_note && !video_note_needs_split {
+        VIDEO_NOTE_MAX_DURATION as i64
+    } else if is_video_note && video_note_needs_split {
+        (VIDEO_NOTE_MAX_DURATION * VIDEO_NOTE_MAX_PARTS as u64) as i64 // Allow full duration for split
+    } else if is_iphone_ringtone {
+        crate::download::ringtone::MAX_IPHONE_DURATION_SECS as i64
+    } else if is_android_ringtone {
+        crate::download::ringtone::MAX_ANDROID_DURATION_SECS as i64
+    } else {
+        60 * 10
+    };
+
+    // For ringtones only, truncate segments to fit within limit and notify user
+    // Video notes with split don't need truncation
+    let (adjusted_segments, truncated) = if is_ringtone && total_len > max_len_secs {
+        let mut adjusted = Vec::new();
+        let mut accumulated = 0i64;
+
+        for seg in &segments {
+            let seg_len = seg.end_secs - seg.start_secs;
+            if accumulated >= max_len_secs {
+                break;
+            }
+
+            if accumulated + seg_len <= max_len_secs {
+                adjusted.push(*seg);
+                accumulated += seg_len;
+            } else {
+                let remaining = max_len_secs - accumulated;
+                adjusted.push(CutSegment {
+                    start_secs: seg.start_secs,
+                    end_secs: seg.start_secs + remaining,
+                });
+                break;
+            }
+        }
+
+        (adjusted, true)
+    } else if !is_video_note && !is_ringtone && total_len > 600 {
+        // For regular cuts, reject if too long (10 min)
+        bot.send_message(chat_id, i18n::t(&lang, "commands.cut_too_long"))
+            .await
+            .ok();
+        return Ok(());
+    } else {
+        (segments.clone(), false)
+    };
+
+    // Calculate actual length after truncation
+    let actual_total_len: i64 = adjusted_segments
+        .iter()
+        .map(|s| (s.end_secs - s.start_secs).max(0))
+        .sum();
+
+    // Effective length after speed for video note split calculations
+    let effective_total_len = if let Some(spd) = speed {
+        (actual_total_len as f32 / spd).ceil() as i64
+    } else {
+        actual_total_len
+    };
+
+    // Notify user about multi-circle split
+    if video_note_needs_split {
+        if let Some(split_info) = calculate_video_note_split(effective_total_len as u64) {
+            let mut args = FluentArgs::new();
+            args.set("count", split_info.num_parts as i64);
+            bot.send_message(chat_id, i18n::t_args(&lang, "commands.video_note_will_split", &args))
+                .await
+                .ok();
+        }
+    }
+
+    // Notify user if segments were truncated (only for ringtones now)
+    if truncated {
+        let max_secs = if is_iphone_ringtone {
+            crate::download::ringtone::MAX_IPHONE_DURATION_SECS as i64
+        } else {
+            crate::download::ringtone::MAX_ANDROID_DURATION_SECS as i64
+        };
+        let limit_text = format!("{} ({}s)", i18n::t(&lang, "commands.cut_limit_ringtone"), max_secs);
+        let mut args = FluentArgs::new();
+        args.set("total", total_len);
+        args.set("limit", limit_text);
+        args.set("actual", actual_total_len);
+        bot.send_message(chat_id, i18n::t_args(&lang, "commands.cut_truncated", &args))
+            .await
+            .ok();
+    }
+
+    let (file_id, original_url, base_title, video_quality) = match session.source_kind.as_str() {
+        "download" => {
+            let download = match shared_storage
+                .get_download_history_entry(chat_id.0, session.source_id)
+                .await?
+            {
+                Some(d) => d,
+                None => {
+                    bot.send_message(chat_id, i18n::t(&lang, "commands.cut_file_not_found"))
+                        .await
+                        .ok();
+                    return Ok(());
+                }
+            };
+            if download.format != "mp4" && !is_ringtone {
+                bot.send_message(chat_id, i18n::t(&lang, "commands.cut_only_mp4"))
+                    .await
+                    .ok();
+                return Ok(());
+            }
+            let fid = match download.file_id.clone() {
+                Some(fid) => fid,
+                None => {
+                    bot.send_message(chat_id, i18n::t(&lang, "commands.cut_missing_file_id"))
+                        .await
+                        .ok();
+                    return Ok(());
+                }
+            };
+            (fid, download.url, download.title, download.video_quality)
+        }
+        "cut" => {
+            let cut = match shared_storage.get_cut_entry(chat_id.0, session.source_id).await? {
+                Some(c) => c,
+                None => {
+                    bot.send_message(chat_id, i18n::t(&lang, "commands.cut_not_found"))
+                        .await
+                        .ok();
+                    return Ok(());
+                }
+            };
+            let fid = match cut.file_id.clone() {
+                Some(fid) => fid,
+                None => {
+                    bot.send_message(chat_id, i18n::t(&lang, "commands.cut_missing_file_id"))
+                        .await
+                        .ok();
+                    return Ok(());
+                }
+            };
+            (
+                fid,
+                if !cut.original_url.is_empty() {
+                    cut.original_url
+                } else {
+                    session.original_url.clone()
+                },
+                cut.title,
+                cut.video_quality,
+            )
+        }
+        _ => {
+            bot.send_message(chat_id, i18n::t(&lang, "commands.cut_unknown_source"))
+                .await
+                .ok();
+            return Ok(());
+        }
+    };
+
+    // Get message_id for MTProto fallback (if available)
+    let message_info = match session.source_kind.as_str() {
+        "download" => shared_storage
+            .get_download_message_info(session.source_id)
+            .await
+            .ok()
+            .flatten(),
+        "cut" => shared_storage
+            .get_cut_message_info(session.source_id)
+            .await
+            .ok()
+            .flatten(),
+        _ => None,
+    };
+    let (fallback_message_id, fallback_chat_id) = message_info.unzip();
+
+    log::info!(
+        "🔍 Source file info: file_id={}, message_id={:?}, chat_id={:?}",
+        &file_id[..20.min(file_id.len())],
+        fallback_message_id,
+        fallback_chat_id
+    );
+
+    let status_msg = if let Some(spd) = speed {
+        let mut args = FluentArgs::new();
+        args.set("segments", segments_text.as_str());
+        args.set("speed", spd as f64);
+        if is_video_note {
+            i18n::t_args(&lang, "commands.cut_status_video_note_speed", &args)
+        } else if is_ringtone {
+            i18n::t_args(&lang, "commands.cut_status_ringtone_speed", &args)
+        } else {
+            i18n::t_args(&lang, "commands.cut_status_clip_speed", &args)
+        }
+    } else {
+        let mut args = FluentArgs::new();
+        args.set("segments", segments_text.as_str());
+        if is_video_note {
+            i18n::t_args(&lang, "commands.cut_status_video_note", &args)
+        } else if is_ringtone {
+            i18n::t_args(&lang, "commands.cut_status_ringtone", &args)
+        } else {
+            i18n::t_args(&lang, "commands.cut_status_clip", &args)
+        }
+    };
+
+    let status = bot.send_message(chat_id, status_msg).await?;
+
+    let mut guard = crate::core::utils::TempDirGuard::new("doradura_clip")
+        .await
+        .map_err(AppError::Io)?;
+    log::info!("📂 Temp directory ready: {:?}", guard.path());
+
+    let input_path = guard
+        .path()
+        .join(format!("input_{}_{}.mp4", chat_id.0, session.source_id));
+    let output_path = if is_ringtone {
+        let safe_title = crate::download::ringtone::sanitize_filename(&base_title);
+        let ext = if is_iphone_ringtone { "m4r" } else { "mp3" };
+        guard.path().join(format!("{}_ringtone.{}", safe_title, ext))
+    } else {
+        guard.path().join(format!(
+            "{}_{}_{}{}",
+            if is_video_note { "circle" } else { "cut" },
+            chat_id.0,
+            uuid::Uuid::new_v4(),
+            ".mp4"
+        ))
+    };
+
+    log::info!(
+        "🔽 Starting download for video note: file_id={}, output_path={:?}",
+        file_id,
+        input_path
+    );
+
+    // Use download_file_with_fallback for Bot API -> MTProto fallback chain
+    let download_result = crate::telegram::download_file_with_fallback(
+        &bot,
+        &file_id,
+        fallback_message_id,
+        fallback_chat_id,
+        Some(input_path.clone()),
+    )
+    .await;
+
+    match &download_result {
+        Ok(path) => log::info!("✅ Download completed: {:?}", path),
+        Err(e) => {
+            log::error!("❌ Download failed (all fallbacks exhausted): {}", e);
+            bot.delete_message(chat_id, status.id).await.ok();
+            bot.send_message(
+                chat_id,
+                "File download failed. The file may have been deleted or is no longer accessible.",
+            )
+            .await
+            .ok();
+            return Ok(());
+        }
+    }
+    let _ = download_result.map_err(AppError::from)?;
+
+    // --- Subtitle handling for circles ---
+    // For circles: download SRT only (don't burn yet) — subs will be burned
+    // AFTER scale+crop in the ffmpeg filter chain so they render at 640x640.
+    let circle_srt_path: Option<std::path::PathBuf> = if is_video_note {
+        if let Some(ref sub_lang) = session.subtitle_lang {
+            match download_circle_subtitles(
+                &session.original_url,
+                sub_lang,
+                guard.path(),
+                chat_id.0,
+                session.source_id,
+            )
+            .await
+            {
+                BurnSubsResult::SubtitleReady(srt) => Some(srt),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let actual_input_path = input_path.clone();
+
+    // Probe file for video stream
+    let probe_output = crate::core::process::run_with_timeout(
+        Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=codec_type",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+            ])
+            .arg(&actual_input_path),
+        crate::core::process::FFPROBE_TIMEOUT,
+    )
+    .await?;
+    let has_video = !probe_output.stdout.is_empty();
+
+    if is_video_note && !has_video {
+        bot.delete_message(chat_id, status.id).await.ok();
+        bot.send_message(chat_id, i18n::t(&lang, "commands.video_note_requires_video"))
+            .await
+            .ok();
+        return Ok(());
+    }
+
+    // Fast seek: use -ss before -i to skip to near the first segment
+    // Subtract 5 seconds for keyframe safety margin
+    let seek_offset = adjusted_segments
+        .iter()
+        .map(|s| s.start_secs)
+        .min()
+        .unwrap_or(0)
+        .saturating_sub(5)
+        .max(0);
+
+    let seeked_segments: Vec<CutSegment> = adjusted_segments
+        .iter()
+        .map(|s| CutSegment {
+            start_secs: s.start_secs - seek_offset,
+            end_secs: s.end_secs - seek_offset,
+        })
+        .collect();
+
+    // For ringtones the input is audio-only (MP3); embedded album art must be ignored
+    // so that the filter_complex doesn't produce an unconnected [v] output which
+    // makes ffmpeg exit with code 234 when using -f ipod.
+    let has_video_for_filter = has_video && !is_ringtone;
+    let base_filter_av = build_cut_filter(&seeked_segments, has_video_for_filter, true);
+    let base_filter_v = if has_video_for_filter {
+        build_cut_filter(&seeked_segments, true, false)
+    } else {
+        String::new()
+    };
+
+    // Smart crop: analyze for face detection (single circles only)
+    #[cfg(feature = "smartcrop")]
+    let smart_crop_filter = if is_video_note && !video_note_needs_split {
+        let sc_duration = effective_len.max(1) as f64;
+        let sc_start = if seek_offset > 0 {
+            Some(seek_offset as f64)
+        } else {
+            None
+        };
+        crate::conversion::smartcrop::compute_smart_crop(
+            std::path::Path::new(&actual_input_path),
+            sc_duration,
+            sc_start,
+        )
+        .await
+        .map(|plan| crate::conversion::smartcrop::ffmpeg::plan_to_filter(&plan))
+    } else {
+        None
+    };
+    #[cfg(not(feature = "smartcrop"))]
+    let smart_crop_filter: Option<String> = None;
+
+    // Build subtitle filter fragment for post-crop burning (640x640 coordinates)
+    let circle_sub_filter = circle_srt_path.as_ref().map(|srt_path| {
+        let escaped = srt_path
+            .to_string_lossy()
+            .replace('\\', "\\\\\\\\")
+            .replace(':', "\\\\:")
+            .replace('\'', "\\\\'");
+        let style = db::SubtitleStyle::circle_default();
+        let force_style = style.to_force_style();
+        format!("subtitles='{escaped}':force_style='{force_style}'")
+    });
+
+    // Apply speed modification if requested
+    // For multi-circle video notes, don't apply circle formatting here - it will be done in split step
+    let (filter_av, filter_v, map_v_label, map_a_label, crf) = if is_video_note && !video_note_needs_split {
+        // Single circle - apply video note formatting in ffmpeg
+        // Subtitles are burned AFTER scale+crop so they render at 640x640 coordinates
+        let video_note_post = if let Some(ref sc_filter) = smart_crop_filter {
+            // Smart crop filter already includes scale+crop+format
+            // Insert subtitles before format=yuv420p
+            if let Some(ref sub_filter) = circle_sub_filter {
+                sc_filter.replace(",format=yuv420p", &format!(",{sub_filter},format=yuv420p"))
+            } else {
+                sc_filter.clone()
+            }
+        } else if let Some(ref sub_filter) = circle_sub_filter {
+            format!("scale=640:640:force_original_aspect_ratio=increase,crop=640:640,{sub_filter},format=yuv420p")
+        } else {
+            "scale=640:640:force_original_aspect_ratio=increase,crop=640:640,format=yuv420p".to_string()
+        };
+        let video_note_post = video_note_post.as_str();
+
+        if let Some(spd) = speed {
+            let setpts_factor = 1.0 / spd;
+            let atempo_filter = if spd > 2.0 {
+                format!("atempo=2.0,atempo={}", spd / 2.0)
+            } else if spd < 0.5 {
+                format!("atempo=0.5,atempo={}", spd / 0.5)
+            } else {
+                format!("atempo={}", spd)
+            };
+
+            (
+                format!(
+                    "{base_filter_av};[v]setpts={}*PTS,{video_note_post}[vout];[a]{atempo_filter}[aout]",
+                    setpts_factor
+                ),
+                format!(
+                    "{base_filter_v};[v]setpts={}*PTS,{video_note_post}[vout]",
+                    setpts_factor
+                ),
+                "[vout]",
+                "[aout]",
+                "18",
+            )
+        } else {
+            (
+                format!("{base_filter_av};[v]{video_note_post}[vout]"),
+                format!("{base_filter_v};[v]{video_note_post}[vout]"),
+                "[vout]",
+                "[a]",
+                "18",
+            )
+        }
+    } else if is_video_note && video_note_needs_split {
+        // Multi-circle - create regular cut, circle formatting will be done in to_video_notes_split
+        if let Some(spd) = speed {
+            let setpts_factor = 1.0 / spd;
+            let atempo_filter = if spd > 2.0 {
+                format!("atempo=2.0,atempo={}", spd / 2.0)
+            } else if spd < 0.5 {
+                format!("atempo=0.5,atempo={}", spd / 0.5)
+            } else {
+                format!("atempo={}", spd)
+            };
+
+            (
+                format!(
+                    "{base_filter_av};[v]setpts={}*PTS[vout];[a]{atempo_filter}[aout]",
+                    setpts_factor
+                ),
+                format!("{base_filter_v};[v]setpts={}*PTS[vout]", setpts_factor),
+                "[vout]",
+                "[aout]",
+                "23",
+            )
+        } else {
+            (base_filter_av, base_filter_v, "[v]", "[a]", "23")
+        }
+    } else if is_ringtone {
+        let atempo_filter = if let Some(spd) = speed {
+            if spd > 2.0 {
+                format!("atempo=2.0,atempo={}", spd / 2.0)
+            } else if spd < 0.5 {
+                format!("atempo=0.5,atempo={}", spd / 0.5)
+            } else {
+                format!("atempo={}", spd)
+            }
+        } else {
+            "atempo=1.0".to_string()
+        };
+        // If !has_video, base_filter_av outputs only [a]. If has_video, [v][a].
+        // Ringtone uses input [a] for atempo.
+        // We need to match output of base_filter
+
+        (
+            format!("{base_filter_av};{}[a]{atempo_filter}[aout]", ""), // standard [a] is output by build_cut_filter
+            String::new(),
+            "[v]",
+            "[aout]",
+            "23",
+        )
+    } else if let Some(spd) = speed {
+        let setpts_factor = 1.0 / spd;
+        let atempo_filter = if spd > 2.0 {
+            format!("atempo=2.0,atempo={}", spd / 2.0)
+        } else if spd < 0.5 {
+            format!("atempo=0.5,atempo={}", spd / 0.5)
+        } else {
+            format!("atempo={}", spd)
+        };
+
+        if has_video {
+            (
+                format!(
+                    "{base_filter_av};[v]setpts={}*PTS[vout];[a]{atempo_filter}[aout]",
+                    setpts_factor
+                ),
+                format!("{base_filter_v};[v]setpts={}*PTS[vout]", setpts_factor),
+                "[vout]",
+                "[aout]",
+                "23",
+            )
+        } else {
+            (
+                format!("{base_filter_av};[a]{atempo_filter}[aout]"),
+                String::new(),
+                "",
+                "[aout]",
+                "23",
+            )
+        }
+    } else {
+        (base_filter_av, base_filter_v, "[v]", "[a]", "23")
+    };
+
+    log::info!("🎬 Starting ffmpeg with filter: {}", filter_av);
+    log::info!("🎬 Input: {:?}, Output: {:?}", actual_input_path, output_path);
+
+    let mut cmd = Command::new("ffmpeg");
+    cmd.arg("-hide_banner").arg("-loglevel").arg("info");
+
+    // Fast seek to near the first segment (before -i for input-level seek)
+    if seek_offset > 0 {
+        cmd.arg("-ss").arg(format!("{}", seek_offset));
+    }
+
+    cmd.arg("-i").arg(&actual_input_path);
+
+    if is_iphone_ringtone {
+        // For iPhone ringtone: AAC in MPEG-4 container (.m4r)
+        // -vn strips embedded album art to avoid exit code 234 with -f ipod
+        cmd.arg("-vn")
+            .arg("-filter_complex")
+            .arg(&filter_av)
+            .arg("-map")
+            .arg(map_a_label)
+            .arg("-c:a")
+            .arg("aac")
+            .arg("-b:a")
+            .arg("192k")
+            .arg("-f")
+            .arg("ipod");
+    } else if is_android_ringtone {
+        // For Android ringtone: MP3 at 192k
+        cmd.arg("-vn")
+            .arg("-filter_complex")
+            .arg(&filter_av)
+            .arg("-map")
+            .arg(map_a_label)
+            .arg("-c:a")
+            .arg("libmp3lame")
+            .arg("-b:a")
+            .arg("192k")
+            .arg("-f")
+            .arg("mp3");
+    } else {
+        cmd.arg("-filter_complex").arg(&filter_av);
+        if has_video {
+            cmd.arg("-map").arg(map_v_label);
+        }
+        cmd.arg("-map").arg(map_a_label);
+
+        if has_video {
+            let preset = if is_video_note { "medium" } else { "ultrafast" };
+            cmd.arg("-c:v")
+                .arg("libx264")
+                .arg("-preset")
+                .arg(preset)
+                .arg("-crf")
+                .arg(crf);
+            if is_video_note {
+                cmd.arg("-maxrate")
+                    .arg("1400k")
+                    .arg("-bufsize")
+                    .arg("2800k")
+                    .arg("-profile:v")
+                    .arg("high");
+            }
+        }
+        let audio_bitrate = if is_video_note { "128k" } else { "192k" };
+        cmd.arg("-c:a")
+            .arg("aac")
+            .arg("-b:a")
+            .arg(audio_bitrate)
+            .arg("-movflags")
+            .arg("+faststart");
+    }
+
+    let ffmpeg_timeout = std::time::Duration::from_secs(10 * 60); // 10 minutes
+    let output = match tokio::time::timeout(ffmpeg_timeout, cmd.arg("-y").arg(&output_path).output()).await {
+        Ok(result) => result.map_err(AppError::from)?,
+        Err(_) => {
+            log::error!("❌ ffmpeg timed out after {} seconds", ffmpeg_timeout.as_secs());
+            bot.delete_message(chat_id, status.id).await.ok();
+            bot.send_message(
+                chat_id,
+                "❌ Video processing timed out (10 min limit). Try a shorter segment.",
+            )
+            .await
+            .ok();
+            return Ok(());
+        }
+    };
+
+    log::info!("✅ ffmpeg processing completed with status: {}", output.status);
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let mut retry_cmd = Command::new("ffmpeg");
+        retry_cmd.arg("-hide_banner").arg("-loglevel").arg("error");
+        if seek_offset > 0 {
+            retry_cmd.arg("-ss").arg(format!("{}", seek_offset));
+        }
+        let retry_output = match tokio::time::timeout(
+            ffmpeg_timeout,
+            retry_cmd
+                .arg("-i")
+                .arg(&actual_input_path)
+                .arg("-filter_complex")
+                .arg(&filter_v)
+                .arg("-map")
+                .arg(map_v_label)
+                .arg("-c:v")
+                .arg("libx264")
+                .arg("-preset")
+                .arg("ultrafast")
+                .arg("-crf")
+                .arg(crf)
+                .arg("-movflags")
+                .arg("+faststart")
+                .arg("-y")
+                .arg(&output_path)
+                .output(),
+        )
+        .await
+        {
+            Ok(result) => result.map_err(AppError::from)?,
+            Err(_) => {
+                log::error!("❌ ffmpeg retry timed out after {} seconds", ffmpeg_timeout.as_secs());
+                bot.delete_message(chat_id, status.id).await.ok();
+                bot.send_message(
+                    chat_id,
+                    "❌ Video processing timed out (10 min limit). Try a shorter segment.",
+                )
+                .await
+                .ok();
+                return Ok(());
+            }
+        };
+
+        if !retry_output.status.success() {
+            let stderr2 = String::from_utf8_lossy(&retry_output.stderr);
+            bot.delete_message(chat_id, status.id).await.ok();
+            let mut args = FluentArgs::new();
+            args.set("stderr", stderr.to_string());
+            args.set("stderr2", stderr2.to_string());
+            bot.send_message(chat_id, i18n::t_args(&lang, "commands.ffmpeg_error_dual", &args))
+                .await
+                .ok();
+            return Ok(());
+        }
+    }
+
+    let file_size = tokio::fs::metadata(&output_path)
+        .await
+        .map(|m| m.len() as i64)
+        .unwrap_or(0);
+
+    // Build a timestamped URL linking to the start of the first segment
+    let timestamped_url = if !original_url.is_empty() {
+        let start_secs = adjusted_segments.first().map(|s| s.start_secs).unwrap_or(0);
+        if start_secs > 0 {
+            let sep = if original_url.contains('?') { "&" } else { "?" };
+            format!("{}{sep}t={start_secs}", original_url)
+        } else {
+            original_url.clone()
+        }
+    } else {
+        String::new()
+    };
+
+    let url_suffix = if timestamped_url.is_empty() {
+        String::new()
+    } else {
+        format!("\n{}", timestamped_url)
+    };
+
+    let (output_kind, clip_title) = if is_video_note {
+        (
+            "video_note",
+            format!("{} [circle {}]{}", base_title, segments_text, url_suffix),
+        )
+    } else if is_ringtone {
+        (
+            "ringtone",
+            format!("{} [ringtone {}]{}", base_title, segments_text, url_suffix),
+        )
+    } else {
+        ("clip", format!("{} [cut {}]{}", base_title, segments_text, url_suffix))
+    };
+
+    // Check output file before sending
+    if !output_path.exists() {
+        log::error!("❌ Output file does not exist: {:?}", output_path);
+        bot.delete_message(chat_id, status.id).await.ok();
+        bot.send_message(chat_id, i18n::t(&lang, "commands.output_file_missing"))
+            .await
+            .ok();
+        return Ok(());
+    }
+
+    let output_size = tokio::fs::metadata(&output_path)
+        .await
+        .ok()
+        .map(|m| m.len())
+        .unwrap_or(0);
+    log::info!(
+        "📤 Sending {} (size: {} bytes, duration: {}s, effective: {}s)",
+        if is_video_note { "video note" } else { "video" },
+        output_size,
+        actual_total_len,
+        effective_total_len
+    );
+
+    let sent = if is_video_note && video_note_needs_split {
+        // Multi-circle: split the cut video into multiple circles and send each
+        // Use effective_total_len (speed-adjusted) since ffmpeg already applied speed
+        match to_video_notes_split(&output_path, effective_total_len as u64, None).await {
+            Ok(circle_paths) => {
+                // Track circle files for automatic cleanup by guard
+                for path in &circle_paths {
+                    guard.track_file(path.clone());
+                }
+                let total_circles = circle_paths.len();
+                log::info!("📤 Sending {} video notes (circles)", total_circles);
+
+                for (i, circle_path) in circle_paths.iter().enumerate() {
+                    // Calculate duration for this part (using effective/speed-adjusted length)
+                    let part_duration = if i == total_circles - 1 {
+                        effective_total_len - (i as i64 * VIDEO_NOTE_MAX_DURATION as i64)
+                    } else {
+                        VIDEO_NOTE_MAX_DURATION as i64
+                    };
+
+                    // Update status message with progress
+                    let mut args = FluentArgs::new();
+                    args.set("current", (i + 1) as i64);
+                    args.set("total", total_circles as i64);
+                    bot.edit_message_text(
+                        chat_id,
+                        status.id,
+                        i18n::t_args(&lang, "commands.video_note_sending_progress", &args),
+                    )
+                    .await
+                    .ok();
+
+                    match bot
+                        .send_video_note(chat_id, teloxide::types::InputFile::file(circle_path))
+                        .duration(part_duration.max(1) as u32)
+                        .length(640)
+                        .await
+                    {
+                        Ok(_) => {}
+                        Err(e) => {
+                            log::error!("❌ Failed to send video note {}/{}: {}", i + 1, total_circles, e);
+                            bot.delete_message(chat_id, status.id).await.ok();
+                            let msg = if e.to_string().to_lowercase().contains("file is too big") {
+                                i18n::t(&lang, "commands.video_note_too_big")
+                            } else {
+                                let mut args = FluentArgs::new();
+                                args.set("error", e.to_string());
+                                i18n::t_args(&lang, "commands.video_note_send_failed", &args)
+                            };
+                            bot.send_message(chat_id, msg).await.ok();
+                            return Ok(());
+                        }
+                    }
+                }
+
+                // Delete status message after successful send
+                bot.delete_message(chat_id, status.id).await.ok();
+
+                // Send clip title as separate message
+                bot.send_message(chat_id, &clip_title).await.ok();
+
+                // Skip the rest of the function since we handled everything
+                // Save to history not needed for multi-circle (complex structure)
+                return Ok(());
+            }
+            Err(e) => {
+                log::error!("❌ Failed to split video into circles: {}", e);
+                bot.delete_message(chat_id, status.id).await.ok();
+                let mut args = FluentArgs::new();
+                args.set("error", e.to_string());
+                bot.send_message(chat_id, i18n::t_args(&lang, "commands.video_note_split_failed", &args))
+                    .await
+                    .ok();
+                return Ok(());
+            }
+        }
+    } else if is_video_note {
+        // Single circle
+        match bot
+            .send_video_note(chat_id, teloxide::types::InputFile::file(output_path.clone()))
+            .duration(effective_total_len.max(1) as u32)
+            .length(640)
+            .await
+        {
+            Ok(m) => m,
+            Err(e) => {
+                log::error!("❌ Failed to send video note: {}", e);
+                bot.delete_message(chat_id, status.id).await.ok();
+                let msg = if e.to_string().to_lowercase().contains("file is too big") {
+                    i18n::t(&lang, "commands.video_note_too_big")
+                } else {
+                    let mut args = FluentArgs::new();
+                    args.set("error", e.to_string());
+                    i18n::t_args(&lang, "commands.video_note_send_failed", &args)
+                };
+                bot.send_message(chat_id, msg).await.ok();
+                return Ok(());
+            }
+        }
+    } else if is_ringtone {
+        let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
+        match bot
+            .send_document(chat_id, teloxide::types::InputFile::file(output_path.clone()))
+            .caption(escape_markdown(&clip_title))
+            .parse_mode(ParseMode::MarkdownV2)
+            .await
+        {
+            Ok(m) => m,
+            Err(e) => {
+                bot.delete_message(chat_id, status.id).await.ok();
+                let mut args = FluentArgs::new();
+                args.set("error", e.to_string());
+                bot.send_message(chat_id, i18n::t_args(&lang, "commands.ringtone_send_failed", &args))
+                    .await
+                    .ok();
+                return Ok(());
+            }
+        };
+        // Send platform-specific instructions with images
+        let platform = if is_iphone_ringtone {
+            crate::telegram::menu::ringtone::Platform::Iphone
+        } else {
+            crate::telegram::menu::ringtone::Platform::Android
+        };
+        if let Err(e) = crate::telegram::menu::ringtone::send_ringtone_instructions(
+            &bot,
+            chat_id,
+            platform,
+            &db_pool,
+            &shared_storage,
+        )
+        .await
+        {
+            log::warn!("Failed to send ringtone instructions: {}", e);
+        }
+        // Clean up files and return early (don't fall through to clip_title logic below)
+        bot.delete_message(chat_id, status.id).await.ok();
+        return Ok(());
+    } else if has_video {
+        match bot
+            .send_video(chat_id, teloxide::types::InputFile::file(output_path.clone()))
+            .caption(&clip_title)
+            .await
+        {
+            Ok(m) => m,
+            Err(e) => {
+                bot.delete_message(chat_id, status.id).await.ok();
+                let mut args = FluentArgs::new();
+                args.set("error", e.to_string());
+                bot.send_message(chat_id, i18n::t_args(&lang, "commands.clip_send_failed", &args))
+                    .await
+                    .ok();
+                return Ok(());
+            }
+        }
+    } else {
+        match bot
+            .send_audio(chat_id, teloxide::types::InputFile::file(output_path.clone()))
+            .caption(&clip_title)
+            .await
+        {
+            Ok(m) => m,
+            Err(e) => {
+                bot.delete_message(chat_id, status.id).await.ok();
+                let mut args = FluentArgs::new();
+                args.set("error", e.to_string());
+                bot.send_message(chat_id, i18n::t_args(&lang, "commands.audio_send_failed", &args))
+                    .await
+                    .ok();
+                return Ok(());
+            }
+        }
+    };
+
+    if is_video_note {
+        bot.send_message(chat_id, clip_title.clone()).await.ok();
+    }
+
+    if !is_video_note && !original_url.trim().is_empty() {
+        bot.send_message(chat_id, original_url.clone()).await.ok();
+    }
+    bot.delete_message(chat_id, status.id).await.ok();
+
+    let sent_file_id = if is_video_note {
+        sent.video_note().map(|v| v.file.id.0.clone())
+    } else if is_ringtone {
+        sent.document().map(|d| d.file.id.0.clone())
+    } else {
+        sent.video()
+            .map(|v| v.file.id.0.clone())
+            .or_else(|| sent.document().map(|d| d.file.id.0.clone()))
+            .or_else(|| sent.audio().map(|a| a.file.id.0.clone()))
+    };
+
+    if let Some(fid) = sent_file_id {
+        let segments_json = serde_json::to_string(&segments).unwrap_or_else(|_| "[]".to_string());
+        if let Err(e) = shared_storage
+            .create_cut(
+                chat_id.0,
+                &original_url,
+                &session.source_kind,
+                session.source_id,
+                output_kind,
+                &segments_json,
+                &segments_text,
+                &clip_title,
+                Some(&fid),
+                Some(file_size),
+                Some(actual_total_len.max(1)),
+                video_quality.as_deref(),
+            )
+            .await
+        {
+            log::error!("Failed to persist cut record for user {}: {}", chat_id.0, e);
+        }
+    }
+
+    // guard drops here, cleaning up the temp dir and tracked files
+    Ok(())
+}
+
+pub async fn process_audio_cut(
+    bot: Bot,
+    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+    chat_id: ChatId,
+    session: crate::download::audio_effects::AudioEffectSession,
+    segments: Vec<CutSegment>,
+    segments_text: String,
+) -> Result<(), AppError> {
+    use tokio::process::Command;
+
+    let _ = db_pool;
+    let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
+    let total_len: i64 = segments.iter().map(|s| (s.end_secs - s.start_secs).max(0)).sum();
+    if total_len <= 0 {
+        bot.send_message(chat_id, i18n::t(&lang, "commands.empty_cut"))
+            .await
+            .ok();
+        return Ok(());
+    }
+
+    let input_path = std::path::PathBuf::from(&session.original_file_path);
+    if !input_path.exists() {
+        bot.send_message(chat_id, i18n::t(&lang, "commands.audio_source_missing"))
+            .await
+            .ok();
+        return Ok(());
+    }
+
+    let mut args = FluentArgs::new();
+    args.set("segments", segments_text.as_str());
+    let status = bot
+        .send_message(chat_id, i18n::t_args(&lang, "commands.audio_cut_processing", &args))
+        .await?;
+
+    let guard = crate::core::utils::TempDirGuard::new("doradura_audio_cut")
+        .await
+        .map_err(AppError::Io)?;
+
+    let output_path = guard
+        .path()
+        .join(format!("cut_audio_{}_{}.mp3", chat_id.0, uuid::Uuid::new_v4()));
+
+    // Fast seek for audio cuts
+    let audio_seek_offset = segments
+        .iter()
+        .map(|s| s.start_secs)
+        .min()
+        .unwrap_or(0)
+        .saturating_sub(5)
+        .max(0);
+
+    let seeked_audio_segments: Vec<CutSegment> = segments
+        .iter()
+        .map(|s| CutSegment {
+            start_secs: s.start_secs - audio_seek_offset,
+            end_secs: s.end_secs - audio_seek_offset,
+        })
+        .collect();
+
+    let filter = build_cut_filter(&seeked_audio_segments, false, true);
+
+    let mut audio_cmd = Command::new("ffmpeg");
+    audio_cmd.arg("-hide_banner").arg("-loglevel").arg("info");
+    if audio_seek_offset > 0 {
+        audio_cmd.arg("-ss").arg(format!("{}", audio_seek_offset));
+    }
+    let audio_timeout = std::time::Duration::from_secs(5 * 60); // 5 minutes for audio
+    let output = match tokio::time::timeout(
+        audio_timeout,
+        audio_cmd
+            .arg("-i")
+            .arg(&input_path)
+            .arg("-filter_complex")
+            .arg(&filter)
+            .arg("-map")
+            .arg("[a]")
+            .arg("-q:a")
+            .arg("0")
+            .arg("-y")
+            .arg(&output_path)
+            .output(),
+    )
+    .await
+    {
+        Ok(result) => result.map_err(AppError::from)?,
+        Err(_) => {
+            log::error!("❌ Audio ffmpeg timed out after {} seconds", audio_timeout.as_secs());
+            bot.delete_message(chat_id, status.id).await.ok();
+            bot.send_message(chat_id, "❌ Audio processing timed out. Try a shorter segment.")
+                .await
+                .ok();
+            return Ok(());
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bot.delete_message(chat_id, status.id).await.ok();
+        let mut args = FluentArgs::new();
+        args.set("stderr", stderr.to_string());
+        bot.send_message(chat_id, i18n::t_args(&lang, "commands.ffmpeg_error_single", &args))
+            .await
+            .ok();
+        return Ok(());
+    }
+
+    if !output_path.exists() {
+        bot.delete_message(chat_id, status.id).await.ok();
+        bot.send_message(chat_id, i18n::t(&lang, "commands.output_file_missing"))
+            .await
+            .ok();
+        return Ok(());
+    }
+
+    let file_size = tokio::fs::metadata(&output_path).await.map(|m| m.len()).unwrap_or(0);
+    if file_size > config::validation::max_audio_size_bytes() {
+        bot.delete_message(chat_id, status.id).await.ok();
+        bot.send_message(chat_id, i18n::t(&lang, "commands.audio_too_large_for_telegram"))
+            .await
+            .ok();
+        return Ok(());
+    }
+
+    let caption = format!("{} [cut {}]", session.title, segments_text);
+    let send_as_document = shared_storage
+        .get_user_send_audio_as_document(chat_id.0)
+        .await
+        .unwrap_or(0);
+
+    let send_res = if send_as_document == 0 {
+        bot.send_audio(chat_id, teloxide::types::InputFile::file(output_path.clone()))
+            .caption(caption)
+            .duration(total_len.max(1) as u32)
+            .await
+    } else {
+        bot.send_document(chat_id, teloxide::types::InputFile::file(output_path.clone()))
+            .caption(caption)
+            .await
+    };
+
+    if let Err(e) = send_res {
+        bot.delete_message(chat_id, status.id).await.ok();
+        let mut args = FluentArgs::new();
+        args.set("error", e.to_string());
+        bot.send_message(chat_id, i18n::t_args(&lang, "commands.audio_send_failed", &args))
+            .await
+            .ok();
+        return Ok(());
+    }
+
+    bot.delete_message(chat_id, status.id).await.ok();
+    // guard drops here, cleaning up the temp dir
+    Ok(())
+}
+
+pub fn build_cut_filter(segments: &[CutSegment], with_video: bool, with_audio: bool) -> String {
+    let mut parts = Vec::new();
+    for (i, seg) in segments.iter().enumerate() {
+        if with_video {
+            parts.push(format!(
+                "[0:v]trim=start={}:end={},setpts=PTS-STARTPTS[v{}]",
+                seg.start_secs, seg.end_secs, i
+            ));
+        }
+        if with_audio {
+            parts.push(format!(
+                "[0:a]atrim=start={}:end={},asetpts=PTS-STARTPTS[a{}]",
+                seg.start_secs, seg.end_secs, i
+            ));
+        }
+    }
+
+    let n = segments.len();
+    let mut concat_inputs = String::new();
+    for i in 0..n {
+        if with_video {
+            concat_inputs.push_str(&format!("[v{}]", i));
+        }
+        if with_audio {
+            concat_inputs.push_str(&format!("[a{}]", i));
+        }
+    }
+
+    let v_count = if with_video { 1 } else { 0 };
+    let a_count = if with_audio { 1 } else { 0 };
+    let output_labels = format!(
+        "{}{}",
+        if with_video { "[v]" } else { "" },
+        if with_audio { "[a]" } else { "" }
+    );
+
+    parts.push(format!(
+        "{}concat=n={}:v={}:a={}{}",
+        concat_inputs, n, v_count, a_count, output_labels
+    ));
+
+    parts.join(";")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== is_cancel_text is in mod.rs ====================
+
+    // ==================== parse_timestamp_secs tests ====================
+
+    #[test]
+    fn test_parse_timestamp_secs_mmss() {
+        assert_eq!(parse_timestamp_secs("00:00"), Some(0));
+        assert_eq!(parse_timestamp_secs("01:30"), Some(90));
+        assert_eq!(parse_timestamp_secs("10:00"), Some(600));
+        assert_eq!(parse_timestamp_secs("59:59"), Some(3599));
+    }
+
+    #[test]
+    fn test_parse_timestamp_secs_hhmmss() {
+        assert_eq!(parse_timestamp_secs("00:00:00"), Some(0));
+        assert_eq!(parse_timestamp_secs("01:00:00"), Some(3600));
+        assert_eq!(parse_timestamp_secs("01:30:45"), Some(5445));
+        assert_eq!(parse_timestamp_secs("10:15:30"), Some(36930));
+    }
+
+    #[test]
+    fn test_parse_timestamp_secs_invalid() {
+        assert_eq!(parse_timestamp_secs(""), None);
+        assert_eq!(parse_timestamp_secs("invalid"), None);
+        assert_eq!(parse_timestamp_secs("1:2:3:4"), None);
+        assert_eq!(parse_timestamp_secs("00:60"), None); // 60 seconds invalid
+        assert_eq!(parse_timestamp_secs("00:-1"), None);
+    }
+
+    // ==================== format_timestamp tests ====================
+
+    #[test]
+    fn test_format_timestamp_mmss() {
+        assert_eq!(format_timestamp(0), "00:00");
+        assert_eq!(format_timestamp(30), "00:30");
+        assert_eq!(format_timestamp(90), "01:30");
+        assert_eq!(format_timestamp(3599), "59:59");
+    }
+
+    #[test]
+    fn test_format_timestamp_hhmmss() {
+        assert_eq!(format_timestamp(3600), "01:00:00");
+        assert_eq!(format_timestamp(5445), "01:30:45");
+        assert_eq!(format_timestamp(36000), "10:00:00");
+    }
+
+    #[test]
+    fn test_format_timestamp_negative() {
+        // Negative values should be treated as 0
+        assert_eq!(format_timestamp(-10), "00:00");
+    }
+
+    // ==================== parse_time_range_secs tests ====================
+
+    #[test]
+    fn test_parse_time_range_secs_valid() {
+        assert_eq!(parse_time_range_secs("00:00-00:30"), Some((0, 30)));
+        assert_eq!(parse_time_range_secs("01:00-02:00"), Some((60, 120)));
+        assert_eq!(parse_time_range_secs("00:10-01:30:00"), Some((10, 5400)));
+    }
+
+    #[test]
+    fn test_parse_time_range_secs_special_dashes() {
+        // Em dash, en dash, minus sign
+        assert_eq!(parse_time_range_secs("00:00\u{2014}00:30"), Some((0, 30)));
+        assert_eq!(parse_time_range_secs("00:00\u{2013}00:30"), Some((0, 30)));
+        assert_eq!(parse_time_range_secs("00:00\u{2212}00:30"), Some((0, 30)));
+    }
+
+    #[test]
+    fn test_parse_time_range_secs_with_spaces() {
+        assert_eq!(parse_time_range_secs("  00:00 - 00:30  "), Some((0, 30)));
+    }
+
+    #[test]
+    fn test_parse_time_range_secs_invalid() {
+        assert_eq!(parse_time_range_secs("00:30-00:00"), None); // End before start
+        assert_eq!(parse_time_range_secs("00:00-00:00"), None); // Same time
+        assert_eq!(parse_time_range_secs("invalid"), None);
+        assert_eq!(parse_time_range_secs("00:00"), None); // No range
+    }
+
+    // ==================== parse_command_segment tests ====================
+
+    #[test]
+    fn test_parse_command_segment_full() {
+        let result = parse_command_segment("full", Some(120));
+        assert!(result.is_some());
+        let (start, end, text) = result.unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(end, 60); // Capped at 60 for video notes
+        assert_eq!(text, "00:00-01:00");
+    }
+
+    #[test]
+    fn test_parse_command_segment_first() {
+        let result = parse_command_segment("first30", Some(120));
+        assert!(result.is_some());
+        let (start, end, _) = result.unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(end, 30);
+
+        let result = parse_command_segment("first15", Some(120));
+        assert!(result.is_some());
+        let (start, end, _) = result.unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(end, 15);
+    }
+
+    #[test]
+    fn test_parse_command_segment_last() {
+        let result = parse_command_segment("last30", Some(120));
+        assert!(result.is_some());
+        let (start, end, _) = result.unwrap();
+        assert_eq!(start, 90);
+        assert_eq!(end, 120);
+    }
+
+    #[test]
+    fn test_parse_command_segment_middle() {
+        let result = parse_command_segment("middle30", Some(120));
+        assert!(result.is_some());
+        let (start, end, _) = result.unwrap();
+        assert_eq!(start, 45); // (120-30)/2 = 45
+        assert_eq!(end, 75);
+    }
+
+    #[test]
+    fn test_parse_command_segment_with_speed() {
+        // Speed modifier should be stripped for segment parsing
+        let result = parse_command_segment("first30 2x", Some(120));
+        assert!(result.is_some());
+        let (start, end, _) = result.unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(end, 30);
+    }
+
+    #[test]
+    fn test_parse_command_segment_invalid() {
+        assert!(parse_command_segment("full", None).is_none()); // No duration
+        assert!(parse_command_segment("first0", Some(120)).is_none()); // Zero seconds
+        assert!(parse_command_segment("first61", Some(120)).is_none()); // Over 60 limit
+        assert!(parse_command_segment("invalid", Some(120)).is_none());
+    }
+
+    // ==================== parse_speed_modifier tests ====================
+
+    #[test]
+    fn test_parse_speed_modifier_suffix_x() {
+        assert_eq!(parse_speed_modifier("2x"), Some(2.0));
+        assert_eq!(parse_speed_modifier("1.5x"), Some(1.5));
+        assert_eq!(parse_speed_modifier("0.5x"), Some(0.5));
+    }
+
+    #[test]
+    fn test_parse_speed_modifier_prefix_x() {
+        assert_eq!(parse_speed_modifier("x2"), Some(2.0));
+        assert_eq!(parse_speed_modifier("x1.5"), Some(1.5));
+    }
+
+    #[test]
+    fn test_parse_speed_modifier_speed_prefix() {
+        assert_eq!(parse_speed_modifier("speed2"), Some(2.0));
+        assert_eq!(parse_speed_modifier("speed1.5"), Some(1.5));
+    }
+
+    #[test]
+    fn test_parse_speed_modifier_in_text() {
+        assert_eq!(parse_speed_modifier("first30 2x"), Some(2.0));
+        assert_eq!(parse_speed_modifier("full speed1.5"), Some(1.5));
+    }
+
+    #[test]
+    fn test_parse_speed_modifier_invalid() {
+        assert_eq!(parse_speed_modifier(""), None);
+        assert_eq!(parse_speed_modifier("fast"), None);
+        assert_eq!(parse_speed_modifier("3x"), None); // Over 2.0 limit
+        assert_eq!(parse_speed_modifier("0x"), None); // Zero not allowed
+    }
+
+    // ==================== parse_segments_spec tests ====================
+
+    #[test]
+    fn test_parse_segments_spec_time_ranges() {
+        let result = parse_segments_spec("00:00-00:30", None);
+        assert!(result.is_some());
+        let (segments, text, speed) = result.unwrap();
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].start_secs, 0);
+        assert_eq!(segments[0].end_secs, 30);
+        assert_eq!(text, "00:00-00:30");
+        assert!(speed.is_none());
+    }
+
+    #[test]
+    fn test_parse_segments_spec_multiple_ranges() {
+        let result = parse_segments_spec("00:00-00:10, 00:30-00:40", None);
+        assert!(result.is_some());
+        let (segments, text, _) = result.unwrap();
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].start_secs, 0);
+        assert_eq!(segments[0].end_secs, 10);
+        assert_eq!(segments[1].start_secs, 30);
+        assert_eq!(segments[1].end_secs, 40);
+        assert_eq!(text, "00:00-00:10, 00:30-00:40");
+    }
+
+    #[test]
+    fn test_parse_segments_spec_command() {
+        let result = parse_segments_spec("first30", Some(120));
+        assert!(result.is_some());
+        let (segments, _, _) = result.unwrap();
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].start_secs, 0);
+        assert_eq!(segments[0].end_secs, 30);
+    }
+
+    #[test]
+    fn test_parse_segments_spec_with_speed() {
+        let result = parse_segments_spec("first30 2x", Some(120));
+        assert!(result.is_some());
+        let (_, _, speed) = result.unwrap();
+        assert_eq!(speed, Some(2.0));
+    }
+
+    #[test]
+    fn test_parse_segments_spec_invalid() {
+        assert!(parse_segments_spec("", None).is_none());
+        assert!(parse_segments_spec("invalid", None).is_none());
+    }
+
+    // ==================== parse_audio_segments_spec tests ====================
+
+    #[test]
+    fn test_parse_audio_segments_spec_time_range() {
+        let result = parse_audio_segments_spec("00:00-01:00", None);
+        assert!(result.is_some());
+        let (segments, text) = result.unwrap();
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].start_secs, 0);
+        assert_eq!(segments[0].end_secs, 60);
+        assert_eq!(text, "00:00-01:00");
+    }
+
+    #[test]
+    fn test_parse_audio_segments_spec_full() {
+        let result = parse_audio_segments_spec("full", Some(300));
+        assert!(result.is_some());
+        let (segments, _) = result.unwrap();
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].start_secs, 0);
+        assert_eq!(segments[0].end_secs, 300); // Full duration, no cap
+    }
+
+    #[test]
+    fn test_parse_audio_segments_spec_first() {
+        let result = parse_audio_segments_spec("first60", Some(300));
+        assert!(result.is_some());
+        let (segments, _) = result.unwrap();
+        assert_eq!(segments[0].start_secs, 0);
+        assert_eq!(segments[0].end_secs, 60);
+    }
+
+    // ==================== parse_audio_command_segment tests ====================
+
+    #[test]
+    fn test_parse_audio_command_segment_full() {
+        let result = parse_audio_command_segment("full", Some(300));
+        assert!(result.is_some());
+        let (start, end, _) = result.unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(end, 300);
+    }
+
+    #[test]
+    fn test_parse_audio_command_segment_first() {
+        let result = parse_audio_command_segment("first60", Some(300));
+        assert!(result.is_some());
+        let (start, end, _) = result.unwrap();
+        assert_eq!(start, 0);
+        assert_eq!(end, 60);
+    }
+
+    #[test]
+    fn test_parse_audio_command_segment_last() {
+        let result = parse_audio_command_segment("last60", Some(300));
+        assert!(result.is_some());
+        let (start, end, _) = result.unwrap();
+        assert_eq!(start, 240);
+        assert_eq!(end, 300);
+    }
+
+    #[test]
+    fn test_parse_audio_command_segment_middle() {
+        let result = parse_audio_command_segment("middle60", Some(300));
+        assert!(result.is_some());
+        let (start, end, _) = result.unwrap();
+        assert_eq!(start, 120); // (300-60)/2 = 120
+        assert_eq!(end, 180);
+    }
+
+    #[test]
+    fn test_parse_audio_command_segment_no_duration() {
+        assert!(parse_audio_command_segment("full", None).is_none());
+    }
+
+    // ==================== build_cut_filter tests ====================
+
+    #[test]
+    fn test_build_cut_filter_single_segment_video_audio() {
+        let segments = vec![CutSegment {
+            start_secs: 0,
+            end_secs: 30,
+        }];
+        let filter = build_cut_filter(&segments, true, true);
+        assert!(filter.contains("[0:v]trim=start=0:end=30"));
+        assert!(filter.contains("[0:a]atrim=start=0:end=30"));
+        assert!(filter.contains("concat=n=1:v=1:a=1[v][a]"));
+    }
+
+    #[test]
+    fn test_build_cut_filter_video_only() {
+        let segments = vec![CutSegment {
+            start_secs: 10,
+            end_secs: 40,
+        }];
+        let filter = build_cut_filter(&segments, true, false);
+        assert!(filter.contains("[0:v]trim=start=10:end=40"));
+        assert!(!filter.contains("[0:a]atrim"));
+        assert!(filter.contains("concat=n=1:v=1:a=0[v]"));
+    }
+
+    #[test]
+    fn test_build_cut_filter_audio_only() {
+        let segments = vec![CutSegment {
+            start_secs: 0,
+            end_secs: 60,
+        }];
+        let filter = build_cut_filter(&segments, false, true);
+        assert!(!filter.contains("[0:v]trim"));
+        assert!(filter.contains("[0:a]atrim=start=0:end=60"));
+        assert!(filter.contains("concat=n=1:v=0:a=1[a]"));
+    }
+
+    #[test]
+    fn test_build_cut_filter_multiple_segments() {
+        let segments = vec![
+            CutSegment {
+                start_secs: 0,
+                end_secs: 10,
+            },
+            CutSegment {
+                start_secs: 30,
+                end_secs: 40,
+            },
+        ];
+        let filter = build_cut_filter(&segments, true, true);
+        assert!(filter.contains("[0:v]trim=start=0:end=10"));
+        assert!(filter.contains("[0:v]trim=start=30:end=40"));
+        assert!(filter.contains("[v0][a0][v1][a1]concat=n=2"));
+    }
+
+    // ==================== CutSegment serialization tests ====================
+
+    #[test]
+    fn test_cut_segment_serialize() {
+        let segment = CutSegment {
+            start_secs: 10,
+            end_secs: 30,
+        };
+        let json = serde_json::to_string(&segment).unwrap();
+        assert!(json.contains("\"start_secs\":10"));
+        assert!(json.contains("\"end_secs\":30"));
+    }
+
+    // ==================== parse_download_time_range tests ====================
+
+    #[test]
+    fn test_parse_download_time_range_basic() {
+        let text = "https://youtu.be/abc123 00:01:00-00:02:30";
+        let url = "https://youtu.be/abc123";
+        let result = parse_download_time_range(text, url);
+        assert_eq!(result, Some(("00:01:00".to_string(), "00:02:30".to_string())));
+    }
+
+    #[test]
+    fn test_parse_download_time_range_mmss() {
+        let text = "https://youtu.be/abc123 01:00-02:30";
+        let url = "https://youtu.be/abc123";
+        let result = parse_download_time_range(text, url);
+        assert_eq!(result, Some(("01:00".to_string(), "02:30".to_string())));
+    }
+
+    #[test]
+    fn test_parse_download_time_range_em_dash() {
+        let text = "https://youtu.be/abc123 01:00\u{2014}02:30";
+        let url = "https://youtu.be/abc123";
+        let result = parse_download_time_range(text, url);
+        assert_eq!(result, Some(("01:00".to_string(), "02:30".to_string())));
+    }
+
+    #[test]
+    fn test_parse_download_time_range_en_dash() {
+        let text = "https://youtu.be/abc123 01:00\u{2013}02:30";
+        let url = "https://youtu.be/abc123";
+        let result = parse_download_time_range(text, url);
+        assert_eq!(result, Some(("01:00".to_string(), "02:30".to_string())));
+    }
+
+    #[test]
+    fn test_parse_download_time_range_no_range() {
+        let text = "https://youtu.be/abc123";
+        let url = "https://youtu.be/abc123";
+        let result = parse_download_time_range(text, url);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_download_time_range_invalid_order() {
+        let text = "https://youtu.be/abc123 02:30-01:00";
+        let url = "https://youtu.be/abc123";
+        let result = parse_download_time_range(text, url);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_download_time_range_equal_times() {
+        let text = "https://youtu.be/abc123 01:00-01:00";
+        let url = "https://youtu.be/abc123";
+        let result = parse_download_time_range(text, url);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_download_time_range_extra_text_after() {
+        let text = "https://youtu.be/abc123 00:10-00:30 some extra text";
+        let url = "https://youtu.be/abc123";
+        let result = parse_download_time_range(text, url);
+        assert_eq!(result, Some(("00:10".to_string(), "00:30".to_string())));
+    }
+
+    #[test]
+    fn test_parse_download_time_range_garbage_after_url() {
+        let text = "https://youtu.be/abc123 hello world";
+        let url = "https://youtu.be/abc123";
+        let result = parse_download_time_range(text, url);
+        assert_eq!(result, None);
+    }
+}
