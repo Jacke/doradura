@@ -7,7 +7,7 @@
 **Two ways to download the internet. One codebase. Pure Rust.**
 
 [![Rust](https://img.shields.io/badge/Rust-1.93+-000000?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Telegram Bot](https://img.shields.io/badge/Telegram_Bot-v0.24-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/DoraDuraDoraDuraBot?start)
+[![Telegram Bot](https://img.shields.io/badge/Telegram_Bot-v0.31-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/DoraDuraDoraDuraBot?start)
 [![TUI](https://img.shields.io/badge/TUI-dora_v0.6-A6E3A1?style=for-the-badge&logo=gnometerminal&logoColor=black)](https://github.com/Jacke/doradura)
 [![License: MIT](https://img.shields.io/badge/License-MIT-CBA6F7?style=for-the-badge)](LICENSE)
 
@@ -59,7 +59,8 @@ YouTube · SoundCloud · TikTok · Instagram · VK · Spotify · Bandcamp · Twi
 |---|---|---|
 | MP3 · MP4 · WAV · FLAC · OGG · M4A | Pitch · Tempo · Bass Boost | Video notes (auto-split circles) |
 | GIF · SRT · Opus · AAC | Lofi · Wide · Morph profiles | Ringtones (iPhone `.m4r` / Android) |
-| 128k–320k audio · up to 4K video | | Share pages with streaming links |
+| 128k–320k audio · up to 4K video | | Archive ZIP download of history |
+| | | Share pages with streaming links |
 
 **Commands:** `/start` · `/download <url>` · `/info <url>` · `/history` · `/settings` · `/plan`
 
@@ -110,8 +111,10 @@ doradura/
 ├── crates/
 │   ├── doracore/      Shared library — download pipeline, storage, i18n, lyrics
 │   │   ├── download/  SourceRegistry → YtDlpSource / HttpSource → Pipeline
-│   │   ├── storage/   SQLite (r2d2), migrations, backup, file management
+│   │   ├── storage/   SQLite + Postgres (SharedStorage), migrations, TempDirGuard
 │   │   └── core/      Config, web server (share pages + admin), metrics
+│   │
+│   ├── health-monitor/  Bot health watchdog — auto-recovers title & checks /health
 │   │
 │   ├── dorabot/       Telegram bot — handlers, menus, callbacks, audio/video
 │   │
@@ -129,9 +132,10 @@ doradura/
 | **Language** | Rust 1.93+ · async Tokio |
 | **TUI** | ratatui · crossterm · Catppuccin Mocha |
 | **Telegram** | teloxide · local Bot API support |
-| **Database** | SQLite · rusqlite · r2d2 pool |
+| **Database** | SQLite + Postgres (SharedStorage) · rusqlite · sqlx · Redis |
 | **Media** | FFmpeg · yt-dlp (nightly + Deno) |
 | **Web** | Axum · HMAC-SHA256 Telegram auth |
+| **Observability** | Tracing with per-task op IDs · Prometheus metrics · health monitor |
 | **Deploy** | Railway · Docker · s6-overlay |
 | **i18n** | fluent-templates (4 languages) |
 

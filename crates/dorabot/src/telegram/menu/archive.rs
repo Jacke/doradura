@@ -1,3 +1,4 @@
+use crate::core::validation::sanitize_filename;
 use crate::storage::db::{self, DbPool, DownloadHistoryEntry};
 use crate::telegram::admin::download_file_from_telegram;
 use crate::telegram::Bot;
@@ -732,14 +733,3 @@ fn create_zip_file(zip_path: &std::path::Path, files: &[(String, PathBuf)]) -> R
     Ok(())
 }
 
-/// Sanitize a filename by replacing unsafe characters.
-fn sanitize_filename(name: &str) -> String {
-    name.chars()
-        .map(|c| match c {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            _ => c,
-        })
-        .collect::<String>()
-        .trim()
-        .to_string()
-}

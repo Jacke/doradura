@@ -1,5 +1,13 @@
 # Claude Code Instructions for doradura
 
+## General Rules
+
+Do what the user asks directly. Do not suggest the user do tasks manually — execute them yourself using available tools. If a tool is restricted, find an alternative approach.
+
+## Build & Verify
+
+Primary languages: Rust and Go. Use `cargo check` for Rust and `go build` for Go after every edit. For Rust, ensure no Send/Sync issues with async code — gather DB data before async calls.
+
 # ⛔⛔⛔ STOP! READ THIS FIRST ⛔⛔⛔
 
 ## 🚨 ПЕРЕД ЛЮБЫМ git commit/push - ОСТАНОВИСЬ И СПРОСИ! 🚨
@@ -28,6 +36,22 @@
 **Если хотя бы на один вопрос ответ "нет" - НЕ КОММИТЬ!**
 
 ---
+
+## Deployment
+
+Always use `git push` to trigger CI/CD pipeline for Railway deployments. NEVER use `railway deploy` directly. Railway auto-deploys when GHCR image updates via Source Image auto-update.
+
+## Git Workflow
+
+When working with git branches, always run `git status` and `git branch` before committing. Never mix unrelated changes into a single commit. Confirm you're on the correct branch before making any edits.
+
+## Bug Fixing
+
+After fixing a bug, search the entire codebase for duplicate implementations of the same logic before considering the fix complete. Use `Grep` to find all instances across all crates.
+
+## TUI Development
+
+When the user says to simplify or reduce visual noise, the problem is usually structural (too many items/options), not cosmetic. Propose structural changes (removing/merging menu entries, collapsing categories) before making style-only edits.
 
 ## ⚠️ CRITICAL: Railway Commands
 
@@ -80,6 +104,13 @@ When performing code audits, ALWAYS read and follow the severity criteria define
 - `refactor:` → PATCH bump (без изменения поведения)
 - `perf:` → PATCH bump (оптимизация)
 - `feat!:` или `BREAKING:` → MINOR bump (ломающее изменение)
+
+### CHANGELOG
+
+**ОБЯЗАТЕЛЬНО** обновляй `CHANGELOG.md` при каждом коммите:
+- Добавляй запись в секцию `[Unreleased]` (или создавай новую версию если bump)
+- Формат: [Keep a Changelog](https://keepachangelog.com/)
+- Категории: Added, Changed, Fixed, Removed, Security
 
 ## ⚠️ CRITICAL: Telegram Bot API State в Docker
 

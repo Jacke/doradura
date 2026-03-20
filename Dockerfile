@@ -123,11 +123,15 @@ RUN addgroup -g 2000 shareddata && \
   chown telegram-bot-api:shareddata /data && \
   chmod 775 /data
 
+# Varlock — env var validation
+COPY --from=ghcr.io/dmno-dev/varlock:latest /usr/local/bin/varlock /usr/local/bin/varlock
+
 # Copy compiled binary and migrations
 COPY --from=rust-builder --chown=1000:2000 /app/doradura-bin /app/doradura
 COPY --from=rust-builder --chown=1000:2000 /app/health-monitor-bin /app/health-monitor
 RUN chmod 755 /app/doradura /app/health-monitor
 COPY --from=rust-builder --chown=1000:2000 /app/migrations /app/migrations
+COPY --chown=1000:2000 .env.schema /app/.env.schema
 
 WORKDIR /app
 
@@ -160,6 +164,8 @@ RUN printf '%s\n' \
     'foreground { echo "================================================" }' \
     'foreground { echo "Initializing Telegram Bot API + Doradura Bot" }' \
     'foreground { echo "================================================" }' \
+    'foreground { echo "Validating environment variables..." }' \
+    'foreground { /bin/sh -c "cd /app && varlock load 2>&1 || echo [varlock] validation warning (non-fatal)" }' \
     'foreground { mkdir -p /data /tmp }' \
     'foreground { chmod 1777 /tmp }' \
     'foreground { echo "Cleaning up old temp files..." }' \
