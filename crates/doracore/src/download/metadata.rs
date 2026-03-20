@@ -15,6 +15,19 @@ use tokio::process::Command as TokioCommand;
 use tokio::time::timeout;
 use url::Url;
 
+/// Extract only the first line from yt-dlp stdout.
+///
+/// yt-dlp `--print` on playlist/set URLs outputs one line per track.
+/// Taking all stdout would concatenate every track's metadata into one string.
+fn first_line_of_stdout(stdout: &[u8]) -> String {
+    String::from_utf8_lossy(stdout)
+        .lines()
+        .next()
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
 // =============================================================================
 // Cached static strings for yt-dlp arguments (prevents memory leaks)
 // =============================================================================
@@ -703,6 +716,8 @@ pub async fn get_metadata_from_ytdlp(
         "--print".to_string(),
         "%(title)s".to_string(),
         "--no-playlist".to_string(),
+        "--playlist-items".to_string(),
+        "1".to_string(),
         "--skip-download".to_string(),
     ];
 
@@ -797,7 +812,7 @@ pub async fn get_metadata_from_ytdlp(
         return Err(AppError::Download(DownloadError::YtDlp(get_error_message(&error_type))));
     }
 
-    let title = String::from_utf8_lossy(&title_output.stdout).trim().to_string();
+    let title = first_line_of_stdout(&title_output.stdout);
 
     if title.is_empty() {
         log::error!("yt-dlp returned empty title for URL: {}", url);
@@ -815,6 +830,8 @@ pub async fn get_metadata_from_ytdlp(
         "--print".to_string(),
         "%(artist)s".to_string(),
         "--no-playlist".to_string(),
+        "--playlist-items".to_string(),
+        "1".to_string(),
         "--skip-download".to_string(),
     ];
 
@@ -842,7 +859,7 @@ pub async fn get_metadata_from_ytdlp(
 
     let mut artist = artist_output
         .and_then(|result| result.ok())
-        .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+        .map(|out| first_line_of_stdout(&out.stdout))
         .unwrap_or_default();
 
     // If artist is empty or "NA", fall back to uploader/channel name
@@ -853,6 +870,8 @@ pub async fn get_metadata_from_ytdlp(
             "--print".to_string(),
             "%(uploader)s".to_string(),
             "--no-playlist".to_string(),
+            "--playlist-items".to_string(),
+            "1".to_string(),
             "--skip-download".to_string(),
         ];
 
@@ -880,7 +899,7 @@ pub async fn get_metadata_from_ytdlp(
 
         let uploader = uploader_output
             .and_then(|result| result.ok())
-            .map(|out| String::from_utf8_lossy(&out.stdout).trim().to_string())
+            .map(|out| first_line_of_stdout(&out.stdout))
             .unwrap_or_default();
 
         if !uploader.trim().is_empty() && uploader.trim() != "NA" {
@@ -891,7 +910,7 @@ pub async fn get_metadata_from_ytdlp(
         }
     }
 
-    if !title.trim().is_empty() && title.trim() != "Unknown Track" {
+    if !title.trim().is_empty() && title.trim() != "Unknown Track" && !title.contains('\n') && title.len() <= 300 {
         cache::cache_metadata(url, title.clone(), artist.clone()).await;
     } else {
         log::warn!("Not caching metadata with invalid title: '{}'", title);
@@ -913,6 +932,8 @@ pub async fn get_estimated_filesize(url: &Url) -> Option<u64> {
         "--print".to_string(),
         "%(filesize_approx)s".to_string(),
         "--no-playlist".to_string(),
+        "--playlist-items".to_string(),
+        "1".to_string(),
         "--skip-download".to_string(),
     ];
 
@@ -937,7 +958,7 @@ pub async fn get_estimated_filesize(url: &Url) -> Option<u64> {
 
     match output {
         Ok(Ok(result)) if result.status.success() => {
-            let size_str = String::from_utf8_lossy(&result.stdout).trim().to_string();
+            let size_str = first_line_of_stdout(&result.stdout);
             if size_str == "NA" || size_str.is_empty() {
                 log::debug!("File size not available for URL: {}", url);
                 return None;
@@ -976,6 +997,8 @@ pub async fn is_livestream(url: &Url) -> bool {
         "--print".to_string(),
         "%(is_live)s".to_string(),
         "--no-playlist".to_string(),
+        "--playlist-items".to_string(),
+        "1".to_string(),
         "--skip-download".to_string(),
     ];
 
@@ -1000,7 +1023,7 @@ pub async fn is_livestream(url: &Url) -> bool {
 
     match output {
         Ok(Ok(result)) if result.status.success() => {
-            let is_live_str = String::from_utf8_lossy(&result.stdout).trim().to_lowercase();
+            let is_live_str = first_line_of_stdout(&result.stdout).to_lowercase();
             let is_live = is_live_str == "true" || is_live_str == "1";
             if is_live {
                 log::warn!("URL is a LIVE STREAM, will be rejected: {}", url);
@@ -1027,5 +1050,35 @@ pub async fn is_livestream(url: &Url) -> bool {
             log::debug!("Livestream check timed out for: {}", url);
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::first_line_of_stdout;
+
+    #[test]
+    fn single_line() {
+        assert_eq!(first_line_of_stdout(b"hello world"), "hello world");
+    }
+
+    #[test]
+    fn multi_line_takes_first() {
+        assert_eq!(first_line_of_stdout(b"Track1\nTrack2\nTrack3"), "Track1");
+    }
+
+    #[test]
+    fn empty_input() {
+        assert_eq!(first_line_of_stdout(b""), "");
+    }
+
+    #[test]
+    fn crlf_takes_first() {
+        assert_eq!(first_line_of_stdout(b"Song\r\nTitle"), "Song");
+    }
+
+    #[test]
+    fn whitespace_trimmed() {
+        assert_eq!(first_line_of_stdout(b"  padded  \nmore"), "padded");
     }
 }

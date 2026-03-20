@@ -1091,15 +1091,26 @@ pub async fn handle_pipeline_error(
 /// When artist is empty/NA and title contains " - ", tries to parse artist from title
 /// (common SoundCloud pattern: "Artist1, Artist2 - Track Name [tags]").
 fn sanitize_metadata(title: String, artist: String) -> (String, String) {
-    // Strip newlines and trim whitespace
-    let title = title.replace('\n', " ").replace('\r', "");
-    let title = title.trim().to_string();
-
-    let artist = artist.replace('\n', " ").replace('\r', "");
-    let artist = artist.trim().to_string();
+    // Take only first line — yt-dlp --print on playlists outputs one line per track
+    let title = title.lines().next().unwrap_or("").trim().to_string();
+    let artist = artist.lines().next().unwrap_or("").trim().to_string();
 
     // yt-dlp returns "NA" for unavailable fields
     let artist = if artist == "NA" { String::new() } else { artist };
+
+    // Truncate excessively long metadata
+    const MAX_TITLE_LEN: usize = 200;
+    const MAX_ARTIST_LEN: usize = 100;
+    let title = if title.len() > MAX_TITLE_LEN {
+        format!("{}...", &title[..title.floor_char_boundary(MAX_TITLE_LEN)])
+    } else {
+        title
+    };
+    let artist = if artist.len() > MAX_ARTIST_LEN {
+        format!("{}...", &artist[..artist.floor_char_boundary(MAX_ARTIST_LEN)])
+    } else {
+        artist
+    };
 
     // If artist is still empty, try to parse "Artist - Title" from the title
     if artist.is_empty() {
@@ -1134,16 +1145,16 @@ mod tests {
     }
 
     #[test]
-    fn newlines_in_title_replaced_with_spaces() {
+    fn multiline_title_takes_first_line() {
         let (title, artist) = sanitize_metadata("Track1\nTrack2\nTrack3".into(), "Artist".into());
-        assert_eq!(title, "Track1 Track2 Track3");
+        assert_eq!(title, "Track1");
         assert_eq!(artist, "Artist");
     }
 
     #[test]
-    fn newlines_in_artist_replaced_with_spaces() {
+    fn multiline_artist_takes_first_line() {
         let (_, artist) = sanitize_metadata("T".into(), "Art\nist".into());
-        assert_eq!(artist, "Art ist");
+        assert_eq!(artist, "Art");
     }
 
     #[test]
@@ -1152,10 +1163,10 @@ mod tests {
             "pale fortress\nkareful - ready or not\nKAREFUL & MANNEQUIN".into(),
             "NA\n".into(),
         );
-        // After newline cleanup: "pale fortress kareful - ready or not KAREFUL & MANNEQUIN"
-        // Artist is NA → empty → parse "Artist - Title" from title
-        assert_eq!(artist, "pale fortress kareful");
-        assert_eq!(title, "ready or not KAREFUL & MANNEQUIN");
+        // First line only: title="pale fortress", artist="NA" → empty
+        // No " - " in "pale fortress" → no split
+        assert_eq!(title, "pale fortress");
+        assert_eq!(artist, "");
     }
 
     #[test]
@@ -1184,9 +1195,9 @@ mod tests {
 
     #[test]
     fn carriage_return_stripped() {
-        // \r\n → \n replaced with space, \r replaced with empty → "Song Title"
+        // \r\n is a line break → first line only → "Song"
         let (title, _) = sanitize_metadata("Song\r\nTitle".into(), "A".into());
-        assert_eq!(title, "Song Title");
+        assert_eq!(title, "Song");
     }
 
     #[test]
@@ -1203,5 +1214,21 @@ mod tests {
 
         let (_, artist) = sanitize_metadata("T".into(), "na".into());
         assert_eq!(artist, "na");
+    }
+
+    #[test]
+    fn long_title_truncated() {
+        let long_title = "A".repeat(250);
+        let (title, _) = sanitize_metadata(long_title, "Artist".into());
+        assert!(title.len() <= 203); // 200 + "..."
+        assert!(title.ends_with("..."));
+    }
+
+    #[test]
+    fn long_artist_truncated() {
+        let long_artist = "B".repeat(150);
+        let (_, artist) = sanitize_metadata("Title".into(), long_artist);
+        assert!(artist.len() <= 103); // 100 + "..."
+        assert!(artist.ends_with("..."));
     }
 }

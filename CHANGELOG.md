@@ -10,6 +10,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Split monolithic modules for maintainability: `db/mod.rs` (4909 -> 1617 lines, 8 new modules), `callback_router.rs` (3 files), `admin.rs` (7-file directory module), `commands.rs` (4-file directory module), `downloads.rs` (3-file directory module)
 
+### Fixed
+- Playlist/set URLs produced garbage metadata: yt-dlp `--print` outputs one line per track, but code took all stdout as a single string — titles showed every track name concatenated with newlines
+- Added `first_line_of_stdout` helper and `--playlist-items 1` safety net to all 5 metadata `--print` calls
+- `sanitize_metadata()` now takes first line only instead of replacing newlines with spaces, and truncates excessively long metadata
+- Hardened cache validation to reject multi-line or oversized titles
+
 ## [0.31.1] - 2026-03-20
 
 ### Fixed
