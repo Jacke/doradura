@@ -10,7 +10,7 @@ use once_cell::sync::Lazy;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardMarkup, ParseMode};
+use teloxide::types::{InlineKeyboardMarkup, MessageId, ParseMode};
 
 /// Cooldown period for cookie refresh notifications (6 hours)
 const COOKIE_NOTIFICATION_COOLDOWN: Duration = Duration::from_secs(6 * 60 * 60);
@@ -133,14 +133,14 @@ pub async fn handle_update_ytdlp_command(bot: &Bot, chat_id: ChatId, user_id: i6
         return Ok(());
     }
 
-    let before = super::system::get_ytdlp_version_pub()
+    let before = super::system::get_ytdlp_version()
         .await
         .unwrap_or_else(|| "unknown".to_string());
     let processing_msg = bot.send_message(chat_id, "⏳ Updating yt-dlp...").await?;
 
     match ytdlp::check_and_update_ytdlp().await {
         Ok(_) => {
-            let after = super::system::get_ytdlp_version_pub()
+            let after = super::system::get_ytdlp_version()
                 .await
                 .unwrap_or_else(|| "unknown".to_string());
             let status = if before == after {
@@ -653,6 +653,40 @@ pub async fn handle_ig_cookies_file_upload(
             .await?;
         }
     }
+
+    Ok(())
+}
+
+/// Handles the admin:test_cookies callback - tests cookies with yt-dlp
+pub async fn handle_test_cookies_callback(bot: &Bot, chat_id: ChatId, message_id: MessageId) -> Result<()> {
+    bot.edit_message_text(chat_id, message_id, "⏳ Testing cookies with yt\\-dlp\\.\\.\\.")
+        .parse_mode(ParseMode::MarkdownV2)
+        .await?;
+
+    let result = cookies::validate_cookies().await;
+
+    let text = match result {
+        Ok(()) => "✅ *Cookies are working\\!*\n\n\
+            Download test passed successfully\\.\n\
+            Cookies are valid and can be used for downloading\\."
+            .to_string(),
+        Err(reason) => {
+            format!(
+                "❌ *Cookies are not working*\n\n\
+                *Error:* {}\n\n\
+                *Possible reasons:*\n\
+                • YouTube blocked the IP address\n\
+                • Cookies expired or were rotated\n\
+                • Account requires confirmation\n\n\
+                Use /update\\_cookies to upload new ones\\.",
+                escape_markdown(&reason)
+            )
+        }
+    };
+
+    bot.edit_message_text(chat_id, message_id, text)
+        .parse_mode(ParseMode::MarkdownV2)
+        .await?;
 
     Ok(())
 }

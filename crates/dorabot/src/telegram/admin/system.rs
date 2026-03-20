@@ -20,7 +20,6 @@ use tokio::process::Command as TokioCommand;
 use tokio::time::timeout;
 use url::Url;
 
-use crate::download::cookies;
 use crate::download::ytdlp;
 
 const DEFAULT_BOT_API_LOG_PATH: &str = "bot-api-data/logs/telegram-bot-api.log";
@@ -34,12 +33,7 @@ struct QueryData {
     response_time: Option<f64>,
 }
 
-/// Public within admin module for use by cookies.rs
-pub(super) async fn get_ytdlp_version_pub() -> Option<String> {
-    get_ytdlp_version().await
-}
-
-async fn get_ytdlp_version() -> Option<String> {
+pub(super) async fn get_ytdlp_version() -> Option<String> {
     let ytdl_bin = &*config::YTDL_BIN;
     let output = TokioCommand::new(ytdl_bin).arg("--version").output().await.ok()?;
     if !output.status.success() {
@@ -297,42 +291,6 @@ pub async fn handle_check_ytdlp_version_callback(bot: &Bot, chat_id: ChatId, mes
     bot.edit_message_text(chat_id, message_id, text)
         .parse_mode(ParseMode::MarkdownV2)
         .reply_markup(keyboard)
-        .await?;
-
-    Ok(())
-}
-
-/// Handles the admin:test_cookies callback - tests cookies with yt-dlp
-pub async fn handle_test_cookies_callback(bot: &Bot, chat_id: ChatId, message_id: MessageId) -> Result<()> {
-    // Update message to show testing in progress
-    bot.edit_message_text(chat_id, message_id, "⏳ Testing cookies with yt\\-dlp\\.\\.\\.")
-        .parse_mode(ParseMode::MarkdownV2)
-        .await?;
-
-    // Run validation
-    let result = cookies::validate_cookies().await;
-
-    let text = match result {
-        Ok(()) => "✅ *Cookies are working\\!*\n\n\
-            Download test passed successfully\\.\n\
-            Cookies are valid and can be used for downloading\\."
-            .to_string(),
-        Err(reason) => {
-            format!(
-                "❌ *Cookies are not working*\n\n\
-                *Error:* {}\n\n\
-                *Possible reasons:*\n\
-                • YouTube blocked the IP address\n\
-                • Cookies expired or were rotated\n\
-                • Account requires confirmation\n\n\
-                Use /update\\_cookies to upload new ones\\.",
-                escape_markdown(&reason)
-            )
-        }
-    };
-
-    bot.edit_message_text(chat_id, message_id, text)
-        .parse_mode(ParseMode::MarkdownV2)
         .await?;
 
     Ok(())

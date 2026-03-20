@@ -24,7 +24,7 @@ use super::settings::{
 /// Handles settings-related callback queries: `mode:`, `main:`, `ext:`, `subscribe:`,
 /// `subscription:`, `language:select_new:`, `language:set:`, `quality:`, `send_type:toggle`,
 /// `video:toggle_burn_subs`, `bitrate:`, `audio_send_type:toggle`, `subtitle:`, `pbar_style:`,
-/// `video_send_type:toggle:`, `back:`, and `format:` prefixes.
+/// `video_send_type:toggle:`, and `back:` prefixes.
 ///
 /// Returns `Ok(true)` if the callback was handled, `Ok(false)` if it was not recognized.
 #[allow(clippy::too_many_arguments)]
