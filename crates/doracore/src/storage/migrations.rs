@@ -27,8 +27,17 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
 
     // Pre-apply columns that might already exist from init scripts,
     // so that refinery doesn't fail on "duplicate column" and roll back
-    // the entire migration batch (which would skip later migrations like V38).
+    // the entire migration batch (which would skip later migrations like V39).
     let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN is_blocked INTEGER NOT NULL DEFAULT 0;");
+
+    // V19: message_id/chat_id on download_history and cuts
+    let _ = conn.execute_batch("ALTER TABLE download_history ADD COLUMN message_id INTEGER DEFAULT NULL;");
+    let _ = conn.execute_batch("ALTER TABLE download_history ADD COLUMN chat_id INTEGER DEFAULT NULL;");
+    let _ = conn.execute_batch("ALTER TABLE cuts ADD COLUMN message_id INTEGER DEFAULT NULL;");
+    let _ = conn.execute_batch("ALTER TABLE cuts ADD COLUMN chat_id INTEGER DEFAULT NULL;");
+
+    // V26: category on download_history
+    let _ = conn.execute_batch("ALTER TABLE download_history ADD COLUMN category TEXT;");
 
     match embedded::migrations::runner().run(conn).map(|_| ()) {
         Ok(()) => {
@@ -77,12 +86,51 @@ fn ensure_tables(conn: &Connection) {
         )",
         "CREATE INDEX IF NOT EXISTS idx_archive_sessions_user ON archive_sessions(user_id, status)",
         "CREATE INDEX IF NOT EXISTS idx_archive_items_session ON archive_session_items(session_id)",
+        // V39: processed_updates table
+        "CREATE TABLE IF NOT EXISTS processed_updates (
+            bot_id BIGINT NOT NULL,
+            update_id BIGINT NOT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (bot_id, update_id)
+        )",
+        "CREATE INDEX IF NOT EXISTS idx_processed_updates_created_at ON processed_updates(created_at)",
+        // V39: task_queue indexes
+        "CREATE INDEX IF NOT EXISTS idx_task_queue_runnable ON task_queue(status, priority DESC, created_at ASC)",
+        "CREATE INDEX IF NOT EXISTS idx_task_queue_lease_expiry ON task_queue(status, lease_expires_at)",
+        "CREATE INDEX IF NOT EXISTS idx_task_queue_user_pending ON task_queue(user_id, status, created_at ASC)",
     ];
     for sql in &stmts {
         if let Err(e) = conn.execute_batch(sql) {
             log::warn!("ensure_tables: {}", e);
         }
     }
+
+    // V39: task_queue columns (SQLite has no ADD COLUMN IF NOT EXISTS)
+    let alter_stmts = [
+        "ALTER TABLE task_queue ADD COLUMN idempotency_key TEXT",
+        "ALTER TABLE task_queue ADD COLUMN worker_id TEXT",
+        "ALTER TABLE task_queue ADD COLUMN leased_at DATETIME",
+        "ALTER TABLE task_queue ADD COLUMN lease_expires_at DATETIME",
+        "ALTER TABLE task_queue ADD COLUMN last_heartbeat_at DATETIME",
+        "ALTER TABLE task_queue ADD COLUMN execute_at DATETIME",
+        "ALTER TABLE task_queue ADD COLUMN started_at DATETIME",
+        "ALTER TABLE task_queue ADD COLUMN finished_at DATETIME",
+        "ALTER TABLE task_queue ADD COLUMN message_id INTEGER",
+        "ALTER TABLE task_queue ADD COLUMN time_range_start TEXT",
+        "ALTER TABLE task_queue ADD COLUMN time_range_end TEXT",
+        "ALTER TABLE task_queue ADD COLUMN carousel_mask INTEGER",
+    ];
+    for sql in &alter_stmts {
+        let _ = conn.execute_batch(sql); // ignore "duplicate column" errors
+    }
+
+    // V39: unique index on idempotency_key (partial index)
+    let _ = conn.execute_batch(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_task_queue_active_idempotency
+            ON task_queue(idempotency_key)
+            WHERE idempotency_key IS NOT NULL
+              AND status IN ('pending', 'leased', 'processing', 'uploading')",
+    );
 }
 
 /// Run migrations for tests without the outer transaction wrapper

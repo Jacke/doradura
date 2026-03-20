@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.31.1] - 2026-03-20
+
+### Fixed
+- Download queue completely broken: V19 migration "duplicate column" error caused refinery to roll back entire batch, skipping V39 (task_queue columns). All `save_task_to_queue` and `claim_next_task` calls failed silently
+- Pre-apply problematic ALTER TABLE statements from V19/V26 before refinery runs
+- `ensure_tables()` now idempotently creates V39 columns on `task_queue` and `processed_updates` table
+
 ## [0.31.0] - 2026-03-19
 
 ### Added
