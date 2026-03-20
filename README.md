@@ -151,7 +151,7 @@ doradura/
 | [ADMIN_COMMANDS.md](docs/ADMIN_COMMANDS.md) | Admin bot commands |
 | [PROXY_SYSTEM.md](docs/PROXY_SYSTEM.md) | WARP/Tailscale proxy for YouTube |
 | [HEALTH_CHECK.md](docs/HEALTH_CHECK.md) | Health monitoring & avatar status |
-| [YTDLP_SETUP.md](docs/YTDLP_SETUP.md) | yt-dlp configuration |
+| [YTDLP.md](docs/YTDLP.md) | yt-dlp setup, updates & troubleshooting |
 
 ---
 

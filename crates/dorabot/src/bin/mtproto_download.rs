@@ -20,7 +20,7 @@
 //!   mtproto-download from-message -m 1843 -o /tmp/video.mp4
 
 use clap::{Parser, Subcommand};
-use doradura::experimental::mtproto::{DecodedFileId, MtProtoClient, MtProtoDownloader};
+use doradura::mtproto::{DecodedFileId, MtProtoClient, MtProtoDownloader};
 use doradura::storage::db;
 use std::path::PathBuf;
 
@@ -138,7 +138,7 @@ fn get_env(name: &str) -> anyhow::Result<String> {
     std::env::var(name).map_err(|_| anyhow::anyhow!("Environment variable {} not set", name))
 }
 
-fn print_message_info(msg: &doradura::experimental::mtproto::MessageInfo) {
+fn print_message_info(msg: &doradura::mtproto::MessageInfo) {
     let date = chrono::DateTime::from_timestamp(msg.date as i64, 0)
         .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
         .unwrap_or_else(|| msg.date.to_string());

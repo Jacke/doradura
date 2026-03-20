@@ -419,7 +419,7 @@ pub async fn download_file_with_fallback(
 
 /// Downloads a file via MTProto using message_id to get fresh file_reference
 async fn download_via_mtproto(message_id: i32, destination_path: Option<PathBuf>) -> Result<PathBuf> {
-    use crate::experimental::mtproto::{MtProtoClient, MtProtoDownloader};
+    use crate::mtproto::{MtProtoClient, MtProtoDownloader};
 
     // Load MTProto credentials from environment
     let api_id: i32 = std::env::var("TELEGRAM_API_ID")
