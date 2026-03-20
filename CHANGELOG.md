@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Split monolithic modules for maintainability: `db/mod.rs` (4909 -> 1617 lines, 8 new modules), `callback_router.rs` (3 files), `admin.rs` (7-file directory module), `commands.rs` (4-file directory module), `downloads.rs` (3-file directory module)
+
 ## [0.31.1] - 2026-03-20
 
 ### Fixed
@@ -57,7 +60,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - ~5,400 lines of doracore/dorabot code duplication eliminated
 
-[Unreleased]: https://github.com/Jacke/doradura/compare/v0.31.0...HEAD
+[Unreleased]: https://github.com/Jacke/doradura/compare/v0.31.1...HEAD
+[0.31.1]: https://github.com/Jacke/doradura/compare/v0.31.0...v0.31.1
 [0.31.0]: https://github.com/Jacke/doradura/compare/v0.30.1...v0.31.0
 [0.30.1]: https://github.com/Jacke/doradura/compare/v0.30.0...v0.30.1
 [0.30.0]: https://github.com/Jacke/doradura/releases/tag/v0.30.0

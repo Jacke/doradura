@@ -32,6 +32,7 @@ bot_data.db
 # IDE
 .idea/
 .vscode/
+.cursorrules
 # Claude Code instructions (private, not for repo)
 CLAUDE.md
 
