@@ -7,7 +7,7 @@
 **Two ways to download the internet. One codebase. Pure Rust.**
 
 [![Rust](https://img.shields.io/badge/Rust-1.93+-000000?style=for-the-badge&logo=rust&logoColor=white)](https://www.rust-lang.org/)
-[![Telegram Bot](https://img.shields.io/badge/Telegram_Bot-v0.31-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/DoraDuraDoraDuraBot?start)
+[![Telegram Bot](https://img.shields.io/badge/Telegram_Bot-v0.31.1-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/DoraDuraDoraDuraBot?start)
 [![TUI](https://img.shields.io/badge/TUI-dora_v0.6-A6E3A1?style=for-the-badge&logo=gnometerminal&logoColor=black)](https://github.com/Jacke/doradura)
 [![License: MIT](https://img.shields.io/badge/License-MIT-CBA6F7?style=for-the-badge)](LICENSE)
 
@@ -121,7 +121,7 @@ doradura/
 │   └── doratui/       Terminal UI — ratatui, settings, preview, lyrics
 │
 ├── locales/           Fluent i18n (en, ru, fr, de)
-├── migrations/        37 SQLite migrations
+├── migrations/        39 SQLite migrations
 └── Dockerfile         Multi-stage build (cargo-chef + s6-overlay runtime)
 ```
 
@@ -149,6 +149,8 @@ doradura/
 | [LOCAL_BOT_API_SETUP.md](docs/LOCAL_BOT_API_SETUP.md) | Files up to 2 GB via local Bot API |
 | [SUBSCRIPTIONS.md](docs/SUBSCRIPTIONS.md) | Subscription tier management |
 | [ADMIN_COMMANDS.md](docs/ADMIN_COMMANDS.md) | Admin bot commands |
+| [PROXY_SYSTEM.md](docs/PROXY_SYSTEM.md) | WARP/Tailscale proxy for YouTube |
+| [HEALTH_CHECK.md](docs/HEALTH_CHECK.md) | Health monitoring & avatar status |
 | [YTDLP_SETUP.md](docs/YTDLP_SETUP.md) | yt-dlp configuration |
 
 ---

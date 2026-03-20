@@ -32,7 +32,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run clippy
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --workspace -- -D warnings
 
   test:
     name: Test Suite + Smoke Tests
@@ -55,7 +55,7 @@ jobs:
           pip3 install yt-dlp
 
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test --workspace --verbose
 
       - name: Run smoke tests
         run: cargo test --test smoke_test -- --nocapture

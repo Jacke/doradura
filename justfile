@@ -26,6 +26,21 @@ build:
 check:
     cargo check --workspace
 
+# Run all tests
+test:
+    cargo test --workspace
+
+# Run clippy lints
+clippy:
+    cargo clippy --workspace -- -D warnings
+
+# Format code
+fmt:
+    cargo fmt --all
+
+# Full lint pass (fmt + clippy + test)
+lint: fmt clippy test
+
 # Clean build artifacts
 clean:
     cargo clean
