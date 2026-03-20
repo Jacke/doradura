@@ -160,8 +160,8 @@ pub async fn start_web_server(port: u16, shared_storage: Arc<SharedStorage>) -> 
     };
 
     let app = Router::new()
-        .route("/s/:id", get(share_page_handler))
-        .route("/api/s/:id", get(share_api_handler))
+        .route("/s/{id}", get(share_page_handler))
+        .route("/api/s/{id}", get(share_api_handler))
         .route("/health", get(health_handler))
         .route("/privacy", get(privacy_handler))
         // Admin routes
@@ -171,8 +171,8 @@ pub async fn start_web_server(port: u16, shared_storage: Arc<SharedStorage>) -> 
         .route("/admin/logout", get(admin_logout_handler))
         // Admin API
         .route("/admin/api/users", get(admin_api_users))
-        .route("/admin/api/users/:id/plan", post(admin_api_user_plan))
-        .route("/admin/api/users/:id/block", post(admin_api_user_block))
+        .route("/admin/api/users/{id}/plan", post(admin_api_user_plan))
+        .route("/admin/api/users/{id}/block", post(admin_api_user_block))
         .route("/admin/api/downloads", get(admin_api_downloads))
         .route("/metrics", get(metrics_handler))
         .with_state(state)
