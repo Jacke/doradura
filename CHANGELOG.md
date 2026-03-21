@@ -16,6 +16,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Admin panel: **Broadcast** — send message to specific user or broadcast to all from topbar button; fire-and-forget background broadcast with rate limiting
 - Admin panel: Errors tab converted from static (last 20) to dynamic API-driven with pagination, resolved/unresolved filter, and per-error resolve button
 - Admin API: 13 new endpoints (`/admin/api/queue`, `/admin/api/errors`, `/admin/api/feedback`, `/admin/api/alerts`, `/admin/api/users/{id}/details`, `/admin/api/health`, `/admin/api/broadcast`)
+- Admin panel: **Revenue** tab — aggregate stats (total revenue, charges, avg check), revenue-per-day chart, paginated charges table with plan/recurring filters
+- Admin panel: **Analytics** API — DAU/WAU/MAU, daily downloads trend, new users per day, format distribution, top users this week (`/admin/api/analytics`)
+- Admin panel: Search on Queue, Errors, Feedback, Alerts tabs (debounced, matches URL/message/user/type)
+- Admin panel: Error context display — click error row to expand JSON context; `context` field added to errors API
+- Admin panel: **Auto-refresh** toggle in topbar — polls active tab every 30s, persists to localStorage
+- Admin panel: **User Detail** drawer extended — shows preferences (format, quality, bitrate, burn_subtitles, progress_bar_style), editable plan/language/block via dropdown selectors, block/unblock from drawer
+- Admin panel: User settings API (`POST /admin/api/users/{id}/settings`) — update plan (with optional expiry days), language, blocked status
+- Admin panel: Broadcast confirmation — "all" target shows `confirm()` dialog before sending
+- Admin panel: Feedback reply flow — "Reply" button pre-configures broadcast modal, auto-marks feedback as "replied" after send
+- Admin panel: Mobile responsive — tabs scroll horizontally on <768px, detail drawer full-width, toolbar stacks vertically
 
 ### Changed
 - Split monolithic modules for maintainability: `db/mod.rs` (4909 -> 1617 lines, 8 new modules), `callback_router.rs` (3 files), `admin.rs` (7-file directory module), `commands.rs` (4-file directory module), `downloads.rs` (3-file directory module)

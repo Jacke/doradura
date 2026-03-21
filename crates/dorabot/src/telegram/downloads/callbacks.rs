@@ -1,4 +1,4 @@
-use crate::core::escape_markdown;
+use crate::core::{escape_markdown, escape_markdown_url};
 use crate::downsub::DownsubGateway;
 use crate::storage::{db, DbPool, SharedStorage, SubtitleCache};
 use crate::telegram::commands::{process_video_clip, CutSegment};
@@ -141,6 +141,7 @@ pub async fn handle_downloads_callback(
                     let mut options = Vec::new();
 
                     if download.format == "mp3" {
+                        // Row 1: send formats
                         options.push(vec![
                             crate::telegram::cb(
                                 "🎵 As audio".to_string(),
@@ -151,19 +152,22 @@ pub async fn handle_downloads_callback(
                                 format!("downloads:send:document:{}", download_id),
                             ),
                         ]);
+                        // Row 2: transform actions
                         options.push(vec![
                             crate::telegram::cb("✂️ Clip".to_string(), format!("downloads:clip:{}", download_id)),
-                            crate::telegram::cb("⭕️ Circle".to_string(), format!("downloads:circle:{}", download_id)),
+                            crate::telegram::cb("🎙 Voice".to_string(), format!("downloads:send:voice:{}", download_id)),
                             crate::telegram::cb(
-                                "🔔 Make ringtone".to_string(),
+                                "🔔 Ringtone".to_string(),
                                 format!("ringtone:select:download:{}", download_id),
                             ),
                         ]);
+                        // Row 3: speed
                         options.push(vec![crate::telegram::cb(
-                            "⚙️ Change speed".to_string(),
+                            "⚙️ Speed".to_string(),
                             format!("downloads:speed:{}", download_id),
                         )]);
                     } else {
+                        // Row 1: send formats
                         options.push(vec![
                             crate::telegram::cb(
                                 "🎬 As video".to_string(),
@@ -174,29 +178,28 @@ pub async fn handle_downloads_callback(
                                 format!("downloads:send:document:{}", download_id),
                             ),
                         ]);
+                        // Row 2: transform actions
                         options.push(vec![
                             crate::telegram::cb("✂️ Clip".to_string(), format!("downloads:clip:{}", download_id)),
                             crate::telegram::cb("⭕️ Circle".to_string(), format!("downloads:circle:{}", download_id)),
                             crate::telegram::cb(
-                                "🔔 Make ringtone".to_string(),
+                                "🔔 Ringtone".to_string(),
                                 format!("ringtone:select:download:{}", download_id),
                             ),
                         ]);
-                        options.push(vec![crate::telegram::cb(
-                            "⚙️ Change speed".to_string(),
-                            format!("downloads:speed:{}", download_id),
-                        )]);
-                    }
-
-                    if is_youtube_url(&download.url) {
-                        options.push(vec![crate::telegram::cb(
-                            "📝 Subtitles".to_string(),
-                            format!("downloads:subtitles:{}", download_id),
-                        )]);
-                        if download.format == "mp4" {
+                        // Row 3: speed + burn subs (YouTube mp4 only)
+                        if is_youtube_url(&download.url) {
+                            options.push(vec![
+                                crate::telegram::cb("⚙️ Speed".to_string(), format!("downloads:speed:{}", download_id)),
+                                crate::telegram::cb(
+                                    "🔤 Burn subs".to_string(),
+                                    format!("downloads:burn_subs:{}", download_id),
+                                ),
+                            ]);
+                        } else {
                             options.push(vec![crate::telegram::cb(
-                                "🔤 Burn subtitles".to_string(),
-                                format!("downloads:burn_subs:{}", download_id),
+                                "⚙️ Speed".to_string(),
+                                format!("downloads:speed:{}", download_id),
                             )]);
                         }
                     }
@@ -217,14 +220,19 @@ pub async fn handle_downloads_callback(
                     )]);
 
                     let keyboard = InlineKeyboardMarkup::new(options);
-                    let msg_text = format!("How to send *{}*?", escape_markdown(&download.title));
+                    let msg_text = format!(
+                        "How to send *{}*?\n[🔗 Source]({})",
+                        escape_markdown(&download.title),
+                        escape_markdown_url(&download.url),
+                    );
 
-                    crate::telegram::styled::send_message_styled_or_fallback(
+                    crate::telegram::styled::send_message_styled_or_fallback_opts(
                         bot,
                         chat_id,
                         &msg_text,
                         &keyboard,
                         Some(ParseMode::MarkdownV2),
+                        true,
                     )
                     .await?;
                 }
@@ -262,14 +270,11 @@ pub async fn handle_downloads_callback(
                     options.push(vec![
                         crate::telegram::cb("✂️ Clip".to_string(), format!("downloads:clip_cut:{}", cut_id)),
                         crate::telegram::cb("⭕️ Circle".to_string(), format!("downloads:circle_cut:{}", cut_id)),
-                        crate::telegram::cb(
-                            "🔔 Make ringtone".to_string(),
-                            format!("ringtone:select:cut:{}", cut_id),
-                        ),
+                        crate::telegram::cb("🔔 Ringtone".to_string(), format!("ringtone:select:cut:{}", cut_id)),
                     ]);
 
                     options.push(vec![crate::telegram::cb(
-                        "⚙️ Change speed".to_string(),
+                        "⚙️ Speed".to_string(),
                         format!("downloads:speed_cut:{}", cut_id),
                     )]);
 
@@ -279,14 +284,19 @@ pub async fn handle_downloads_callback(
                     )]);
 
                     let keyboard = InlineKeyboardMarkup::new(options);
-                    let msg_text = format!("How to send clip *{}*?", escape_markdown(&cut.title));
+                    let msg_text = format!(
+                        "How to send clip *{}*?\n[🔗 Source]({})",
+                        escape_markdown(&cut.title),
+                        escape_markdown_url(&cut.original_url),
+                    );
 
-                    crate::telegram::styled::send_message_styled_or_fallback(
+                    crate::telegram::styled::send_message_styled_or_fallback_opts(
                         bot,
                         chat_id,
                         &msg_text,
                         &keyboard,
                         Some(ParseMode::MarkdownV2),
+                        true,
                     )
                     .await?;
                 }
@@ -309,6 +319,7 @@ pub async fn handle_downloads_callback(
                         "audio" => "⏳ Preparing to send as audio…",
                         "video" => "⏳ Preparing to send as video…",
                         "document" => "⏳ Preparing to send as document…",
+                        "voice" => "⏳ Converting to voice message…",
                         _ => "⏳ Preparing to send…",
                     };
                     let status_msg = bot.send_message(chat_id, status_text).await?;
@@ -346,6 +357,7 @@ pub async fn handle_downloads_callback(
                             send_document_forced(bot, chat_id, &telegram_file_id, upload_file_name, caption.clone())
                                 .await
                         }
+                        "voice" => send_as_voice(bot, chat_id, &telegram_file_id, &caption).await,
                         _ => {
                             bot.delete_message(chat_id, status_msg.id).await.ok();
                             return Ok(());
@@ -1695,4 +1707,46 @@ pub async fn handle_downloads_callback(
     }
 
     Ok(())
+}
+
+/// Download an audio file from Telegram, convert to OGG Opus, and send as a voice message.
+async fn send_as_voice(
+    bot: &Bot,
+    chat_id: ChatId,
+    telegram_file_id: &str,
+    _caption: &str,
+) -> ResponseResult<teloxide::types::Message> {
+    use crate::core::utils::TempDirGuard;
+
+    let guard = TempDirGuard::new("doradura_voice")
+        .await
+        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+
+    let input_path = guard
+        .path()
+        .join(format!("voice_input_{}_{}.mp3", chat_id.0, uuid::Uuid::new_v4()));
+    let output_path = guard
+        .path()
+        .join(format!("voice_output_{}_{}.ogg", chat_id.0, uuid::Uuid::new_v4()));
+
+    // Download audio from Telegram
+    crate::telegram::download_file_from_telegram(bot, telegram_file_id, Some(input_path.clone()))
+        .await
+        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+
+    // Convert to OGG Opus on a blocking thread
+    let in_str = input_path.to_string_lossy().to_string();
+    let out_str = output_path.to_string_lossy().to_string();
+    let duration =
+        tokio::task::spawn_blocking(move || crate::telegram::voice::convert_wav_to_ogg_opus(&in_str, &out_str))
+            .await
+            .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+            .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+
+    // Send as voice message
+    let mut req = bot.send_voice(chat_id, InputFile::file(output_path));
+    if let Some(dur) = duration {
+        req = req.duration(dur);
+    }
+    req.await
 }

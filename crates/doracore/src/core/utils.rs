@@ -370,6 +370,13 @@ pub fn escape_filename(filename: &str) -> String {
 /// let escaped = escape_markdown_v2("Hello. World!");
 /// assert_eq!(escaped, "Hello\\. World\\!");
 /// ```
+/// Escape a URL for use inside MarkdownV2 inline link `[text](url)`.
+///
+/// Per Bot API docs, only `)` and `\` need escaping inside the URL part.
+pub fn escape_markdown_v2_url(url: &str) -> String {
+    url.replace('\\', "\\\\").replace(')', "\\)")
+}
+
 pub fn escape_markdown_v2(text: &str) -> String {
     let mut result = String::with_capacity(text.len() * 2);
 

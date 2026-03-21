@@ -1670,7 +1670,7 @@ dependencies = [
 
 [[package]]
 name = "doracore"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "anyhow",
  "async-trait",

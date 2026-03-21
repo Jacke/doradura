@@ -45,3 +45,4 @@ pub use utils::{
 
 /// Alias for backward compatibility — use `escape_markdown_v2`.
 pub use utils::escape_markdown_v2 as escape_markdown;
+pub use utils::escape_markdown_v2_url as escape_markdown_url;

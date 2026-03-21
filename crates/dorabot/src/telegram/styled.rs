@@ -127,6 +127,18 @@ pub async fn send_message_styled(
     keyboard: &InlineKeyboardMarkup,
     parse_mode: Option<ParseMode>,
 ) -> Result<Option<teloxide::types::Message>, StyledError> {
+    send_message_styled_inner(bot, chat_id, text, keyboard, parse_mode, false).await
+}
+
+/// Inner implementation with optional link preview control.
+async fn send_message_styled_inner(
+    bot: &Bot,
+    chat_id: ChatId,
+    text: &str,
+    keyboard: &InlineKeyboardMarkup,
+    parse_mode: Option<ParseMode>,
+    disable_link_preview: bool,
+) -> Result<Option<teloxide::types::Message>, StyledError> {
     let mut body = json!({
         "chat_id": chat_id.0,
         "text": text,
@@ -134,6 +146,9 @@ pub async fn send_message_styled(
     });
     if let Some(pm) = parse_mode {
         body["parse_mode"] = json!(format!("{:?}", pm));
+    }
+    if disable_link_preview {
+        body["link_preview_options"] = json!({"is_disabled": true});
     }
 
     let resp: TgMessageResponse = bot
@@ -305,13 +320,34 @@ pub async fn send_message_styled_or_fallback(
     keyboard: &InlineKeyboardMarkup,
     parse_mode: Option<ParseMode>,
 ) -> ResponseResult<teloxide::types::Message> {
-    match send_message_styled(bot, chat_id, text, keyboard, parse_mode).await {
+    send_message_styled_or_fallback_opts(bot, chat_id, text, keyboard, parse_mode, false).await
+}
+
+/// Like [`send_message_styled_or_fallback`] but with link-preview control.
+pub async fn send_message_styled_or_fallback_opts(
+    bot: &Bot,
+    chat_id: ChatId,
+    text: &str,
+    keyboard: &InlineKeyboardMarkup,
+    parse_mode: Option<ParseMode>,
+    disable_link_preview: bool,
+) -> ResponseResult<teloxide::types::Message> {
+    match send_message_styled_inner(bot, chat_id, text, keyboard, parse_mode, disable_link_preview).await {
         Ok(Some(msg)) => Ok(msg),
         Err(e) => {
             log::debug!("Styled send failed ({}), falling back to teloxide", e);
             let mut req = bot.send_message(chat_id, text).reply_markup(keyboard.clone());
             if let Some(pm) = parse_mode {
                 req = req.parse_mode(pm);
+            }
+            if disable_link_preview {
+                req = req.link_preview_options(teloxide::types::LinkPreviewOptions {
+                    is_disabled: true,
+                    url: None,
+                    prefer_small_media: false,
+                    prefer_large_media: false,
+                    show_above_text: false,
+                });
             }
             req.await
         }

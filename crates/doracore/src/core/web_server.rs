@@ -126,6 +126,7 @@ struct PaginatedResponse<T: Serialize> {
 struct QueueQuery {
     page: Option<u32>,
     status: Option<String>,
+    search: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -151,6 +152,7 @@ struct ErrorQuery {
     page: Option<u32>,
     error_type: Option<String>,
     resolved: Option<String>,
+    search: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -162,6 +164,7 @@ struct ApiError {
     error_type: String,
     error_message: String,
     url: String,
+    context: String,
     resolved: bool,
 }
 
@@ -171,6 +174,7 @@ struct ApiError {
 struct FeedbackQuery {
     page: Option<u32>,
     status: Option<String>,
+    search: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -196,6 +200,7 @@ struct FeedbackStatusReq {
 struct AlertQuery {
     page: Option<u32>,
     severity: Option<String>,
+    search: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -208,6 +213,43 @@ struct ApiAlert {
     triggered_at: String,
     resolved_at: String,
     acknowledged: bool,
+}
+
+// --- Revenue API types ---
+
+#[derive(Deserialize)]
+struct RevenueQuery {
+    page: Option<u32>,
+    plan: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ApiChargeEntry {
+    id: i64,
+    user_id: i64,
+    username: String,
+    plan: String,
+    amount: i64,
+    currency: String,
+    is_recurring: bool,
+    payment_date: String,
+}
+
+// --- Analytics API types ---
+
+#[derive(Deserialize)]
+struct AnalyticsQuery {
+    days: Option<u32>,
+}
+
+// --- User settings API types ---
+
+#[derive(Deserialize)]
+struct UserSettingsReq {
+    language: Option<String>,
+    plan: Option<String>,
+    plan_days: Option<i32>,
+    is_blocked: Option<bool>,
 }
 
 // --- Broadcast API types ---
@@ -285,10 +327,13 @@ pub async fn start_web_server(port: u16, shared_storage: Arc<SharedStorage>) -> 
         // Alerts API
         .route("/admin/api/alerts", get(admin_api_alerts))
         .route("/admin/api/alerts/{id}/acknowledge", post(admin_api_alert_acknowledge))
-        // User details + Health + Broadcast
+        // User details + Health + Broadcast + Revenue + Analytics
         .route("/admin/api/users/{id}/details", get(admin_api_user_details))
+        .route("/admin/api/users/{id}/settings", post(admin_api_user_settings))
         .route("/admin/api/health", get(admin_api_health))
         .route("/admin/api/broadcast", post(admin_api_broadcast))
+        .route("/admin/api/revenue", get(admin_api_revenue))
+        .route("/admin/api/analytics", get(admin_api_analytics))
         .route("/metrics", get(metrics_handler))
         .with_state(state)
         .layer(DefaultBodyLimit::max(1024 * 1024)) // 1 MB
@@ -1333,26 +1378,48 @@ async fn admin_api_queue(
     }
     let page = q.page.unwrap_or(1).max(1);
     let status_filter = q.status.unwrap_or_default();
+    let search = q.search.unwrap_or_default();
     let offset = ((page - 1) * QUEUE_PER_PAGE) as i64;
     let db = state.shared_storage.sqlite_pool();
 
     let result = tokio::task::spawn_blocking(move || -> Result<PaginatedResponse<ApiQueueTask>, rusqlite::Error> {
         let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
-        let where_clause = match status_filter.as_str() {
+        let mut conditions = Vec::new();
+        let search_param = if !search.is_empty() {
+            conditions.push(
+                "(t.url LIKE ?1 OR COALESCE(u.username,'') LIKE ?1 \
+                 OR CAST(t.user_id AS TEXT) LIKE ?1 OR t.id LIKE ?1)"
+                    .to_string(),
+            );
+            Some(format!("%{}%", search))
+        } else {
+            None
+        };
+        match status_filter.as_str() {
             "pending" | "leased" | "processing" | "uploading" | "completed" | "dead_letter" => {
-                format!("WHERE t.status = '{}'", status_filter)
+                conditions.push(format!("t.status = '{}'", status_filter));
             }
-            "active" => "WHERE t.status IN ('pending','leased','processing','uploading')".to_string(),
-            _ => String::new(),
+            "active" => {
+                conditions.push("t.status IN ('pending','leased','processing','uploading')".to_string());
+            }
+            _ => {}
+        };
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
         };
 
-        let total: i64 = conn
-            .query_row(
-                &format!("SELECT COUNT(*) FROM task_queue t {}", where_clause),
-                [],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
+        let count_sql = format!(
+            "SELECT COUNT(*) FROM task_queue t LEFT JOIN users u ON u.telegram_id = t.user_id {}",
+            where_clause
+        );
+        let total: i64 = if let Some(ref sp) = search_param {
+            conn.query_row(&count_sql, rusqlite::params![sp], |r| r.get(0))
+                .unwrap_or(0)
+        } else {
+            conn.query_row(&count_sql, [], |r| r.get(0)).unwrap_or(0)
+        };
         let total_pages = ((total as f64) / QUEUE_PER_PAGE as f64).ceil() as u32;
 
         let sql = format!(
@@ -1365,28 +1432,37 @@ async fn admin_api_queue(
             where_clause, QUEUE_PER_PAGE, offset
         );
 
-        let tasks: Vec<ApiQueueTask> = conn
-            .prepare(&sql)
-            .and_then(|mut s| {
-                let rows = s.query_map([], |r| {
-                    Ok(ApiQueueTask {
-                        id: r.get(0)?,
-                        user_id: r.get(1)?,
-                        username: r.get(2)?,
-                        url: r.get(3)?,
-                        format: r.get(4)?,
-                        status: r.get(5)?,
-                        error_message: r.get(6)?,
-                        retry_count: r.get(7)?,
-                        worker_id: r.get(8)?,
-                        created_at: r.get(9)?,
-                        started_at: r.get(10)?,
-                        finished_at: r.get(11)?,
-                    })
-                })?;
-                Ok(rows.filter_map(|r| r.ok()).collect())
+        let map_q = |r: &rusqlite::Row<'_>| -> rusqlite::Result<ApiQueueTask> {
+            Ok(ApiQueueTask {
+                id: r.get(0)?,
+                user_id: r.get(1)?,
+                username: r.get(2)?,
+                url: r.get(3)?,
+                format: r.get(4)?,
+                status: r.get(5)?,
+                error_message: r.get(6)?,
+                retry_count: r.get(7)?,
+                worker_id: r.get(8)?,
+                created_at: r.get(9)?,
+                started_at: r.get(10)?,
+                finished_at: r.get(11)?,
             })
-            .unwrap_or_default();
+        };
+        let tasks: Vec<ApiQueueTask> = if let Some(ref sp) = search_param {
+            conn.prepare(&sql)
+                .and_then(|mut s| {
+                    let rows = s.query_map(rusqlite::params![sp], map_q)?;
+                    Ok(rows.filter_map(|r| r.ok()).collect())
+                })
+                .unwrap_or_default()
+        } else {
+            conn.prepare(&sql)
+                .and_then(|mut s| {
+                    let rows = s.query_map([], map_q)?;
+                    Ok(rows.filter_map(|r| r.ok()).collect())
+                })
+                .unwrap_or_default()
+        };
 
         Ok(PaginatedResponse {
             items: tasks,
@@ -1485,6 +1561,7 @@ async fn admin_api_errors(
     let page = q.page.unwrap_or(1).max(1);
     let type_filter = q.error_type.unwrap_or_default();
     let resolved_filter = q.resolved.unwrap_or_default();
+    let search_filter = q.search.unwrap_or_default();
     let offset = ((page - 1) * ERRORS_PER_PAGE) as i64;
     let db = state.shared_storage.sqlite_pool();
 
@@ -1495,6 +1572,13 @@ async fn admin_api_errors(
         let search_param = if !type_filter.is_empty() {
             conditions.push("error_type LIKE ?1".to_string());
             Some(format!("%{}%", type_filter))
+        } else if !search_filter.is_empty() {
+            conditions.push(
+                "(error_message LIKE ?1 OR COALESCE(error_type,'') LIKE ?1 \
+                 OR COALESCE(url,'') LIKE ?1 OR CAST(COALESCE(user_id,0) AS TEXT) LIKE ?1)"
+                    .to_string(),
+            );
+            Some(format!("%{}%", search_filter))
         } else {
             None
         };
@@ -1521,7 +1605,7 @@ async fn admin_api_errors(
         let sql = format!(
             "SELECT id, COALESCE(timestamp, ''), user_id, COALESCE(username, ''), \
                     COALESCE(error_type, ''), COALESCE(error_message, ''), COALESCE(url, ''), \
-                    COALESCE(resolved, 0) \
+                    COALESCE(context, ''), COALESCE(resolved, 0) \
              FROM error_log {} ORDER BY timestamp DESC LIMIT {} OFFSET {}",
             where_clause, ERRORS_PER_PAGE, offset
         );
@@ -1535,7 +1619,8 @@ async fn admin_api_errors(
                 error_type: r.get(4)?,
                 error_message: r.get(5)?,
                 url: r.get(6)?,
-                resolved: r.get::<_, i64>(7)? != 0,
+                context: r.get(7)?,
+                resolved: r.get::<_, i64>(8)? != 0,
             })
         };
 
@@ -1616,23 +1701,40 @@ async fn admin_api_feedback(
     }
     let page = q.page.unwrap_or(1).max(1);
     let status_filter = q.status.unwrap_or_default();
+    let search = q.search.unwrap_or_default();
     let offset = ((page - 1) * FEEDBACK_PER_PAGE) as i64;
     let db = state.shared_storage.sqlite_pool();
 
     let result = tokio::task::spawn_blocking(move || -> Result<PaginatedResponse<ApiFeedback>, rusqlite::Error> {
         let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
-        let where_clause = match status_filter.as_str() {
-            "new" | "reviewed" | "replied" => format!("WHERE status = '{}'", status_filter),
-            _ => String::new(),
+        let mut conditions = Vec::new();
+        match status_filter.as_str() {
+            "new" | "reviewed" | "replied" => {
+                conditions.push(format!("status = '{}'", status_filter));
+            }
+            _ => {}
+        }
+        let search_param = if !search.is_empty() {
+            conditions.push(
+                "(message LIKE ?1 OR COALESCE(username,'') LIKE ?1 OR COALESCE(first_name,'') LIKE ?1)".to_string(),
+            );
+            Some(format!("%{}%", search))
+        } else {
+            None
+        };
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
         };
 
-        let total: i64 = conn
-            .query_row(
-                &format!("SELECT COUNT(*) FROM feedback_messages {}", where_clause),
-                [],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
+        let count_sql = format!("SELECT COUNT(*) FROM feedback_messages {}", where_clause);
+        let total: i64 = if let Some(ref sp) = search_param {
+            conn.query_row(&count_sql, rusqlite::params![sp], |r| r.get(0))
+                .unwrap_or(0)
+        } else {
+            conn.query_row(&count_sql, [], |r| r.get(0)).unwrap_or(0)
+        };
         let total_pages = ((total as f64) / FEEDBACK_PER_PAGE as f64).ceil() as u32;
 
         let sql = format!(
@@ -1642,24 +1744,33 @@ async fn admin_api_feedback(
             where_clause, FEEDBACK_PER_PAGE, offset
         );
 
-        let feedback: Vec<ApiFeedback> = conn
-            .prepare(&sql)
-            .and_then(|mut s| {
-                let rows = s.query_map([], |r| {
-                    Ok(ApiFeedback {
-                        id: r.get(0)?,
-                        user_id: r.get(1)?,
-                        username: r.get(2)?,
-                        first_name: r.get(3)?,
-                        message: r.get(4)?,
-                        status: r.get(5)?,
-                        admin_reply: r.get(6)?,
-                        created_at: r.get(7)?,
-                    })
-                })?;
-                Ok(rows.filter_map(|r| r.ok()).collect())
+        let map_f = |r: &rusqlite::Row<'_>| -> rusqlite::Result<ApiFeedback> {
+            Ok(ApiFeedback {
+                id: r.get(0)?,
+                user_id: r.get(1)?,
+                username: r.get(2)?,
+                first_name: r.get(3)?,
+                message: r.get(4)?,
+                status: r.get(5)?,
+                admin_reply: r.get(6)?,
+                created_at: r.get(7)?,
             })
-            .unwrap_or_default();
+        };
+        let feedback: Vec<ApiFeedback> = if let Some(ref sp) = search_param {
+            conn.prepare(&sql)
+                .and_then(|mut s| {
+                    let rows = s.query_map(rusqlite::params![sp], map_f)?;
+                    Ok(rows.filter_map(|r| r.ok()).collect())
+                })
+                .unwrap_or_default()
+        } else {
+            conn.prepare(&sql)
+                .and_then(|mut s| {
+                    let rows = s.query_map([], map_f)?;
+                    Ok(rows.filter_map(|r| r.ok()).collect())
+                })
+                .unwrap_or_default()
+        };
 
         Ok(PaginatedResponse {
             items: feedback,
@@ -1728,25 +1839,40 @@ async fn admin_api_alerts(
     }
     let page = q.page.unwrap_or(1).max(1);
     let severity_filter = q.severity.unwrap_or_default();
+    let search = q.search.unwrap_or_default();
     let offset = ((page - 1) * ALERTS_PER_PAGE) as i64;
     let db = state.shared_storage.sqlite_pool();
 
     let result = tokio::task::spawn_blocking(move || -> Result<PaginatedResponse<ApiAlert>, rusqlite::Error> {
         let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
-        let where_clause = match severity_filter.as_str() {
-            "critical" | "warning" | "info" => format!("WHERE severity = '{}'", severity_filter),
-            "unresolved" => "WHERE resolved_at IS NULL".to_string(),
-            "unacked" => "WHERE COALESCE(acknowledged, 0) = 0".to_string(),
-            _ => String::new(),
+        let mut conditions = Vec::new();
+        match severity_filter.as_str() {
+            "critical" | "warning" | "info" => {
+                conditions.push(format!("severity = '{}'", severity_filter));
+            }
+            "unresolved" => conditions.push("resolved_at IS NULL".to_string()),
+            "unacked" => conditions.push("COALESCE(acknowledged, 0) = 0".to_string()),
+            _ => {}
+        }
+        let search_param = if !search.is_empty() {
+            conditions.push("(COALESCE(alert_type,'') LIKE ?1 OR message LIKE ?1)".to_string());
+            Some(format!("%{}%", search))
+        } else {
+            None
+        };
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
         };
 
-        let total: i64 = conn
-            .query_row(
-                &format!("SELECT COUNT(*) FROM alert_history {}", where_clause),
-                [],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
+        let count_sql = format!("SELECT COUNT(*) FROM alert_history {}", where_clause);
+        let total: i64 = if let Some(ref sp) = search_param {
+            conn.query_row(&count_sql, rusqlite::params![sp], |r| r.get(0))
+                .unwrap_or(0)
+        } else {
+            conn.query_row(&count_sql, [], |r| r.get(0)).unwrap_or(0)
+        };
         let total_pages = ((total as f64) / ALERTS_PER_PAGE as f64).ceil() as u32;
 
         let sql = format!(
@@ -1758,24 +1884,33 @@ async fn admin_api_alerts(
             where_clause, ALERTS_PER_PAGE, offset
         );
 
-        let alerts: Vec<ApiAlert> = conn
-            .prepare(&sql)
-            .and_then(|mut s| {
-                let rows = s.query_map([], |r| {
-                    Ok(ApiAlert {
-                        id: r.get(0)?,
-                        alert_type: r.get(1)?,
-                        severity: r.get(2)?,
-                        message: r.get(3)?,
-                        metadata: r.get(4)?,
-                        triggered_at: r.get(5)?,
-                        resolved_at: r.get(6)?,
-                        acknowledged: r.get::<_, i64>(7)? != 0,
-                    })
-                })?;
-                Ok(rows.filter_map(|r| r.ok()).collect())
+        let map_a = |r: &rusqlite::Row<'_>| -> rusqlite::Result<ApiAlert> {
+            Ok(ApiAlert {
+                id: r.get(0)?,
+                alert_type: r.get(1)?,
+                severity: r.get(2)?,
+                message: r.get(3)?,
+                metadata: r.get(4)?,
+                triggered_at: r.get(5)?,
+                resolved_at: r.get(6)?,
+                acknowledged: r.get::<_, i64>(7)? != 0,
             })
-            .unwrap_or_default();
+        };
+        let alerts: Vec<ApiAlert> = if let Some(ref sp) = search_param {
+            conn.prepare(&sql)
+                .and_then(|mut s| {
+                    let rows = s.query_map(rusqlite::params![sp], map_a)?;
+                    Ok(rows.filter_map(|r| r.ok()).collect())
+                })
+                .unwrap_or_default()
+        } else {
+            conn.prepare(&sql)
+                .and_then(|mut s| {
+                    let rows = s.query_map([], map_a)?;
+                    Ok(rows.filter_map(|r| r.ok()).collect())
+                })
+                .unwrap_or_default()
+        };
 
         Ok(PaginatedResponse {
             items: alerts,
@@ -1839,11 +1974,14 @@ async fn admin_api_user_details(
     let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, rusqlite::Error> {
         let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
 
-        // User info
+        // User info (extended with preferences)
         let user = conn.query_row(
             "SELECT u.telegram_id, COALESCE(u.username, ''), COALESCE(u.plan, 'free'), \
                     COALESCE(u.is_blocked, 0), COALESCE(u.language, 'ru'), \
-                    (SELECT COUNT(*) FROM download_history WHERE user_id = u.telegram_id) \
+                    (SELECT COUNT(*) FROM download_history WHERE user_id = u.telegram_id), \
+                    COALESCE(u.download_format, 'mp3'), COALESCE(u.video_quality, 'best'), \
+                    COALESCE(u.audio_bitrate, '320k'), COALESCE(u.send_as_document, 0), \
+                    COALESCE(u.burn_subtitles, 0), COALESCE(u.progress_bar_style, 'classic') \
              FROM users u WHERE u.telegram_id = ?1",
             rusqlite::params![user_id],
             |r| {
@@ -1854,6 +1992,12 @@ async fn admin_api_user_details(
                     "is_blocked": r.get::<_, i64>(3)? != 0,
                     "language": r.get::<_, String>(4)?,
                     "download_count": r.get::<_, i64>(5)?,
+                    "download_format": r.get::<_, String>(6)?,
+                    "video_quality": r.get::<_, String>(7)?,
+                    "audio_bitrate": r.get::<_, String>(8)?,
+                    "send_as_document": r.get::<_, i64>(9)? != 0,
+                    "burn_subtitles": r.get::<_, i64>(10)? != 0,
+                    "progress_bar_style": r.get::<_, String>(11)?,
                 }))
             },
         );
@@ -2223,6 +2367,337 @@ async fn admin_api_broadcast(
     }
 }
 
+// --- Revenue API ---
+
+const REVENUE_PER_PAGE: u32 = 50;
+
+/// GET /admin/api/revenue — paginated charges with aggregate stats.
+async fn admin_api_revenue(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Query(q): Query<RevenueQuery>,
+) -> Response {
+    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+        return resp;
+    }
+    let page = q.page.unwrap_or(1).max(1);
+    let plan_filter = q.plan.unwrap_or_default();
+    let offset = ((page - 1) * REVENUE_PER_PAGE) as i64;
+    let db = state.shared_storage.sqlite_pool();
+
+    let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, rusqlite::Error> {
+        let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
+
+        // Aggregate stats
+        let (total_charges, total_amount, premium_count, vip_count, recurring_count): (i64, i64, i64, i64, i64) = conn
+            .query_row(
+                "SELECT COUNT(*), COALESCE(SUM(total_amount),0), \
+                 SUM(CASE WHEN plan='premium' THEN 1 ELSE 0 END), \
+                 SUM(CASE WHEN plan='vip' THEN 1 ELSE 0 END), \
+                 SUM(CASE WHEN is_recurring=1 THEN 1 ELSE 0 END) \
+                 FROM charges",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .unwrap_or((0, 0, 0, 0, 0));
+
+        // Revenue per day (last 30 days)
+        let revenue_per_day: Vec<serde_json::Value> = conn
+            .prepare(
+                "SELECT date(payment_date) AS day, SUM(total_amount) AS amt \
+                 FROM charges WHERE payment_date >= date('now','-29 days') \
+                 GROUP BY day ORDER BY day ASC",
+            )
+            .and_then(|mut s| {
+                let rows = s.query_map([], |r| Ok(json!([r.get::<_, String>(0)?, r.get::<_, i64>(1)?])))?;
+                Ok(rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default();
+
+        // Paginated charges
+        let where_clause = match plan_filter.as_str() {
+            "premium" | "vip" => format!("WHERE c.plan = '{}'", plan_filter),
+            "recurring" => "WHERE c.is_recurring = 1".to_string(),
+            _ => String::new(),
+        };
+
+        let total: i64 = conn
+            .query_row(&format!("SELECT COUNT(*) FROM charges c {}", where_clause), [], |r| {
+                r.get(0)
+            })
+            .unwrap_or(0);
+        let total_pages = ((total as f64) / REVENUE_PER_PAGE as f64).ceil() as u32;
+
+        let sql = format!(
+            "SELECT c.id, c.user_id, COALESCE(u.username, ''), COALESCE(c.plan, ''), \
+                    c.total_amount, COALESCE(c.currency, 'XTR'), COALESCE(c.is_recurring, 0), \
+                    COALESCE(c.payment_date, '') \
+             FROM charges c LEFT JOIN users u ON u.telegram_id = c.user_id \
+             {} ORDER BY c.payment_date DESC LIMIT {} OFFSET {}",
+            where_clause, REVENUE_PER_PAGE, offset
+        );
+
+        let charges: Vec<ApiChargeEntry> = conn
+            .prepare(&sql)
+            .and_then(|mut s| {
+                let rows = s.query_map([], |r| {
+                    Ok(ApiChargeEntry {
+                        id: r.get(0)?,
+                        user_id: r.get(1)?,
+                        username: r.get(2)?,
+                        plan: r.get(3)?,
+                        amount: r.get(4)?,
+                        currency: r.get(5)?,
+                        is_recurring: r.get::<_, i64>(6)? != 0,
+                        payment_date: r.get(7)?,
+                    })
+                })?;
+                Ok(rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default();
+
+        Ok(json!({
+            "stats": {
+                "total_charges": total_charges,
+                "total_amount": total_amount,
+                "premium_count": premium_count,
+                "vip_count": vip_count,
+                "recurring_count": recurring_count,
+            },
+            "revenue_per_day": revenue_per_day,
+            "charges": {
+                "items": charges,
+                "total": total,
+                "page": page,
+                "per_page": REVENUE_PER_PAGE,
+                "total_pages": total_pages,
+            },
+        }))
+    })
+    .await;
+
+    match result {
+        Ok(Ok(data)) => Json(data).into_response(),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    }
+}
+
+// --- Analytics API ---
+
+/// GET /admin/api/analytics — DAU/MAU trends, download trends.
+async fn admin_api_analytics(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Query(q): Query<AnalyticsQuery>,
+) -> Response {
+    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+        return resp;
+    }
+    let days = q.days.unwrap_or(30).min(90) as i64;
+    let db = state.shared_storage.sqlite_pool();
+
+    let result = tokio::task::spawn_blocking(move || -> serde_json::Value {
+        let conn = match get_connection(&db) {
+            Ok(c) => c,
+            Err(_) => return json!({"error": "DB unavailable"}),
+        };
+
+        // DAU (from request_history)
+        let dau: Vec<serde_json::Value> = conn
+            .prepare(&format!(
+                "SELECT date(timestamp) AS day, COUNT(DISTINCT user_id) AS users \
+                 FROM request_history WHERE timestamp >= date('now','-{} days') \
+                 GROUP BY day ORDER BY day ASC",
+                days
+            ))
+            .and_then(|mut s| {
+                let rows = s.query_map([], |r| Ok(json!([r.get::<_, String>(0)?, r.get::<_, i64>(1)?])))?;
+                Ok(rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default();
+
+        // MAU (last 30 days)
+        let mau: i64 = conn
+            .query_row(
+                "SELECT COUNT(DISTINCT user_id) FROM request_history \
+                 WHERE timestamp >= datetime('now', '-30 days')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        // WAU (last 7 days)
+        let wau: i64 = conn
+            .query_row(
+                "SELECT COUNT(DISTINCT user_id) FROM request_history \
+                 WHERE timestamp >= datetime('now', '-7 days')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        // Today's DAU
+        let dau_today: i64 = conn
+            .query_row(
+                "SELECT COUNT(DISTINCT user_id) FROM request_history \
+                 WHERE date(timestamp) = date('now')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        // Downloads per day
+        let downloads_daily: Vec<serde_json::Value> = conn
+            .prepare(&format!(
+                "SELECT date(downloaded_at) AS day, COUNT(*) AS cnt \
+                 FROM download_history WHERE downloaded_at >= date('now','-{} days') \
+                 GROUP BY day ORDER BY day ASC",
+                days
+            ))
+            .and_then(|mut s| {
+                let rows = s.query_map([], |r| Ok(json!([r.get::<_, String>(0)?, r.get::<_, i64>(1)?])))?;
+                Ok(rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default();
+
+        // New users per day (first download)
+        let new_users_daily: Vec<serde_json::Value> = conn
+            .prepare(&format!(
+                "SELECT day, COUNT(*) FROM ( \
+                    SELECT MIN(date(downloaded_at)) AS day FROM download_history GROUP BY user_id \
+                 ) WHERE day >= date('now','-{} days') GROUP BY day ORDER BY day ASC",
+                days
+            ))
+            .and_then(|mut s| {
+                let rows = s.query_map([], |r| Ok(json!([r.get::<_, String>(0)?, r.get::<_, i64>(1)?])))?;
+                Ok(rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default();
+
+        // Format distribution trend (last 7 days)
+        let format_trend: Vec<serde_json::Value> = conn
+            .prepare(
+                "SELECT COALESCE(format, 'unknown'), COUNT(*) FROM download_history \
+                 WHERE downloaded_at >= date('now','-7 days') \
+                 GROUP BY format ORDER BY COUNT(*) DESC LIMIT 5",
+            )
+            .and_then(|mut s| {
+                let rows = s.query_map([], |r| Ok(json!([r.get::<_, String>(0)?, r.get::<_, i64>(1)?])))?;
+                Ok(rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default();
+
+        // Top users this week
+        let top_users: Vec<serde_json::Value> = conn
+            .prepare(
+                "SELECT d.user_id, COALESCE(u.username, ''), COUNT(*) AS cnt \
+                 FROM download_history d LEFT JOIN users u ON u.telegram_id = d.user_id \
+                 WHERE d.downloaded_at >= date('now','-7 days') \
+                 GROUP BY d.user_id ORDER BY cnt DESC LIMIT 10",
+            )
+            .and_then(|mut s| {
+                let rows = s.query_map([], |r| {
+                    Ok(json!({
+                        "user_id": r.get::<_, i64>(0)?,
+                        "username": r.get::<_, String>(1)?,
+                        "count": r.get::<_, i64>(2)?,
+                    }))
+                })?;
+                Ok(rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default();
+
+        json!({
+            "dau_today": dau_today,
+            "wau": wau,
+            "mau": mau,
+            "dau": dau,
+            "downloads_daily": downloads_daily,
+            "new_users_daily": new_users_daily,
+            "format_trend": format_trend,
+            "top_users": top_users,
+        })
+    })
+    .await;
+
+    match result {
+        Ok(data) => Json(data).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Error").into_response(),
+    }
+}
+
+// --- User Settings API ---
+
+/// POST /admin/api/users/:id/settings — update user settings from detail drawer.
+async fn admin_api_user_settings(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Path(user_id): Path<i64>,
+    Json(body): Json<UserSettingsReq>,
+) -> Response {
+    let admin_id = match verify_admin(&header_map, &state.bot_token) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let db = state.shared_storage.sqlite_pool();
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let mut updated = Vec::new();
+
+        if let Some(ref lang) = body.language {
+            let valid = ["en", "ru", "fr", "de"];
+            if valid.contains(&lang.as_str()) {
+                conn.execute(
+                    "UPDATE users SET language = ?1 WHERE telegram_id = ?2",
+                    rusqlite::params![lang, user_id],
+                )?;
+                updated.push("language");
+            }
+        }
+        if let Some(ref plan) = body.plan {
+            let valid = ["free", "premium", "vip"];
+            if valid.contains(&plan.as_str()) {
+                if let Some(days) = body.plan_days {
+                    let expires = format!("datetime('now', '+{} days')", days.clamp(1, 3650));
+                    conn.execute(
+                        &format!(
+                            "INSERT OR REPLACE INTO subscriptions (user_id, plan, expires_at) \
+                             VALUES (?1, ?2, {})",
+                            expires
+                        ),
+                        rusqlite::params![user_id, plan],
+                    )?;
+                }
+                conn.execute(
+                    "UPDATE users SET plan = ?1 WHERE telegram_id = ?2",
+                    rusqlite::params![plan, user_id],
+                )?;
+                updated.push("plan");
+            }
+        }
+        if let Some(blocked) = body.is_blocked {
+            let v: i64 = if blocked { 1 } else { 0 };
+            conn.execute(
+                "UPDATE users SET is_blocked = ?1 WHERE telegram_id = ?2",
+                rusqlite::params![v, user_id],
+            )?;
+            updated.push("is_blocked");
+        }
+
+        Ok::<_, rusqlite::Error>(updated)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(updated)) if updated.is_empty() => (StatusCode::BAD_REQUEST, "No valid fields to update").into_response(),
+        Ok(Ok(updated)) => {
+            log::info!("Admin {} updated user {} settings: {:?}", admin_id, user_id, updated);
+            Json(json!({"ok": true, "updated": updated})).into_response()
+        }
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    }
+}
+
 // --- Admin Stats ---
 
 struct AdminStats {
@@ -2556,7 +3031,8 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
         #tab-queue:checked   ~ .tab-labels label[for="tab-queue"],
         #tab-health:checked  ~ .tab-labels label[for="tab-health"],
         #tab-feedback:checked ~ .tab-labels label[for="tab-feedback"],
-        #tab-alerts:checked  ~ .tab-labels label[for="tab-alerts"] {{
+        #tab-alerts:checked  ~ .tab-labels label[for="tab-alerts"],
+        #tab-revenue:checked ~ .tab-labels label[for="tab-revenue"] {{
             background: var(--card);
             color: var(--text);
             border: 1px solid var(--border2);
@@ -2570,7 +3046,8 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
         #tab-queue:checked   ~ .tab-contents #pane-queue,
         #tab-health:checked  ~ .tab-contents #pane-health,
         #tab-feedback:checked ~ .tab-contents #pane-feedback,
-        #tab-alerts:checked  ~ .tab-contents #pane-alerts {{
+        #tab-alerts:checked  ~ .tab-contents #pane-alerts,
+        #tab-revenue:checked ~ .tab-contents #pane-revenue {{
             display: block;
         }}
 
@@ -2871,10 +3348,19 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
         @media (max-width: 768px) {{
             .two-col {{ grid-template-columns: 1fr; }}
             .stats-grid {{ grid-template-columns: repeat(2, 1fr); }}
+            .tab-labels {{ overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; scrollbar-width: none; }}
+            .tab-labels::-webkit-scrollbar {{ display: none; }}
+            .tab-label {{ flex-shrink: 0; }}
+            .detail-panel {{ width: 100vw !important; }}
+            .topbar {{ padding: 0 12px; }}
+            .page {{ padding: 16px 12px 40px; }}
+            .toolbar {{ flex-direction: column; align-items: stretch; }}
+            .search-input {{ min-width: 0; width: 100%; }}
         }}
         @media (max-width: 480px) {{
             .stats-grid {{ grid-template-columns: 1fr; }}
             .tab-label {{ padding: 7px 12px; font-size: 0.78rem; }}
+            .health-grid {{ grid-template-columns: repeat(2, 1fr); }}
         }}
     </style>
 </head>
@@ -2885,6 +3371,7 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
     <div class="topbar-right">
         <span style="color:var(--muted);font-size:0.8rem;">Admin Dashboard</span>
         <button class="logout" style="cursor:pointer;background:none;" onclick="openBroadcastFor('')">Broadcast</button>
+        <button id="auto-refresh-btn" class="logout" style="cursor:pointer;background:none;" onclick="toggleAutoRefresh()">▶ Auto</button>
         <a href="/admin/logout" class="logout">Logout</a>
     </div>
 </div>
@@ -2900,6 +3387,7 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
     <input type="radio" name="tab" id="tab-health"   class="tab-radio">
     <input type="radio" name="tab" id="tab-feedback" class="tab-radio">
     <input type="radio" name="tab" id="tab-alerts"   class="tab-radio">
+    <input type="radio" name="tab" id="tab-revenue"  class="tab-radio">
 
     <div class="tabs-wrap">
         <div class="tab-labels">
@@ -2911,6 +3399,7 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
             <label for="tab-health"   class="tab-label">Health</label>
             <label for="tab-feedback" class="tab-label">Feedback</label>
             <label for="tab-alerts"   class="tab-label">Alerts</label>
+            <label for="tab-revenue"  class="tab-label">Revenue</label>
         </div>
     </div>
 
@@ -3045,6 +3534,7 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
                     <button class="filter-btn" data-qfilter="completed">Completed</button>
                     <button class="filter-btn" data-qfilter="dead_letter">Dead</button>
                 </div>
+                <input type="text" id="queue-search" class="search-input" placeholder="Search by URL, user, task ID...">
             </div>
             <div class="panel">
                 <div class="tbl-wrap">
@@ -3073,6 +3563,7 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
                     <button class="filter-btn" data-efilter="no">Unresolved</button>
                     <button class="filter-btn" data-efilter="yes">Resolved</button>
                 </div>
+                <input type="text" id="errors-search" class="search-input" placeholder="Search errors...">
             </div>
             <div class="panel">
                 <div class="tbl-wrap">
@@ -3108,6 +3599,7 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
                     <button class="filter-btn" data-ffilter="reviewed">Reviewed</button>
                     <button class="filter-btn" data-ffilter="replied">Replied</button>
                 </div>
+                <input type="text" id="feedback-search" class="search-input" placeholder="Search feedback...">
             </div>
             <div class="panel">
                 <div class="tbl-wrap">
@@ -3136,6 +3628,7 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
                     <button class="filter-btn" data-afilter="warning">Warning</button>
                     <button class="filter-btn" data-afilter="unacked">Unacked</button>
                 </div>
+                <input type="text" id="alerts-search" class="search-input" placeholder="Search alerts...">
             </div>
             <div class="panel">
                 <div class="tbl-wrap">
@@ -3152,6 +3645,32 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
             </div>
             <div id="alerts-pagination" class="pagination"></div>
         </div><!-- /pane-alerts -->
+
+        <!-- ══════════════════════════════════════════
+             Pane: Revenue (dynamic via JS)
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-revenue">
+            <div id="revenue-content"><div class="empty-state">Loading...</div></div>
+            <div class="toolbar" style="margin-top:16px;">
+                <div class="filter-group">
+                    <button class="filter-btn active" data-rfilter="all">All</button>
+                    <button class="filter-btn" data-rfilter="premium">Premium</button>
+                    <button class="filter-btn" data-rfilter="vip">VIP</button>
+                    <button class="filter-btn" data-rfilter="recurring">Recurring</button>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr><th>User</th><th>Plan</th><th>Amount</th><th>Currency</th><th>Recurring</th><th>Date</th></tr>
+                        </thead>
+                        <tbody id="revenue-tbody"><tr><td colspan="6" class="empty-state">Loading...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+            <div id="revenue-pagination" class="pagination"></div>
+        </div><!-- /pane-revenue -->
 
     </div><!-- /tab-contents -->
 </div><!-- /page -->
@@ -3196,16 +3715,17 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
     // --- State ---
     let usersPage=1, usersFilter='all', usersSearch='';
     let dlPage=1, dlSearch='';
-    let queuePage=1, queueFilter='all';
-    let errorsPage=1, errorsResolved='all';
-    let feedbackPage=1, feedbackFilter='all';
-    let alertsPage=1, alertsFilter='all';
+    let queuePage=1, queueFilter='all', queueSearch='';
+    let errorsPage=1, errorsResolved='all', errorsSearch='';
+    let feedbackPage=1, feedbackFilter='all', feedbackSearch='';
+    let alertsPage=1, alertsFilter='all', alertsSearch='';
+    let revPage=1, revFilter='all';
     const loaded = {{}};
-    let usersDebounce=null, dlDebounce=null;
+    let debounces = {{}};
 
     // --- Helpers ---
-    const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-    const fmtNum = n => Number(n).toLocaleString();
+    const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    const fmtNum = n => Number(n||0).toLocaleString();
     const fmtSize = b => {{
         if (!b) return '';
         if (b < 1024) return b + ' B';
@@ -3227,6 +3747,29 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
         return 'err-other';
     }};
 
+    // --- Auto-refresh ---
+    let autoRefresh = localStorage.getItem('adminAutoRefresh')==='1';
+    let autoTimer = null;
+    let lastUpdated = {{}};
+    function startAutoRefresh() {{
+        stopAutoRefresh();
+        if (!autoRefresh) return;
+        autoTimer = setInterval(() => {{
+            const active = document.querySelector('.tab-radio:checked');
+            if (active) active.dispatchEvent(new Event('change'));
+        }}, 30000);
+    }}
+    function stopAutoRefresh() {{ if (autoTimer) {{ clearInterval(autoTimer); autoTimer=null; }} }}
+    function toggleAutoRefresh() {{
+        autoRefresh = !autoRefresh;
+        localStorage.setItem('adminAutoRefresh', autoRefresh?'1':'0');
+        const btn = document.getElementById('auto-refresh-btn');
+        if (btn) btn.textContent = autoRefresh ? '⏸ Auto' : '▶ Auto';
+        autoRefresh ? startAutoRefresh() : stopAutoRefresh();
+    }}
+    window.toggleAutoRefresh = toggleAutoRefresh;
+    if (autoRefresh) startAutoRefresh();
+
     async function api(url, opts) {{
         const resp = await fetch(url, opts);
         if (resp.status === 401) {{ window.location = '/admin/login'; return null; }}
@@ -3234,6 +3777,7 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
         return resp.json();
     }}
     const postJson = (url, body) => api(url, {{ method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify(body) }});
+    function debounce(key, fn, ms) {{ clearTimeout(debounces[key]); debounces[key]=setTimeout(fn, ms||300); }}
 
     // --- Pagination ---
     function renderPagination(elId, data, onPage) {{
@@ -3308,6 +3852,7 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
     async function loadQueue() {{
         const p = new URLSearchParams({{page:queuePage}});
         if (queueFilter!=='all') p.set('status', queueFilter);
+        if (queueSearch) p.set('search', queueSearch);
         const data = await api('/admin/api/queue?'+p);
         if (!data) return;
         const tb = document.getElementById('queue-tbody');
@@ -3340,6 +3885,7 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
     async function loadErrors() {{
         const p = new URLSearchParams({{page:errorsPage}});
         if (errorsResolved!=='all') p.set('resolved', errorsResolved);
+        if (errorsSearch) p.set('search', errorsSearch);
         const data = await api('/admin/api/errors?'+p);
         if (!data) return;
         const tb = document.getElementById('errors-tbody');
@@ -3347,14 +3893,15 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
         tb.innerHTML = data.items.map(e => {{
             const cls = e.resolved?'resolved-yes':'';
             const shortUrl = e.url.length>40?e.url.slice(0,40)+'…':e.url;
-            return `<tr class="${{cls}}">
+            const ctx = e.context ? `<tr class="err-ctx" style="display:none" data-eid="${{e.id}}"><td colspan="6" class="mono small dim" style="padding:8px 18px;white-space:pre-wrap;background:var(--surface);">${{esc(e.context)}}</td></tr>` : '';
+            return `<tr class="${{cls}}" style="cursor:pointer" onclick="toggleErrCtx(${{e.id}})">
                 <td class="dim mono small">${{fmtTime(e.timestamp)}}</td>
                 <td><span class="err-badge ${{errClass(e.error_type)}}">${{esc(e.error_type)}}</span></td>
                 <td class="msg-cell" title="${{esc(e.error_message)}}">${{esc(e.error_message.length>60?e.error_message.slice(0,60)+'…':e.error_message)}}</td>
                 <td class="dim mono small" title="${{esc(e.url)}}">${{esc(shortUrl)}}</td>
                 <td class="dim mono">${{e.user_id||''}}</td>
-                <td>${{e.resolved?'<span class="dim">Resolved</span>':`<button class="act-btn success" onclick="resolveError(${{e.id}})">Resolve</button>`}}</td>
-            </tr>`;
+                <td onclick="event.stopPropagation()">${{e.resolved?'<span class="dim">Resolved</span>':`<button class="act-btn success" onclick="resolveError(${{e.id}})">Resolve</button>`}}</td>
+            </tr>${{ctx}}`;
         }}).join('');
         renderPagination('errors-pagination', data, p => {{ errorsPage=p; loadErrors(); }});
     }}
@@ -3389,6 +3936,7 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
     async function loadFeedback() {{
         const p = new URLSearchParams({{page:feedbackPage}});
         if (feedbackFilter!=='all') p.set('status', feedbackFilter);
+        if (feedbackSearch) p.set('search', feedbackSearch);
         const data = await api('/admin/api/feedback?'+p);
         if (!data) return;
         const tb = document.getElementById('feedback-tbody');
@@ -3401,7 +3949,7 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
             <td class="dim small">${{fmtTime(f.created_at)}}</td>
             <td><div class="action-group">
                 ${{f.status==='new'?`<button class="act-btn" onclick="markFeedback(${{f.id}},'reviewed')">Mark Read</button>`:''}}
-                <button class="act-btn" onclick="openBroadcastFor(${{f.user_id}})">Reply</button>
+                <button class="act-btn" onclick="replyToFeedback(${{f.user_id}},${{f.id}},'')">Reply</button>
             </div></td></tr>`).join('');
         renderPagination('feedback-pagination', data, p => {{ feedbackPage=p; loadFeedback(); }});
     }}
@@ -3411,6 +3959,7 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
     async function loadAlerts() {{
         const p = new URLSearchParams({{page:alertsPage}});
         if (alertsFilter!=='all') p.set('severity', alertsFilter);
+        if (alertsSearch) p.set('search', alertsSearch);
         const data = await api('/admin/api/alerts?'+p);
         if (!data) return;
         const tb = document.getElementById('alerts-tbody');
@@ -3430,70 +3979,17 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
     }}
     window.ackAlert = async id => {{ if (await postJson(`/admin/api/alerts/${{id}}/acknowledge`, {{}})) loadAlerts(); }};
 
-    // ══════ User Detail Drawer ══════
-    window.openUserDetail = async function(uid) {{
-        const drawer = document.getElementById('detail-drawer');
-        const body = document.getElementById('detail-body');
-        drawer.classList.add('open');
-        body.innerHTML = '<div class="empty-state">Loading...</div>';
-        const data = await api(`/admin/api/users/${{uid}}/details`);
-        if (!data || data.error) {{ body.innerHTML = '<div class="empty-state">User not found.</div>'; return; }}
-        const u = data.user, s = data.stats, sub = data.subscription;
-        document.getElementById('detail-title').textContent = u.username ? '@'+u.username : 'User '+u.telegram_id;
-        let html = `<div class="detail-section"><h3>Profile</h3>
-            <div class="detail-row"><span>Telegram ID</span><span class="mono">${{u.telegram_id}}</span></div>
-            <div class="detail-row"><span>Plan</span><span>${{u.plan}}</span></div>
-            <div class="detail-row"><span>Language</span><span>${{u.language}}</span></div>
-            <div class="detail-row"><span>Status</span><span>${{u.is_blocked?'Blocked':'Active'}}</span></div>
-            ${{sub?`<div class="detail-row"><span>Subscription</span><span>${{sub.plan}}${{sub.expires_at?' until '+fmtTime(sub.expires_at):''}}</span></div>
-            <div class="detail-row"><span>Recurring</span><span>${{sub.is_recurring?'Yes':'No'}}</span></div>`:''}}
-        </div>`;
-        html += `<div class="detail-section"><h3>Stats</h3>
-            <div class="detail-row"><span>Total Downloads</span><strong>${{fmtNum(s.total_downloads)}}</strong></div>
-            <div class="detail-row"><span>Total Size</span><strong>${{fmtSize(s.total_size)}}</strong></div>
-            <div class="detail-row"><span>Active Days</span><strong>${{s.active_days}}</strong></div>
-        </div>`;
-        if (s.top_artists && s.top_artists.length) {{
-            html += `<div class="detail-section"><h3>Top Artists</h3>${{s.top_artists.map(a => `<div class="detail-row"><span>${{esc(a[0])}}</span><span>${{a[1]}}</span></div>`).join('')}}</div>`;
-        }}
-        if (data.charges && data.charges.length) {{
-            html += `<div class="detail-section"><h3>Payments</h3>${{data.charges.map(c => `<div class="detail-row"><span>${{esc(c.plan)}} ${{c.is_recurring?'🔄':''}}</span><span>${{c.amount}} ${{esc(c.currency)}} — ${{fmtTime(c.payment_date)}}</span></div>`).join('')}}</div>`;
-        }}
-        if (data.recent_downloads && data.recent_downloads.length) {{
-            html += `<div class="detail-section"><h3>Recent Downloads</h3>${{data.recent_downloads.slice(0,10).map(d => `<div class="detail-row"><span>${{esc(d.title.length>30?d.title.slice(0,30)+'…':d.title)}}</span><span class="dim small">${{esc(d.format)}} · ${{fmtTime(d.downloaded_at)}}</span></div>`).join('')}}</div>`;
-        }}
-        if (data.errors && data.errors.length) {{
-            html += `<div class="detail-section"><h3>Recent Errors</h3>${{data.errors.map(e => `<div class="detail-row"><span class="err-badge ${{errClass(e.error_type)}}">${{esc(e.error_type)}}</span><span class="dim small">${{esc(e.error_message.length>40?e.error_message.slice(0,40)+'…':e.error_message)}}</span></div>`).join('')}}</div>`;
-        }}
-        html += `<div style="margin-top:20px;"><button class="act-btn" onclick="openBroadcastFor(${{u.telegram_id}})">Send Message</button></div>`;
-        body.innerHTML = html;
-    }};
+    // ══════ Detail/Broadcast/Modal setup ══════
     window.closeDetail = () => document.getElementById('detail-drawer').classList.remove('open');
     document.getElementById('detail-drawer').addEventListener('click', e => {{ if (e.target.id==='detail-drawer') closeDetail(); }});
-
-    // ══════ Broadcast ══════
     window.openBroadcastFor = function(uid) {{
         document.getElementById('bc-target').value = uid || '';
         document.getElementById('bc-message').value = '';
+        document.getElementById('bc-title').textContent = 'Send Message';
         document.getElementById('broadcast-modal').classList.add('open');
     }};
     window.closeBroadcast = () => document.getElementById('broadcast-modal').classList.remove('open');
     document.getElementById('broadcast-modal').addEventListener('click', e => {{ if (e.target.id==='broadcast-modal') closeBroadcast(); }});
-    window.sendBroadcast = async function() {{
-        const target = document.getElementById('bc-target').value.trim();
-        const message = document.getElementById('bc-message').value.trim();
-        if (!target || !message) {{ alert('Fill in target and message'); return; }}
-        const btn = document.getElementById('bc-send');
-        btn.disabled = true; btn.textContent = 'Sending...';
-        const data = await postJson('/admin/api/broadcast', {{ target, message }});
-        btn.disabled = false; btn.textContent = 'Send';
-        if (data && data.ok) {{
-            if (data.status === 'broadcasting') alert(`Broadcasting to ${{data.total}} users...`);
-            else if (data.blocked > 0) alert('User has blocked the bot.');
-            else alert('Message sent!');
-            closeBroadcast();
-        }}
-    }};
 
     // ══════ Modal (block/unblock) ══════
     let modalCallback = null;
@@ -3516,15 +4012,182 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
             async () => {{ if (await postJson(`/admin/api/users/${{uid}}/block`, {{blocked:block}})) loadUsers(); }});
     }};
 
+    // ══════ Error context toggle ══════
+    window.toggleErrCtx = id => {{
+        const row = document.querySelector(`.err-ctx[data-eid="${{id}}"]`);
+        if (row) row.style.display = row.style.display==='none'?'table-row':'none';
+    }};
+
+    // ══════ Revenue ══════
+    async function loadRevenue() {{
+        const p = new URLSearchParams({{page:revPage}});
+        if (revFilter!=='all') p.set('plan', revFilter);
+        const data = await api('/admin/api/revenue?'+p);
+        if (!data) return;
+        const s = data.stats||{{}};
+        const el = document.getElementById('revenue-content');
+        const rpd = data.revenue_per_day||[];
+        const maxR = Math.max(1,...rpd.map(d=>d[1]));
+        let chartH = rpd.map(d => {{
+            const pct = (d[1]/maxR*100)|0;
+            const dt = d[0].substring(5);
+            return `<div class="bar-col"><div class="bar-tip">${{d[1]}}</div><div class="bar" style="height:${{pct}}%;background:var(--green)"></div><div class="bar-label">${{dt}}</div></div>`;
+        }}).join('');
+        el.innerHTML = `
+            <div class="health-grid">
+                <div class="health-card"><div class="hc-label">Total Revenue</div><div class="hc-value">${{fmtNum(s.total_amount)}} ⭐</div></div>
+                <div class="health-card"><div class="hc-label">Total Charges</div><div class="hc-value">${{fmtNum(s.total_charges)}}</div></div>
+                <div class="health-card"><div class="hc-label">Premium</div><div class="hc-value" style="color:var(--accent)">${{s.premium_count}}</div></div>
+                <div class="health-card"><div class="hc-label">VIP</div><div class="hc-value" style="color:var(--yellow)">${{s.vip_count}}</div></div>
+                <div class="health-card"><div class="hc-label">Recurring</div><div class="hc-value">${{s.recurring_count}}</div></div>
+                <div class="health-card"><div class="hc-label">Avg Check</div><div class="hc-value">${{s.total_charges?Math.round(s.total_amount/s.total_charges):0}} ⭐</div></div>
+            </div>
+            <div class="panel"><div class="panel-head">Revenue — last 30 days</div>
+                <div class="chart-wrap">${{chartH||'<div class="empty-state">No data</div>'}}</div>
+                <div class="chart-footer">Stars per day</div>
+            </div>`;
+        // Render charges table
+        const ch = data.charges||{{}};
+        const tb = document.getElementById('revenue-tbody');
+        if (!ch.items||!ch.items.length) {{ tb.innerHTML='<tr><td colspan="6" class="empty-state">No charges.</td></tr>'; document.getElementById('revenue-pagination').innerHTML=''; return; }}
+        tb.innerHTML = ch.items.map(c => `<tr>
+            <td class="mono">${{c.username?'@'+esc(c.username):c.user_id}}</td>
+            <td><span class="pill plan-${{c.plan}}">${{esc(c.plan)}}</span></td>
+            <td><strong>${{c.amount}}</strong></td>
+            <td class="dim">${{esc(c.currency)}}</td>
+            <td>${{c.is_recurring?'🔄':'—'}}</td>
+            <td class="dim small">${{fmtTime(c.payment_date)}}</td>
+        </tr>`).join('');
+        renderPagination('revenue-pagination', ch, p => {{ revPage=p; loadRevenue(); }});
+    }}
+
+    // ══════ Enhanced User Detail ══════
+    // (extended openUserDetail to show preferences and editable fields)
+    const _origOpenDetail = window.openUserDetail;
+    window.openUserDetail = async function(uid) {{
+        const drawer = document.getElementById('detail-drawer');
+        const body = document.getElementById('detail-body');
+        drawer.classList.add('open');
+        body.innerHTML = '<div class="empty-state">Loading...</div>';
+        const data = await api(`/admin/api/users/${{uid}}/details`);
+        if (!data || data.error) {{ body.innerHTML = '<div class="empty-state">User not found.</div>'; return; }}
+        const u = data.user, s = data.stats, sub = data.subscription;
+        document.getElementById('detail-title').textContent = u.username ? '@'+u.username : 'User '+u.telegram_id;
+        let html = `<div class="detail-section"><h3>Profile</h3>
+            <div class="detail-row"><span>Telegram ID</span><span class="mono">${{u.telegram_id}}</span></div>
+            <div class="detail-row"><span>Plan</span><span>
+                <select class="plan-select" onchange="updateUserSetting(${{u.telegram_id}},'plan',this.value)">
+                    <option value="free" ${{u.plan==='free'?'selected':''}}>free</option>
+                    <option value="premium" ${{u.plan==='premium'?'selected':''}}>premium</option>
+                    <option value="vip" ${{u.plan==='vip'?'selected':''}}>vip</option>
+                </select></span></div>
+            <div class="detail-row"><span>Language</span><span>
+                <select class="plan-select" onchange="updateUserSetting(${{u.telegram_id}},'language',this.value)">
+                    <option value="en" ${{u.language==='en'?'selected':''}}>en</option>
+                    <option value="ru" ${{u.language==='ru'?'selected':''}}>ru</option>
+                    <option value="fr" ${{u.language==='fr'?'selected':''}}>fr</option>
+                    <option value="de" ${{u.language==='de'?'selected':''}}>de</option>
+                </select></span></div>
+            <div class="detail-row"><span>Status</span><span>${{u.is_blocked?'<span style="color:var(--red)">Blocked</span>':'<span style="color:var(--green)">Active</span>'}}</span></div>
+            ${{sub?`<div class="detail-row"><span>Subscription</span><span>${{sub.plan}}${{sub.expires_at?' until '+fmtTime(sub.expires_at):''}}</span></div>
+            <div class="detail-row"><span>Recurring</span><span>${{sub.is_recurring?'Yes':'No'}}</span></div>`:''}}
+        </div>`;
+        html += `<div class="detail-section"><h3>Preferences</h3>
+            <div class="detail-row"><span>Format</span><span>${{esc(u.download_format||'mp3')}}</span></div>
+            <div class="detail-row"><span>Video Quality</span><span>${{esc(u.video_quality||'best')}}</span></div>
+            <div class="detail-row"><span>Audio Bitrate</span><span>${{esc(u.audio_bitrate||'320k')}}</span></div>
+            <div class="detail-row"><span>Send as Doc</span><span>${{u.send_as_document?'Yes':'No'}}</span></div>
+            <div class="detail-row"><span>Burn Subtitles</span><span>${{u.burn_subtitles?'Yes':'No'}}</span></div>
+            <div class="detail-row"><span>Progress Style</span><span>${{esc(u.progress_bar_style||'classic')}}</span></div>
+        </div>`;
+        html += `<div class="detail-section"><h3>Stats</h3>
+            <div class="detail-row"><span>Total Downloads</span><strong>${{fmtNum(s.total_downloads)}}</strong></div>
+            <div class="detail-row"><span>Total Size</span><strong>${{fmtSize(s.total_size)}}</strong></div>
+            <div class="detail-row"><span>Active Days</span><strong>${{s.active_days}}</strong></div>
+        </div>`;
+        if (s.top_artists && s.top_artists.length)
+            html += `<div class="detail-section"><h3>Top Artists</h3>${{s.top_artists.map(a => `<div class="detail-row"><span>${{esc(a[0])}}</span><span>${{a[1]}}</span></div>`).join('')}}</div>`;
+        if (data.charges && data.charges.length)
+            html += `<div class="detail-section"><h3>Payments</h3>${{data.charges.map(c => `<div class="detail-row"><span>${{esc(c.plan)}} ${{c.is_recurring?'🔄':''}}</span><span>${{c.amount}} ${{esc(c.currency)}} — ${{fmtTime(c.payment_date)}}</span></div>`).join('')}}</div>`;
+        if (data.recent_downloads && data.recent_downloads.length)
+            html += `<div class="detail-section"><h3>Recent Downloads</h3>${{data.recent_downloads.slice(0,10).map(d => `<div class="detail-row"><span>${{esc(d.title.length>30?d.title.slice(0,30)+'…':d.title)}}</span><span class="dim small">${{esc(d.format)}} · ${{fmtTime(d.downloaded_at)}}</span></div>`).join('')}}</div>`;
+        if (data.errors && data.errors.length)
+            html += `<div class="detail-section"><h3>Recent Errors</h3>${{data.errors.map(e => `<div class="detail-row"><span class="err-badge ${{errClass(e.error_type)}}">${{esc(e.error_type)}}</span><span class="dim small">${{esc(e.error_message.length>40?e.error_message.slice(0,40)+'…':e.error_message)}}</span></div>`).join('')}}</div>`;
+        html += `<div style="margin-top:20px;display:flex;gap:8px;">
+            <button class="act-btn" onclick="openBroadcastFor(${{u.telegram_id}})">Send Message</button>
+            ${{u.is_blocked
+                ?`<button class="act-btn success" onclick="updateUserSetting(${{u.telegram_id}},'is_blocked',false);closeDetail()">Unblock</button>`
+                :`<button class="act-btn danger" onclick="updateUserSetting(${{u.telegram_id}},'is_blocked',true);closeDetail()">Block</button>`}}
+        </div>`;
+        body.innerHTML = html;
+    }};
+    window.updateUserSetting = async function(uid, field, value) {{
+        const body = {{}};
+        if (field==='plan') body.plan = value;
+        else if (field==='language') body.language = value;
+        else if (field==='is_blocked') body.is_blocked = value;
+        const data = await postJson(`/admin/api/users/${{uid}}/settings`, body);
+        if (data && data.ok) {{ if (loaded.users) loadUsers(); }}
+    }};
+
+    // ══════ Broadcast confirmation ══════
+    const _origSendBroadcast = window.sendBroadcast;
+    window.sendBroadcast = async function() {{
+        const target = document.getElementById('bc-target').value.trim();
+        const message = document.getElementById('bc-message').value.trim();
+        if (!target || !message) {{ alert('Fill in target and message'); return; }}
+        if (target === 'all') {{
+            if (!confirm('This will broadcast to ALL users. Are you sure?')) return;
+        }}
+        const btn = document.getElementById('bc-send');
+        btn.disabled = true; btn.textContent = 'Sending...';
+        const data = await postJson('/admin/api/broadcast', {{ target, message }});
+        btn.disabled = false; btn.textContent = 'Send';
+        if (data && data.ok) {{
+            if (data.status === 'broadcasting') alert(`Broadcasting to ${{data.total}} users in background.`);
+            else if (data.blocked > 0) alert('User has blocked the bot.');
+            else alert('Message sent!');
+            closeBroadcast();
+        }}
+    }};
+
+    // ══════ Reply to feedback ══════
+    window.replyToFeedback = function(userId, feedbackId, originalMsg) {{
+        document.getElementById('bc-target').value = userId;
+        document.getElementById('bc-message').value = '';
+        document.getElementById('bc-title').textContent = 'Reply to Feedback';
+        document.getElementById('broadcast-modal').classList.add('open');
+        // After send, mark as replied
+        const origSend = document.getElementById('bc-send').onclick;
+        document.getElementById('bc-send').onclick = async function() {{
+            const msg = document.getElementById('bc-message').value.trim();
+            if (!msg) {{ alert('Enter a message'); return; }}
+            const btn = document.getElementById('bc-send');
+            btn.disabled = true; btn.textContent = 'Sending...';
+            const data = await postJson('/admin/api/broadcast', {{ target: String(userId), message: msg }});
+            btn.disabled = false; btn.textContent = 'Send';
+            if (data && data.ok) {{
+                await postJson(`/admin/api/feedback/${{feedbackId}}/status`, {{ status: 'replied' }});
+                alert('Reply sent!');
+                closeBroadcast();
+                if (loaded.feedback) loadFeedback();
+            }}
+            document.getElementById('bc-send').onclick = origSend;
+        }};
+    }};
+
     // ══════ Tab switching ══════
+    const tabLoaders = {{
+        'tab-users': loadUsers, 'tab-dl': loadDownloads, 'tab-queue': loadQueue,
+        'tab-errors': loadErrors, 'tab-health': loadHealth, 'tab-feedback': loadFeedback,
+        'tab-alerts': loadAlerts, 'tab-revenue': loadRevenue,
+    }};
     document.querySelectorAll('.tab-radio').forEach(r => r.addEventListener('change', () => {{
-        if (r.id==='tab-users'    && !loaded.users)    {{ loaded.users=1;    loadUsers(); }}
-        if (r.id==='tab-dl'       && !loaded.dl)       {{ loaded.dl=1;       loadDownloads(); }}
-        if (r.id==='tab-queue'    && !loaded.queue)    {{ loaded.queue=1;    loadQueue(); }}
-        if (r.id==='tab-errors'   && !loaded.errors)   {{ loaded.errors=1;   loadErrors(); }}
-        if (r.id==='tab-health'   && !loaded.health)   {{ loaded.health=1;   loadHealth(); }}
-        if (r.id==='tab-feedback' && !loaded.feedback) {{ loaded.feedback=1; loadFeedback(); }}
-        if (r.id==='tab-alerts'   && !loaded.alerts)   {{ loaded.alerts=1;   loadAlerts(); }}
+        const loader = tabLoaders[r.id];
+        if (loader) {{
+            if (!loaded[r.id]) {{ loaded[r.id]=1; loader(); }}
+            else if (autoRefresh) loader(); // refresh on auto-refresh re-trigger
+        }}
     }}));
 
     // ══════ Filter buttons ══════
@@ -3541,6 +4204,7 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
     bindFilters('data-efilter', v => {{ errorsResolved=v; errorsPage=1; }}, loadErrors);
     bindFilters('data-ffilter', v => {{ feedbackFilter=v; feedbackPage=1; }}, loadFeedback);
     bindFilters('data-afilter', v => {{ alertsFilter=v; alertsPage=1; }}, loadAlerts);
+    bindFilters('data-rfilter', v => {{ revFilter=v; revPage=1; }}, loadRevenue);
 
     // ══════ Search ══════
     const userSearchEl = document.getElementById('user-search');
@@ -3549,10 +4213,17 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
         usersDebounce = setTimeout(() => {{ usersSearch=userSearchEl.value.trim(); usersPage=1; loadUsers(); }}, 300);
     }});
     const dlSearchEl = document.getElementById('dl-search');
-    if (dlSearchEl) dlSearchEl.addEventListener('input', () => {{
-        clearTimeout(dlDebounce);
-        dlDebounce = setTimeout(() => {{ dlSearch=dlSearchEl.value.trim(); dlPage=1; loadDownloads(); }}, 300);
-    }});
+    if (dlSearchEl) dlSearchEl.addEventListener('input', () => debounce('dl', () => {{ dlSearch=dlSearchEl.value.trim(); dlPage=1; loadDownloads(); }}));
+
+    // Search on new tabs
+    const qsEl = document.getElementById('queue-search');
+    if (qsEl) qsEl.addEventListener('input', () => debounce('queue', () => {{ queueSearch=qsEl.value.trim(); queuePage=1; loadQueue(); }}));
+    const esEl = document.getElementById('errors-search');
+    if (esEl) esEl.addEventListener('input', () => debounce('errors', () => {{ errorsSearch=esEl.value.trim(); errorsPage=1; loadErrors(); }}));
+    const fsEl = document.getElementById('feedback-search');
+    if (fsEl) fsEl.addEventListener('input', () => debounce('feedback', () => {{ feedbackSearch=fsEl.value.trim(); feedbackPage=1; loadFeedback(); }}));
+    const asEl = document.getElementById('alerts-search');
+    if (asEl) asEl.addEventListener('input', () => debounce('alerts', () => {{ alertsSearch=asEl.value.trim(); alertsPage=1; loadAlerts(); }}));
 }})();
 </script>
 
