@@ -9,7 +9,7 @@
 //! does NOT change avatar on smoke test results.
 
 use std::env;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use log::{error, info, warn};
 use reqwest::Client;
@@ -70,35 +70,52 @@ impl Config {
     }
 }
 
-/// Result of a Telegram API call that may be rate-limited.
-enum ApiResult {
-    Ok,
-    /// Rate-limited — must wait this many seconds before next call.
-    RateLimited(u64),
-    /// Other error (network, API error, etc.)
-    Error(String),
-}
+/// Try to set bot name. Returns true on success.
+async fn try_set_name(client: &Client, token: &str, name: &str) -> bool {
+    let url = format!("{}/bot{}/setMyName", TELEGRAM_API_URL, token);
+    info!("[API] POST setMyName name=\"{}\"", name);
 
-/// Parse `retry_after` from Telegram error description like
-/// "Too Many Requests: retry after 13317"
-fn parse_retry_after(description: &str) -> Option<u64> {
-    if description.contains("retry after") {
-        description
-            .rsplit("retry after ")
-            .next()
-            .and_then(|s| s.trim().parse::<u64>().ok())
-    } else {
-        None
+    let resp = match client
+        .post(&url)
+        .json(&serde_json::json!({ "name": name }))
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            error!("[API] setMyName request failed: {e}");
+            return false;
+        }
+    };
+
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    info!("[API] setMyName response: HTTP {} | {:.200}", status, body);
+
+    if status.is_success() && body.contains("\"ok\":true") {
+        info!("[API] setMyName: success");
+        return true;
     }
+    if status.as_u16() == 429 {
+        warn!("[API] setMyName: 429 — will retry next cycle");
+    } else {
+        warn!("[API] setMyName: HTTP {} — will retry next cycle", status);
+    }
+    false
 }
 
-async fn set_avatar(client: &Client, _api_url: &str, token: &str, photo: &[u8]) -> ApiResult {
+/// Try to set bot avatar. Returns true on success.
+async fn try_set_avatar(client: &Client, _api_url: &str, token: &str, photo: &[u8]) -> bool {
     let photo_file = match reqwest::multipart::Part::bytes(photo.to_vec())
         .file_name("photo.png")
         .mime_str("image/png")
     {
         Ok(p) => p,
-        Err(e) => return ApiResult::Error(e.to_string()),
+        Err(e) => {
+            error!("[API] Failed to build multipart: {e}");
+            return false;
+        }
     };
 
     let form = reqwest::multipart::Form::new()
@@ -106,195 +123,36 @@ async fn set_avatar(client: &Client, _api_url: &str, token: &str, photo: &[u8]) 
         .part("photo_file", photo_file);
 
     let url = format!("{}/bot{}/setMyProfilePhoto", TELEGRAM_API_URL, token);
-
     info!("[API] POST setMyProfilePhoto (photo_size={}B)", photo.len());
 
-    let resp_result = client
+    let resp = match client
         .post(&url)
         .multipart(form)
         .timeout(Duration::from_secs(30))
         .send()
-        .await;
-
-    let resp = match resp_result {
-        Ok(r) => {
-            let status = r.status();
-            let body = r.text().await.unwrap_or_else(|e| format!("<read error: {e}>"));
-            info!(
-                "[API] setMyProfilePhoto response: HTTP {} | body: {}",
-                status,
-                truncate(&body, 500)
-            );
-            match serde_json::from_str::<serde_json::Value>(&body) {
-                Ok(j) => j,
-                Err(_) => return ApiResult::Error(format!("json parse failed, HTTP {status}, body: {body}")),
-            }
-        }
+        .await
+    {
+        Ok(r) => r,
         Err(e) => {
             error!("[API] setMyProfilePhoto request failed: {e}");
-            return ApiResult::Error(format!("request failed: {e}"));
+            return false;
         }
     };
 
-    if resp.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    info!("[API] setMyProfilePhoto response: HTTP {} | {:.200}", status, body);
+
+    if status.is_success() && body.contains("\"ok\":true") {
         info!("[API] setMyProfilePhoto: success");
-        return ApiResult::Ok;
+        return true;
     }
-
-    let desc = resp
-        .get("description")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown error");
-    let error_code = resp.get("error_code").and_then(|v| v.as_i64()).unwrap_or(0);
-    let retry_after_field = resp
-        .get("parameters")
-        .and_then(|p| p.get("retry_after"))
-        .and_then(|v| v.as_u64());
-
-    if let Some(retry_secs) = retry_after_field.or_else(|| parse_retry_after(desc)) {
-        warn!(
-            "[API] setMyProfilePhoto: HTTP 429 | retry_after={}s ({:.1}h) | error_code={} | description=\"{}\"",
-            retry_secs,
-            retry_secs as f64 / 3600.0,
-            error_code,
-            desc
-        );
-        ApiResult::RateLimited(retry_secs)
+    if status.as_u16() == 429 {
+        warn!("[API] setMyProfilePhoto: 429 — will retry next cycle");
     } else {
-        error!(
-            "[API] setMyProfilePhoto: error_code={} | description=\"{}\"",
-            error_code, desc
-        );
-        ApiResult::Error(format!("Bot API error: {desc}"))
+        warn!("[API] setMyProfilePhoto: HTTP {} — will retry next cycle", status);
     }
-}
-
-async fn set_bot_name(client: &Client, token: &str, name: &str) -> ApiResult {
-    let url = format!("{}/bot{}/setMyName", TELEGRAM_API_URL, token);
-
-    info!("[API] POST setMyName name=\"{}\"", name);
-
-    let resp_result = client
-        .post(&url)
-        .json(&serde_json::json!({ "name": name }))
-        .timeout(Duration::from_secs(10))
-        .send()
-        .await;
-
-    let resp = match resp_result {
-        Ok(r) => {
-            let status = r.status();
-            let body = r.text().await.unwrap_or_else(|e| format!("<read error: {e}>"));
-            info!(
-                "[API] setMyName response: HTTP {} | body: {}",
-                status,
-                truncate(&body, 500)
-            );
-            match serde_json::from_str::<serde_json::Value>(&body) {
-                Ok(j) => j,
-                Err(_) => return ApiResult::Error(format!("json parse failed, HTTP {status}, body: {body}")),
-            }
-        }
-        Err(e) => {
-            error!("[API] setMyName request failed: {e}");
-            return ApiResult::Error(format!("request failed: {e}"));
-        }
-    };
-
-    if resp.get("ok").and_then(|v| v.as_bool()) == Some(true) {
-        info!("[API] setMyName: success");
-        return ApiResult::Ok;
-    }
-
-    let desc = resp
-        .get("description")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown error");
-    let error_code = resp.get("error_code").and_then(|v| v.as_i64()).unwrap_or(0);
-    let retry_after_field = resp
-        .get("parameters")
-        .and_then(|p| p.get("retry_after"))
-        .and_then(|v| v.as_u64());
-
-    if let Some(retry_secs) = retry_after_field.or_else(|| parse_retry_after(desc)) {
-        warn!(
-            "[API] setMyName: HTTP 429 | retry_after={}s ({:.1}h) | error_code={} | description=\"{}\"",
-            retry_secs,
-            retry_secs as f64 / 3600.0,
-            error_code,
-            desc
-        );
-        ApiResult::RateLimited(retry_secs)
-    } else {
-        error!("[API] setMyName: error_code={} | description=\"{}\"", error_code, desc);
-        ApiResult::Error(format!("setMyName error: {desc}"))
-    }
-}
-
-/// Apply a rate-limit cooldown. Returns the new `rate_limit_until` if
-/// `retry_secs` extends beyond the current deadline.
-fn apply_rate_limit(current: Option<Instant>, retry_secs: u64) -> Option<Instant> {
-    let new_deadline = Instant::now() + Duration::from_secs(retry_secs);
-    match current {
-        Some(existing) if existing > new_deadline => Some(existing),
-        _ => Some(new_deadline),
-    }
-}
-
-fn is_rate_limited(deadline: Option<Instant>) -> bool {
-    deadline.is_some_and(|d| Instant::now() < d)
-}
-
-fn rate_limit_remaining_secs(deadline: Option<Instant>) -> u64 {
-    deadline
-        .map(|d| d.saturating_duration_since(Instant::now()).as_secs())
-        .unwrap_or(0)
-}
-
-/// Try to set bot name. Returns true if successful.
-async fn try_set_name(client: &Client, token: &str, name: &str, rate_limit_until: &mut Option<Instant>) -> bool {
-    match set_bot_name(client, token, name).await {
-        ApiResult::Ok => true,
-        ApiResult::RateLimited(secs) => {
-            warn!(
-                "setMyName rate-limited for {}s ({:.1}h) — will wait",
-                secs,
-                secs as f64 / 3600.0
-            );
-            *rate_limit_until = apply_rate_limit(*rate_limit_until, secs);
-            false
-        }
-        ApiResult::Error(e) => {
-            warn!("Failed to set bot name: {e}");
-            false
-        }
-    }
-}
-
-/// Try to set bot avatar. Returns true if successful.
-async fn try_set_avatar(
-    client: &Client,
-    api_url: &str,
-    token: &str,
-    photo: &[u8],
-    rate_limit_until: &mut Option<Instant>,
-) -> bool {
-    match set_avatar(client, api_url, token, photo).await {
-        ApiResult::Ok => true,
-        ApiResult::RateLimited(secs) => {
-            warn!(
-                "setMyProfilePhoto rate-limited for {}s ({:.1}h) — will wait",
-                secs,
-                secs as f64 / 3600.0
-            );
-            *rate_limit_until = apply_rate_limit(*rate_limit_until, secs);
-            false
-        }
-        ApiResult::Error(e) => {
-            error!("Failed to set avatar: {e}");
-            false
-        }
-    }
+    false
 }
 
 async fn check_health(client: &Client, health_url: &str) -> bool {
@@ -304,15 +162,6 @@ async fn check_health(client: &Client, health_url: &str) -> bool {
             Err(_) => false,
         },
         _ => false,
-    }
-}
-
-/// Truncate a string for logging (avoid flooding logs with huge API responses).
-fn truncate(s: &str, max: usize) -> &str {
-    if s.len() <= max {
-        s
-    } else {
-        &s[..max]
     }
 }
 
@@ -347,60 +196,33 @@ async fn main() {
 
     let client = Client::new();
 
-    // Global rate-limit deadline — skip ALL profile API calls until this time.
-    let mut rate_limit_until: Option<Instant> = None;
-
-    // Track actual state of name and avatar independently.
     let mut actual_name = ActualState::Unknown;
     let mut actual_avatar = ActualState::Unknown;
 
-    // ── Startup: wait for bot, only set "Sleep" if it's actually down ──
-    // Previous behavior: unconditionally set "Sleep" on every restart, which
-    // burns the setMyName rate limit (~22h cooldown). Then when the bot comes
-    // up 30s later, we can't switch to "Awake" for hours.
+    // ── Startup: wait for bot, set initial state ──
     info!("Waiting {}s for bot startup...", config.startup_delay.as_secs());
     tokio::time::sleep(config.startup_delay).await;
 
     if check_health(&client, &config.health_url).await {
         info!("Bot is healthy after startup delay — setting ONLINE profile");
-        // Always try to set online state; don't assume it persisted from previous run.
-        // A prior rate limit or crash may have left avatar/name stuck on offline.
-        if try_set_name(&client, &config.bot_token, ONLINE_NAME, &mut rate_limit_until).await {
+        if try_set_name(&client, &config.bot_token, ONLINE_NAME).await {
             actual_name = ActualState::Online;
         }
-        if !is_rate_limited(rate_limit_until)
-            && try_set_avatar(
-                &client,
-                &config.bot_api_url,
-                &config.bot_token,
-                ONLINE_AVATAR,
-                &mut rate_limit_until,
-            )
-            .await
-        {
+        if try_set_avatar(&client, &config.bot_api_url, &config.bot_token, ONLINE_AVATAR).await {
             actual_avatar = ActualState::Online;
         }
     } else {
         info!("Bot not healthy after startup, setting OFFLINE name");
-        if try_set_name(&client, &config.bot_token, OFFLINE_NAME, &mut rate_limit_until).await {
+        if try_set_name(&client, &config.bot_token, OFFLINE_NAME).await {
             actual_name = ActualState::Offline;
         }
-        if !is_rate_limited(rate_limit_until)
-            && try_set_avatar(
-                &client,
-                &config.bot_api_url,
-                &config.bot_token,
-                OFFLINE_AVATAR,
-                &mut rate_limit_until,
-            )
-            .await
-        {
+        if try_set_avatar(&client, &config.bot_api_url, &config.bot_token, OFFLINE_AVATAR).await {
             actual_avatar = ActualState::Offline;
         }
     }
     info!("Startup complete, beginning health checks");
 
-    let mut failures: u32 = config.fail_threshold; // start assuming bot is down
+    let mut failures: u32 = config.fail_threshold;
 
     loop {
         let healthy = check_health(&client, &config.health_url).await;
@@ -419,27 +241,12 @@ async fn main() {
             if failures >= config.fail_threshold {
                 DesiredState::Offline
             } else {
-                // Not enough failures yet — keep current state, don't change anything
                 tokio::time::sleep(config.interval).await;
                 continue;
             }
         };
 
-        // Check rate limit before any API call
-        if is_rate_limited(rate_limit_until) {
-            let remaining = rate_limit_remaining_secs(rate_limit_until);
-            if remaining > 60 {
-                // Only log once per minute-ish to avoid spam
-                info!(
-                    "Rate-limited, skipping profile update ({remaining}s / {:.1}h remaining)",
-                    remaining as f64 / 3600.0
-                );
-            }
-            tokio::time::sleep(config.interval).await;
-            continue;
-        }
-
-        // ── Set NAME first (lightweight, rarely rate-limited) ──
+        // ── Set NAME ──
         let desired_name_state = match desired {
             DesiredState::Online => ActualState::Online,
             DesiredState::Offline => ActualState::Offline,
@@ -450,51 +257,21 @@ async fn main() {
                 DesiredState::Online => ONLINE_NAME,
                 DesiredState::Offline => OFFLINE_NAME,
             };
-            info!(
-                "Setting bot name to {:?}",
-                if desired == DesiredState::Online {
-                    "online"
-                } else {
-                    "offline"
-                }
-            );
-            if try_set_name(&client, &config.bot_token, name, &mut rate_limit_until).await {
+            if try_set_name(&client, &config.bot_token, name).await {
                 actual_name = desired_name_state;
                 info!("Bot name updated successfully");
             }
-            // If rate-limited, skip avatar too
-            if is_rate_limited(rate_limit_until) {
-                tokio::time::sleep(config.interval).await;
-                continue;
-            }
+            // If 429, actual_name stays unchanged → will retry next cycle
         }
 
-        // ── Set AVATAR second (heavy, strict rate limits) ──
-        let desired_avatar_state = desired_name_state;
-
-        if actual_avatar != desired_avatar_state {
+        // ── Set AVATAR ──
+        if actual_avatar != desired_name_state {
             let photo = match desired {
                 DesiredState::Online => ONLINE_AVATAR,
                 DesiredState::Offline => OFFLINE_AVATAR,
             };
-            info!(
-                "Setting bot avatar to {:?}",
-                if desired == DesiredState::Online {
-                    "online"
-                } else {
-                    "offline"
-                }
-            );
-            if try_set_avatar(
-                &client,
-                &config.bot_api_url,
-                &config.bot_token,
-                photo,
-                &mut rate_limit_until,
-            )
-            .await
-            {
-                actual_avatar = desired_avatar_state;
+            if try_set_avatar(&client, &config.bot_api_url, &config.bot_token, photo).await {
+                actual_avatar = desired_name_state;
                 info!("Bot avatar updated successfully");
             }
         }
@@ -508,42 +285,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_retry_after() {
-        assert_eq!(parse_retry_after("Too Many Requests: retry after 13317"), Some(13317));
-        assert_eq!(parse_retry_after("Too Many Requests: retry after 5"), Some(5));
-        assert_eq!(parse_retry_after("Bad Request: invalid photo"), None);
-        assert_eq!(parse_retry_after("unknown error"), None);
-    }
-
-    #[test]
-    fn test_apply_rate_limit() {
-        // New deadline extends beyond none
-        let result = apply_rate_limit(None, 100);
-        assert!(result.is_some());
-
-        // Longer existing deadline wins
-        let far_future = Some(Instant::now() + Duration::from_secs(10000));
-        let result = apply_rate_limit(far_future, 5);
-        assert_eq!(result, far_future);
-
-        // Shorter existing deadline loses to new longer one
-        let near_instant = Instant::now() + Duration::from_secs(1);
-        let result = apply_rate_limit(Some(near_instant), 10000);
-        assert!(result.unwrap() > near_instant);
-    }
-
-    #[test]
-    fn test_is_rate_limited() {
-        assert!(!is_rate_limited(None));
-        assert!(is_rate_limited(Some(Instant::now() + Duration::from_secs(100))));
-        // Past deadline = not limited
-        assert!(!is_rate_limited(Some(Instant::now() - Duration::from_secs(1))));
-    }
-
-    #[test]
-    fn test_truncate() {
-        assert_eq!(truncate("hello", 10), "hello");
-        assert_eq!(truncate("hello world", 5), "hello");
-        assert_eq!(truncate("", 5), "");
+    fn test_health_monitor_compiles() {
+        // Smoke test — ensure the module compiles
+        assert_eq!(ONLINE_NAME, "Dora \u{2013} Downloader Youtube Instagram TikTok");
+        assert_eq!(OFFLINE_NAME, "Dora \u{2013} Sleep");
     }
 }
