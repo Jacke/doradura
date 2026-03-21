@@ -142,7 +142,7 @@ async fn security_headers(request: Request, next: Next) -> Response {
     headers.insert("Referrer-Policy", "strict-origin-when-cross-origin".parse().unwrap());
     headers.insert(
         "Content-Security-Policy",
-        "default-src 'self'; script-src 'self' https://telegram.org 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; connect-src 'self'; frame-ancestors 'none'"
+        "default-src 'self'; script-src 'self' https://telegram.org 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; connect-src 'self'; frame-src https://oauth.telegram.org; frame-ancestors 'none'"
             .parse()
             .unwrap(),
     );

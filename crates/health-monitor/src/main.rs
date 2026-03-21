@@ -362,10 +362,24 @@ async fn main() {
     tokio::time::sleep(config.startup_delay).await;
 
     if check_health(&client, &config.health_url).await {
-        info!("Bot is already healthy after startup delay, skipping offline name");
-        // Assume name is correct (online) from previous run; loop will fix if not.
-        actual_name = ActualState::Online;
-        actual_avatar = ActualState::Online;
+        info!("Bot is healthy after startup delay — setting ONLINE profile");
+        // Always try to set online state; don't assume it persisted from previous run.
+        // A prior rate limit or crash may have left avatar/name stuck on offline.
+        if try_set_name(&client, &config.bot_token, ONLINE_NAME, &mut rate_limit_until).await {
+            actual_name = ActualState::Online;
+        }
+        if !is_rate_limited(rate_limit_until)
+            && try_set_avatar(
+                &client,
+                &config.bot_api_url,
+                &config.bot_token,
+                ONLINE_AVATAR,
+                &mut rate_limit_until,
+            )
+            .await
+        {
+            actual_avatar = ActualState::Online;
+        }
     } else {
         info!("Bot not healthy after startup, setting OFFLINE name");
         if try_set_name(&client, &config.bot_token, OFFLINE_NAME, &mut rate_limit_until).await {

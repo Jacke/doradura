@@ -11,6 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Split monolithic modules for maintainability: `db/mod.rs` (4909 -> 1617 lines, 8 new modules), `callback_router.rs` (3 files), `admin.rs` (7-file directory module), `commands.rs` (4-file directory module), `downloads.rs` (3-file directory module)
 
 ### Fixed
+- Health-monitor assumed avatar/name were online when bot was healthy at startup, never re-setting them if a prior rate limit left them stuck on offline. Now always attempts to set online profile on healthy startup
+- CSP blocked Telegram OAuth iframe on `/admin/login` — added `frame-src https://oauth.telegram.org` directive
+- Degraded video quality when converting circles with speed >1x: `setpts` increased effective FPS (30→45 at 1.5x, 30→60 at 2x), starving the VBV-constrained encoder of bits per frame. Added `fps=30` after `setpts` to normalize output framerate
 - Playlist/set URLs produced garbage metadata: yt-dlp `--print` outputs one line per track, but code took all stdout as a single string — titles showed every track name concatenated with newlines
 - Added `first_line_of_stdout` helper and `--playlist-items 1` safety net to all 5 metadata `--print` calls
 - `sanitize_metadata()` now takes first line only instead of replacing newlines with spaces, and truncates excessively long metadata
