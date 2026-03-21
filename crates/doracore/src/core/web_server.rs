@@ -2375,47 +2375,36 @@ async fn admin_api_health(State(state): State<WebState>, header_map: HeaderMap) 
             })
             .unwrap_or_default();
 
-        // Cookies check
+        // Cookies check (single read)
         let cookies_path = std::env::var("COOKIES_FILE").unwrap_or_else(|_| "/data/cookies.txt".to_string());
-        let cookies_exist = std::path::Path::new(&cookies_path).exists();
-        let cookies_count = if cookies_exist {
-            std::fs::read_to_string(&cookies_path)
-                .map(|c| {
-                    c.lines()
-                        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
-                        .count()
-                })
-                .unwrap_or(0)
-        } else {
-            0
-        };
+        let cookies_content = std::fs::read_to_string(&cookies_path).unwrap_or_default();
+        let cookies_exist = !cookies_content.is_empty();
+        let cookies_count = cookies_content
+            .lines()
+            .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+            .count();
         let required_cookies = ["APISID", "SAPISID", "HSID", "SID", "SSID"];
-        let cookies_content = if cookies_exist {
-            std::fs::read_to_string(&cookies_path).unwrap_or_default()
-        } else {
-            String::new()
-        };
         let mut cookies_found = serde_json::Map::new();
         for name in &required_cookies {
-            cookies_found.insert(name.to_string(), json!(cookies_content.contains(name)));
+            // Match cookie name as a tab-delimited field (Netscape format: domain\tpath\t...\tNAME\tvalue)
+            let pattern = format!("\t{}\t", name);
+            cookies_found.insert(name.to_string(), json!(cookies_content.contains(&pattern)));
         }
 
         // WARP proxy check
         let warp_proxy = std::env::var("WARP_PROXY").unwrap_or_default();
+        let tcp_timeout = std::time::Duration::from_millis(500);
         let warp_ok = if !warp_proxy.is_empty() {
             std::net::TcpStream::connect_timeout(
                 &warp_proxy.parse().unwrap_or_else(|_| "127.0.0.1:1080".parse().unwrap()),
-                std::time::Duration::from_secs(2),
+                tcp_timeout,
             )
             .is_ok()
         } else {
             false
         };
 
-        // PO Token server check (port 4416)
-        let pot_ok =
-            std::net::TcpStream::connect_timeout(&"127.0.0.1:4416".parse().unwrap(), std::time::Duration::from_secs(2))
-                .is_ok();
+        let pot_ok = std::net::TcpStream::connect_timeout(&"127.0.0.1:4416".parse().unwrap(), tcp_timeout).is_ok();
 
         json!({
             "ytdlp_version": ytdlp_version,
@@ -3060,12 +3049,9 @@ async fn admin_api_queue_bulk_cancel(
             return Ok(0);
         }
         let n = conn.execute(
-            &format!(
-                "UPDATE task_queue SET status = 'dead_letter', error_message = 'Bulk cancelled by admin' \
-                 WHERE status = '{}'",
-                status_filter
-            ),
-            [],
+            "UPDATE task_queue SET status = 'dead_letter', error_message = 'Bulk cancelled by admin' \
+             WHERE status = ?1",
+            rusqlite::params![&status_filter],
         )?;
         log_audit(
             &conn,
