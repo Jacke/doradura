@@ -112,8 +112,11 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
         log::info!("Downsub gRPC gateway disabled (DOWNSUB_GRPC_ENDPOINT unset or unreachable)");
     }
 
+    // --- Plan change notification channel ---
+    let (plan_change_tx, plan_change_rx) = crate::core::plan_change_channel();
+
     // --- Spawn background tasks ---
-    background_tasks::spawn_web_server(Arc::clone(&shared_storage));
+    background_tasks::spawn_web_server(Arc::clone(&shared_storage), Some(plan_change_tx));
     background_tasks::spawn_metrics_server();
 
     let alert_manager = background_tasks::start_alert_monitor(bot.clone(), Arc::clone(&shared_storage)).await;
@@ -130,6 +133,9 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
 
     background_tasks::spawn_stats_reporter(bot.clone(), Arc::clone(&shared_storage)).await;
     background_tasks::spawn_health_checks(bot.clone());
+
+    // Plan change notification dispatcher (listens for events from admin panel)
+    spawn_plan_change_dispatcher(bot.clone(), plan_change_rx);
 
     tokio::spawn(queue_processor::process_queue(
         bot.clone(),
@@ -259,6 +265,62 @@ async fn connect_to_bot_api(bot: &crate::telegram::Bot) -> Result<teloxide::type
             }
         }
     }
+}
+
+/// Background task: listen for plan change events and notify users via Telegram.
+fn spawn_plan_change_dispatcher(bot: crate::telegram::Bot, mut rx: crate::core::PlanChangeReceiver) {
+    use crate::core::{escape_markdown, PlanChangeReason};
+    use teloxide::types::ParseMode;
+
+    tokio::spawn(async move {
+        log::info!("Plan change notification dispatcher started");
+        while let Some(event) = rx.recv().await {
+            let plan_emoji = event.new_plan.emoji();
+            let plan_name = event.new_plan.display_name();
+
+            let reason_text = match event.reason {
+                PlanChangeReason::Admin => "by an administrator",
+                PlanChangeReason::Payment => "after successful payment",
+                PlanChangeReason::Renewal => "automatically renewed",
+                PlanChangeReason::Cancel => "auto\\-renewal cancelled",
+            };
+
+            let expiry_line = if let Some(ref exp) = event.expires_at {
+                format!("\n📅 Valid until: {}", escape_markdown(exp))
+            } else if event.new_plan.is_paid() {
+                "\n♾️ Unlimited".to_string()
+            } else {
+                String::new()
+            };
+
+            let text = format!(
+                "💳 *Plan updated*\n\n\
+                 {} {} → {} {}\n\
+                 Reason: {}{}\n\n\
+                 Changes take effect immediately\\!",
+                event.old_plan.emoji(),
+                escape_markdown(event.old_plan.display_name()),
+                plan_emoji,
+                escape_markdown(plan_name),
+                reason_text,
+                expiry_line,
+            );
+
+            let chat_id = teloxide::types::ChatId(event.user_id);
+            if let Err(e) = bot.send_message(chat_id, &text).parse_mode(ParseMode::MarkdownV2).await {
+                log::warn!("Failed to notify user {} about plan change: {}", event.user_id, e);
+            } else {
+                log::info!(
+                    "Notified user {} about plan change: {} → {} ({})",
+                    event.user_id,
+                    event.old_plan,
+                    event.new_plan,
+                    event.reason
+                );
+            }
+        }
+        log::warn!("Plan change notification dispatcher stopped (channel closed)");
+    });
 }
 
 /// Run the bot in long polling mode with dispatcher retry logic.

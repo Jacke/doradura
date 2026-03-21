@@ -180,12 +180,15 @@ pub async fn spawn_content_watcher(bot: Bot, db_pool: Arc<DbPool>, shared_storag
 }
 
 /// Start the web server for share pages (if WEB_BASE_URL is configured).
-pub fn spawn_web_server(shared_storage: Arc<SharedStorage>) {
+pub fn spawn_web_server(
+    shared_storage: Arc<SharedStorage>,
+    plan_notifier: Option<crate::core::types::PlanChangeNotifier>,
+) {
     if config::share::base_url().is_some() {
         let web_port = config::share::web_port();
         log::info!("Starting web server on port {} (WEB_BASE_URL configured)", web_port);
         tokio::spawn(async move {
-            if let Err(e) = crate::core::web_server::start_web_server(web_port, shared_storage).await {
+            if let Err(e) = crate::core::web_server::start_web_server(web_port, shared_storage, plan_notifier).await {
                 log::error!("Web server failed: {}", e);
             }
         });

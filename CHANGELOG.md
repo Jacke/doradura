@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Plan change notifications** — users receive Telegram message whenever their plan changes (admin panel, payment, renewal, cancellation). Event channel between doracore web_server and dorabot dispatcher
 - Downloads menu: **Lyrics** button for MP3 — fetches lyrics via Genius/LRCLIB, shows section picker (Verse, Chorus, Bridge…) or full text
 - Downloads menu: **Voice** button for MP3 — converts audio to OGG Opus and sends as Telegram voice message
 - Downloads menu: **Source link** — clickable `🔗 Source` link to original URL (no preview) in "How to send?" message

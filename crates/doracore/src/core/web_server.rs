@@ -46,6 +46,7 @@ const SHARE_WINDOW_SECS: u64 = 60;
 struct WebState {
     shared_storage: Arc<SharedStorage>,
     bot_token: String,
+    plan_notifier: Option<super::PlanChangeNotifier>,
 }
 
 /// Query parameters from Telegram Login Widget
@@ -410,12 +411,17 @@ async fn security_headers(request: Request, next: Next) -> Response {
 }
 
 /// Start the public web server.
-pub async fn start_web_server(port: u16, shared_storage: Arc<SharedStorage>) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn start_web_server(
+    port: u16,
+    shared_storage: Arc<SharedStorage>,
+    plan_notifier: Option<super::PlanChangeNotifier>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let bot_token = config::BOT_TOKEN.clone();
     let state = WebState {
         shared_storage,
         bot_token,
+        plan_notifier,
     };
 
     let app = Router::new()
@@ -2907,10 +2913,12 @@ async fn admin_api_user_settings(
         Ok(id) => id,
         Err(resp) => return resp,
     };
+    let plan_notifier = state.plan_notifier.clone();
     let db = state.shared_storage.sqlite_pool();
     let result = tokio::task::spawn_blocking(move || {
         let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
         let mut updated = Vec::new();
+        let mut plan_change: Option<(String, String, Option<String>)> = None; // (old, new, expires_at)
 
         if let Some(ref lang) = body.language {
             let valid = ["en", "ru", "fr", "de"];
@@ -2925,8 +2933,18 @@ async fn admin_api_user_settings(
         if let Some(ref plan) = body.plan {
             let valid = ["free", "premium", "vip"];
             if valid.contains(&plan.as_str()) {
-                if let Some(days) = body.plan_days {
-                    let expires = format!("datetime('now', '+{} days')", days.clamp(1, 3650));
+                // Read old plan before updating
+                let old_plan: String = conn
+                    .query_row(
+                        "SELECT COALESCE(plan, 'free') FROM users WHERE telegram_id = ?1",
+                        rusqlite::params![user_id],
+                        |r| r.get(0),
+                    )
+                    .unwrap_or_else(|_| "free".to_string());
+
+                let expires_at = if let Some(days) = body.plan_days {
+                    let clamped = days.clamp(1, 3650);
+                    let expires = format!("datetime('now', '+{} days')", clamped);
                     conn.execute(
                         &format!(
                             "INSERT OR REPLACE INTO subscriptions (user_id, plan, expires_at) \
@@ -2935,12 +2953,26 @@ async fn admin_api_user_settings(
                         ),
                         rusqlite::params![user_id, plan],
                     )?;
-                }
+                    let exp_str: Option<String> = conn
+                        .query_row(
+                            "SELECT expires_at FROM subscriptions WHERE user_id = ?1",
+                            rusqlite::params![user_id],
+                            |r| r.get(0),
+                        )
+                        .ok();
+                    exp_str
+                } else {
+                    None
+                };
                 conn.execute(
                     "UPDATE users SET plan = ?1 WHERE telegram_id = ?2",
                     rusqlite::params![plan, user_id],
                 )?;
                 updated.push("plan");
+
+                if old_plan != *plan {
+                    plan_change = Some((old_plan, plan.clone(), expires_at));
+                }
             }
         }
         if let Some(blocked) = body.is_blocked {
@@ -2963,14 +2995,31 @@ async fn admin_api_user_settings(
             );
         }
 
-        Ok::<_, rusqlite::Error>(updated)
+        Ok::<_, rusqlite::Error>((updated, plan_change))
     })
     .await;
 
     match result {
-        Ok(Ok(updated)) if updated.is_empty() => (StatusCode::BAD_REQUEST, "No valid fields to update").into_response(),
-        Ok(Ok(updated)) => {
+        Ok(Ok((updated, _))) if updated.is_empty() => {
+            (StatusCode::BAD_REQUEST, "No valid fields to update").into_response()
+        }
+        Ok(Ok((updated, plan_change))) => {
             log::info!("Admin {} updated user {} settings: {:?}", admin_id, user_id, updated);
+            // Emit plan change event for notification
+            if let Some((old_plan_str, new_plan_str, expires_at)) = plan_change {
+                if let Some(ref tx) = plan_notifier {
+                    use std::str::FromStr;
+                    let old_plan = super::Plan::from_str(&old_plan_str).unwrap_or_default();
+                    let new_plan = super::Plan::from_str(&new_plan_str).unwrap_or_default();
+                    let _ = tx.send(super::PlanChangeEvent {
+                        user_id,
+                        old_plan,
+                        new_plan,
+                        reason: super::PlanChangeReason::Admin,
+                        expires_at,
+                    });
+                }
+            }
             Json(json!({"ok": true, "updated": updated})).into_response()
         }
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),

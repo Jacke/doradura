@@ -76,6 +76,53 @@ impl rusqlite::types::ToSql for Plan {
     }
 }
 
+// ── Plan change events (cross-crate notification channel) ────────────
+
+/// Why a plan changed.
+#[derive(Debug, Clone)]
+pub enum PlanChangeReason {
+    /// Admin changed the plan (via /setplan or web dashboard).
+    Admin,
+    /// User paid (first recurring payment).
+    Payment,
+    /// Automatic recurring renewal.
+    Renewal,
+    /// User or admin cancelled auto-renewal.
+    Cancel,
+}
+
+impl fmt::Display for PlanChangeReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Admin => f.write_str("admin"),
+            Self::Payment => f.write_str("payment"),
+            Self::Renewal => f.write_str("renewal"),
+            Self::Cancel => f.write_str("cancel"),
+        }
+    }
+}
+
+/// A plan change that should be communicated to the user.
+#[derive(Debug, Clone)]
+pub struct PlanChangeEvent {
+    pub user_id: i64,
+    pub old_plan: Plan,
+    pub new_plan: Plan,
+    pub reason: PlanChangeReason,
+    /// Human-readable expiry info (e.g. "2026-04-21") or None for unlimited/free.
+    pub expires_at: Option<String>,
+}
+
+/// Sender half — stored in WebState / admin handlers.
+pub type PlanChangeNotifier = tokio::sync::mpsc::UnboundedSender<PlanChangeEvent>;
+/// Receiver half — consumed by the notification dispatcher in dorabot.
+pub type PlanChangeReceiver = tokio::sync::mpsc::UnboundedReceiver<PlanChangeEvent>;
+
+/// Create a plan-change notification channel.
+pub fn plan_change_channel() -> (PlanChangeNotifier, PlanChangeReceiver) {
+    tokio::sync::mpsc::unbounded_channel()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
