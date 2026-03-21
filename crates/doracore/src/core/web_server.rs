@@ -1624,21 +1624,26 @@ async fn admin_api_queue_retry(
     };
     let db = state.shared_storage.sqlite_pool();
     let tid = task_id.clone();
+    let tid2 = task_id.clone();
     let result = tokio::task::spawn_blocking(move || {
         let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
-        conn.execute(
+        let n = conn.execute(
             "UPDATE task_queue SET status = 'pending', error_message = NULL, retry_count = 0, \
              worker_id = NULL, leased_at = NULL, lease_expires_at = NULL \
              WHERE id = ?1 AND status IN ('dead_letter', 'failed')",
             rusqlite::params![tid],
-        )
+        )?;
+        if n > 0 {
+            log_audit(&conn, admin_id, "retry_task", "task", &tid, None);
+        }
+        Ok::<_, rusqlite::Error>(n)
     })
     .await;
 
     match result {
         Ok(Ok(0)) => (StatusCode::NOT_FOUND, "Task not found or not retryable").into_response(),
         Ok(Ok(_)) => {
-            log::info!("Admin {} retried task {}", admin_id, task_id);
+            log::info!("Admin {} retried task {}", admin_id, tid2);
             Json(json!({"ok": true})).into_response()
         }
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
@@ -1659,11 +1664,15 @@ async fn admin_api_queue_cancel(
     let tid = task_id.clone();
     let result = tokio::task::spawn_blocking(move || {
         let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
-        conn.execute(
+        let n = conn.execute(
             "UPDATE task_queue SET status = 'dead_letter', error_message = 'Cancelled by admin' \
              WHERE id = ?1 AND status IN ('pending', 'leased')",
             rusqlite::params![tid],
-        )
+        )?;
+        if n > 0 {
+            log_audit(&conn, admin_id, "cancel_task", "task", &tid, None);
+        }
+        Ok::<_, rusqlite::Error>(n)
     })
     .await;
 
@@ -1801,10 +1810,14 @@ async fn admin_api_error_resolve(
     let db = state.shared_storage.sqlite_pool();
     let result = tokio::task::spawn_blocking(move || {
         let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
-        conn.execute(
+        let n = conn.execute(
             "UPDATE error_log SET resolved = 1 WHERE id = ?1",
             rusqlite::params![error_id],
-        )
+        )?;
+        if n > 0 {
+            log_audit(&conn, admin_id, "resolve_error", "error", &error_id.to_string(), None);
+        }
+        Ok::<_, rusqlite::Error>(n)
     })
     .await;
 
@@ -1937,19 +1950,31 @@ async fn admin_api_feedback_status(
     }
     let db = state.shared_storage.sqlite_pool();
     let status = body.status.clone();
+    let status2 = body.status.clone();
     let result = tokio::task::spawn_blocking(move || {
         let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
-        conn.execute(
+        let n = conn.execute(
             "UPDATE feedback_messages SET status = ?1 WHERE id = ?2",
             rusqlite::params![status, feedback_id],
-        )
+        )?;
+        if n > 0 {
+            log_audit(
+                &conn,
+                admin_id,
+                "feedback_status",
+                "feedback",
+                &feedback_id.to_string(),
+                Some(&status),
+            );
+        }
+        Ok::<_, rusqlite::Error>(n)
     })
     .await;
 
     match result {
         Ok(Ok(0)) => (StatusCode::NOT_FOUND, "Feedback not found").into_response(),
         Ok(Ok(_)) => {
-            log::info!("Admin {} updated feedback {} to {}", admin_id, feedback_id, body.status);
+            log::info!("Admin {} updated feedback {} to {}", admin_id, feedback_id, status2);
             Json(json!({"ok": true, "status": body.status})).into_response()
         }
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
@@ -2073,10 +2098,14 @@ async fn admin_api_alert_acknowledge(
     let db = state.shared_storage.sqlite_pool();
     let result = tokio::task::spawn_blocking(move || {
         let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
-        conn.execute(
+        let n = conn.execute(
             "UPDATE alert_history SET acknowledged = 1, acknowledged_at = datetime('now') WHERE id = ?1",
             rusqlite::params![alert_id],
-        )
+        )?;
+        if n > 0 {
+            log_audit(&conn, admin_id, "ack_alert", "alert", &alert_id.to_string(), None);
+        }
+        Ok::<_, rusqlite::Error>(n)
     })
     .await;
 
@@ -2482,6 +2511,12 @@ async fn admin_api_broadcast(
         match resp {
             Ok(r) if r.status().is_success() => {
                 log::info!("Admin {} sent message to user {}", admin_id, target_id);
+                let db2 = state.shared_storage.sqlite_pool();
+                tokio::task::spawn_blocking(move || {
+                    if let Ok(conn) = get_connection(&db2) {
+                        log_audit(&conn, admin_id, "send_message", "user", &target_id.to_string(), None);
+                    }
+                });
                 Json(json!({"ok": true, "sent": 1, "blocked": 0, "failed": 0})).into_response()
             }
             Ok(r) => {
@@ -2520,6 +2555,19 @@ async fn admin_api_broadcast(
 
         let total = user_ids.len();
         log::info!("Admin {} started broadcast to {} users", admin_id, total);
+        let db3 = state.shared_storage.sqlite_pool();
+        tokio::task::spawn_blocking(move || {
+            if let Ok(conn) = get_connection(&db3) {
+                log_audit(
+                    &conn,
+                    admin_id,
+                    "broadcast",
+                    "broadcast",
+                    "all",
+                    Some(&format!("total={}", total)),
+                );
+            }
+        });
 
         // Fire-and-forget background task
         tokio::spawn(async move {
@@ -2870,6 +2918,17 @@ async fn admin_api_user_settings(
                 rusqlite::params![v, user_id],
             )?;
             updated.push("is_blocked");
+        }
+
+        if !updated.is_empty() {
+            log_audit(
+                &conn,
+                admin_id,
+                "user_settings",
+                "user",
+                &user_id.to_string(),
+                Some(&updated.join(",")),
+            );
         }
 
         Ok::<_, rusqlite::Error>(updated)
