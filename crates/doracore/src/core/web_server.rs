@@ -332,6 +332,35 @@ fn log_audit(
     );
 }
 
+// --- Content subscriptions API types ---
+
+#[derive(Deserialize)]
+struct SubsQuery {
+    page: Option<u32>,
+    status: Option<String>,
+    search: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ApiContentSub {
+    id: i64,
+    user_id: i64,
+    username: String,
+    source_type: String,
+    source_id: String,
+    display_name: String,
+    is_active: bool,
+    last_checked_at: String,
+    last_error: String,
+    consecutive_errors: i32,
+    created_at: String,
+}
+
+#[derive(Deserialize)]
+struct SubToggleReq {
+    is_active: bool,
+}
+
 // --- Bulk action types ---
 
 #[derive(Deserialize)]
@@ -428,6 +457,9 @@ pub async fn start_web_server(port: u16, shared_storage: Arc<SharedStorage>) -> 
         // Bulk actions
         .route("/admin/api/errors/bulk-resolve", post(admin_api_errors_bulk_resolve))
         .route("/admin/api/queue/bulk-cancel", post(admin_api_queue_bulk_cancel))
+        // Content subscriptions
+        .route("/admin/api/subscriptions", get(admin_api_subscriptions))
+        .route("/admin/api/subscriptions/{id}/toggle", post(admin_api_sub_toggle))
         // Lightweight polling for tab badges
         .route("/admin/api/counts", get(admin_api_counts))
         .route("/metrics", get(metrics_handler))
@@ -3017,6 +3049,198 @@ async fn admin_api_audit(
 
     match result {
         Ok(Ok(data)) => Json(data).into_response(),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    }
+}
+
+// --- Content Subscriptions API ---
+
+const SUBS_PER_PAGE: u32 = 50;
+
+/// GET /admin/api/subscriptions — paginated content subscriptions (all users).
+async fn admin_api_subscriptions(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Query(q): Query<SubsQuery>,
+) -> Response {
+    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+        return resp;
+    }
+    let page = q.page.unwrap_or(1).max(1);
+    let status_filter = q.status.unwrap_or_default();
+    let search = q.search.unwrap_or_default();
+    let offset = ((page - 1) * SUBS_PER_PAGE) as i64;
+    let db = state.shared_storage.sqlite_pool();
+
+    let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, rusqlite::Error> {
+        let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
+
+        // Aggregate stats
+        let total_active: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM content_subscriptions WHERE is_active = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let total_inactive: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM content_subscriptions WHERE is_active = 0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let total_errored: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM content_subscriptions WHERE is_active = 1 AND consecutive_errors > 0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let unique_sources: i64 = conn
+            .query_row(
+                "SELECT COUNT(DISTINCT source_id) FROM content_subscriptions WHERE is_active = 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        // Build WHERE
+        let mut conditions = Vec::new();
+        match status_filter.as_str() {
+            "active" => conditions.push("s.is_active = 1".to_string()),
+            "inactive" => conditions.push("s.is_active = 0".to_string()),
+            "errored" => conditions.push("s.is_active = 1 AND s.consecutive_errors > 0".to_string()),
+            _ => {}
+        }
+        let search_param = if !search.is_empty() {
+            conditions.push(
+                "(s.display_name LIKE ?1 OR s.source_id LIKE ?1 \
+                     OR COALESCE(u.username,'') LIKE ?1 OR CAST(s.user_id AS TEXT) LIKE ?1)"
+                    .to_string(),
+            );
+            Some(format!("%{}%", search))
+        } else {
+            None
+        };
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        let count_sql = format!(
+            "SELECT COUNT(*) FROM content_subscriptions s \
+                 LEFT JOIN users u ON u.telegram_id = s.user_id {}",
+            where_clause
+        );
+        let total: i64 = if let Some(ref sp) = search_param {
+            conn.query_row(&count_sql, rusqlite::params![sp], |r| r.get(0))
+                .unwrap_or(0)
+        } else {
+            conn.query_row(&count_sql, [], |r| r.get(0)).unwrap_or(0)
+        };
+        let total_pages = ((total as f64) / SUBS_PER_PAGE as f64).ceil() as u32;
+
+        let sql = format!(
+            "SELECT s.id, s.user_id, COALESCE(u.username, ''), s.source_type, s.source_id, \
+                    COALESCE(s.display_name, ''), COALESCE(s.is_active, 0), \
+                    COALESCE(s.last_checked_at, ''), COALESCE(s.last_error, ''), \
+                    COALESCE(s.consecutive_errors, 0), COALESCE(s.created_at, '') \
+                 FROM content_subscriptions s \
+                 LEFT JOIN users u ON u.telegram_id = s.user_id \
+                 {} ORDER BY s.created_at DESC LIMIT {} OFFSET {}",
+            where_clause, SUBS_PER_PAGE, offset
+        );
+
+        let map_row = |r: &rusqlite::Row<'_>| -> rusqlite::Result<ApiContentSub> {
+            Ok(ApiContentSub {
+                id: r.get(0)?,
+                user_id: r.get(1)?,
+                username: r.get(2)?,
+                source_type: r.get(3)?,
+                source_id: r.get(4)?,
+                display_name: r.get(5)?,
+                is_active: r.get::<_, i64>(6)? != 0,
+                last_checked_at: r.get(7)?,
+                last_error: r.get(8)?,
+                consecutive_errors: r.get(9)?,
+                created_at: r.get(10)?,
+            })
+        };
+
+        let items: Vec<ApiContentSub> = if let Some(ref sp) = search_param {
+            conn.prepare(&sql)
+                .and_then(|mut s| {
+                    let rows = s.query_map(rusqlite::params![sp], map_row)?;
+                    Ok(rows.filter_map(|r| r.ok()).collect())
+                })
+                .unwrap_or_default()
+        } else {
+            conn.prepare(&sql)
+                .and_then(|mut s| {
+                    let rows = s.query_map([], map_row)?;
+                    Ok(rows.filter_map(|r| r.ok()).collect())
+                })
+                .unwrap_or_default()
+        };
+
+        Ok(json!({
+            "stats": {
+                "active": total_active,
+                "inactive": total_inactive,
+                "errored": total_errored,
+                "unique_sources": unique_sources,
+            },
+            "items": items,
+            "total": total,
+            "page": page,
+            "per_page": SUBS_PER_PAGE,
+            "total_pages": total_pages,
+        }))
+    })
+    .await;
+
+    match result {
+        Ok(Ok(data)) => Json(data).into_response(),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    }
+}
+
+/// POST /admin/api/subscriptions/:id/toggle — activate/deactivate a subscription.
+async fn admin_api_sub_toggle(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Path(sub_id): Path<i64>,
+    Json(body): Json<SubToggleReq>,
+) -> Response {
+    let admin_id = match verify_admin_post(&header_map, &state.bot_token) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let db = state.shared_storage.sqlite_pool();
+    let active = body.is_active;
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let val: i64 = if active { 1 } else { 0 };
+        let n = conn.execute(
+            "UPDATE content_subscriptions SET is_active = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
+            rusqlite::params![val, sub_id],
+        )?;
+        if n > 0 {
+            let action = if active { "reactivate_sub" } else { "deactivate_sub" };
+            log_audit(&conn, admin_id, action, "subscription", &sub_id.to_string(), None);
+        }
+        Ok::<_, rusqlite::Error>(n)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(0)) => (StatusCode::NOT_FOUND, "Subscription not found").into_response(),
+        Ok(Ok(_)) => {
+            log::info!("Admin {} toggled sub {} to active={}", admin_id, sub_id, active);
+            Json(json!({"ok": true, "is_active": active})).into_response()
+        }
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
     }
 }

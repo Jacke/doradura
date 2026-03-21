@@ -87,6 +87,7 @@
         #tab-feedback:checked ~ .tab-labels label[for="tab-feedback"],
         #tab-alerts:checked  ~ .tab-labels label[for="tab-alerts"],
         #tab-revenue:checked ~ .tab-labels label[for="tab-revenue"],
+        #tab-subs:checked    ~ .tab-labels label[for="tab-subs"],
         #tab-audit:checked   ~ .tab-labels label[for="tab-audit"] {{
             background: var(--card);
             color: var(--text);
@@ -103,6 +104,7 @@
         #tab-feedback:checked ~ .tab-contents #pane-feedback,
         #tab-alerts:checked  ~ .tab-contents #pane-alerts,
         #tab-revenue:checked ~ .tab-contents #pane-revenue,
+        #tab-subs:checked    ~ .tab-contents #pane-subs,
         #tab-audit:checked   ~ .tab-contents #pane-audit {{
             display: block;
         }}
@@ -450,6 +452,7 @@
     <input type="radio" name="tab" id="tab-feedback" class="tab-radio">
     <input type="radio" name="tab" id="tab-alerts"   class="tab-radio">
     <input type="radio" name="tab" id="tab-revenue"  class="tab-radio">
+    <input type="radio" name="tab" id="tab-subs"     class="tab-radio">
     <input type="radio" name="tab" id="tab-audit"    class="tab-radio">
 
     <div class="tabs-wrap">
@@ -463,6 +466,7 @@
             <label for="tab-feedback" class="tab-label">Feedback</label>
             <label for="tab-alerts"   class="tab-label">Alerts</label>
             <label for="tab-revenue"  class="tab-label">Revenue</label>
+            <label for="tab-subs"     class="tab-label">Subs</label>
             <label for="tab-audit"    class="tab-label">Audit</label>
         </div>
     </div>
@@ -740,6 +744,33 @@
             </div>
             <div id="revenue-pagination" class="pagination"></div>
         </div><!-- /pane-revenue -->
+
+        <!-- ══════════════════════════════════════════
+             Pane: Subscriptions (dynamic via JS)
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-subs">
+            <div id="subs-stats"></div>
+            <div class="toolbar">
+                <div class="filter-group">
+                    <button class="filter-btn active" data-sfilter="all">All</button>
+                    <button class="filter-btn" data-sfilter="active">Active</button>
+                    <button class="filter-btn" data-sfilter="inactive">Inactive</button>
+                    <button class="filter-btn" data-sfilter="errored">Errored</button>
+                </div>
+                <input type="text" id="subs-search" class="search-input" placeholder="Search by name, source, user...">
+            </div>
+            <div class="panel">
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr><th>Source</th><th>Name</th><th>User</th><th>Status</th><th>Last Check</th><th>Errors</th><th>Actions</th></tr>
+                        </thead>
+                        <tbody id="subs-tbody"><tr><td colspan="7" class="empty-state">Loading...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+            <div id="subs-pagination" class="pagination"></div>
+        </div><!-- /pane-subs -->
 
         <!-- ══════════════════════════════════════════
              Pane: Audit Log (dynamic via JS)
@@ -1330,6 +1361,50 @@
         }}
     }};
 
+    // ══════ Subscriptions ══════
+    let subsPage=1, subsFilter='all', subsSearch='';
+    async function loadSubs() {{
+        const p = new URLSearchParams({{page:subsPage}});
+        if (subsFilter!=='all') p.set('status', subsFilter);
+        if (subsSearch) p.set('search', subsSearch);
+        const data = await api('/admin/api/subscriptions?'+p);
+        if (!data) return;
+        // Stats cards
+        const s = data.stats||{{}};
+        const statsEl = document.getElementById('subs-stats');
+        if (statsEl) statsEl.innerHTML = `<div class="health-grid" style="margin-bottom:16px;">
+            <div class="health-card"><div class="hc-label">Active</div><div class="hc-value" style="color:var(--green)">${{s.active||0}}</div></div>
+            <div class="health-card"><div class="hc-label">Inactive</div><div class="hc-value">${{s.inactive||0}}</div></div>
+            <div class="health-card"><div class="hc-label">Errored</div><div class="hc-value" style="color:${{s.errored>0?'var(--red)':'inherit'}}">${{s.errored||0}}</div></div>
+            <div class="health-card"><div class="hc-label">Unique Sources</div><div class="hc-value">${{s.unique_sources||0}}</div></div>
+        </div>`;
+        // Table
+        const tb = document.getElementById('subs-tbody');
+        const items = data.items||[];
+        if (!items.length) {{ tb.innerHTML='<tr><td colspan="7" class="empty-state">No subscriptions.</td></tr>'; document.getElementById('subs-pagination').innerHTML=''; return; }}
+        tb.innerHTML = items.map(sub => {{
+            const srcEmoji = sub.source_type==='instagram'?'📸':'🔗';
+            const statusCls = sub.is_active?(sub.consecutive_errors>0?'status-dead_letter':'status-completed'):'status-new';
+            const statusText = sub.is_active?(sub.consecutive_errors>0?'Error':'Active'):'Inactive';
+            return `<tr>
+                <td><span class="fmt-badge">${{srcEmoji}} ${{esc(sub.source_type)}}</span></td>
+                <td>${{esc(sub.display_name||sub.source_id)}}</td>
+                <td class="mono">${{sub.username?'@'+esc(sub.username):sub.user_id}}</td>
+                <td><span class="pill ${{statusCls}}">${{statusText}}</span></td>
+                <td class="dim small">${{fmtTime(sub.last_checked_at)}}</td>
+                <td class="dim small" title="${{esc(sub.last_error)}}">${{sub.consecutive_errors>0?sub.consecutive_errors+'x':'—'}}</td>
+                <td><div class="action-group">
+                    ${{sub.is_active
+                        ?`<button class="act-btn danger" onclick="toggleSub(${{sub.id}},false)">Disable</button>`
+                        :`<button class="act-btn success" onclick="toggleSub(${{sub.id}},true)">Enable</button>`}}
+                </div></td></tr>`;
+        }}).join('');
+        renderPagination('subs-pagination', data, p => {{ subsPage=p; loadSubs(); }});
+    }}
+    window.toggleSub = async (id, active) => {{
+        if (await postJson(`/admin/api/subscriptions/${{id}}/toggle`, {{ is_active: active }})) loadSubs();
+    }};
+
     // ══════ Audit Log ══════
     let auditPage=1, auditFilter='all';
     async function loadAudit() {{
@@ -1388,7 +1463,7 @@
     const tabLoaders = {{
         'tab-users': loadUsers, 'tab-dl': loadDownloads, 'tab-queue': loadQueue,
         'tab-errors': loadErrors, 'tab-health': loadHealth, 'tab-feedback': loadFeedback,
-        'tab-alerts': loadAlerts, 'tab-revenue': loadRevenue, 'tab-audit': loadAudit,
+        'tab-alerts': loadAlerts, 'tab-revenue': loadRevenue, 'tab-subs': loadSubs, 'tab-audit': loadAudit,
     }};
     document.querySelectorAll('.tab-radio').forEach(r => r.addEventListener('change', () => {{
         const loader = tabLoaders[r.id];
@@ -1413,6 +1488,7 @@
     bindFilters('data-ffilter', v => {{ feedbackFilter=v; feedbackPage=1; }}, loadFeedback);
     bindFilters('data-afilter', v => {{ alertsFilter=v; alertsPage=1; }}, loadAlerts);
     bindFilters('data-rfilter', v => {{ revFilter=v; revPage=1; }}, loadRevenue);
+    bindFilters('data-sfilter', v => {{ subsFilter=v; subsPage=1; }}, loadSubs);
     bindFilters('data-aufilter', v => {{ auditFilter=v; auditPage=1; }}, loadAudit);
 
     // ══════ Search ══════
@@ -1430,6 +1506,8 @@
     if (fsEl) fsEl.addEventListener('input', () => debounce('feedback', () => {{ feedbackSearch=fsEl.value.trim(); feedbackPage=1; loadFeedback(); }}));
     const asEl = document.getElementById('alerts-search');
     if (asEl) asEl.addEventListener('input', () => debounce('alerts', () => {{ alertsSearch=asEl.value.trim(); alertsPage=1; loadAlerts(); }}));
+    const ssEl = document.getElementById('subs-search');
+    if (ssEl) ssEl.addEventListener('input', () => debounce('subs', () => {{ subsSearch=ssEl.value.trim(); subsPage=1; loadSubs(); }}));
 }})();
 </script>
 
