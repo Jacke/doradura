@@ -1926,6 +1926,8 @@ async fn send_as_voice_segment(
             "64k",
             "-ac",
             "1",
+            "-ar",
+            "48000",
             "-application",
             "voip",
             "-y",
@@ -1963,11 +1965,11 @@ async fn send_as_voice_segment(
     .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
     .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
-    let mut req = bot.send_voice(chat_id, InputFile::file(output_path));
-    if let Some(dur) = result {
-        req = req.duration(dur);
-    }
-    req.await
+    // Always set duration — required for waveform. Fall back to segment length.
+    let dur = result.unwrap_or(duration_secs.max(1) as u32);
+    bot.send_voice(chat_id, InputFile::file(output_path))
+        .duration(dur)
+        .await
 }
 
 /// Build section picker keyboard for lyrics (reuses lyr:s: callback prefix

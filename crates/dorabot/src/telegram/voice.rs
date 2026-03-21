@@ -47,7 +47,7 @@ pub fn convert_wav_to_ogg_opus(input_path: &str, output_path: &str) -> Result<Op
         ));
     }
 
-    // Convert to OGG Opus mono (Telegram requires mono for waveform display)
+    // Convert to OGG Opus mono 48kHz (Telegram requires mono + 48kHz for waveform)
     let output = ProcessCommand::new("ffmpeg")
         .arg("-i")
         .arg(input_path)
@@ -57,6 +57,8 @@ pub fn convert_wav_to_ogg_opus(input_path: &str, output_path: &str) -> Result<Op
         .arg("64k")
         .arg("-ac")
         .arg("1")
+        .arg("-ar")
+        .arg("48000")
         .arg("-application")
         .arg("voip")
         .arg("-y")
