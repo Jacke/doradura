@@ -1,0 +1,1361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Dashboard — Doradura Admin</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{csrf_token}">
+    <style>
+        *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+        :root {{
+            --bg:       #0d0d0d;
+            --surface:  #141414;
+            --card:     #1a1a1a;
+            --border:   #252525;
+            --border2:  #333;
+            --text:     #e8e8e8;
+            --muted:    #666;
+            --accent:   #7c6aff;
+            --green:    #22c55e;
+            --red:      #ef4444;
+            --yellow:   #f59e0b;
+            --blue:     #3b82f6;
+        }}
+
+        body {{
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            font-size: 14px;
+            line-height: 1.5;
+            min-height: 100vh;
+        }}
+
+        /* ── Layout ── */
+        .topbar {{
+            position: sticky; top: 0; z-index: 100;
+            background: rgba(13,13,13,0.85);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+            padding: 0 28px;
+            height: 56px;
+            display: flex; align-items: center; justify-content: space-between;
+        }}
+        .topbar-brand {{ font-weight: 700; font-size: 1.05rem; letter-spacing: -0.3px; }}
+        .topbar-brand span {{ color: var(--accent); }}
+        .topbar-right {{ display: flex; align-items: center; gap: 16px; }}
+        .logout {{
+            color: var(--muted); text-decoration: none; font-size: 0.82rem;
+            padding: 5px 12px; border: 1px solid var(--border2); border-radius: 8px;
+            transition: color .15s, border-color .15s;
+        }}
+        .logout:hover {{ color: var(--text); border-color: #555; }}
+
+        .page {{ max-width: 1200px; margin: 0 auto; padding: 28px 24px 60px; }}
+
+        /* ── Tabs (CSS-only) ── */
+        .tabs-wrap {{ margin-bottom: 28px; }}
+        .tab-radio {{ display: none; }}
+
+        .tab-labels {{
+            display: flex; gap: 4px;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 4px;
+            width: fit-content;
+        }}
+        .tab-label {{
+            padding: 7px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: var(--muted);
+            transition: background .15s, color .15s;
+            user-select: none;
+        }}
+        .tab-label:hover {{ color: var(--text); }}
+
+        #tab-overview:checked ~ .tab-labels label[for="tab-overview"],
+        #tab-users:checked   ~ .tab-labels label[for="tab-users"],
+        #tab-dl:checked      ~ .tab-labels label[for="tab-dl"],
+        #tab-errors:checked  ~ .tab-labels label[for="tab-errors"],
+        #tab-queue:checked   ~ .tab-labels label[for="tab-queue"],
+        #tab-health:checked  ~ .tab-labels label[for="tab-health"],
+        #tab-feedback:checked ~ .tab-labels label[for="tab-feedback"],
+        #tab-alerts:checked  ~ .tab-labels label[for="tab-alerts"],
+        #tab-revenue:checked ~ .tab-labels label[for="tab-revenue"],
+        #tab-audit:checked   ~ .tab-labels label[for="tab-audit"] {{
+            background: var(--card);
+            color: var(--text);
+            border: 1px solid var(--border2);
+        }}
+
+        .tab-content {{ display: none; }}
+        #tab-overview:checked ~ .tab-contents #pane-overview,
+        #tab-users:checked   ~ .tab-contents #pane-users,
+        #tab-dl:checked      ~ .tab-contents #pane-dl,
+        #tab-errors:checked  ~ .tab-contents #pane-errors,
+        #tab-queue:checked   ~ .tab-contents #pane-queue,
+        #tab-health:checked  ~ .tab-contents #pane-health,
+        #tab-feedback:checked ~ .tab-contents #pane-feedback,
+        #tab-alerts:checked  ~ .tab-contents #pane-alerts,
+        #tab-revenue:checked ~ .tab-contents #pane-revenue,
+        #tab-audit:checked   ~ .tab-contents #pane-audit {{
+            display: block;
+        }}
+
+        /* ── Stat Cards ── */
+        .stats-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 32px;
+        }}
+        .stat-card {{
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 18px 20px;
+            display: flex; align-items: flex-start; gap: 14px;
+            transition: border-color .15s;
+        }}
+        .stat-card:hover {{ border-color: var(--border2); }}
+        .stat-icon {{ font-size: 1.4rem; opacity: 0.7; flex-shrink: 0; }}
+        .stat-value {{
+            font-size: 1.7rem; font-weight: 700;
+            line-height: 1.1; margin-bottom: 4px;
+            font-variant-numeric: tabular-nums;
+        }}
+        .stat-label {{ color: var(--muted); font-size: 0.8rem; }}
+        .active-val {{ color: var(--green); }}
+        .err-val    {{ color: var(--red); }}
+
+        /* ── Section headers ── */
+        .section-title {{
+            font-size: 0.78rem; font-weight: 600;
+            text-transform: uppercase; letter-spacing: 0.08em;
+            color: var(--muted); margin-bottom: 14px;
+        }}
+
+        /* ── Cards / panels ── */
+        .panel {{
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            overflow: hidden;
+            margin-bottom: 28px;
+        }}
+        .panel-head {{
+            padding: 14px 20px;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.85rem; font-weight: 600; color: var(--muted);
+            text-transform: uppercase; letter-spacing: 0.06em;
+        }}
+
+        /* ── Tables ── */
+        .tbl-wrap {{ overflow-x: auto; }}
+        table {{ width: 100%; border-collapse: collapse; }}
+        th, td {{ padding: 11px 18px; text-align: left; border-bottom: 1px solid var(--border); }}
+        th {{ background: var(--surface); color: var(--muted); font-weight: 500; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }}
+        tr:last-child td {{ border-bottom: none; }}
+        tr:hover td {{ background: rgba(255,255,255,0.02); }}
+
+        .mono  {{ font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace; font-size: 0.82rem; }}
+        .small {{ font-size: 0.78rem; }}
+        .dim   {{ color: var(--muted); }}
+        .title-cell {{ max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+        .msg-cell   {{ max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+        .empty-state {{ padding: 32px; text-align: center; color: var(--muted); font-size: 0.9rem; }}
+
+        /* ── Pills / badges ── */
+        .pill {{
+            display: inline-block; padding: 2px 9px; border-radius: 20px;
+            font-size: 0.75rem; font-weight: 600;
+        }}
+        .plan-free    {{ background: #232323; color: #888; }}
+        .plan-premium {{ background: rgba(124,106,255,0.18); color: #a799ff; }}
+        .plan-vip     {{ background: rgba(245,158,11,0.15); color: #f59e0b; }}
+
+        .fmt-badge {{
+            display: inline-block; padding: 1px 8px; border-radius: 6px;
+            font-size: 0.75rem; font-weight: 600;
+            background: rgba(255,255,255,0.07); color: #ccc;
+            font-family: 'SF Mono', ui-monospace, monospace;
+        }}
+
+        .err-badge {{
+            display: inline-block; padding: 2px 9px; border-radius: 6px;
+            font-size: 0.75rem; font-weight: 600;
+            font-family: 'SF Mono', ui-monospace, monospace;
+        }}
+        .err-network  {{ background: rgba(59,130,246,0.15); color: #60a5fa; }}
+        .err-auth     {{ background: rgba(245,158,11,0.15); color: #fbbf24; }}
+        .err-download {{ background: rgba(239,68,68,0.15);  color: #f87171; }}
+        .err-db       {{ background: rgba(168,85,247,0.15); color: #c084fc; }}
+        .err-other    {{ background: rgba(255,255,255,0.07); color: #999; }}
+
+        /* ── Rank ── */
+        .rank {{ display: inline-block; font-weight: 700; font-size: 0.82rem; width: 28px; text-align: center; }}
+        .rank-gold   {{ color: #f59e0b; }}
+        .rank-silver {{ color: #94a3b8; }}
+        .rank-bronze {{ color: #a16207; }}
+
+        /* ── Bar chart ── */
+        .chart-wrap {{
+            padding: 20px 16px 0;
+            height: 180px;
+            display: flex; align-items: flex-end; gap: 3px;
+            overflow-x: auto;
+        }}
+        .bar-col {{
+            display: flex; flex-direction: column; align-items: center;
+            flex: 1 1 0; min-width: 18px; max-width: 44px;
+            height: 100%;
+            position: relative;
+            justify-content: flex-end;
+        }}
+        .bar-tip {{
+            font-size: 0.6rem; color: var(--muted);
+            margin-bottom: 2px;
+            white-space: nowrap;
+        }}
+        .bar {{
+            width: 100%; background: var(--accent);
+            border-radius: 4px 4px 0 0;
+            min-height: 2px;
+            opacity: 0.75;
+            transition: opacity .15s;
+        }}
+        .bar:hover {{ opacity: 1; }}
+        .bar-label {{
+            font-size: 0.58rem; color: var(--muted);
+            margin-top: 4px; writing-mode: vertical-rl;
+            transform: rotate(180deg);
+            max-height: 40px; overflow: hidden;
+        }}
+        .chart-footer {{
+            padding: 8px 16px 16px;
+            font-size: 0.75rem; color: var(--muted);
+            text-align: right;
+        }}
+
+        /* ── Format bars ── */
+        .fmt-rows {{ padding: 16px 20px; display: flex; flex-direction: column; gap: 12px; }}
+        .fmt-row {{ display: flex; align-items: center; gap: 12px; }}
+        .fmt-name {{ width: 56px; font-family: 'SF Mono', ui-monospace, monospace; font-size: 0.8rem; color: var(--muted); flex-shrink: 0; }}
+        .fmt-bar-track {{
+            flex: 1; height: 8px; background: var(--border); border-radius: 99px; overflow: hidden;
+        }}
+        .fmt-bar {{ height: 100%; border-radius: 99px; transition: width .4s; }}
+        .fmt-mp3      {{ background: var(--accent); }}
+        .fmt-video    {{ background: var(--blue); }}
+        .fmt-aac      {{ background: var(--green); }}
+        .fmt-lossless {{ background: var(--yellow); }}
+        .fmt-other    {{ background: #555; }}
+        .fmt-count {{ font-size: 0.78rem; color: var(--muted); white-space: nowrap; width: 110px; text-align: right; }}
+
+        /* ── Toolbar / search / filters ── */
+        .toolbar {{
+            display: flex; align-items: center; gap: 12px;
+            margin-bottom: 16px; flex-wrap: wrap;
+        }}
+        .filter-group {{ display: flex; gap: 4px; }}
+        .filter-btn {{
+            padding: 6px 14px; border-radius: 8px; border: 1px solid var(--border2);
+            background: transparent; color: var(--muted); font-size: 0.8rem; font-weight: 500;
+            cursor: pointer; transition: all .15s;
+        }}
+        .filter-btn:hover {{ color: var(--text); border-color: #555; }}
+        .filter-btn.active {{ background: var(--card); color: var(--text); border-color: var(--accent); }}
+        .search-input {{
+            padding: 7px 14px; border-radius: 8px; border: 1px solid var(--border2);
+            background: var(--surface); color: var(--text); font-size: 0.85rem;
+            outline: none; min-width: 220px; transition: border-color .15s;
+        }}
+        .search-input:focus {{ border-color: var(--accent); }}
+        .search-input::placeholder {{ color: #555; }}
+
+        /* ── Pagination ── */
+        .pagination {{
+            display: flex; align-items: center; justify-content: center;
+            gap: 8px; margin-top: 16px;
+        }}
+        .page-btn {{
+            padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border2);
+            background: transparent; color: var(--muted); font-size: 0.8rem;
+            cursor: pointer; transition: all .15s;
+        }}
+        .page-btn:hover {{ color: var(--text); border-color: #555; }}
+        .page-btn.active {{ background: var(--accent); color: #fff; border-color: var(--accent); }}
+        .page-btn:disabled {{ opacity: 0.3; cursor: default; }}
+        .page-info {{ color: var(--muted); font-size: 0.8rem; }}
+
+        /* ── Action buttons ── */
+        .action-group {{ display: flex; gap: 4px; }}
+        .act-btn {{
+            padding: 3px 8px; border-radius: 5px; border: 1px solid var(--border2);
+            background: transparent; color: var(--muted); font-size: 0.72rem; font-weight: 500;
+            cursor: pointer; transition: all .15s; white-space: nowrap;
+        }}
+        .act-btn:hover {{ color: var(--text); border-color: #555; }}
+        .act-btn.danger {{ border-color: rgba(239,68,68,0.3); color: #f87171; }}
+        .act-btn.danger:hover {{ background: rgba(239,68,68,0.1); }}
+        .act-btn.success {{ border-color: rgba(34,197,94,0.3); color: #22c55e; }}
+        .act-btn.success:hover {{ background: rgba(34,197,94,0.1); }}
+
+        /* ── Plan select dropdown ── */
+        .plan-select {{
+            padding: 3px 6px; border-radius: 5px; border: 1px solid var(--border2);
+            background: var(--surface); color: var(--text); font-size: 0.75rem;
+            cursor: pointer; outline: none;
+        }}
+
+        /* ── Modal ── */
+        .modal-overlay {{
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.6);
+            z-index: 200; justify-content: center; align-items: center;
+        }}
+        .modal-overlay.open {{ display: flex; }}
+        .modal {{
+            background: var(--card); border: 1px solid var(--border2);
+            border-radius: 16px; padding: 28px; min-width: 320px; max-width: 480px;
+        }}
+        .modal h3 {{ margin-bottom: 16px; font-size: 1rem; }}
+        .modal-actions {{ display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }}
+        .modal-btn {{
+            padding: 8px 18px; border-radius: 8px; border: none;
+            font-size: 0.85rem; font-weight: 500; cursor: pointer;
+        }}
+        .modal-btn.cancel {{ background: var(--surface); color: var(--muted); }}
+        .modal-btn.confirm {{ background: var(--accent); color: #fff; }}
+        .modal-btn.confirm.danger {{ background: var(--red); }}
+
+        /* ── Severity / status badges ── */
+        .sev-critical {{ background: rgba(239,68,68,0.15); color: #f87171; }}
+        .sev-warning  {{ background: rgba(245,158,11,0.15); color: #fbbf24; }}
+        .sev-info     {{ background: rgba(59,130,246,0.15); color: #60a5fa; }}
+        .status-new      {{ background: rgba(59,130,246,0.15); color: #60a5fa; }}
+        .status-reviewed {{ background: rgba(245,158,11,0.15); color: #fbbf24; }}
+        .status-replied  {{ background: rgba(34,197,94,0.12); color: #22c55e; }}
+        .status-pending    {{ background: rgba(245,158,11,0.15); color: #fbbf24; }}
+        .status-processing {{ background: rgba(59,130,246,0.15); color: #60a5fa; }}
+        .status-uploading  {{ background: rgba(124,106,255,0.18); color: #a799ff; }}
+        .status-completed  {{ background: rgba(34,197,94,0.12); color: #22c55e; }}
+        .status-dead_letter {{ background: rgba(239,68,68,0.15); color: #f87171; }}
+        .status-leased     {{ background: rgba(168,85,247,0.15); color: #c084fc; }}
+        .resolved-yes {{ opacity: 0.5; }}
+
+        /* ── Health grid ── */
+        .health-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 16px; margin-bottom: 28px;
+        }}
+        .health-card {{
+            background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+            padding: 20px; display: flex; flex-direction: column; gap: 8px;
+        }}
+        .health-card .hc-label {{ color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }}
+        .health-card .hc-value {{ font-size: 1.3rem; font-weight: 700; font-variant-numeric: tabular-nums; }}
+
+        /* ── Detail drawer (right slide-in) ── */
+        .detail-overlay {{
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+            z-index: 250; justify-content: flex-end;
+        }}
+        .detail-overlay.open {{ display: flex; }}
+        .detail-panel {{
+            background: var(--bg); width: min(560px, 90vw); height: 100vh;
+            overflow-y: auto; border-left: 1px solid var(--border2); padding: 28px;
+        }}
+        .detail-panel h2 {{ margin-bottom: 20px; font-size: 1.1rem; display: flex; justify-content: space-between; align-items: center; }}
+        .detail-panel .close-btn {{
+            background: none; border: 1px solid var(--border2); border-radius: 8px;
+            color: var(--muted); padding: 4px 12px; cursor: pointer; font-size: 0.82rem;
+        }}
+        .detail-section {{ margin-bottom: 24px; }}
+        .detail-section h3 {{ font-size: 0.82rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }}
+        .detail-row {{ display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 0.88rem; }}
+        .detail-row span:first-child {{ color: var(--muted); }}
+
+        /* ── Broadcast form ── */
+        .broadcast-area {{
+            display: flex; flex-direction: column; gap: 12px; padding: 20px;
+        }}
+        .broadcast-area textarea {{
+            background: var(--surface); color: var(--text); border: 1px solid var(--border2);
+            border-radius: 8px; padding: 12px; font-size: 0.88rem; min-height: 100px;
+            resize: vertical; outline: none; font-family: inherit;
+        }}
+        .broadcast-area textarea:focus {{ border-color: var(--accent); }}
+        .broadcast-area .send-btn {{
+            align-self: flex-end; padding: 8px 20px; border-radius: 8px;
+            border: none; background: var(--accent); color: #fff;
+            font-size: 0.85rem; font-weight: 500; cursor: pointer;
+        }}
+        .broadcast-area .send-btn:disabled {{ opacity: 0.4; cursor: default; }}
+        .tab-labels {{ flex-wrap: wrap; }}
+
+        /* ── Two-column layout ── */
+        .two-col {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }}
+        @media (max-width: 768px) {{
+            .two-col {{ grid-template-columns: 1fr; }}
+            .stats-grid {{ grid-template-columns: repeat(2, 1fr); }}
+            .tab-labels {{ overflow-x: auto; flex-wrap: nowrap; -webkit-overflow-scrolling: touch; scrollbar-width: none; }}
+            .tab-labels::-webkit-scrollbar {{ display: none; }}
+            .tab-label {{ flex-shrink: 0; }}
+            .detail-panel {{ width: 100vw !important; }}
+            .topbar {{ padding: 0 12px; }}
+            .page {{ padding: 16px 12px 40px; }}
+            .toolbar {{ flex-direction: column; align-items: stretch; }}
+            .search-input {{ min-width: 0; width: 100%; }}
+        }}
+        @media (max-width: 480px) {{
+            .stats-grid {{ grid-template-columns: 1fr; }}
+            .tab-label {{ padding: 7px 12px; font-size: 0.78rem; }}
+            .health-grid {{ grid-template-columns: repeat(2, 1fr); }}
+        }}
+    </style>
+</head>
+<body>
+
+<div class="topbar">
+    <div class="topbar-brand">dora<span>dura</span></div>
+    <div class="topbar-right">
+        <span style="color:var(--muted);font-size:0.8rem;">Admin Dashboard</span>
+        <button class="logout" style="cursor:pointer;background:none;" onclick="openBroadcastFor('')">Broadcast</button>
+        <button id="auto-refresh-btn" class="logout" style="cursor:pointer;background:none;" onclick="toggleAutoRefresh()">▶ Auto</button>
+        <a href="/admin/logout" class="logout">Logout</a>
+    </div>
+</div>
+
+<div class="page">
+
+    <!-- CSS-only tab switcher -->
+    <input type="radio" name="tab" id="tab-overview" class="tab-radio" checked>
+    <input type="radio" name="tab" id="tab-users"    class="tab-radio">
+    <input type="radio" name="tab" id="tab-dl"       class="tab-radio">
+    <input type="radio" name="tab" id="tab-queue"    class="tab-radio">
+    <input type="radio" name="tab" id="tab-errors"   class="tab-radio">
+    <input type="radio" name="tab" id="tab-health"   class="tab-radio">
+    <input type="radio" name="tab" id="tab-feedback" class="tab-radio">
+    <input type="radio" name="tab" id="tab-alerts"   class="tab-radio">
+    <input type="radio" name="tab" id="tab-revenue"  class="tab-radio">
+    <input type="radio" name="tab" id="tab-audit"    class="tab-radio">
+
+    <div class="tabs-wrap">
+        <div class="tab-labels">
+            <label for="tab-overview" class="tab-label">Overview</label>
+            <label for="tab-users"    class="tab-label">Users</label>
+            <label for="tab-dl"       class="tab-label">Downloads</label>
+            <label for="tab-queue"    class="tab-label">Queue</label>
+            <label for="tab-errors"   class="tab-label">Errors</label>
+            <label for="tab-health"   class="tab-label">Health</label>
+            <label for="tab-feedback" class="tab-label">Feedback</label>
+            <label for="tab-alerts"   class="tab-label">Alerts</label>
+            <label for="tab-revenue"  class="tab-label">Revenue</label>
+            <label for="tab-audit"    class="tab-label">Audit</label>
+        </div>
+    </div>
+
+    <div class="tab-contents">
+
+        <!-- ══════════════════════════════════════════
+             Pane: Overview
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-overview">
+
+            <div class="stats-grid">
+                {cards}
+            </div>
+
+            <!-- Downloads chart -->
+            <div class="panel">
+                <div class="panel-head">Downloads — last 30 days</div>
+                <div class="chart-wrap">
+                    {chart}
+                </div>
+                <div class="chart-footer">Each bar = one calendar day</div>
+            </div>
+
+            <!-- Two-col: format dist + system -->
+            <div class="two-col">
+                <div class="panel">
+                    <div class="panel-head">Format Distribution</div>
+                    <div class="fmt-rows">{fmt}</div>
+                </div>
+                <div class="panel">
+                    <div class="panel-head">System</div>
+                    <div style="padding:20px; display:flex; flex-direction:column; gap:14px;">
+                        <div style="display:flex;justify-content:space-between;">
+                            <span style="color:var(--muted);">Queue size</span>
+                            <strong>{active_tasks}</strong>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;">
+                            <span style="color:var(--muted);">Total users</span>
+                            <strong>{total_users}</strong>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;">
+                            <span style="color:var(--muted);">Total downloads</span>
+                            <strong>{total_dl}</strong>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;">
+                            <span style="color:var(--muted);">Downloads today</span>
+                            <strong>{dl_today}</strong>
+                        </div>
+                        <div style="display:flex;justify-content:space-between;">
+                            <span style="color:var(--muted);">Errors today</span>
+                            <strong style="color:{err_color};">{errors_today}</strong>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Analytics (loaded via JS) -->
+            <div id="overview-analytics"></div>
+
+        </div><!-- /pane-overview -->
+
+        <!-- ══════════════════════════════════════════
+             Pane: Users (dynamic via JS)
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-users">
+            <div class="toolbar">
+                <div class="filter-group">
+                    <button class="filter-btn active" data-filter="all">All</button>
+                    <button class="filter-btn" data-filter="free">Free</button>
+                    <button class="filter-btn" data-filter="premium">Premium</button>
+                    <button class="filter-btn" data-filter="vip">VIP</button>
+                    <button class="filter-btn" data-filter="blocked">Blocked</button>
+                </div>
+                <input type="text" id="user-search" class="search-input" placeholder="Search by username or ID...">
+            </div>
+            <div class="panel">
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Username</th>
+                                <th>Plan</th>
+                                <th>Downloads</th>
+                                <th>Lang</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="users-tbody"><tr><td colspan="7" class="empty-state">Loading...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+            <div id="users-pagination" class="pagination"></div>
+        </div><!-- /pane-users -->
+
+        <!-- ══════════════════════════════════════════
+             Pane: Downloads (dynamic via JS)
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-dl">
+            <div class="toolbar">
+                <input type="text" id="dl-search" class="search-input" placeholder="Search by title, author, or user...">
+            </div>
+            <div class="panel">
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Title / Author</th>
+                                <th>User</th>
+                                <th>Format</th>
+                                <th>Quality</th>
+                                <th>Size</th>
+                                <th>Duration</th>
+                                <th>Time</th>
+                            </tr>
+                        </thead>
+                        <tbody id="dl-tbody"><tr><td colspan="7" class="empty-state">Loading...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+            <div id="dl-pagination" class="pagination"></div>
+        </div><!-- /pane-dl -->
+
+        <!-- ══════════════════════════════════════════
+             Pane: Queue (dynamic via JS)
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-queue">
+            <div class="toolbar">
+                <div class="filter-group">
+                    <button class="filter-btn active" data-qfilter="all">All</button>
+                    <button class="filter-btn" data-qfilter="active">Active</button>
+                    <button class="filter-btn" data-qfilter="pending">Pending</button>
+                    <button class="filter-btn" data-qfilter="processing">Processing</button>
+                    <button class="filter-btn" data-qfilter="completed">Completed</button>
+                    <button class="filter-btn" data-qfilter="dead_letter">Dead</button>
+                </div>
+                <input type="text" id="queue-search" class="search-input" placeholder="Search by URL, user, task ID...">
+            </div>
+            <div class="panel">
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>ID</th><th>User</th><th>URL</th><th>Format</th>
+                                <th>Status</th><th>Retries</th><th>Worker</th>
+                                <th>Created</th><th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="queue-tbody"><tr><td colspan="9" class="empty-state">Loading...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+            <div id="queue-pagination" class="pagination"></div>
+        </div><!-- /pane-queue -->
+
+        <!-- ══════════════════════════════════════════
+             Pane: Errors (dynamic via JS)
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-errors">
+            <div class="toolbar">
+                <div class="filter-group">
+                    <button class="filter-btn active" data-efilter="all">All</button>
+                    <button class="filter-btn" data-efilter="no">Unresolved</button>
+                    <button class="filter-btn" data-efilter="yes">Resolved</button>
+                </div>
+                <input type="text" id="errors-search" class="search-input" placeholder="Search errors...">
+            </div>
+            <div class="panel">
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th><th>Type</th><th>Message</th>
+                                <th>URL</th><th>User</th><th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="errors-tbody"><tr><td colspan="6" class="empty-state">Loading...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+            <div id="errors-pagination" class="pagination"></div>
+        </div><!-- /pane-errors -->
+
+        <!-- ══════════════════════════════════════════
+             Pane: Health (dynamic via JS)
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-health">
+            <div id="health-content"><div class="empty-state">Loading...</div></div>
+        </div><!-- /pane-health -->
+
+        <!-- ══════════════════════════════════════════
+             Pane: Feedback (dynamic via JS)
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-feedback">
+            <div class="toolbar">
+                <div class="filter-group">
+                    <button class="filter-btn active" data-ffilter="all">All</button>
+                    <button class="filter-btn" data-ffilter="new">New</button>
+                    <button class="filter-btn" data-ffilter="reviewed">Reviewed</button>
+                    <button class="filter-btn" data-ffilter="replied">Replied</button>
+                </div>
+                <input type="text" id="feedback-search" class="search-input" placeholder="Search feedback...">
+            </div>
+            <div class="panel">
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>User</th><th>Name</th><th>Message</th>
+                                <th>Status</th><th>Time</th><th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="feedback-tbody"><tr><td colspan="6" class="empty-state">Loading...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+            <div id="feedback-pagination" class="pagination"></div>
+        </div><!-- /pane-feedback -->
+
+        <!-- ══════════════════════════════════════════
+             Pane: Alerts (dynamic via JS)
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-alerts">
+            <div class="toolbar">
+                <div class="filter-group">
+                    <button class="filter-btn active" data-afilter="all">All</button>
+                    <button class="filter-btn" data-afilter="critical">Critical</button>
+                    <button class="filter-btn" data-afilter="warning">Warning</button>
+                    <button class="filter-btn" data-afilter="unacked">Unacked</button>
+                </div>
+                <input type="text" id="alerts-search" class="search-input" placeholder="Search alerts...">
+            </div>
+            <div class="panel">
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th><th>Type</th><th>Severity</th>
+                                <th>Message</th><th>Status</th><th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="alerts-tbody"><tr><td colspan="6" class="empty-state">Loading...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+            <div id="alerts-pagination" class="pagination"></div>
+        </div><!-- /pane-alerts -->
+
+        <!-- ══════════════════════════════════════════
+             Pane: Revenue (dynamic via JS)
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-revenue">
+            <div id="revenue-content"><div class="empty-state">Loading...</div></div>
+            <div class="toolbar" style="margin-top:16px;">
+                <div class="filter-group">
+                    <button class="filter-btn active" data-rfilter="all">All</button>
+                    <button class="filter-btn" data-rfilter="premium">Premium</button>
+                    <button class="filter-btn" data-rfilter="vip">VIP</button>
+                    <button class="filter-btn" data-rfilter="recurring">Recurring</button>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr><th>User</th><th>Plan</th><th>Amount</th><th>Currency</th><th>Recurring</th><th>Date</th></tr>
+                        </thead>
+                        <tbody id="revenue-tbody"><tr><td colspan="6" class="empty-state">Loading...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+            <div id="revenue-pagination" class="pagination"></div>
+        </div><!-- /pane-revenue -->
+
+        <!-- ══════════════════════════════════════════
+             Pane: Audit Log (dynamic via JS)
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-audit">
+            <div class="toolbar">
+                <div class="filter-group">
+                    <button class="filter-btn active" data-aufilter="all">All</button>
+                    <button class="filter-btn" data-aufilter="plan_change">Plan</button>
+                    <button class="filter-btn" data-aufilter="block">Block</button>
+                    <button class="filter-btn" data-aufilter="broadcast">Broadcast</button>
+                    <button class="filter-btn" data-aufilter="user_settings">Settings</button>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr><th>Time</th><th>Admin</th><th>Action</th><th>Target</th><th>Details</th></tr>
+                        </thead>
+                        <tbody id="audit-tbody"><tr><td colspan="5" class="empty-state">Loading...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+            <div id="audit-pagination" class="pagination"></div>
+        </div><!-- /pane-audit -->
+
+    </div><!-- /tab-contents -->
+</div><!-- /page -->
+
+<!-- User detail drawer -->
+<div class="detail-overlay" id="detail-drawer">
+    <div class="detail-panel" id="detail-content">
+        <h2><span id="detail-title">User Details</span> <button class="close-btn" onclick="closeDetail()">Close</button></h2>
+        <div id="detail-body"><div class="empty-state">Loading...</div></div>
+    </div>
+</div>
+
+<!-- Broadcast modal -->
+<div class="modal-overlay" id="broadcast-modal">
+    <div class="modal" style="min-width:400px;">
+        <h3 id="bc-title">Send Message</h3>
+        <div class="broadcast-area">
+            <input type="text" id="bc-target" class="search-input" placeholder="User ID or 'all' for broadcast" style="min-width:100%;">
+            <textarea id="bc-message" placeholder="Message text..."></textarea>
+            <div style="display:flex;gap:8px;justify-content:flex-end;">
+                <button class="modal-btn cancel" onclick="closeBroadcast()">Cancel</button>
+                <button class="send-btn" id="bc-send" onclick="sendBroadcast()">Send</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- User action modal -->
+<div class="modal-overlay" id="modal">
+    <div class="modal">
+        <h3 id="modal-title">Confirm</h3>
+        <p id="modal-body" style="color:var(--muted);font-size:0.9rem;"></p>
+        <div class="modal-actions">
+            <button class="modal-btn cancel" onclick="closeModal()">Cancel</button>
+            <button class="modal-btn confirm" id="modal-confirm">Confirm</button>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {{
+    // --- State ---
+    let usersPage=1, usersFilter='all', usersSearch='';
+    let dlPage=1, dlSearch='';
+    let queuePage=1, queueFilter='all', queueSearch='';
+    let errorsPage=1, errorsResolved='all', errorsSearch='';
+    let feedbackPage=1, feedbackFilter='all', feedbackSearch='';
+    let alertsPage=1, alertsFilter='all', alertsSearch='';
+    let revPage=1, revFilter='all';
+    const loaded = {{}};
+    let debounces = {{}};
+
+    // --- Helpers ---
+    const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    const fmtNum = n => Number(n||0).toLocaleString();
+    const fmtSize = b => {{
+        if (!b) return '';
+        if (b < 1024) return b + ' B';
+        if (b < 1048576) return (b/1024).toFixed(1) + ' KB';
+        return (b/1048576).toFixed(1) + ' MB';
+    }};
+    const fmtDur = s => {{
+        if (!s) return '';
+        const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = s%60;
+        return h > 0 ? h+':'+(m<10?'0':'')+m+':'+(sec<10?'0':'')+sec : m+':'+(sec<10?'0':'')+sec;
+    }};
+    const fmtTime = ts => ts ? ts.substring(0, 16).replace('T',' ') : '';
+    const errClass = t => {{
+        t = t.toLowerCase();
+        if (t.includes('network')||t.includes('timeout')) return 'err-network';
+        if (t.includes('auth')||t.includes('forbidden')) return 'err-auth';
+        if (t.includes('download')||t.includes('yt')) return 'err-download';
+        if (t.includes('db')||t.includes('sql')) return 'err-db';
+        return 'err-other';
+    }};
+
+    // --- Auto-refresh ---
+    let autoRefresh = localStorage.getItem('adminAutoRefresh')==='1';
+    let autoTimer = null;
+    let lastUpdated = {{}};
+    function startAutoRefresh() {{
+        stopAutoRefresh();
+        if (!autoRefresh) return;
+        autoTimer = setInterval(() => {{
+            const active = document.querySelector('.tab-radio:checked');
+            if (active) active.dispatchEvent(new Event('change'));
+        }}, 30000);
+    }}
+    function stopAutoRefresh() {{ if (autoTimer) {{ clearInterval(autoTimer); autoTimer=null; }} }}
+    function toggleAutoRefresh() {{
+        autoRefresh = !autoRefresh;
+        localStorage.setItem('adminAutoRefresh', autoRefresh?'1':'0');
+        const btn = document.getElementById('auto-refresh-btn');
+        if (btn) btn.textContent = autoRefresh ? '⏸ Auto' : '▶ Auto';
+        autoRefresh ? startAutoRefresh() : stopAutoRefresh();
+    }}
+    window.toggleAutoRefresh = toggleAutoRefresh;
+    if (autoRefresh) startAutoRefresh();
+
+    async function api(url, opts) {{
+        const resp = await fetch(url, opts);
+        if (resp.status === 401) {{ window.location = '/admin/login'; return null; }}
+        if (!resp.ok) {{ const t = await resp.text(); alert('Error: ' + t); return null; }}
+        return resp.json();
+    }}
+    const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
+    const postJson = (url, body) => api(url, {{ method:'POST', headers:{{'Content-Type':'application/json','X-CSRF-Token':csrfToken}}, body:JSON.stringify(body) }});
+    function debounce(key, fn, ms) {{ clearTimeout(debounces[key]); debounces[key]=setTimeout(fn, ms||300); }}
+
+    // --- Pagination ---
+    function renderPagination(elId, data, onPage) {{
+        const el = document.getElementById(elId);
+        if (data.total_pages <= 1) {{ el.innerHTML = ''; return; }}
+        let html = `<span class="page-info">${{fmtNum(data.total)}} total — page ${{data.page}} of ${{data.total_pages}}</span>`;
+        html += `<button class="page-btn" ${{data.page<=1?'disabled':''}} onclick="void(0)">‹ Prev</button>`;
+        for (let p = Math.max(1,data.page-2); p <= Math.min(data.total_pages,data.page+2); p++)
+            html += `<button class="page-btn ${{p===data.page?'active':''}}" onclick="void(0)">${{p}}</button>`;
+        html += `<button class="page-btn" ${{data.page>=data.total_pages?'disabled':''}} onclick="void(0)">Next ›</button>`;
+        el.innerHTML = html;
+        el.querySelectorAll('.page-btn').forEach(btn => btn.addEventListener('click', () => {{
+            const t = btn.textContent.trim();
+            if (t === '‹ Prev' && data.page > 1) onPage(data.page - 1);
+            else if (t === 'Next ›' && data.page < data.total_pages) onPage(data.page + 1);
+            else {{ const n = parseInt(t); if (!isNaN(n)) onPage(n); }}
+        }}));
+    }}
+
+    // ══════ Users ══════
+    async function loadUsers() {{
+        const p = new URLSearchParams({{page:usersPage, filter:usersFilter}});
+        if (usersSearch) p.set('search', usersSearch);
+        const data = await api('/admin/api/users?'+p);
+        if (!data) return;
+        const tb = document.getElementById('users-tbody');
+        if (!data.items.length) {{ tb.innerHTML='<tr><td colspan="7" class="empty-state">No users found.</td></tr>'; document.getElementById('users-pagination').innerHTML=''; return; }}
+        tb.innerHTML = data.items.map(u => {{
+            const st = u.is_blocked ? '<span class="pill" style="background:rgba(239,68,68,0.15);color:#f87171;">Blocked</span>' : '<span class="pill" style="background:rgba(34,197,94,0.12);color:#22c55e;">Active</span>';
+            return `<tr style="cursor:pointer" onclick="openUserDetail(${{u.telegram_id}})">
+                <td class="mono">${{u.telegram_id}}</td>
+                <td class="mono">${{u.username?'@'+esc(u.username):'<span class="dim">—</span>'}}</td>
+                <td><select class="plan-select" onclick="event.stopPropagation()" onchange="changePlan(${{u.telegram_id}},this.value)">
+                    <option value="free" ${{u.plan==='free'?'selected':''}}>free</option>
+                    <option value="premium" ${{u.plan==='premium'?'selected':''}}>premium</option>
+                    <option value="vip" ${{u.plan==='vip'?'selected':''}}>vip</option>
+                </select></td>
+                <td>${{fmtNum(u.download_count)}}</td>
+                <td class="dim">${{esc(u.language)}}</td>
+                <td>${{st}}</td>
+                <td><div class="action-group" onclick="event.stopPropagation()">
+                    ${{u.is_blocked
+                        ? `<button class="act-btn success" onclick="toggleBlock(${{u.telegram_id}},false)">Unblock</button>`
+                        : `<button class="act-btn danger" onclick="toggleBlock(${{u.telegram_id}},true)">Block</button>`}}
+                    <button class="act-btn" onclick="openBroadcastFor(${{u.telegram_id}})">Msg</button>
+                </div></td></tr>`;
+        }}).join('');
+        renderPagination('users-pagination', data, p => {{ usersPage=p; loadUsers(); }});
+    }}
+
+    // ══════ Downloads ══════
+    async function loadDownloads() {{
+        const p = new URLSearchParams({{page:dlPage}});
+        if (dlSearch) p.set('search', dlSearch);
+        const data = await api('/admin/api/downloads?'+p);
+        if (!data) return;
+        const tb = document.getElementById('dl-tbody');
+        if (!data.items.length) {{ tb.innerHTML='<tr><td colspan="7" class="empty-state">No downloads.</td></tr>'; document.getElementById('dl-pagination').innerHTML=''; return; }}
+        tb.innerHTML = data.items.map(d => {{
+            const tl = esc(d.title.length>45?d.title.slice(0,45)+'…':d.title);
+            const al = d.author?`<div class="dim small">${{esc(d.author)}}</div>`:'';
+            const q = d.video_quality||d.audio_bitrate||'';
+            return `<tr><td class="title-cell">${{tl}}${{al}}</td><td class="mono">@${{esc(d.user)}}</td>
+                <td><span class="fmt-badge">${{esc(d.format)}}</span></td><td class="dim">${{esc(q)}}</td>
+                <td class="dim mono small">${{fmtSize(d.file_size)}}</td><td class="dim mono small">${{fmtDur(d.duration)}}</td>
+                <td class="dim small">${{fmtTime(d.downloaded_at)}}</td></tr>`;
+        }}).join('');
+        renderPagination('dl-pagination', data, p => {{ dlPage=p; loadDownloads(); }});
+    }}
+
+    // ══════ Queue ══════
+    async function loadQueue() {{
+        const p = new URLSearchParams({{page:queuePage}});
+        if (queueFilter!=='all') p.set('status', queueFilter);
+        if (queueSearch) p.set('search', queueSearch);
+        const data = await api('/admin/api/queue?'+p);
+        if (!data) return;
+        const tb = document.getElementById('queue-tbody');
+        if (!data.items.length) {{ tb.innerHTML='<tr><td colspan="9" class="empty-state">Queue empty.</td></tr>'; document.getElementById('queue-pagination').innerHTML=''; return; }}
+        tb.innerHTML = data.items.map(t => {{
+            const shortUrl = t.url.length>40 ? t.url.slice(0,40)+'…' : t.url;
+            const shortId = t.id.length>8 ? t.id.slice(0,8)+'…' : t.id;
+            const canRetry = t.status==='dead_letter';
+            const canCancel = t.status==='pending'||t.status==='leased';
+            return `<tr>
+                <td class="mono small" title="${{esc(t.id)}}">${{esc(shortId)}}</td>
+                <td class="mono">${{t.username?'@'+esc(t.username):t.user_id}}</td>
+                <td class="small" title="${{esc(t.url)}}">${{esc(shortUrl)}}</td>
+                <td><span class="fmt-badge">${{esc(t.format)}}</span></td>
+                <td><span class="pill status-${{t.status}}">${{esc(t.status)}}</span></td>
+                <td class="dim">${{t.retry_count}}</td>
+                <td class="dim mono small">${{esc(t.worker_id||'—')}}</td>
+                <td class="dim small">${{fmtTime(t.created_at)}}</td>
+                <td><div class="action-group">
+                    ${{canRetry?`<button class="act-btn success" onclick="retryTask('${{t.id}}')">Retry</button>`:''}}
+                    ${{canCancel?`<button class="act-btn danger" onclick="cancelTask('${{t.id}}')">Cancel</button>`:''}}
+                </div></td></tr>`;
+        }}).join('');
+        renderPagination('queue-pagination', data, p => {{ queuePage=p; loadQueue(); }});
+    }}
+    window.retryTask = async id => {{ if (await postJson(`/admin/api/queue/${{id}}/retry`, {{}})) loadQueue(); }};
+    window.cancelTask = async id => {{ if (await postJson(`/admin/api/queue/${{id}}/cancel`, {{}})) loadQueue(); }};
+
+    // ══════ Errors ══════
+    async function loadErrors() {{
+        const p = new URLSearchParams({{page:errorsPage}});
+        if (errorsResolved!=='all') p.set('resolved', errorsResolved);
+        if (errorsSearch) p.set('search', errorsSearch);
+        const data = await api('/admin/api/errors?'+p);
+        if (!data) return;
+        const tb = document.getElementById('errors-tbody');
+        if (!data.items.length) {{ tb.innerHTML='<tr><td colspan="6" class="empty-state">No errors. 🎉</td></tr>'; document.getElementById('errors-pagination').innerHTML=''; return; }}
+        tb.innerHTML = data.items.map(e => {{
+            const cls = e.resolved?'resolved-yes':'';
+            const shortUrl = e.url.length>40?e.url.slice(0,40)+'…':e.url;
+            const ctx = e.context ? `<tr class="err-ctx" style="display:none" data-eid="${{e.id}}"><td colspan="6" class="mono small dim" style="padding:8px 18px;white-space:pre-wrap;background:var(--surface);">${{esc(e.context)}}</td></tr>` : '';
+            return `<tr class="${{cls}}" style="cursor:pointer" onclick="toggleErrCtx(${{e.id}})">
+                <td class="dim mono small">${{fmtTime(e.timestamp)}}</td>
+                <td><span class="err-badge ${{errClass(e.error_type)}}">${{esc(e.error_type)}}</span></td>
+                <td class="msg-cell" title="${{esc(e.error_message)}}">${{esc(e.error_message.length>60?e.error_message.slice(0,60)+'…':e.error_message)}}</td>
+                <td class="dim mono small" title="${{esc(e.url)}}">${{esc(shortUrl)}}</td>
+                <td class="dim mono">${{e.user_id||''}}</td>
+                <td onclick="event.stopPropagation()">${{e.resolved?'<span class="dim">Resolved</span>':`<button class="act-btn success" onclick="resolveError(${{e.id}})">Resolve</button>`}}</td>
+            </tr>${{ctx}}`;
+        }}).join('');
+        renderPagination('errors-pagination', data, p => {{ errorsPage=p; loadErrors(); }});
+    }}
+    window.resolveError = async id => {{ if (await postJson(`/admin/api/errors/${{id}}/resolve`, {{}})) loadErrors(); }};
+
+    // ══════ Health ══════
+    async function loadHealth() {{
+        const data = await api('/admin/api/health');
+        if (!data) return;
+        const el = document.getElementById('health-content');
+        const q = data.queue || {{}};
+        const qTotal = Object.values(q).reduce((a,b) => a+b, 0);
+        const et = data.error_types || {{}};
+        let queueHtml = Object.entries(q).map(([s,c]) => `<div class="detail-row"><span>${{esc(s)}}</span><strong>${{c}}</strong></div>`).join('');
+        let errHtml = Object.entries(et).map(([t,c]) => `<div class="detail-row"><span>${{esc(t)}}</span><strong>${{c}}</strong></div>`).join('');
+        el.innerHTML = `
+            <div class="health-grid">
+                <div class="health-card"><div class="hc-label">yt-dlp version</div><div class="hc-value">${{esc(data.ytdlp_version)}}</div></div>
+                <div class="health-card"><div class="hc-label">Queue Total</div><div class="hc-value">${{qTotal}}</div></div>
+                <div class="health-card"><div class="hc-label">Errors (24h)</div><div class="hc-value" style="color:${{data.errors_24h>0?'var(--red)':'inherit'}}">${{data.errors_24h}}</div></div>
+                <div class="health-card"><div class="hc-label">Unacked Alerts</div><div class="hc-value" style="color:${{data.unacked_alerts>0?'var(--yellow)':'inherit'}}">${{data.unacked_alerts}}</div></div>
+                <div class="health-card"><div class="hc-label">Unread Feedback</div><div class="hc-value">${{data.unread_feedback}}</div></div>
+                <div class="health-card"><div class="hc-label">DB Size</div><div class="hc-value">${{fmtSize(data.db_size)}}</div></div>
+            </div>
+            <div class="two-col">
+                <div class="panel"><div class="panel-head">Queue by Status</div><div style="padding:16px 20px;">${{queueHtml||'<div class="empty-state">Empty</div>'}}</div></div>
+                <div class="panel"><div class="panel-head">Errors by Type (24h)</div><div style="padding:16px 20px;">${{errHtml||'<div class="empty-state">No errors</div>'}}</div></div>
+            </div>`;
+    }}
+
+    // ══════ Feedback ══════
+    async function loadFeedback() {{
+        const p = new URLSearchParams({{page:feedbackPage}});
+        if (feedbackFilter!=='all') p.set('status', feedbackFilter);
+        if (feedbackSearch) p.set('search', feedbackSearch);
+        const data = await api('/admin/api/feedback?'+p);
+        if (!data) return;
+        const tb = document.getElementById('feedback-tbody');
+        if (!data.items.length) {{ tb.innerHTML='<tr><td colspan="6" class="empty-state">No feedback yet.</td></tr>'; document.getElementById('feedback-pagination').innerHTML=''; return; }}
+        tb.innerHTML = data.items.map(f => `<tr>
+            <td class="mono">${{f.username?'@'+esc(f.username):f.user_id}}</td>
+            <td>${{esc(f.first_name)}}</td>
+            <td class="msg-cell" title="${{esc(f.message)}}">${{esc(f.message.length>60?f.message.slice(0,60)+'…':f.message)}}</td>
+            <td><span class="pill status-${{f.status}}">${{esc(f.status)}}</span></td>
+            <td class="dim small">${{fmtTime(f.created_at)}}</td>
+            <td><div class="action-group">
+                ${{f.status==='new'?`<button class="act-btn" onclick="markFeedback(${{f.id}},'reviewed')">Mark Read</button>`:''}}
+                <button class="act-btn" onclick="replyToFeedback(${{f.user_id}},${{f.id}},'')">Reply</button>
+            </div></td></tr>`).join('');
+        renderPagination('feedback-pagination', data, p => {{ feedbackPage=p; loadFeedback(); }});
+    }}
+    window.markFeedback = async (id,status) => {{ if (await postJson(`/admin/api/feedback/${{id}}/status`, {{status}})) loadFeedback(); }};
+
+    // ══════ Alerts ══════
+    async function loadAlerts() {{
+        const p = new URLSearchParams({{page:alertsPage}});
+        if (alertsFilter!=='all') p.set('severity', alertsFilter);
+        if (alertsSearch) p.set('search', alertsSearch);
+        const data = await api('/admin/api/alerts?'+p);
+        if (!data) return;
+        const tb = document.getElementById('alerts-tbody');
+        if (!data.items.length) {{ tb.innerHTML='<tr><td colspan="6" class="empty-state">No alerts.</td></tr>'; document.getElementById('alerts-pagination').innerHTML=''; return; }}
+        tb.innerHTML = data.items.map(a => {{
+            const resolved = a.resolved_at ? `<span class="dim">Resolved ${{fmtTime(a.resolved_at)}}</span>` : '<span style="color:var(--yellow)">Active</span>';
+            return `<tr>
+                <td class="dim small">${{fmtTime(a.triggered_at)}}</td>
+                <td class="mono small">${{esc(a.alert_type)}}</td>
+                <td><span class="pill sev-${{a.severity}}">${{esc(a.severity)}}</span></td>
+                <td class="msg-cell" title="${{esc(a.message)}}">${{esc(a.message.length>60?a.message.slice(0,60)+'…':a.message)}}</td>
+                <td>${{resolved}}</td>
+                <td>${{a.acknowledged?'<span class="dim">Acked</span>':`<button class="act-btn" onclick="ackAlert(${{a.id}})">Ack</button>`}}</td>
+            </tr>`;
+        }}).join('');
+        renderPagination('alerts-pagination', data, p => {{ alertsPage=p; loadAlerts(); }});
+    }}
+    window.ackAlert = async id => {{ if (await postJson(`/admin/api/alerts/${{id}}/acknowledge`, {{}})) loadAlerts(); }};
+
+    // ══════ Detail/Broadcast/Modal setup ══════
+    window.closeDetail = () => document.getElementById('detail-drawer').classList.remove('open');
+    document.getElementById('detail-drawer').addEventListener('click', e => {{ if (e.target.id==='detail-drawer') closeDetail(); }});
+    window.openBroadcastFor = function(uid) {{
+        document.getElementById('bc-target').value = uid || '';
+        document.getElementById('bc-message').value = '';
+        document.getElementById('bc-title').textContent = 'Send Message';
+        document.getElementById('broadcast-modal').classList.add('open');
+    }};
+    window.closeBroadcast = () => document.getElementById('broadcast-modal').classList.remove('open');
+    document.getElementById('broadcast-modal').addEventListener('click', e => {{ if (e.target.id==='broadcast-modal') closeBroadcast(); }});
+
+    // ══════ Modal (block/unblock) ══════
+    let modalCallback = null;
+    function openModal(title, body, btnText, isDanger, cb) {{
+        document.getElementById('modal-title').textContent = title;
+        document.getElementById('modal-body').textContent = body;
+        const btn = document.getElementById('modal-confirm');
+        btn.textContent = btnText;
+        btn.className = 'modal-btn confirm' + (isDanger ? ' danger' : '');
+        modalCallback = cb;
+        document.getElementById('modal').classList.add('open');
+    }}
+    window.closeModal = () => {{ document.getElementById('modal').classList.remove('open'); modalCallback=null; }};
+    document.getElementById('modal-confirm').addEventListener('click', async () => {{ if (modalCallback) await modalCallback(); closeModal(); }});
+
+    window.changePlan = async (uid,plan) => {{ if (await postJson(`/admin/api/users/${{uid}}/plan`, {{plan}})) loadUsers(); }};
+    window.toggleBlock = (uid,block) => {{
+        const a = block?'Block':'Unblock';
+        openModal(a+' User', `Are you sure you want to ${{a.toLowerCase()}} user ${{uid}}?`, a, block,
+            async () => {{ if (await postJson(`/admin/api/users/${{uid}}/block`, {{blocked:block}})) loadUsers(); }});
+    }};
+
+    // ══════ Error context toggle ══════
+    window.toggleErrCtx = id => {{
+        const row = document.querySelector(`.err-ctx[data-eid="${{id}}"]`);
+        if (row) row.style.display = row.style.display==='none'?'table-row':'none';
+    }};
+
+    // ══════ Revenue ══════
+    async function loadRevenue() {{
+        const p = new URLSearchParams({{page:revPage}});
+        if (revFilter!=='all') p.set('plan', revFilter);
+        const data = await api('/admin/api/revenue?'+p);
+        if (!data) return;
+        const s = data.stats||{{}};
+        const el = document.getElementById('revenue-content');
+        const rpd = data.revenue_per_day||[];
+        const maxR = Math.max(1,...rpd.map(d=>d[1]));
+        let chartH = rpd.map(d => {{
+            const pct = (d[1]/maxR*100)|0;
+            const dt = d[0].substring(5);
+            return `<div class="bar-col"><div class="bar-tip">${{d[1]}}</div><div class="bar" style="height:${{pct}}%;background:var(--green)"></div><div class="bar-label">${{dt}}</div></div>`;
+        }}).join('');
+        el.innerHTML = `
+            <div class="health-grid">
+                <div class="health-card"><div class="hc-label">Total Revenue</div><div class="hc-value">${{fmtNum(s.total_amount)}} ⭐</div></div>
+                <div class="health-card"><div class="hc-label">Total Charges</div><div class="hc-value">${{fmtNum(s.total_charges)}}</div></div>
+                <div class="health-card"><div class="hc-label">Premium</div><div class="hc-value" style="color:var(--accent)">${{s.premium_count}}</div></div>
+                <div class="health-card"><div class="hc-label">VIP</div><div class="hc-value" style="color:var(--yellow)">${{s.vip_count}}</div></div>
+                <div class="health-card"><div class="hc-label">Recurring</div><div class="hc-value">${{s.recurring_count}}</div></div>
+                <div class="health-card"><div class="hc-label">Avg Check</div><div class="hc-value">${{s.total_charges?Math.round(s.total_amount/s.total_charges):0}} ⭐</div></div>
+            </div>
+            <div class="panel"><div class="panel-head">Revenue — last 30 days</div>
+                <div class="chart-wrap">${{chartH||'<div class="empty-state">No data</div>'}}</div>
+                <div class="chart-footer">Stars per day</div>
+            </div>`;
+        // Render charges table
+        const ch = data.charges||{{}};
+        const tb = document.getElementById('revenue-tbody');
+        if (!ch.items||!ch.items.length) {{ tb.innerHTML='<tr><td colspan="6" class="empty-state">No charges.</td></tr>'; document.getElementById('revenue-pagination').innerHTML=''; return; }}
+        tb.innerHTML = ch.items.map(c => `<tr>
+            <td class="mono">${{c.username?'@'+esc(c.username):c.user_id}}</td>
+            <td><span class="pill plan-${{c.plan}}">${{esc(c.plan)}}</span></td>
+            <td><strong>${{c.amount}}</strong></td>
+            <td class="dim">${{esc(c.currency)}}</td>
+            <td>${{c.is_recurring?'🔄':'—'}}</td>
+            <td class="dim small">${{fmtTime(c.payment_date)}}</td>
+        </tr>`).join('');
+        renderPagination('revenue-pagination', ch, p => {{ revPage=p; loadRevenue(); }});
+    }}
+
+    // ══════ Enhanced User Detail ══════
+    // (extended openUserDetail to show preferences and editable fields)
+    window.openUserDetail = async function(uid) {{
+        const drawer = document.getElementById('detail-drawer');
+        const body = document.getElementById('detail-body');
+        drawer.classList.add('open');
+        body.innerHTML = '<div class="empty-state">Loading...</div>';
+        const data = await api(`/admin/api/users/${{uid}}/details`);
+        if (!data || data.error) {{ body.innerHTML = '<div class="empty-state">User not found.</div>'; return; }}
+        const u = data.user, s = data.stats, sub = data.subscription;
+        document.getElementById('detail-title').textContent = u.username ? '@'+u.username : 'User '+u.telegram_id;
+        let html = `<div class="detail-section"><h3>Profile</h3>
+            <div class="detail-row"><span>Telegram ID</span><span class="mono">${{u.telegram_id}}</span></div>
+            <div class="detail-row"><span>Plan</span><span>
+                <select class="plan-select" onchange="updateUserSetting(${{u.telegram_id}},'plan',this.value)">
+                    <option value="free" ${{u.plan==='free'?'selected':''}}>free</option>
+                    <option value="premium" ${{u.plan==='premium'?'selected':''}}>premium</option>
+                    <option value="vip" ${{u.plan==='vip'?'selected':''}}>vip</option>
+                </select></span></div>
+            <div class="detail-row"><span>Language</span><span>
+                <select class="plan-select" onchange="updateUserSetting(${{u.telegram_id}},'language',this.value)">
+                    <option value="en" ${{u.language==='en'?'selected':''}}>en</option>
+                    <option value="ru" ${{u.language==='ru'?'selected':''}}>ru</option>
+                    <option value="fr" ${{u.language==='fr'?'selected':''}}>fr</option>
+                    <option value="de" ${{u.language==='de'?'selected':''}}>de</option>
+                </select></span></div>
+            <div class="detail-row"><span>Status</span><span>${{u.is_blocked?'<span style="color:var(--red)">Blocked</span>':'<span style="color:var(--green)">Active</span>'}}</span></div>
+            ${{sub?`<div class="detail-row"><span>Subscription</span><span>${{sub.plan}}${{sub.expires_at?' until '+fmtTime(sub.expires_at):''}}</span></div>
+            <div class="detail-row"><span>Recurring</span><span>${{sub.is_recurring?'Yes':'No'}}</span></div>`:''}}
+        </div>`;
+        html += `<div class="detail-section"><h3>Preferences</h3>
+            <div class="detail-row"><span>Format</span><span>${{esc(u.download_format||'mp3')}}</span></div>
+            <div class="detail-row"><span>Video Quality</span><span>${{esc(u.video_quality||'best')}}</span></div>
+            <div class="detail-row"><span>Audio Bitrate</span><span>${{esc(u.audio_bitrate||'320k')}}</span></div>
+            <div class="detail-row"><span>Send as Doc</span><span>${{u.send_as_document?'Yes':'No'}}</span></div>
+            <div class="detail-row"><span>Burn Subtitles</span><span>${{u.burn_subtitles?'Yes':'No'}}</span></div>
+            <div class="detail-row"><span>Progress Style</span><span>${{esc(u.progress_bar_style||'classic')}}</span></div>
+        </div>`;
+        html += `<div class="detail-section"><h3>Stats</h3>
+            <div class="detail-row"><span>Total Downloads</span><strong>${{fmtNum(s.total_downloads)}}</strong></div>
+            <div class="detail-row"><span>Total Size</span><strong>${{fmtSize(s.total_size)}}</strong></div>
+            <div class="detail-row"><span>Active Days</span><strong>${{s.active_days}}</strong></div>
+        </div>`;
+        if (s.top_artists && s.top_artists.length)
+            html += `<div class="detail-section"><h3>Top Artists</h3>${{s.top_artists.map(a => `<div class="detail-row"><span>${{esc(a[0])}}</span><span>${{a[1]}}</span></div>`).join('')}}</div>`;
+        if (data.charges && data.charges.length)
+            html += `<div class="detail-section"><h3>Payments</h3>${{data.charges.map(c => `<div class="detail-row"><span>${{esc(c.plan)}} ${{c.is_recurring?'🔄':''}}</span><span>${{c.amount}} ${{esc(c.currency)}} — ${{fmtTime(c.payment_date)}}</span></div>`).join('')}}</div>`;
+        if (data.recent_downloads && data.recent_downloads.length)
+            html += `<div class="detail-section"><h3>Recent Downloads</h3>${{data.recent_downloads.slice(0,10).map(d => `<div class="detail-row"><span>${{esc(d.title.length>30?d.title.slice(0,30)+'…':d.title)}}</span><span class="dim small">${{esc(d.format)}} · ${{fmtTime(d.downloaded_at)}}</span></div>`).join('')}}</div>`;
+        if (data.errors && data.errors.length)
+            html += `<div class="detail-section"><h3>Recent Errors</h3>${{data.errors.map(e => `<div class="detail-row"><span class="err-badge ${{errClass(e.error_type)}}">${{esc(e.error_type)}}</span><span class="dim small">${{esc(e.error_message.length>40?e.error_message.slice(0,40)+'…':e.error_message)}}</span></div>`).join('')}}</div>`;
+        html += `<div style="margin-top:20px;display:flex;gap:8px;">
+            <button class="act-btn" onclick="openBroadcastFor(${{u.telegram_id}})">Send Message</button>
+            ${{u.is_blocked
+                ?`<button class="act-btn success" onclick="updateUserSetting(${{u.telegram_id}},'is_blocked',false);closeDetail()">Unblock</button>`
+                :`<button class="act-btn danger" onclick="updateUserSetting(${{u.telegram_id}},'is_blocked',true);closeDetail()">Block</button>`}}
+        </div>`;
+        body.innerHTML = html;
+    }};
+    window.updateUserSetting = async function(uid, field, value) {{
+        const body = {{}};
+        if (field==='plan') body.plan = value;
+        else if (field==='language') body.language = value;
+        else if (field==='is_blocked') body.is_blocked = value;
+        const data = await postJson(`/admin/api/users/${{uid}}/settings`, body);
+        if (data && data.ok) {{ if (loaded.users) loadUsers(); }}
+    }};
+
+    // ══════ Reply to feedback + unified broadcast ══════
+    let pendingFeedbackId = null;
+    window.replyToFeedback = function(userId, feedbackId) {{
+        pendingFeedbackId = feedbackId;
+        document.getElementById('bc-target').value = userId;
+        document.getElementById('bc-message').value = '';
+        document.getElementById('bc-title').textContent = 'Reply to Feedback';
+        document.getElementById('broadcast-modal').classList.add('open');
+    }};
+    // Hook into sendBroadcast to auto-mark feedback as replied
+    const _origSendBroadcast = window.sendBroadcast;
+    window.sendBroadcast = async function() {{
+        const target = document.getElementById('bc-target').value.trim();
+        const message = document.getElementById('bc-message').value.trim();
+        if (!target || !message) {{ alert('Fill in target and message'); return; }}
+        if (target === 'all' && !confirm('This will broadcast to ALL users. Are you sure?')) return;
+        const btn = document.getElementById('bc-send');
+        btn.disabled = true; btn.textContent = 'Sending...';
+        const data = await postJson('/admin/api/broadcast', {{ target, message }});
+        btn.disabled = false; btn.textContent = 'Send';
+        if (data && data.ok) {{
+            if (pendingFeedbackId) {{
+                await postJson(`/admin/api/feedback/${{pendingFeedbackId}}/status`, {{ status: 'replied' }});
+                pendingFeedbackId = null;
+                if (loaded['tab-feedback']) loadFeedback();
+                alert('Reply sent!');
+            }} else if (data.status === 'broadcasting') {{
+                alert(`Broadcasting to ${{data.total}} users in background.`);
+            }} else if (data.blocked > 0) {{
+                alert('User has blocked the bot.');
+            }} else {{
+                alert('Message sent!');
+            }}
+            closeBroadcast();
+        }}
+    }};
+
+    // ══════ Audit Log ══════
+    let auditPage=1, auditFilter='all';
+    async function loadAudit() {{
+        const p = new URLSearchParams({{page:auditPage}});
+        if (auditFilter!=='all') p.set('action', auditFilter);
+        const data = await api('/admin/api/audit?'+p);
+        if (!data) return;
+        const tb = document.getElementById('audit-tbody');
+        if (!data.items.length) {{ tb.innerHTML='<tr><td colspan="5" class="empty-state">No audit entries.</td></tr>'; document.getElementById('audit-pagination').innerHTML=''; return; }}
+        tb.innerHTML = data.items.map(a => `<tr>
+            <td class="dim small">${{fmtTime(a.created_at)}}</td>
+            <td class="mono">${{a.admin_id}}</td>
+            <td><span class="pill">${{esc(a.action)}}</span></td>
+            <td class="mono small">${{esc(a.target_type)}}:${{esc(a.target_id)}}</td>
+            <td class="dim small">${{esc(a.details.length>50?a.details.slice(0,50)+'…':a.details)}}</td>
+        </tr>`).join('');
+        renderPagination('audit-pagination', data, p => {{ auditPage=p; loadAudit(); }});
+    }}
+
+    // ══════ Analytics on Overview ══════
+    async function loadOverviewAnalytics() {{
+        const data = await api('/admin/api/analytics?days=30');
+        if (!data) return;
+        const el = document.getElementById('overview-analytics');
+        if (!el) return;
+        // DAU/WAU/MAU cards
+        let html = `<div class="section-title" style="margin-top:24px;">User Activity</div>
+            <div class="health-grid">
+                <div class="health-card"><div class="hc-label">DAU (today)</div><div class="hc-value">${{fmtNum(data.dau_today)}}</div></div>
+                <div class="health-card"><div class="hc-label">WAU (7d)</div><div class="hc-value">${{fmtNum(data.wau)}}</div></div>
+                <div class="health-card"><div class="hc-label">MAU (30d)</div><div class="hc-value">${{fmtNum(data.mau)}}</div></div>
+            </div>`;
+        // DAU chart
+        const dau = data.dau || [];
+        if (dau.length) {{
+            const maxD = Math.max(1,...dau.map(d=>d[1]));
+            html += `<div class="panel"><div class="panel-head">Daily Active Users — last 30 days</div><div class="chart-wrap">`;
+            html += dau.map(d => {{
+                const pct = (d[1]/maxD*100)|0;
+                return `<div class="bar-col"><div class="bar-tip">${{d[1]}}</div><div class="bar" style="height:${{pct}}%;background:var(--green)"></div><div class="bar-label">${{d[0].substring(5)}}</div></div>`;
+            }}).join('');
+            html += `</div><div class="chart-footer">Unique users per day</div></div>`;
+        }}
+        // Top users this week
+        if (data.top_users && data.top_users.length) {{
+            html += `<div class="panel"><div class="panel-head">Top Users This Week</div><div style="padding:12px 20px;">`;
+            html += data.top_users.slice(0,5).map((u,i) => `<div class="detail-row"><span>${{i+1}}. ${{u.username?'@'+esc(u.username):u.user_id}}</span><strong>${{u.count}} downloads</strong></div>`).join('');
+            html += `</div></div>`;
+        }}
+        el.innerHTML = html;
+    }}
+    // Load analytics on page load (Overview is default tab)
+    loadOverviewAnalytics();
+
+    // ══════ Tab switching ══════
+    const tabLoaders = {{
+        'tab-users': loadUsers, 'tab-dl': loadDownloads, 'tab-queue': loadQueue,
+        'tab-errors': loadErrors, 'tab-health': loadHealth, 'tab-feedback': loadFeedback,
+        'tab-alerts': loadAlerts, 'tab-revenue': loadRevenue, 'tab-audit': loadAudit,
+    }};
+    document.querySelectorAll('.tab-radio').forEach(r => r.addEventListener('change', () => {{
+        const loader = tabLoaders[r.id];
+        if (loader) {{
+            if (!loaded[r.id]) {{ loaded[r.id]=1; loader(); }}
+            else if (autoRefresh) loader(); // refresh on auto-refresh re-trigger
+        }}
+    }}));
+
+    // ══════ Filter buttons ══════
+    function bindFilters(attr, setter, loader) {{
+        document.querySelectorAll(`[${{attr}}]`).forEach(btn => btn.addEventListener('click', () => {{
+            btn.closest('.filter-group').querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            setter(btn.getAttribute(attr));
+            loader();
+        }}));
+    }}
+    bindFilters('data-filter', v => {{ usersFilter=v; usersPage=1; }}, loadUsers);
+    bindFilters('data-qfilter', v => {{ queueFilter=v; queuePage=1; }}, loadQueue);
+    bindFilters('data-efilter', v => {{ errorsResolved=v; errorsPage=1; }}, loadErrors);
+    bindFilters('data-ffilter', v => {{ feedbackFilter=v; feedbackPage=1; }}, loadFeedback);
+    bindFilters('data-afilter', v => {{ alertsFilter=v; alertsPage=1; }}, loadAlerts);
+    bindFilters('data-rfilter', v => {{ revFilter=v; revPage=1; }}, loadRevenue);
+    bindFilters('data-aufilter', v => {{ auditFilter=v; auditPage=1; }}, loadAudit);
+
+    // ══════ Search ══════
+    const userSearchEl = document.getElementById('user-search');
+    if (userSearchEl) userSearchEl.addEventListener('input', () => debounce('users', () => {{ usersSearch=userSearchEl.value.trim(); usersPage=1; loadUsers(); }}));
+    const dlSearchEl = document.getElementById('dl-search');
+    if (dlSearchEl) dlSearchEl.addEventListener('input', () => debounce('dl', () => {{ dlSearch=dlSearchEl.value.trim(); dlPage=1; loadDownloads(); }}));
+
+    // Search on new tabs
+    const qsEl = document.getElementById('queue-search');
+    if (qsEl) qsEl.addEventListener('input', () => debounce('queue', () => {{ queueSearch=qsEl.value.trim(); queuePage=1; loadQueue(); }}));
+    const esEl = document.getElementById('errors-search');
+    if (esEl) esEl.addEventListener('input', () => debounce('errors', () => {{ errorsSearch=esEl.value.trim(); errorsPage=1; loadErrors(); }}));
+    const fsEl = document.getElementById('feedback-search');
+    if (fsEl) fsEl.addEventListener('input', () => debounce('feedback', () => {{ feedbackSearch=fsEl.value.trim(); feedbackPage=1; loadFeedback(); }}));
+    const asEl = document.getElementById('alerts-search');
+    if (asEl) asEl.addEventListener('input', () => debounce('alerts', () => {{ alertsSearch=asEl.value.trim(); alertsPage=1; loadAlerts(); }}));
+}})();
+</script>
+
+</body>
+</html>

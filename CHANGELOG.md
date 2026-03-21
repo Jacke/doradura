@@ -29,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Admin panel: Broadcast confirmation — "all" target shows `confirm()` dialog before sending
 - Admin panel: Feedback reply flow — "Reply" button pre-configures broadcast modal, auto-marks feedback as "replied" after send
 - Admin panel: Mobile responsive — tabs scroll horizontally on <768px, detail drawer full-width, toolbar stacks vertically
+- Admin panel: **Template extraction** — 1271-line HTML/CSS/JS template moved from inline Rust to `admin_dashboard.html` via `include_str!()`, reducing web_server.rs by ~1265 lines
+- Admin panel: **Audit Log** tab — paginated admin action history (plan changes, blocks, broadcasts, settings) with action type filters; V40 migration creates `admin_audit_log` table
+- Admin panel: **CSRF protection** — all POST endpoints require `X-CSRF-Token` header validated against session; token embedded in `<meta>` tag and auto-sent by `postJson()`
+- Admin panel: **Analytics on Overview** — DAU/WAU/MAU cards, daily active users bar chart, top users this week; loads automatically on page open via `/admin/api/analytics`
+- Admin panel: Audit logging embedded in plan change + block/unblock handlers (more handlers to follow)
 
 ### Changed
 - Downloads menu: removed Circle from MP3 (audio-only, no visual), shortened button labels ("Ringtone", "Speed", "Burn subs"), combined Speed+Burn subs in one row for MP4, removed standalone Subtitles button (kept Burn subtitles)
