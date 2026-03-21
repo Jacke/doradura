@@ -270,6 +270,9 @@ async fn run_polling_mode(
     let mut retry_count = 0;
     let max_retries = config::retry::MAX_DISPATCHER_RETRIES;
 
+    // Record boot time for stale message filtering (must be before dispatching)
+    crate::telegram::handlers::init_boot_timestamp();
+
     let init_elapsed = bot_init_start.elapsed();
     log::info!("Starting bot in long polling mode");
     log::info!("================================================");
@@ -307,7 +310,9 @@ async fn run_polling_mode(
             use teloxide::prelude::*;
             use teloxide::update_listeners::Polling;
 
-            let listener = Polling::builder(bot_clone.clone()).drop_pending_updates().build();
+            // No drop_pending_updates() — payment events must never be lost.
+            // Stale messages are filtered by is_fresh_message() in the handler chain.
+            let listener = Polling::builder(bot_clone.clone()).build();
 
             Dispatcher::builder(bot_clone, handler_clone)
                 .dependencies(DependencyMap::new())

@@ -1,5 +1,6 @@
 //! Dispatcher schema and handler chain builders
 
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 
 use teloxide::dispatching::{UpdateFilterExt, UpdateHandler};
@@ -12,6 +13,40 @@ use super::uploads::media_upload_handler;
 use crate::i18n;
 use crate::telegram::bot::Command;
 use crate::telegram::Bot;
+
+/// Unix timestamp when the bot started. Messages older than this
+/// (minus a grace period) are skipped to avoid flooding users after a restart,
+/// while still processing all payment events.
+static BOOT_TIMESTAMP: AtomicI64 = AtomicI64::new(0);
+
+/// Grace period in seconds — process messages sent up to this many seconds
+/// before boot (covers clock skew and messages in-flight during startup).
+const STALE_MESSAGE_GRACE_SECS: i64 = 60;
+
+/// Initialize the boot timestamp. Call once at startup before dispatching.
+pub fn init_boot_timestamp() {
+    BOOT_TIMESTAMP.store(chrono::Utc::now().timestamp(), Ordering::Relaxed);
+}
+
+/// Returns true if the message is fresh enough to process (sent after boot - grace).
+/// Used to skip accumulated messages after a restart without losing payments.
+fn is_fresh_message(msg: &Message) -> bool {
+    let boot = BOOT_TIMESTAMP.load(Ordering::Relaxed);
+    if boot == 0 {
+        return true; // not initialized yet, process everything
+    }
+    let cutoff = boot - STALE_MESSAGE_GRACE_SECS;
+    let msg_time = msg.date.timestamp();
+    if msg_time >= cutoff {
+        return true;
+    }
+    log::debug!(
+        "Skipping stale message ({}s old) from chat {}",
+        boot - msg_time,
+        msg.chat.id
+    );
+    false
+}
 
 /// Creates the main dispatcher schema for the Telegram bot.
 ///
@@ -42,9 +77,10 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
     let deps_inline = deps.clone();
 
     dptree::entry()
-        // Successful payment handler must be first
+        // ── Payment handlers: NEVER skip, regardless of message age ──
         .branch(successful_payment_handler(deps_payment))
-        // Hidden admin commands (not in Command enum)
+        .branch(pre_checkout_handler(deps_precheckout))
+        // ── All other message handlers: skip stale messages to avoid flood after restart ──
         .branch(update_cookies_handler(deps_cookies))
         .branch(update_ig_cookies_handler(deps_ig_cookies))
         .branch(diagnose_cookies_handler(deps_diagnose_cookies))
@@ -53,16 +89,10 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
         .branch(browser_status_handler(deps_browser_status))
         .branch(send_handler(deps_send))
         .branch(broadcast_handler(deps_broadcast))
-        // Command handler
         .branch(command_handler(deps_commands))
-        // Media upload handler for premium/vip users
         .branch(media_upload_handler(deps_media_upload))
-        // Voice message effects handler
         .branch(voice_message_handler(deps_voice))
-        // Message handler for URLs and text
         .branch(message_handler(deps_messages))
-        // Pre-checkout query handler
-        .branch(pre_checkout_handler(deps_precheckout))
         // Callback query handler
         .branch(callback_handler(deps_callback))
         // Inline query handler (Vlipsy search)
@@ -347,242 +377,274 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
         handle_version_command, show_main_menu,
     };
 
-    Update::filter_message().branch(dptree::entry().filter_command::<Command>().endpoint(
-        move |bot: Bot, msg: Message, cmd: Command| {
-            let deps = deps.clone();
-            async move {
-                log::info!("🎯 Received command: {:?} from chat {}", cmd, msg.chat.id);
-                crate::core::metrics::record_command(&format!("{:?}", cmd).to_lowercase());
+    Update::filter_message()
+        .filter(|msg: Message| is_fresh_message(&msg))
+        .branch(
+            dptree::entry()
+                .filter_command::<Command>()
+                .endpoint(move |bot: Bot, msg: Message, cmd: Command| {
+                    let deps = deps.clone();
+                    async move {
+                        log::info!("🎯 Received command: {:?} from chat {}", cmd, msg.chat.id);
+                        crate::core::metrics::record_command(&format!("{:?}", cmd).to_lowercase());
 
-                match cmd {
-                    Command::Start => {
-                        handle_start_command(&bot, &msg, &deps).await?;
-                    }
-                    Command::Settings => {
-                        let _ =
-                            show_main_menu(&bot, msg.chat.id, deps.db_pool.clone(), deps.shared_storage.clone()).await;
-                    }
-                    Command::Info => {
-                        log::info!("⚡ Command::Info matched, calling handle_info_command");
-                        match handle_info_command(
-                            bot.clone(),
-                            msg.clone(),
-                            deps.db_pool.clone(),
-                            deps.shared_storage.clone(),
-                        )
-                        .await
-                        {
-                            Ok(_) => log::info!("✅ handle_info_command completed successfully"),
-                            Err(e) => log::error!("❌ handle_info_command failed: {:?}", e),
+                        match cmd {
+                            Command::Start => {
+                                handle_start_command(&bot, &msg, &deps).await?;
+                            }
+                            Command::Settings => {
+                                let _ = show_main_menu(
+                                    &bot,
+                                    msg.chat.id,
+                                    deps.db_pool.clone(),
+                                    deps.shared_storage.clone(),
+                                )
+                                .await;
+                            }
+                            Command::Info => {
+                                log::info!("⚡ Command::Info matched, calling handle_info_command");
+                                match handle_info_command(
+                                    bot.clone(),
+                                    msg.clone(),
+                                    deps.db_pool.clone(),
+                                    deps.shared_storage.clone(),
+                                )
+                                .await
+                                {
+                                    Ok(_) => log::info!("✅ handle_info_command completed successfully"),
+                                    Err(e) => log::error!("❌ handle_info_command failed: {:?}", e),
+                                }
+                            }
+                            Command::Downsub => {
+                                let _ = handle_downsub_command(
+                                    bot.clone(),
+                                    msg.clone(),
+                                    deps.db_pool.clone(),
+                                    deps.shared_storage.clone(),
+                                    deps.downsub_gateway.clone(),
+                                    deps.subtitle_cache.clone(),
+                                )
+                                .await;
+                            }
+                            Command::History => {
+                                let _ =
+                                    show_history(&bot, msg.chat.id, deps.db_pool.clone(), deps.shared_storage.clone())
+                                        .await;
+                            }
+                            Command::Downloads => {
+                                handle_downloads_command(&bot, &msg, &deps).await?;
+                            }
+                            Command::Uploads => {
+                                handle_uploads_command(&bot, &msg, &deps).await?;
+                            }
+                            Command::Cuts => {
+                                handle_cuts_command(&bot, &msg, &deps).await?;
+                            }
+                            Command::Stats => {
+                                log::info!("Stats command called for user {}", msg.chat.id);
+                                match show_user_stats(
+                                    &bot,
+                                    msg.chat.id,
+                                    deps.db_pool.clone(),
+                                    deps.shared_storage.clone(),
+                                )
+                                .await
+                                {
+                                    Ok(_) => log::info!("Stats sent successfully"),
+                                    Err(e) => log::error!("Failed to show user stats: {:?}", e),
+                                }
+                            }
+                            Command::Export => {
+                                let _ = show_export_menu(
+                                    &bot,
+                                    msg.chat.id,
+                                    deps.db_pool.clone(),
+                                    deps.shared_storage.clone(),
+                                )
+                                .await;
+                            }
+                            Command::Backup => {
+                                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+                                let _ = handle_backup_command(&bot, msg.chat.id, user_id).await;
+                            }
+                            Command::Plan => {
+                                let _ = show_subscription_info(
+                                    &bot,
+                                    msg.chat.id,
+                                    deps.db_pool.clone(),
+                                    deps.shared_storage.clone(),
+                                )
+                                .await;
+                            }
+                            Command::Users => {
+                                let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
+                                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+                                let _ = handle_users_command(
+                                    &bot,
+                                    msg.chat.id,
+                                    username,
+                                    user_id,
+                                    deps.db_pool.clone(),
+                                    deps.shared_storage.clone(),
+                                )
+                                .await;
+                            }
+                            Command::Setplan => {
+                                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+                                let message_text = msg.text().unwrap_or("");
+                                let _ = handle_setplan_command(
+                                    &bot,
+                                    msg.chat.id,
+                                    user_id,
+                                    message_text,
+                                    deps.shared_storage.clone(),
+                                )
+                                .await;
+                            }
+                            Command::Transactions => {
+                                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+                                let _ = handle_transactions_command(&bot, msg.chat.id, user_id).await;
+                            }
+                            Command::Admin => {
+                                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+                                if let Err(e) =
+                                    handle_admin_command(&bot, msg.chat.id, user_id, deps.shared_storage.clone()).await
+                                {
+                                    log::error!("/admin command failed: {:#}", e);
+                                    let _ = bot.send_message(msg.chat.id, format!("❌ Admin error: {}", e)).await;
+                                }
+                            }
+                            Command::Charges => {
+                                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+                                let message_text = msg.text().unwrap_or("");
+                                let args = message_text.strip_prefix("/charges").unwrap_or("").trim();
+                                let _ = handle_charges_command(
+                                    &bot,
+                                    msg.chat.id,
+                                    user_id,
+                                    deps.shared_storage.clone(),
+                                    args,
+                                )
+                                .await;
+                            }
+                            Command::DownloadTg => {
+                                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+                                let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
+                                let message_text = msg.text().unwrap_or("");
+                                let _ = handle_download_tg_command(&bot, msg.chat.id, user_id, username, message_text)
+                                    .await;
+                            }
+                            Command::SentFiles => {
+                                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+                                let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
+                                let message_text = msg.text().unwrap_or("");
+                                let _ = handle_sent_files_command(
+                                    &bot,
+                                    msg.chat.id,
+                                    user_id,
+                                    username,
+                                    deps.db_pool.clone(),
+                                    deps.shared_storage.clone(),
+                                    message_text,
+                                )
+                                .await;
+                            }
+                            Command::Analytics => {
+                                let _ = handle_analytics_command(
+                                    bot.clone(),
+                                    msg.clone(),
+                                    deps.db_pool.clone(),
+                                    deps.shared_storage.clone(),
+                                )
+                                .await;
+                            }
+                            Command::Health => {
+                                let _ = handle_health_command(
+                                    bot.clone(),
+                                    msg.clone(),
+                                    deps.db_pool.clone(),
+                                    deps.shared_storage.clone(),
+                                )
+                                .await;
+                            }
+                            Command::DownsubHealth => {
+                                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+                                let _ = handle_downsub_health_command(
+                                    &bot,
+                                    msg.chat.id,
+                                    user_id,
+                                    deps.downsub_gateway.clone(),
+                                )
+                                .await;
+                            }
+                            Command::Metrics => {
+                                let _ = handle_metrics_command(
+                                    bot.clone(),
+                                    msg.clone(),
+                                    deps.db_pool.clone(),
+                                    deps.shared_storage.clone(),
+                                    None,
+                                )
+                                .await;
+                            }
+                            Command::Revenue => {
+                                let _ = handle_revenue_command(
+                                    bot.clone(),
+                                    msg.clone(),
+                                    deps.db_pool.clone(),
+                                    deps.shared_storage.clone(),
+                                )
+                                .await;
+                            }
+                            Command::BotApiSpeed => {
+                                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+                                let _ = handle_botapi_speed_command(&bot, msg.chat.id, user_id).await;
+                            }
+                            Command::Version => {
+                                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+                                let _ = handle_version_command(&bot, msg.chat.id, user_id).await;
+                            }
+                            Command::Subscriptions => {
+                                crate::telegram::subscriptions::handle_subscriptions_command(
+                                    &bot,
+                                    msg.chat.id,
+                                    &deps.db_pool,
+                                    &deps.shared_storage,
+                                )
+                                .await;
+                            }
+                            Command::Player => {
+                                crate::telegram::menu::player::handle_player_command(
+                                    &bot,
+                                    msg.chat.id,
+                                    &deps.db_pool,
+                                    &deps.shared_storage,
+                                )
+                                .await;
+                            }
+                            Command::Playlists => {
+                                crate::telegram::menu::playlist::handle_playlists_command(
+                                    &bot,
+                                    msg.chat.id,
+                                    &deps.db_pool,
+                                    &deps.shared_storage,
+                                )
+                                .await;
+                            }
+                            Command::PlaylistIntegrations => {
+                                crate::telegram::menu::playlist_integrations::handle_playlist_integrations_command(
+                                    &bot,
+                                    msg.chat.id,
+                                    &deps.db_pool,
+                                    &deps.shared_storage,
+                                )
+                                .await;
+                            }
                         }
+                        Ok(())
                     }
-                    Command::Downsub => {
-                        let _ = handle_downsub_command(
-                            bot.clone(),
-                            msg.clone(),
-                            deps.db_pool.clone(),
-                            deps.shared_storage.clone(),
-                            deps.downsub_gateway.clone(),
-                            deps.subtitle_cache.clone(),
-                        )
-                        .await;
-                    }
-                    Command::History => {
-                        let _ =
-                            show_history(&bot, msg.chat.id, deps.db_pool.clone(), deps.shared_storage.clone()).await;
-                    }
-                    Command::Downloads => {
-                        handle_downloads_command(&bot, &msg, &deps).await?;
-                    }
-                    Command::Uploads => {
-                        handle_uploads_command(&bot, &msg, &deps).await?;
-                    }
-                    Command::Cuts => {
-                        handle_cuts_command(&bot, &msg, &deps).await?;
-                    }
-                    Command::Stats => {
-                        log::info!("Stats command called for user {}", msg.chat.id);
-                        match show_user_stats(&bot, msg.chat.id, deps.db_pool.clone(), deps.shared_storage.clone())
-                            .await
-                        {
-                            Ok(_) => log::info!("Stats sent successfully"),
-                            Err(e) => log::error!("Failed to show user stats: {:?}", e),
-                        }
-                    }
-                    Command::Export => {
-                        let _ = show_export_menu(&bot, msg.chat.id, deps.db_pool.clone(), deps.shared_storage.clone())
-                            .await;
-                    }
-                    Command::Backup => {
-                        let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
-                        let _ = handle_backup_command(&bot, msg.chat.id, user_id).await;
-                    }
-                    Command::Plan => {
-                        let _ = show_subscription_info(
-                            &bot,
-                            msg.chat.id,
-                            deps.db_pool.clone(),
-                            deps.shared_storage.clone(),
-                        )
-                        .await;
-                    }
-                    Command::Users => {
-                        let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
-                        let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
-                        let _ = handle_users_command(
-                            &bot,
-                            msg.chat.id,
-                            username,
-                            user_id,
-                            deps.db_pool.clone(),
-                            deps.shared_storage.clone(),
-                        )
-                        .await;
-                    }
-                    Command::Setplan => {
-                        let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
-                        let message_text = msg.text().unwrap_or("");
-                        let _ = handle_setplan_command(
-                            &bot,
-                            msg.chat.id,
-                            user_id,
-                            message_text,
-                            deps.shared_storage.clone(),
-                        )
-                        .await;
-                    }
-                    Command::Transactions => {
-                        let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
-                        let _ = handle_transactions_command(&bot, msg.chat.id, user_id).await;
-                    }
-                    Command::Admin => {
-                        let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
-                        if let Err(e) =
-                            handle_admin_command(&bot, msg.chat.id, user_id, deps.shared_storage.clone()).await
-                        {
-                            log::error!("/admin command failed: {:#}", e);
-                            let _ = bot.send_message(msg.chat.id, format!("❌ Admin error: {}", e)).await;
-                        }
-                    }
-                    Command::Charges => {
-                        let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
-                        let message_text = msg.text().unwrap_or("");
-                        let args = message_text.strip_prefix("/charges").unwrap_or("").trim();
-                        let _ =
-                            handle_charges_command(&bot, msg.chat.id, user_id, deps.shared_storage.clone(), args).await;
-                    }
-                    Command::DownloadTg => {
-                        let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
-                        let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
-                        let message_text = msg.text().unwrap_or("");
-                        let _ = handle_download_tg_command(&bot, msg.chat.id, user_id, username, message_text).await;
-                    }
-                    Command::SentFiles => {
-                        let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
-                        let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
-                        let message_text = msg.text().unwrap_or("");
-                        let _ = handle_sent_files_command(
-                            &bot,
-                            msg.chat.id,
-                            user_id,
-                            username,
-                            deps.db_pool.clone(),
-                            deps.shared_storage.clone(),
-                            message_text,
-                        )
-                        .await;
-                    }
-                    Command::Analytics => {
-                        let _ = handle_analytics_command(
-                            bot.clone(),
-                            msg.clone(),
-                            deps.db_pool.clone(),
-                            deps.shared_storage.clone(),
-                        )
-                        .await;
-                    }
-                    Command::Health => {
-                        let _ = handle_health_command(
-                            bot.clone(),
-                            msg.clone(),
-                            deps.db_pool.clone(),
-                            deps.shared_storage.clone(),
-                        )
-                        .await;
-                    }
-                    Command::DownsubHealth => {
-                        let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
-                        let _ = handle_downsub_health_command(&bot, msg.chat.id, user_id, deps.downsub_gateway.clone())
-                            .await;
-                    }
-                    Command::Metrics => {
-                        let _ = handle_metrics_command(
-                            bot.clone(),
-                            msg.clone(),
-                            deps.db_pool.clone(),
-                            deps.shared_storage.clone(),
-                            None,
-                        )
-                        .await;
-                    }
-                    Command::Revenue => {
-                        let _ = handle_revenue_command(
-                            bot.clone(),
-                            msg.clone(),
-                            deps.db_pool.clone(),
-                            deps.shared_storage.clone(),
-                        )
-                        .await;
-                    }
-                    Command::BotApiSpeed => {
-                        let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
-                        let _ = handle_botapi_speed_command(&bot, msg.chat.id, user_id).await;
-                    }
-                    Command::Version => {
-                        let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
-                        let _ = handle_version_command(&bot, msg.chat.id, user_id).await;
-                    }
-                    Command::Subscriptions => {
-                        crate::telegram::subscriptions::handle_subscriptions_command(
-                            &bot,
-                            msg.chat.id,
-                            &deps.db_pool,
-                            &deps.shared_storage,
-                        )
-                        .await;
-                    }
-                    Command::Player => {
-                        crate::telegram::menu::player::handle_player_command(
-                            &bot,
-                            msg.chat.id,
-                            &deps.db_pool,
-                            &deps.shared_storage,
-                        )
-                        .await;
-                    }
-                    Command::Playlists => {
-                        crate::telegram::menu::playlist::handle_playlists_command(
-                            &bot,
-                            msg.chat.id,
-                            &deps.db_pool,
-                            &deps.shared_storage,
-                        )
-                        .await;
-                    }
-                    Command::PlaylistIntegrations => {
-                        crate::telegram::menu::playlist_integrations::handle_playlist_integrations_command(
-                            &bot,
-                            msg.chat.id,
-                            &deps.db_pool,
-                            &deps.shared_storage,
-                        )
-                        .await;
-                    }
-                }
-                Ok(())
-            }
-        },
-    ))
+                }),
+        )
 }
 
 /// Handler for voice messages — shows effects menu
@@ -590,6 +652,7 @@ fn voice_message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
     use crate::telegram::voice_effects::handle_voice_message;
 
     Update::filter_message()
+        .filter(|msg: Message| is_fresh_message(&msg))
         .filter(|msg: Message| msg.voice().is_some())
         .endpoint(move |bot: Bot, msg: Message| {
             let deps = deps.clone();
@@ -610,6 +673,7 @@ fn message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
     let bot_id = deps.bot_id;
 
     Update::filter_message()
+        .filter(|msg: Message| is_fresh_message(&msg))
         .filter(move |msg: Message| is_message_addressed_to_bot(&msg, bot_username.as_deref(), bot_id))
         .endpoint(move |bot: Bot, msg: Message| {
             let deps = deps.clone();

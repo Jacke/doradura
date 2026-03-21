@@ -9,5 +9,5 @@ mod schema;
 mod types;
 mod uploads;
 
-pub use schema::schema;
+pub use schema::{init_boot_timestamp, schema};
 pub use types::{ensure_user_exists, HandlerDeps, HandlerError, UserCreationResult, UserInfo};
