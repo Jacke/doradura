@@ -4063,7 +4063,6 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
 
     // ══════ Enhanced User Detail ══════
     // (extended openUserDetail to show preferences and editable fields)
-    const _origOpenDetail = window.openUserDetail;
     window.openUserDetail = async function(uid) {{
         const drawer = document.getElementById('detail-drawer');
         const body = document.getElementById('detail-body');
@@ -4130,50 +4129,41 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
         if (data && data.ok) {{ if (loaded.users) loadUsers(); }}
     }};
 
-    // ══════ Broadcast confirmation ══════
+    // ══════ Reply to feedback + unified broadcast ══════
+    let pendingFeedbackId = null;
+    window.replyToFeedback = function(userId, feedbackId) {{
+        pendingFeedbackId = feedbackId;
+        document.getElementById('bc-target').value = userId;
+        document.getElementById('bc-message').value = '';
+        document.getElementById('bc-title').textContent = 'Reply to Feedback';
+        document.getElementById('broadcast-modal').classList.add('open');
+    }};
+    // Hook into sendBroadcast to auto-mark feedback as replied
     const _origSendBroadcast = window.sendBroadcast;
     window.sendBroadcast = async function() {{
         const target = document.getElementById('bc-target').value.trim();
         const message = document.getElementById('bc-message').value.trim();
         if (!target || !message) {{ alert('Fill in target and message'); return; }}
-        if (target === 'all') {{
-            if (!confirm('This will broadcast to ALL users. Are you sure?')) return;
-        }}
+        if (target === 'all' && !confirm('This will broadcast to ALL users. Are you sure?')) return;
         const btn = document.getElementById('bc-send');
         btn.disabled = true; btn.textContent = 'Sending...';
         const data = await postJson('/admin/api/broadcast', {{ target, message }});
         btn.disabled = false; btn.textContent = 'Send';
         if (data && data.ok) {{
-            if (data.status === 'broadcasting') alert(`Broadcasting to ${{data.total}} users in background.`);
-            else if (data.blocked > 0) alert('User has blocked the bot.');
-            else alert('Message sent!');
+            if (pendingFeedbackId) {{
+                await postJson(`/admin/api/feedback/${{pendingFeedbackId}}/status`, {{ status: 'replied' }});
+                pendingFeedbackId = null;
+                if (loaded['tab-feedback']) loadFeedback();
+                alert('Reply sent!');
+            }} else if (data.status === 'broadcasting') {{
+                alert(`Broadcasting to ${{data.total}} users in background.`);
+            }} else if (data.blocked > 0) {{
+                alert('User has blocked the bot.');
+            }} else {{
+                alert('Message sent!');
+            }}
             closeBroadcast();
         }}
-    }};
-
-    // ══════ Reply to feedback ══════
-    window.replyToFeedback = function(userId, feedbackId, originalMsg) {{
-        document.getElementById('bc-target').value = userId;
-        document.getElementById('bc-message').value = '';
-        document.getElementById('bc-title').textContent = 'Reply to Feedback';
-        document.getElementById('broadcast-modal').classList.add('open');
-        // After send, mark as replied
-        const origSend = document.getElementById('bc-send').onclick;
-        document.getElementById('bc-send').onclick = async function() {{
-            const msg = document.getElementById('bc-message').value.trim();
-            if (!msg) {{ alert('Enter a message'); return; }}
-            const btn = document.getElementById('bc-send');
-            btn.disabled = true; btn.textContent = 'Sending...';
-            const data = await postJson('/admin/api/broadcast', {{ target: String(userId), message: msg }});
-            btn.disabled = false; btn.textContent = 'Send';
-            if (data && data.ok) {{
-                await postJson(`/admin/api/feedback/${{feedbackId}}/status`, {{ status: 'replied' }});
-                alert('Reply sent!');
-                closeBroadcast();
-                if (loaded.feedback) loadFeedback();
-            }}
-            document.getElementById('bc-send').onclick = origSend;
-        }};
     }};
 
     // ══════ Tab switching ══════
@@ -4208,10 +4198,7 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
 
     // ══════ Search ══════
     const userSearchEl = document.getElementById('user-search');
-    if (userSearchEl) userSearchEl.addEventListener('input', () => {{
-        clearTimeout(usersDebounce);
-        usersDebounce = setTimeout(() => {{ usersSearch=userSearchEl.value.trim(); usersPage=1; loadUsers(); }}, 300);
-    }});
+    if (userSearchEl) userSearchEl.addEventListener('input', () => debounce('users', () => {{ usersSearch=userSearchEl.value.trim(); usersPage=1; loadUsers(); }}));
     const dlSearchEl = document.getElementById('dl-search');
     if (dlSearchEl) dlSearchEl.addEventListener('input', () => debounce('dl', () => {{ dlSearch=dlSearchEl.value.trim(); dlPage=1; loadDownloads(); }}));
 
