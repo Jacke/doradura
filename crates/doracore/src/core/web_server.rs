@@ -332,6 +332,18 @@ fn log_audit(
     );
 }
 
+// --- Bulk action types ---
+
+#[derive(Deserialize)]
+struct BulkResolveReq {
+    error_type: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct BulkCancelReq {
+    status: Option<String>,
+}
+
 /// Constant-time byte-level string comparison to prevent timing side-channels.
 fn constant_time_eq(a: &str, b: &str) -> bool {
     if a.len() != b.len() {
@@ -407,6 +419,11 @@ pub async fn start_web_server(port: u16, shared_storage: Arc<SharedStorage>) -> 
         .route("/admin/api/revenue", get(admin_api_revenue))
         .route("/admin/api/analytics", get(admin_api_analytics))
         .route("/admin/api/audit", get(admin_api_audit))
+        // Bulk actions
+        .route("/admin/api/errors/bulk-resolve", post(admin_api_errors_bulk_resolve))
+        .route("/admin/api/queue/bulk-cancel", post(admin_api_queue_bulk_cancel))
+        // Lightweight polling for tab badges
+        .route("/admin/api/counts", get(admin_api_counts))
         .route("/metrics", get(metrics_handler))
         .with_state(state)
         .layer(DefaultBodyLimit::max(1024 * 1024)) // 1 MB
@@ -2345,14 +2362,81 @@ async fn admin_api_health(State(state): State<WebState>, header_map: HeaderMap) 
             )
             .unwrap_or(0);
 
+        // Error rate per hour (last 24h, for sparkline)
+        let error_hourly: Vec<serde_json::Value> = conn
+            .prepare(
+                "SELECT strftime('%Y-%m-%d %H:00', timestamp) AS hr, COUNT(*) \
+                 FROM error_log WHERE timestamp >= datetime('now', '-24 hours') \
+                 GROUP BY hr ORDER BY hr ASC",
+            )
+            .and_then(|mut s| {
+                let rows = s.query_map([], |r| Ok(json!([r.get::<_, String>(0)?, r.get::<_, i64>(1)?])))?;
+                Ok(rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default();
+
+        // Cookies check
+        let cookies_path = std::env::var("COOKIES_FILE").unwrap_or_else(|_| "/data/cookies.txt".to_string());
+        let cookies_exist = std::path::Path::new(&cookies_path).exists();
+        let cookies_count = if cookies_exist {
+            std::fs::read_to_string(&cookies_path)
+                .map(|c| {
+                    c.lines()
+                        .filter(|l| !l.starts_with('#') && !l.trim().is_empty())
+                        .count()
+                })
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        let required_cookies = ["APISID", "SAPISID", "HSID", "SID", "SSID"];
+        let cookies_content = if cookies_exist {
+            std::fs::read_to_string(&cookies_path).unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let mut cookies_found = serde_json::Map::new();
+        for name in &required_cookies {
+            cookies_found.insert(name.to_string(), json!(cookies_content.contains(name)));
+        }
+
+        // WARP proxy check
+        let warp_proxy = std::env::var("WARP_PROXY").unwrap_or_default();
+        let warp_ok = if !warp_proxy.is_empty() {
+            std::net::TcpStream::connect_timeout(
+                &warp_proxy.parse().unwrap_or_else(|_| "127.0.0.1:1080".parse().unwrap()),
+                std::time::Duration::from_secs(2),
+            )
+            .is_ok()
+        } else {
+            false
+        };
+
+        // PO Token server check (port 4416)
+        let pot_ok =
+            std::net::TcpStream::connect_timeout(&"127.0.0.1:4416".parse().unwrap(), std::time::Duration::from_secs(2))
+                .is_ok();
+
         json!({
             "ytdlp_version": ytdlp_version,
             "queue": queue,
             "errors_24h": errors_24h,
             "error_types": error_types,
+            "error_hourly": error_hourly,
             "unacked_alerts": unacked_alerts,
             "unread_feedback": unread_feedback,
             "db_size": db_size,
+            "cookies": {
+                "exists": cookies_exist,
+                "count": cookies_count,
+                "required": cookies_found,
+            },
+            "warp": {
+                "configured": !warp_proxy.is_empty(),
+                "address": warp_proxy,
+                "reachable": warp_ok,
+            },
+            "pot_server": pot_ok,
         })
     })
     .await;
@@ -2877,6 +2961,129 @@ async fn admin_api_audit(
 
     match result {
         Ok(Ok(data)) => Json(data).into_response(),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    }
+}
+
+// --- Counts (lightweight polling for badges) ---
+
+/// GET /admin/api/counts — quick counts for tab badges.
+async fn admin_api_counts(State(state): State<WebState>, header_map: HeaderMap) -> Response {
+    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+        return resp;
+    }
+    let db = state.shared_storage.sqlite_pool();
+    let result = tokio::task::spawn_blocking(move || -> serde_json::Value {
+        let conn = match get_connection(&db) {
+            Ok(c) => c,
+            Err(_) => return json!({}),
+        };
+        let q = |sql: &str| -> i64 {
+            conn.query_row(sql, [], |r| r.get(0)).unwrap_or(0)
+        };
+        json!({
+            "queue_active": q("SELECT COUNT(*) FROM task_queue WHERE status IN ('pending','leased','processing','uploading')"),
+            "errors_unresolved": q("SELECT COUNT(*) FROM error_log WHERE COALESCE(resolved, 0) = 0"),
+            "feedback_new": q("SELECT COUNT(*) FROM feedback_messages WHERE status = 'new'"),
+            "alerts_unacked": q("SELECT COUNT(*) FROM alert_history WHERE COALESCE(acknowledged, 0) = 0 AND resolved_at IS NULL"),
+        })
+    })
+    .await;
+
+    match result {
+        Ok(data) => Json(data).into_response(),
+        Err(_) => Json(json!({})).into_response(),
+    }
+}
+
+// --- Bulk Actions ---
+
+/// POST /admin/api/errors/bulk-resolve — resolve all errors matching type.
+async fn admin_api_errors_bulk_resolve(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Json(body): Json<BulkResolveReq>,
+) -> Response {
+    let admin_id = match verify_admin_post(&header_map, &state.bot_token) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let db = state.shared_storage.sqlite_pool();
+    let error_type = body.error_type.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let n = if let Some(ref et) = error_type {
+            conn.execute(
+                "UPDATE error_log SET resolved = 1 WHERE COALESCE(resolved, 0) = 0 AND error_type = ?1",
+                rusqlite::params![et],
+            )?
+        } else {
+            conn.execute("UPDATE error_log SET resolved = 1 WHERE COALESCE(resolved, 0) = 0", [])?
+        };
+        log_audit(
+            &conn,
+            admin_id,
+            "bulk_resolve",
+            "error",
+            error_type.as_deref().unwrap_or("all"),
+            Some(&format!("count={}", n)),
+        );
+        Ok::<_, rusqlite::Error>(n)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(n)) => {
+            log::info!("Admin {} bulk-resolved {} errors", admin_id, n);
+            Json(json!({"ok": true, "resolved": n})).into_response()
+        }
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    }
+}
+
+/// POST /admin/api/queue/bulk-cancel — cancel all pending/leased tasks.
+async fn admin_api_queue_bulk_cancel(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Json(body): Json<BulkCancelReq>,
+) -> Response {
+    let admin_id = match verify_admin_post(&header_map, &state.bot_token) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let db = state.shared_storage.sqlite_pool();
+    let status_filter = body.status.unwrap_or_else(|| "pending".to_string());
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let valid = ["pending", "leased"];
+        if !valid.contains(&status_filter.as_str()) {
+            return Ok(0);
+        }
+        let n = conn.execute(
+            &format!(
+                "UPDATE task_queue SET status = 'dead_letter', error_message = 'Bulk cancelled by admin' \
+                 WHERE status = '{}'",
+                status_filter
+            ),
+            [],
+        )?;
+        log_audit(
+            &conn,
+            admin_id,
+            "bulk_cancel",
+            "task",
+            &status_filter,
+            Some(&format!("count={}", n)),
+        );
+        Ok::<_, rusqlite::Error>(n)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(n)) => {
+            log::info!("Admin {} bulk-cancelled {} tasks", admin_id, n);
+            Json(json!({"ok": true, "cancelled": n})).into_response()
+        }
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
     }
 }

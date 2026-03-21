@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Admin panel: **CSRF protection** — all POST endpoints require `X-CSRF-Token` header validated against session; token embedded in `<meta>` tag and auto-sent by `postJson()`
 - Admin panel: **Analytics on Overview** — DAU/WAU/MAU cards, daily active users bar chart, top users this week; loads automatically on page open via `/admin/api/analytics`
 - Admin panel: Audit logging embedded in plan change + block/unblock handlers (more handlers to follow)
+- Admin panel: **Enhanced Health** — WARP proxy connectivity check, PO Token server check, YouTube cookies validation (per-cookie status for APISID/SAPISID/HSID/SID/SSID), error rate hourly sparkline (24h)
+- Admin panel: **Bulk actions** — "Resolve All" button on Errors tab, "Cancel All Pending" on Queue tab; both with confirmation dialogs and audit logging
+- Admin panel: **Tab badges** — red badge counters on Queue/Errors/Feedback/Alerts tabs showing active/unresolved/new/unacked counts; polled every 20s via lightweight `/admin/api/counts` endpoint
+- Admin API: 3 new endpoints (`/admin/api/errors/bulk-resolve`, `/admin/api/queue/bulk-cancel`, `/admin/api/counts`)
 
 ### Changed
 - Downloads menu: removed Circle from MP3 (audio-only, no visual), shortened button labels ("Ringtone", "Speed", "Burn subs"), combined Speed+Burn subs in one row for MP4, removed standalone Subtitles button (kept Burn subtitles)

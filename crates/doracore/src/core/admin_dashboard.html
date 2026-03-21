@@ -397,6 +397,12 @@
             font-size: 0.85rem; font-weight: 500; cursor: pointer;
         }}
         .broadcast-area .send-btn:disabled {{ opacity: 0.4; cursor: default; }}
+        .tab-badge {{
+            display: inline-block; min-width: 16px; height: 16px; line-height: 16px;
+            padding: 0 5px; border-radius: 99px; font-size: 0.6rem; font-weight: 700;
+            background: var(--red); color: #fff; text-align: center;
+            margin-left: 6px; vertical-align: middle;
+        }}
         .tab-labels {{ flex-wrap: wrap; }}
 
         /* ── Two-column layout ── */
@@ -596,6 +602,7 @@
                     <button class="filter-btn" data-qfilter="dead_letter">Dead</button>
                 </div>
                 <input type="text" id="queue-search" class="search-input" placeholder="Search by URL, user, task ID...">
+                <button class="act-btn danger" onclick="bulkCancelQueue()">Cancel All Pending</button>
             </div>
             <div class="panel">
                 <div class="tbl-wrap">
@@ -625,6 +632,7 @@
                     <button class="filter-btn" data-efilter="yes">Resolved</button>
                 </div>
                 <input type="text" id="errors-search" class="search-input" placeholder="Search errors...">
+                <button class="act-btn danger" onclick="bulkResolveErrors()">Resolve All</button>
             </div>
             <div class="panel">
                 <div class="tbl-wrap">
@@ -857,6 +865,35 @@
     window.toggleAutoRefresh = toggleAutoRefresh;
     if (autoRefresh) startAutoRefresh();
 
+    // --- Tab badges (poll every 20s) ---
+    async function pollCounts() {{
+        const data = await api('/admin/api/counts');
+        if (!data) return;
+        const badges = {{
+            'tab-queue': data.queue_active,
+            'tab-errors': data.errors_unresolved,
+            'tab-feedback': data.feedback_new,
+            'tab-alerts': data.alerts_unacked,
+        }};
+        Object.entries(badges).forEach(([tabId, count]) => {{
+            const label = document.querySelector(`label[for="${{tabId}}"]`);
+            if (!label) return;
+            let badge = label.querySelector('.tab-badge');
+            if (count > 0) {{
+                if (!badge) {{
+                    badge = document.createElement('span');
+                    badge.className = 'tab-badge';
+                    label.appendChild(badge);
+                }}
+                badge.textContent = count > 99 ? '99+' : count;
+            }} else if (badge) {{
+                badge.remove();
+            }}
+        }});
+    }}
+    pollCounts();
+    setInterval(pollCounts, 20000);
+
     async function api(url, opts) {{
         const resp = await fetch(url, opts);
         if (resp.status === 401) {{ window.location = '/admin/login'; return null; }}
@@ -994,6 +1031,16 @@
         renderPagination('errors-pagination', data, p => {{ errorsPage=p; loadErrors(); }});
     }}
     window.resolveError = async id => {{ if (await postJson(`/admin/api/errors/${{id}}/resolve`, {{}})) loadErrors(); }};
+    window.bulkResolveErrors = async () => {{
+        if (!confirm('Resolve ALL unresolved errors?')) return;
+        const data = await postJson('/admin/api/errors/bulk-resolve', {{}});
+        if (data && data.ok) {{ alert(`Resolved ${{data.resolved}} errors.`); loadErrors(); }}
+    }};
+    window.bulkCancelQueue = async () => {{
+        if (!confirm('Cancel ALL pending tasks?')) return;
+        const data = await postJson('/admin/api/queue/bulk-cancel', {{ status: 'pending' }});
+        if (data && data.ok) {{ alert(`Cancelled ${{data.cancelled}} tasks.`); loadQueue(); }}
+    }};
 
     // ══════ Health ══════
     async function loadHealth() {{
@@ -1003,20 +1050,49 @@
         const q = data.queue || {{}};
         const qTotal = Object.values(q).reduce((a,b) => a+b, 0);
         const et = data.error_types || {{}};
+        const ck = data.cookies || {{}};
+        const wp = data.warp || {{}};
         let queueHtml = Object.entries(q).map(([s,c]) => `<div class="detail-row"><span>${{esc(s)}}</span><strong>${{c}}</strong></div>`).join('');
         let errHtml = Object.entries(et).map(([t,c]) => `<div class="detail-row"><span>${{esc(t)}}</span><strong>${{c}}</strong></div>`).join('');
+        // Cookies status
+        const reqCk = ck.required||{{}};
+        let ckHtml = Object.entries(reqCk).map(([n,ok]) => `<div class="detail-row"><span>${{n}}</span><span style="color:${{ok?'var(--green)':'var(--red)'}}">${{ok?'✓':'✗'}}</span></div>`).join('');
+        // Error sparkline (24h hourly)
+        const hourly = data.error_hourly || [];
+        let sparkHtml = '';
+        if (hourly.length) {{
+            const maxH = Math.max(1,...hourly.map(h=>h[1]));
+            sparkHtml = `<div class="panel"><div class="panel-head">Error Rate — last 24h (hourly)</div><div class="chart-wrap" style="height:100px;">` +
+                hourly.map(h => {{
+                    const pct = (h[1]/maxH*100)|0;
+                    const hr = h[0].substring(11,16);
+                    return `<div class="bar-col"><div class="bar-tip">${{h[1]}}</div><div class="bar" style="height:${{pct}}%;background:var(--red)"></div><div class="bar-label">${{hr}}</div></div>`;
+                }}).join('') + `</div></div>`;
+        }}
         el.innerHTML = `
             <div class="health-grid">
-                <div class="health-card"><div class="hc-label">yt-dlp version</div><div class="hc-value">${{esc(data.ytdlp_version)}}</div></div>
-                <div class="health-card"><div class="hc-label">Queue Total</div><div class="hc-value">${{qTotal}}</div></div>
+                <div class="health-card"><div class="hc-label">yt-dlp</div><div class="hc-value">${{esc(data.ytdlp_version)}}</div></div>
+                <div class="health-card"><div class="hc-label">Queue</div><div class="hc-value">${{qTotal}}</div></div>
                 <div class="health-card"><div class="hc-label">Errors (24h)</div><div class="hc-value" style="color:${{data.errors_24h>0?'var(--red)':'inherit'}}">${{data.errors_24h}}</div></div>
-                <div class="health-card"><div class="hc-label">Unacked Alerts</div><div class="hc-value" style="color:${{data.unacked_alerts>0?'var(--yellow)':'inherit'}}">${{data.unacked_alerts}}</div></div>
-                <div class="health-card"><div class="hc-label">Unread Feedback</div><div class="hc-value">${{data.unread_feedback}}</div></div>
+                <div class="health-card"><div class="hc-label">WARP Proxy</div><div class="hc-value" style="color:${{wp.reachable?'var(--green)':'var(--red)'}}">${{wp.configured?(wp.reachable?'Connected':'Down'):'Not configured'}}</div></div>
+                <div class="health-card"><div class="hc-label">PO Token</div><div class="hc-value" style="color:${{data.pot_server?'var(--green)':'var(--red)'}}">${{data.pot_server?'Running':'Down'}}</div></div>
                 <div class="health-card"><div class="hc-label">DB Size</div><div class="hc-value">${{fmtSize(data.db_size)}}</div></div>
             </div>
+            ${{sparkHtml}}
             <div class="two-col">
                 <div class="panel"><div class="panel-head">Queue by Status</div><div style="padding:16px 20px;">${{queueHtml||'<div class="empty-state">Empty</div>'}}</div></div>
                 <div class="panel"><div class="panel-head">Errors by Type (24h)</div><div style="padding:16px 20px;">${{errHtml||'<div class="empty-state">No errors</div>'}}</div></div>
+            </div>
+            <div class="two-col">
+                <div class="panel"><div class="panel-head">YouTube Cookies ${{ck.exists?'('+ck.count+')':''}}</div><div style="padding:16px 20px;">
+                    <div class="detail-row"><span>File</span><span style="color:${{ck.exists?'var(--green)':'var(--red)'}}">${{ck.exists?'Found':'Missing'}}</span></div>
+                    ${{ckHtml}}
+                </div></div>
+                <div class="panel"><div class="panel-head">System</div><div style="padding:16px 20px;">
+                    <div class="detail-row"><span>Unacked Alerts</span><strong style="color:${{data.unacked_alerts>0?'var(--yellow)':'inherit'}}">${{data.unacked_alerts}}</strong></div>
+                    <div class="detail-row"><span>Unread Feedback</span><strong>${{data.unread_feedback}}</strong></div>
+                    <div class="detail-row"><span>WARP Address</span><span class="mono dim">${{esc(wp.address||'—')}}</span></div>
+                </div></div>
             </div>`;
     }}
 
