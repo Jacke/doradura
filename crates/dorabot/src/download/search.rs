@@ -216,6 +216,11 @@ pub async fn search(
             if url.is_empty() {
                 return None;
             }
+            // Skip non-video results (channels, playlists) — they cause download hangs
+            if url.contains("/channel/") || url.contains("/playlist?") || url.contains("/user/") || url.contains("/@") {
+                log::debug!("Search: skipping non-video URL: {:.100}", url);
+                return None;
+            }
             Some(SearchResult {
                 title,
                 artist,

@@ -165,7 +165,7 @@ async fn enter_player_mode(
         track_message(shared_storage, chat_id.0, sid.0).await;
     }
 
-    // 3. Send banner "Music Player by Dora" and pin it
+    // 3. Send banner
     let banner_msg_id = bot
         .send_message(chat_id, "🎧 Music Player by Dora")
         .await
@@ -174,25 +174,25 @@ async fn enter_player_mode(
 
     if let Some(bid) = banner_msg_id {
         track_message(shared_storage, chat_id.0, bid.0).await;
-        let _ = bot.pin_chat_message(chat_id, bid).disable_notification(true).await;
     }
 
-    // 4. Create player session (sticker_message_id stores the PINNED message for unpin)
+    // 4. Send player menu (this is the message we pin — shows playlist info)
+    let menu_msg = send_player_menu(bot, chat_id, playlist_name, items, false, None).await;
+    if let Some(msg_id) = menu_msg {
+        track_message(shared_storage, chat_id.0, msg_id.0).await;
+        let _ = bot.pin_chat_message(chat_id, msg_id).disable_notification(true).await;
+    }
+
+    // 5. Create player session (sticker_message_id stores the PINNED message for unpin)
+    let pinned_msg_id = menu_msg.or(banner_msg_id);
     if let Err(e) = shared_storage
-        .create_player_session(chat_id.0, playlist_id, None, banner_msg_id.map(|m| m.0))
+        .create_player_session(chat_id.0, playlist_id, None, pinned_msg_id.map(|m| m.0))
         .await
     {
         log::error!("Failed to create player session for user {}: {}", chat_id.0, e);
         bot.send_message(chat_id, "❌ Failed to start player mode. Please try again.")
             .await
             .ok();
-        return;
-    }
-
-    // 5. Send player menu
-    let menu_msg = send_player_menu(bot, chat_id, playlist_name, items, false, None).await;
-    if let Some(msg_id) = menu_msg {
-        track_message(shared_storage, chat_id.0, msg_id.0).await;
     }
 }
 
@@ -432,7 +432,16 @@ async fn download_player_track(
     _db_pool: &Arc<DbPool>,
     shared_storage: &Arc<SharedStorage>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let url = Url::parse(&item.url)?;
+    let url_str = &item.url;
+    // Skip non-video URLs (channels, playlists) — they hang yt-dlp for minutes
+    if url_str.contains("/channel/")
+        || url_str.contains("/playlist?")
+        || url_str.contains("/user/")
+        || url_str.contains("/@")
+    {
+        return Err(format!("Skipped non-video URL: {:.80}", url_str).into());
+    }
+    let url = Url::parse(url_str)?;
 
     // Check vault cache first
     if let Some(cached_fid) = crate::download::vault::check_vault_cache(shared_storage, chat_id.0, &item.url).await {

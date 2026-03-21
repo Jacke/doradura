@@ -86,7 +86,11 @@ mod youtube {
 
                 let artist = entry.artist().map(|s| s.to_string());
                 let title = entry.title.unwrap_or_else(|| format!("Track {}", i + 1));
-                let resolved_url = entry.webpage_url.or(entry.url);
+                let raw_url = entry.webpage_url.or(entry.url);
+                // Skip non-video entries (channels, playlists within playlists)
+                let resolved_url = raw_url.filter(|u| {
+                    !u.contains("/channel/") && !u.contains("/playlist?") && !u.contains("/user/") && !u.contains("/@")
+                });
                 let duration = entry.duration.map(|d| d as i32);
 
                 if let Some(ref cb) = progress {
