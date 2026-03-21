@@ -155,7 +155,7 @@ pub async fn handle_downloads_callback(
                         // Row 2: transform actions
                         options.push(vec![
                             crate::telegram::cb("✂️ Clip".to_string(), format!("downloads:clip:{}", download_id)),
-                            crate::telegram::cb("🎙 Voice".to_string(), format!("downloads:send:voice:{}", download_id)),
+                            crate::telegram::cb("🎙 Voice".to_string(), format!("downloads:voice:{}", download_id)),
                             crate::telegram::cb(
                                 "🔔 Ringtone".to_string(),
                                 format!("ringtone:select:download:{}", download_id),
@@ -357,7 +357,6 @@ pub async fn handle_downloads_callback(
                             send_document_forced(bot, chat_id, &telegram_file_id, upload_file_name, caption.clone())
                                 .await
                         }
-                        "voice" => send_as_voice(bot, chat_id, &telegram_file_id, &caption).await,
                         _ => {
                             bot.delete_message(chat_id, status_msg.id).await.ok();
                             return Ok(());
@@ -1544,6 +1543,108 @@ pub async fn handle_downloads_callback(
                 }
             }
         }
+        // Show voice message duration picker (like circle)
+        "voice" => {
+            if parts.len() < 3 {
+                return Ok(());
+            }
+            let download_id = parts[2].parse::<i64>().unwrap_or(0);
+            if let Some(download) = shared_storage
+                .get_download_history_entry(chat_id.0, download_id)
+                .await
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+            {
+                if download.file_id.is_none() {
+                    return Ok(());
+                }
+                let durations = [15, 30, 60];
+                let first_row: Vec<_> = durations
+                    .iter()
+                    .map(|&d| {
+                        crate::telegram::cb(
+                            format!("▶ 0:00–{}", super::format_duration_short(d)),
+                            format!("downloads:voice_dur:first:{}:{}", download_id, d),
+                        )
+                    })
+                    .collect();
+                let last_row: Vec<_> = durations
+                    .iter()
+                    .map(|&d| {
+                        crate::telegram::cb(
+                            format!("◀ ...–{}", super::format_duration_short(d)),
+                            format!("downloads:voice_dur:last:{}:{}", download_id, d),
+                        )
+                    })
+                    .collect();
+                let full_row = vec![crate::telegram::cb(
+                    "🔊 Full".to_string(),
+                    format!("downloads:voice_dur:full:{}", download_id),
+                )];
+                let mut keyboard_rows = vec![first_row, last_row, full_row];
+                keyboard_rows.push(vec![crate::telegram::cb(
+                    "❌ Cancel".to_string(),
+                    "downloads:cancel".to_string(),
+                )]);
+                let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
+                let title = escape_markdown(&download.title);
+                bot.send_message(chat_id, format!("🎙 Select voice message duration for *{}*:", title))
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .reply_markup(keyboard)
+                    .await?;
+                bot.delete_message(chat_id, message_id).await.ok();
+            }
+        }
+        // Process voice message with selected duration
+        "voice_dur" => {
+            if parts.len() < 4 {
+                return Ok(());
+            }
+            let position = parts[2]; // first, last, middle, full
+            let download_id = parts[3].parse::<i64>().unwrap_or(0);
+            let duration_seconds = if parts.len() >= 5 {
+                parts[4].parse::<i64>().unwrap_or(30)
+            } else {
+                60
+            };
+
+            if let Some(download) = shared_storage
+                .get_download_history_entry(chat_id.0, download_id)
+                .await
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+            {
+                if let Some(ref fid) = download.file_id {
+                    bot.delete_message(chat_id, message_id).await.ok();
+                    let status_msg = bot.send_message(chat_id, "🎙 Converting to voice message…").await?;
+
+                    let audio_duration = download.duration.unwrap_or(duration_seconds);
+                    let (start_secs, end_secs) = match position {
+                        "first" => (0i64, duration_seconds.min(audio_duration)),
+                        "last" => {
+                            let start = (audio_duration - duration_seconds).max(0);
+                            (start, audio_duration)
+                        }
+                        "middle" => {
+                            let start = ((audio_duration - duration_seconds) / 2).max(0);
+                            (start, (start + duration_seconds).min(audio_duration))
+                        }
+                        "full" => (0, audio_duration),
+                        _ => (0, duration_seconds.min(audio_duration)),
+                    };
+
+                    let result = send_as_voice_segment(bot, chat_id, fid, start_secs, end_secs - start_secs).await;
+
+                    bot.delete_message(chat_id, status_msg.id).await.ok();
+                    match result {
+                        Ok(_) => {}
+                        Err(e) => {
+                            bot.send_message(chat_id, format!("❌ Voice conversion failed: {e}"))
+                                .await
+                                .ok();
+                        }
+                    }
+                }
+            }
+        }
         // Fetch and display lyrics for a downloaded track
         "lyrics" => {
             if parts.len() < 3 {
@@ -1779,11 +1880,13 @@ pub async fn handle_downloads_callback(
 }
 
 /// Download an audio file from Telegram, convert to OGG Opus, and send as a voice message.
-async fn send_as_voice(
+/// Download audio, extract segment, convert to OGG Opus mono, send as voice.
+async fn send_as_voice_segment(
     bot: &Bot,
     chat_id: ChatId,
     telegram_file_id: &str,
-    _caption: &str,
+    start_secs: i64,
+    duration_secs: i64,
 ) -> ResponseResult<teloxide::types::Message> {
     use crate::core::utils::TempDirGuard;
 
@@ -1798,23 +1901,70 @@ async fn send_as_voice(
         .path()
         .join(format!("voice_output_{}_{}.ogg", chat_id.0, uuid::Uuid::new_v4()));
 
-    // Download audio from Telegram
     crate::telegram::download_file_from_telegram(bot, telegram_file_id, Some(input_path.clone()))
         .await
         .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
-    // Convert to OGG Opus on a blocking thread
+    // Extract segment + convert to OGG Opus mono
     let in_str = input_path.to_string_lossy().to_string();
     let out_str = output_path.to_string_lossy().to_string();
-    let duration =
-        tokio::task::spawn_blocking(move || crate::telegram::voice::convert_wav_to_ogg_opus(&in_str, &out_str))
-            .await
-            .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
-            .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+    let seg_start = start_secs;
+    let seg_dur = duration_secs;
+    let result = tokio::task::spawn_blocking(move || -> anyhow::Result<Option<u32>> {
+        let mut cmd = std::process::Command::new("ffmpeg");
+        cmd.arg("-i").arg(&in_str);
+        if seg_start > 0 {
+            cmd.arg("-ss").arg(seg_start.to_string());
+        }
+        if seg_dur > 0 {
+            cmd.arg("-t").arg(seg_dur.to_string());
+        }
+        cmd.args([
+            "-c:a",
+            "libopus",
+            "-b:a",
+            "64k",
+            "-ac",
+            "1",
+            "-application",
+            "voip",
+            "-y",
+        ])
+        .arg(&out_str);
+        let output = cmd.output()?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow::anyhow!("ffmpeg failed: {}", stderr));
+        }
+        // Probe duration for waveform
+        let probe = std::process::Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+            ])
+            .arg(&out_str)
+            .output()?;
+        let dur = if probe.status.success() {
+            String::from_utf8_lossy(&probe.stdout)
+                .trim()
+                .parse::<f64>()
+                .ok()
+                .map(|d| d as u32)
+        } else {
+            None
+        };
+        Ok(dur)
+    })
+    .await
+    .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+    .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
-    // Send as voice message
     let mut req = bot.send_voice(chat_id, InputFile::file(output_path));
-    if let Some(dur) = duration {
+    if let Some(dur) = result {
         req = req.duration(dur);
     }
     req.await

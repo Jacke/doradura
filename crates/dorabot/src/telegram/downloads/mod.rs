@@ -84,7 +84,7 @@ fn build_duration_buttons(download_id: i64, lang: &unic_langid::LanguageIdentifi
 }
 
 /// Format duration as short string (0:15, 0:30, 1:00)
-fn format_duration_short(seconds: i64) -> String {
+pub(super) fn format_duration_short(seconds: i64) -> String {
     let mins = seconds / 60;
     let secs = seconds % 60;
     format!("{}:{:02}", mins, secs)
