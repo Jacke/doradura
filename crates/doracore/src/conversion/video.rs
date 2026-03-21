@@ -154,10 +154,8 @@ pub async fn to_video_note<P: AsRef<Path>>(
         let setpts_factor = 1.0 / spd;
         let atempo_filter = build_atempo_filter(spd);
         format!(
-            "[0:v]{}setpts={}*PTS[vout];[0:a]{}[aout]",
-            video_filter.to_owned() + ",",
-            setpts_factor,
-            atempo_filter
+            "[0:v]{},setpts={}*PTS,fps=30[vout];[0:a]{}[aout]",
+            video_filter, setpts_factor, atempo_filter
         )
     } else {
         format!("[0:v]{}[vout]", video_filter)
@@ -504,6 +502,21 @@ mod tests {
         assert_eq!(build_atempo_filter(1.5), "atempo=1.5");
         assert_eq!(build_atempo_filter(2.5), "atempo=2.0,atempo=1.25");
         assert_eq!(build_atempo_filter(0.25), "atempo=0.5,atempo=0.5");
+    }
+
+    #[test]
+    fn test_speed_filter_includes_fps_normalization() {
+        let video_filter = "scale=640:640:force_original_aspect_ratio=increase,crop=640:640,format=yuv420p";
+        let spd = 1.5_f64;
+        let setpts_factor = 1.0 / spd;
+        let atempo_filter = build_atempo_filter(spd);
+        let filter = format!(
+            "[0:v]{},setpts={}*PTS,fps=30[vout];[0:a]{}[aout]",
+            video_filter, setpts_factor, atempo_filter
+        );
+        assert!(filter.contains("fps=30"));
+        assert!(filter.contains("setpts="));
+        assert!(filter.contains("scale=640:640"));
     }
 
     #[test]
