@@ -1645,7 +1645,7 @@ pub async fn handle_downloads_callback(
                 }
             }
         }
-        // Fetch and display lyrics for a downloaded track
+        // Fetch lyrics and show section picker — selecting a section re-sends the audio with lyrics caption
         "lyrics" => {
             if parts.len() < 3 {
                 return Ok(());
@@ -1677,40 +1677,91 @@ pub async fn handle_downloads_callback(
                     Some(lyr) => {
                         bot.delete_message(chat_id, status_msg.id).await.ok();
 
-                        if !lyr.has_structure || lyr.sections.len() <= 1 {
-                            let header = format!("🎵 {} – {}\n\n", lyr.artist, lyr.title);
-                            let full = format!("{}{}", header, lyr.all_text());
-                            send_lyrics_chunked(bot, chat_id, &full).await?;
+                        // Save lyrics session (needed for lyrics_send to retrieve text)
+                        let session_id = uuid::Uuid::new_v4().to_string();
+                        let sections_json = serde_json::to_string(&lyr.sections).unwrap_or_default();
+                        let _ = shared_storage
+                            .create_lyrics_session(
+                                &session_id,
+                                chat_id.0,
+                                &lyr.artist,
+                                &lyr.title,
+                                &sections_json,
+                                lyr.has_structure,
+                            )
+                            .await;
+
+                        // Build section picker — callbacks go to downloads:lyrics_send:{download_id}:{session_id}:{idx}
+                        let display = escape_markdown(&format!("{} – {}", lyr.artist, lyr.title));
+                        let keyboard = build_lyrics_audio_keyboard(download_id, &session_id, &lyr.sections);
+                        let msg = if lyr.has_structure && lyr.sections.len() > 1 {
+                            format!("🎵 *{}*\nChoose a section to send with audio:", display)
                         } else {
-                            let session_id = uuid::Uuid::new_v4().to_string();
-                            let sections_json = serde_json::to_string(&lyr.sections).map_err(|e| {
-                                teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                            })?;
-                            if let Err(e) = shared_storage
-                                .create_lyrics_session(
-                                    &session_id,
-                                    chat_id.0,
-                                    &lyr.artist,
-                                    &lyr.title,
-                                    &sections_json,
-                                    lyr.has_structure,
-                                )
-                                .await
-                            {
-                                log::error!("Failed to save lyrics session: {}", e);
-                                let header = format!("🎵 {} – {}\n\n", lyr.artist, lyr.title);
-                                send_lyrics_chunked(bot, chat_id, &format!("{}{}", header, lyr.all_text())).await?;
-                            } else {
-                                let display = escape_markdown(&format!("{} – {}", lyr.artist, lyr.title));
-                                let header = format!("🎵 *{}*\nChoose a section:", display);
-                                let keyboard = build_lyrics_section_keyboard(&session_id, &lyr.sections);
-                                bot.send_message(chat_id, header)
-                                    .parse_mode(ParseMode::MarkdownV2)
-                                    .reply_markup(keyboard)
-                                    .await?;
-                            }
-                        }
+                            format!("🎵 *{}*\nSend audio with lyrics?", display)
+                        };
+                        bot.send_message(chat_id, msg)
+                            .parse_mode(ParseMode::MarkdownV2)
+                            .reply_markup(keyboard)
+                            .await?;
                     }
+                }
+                bot.delete_message(chat_id, message_id).await.ok();
+            }
+        }
+        // Re-send audio file with selected lyrics as caption
+        "lyrics_send" => {
+            // downloads:lyrics_send:{download_id}:{session_id}:{idx_or_all}
+            if parts.len() < 5 {
+                return Ok(());
+            }
+            let download_id = parts[2].parse::<i64>().unwrap_or(0);
+            let session_id = parts[3];
+            let idx_str = parts[4];
+
+            let download = shared_storage
+                .get_download_history_entry(chat_id.0, download_id)
+                .await
+                .ok()
+                .flatten();
+            let lyrics_session = shared_storage.get_lyrics_session(session_id).await.ok().flatten();
+
+            if let (Some(dl), Some((_artist, _title, sections_json, _has_struct))) = (download, lyrics_session) {
+                if let Some(ref fid) = dl.file_id {
+                    let sections: Vec<crate::lyrics::LyricsSection> =
+                        serde_json::from_str(&sections_json).unwrap_or_default();
+
+                    let lyrics_text = if idx_str == "all" {
+                        sections
+                            .iter()
+                            .map(|s| format!("[{}]\n{}", s.name, s.text()))
+                            .collect::<Vec<_>>()
+                            .join("\n\n")
+                    } else if let Ok(idx) = idx_str.parse::<usize>() {
+                        sections
+                            .get(idx)
+                            .map(|s| format!("[{}]\n{}", s.name, s.text()))
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+
+                    if lyrics_text.is_empty() {
+                        bot.send_message(chat_id, "❌ Section not found.").await?;
+                    } else {
+                        // Telegram caption limit is 1024 chars
+                        let caption = if lyrics_text.len() > 1024 {
+                            format!("{}…", &lyrics_text[..1020])
+                        } else {
+                            lyrics_text
+                        };
+                        bot.send_audio(
+                            chat_id,
+                            teloxide::types::InputFile::file_id(teloxide::types::FileId(fid.clone())),
+                        )
+                        .caption(caption)
+                        .await?;
+                    }
+                    bot.delete_message(chat_id, message_id).await.ok();
                 }
             }
         }
@@ -1972,9 +2023,13 @@ async fn send_as_voice_segment(
         .await
 }
 
-/// Build section picker keyboard for lyrics (reuses lyr:s: callback prefix
-/// so the existing lyrics handler shows the selected section).
-fn build_lyrics_section_keyboard(session_id: &str, sections: &[crate::lyrics::LyricsSection]) -> InlineKeyboardMarkup {
+/// Build section picker keyboard for lyrics + audio re-send.
+/// Callbacks: `downloads:lyrics_send:{download_id}:{session_id}:{idx_or_all}`
+fn build_lyrics_audio_keyboard(
+    download_id: i64,
+    session_id: &str,
+    sections: &[crate::lyrics::LyricsSection],
+) -> InlineKeyboardMarkup {
     use std::collections::HashMap;
 
     let mut total: HashMap<String, usize> = HashMap::new();
@@ -1994,7 +2049,10 @@ fn build_lyrics_section_keyboard(session_id: &str, sections: &[crate::lyrics::Ly
             } else {
                 s.name.clone()
             };
-            crate::telegram::cb(label, format!("lyr:s:{}:{}", session_id, idx))
+            crate::telegram::cb(
+                label,
+                format!("downloads:lyrics_send:{}:{}:{}", download_id, session_id, idx),
+            )
         })
         .collect();
 
@@ -2002,33 +2060,13 @@ fn build_lyrics_section_keyboard(session_id: &str, sections: &[crate::lyrics::Ly
 
     rows.push(vec![crate::telegram::cb(
         "📄 All Lyrics".to_string(),
-        format!("lyr:s:{}:all", session_id),
+        format!("downloads:lyrics_send:{}:{}:all", download_id, session_id),
+    )]);
+
+    rows.push(vec![crate::telegram::cb(
+        "❌ Cancel".to_string(),
+        "downloads:cancel".to_string(),
     )]);
 
     InlineKeyboardMarkup::new(rows)
-}
-
-/// Send long lyrics text in ≤4000-char chunks, splitting on newlines.
-async fn send_lyrics_chunked(bot: &Bot, chat_id: ChatId, text: &str) -> ResponseResult<teloxide::types::Message> {
-    const MAX: usize = 4000;
-    if text.len() <= MAX {
-        return bot.send_message(chat_id, text).await;
-    }
-    let mut chunk = String::new();
-    let mut last_msg = None;
-    for line in text.lines() {
-        if chunk.len() + line.len() + 1 > MAX {
-            last_msg = Some(bot.send_message(chat_id, &chunk).await?);
-            chunk.clear();
-        }
-        if !chunk.is_empty() {
-            chunk.push('\n');
-        }
-        chunk.push_str(line);
-    }
-    if !chunk.is_empty() {
-        last_msg = Some(bot.send_message(chat_id, &chunk).await?);
-    }
-    last_msg
-        .ok_or_else(|| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other("empty lyrics text"))))
 }
