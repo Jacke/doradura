@@ -120,6 +120,104 @@ struct PaginatedResponse<T: Serialize> {
     total_pages: u32,
 }
 
+// --- Queue API types ---
+
+#[derive(Deserialize)]
+struct QueueQuery {
+    page: Option<u32>,
+    status: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ApiQueueTask {
+    id: String,
+    user_id: i64,
+    username: String,
+    url: String,
+    format: String,
+    status: String,
+    error_message: String,
+    retry_count: i32,
+    worker_id: String,
+    created_at: String,
+    started_at: String,
+    finished_at: String,
+}
+
+// --- Error API types ---
+
+#[derive(Deserialize)]
+struct ErrorQuery {
+    page: Option<u32>,
+    error_type: Option<String>,
+    resolved: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ApiError {
+    id: i64,
+    timestamp: String,
+    user_id: Option<i64>,
+    username: String,
+    error_type: String,
+    error_message: String,
+    url: String,
+    resolved: bool,
+}
+
+// --- Feedback API types ---
+
+#[derive(Deserialize)]
+struct FeedbackQuery {
+    page: Option<u32>,
+    status: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ApiFeedback {
+    id: i64,
+    user_id: i64,
+    username: String,
+    first_name: String,
+    message: String,
+    status: String,
+    admin_reply: String,
+    created_at: String,
+}
+
+#[derive(Deserialize)]
+struct FeedbackStatusReq {
+    status: String,
+}
+
+// --- Alert API types ---
+
+#[derive(Deserialize)]
+struct AlertQuery {
+    page: Option<u32>,
+    severity: Option<String>,
+}
+
+#[derive(Serialize)]
+struct ApiAlert {
+    id: i64,
+    alert_type: String,
+    severity: String,
+    message: String,
+    metadata: String,
+    triggered_at: String,
+    resolved_at: String,
+    acknowledged: bool,
+}
+
+// --- Broadcast API types ---
+
+#[derive(Deserialize)]
+struct BroadcastReq {
+    target: String,
+    message: String,
+}
+
 /// Constant-time byte-level string comparison to prevent timing side-channels.
 fn constant_time_eq(a: &str, b: &str) -> bool {
     if a.len() != b.len() {
@@ -174,6 +272,23 @@ pub async fn start_web_server(port: u16, shared_storage: Arc<SharedStorage>) -> 
         .route("/admin/api/users/{id}/plan", post(admin_api_user_plan))
         .route("/admin/api/users/{id}/block", post(admin_api_user_block))
         .route("/admin/api/downloads", get(admin_api_downloads))
+        // Queue API
+        .route("/admin/api/queue", get(admin_api_queue))
+        .route("/admin/api/queue/{id}/retry", post(admin_api_queue_retry))
+        .route("/admin/api/queue/{id}/cancel", post(admin_api_queue_cancel))
+        // Errors API (paginated)
+        .route("/admin/api/errors", get(admin_api_errors))
+        .route("/admin/api/errors/{id}/resolve", post(admin_api_error_resolve))
+        // Feedback API
+        .route("/admin/api/feedback", get(admin_api_feedback))
+        .route("/admin/api/feedback/{id}/status", post(admin_api_feedback_status))
+        // Alerts API
+        .route("/admin/api/alerts", get(admin_api_alerts))
+        .route("/admin/api/alerts/{id}/acknowledge", post(admin_api_alert_acknowledge))
+        // User details + Health + Broadcast
+        .route("/admin/api/users/{id}/details", get(admin_api_user_details))
+        .route("/admin/api/health", get(admin_api_health))
+        .route("/admin/api/broadcast", post(admin_api_broadcast))
         .route("/metrics", get(metrics_handler))
         .with_state(state)
         .layer(DefaultBodyLimit::max(1024 * 1024)) // 1 MB
@@ -1203,6 +1318,911 @@ async fn admin_api_downloads(
     }
 }
 
+// --- Queue API ---
+
+const QUEUE_PER_PAGE: u32 = 50;
+
+/// GET /admin/api/queue — paginated task queue with status filter.
+async fn admin_api_queue(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Query(q): Query<QueueQuery>,
+) -> Response {
+    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+        return resp;
+    }
+    let page = q.page.unwrap_or(1).max(1);
+    let status_filter = q.status.unwrap_or_default();
+    let offset = ((page - 1) * QUEUE_PER_PAGE) as i64;
+    let db = state.shared_storage.sqlite_pool();
+
+    let result = tokio::task::spawn_blocking(move || -> Result<PaginatedResponse<ApiQueueTask>, rusqlite::Error> {
+        let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let where_clause = match status_filter.as_str() {
+            "pending" | "leased" | "processing" | "uploading" | "completed" | "dead_letter" => {
+                format!("WHERE t.status = '{}'", status_filter)
+            }
+            "active" => "WHERE t.status IN ('pending','leased','processing','uploading')".to_string(),
+            _ => String::new(),
+        };
+
+        let total: i64 = conn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM task_queue t {}", where_clause),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let total_pages = ((total as f64) / QUEUE_PER_PAGE as f64).ceil() as u32;
+
+        let sql = format!(
+            "SELECT t.id, t.user_id, COALESCE(u.username, ''), COALESCE(t.url, ''), \
+                    COALESCE(t.format, ''), COALESCE(t.status, ''), COALESCE(t.error_message, ''), \
+                    COALESCE(t.retry_count, 0), COALESCE(t.worker_id, ''), \
+                    COALESCE(t.created_at, ''), COALESCE(t.started_at, ''), COALESCE(t.finished_at, '') \
+             FROM task_queue t LEFT JOIN users u ON u.telegram_id = t.user_id \
+             {} ORDER BY t.created_at DESC LIMIT {} OFFSET {}",
+            where_clause, QUEUE_PER_PAGE, offset
+        );
+
+        let tasks: Vec<ApiQueueTask> = conn
+            .prepare(&sql)
+            .and_then(|mut s| {
+                let rows = s.query_map([], |r| {
+                    Ok(ApiQueueTask {
+                        id: r.get(0)?,
+                        user_id: r.get(1)?,
+                        username: r.get(2)?,
+                        url: r.get(3)?,
+                        format: r.get(4)?,
+                        status: r.get(5)?,
+                        error_message: r.get(6)?,
+                        retry_count: r.get(7)?,
+                        worker_id: r.get(8)?,
+                        created_at: r.get(9)?,
+                        started_at: r.get(10)?,
+                        finished_at: r.get(11)?,
+                    })
+                })?;
+                Ok(rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default();
+
+        Ok(PaginatedResponse {
+            items: tasks,
+            total,
+            page,
+            per_page: QUEUE_PER_PAGE,
+            total_pages,
+        })
+    })
+    .await;
+
+    match result {
+        Ok(Ok(data)) => Json(data).into_response(),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    }
+}
+
+/// POST /admin/api/queue/:id/retry — retry a dead/failed task.
+async fn admin_api_queue_retry(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Path(task_id): Path<String>,
+) -> Response {
+    let admin_id = match verify_admin(&header_map, &state.bot_token) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let db = state.shared_storage.sqlite_pool();
+    let tid = task_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.execute(
+            "UPDATE task_queue SET status = 'pending', error_message = NULL, retry_count = 0, \
+             worker_id = NULL, leased_at = NULL, lease_expires_at = NULL \
+             WHERE id = ?1 AND status IN ('dead_letter', 'failed')",
+            rusqlite::params![tid],
+        )
+    })
+    .await;
+
+    match result {
+        Ok(Ok(0)) => (StatusCode::NOT_FOUND, "Task not found or not retryable").into_response(),
+        Ok(Ok(_)) => {
+            log::info!("Admin {} retried task {}", admin_id, task_id);
+            Json(json!({"ok": true})).into_response()
+        }
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    }
+}
+
+/// POST /admin/api/queue/:id/cancel — cancel a pending/leased task.
+async fn admin_api_queue_cancel(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Path(task_id): Path<String>,
+) -> Response {
+    let admin_id = match verify_admin(&header_map, &state.bot_token) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let db = state.shared_storage.sqlite_pool();
+    let tid = task_id.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.execute(
+            "UPDATE task_queue SET status = 'dead_letter', error_message = 'Cancelled by admin' \
+             WHERE id = ?1 AND status IN ('pending', 'leased')",
+            rusqlite::params![tid],
+        )
+    })
+    .await;
+
+    match result {
+        Ok(Ok(0)) => (StatusCode::NOT_FOUND, "Task not found or not cancellable").into_response(),
+        Ok(Ok(_)) => {
+            log::info!("Admin {} cancelled task {}", admin_id, task_id);
+            Json(json!({"ok": true})).into_response()
+        }
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    }
+}
+
+// --- Errors API (paginated) ---
+
+const ERRORS_PER_PAGE: u32 = 50;
+
+/// GET /admin/api/errors — paginated, filterable error log.
+async fn admin_api_errors(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Query(q): Query<ErrorQuery>,
+) -> Response {
+    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+        return resp;
+    }
+    let page = q.page.unwrap_or(1).max(1);
+    let type_filter = q.error_type.unwrap_or_default();
+    let resolved_filter = q.resolved.unwrap_or_default();
+    let offset = ((page - 1) * ERRORS_PER_PAGE) as i64;
+    let db = state.shared_storage.sqlite_pool();
+
+    let result = tokio::task::spawn_blocking(move || -> Result<PaginatedResponse<ApiError>, rusqlite::Error> {
+        let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
+
+        let mut conditions = Vec::new();
+        let search_param = if !type_filter.is_empty() {
+            conditions.push("error_type LIKE ?1".to_string());
+            Some(format!("%{}%", type_filter))
+        } else {
+            None
+        };
+        match resolved_filter.as_str() {
+            "yes" => conditions.push("resolved = 1".to_string()),
+            "no" => conditions.push("COALESCE(resolved, 0) = 0".to_string()),
+            _ => {}
+        }
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        let count_sql = format!("SELECT COUNT(*) FROM error_log {}", where_clause);
+        let total: i64 = if let Some(ref sp) = search_param {
+            conn.query_row(&count_sql, rusqlite::params![sp], |r| r.get(0))
+                .unwrap_or(0)
+        } else {
+            conn.query_row(&count_sql, [], |r| r.get(0)).unwrap_or(0)
+        };
+        let total_pages = ((total as f64) / ERRORS_PER_PAGE as f64).ceil() as u32;
+
+        let sql = format!(
+            "SELECT id, COALESCE(timestamp, ''), user_id, COALESCE(username, ''), \
+                    COALESCE(error_type, ''), COALESCE(error_message, ''), COALESCE(url, ''), \
+                    COALESCE(resolved, 0) \
+             FROM error_log {} ORDER BY timestamp DESC LIMIT {} OFFSET {}",
+            where_clause, ERRORS_PER_PAGE, offset
+        );
+
+        let map_row = |r: &rusqlite::Row<'_>| -> rusqlite::Result<ApiError> {
+            Ok(ApiError {
+                id: r.get(0)?,
+                timestamp: r.get(1)?,
+                user_id: r.get(2)?,
+                username: r.get(3)?,
+                error_type: r.get(4)?,
+                error_message: r.get(5)?,
+                url: r.get(6)?,
+                resolved: r.get::<_, i64>(7)? != 0,
+            })
+        };
+
+        let errors: Vec<ApiError> = if let Some(ref sp) = search_param {
+            conn.prepare(&sql)
+                .and_then(|mut s| {
+                    let rows = s.query_map(rusqlite::params![sp], map_row)?;
+                    Ok(rows.filter_map(|r| r.ok()).collect())
+                })
+                .unwrap_or_default()
+        } else {
+            conn.prepare(&sql)
+                .and_then(|mut s| {
+                    let rows = s.query_map([], map_row)?;
+                    Ok(rows.filter_map(|r| r.ok()).collect())
+                })
+                .unwrap_or_default()
+        };
+
+        Ok(PaginatedResponse {
+            items: errors,
+            total,
+            page,
+            per_page: ERRORS_PER_PAGE,
+            total_pages,
+        })
+    })
+    .await;
+
+    match result {
+        Ok(Ok(data)) => Json(data).into_response(),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    }
+}
+
+/// POST /admin/api/errors/:id/resolve — mark error as resolved.
+async fn admin_api_error_resolve(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Path(error_id): Path<i64>,
+) -> Response {
+    let admin_id = match verify_admin(&header_map, &state.bot_token) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let db = state.shared_storage.sqlite_pool();
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.execute(
+            "UPDATE error_log SET resolved = 1 WHERE id = ?1",
+            rusqlite::params![error_id],
+        )
+    })
+    .await;
+
+    match result {
+        Ok(Ok(0)) => (StatusCode::NOT_FOUND, "Error not found").into_response(),
+        Ok(Ok(_)) => {
+            log::info!("Admin {} resolved error {}", admin_id, error_id);
+            Json(json!({"ok": true})).into_response()
+        }
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    }
+}
+
+// --- Feedback API ---
+
+const FEEDBACK_PER_PAGE: u32 = 50;
+
+/// GET /admin/api/feedback — paginated feedback messages.
+async fn admin_api_feedback(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Query(q): Query<FeedbackQuery>,
+) -> Response {
+    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+        return resp;
+    }
+    let page = q.page.unwrap_or(1).max(1);
+    let status_filter = q.status.unwrap_or_default();
+    let offset = ((page - 1) * FEEDBACK_PER_PAGE) as i64;
+    let db = state.shared_storage.sqlite_pool();
+
+    let result = tokio::task::spawn_blocking(move || -> Result<PaginatedResponse<ApiFeedback>, rusqlite::Error> {
+        let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let where_clause = match status_filter.as_str() {
+            "new" | "reviewed" | "replied" => format!("WHERE status = '{}'", status_filter),
+            _ => String::new(),
+        };
+
+        let total: i64 = conn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM feedback_messages {}", where_clause),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let total_pages = ((total as f64) / FEEDBACK_PER_PAGE as f64).ceil() as u32;
+
+        let sql = format!(
+            "SELECT id, user_id, COALESCE(username, ''), COALESCE(first_name, ''), \
+                    message, status, COALESCE(admin_reply, ''), created_at \
+             FROM feedback_messages {} ORDER BY created_at DESC LIMIT {} OFFSET {}",
+            where_clause, FEEDBACK_PER_PAGE, offset
+        );
+
+        let feedback: Vec<ApiFeedback> = conn
+            .prepare(&sql)
+            .and_then(|mut s| {
+                let rows = s.query_map([], |r| {
+                    Ok(ApiFeedback {
+                        id: r.get(0)?,
+                        user_id: r.get(1)?,
+                        username: r.get(2)?,
+                        first_name: r.get(3)?,
+                        message: r.get(4)?,
+                        status: r.get(5)?,
+                        admin_reply: r.get(6)?,
+                        created_at: r.get(7)?,
+                    })
+                })?;
+                Ok(rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default();
+
+        Ok(PaginatedResponse {
+            items: feedback,
+            total,
+            page,
+            per_page: FEEDBACK_PER_PAGE,
+            total_pages,
+        })
+    })
+    .await;
+
+    match result {
+        Ok(Ok(data)) => Json(data).into_response(),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    }
+}
+
+/// POST /admin/api/feedback/:id/status — update feedback status.
+async fn admin_api_feedback_status(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Path(feedback_id): Path<i64>,
+    Json(body): Json<FeedbackStatusReq>,
+) -> Response {
+    let admin_id = match verify_admin(&header_map, &state.bot_token) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let valid = ["new", "reviewed", "replied"];
+    if !valid.contains(&body.status.as_str()) {
+        return (StatusCode::BAD_REQUEST, "Invalid status").into_response();
+    }
+    let db = state.shared_storage.sqlite_pool();
+    let status = body.status.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.execute(
+            "UPDATE feedback_messages SET status = ?1 WHERE id = ?2",
+            rusqlite::params![status, feedback_id],
+        )
+    })
+    .await;
+
+    match result {
+        Ok(Ok(0)) => (StatusCode::NOT_FOUND, "Feedback not found").into_response(),
+        Ok(Ok(_)) => {
+            log::info!("Admin {} updated feedback {} to {}", admin_id, feedback_id, body.status);
+            Json(json!({"ok": true, "status": body.status})).into_response()
+        }
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    }
+}
+
+// --- Alerts API ---
+
+const ALERTS_PER_PAGE: u32 = 50;
+
+/// GET /admin/api/alerts — paginated alert history.
+async fn admin_api_alerts(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Query(q): Query<AlertQuery>,
+) -> Response {
+    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+        return resp;
+    }
+    let page = q.page.unwrap_or(1).max(1);
+    let severity_filter = q.severity.unwrap_or_default();
+    let offset = ((page - 1) * ALERTS_PER_PAGE) as i64;
+    let db = state.shared_storage.sqlite_pool();
+
+    let result = tokio::task::spawn_blocking(move || -> Result<PaginatedResponse<ApiAlert>, rusqlite::Error> {
+        let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let where_clause = match severity_filter.as_str() {
+            "critical" | "warning" | "info" => format!("WHERE severity = '{}'", severity_filter),
+            "unresolved" => "WHERE resolved_at IS NULL".to_string(),
+            "unacked" => "WHERE COALESCE(acknowledged, 0) = 0".to_string(),
+            _ => String::new(),
+        };
+
+        let total: i64 = conn
+            .query_row(
+                &format!("SELECT COUNT(*) FROM alert_history {}", where_clause),
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let total_pages = ((total as f64) / ALERTS_PER_PAGE as f64).ceil() as u32;
+
+        let sql = format!(
+            "SELECT id, COALESCE(alert_type, ''), COALESCE(severity, ''), \
+                    COALESCE(message, ''), COALESCE(metadata, ''), \
+                    COALESCE(triggered_at, ''), COALESCE(resolved_at, ''), \
+                    COALESCE(acknowledged, 0) \
+             FROM alert_history {} ORDER BY triggered_at DESC LIMIT {} OFFSET {}",
+            where_clause, ALERTS_PER_PAGE, offset
+        );
+
+        let alerts: Vec<ApiAlert> = conn
+            .prepare(&sql)
+            .and_then(|mut s| {
+                let rows = s.query_map([], |r| {
+                    Ok(ApiAlert {
+                        id: r.get(0)?,
+                        alert_type: r.get(1)?,
+                        severity: r.get(2)?,
+                        message: r.get(3)?,
+                        metadata: r.get(4)?,
+                        triggered_at: r.get(5)?,
+                        resolved_at: r.get(6)?,
+                        acknowledged: r.get::<_, i64>(7)? != 0,
+                    })
+                })?;
+                Ok(rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default();
+
+        Ok(PaginatedResponse {
+            items: alerts,
+            total,
+            page,
+            per_page: ALERTS_PER_PAGE,
+            total_pages,
+        })
+    })
+    .await;
+
+    match result {
+        Ok(Ok(data)) => Json(data).into_response(),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    }
+}
+
+/// POST /admin/api/alerts/:id/acknowledge — acknowledge an alert.
+async fn admin_api_alert_acknowledge(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Path(alert_id): Path<i64>,
+) -> Response {
+    let admin_id = match verify_admin(&header_map, &state.bot_token) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    let db = state.shared_storage.sqlite_pool();
+    let result = tokio::task::spawn_blocking(move || {
+        let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        conn.execute(
+            "UPDATE alert_history SET acknowledged = 1, acknowledged_at = datetime('now') WHERE id = ?1",
+            rusqlite::params![alert_id],
+        )
+    })
+    .await;
+
+    match result {
+        Ok(Ok(0)) => (StatusCode::NOT_FOUND, "Alert not found").into_response(),
+        Ok(Ok(_)) => {
+            log::info!("Admin {} acknowledged alert {}", admin_id, alert_id);
+            Json(json!({"ok": true})).into_response()
+        }
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    }
+}
+
+// --- User Details API ---
+
+/// GET /admin/api/users/:id/details — full user profile with stats, downloads, charges.
+async fn admin_api_user_details(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Path(user_id): Path<i64>,
+) -> Response {
+    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+        return resp;
+    }
+    let db = state.shared_storage.sqlite_pool();
+
+    let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, rusqlite::Error> {
+        let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
+
+        // User info
+        let user = conn.query_row(
+            "SELECT u.telegram_id, COALESCE(u.username, ''), COALESCE(u.plan, 'free'), \
+                    COALESCE(u.is_blocked, 0), COALESCE(u.language, 'ru'), \
+                    (SELECT COUNT(*) FROM download_history WHERE user_id = u.telegram_id) \
+             FROM users u WHERE u.telegram_id = ?1",
+            rusqlite::params![user_id],
+            |r| {
+                Ok(json!({
+                    "telegram_id": r.get::<_, i64>(0)?,
+                    "username": r.get::<_, String>(1)?,
+                    "plan": r.get::<_, String>(2)?,
+                    "is_blocked": r.get::<_, i64>(3)? != 0,
+                    "language": r.get::<_, String>(4)?,
+                    "download_count": r.get::<_, i64>(5)?,
+                }))
+            },
+        );
+        let user = match user {
+            Ok(u) => u,
+            Err(_) => return Ok(json!({"error": "not_found"})),
+        };
+
+        // Subscription
+        let sub = conn
+            .query_row(
+                "SELECT COALESCE(plan, 'free'), COALESCE(expires_at, ''), \
+                    COALESCE(telegram_charge_id, ''), COALESCE(is_recurring, 0) \
+             FROM subscriptions WHERE user_id = ?1",
+                rusqlite::params![user_id],
+                |r| {
+                    Ok(json!({
+                        "plan": r.get::<_, String>(0)?,
+                        "expires_at": r.get::<_, String>(1)?,
+                        "charge_id": r.get::<_, String>(2)?,
+                        "is_recurring": r.get::<_, i64>(3)? != 0,
+                    }))
+                },
+            )
+            .ok();
+
+        // Stats
+        let total_downloads: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM download_history WHERE user_id = ?1",
+                rusqlite::params![user_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let total_size: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(COALESCE(file_size, 0)), 0) FROM download_history WHERE user_id = ?1",
+                rusqlite::params![user_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let active_days: i64 = conn
+            .query_row(
+                "SELECT COUNT(DISTINCT date(downloaded_at)) FROM download_history WHERE user_id = ?1",
+                rusqlite::params![user_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        let top_artists: Vec<serde_json::Value> = conn
+            .prepare(
+                "SELECT COALESCE(author, 'Unknown'), COUNT(*) FROM download_history \
+             WHERE user_id = ?1 AND author IS NOT NULL AND author != '' \
+             GROUP BY author ORDER BY COUNT(*) DESC LIMIT 5",
+            )
+            .and_then(|mut s| {
+                let rows = s.query_map(rusqlite::params![user_id], |r| {
+                    Ok(json!([r.get::<_, String>(0)?, r.get::<_, i64>(1)?]))
+                })?;
+                Ok(rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default();
+
+        let top_formats: Vec<serde_json::Value> = conn
+            .prepare(
+                "SELECT COALESCE(format, 'unknown'), COUNT(*) FROM download_history \
+             WHERE user_id = ?1 GROUP BY format ORDER BY COUNT(*) DESC",
+            )
+            .and_then(|mut s| {
+                let rows = s.query_map(rusqlite::params![user_id], |r| {
+                    Ok(json!([r.get::<_, String>(0)?, r.get::<_, i64>(1)?]))
+                })?;
+                Ok(rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default();
+
+        // Recent downloads (last 20)
+        let downloads: Vec<serde_json::Value> = conn
+            .prepare(
+                "SELECT COALESCE(title, ''), COALESCE(author, ''), COALESCE(format, ''), \
+                    file_size, duration, downloaded_at \
+             FROM download_history WHERE user_id = ?1 ORDER BY downloaded_at DESC LIMIT 20",
+            )
+            .and_then(|mut s| {
+                let rows = s.query_map(rusqlite::params![user_id], |r| {
+                    Ok(json!({
+                        "title": r.get::<_, String>(0)?,
+                        "author": r.get::<_, String>(1)?,
+                        "format": r.get::<_, String>(2)?,
+                        "file_size": r.get::<_, Option<i64>>(3)?,
+                        "duration": r.get::<_, Option<i64>>(4)?,
+                        "downloaded_at": r.get::<_, String>(5)?,
+                    }))
+                })?;
+                Ok(rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default();
+
+        // Charges
+        let charges: Vec<serde_json::Value> = conn
+            .prepare(
+                "SELECT COALESCE(plan, ''), total_amount, COALESCE(currency, 'XTR'), \
+                    COALESCE(is_recurring, 0), COALESCE(payment_date, '') \
+             FROM charges WHERE user_id = ?1 ORDER BY payment_date DESC LIMIT 20",
+            )
+            .and_then(|mut s| {
+                let rows = s.query_map(rusqlite::params![user_id], |r| {
+                    Ok(json!({
+                        "plan": r.get::<_, String>(0)?,
+                        "amount": r.get::<_, i64>(1)?,
+                        "currency": r.get::<_, String>(2)?,
+                        "is_recurring": r.get::<_, i64>(3)? != 0,
+                        "payment_date": r.get::<_, String>(4)?,
+                    }))
+                })?;
+                Ok(rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default();
+
+        // Recent errors
+        let errors: Vec<serde_json::Value> = conn
+            .prepare(
+                "SELECT COALESCE(timestamp, ''), COALESCE(error_type, ''), COALESCE(error_message, '') \
+             FROM error_log WHERE user_id = ?1 ORDER BY timestamp DESC LIMIT 10",
+            )
+            .and_then(|mut s| {
+                let rows = s.query_map(rusqlite::params![user_id], |r| {
+                    Ok(json!({
+                        "timestamp": r.get::<_, String>(0)?,
+                        "error_type": r.get::<_, String>(1)?,
+                        "error_message": r.get::<_, String>(2)?,
+                    }))
+                })?;
+                Ok(rows.filter_map(|r| r.ok()).collect())
+            })
+            .unwrap_or_default();
+
+        Ok(json!({
+            "user": user,
+            "subscription": sub,
+            "stats": {
+                "total_downloads": total_downloads,
+                "total_size": total_size,
+                "active_days": active_days,
+                "top_artists": top_artists,
+                "top_formats": top_formats,
+            },
+            "recent_downloads": downloads,
+            "charges": charges,
+            "errors": errors,
+        }))
+    })
+    .await;
+
+    match result {
+        Ok(Ok(ref data)) if data.get("error").is_some() => (StatusCode::NOT_FOUND, "User not found").into_response(),
+        Ok(Ok(data)) => Json(data).into_response(),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    }
+}
+
+// --- System Health API ---
+
+/// GET /admin/api/health — system health overview.
+async fn admin_api_health(State(state): State<WebState>, header_map: HeaderMap) -> Response {
+    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+        return resp;
+    }
+    let db = state.shared_storage.sqlite_pool();
+
+    let result = tokio::task::spawn_blocking(move || -> serde_json::Value {
+        let ytdlp_version = std::process::Command::new("yt-dlp")
+            .arg("--version")
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8(o.stdout).ok())
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| "not found".to_string());
+
+        let conn = match get_connection(&db) {
+            Ok(c) => c,
+            Err(_) => return json!({"ytdlp_version": ytdlp_version, "db_error": true}),
+        };
+
+        // Queue breakdown by status
+        let mut queue = serde_json::Map::new();
+        if let Ok(mut stmt) =
+            conn.prepare("SELECT COALESCE(status, 'unknown'), COUNT(*) FROM task_queue GROUP BY status")
+        {
+            if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))) {
+                for row in rows.flatten() {
+                    queue.insert(row.0, json!(row.1));
+                }
+            }
+        }
+
+        // Error rate last 24h by type
+        let mut error_types = serde_json::Map::new();
+        let errors_24h: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM error_log WHERE timestamp >= datetime('now', '-24 hours')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        if let Ok(mut stmt) = conn.prepare(
+            "SELECT COALESCE(error_type, 'unknown'), COUNT(*) FROM error_log \
+             WHERE timestamp >= datetime('now', '-24 hours') GROUP BY error_type ORDER BY COUNT(*) DESC LIMIT 10",
+        ) {
+            if let Ok(rows) = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))) {
+                for row in rows.flatten() {
+                    error_types.insert(row.0, json!(row.1));
+                }
+            }
+        }
+
+        // Unacked alerts & unread feedback
+        let unacked_alerts: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM alert_history WHERE COALESCE(acknowledged, 0) = 0 AND resolved_at IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        let unread_feedback: i64 = conn
+            .query_row("SELECT COUNT(*) FROM feedback_messages WHERE status = 'new'", [], |r| {
+                r.get(0)
+            })
+            .unwrap_or(0);
+
+        // DB size
+        let db_size: i64 = conn
+            .query_row(
+                "SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+
+        json!({
+            "ytdlp_version": ytdlp_version,
+            "queue": queue,
+            "errors_24h": errors_24h,
+            "error_types": error_types,
+            "unacked_alerts": unacked_alerts,
+            "unread_feedback": unread_feedback,
+            "db_size": db_size,
+        })
+    })
+    .await;
+
+    match result {
+        Ok(data) => Json(data).into_response(),
+        Err(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Error").into_response(),
+    }
+}
+
+// --- Broadcast API ---
+
+/// POST /admin/api/broadcast — send message to one user or broadcast to all.
+async fn admin_api_broadcast(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Json(body): Json<BroadcastReq>,
+) -> Response {
+    let admin_id = match verify_admin(&header_map, &state.bot_token) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+    if body.message.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, "Empty message").into_response();
+    }
+    if body.message.len() > 4096 {
+        return (StatusCode::BAD_REQUEST, "Message too long (max 4096)").into_response();
+    }
+
+    let bot_token = state.bot_token.clone();
+
+    if body.target != "all" {
+        // Send to specific user
+        let target_id: i64 = match body.target.parse() {
+            Ok(id) => id,
+            Err(_) => return (StatusCode::BAD_REQUEST, "Invalid target ID").into_response(),
+        };
+
+        let client = reqwest::Client::new();
+        let resp = client
+            .post(format!("https://api.telegram.org/bot{}/sendMessage", bot_token))
+            .json(&json!({"chat_id": target_id, "text": body.message}))
+            .send()
+            .await;
+
+        match resp {
+            Ok(r) if r.status().is_success() => {
+                log::info!("Admin {} sent message to user {}", admin_id, target_id);
+                Json(json!({"ok": true, "sent": 1, "blocked": 0, "failed": 0})).into_response()
+            }
+            Ok(r) => {
+                let text = r.text().await.unwrap_or_default();
+                if text.contains("Forbidden") || text.contains("blocked") {
+                    Json(json!({"ok": true, "sent": 0, "blocked": 1, "failed": 0})).into_response()
+                } else {
+                    log::warn!("Telegram send error to {}: {}", target_id, text);
+                    (StatusCode::BAD_REQUEST, "Telegram error").into_response()
+                }
+            }
+            Err(e) => {
+                log::error!("Broadcast request error: {}", e);
+                (StatusCode::INTERNAL_SERVER_ERROR, "Request failed").into_response()
+            }
+        }
+    } else {
+        // Broadcast to all users — runs in background
+        let db = state.shared_storage.sqlite_pool();
+        let message = body.message.clone();
+
+        let user_ids: Vec<i64> = tokio::task::spawn_blocking(move || {
+            let conn = match get_connection(&db) {
+                Ok(c) => c,
+                Err(_) => return vec![],
+            };
+            conn.prepare("SELECT telegram_id FROM users WHERE COALESCE(is_blocked, 0) = 0")
+                .and_then(|mut s| {
+                    let rows = s.query_map([], |r| r.get::<_, i64>(0))?;
+                    Ok(rows.filter_map(|r| r.ok()).collect())
+                })
+                .unwrap_or_default()
+        })
+        .await
+        .unwrap_or_default();
+
+        let total = user_ids.len();
+        log::info!("Admin {} started broadcast to {} users", admin_id, total);
+
+        // Fire-and-forget background task
+        tokio::spawn(async move {
+            let client = reqwest::Client::new();
+            let (mut sent, mut blocked, mut failed) = (0u32, 0u32, 0u32);
+            for uid in &user_ids {
+                if *uid == admin_id {
+                    continue;
+                }
+                let resp = client
+                    .post(format!("https://api.telegram.org/bot{}/sendMessage", bot_token))
+                    .json(&json!({"chat_id": uid, "text": message}))
+                    .send()
+                    .await;
+                match resp {
+                    Ok(r) if r.status().is_success() => sent += 1,
+                    Ok(r) => {
+                        let text = r.text().await.unwrap_or_default();
+                        if text.contains("Forbidden") || text.contains("blocked") || text.contains("not found") {
+                            blocked += 1;
+                        } else {
+                            failed += 1;
+                        }
+                    }
+                    Err(_) => failed += 1,
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(35)).await;
+            }
+            log::info!("Broadcast done: sent={}, blocked={}, failed={}", sent, blocked, failed);
+        });
+
+        Json(json!({"ok": true, "total": total, "status": "broadcasting"})).into_response()
+    }
+}
+
 // --- Admin Stats ---
 
 struct AdminStats {
@@ -1215,8 +2235,6 @@ struct AdminStats {
     new_users_today: i64,
     // Downloads per day — (date_str, count), last 30 days, chronological order
     downloads_per_day: Vec<(String, i64)>,
-    // Recent errors — (timestamp, error_type, error_message, url, user_id)
-    recent_errors: Vec<(String, String, String, String, String)>,
     // Format distribution — (format, count)
     format_dist: Vec<(String, i64)>,
 }
@@ -1233,7 +2251,6 @@ fn fetch_admin_stats(db: &Arc<DbPool>) -> AdminStats {
                 downloads_today: 0,
                 new_users_today: 0,
                 downloads_per_day: vec![],
-                recent_errors: vec![],
                 format_dist: vec![],
             };
         }
@@ -1297,32 +2314,6 @@ fn fetch_admin_stats(db: &Arc<DbPool>) -> AdminStats {
         })
         .unwrap_or_default();
 
-    // Last 20 errors
-    let recent_errors = conn
-        .prepare(
-            "SELECT timestamp, \
-                    COALESCE(error_type, ''), \
-                    COALESCE(error_message, ''), \
-                    COALESCE(url, ''), \
-                    COALESCE(CAST(user_id AS TEXT), '') \
-             FROM error_log \
-             ORDER BY timestamp DESC \
-             LIMIT 20",
-        )
-        .and_then(|mut s| {
-            let rows = s.query_map([], |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, String>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, String>(3)?,
-                    r.get::<_, String>(4)?,
-                ))
-            })?;
-            Ok(rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
-        })
-        .unwrap_or_default();
-
     // Format distribution
     let format_dist = conn
         .prepare(
@@ -1345,7 +2336,6 @@ fn fetch_admin_stats(db: &Arc<DbPool>) -> AdminStats {
         downloads_today,
         new_users_today,
         downloads_per_day,
-        recent_errors,
         format_dist,
     }
 }
@@ -1363,32 +2353,6 @@ fn fmt_num(n: i64) -> String {
         out.push(b as char);
     }
     out
-}
-
-/// Truncate a string for display (adds … if needed).
-fn truncate(s: &str, max: usize) -> String {
-    let chars: Vec<char> = s.chars().collect();
-    if chars.len() <= max {
-        s.to_owned()
-    } else {
-        chars[..max].iter().collect::<String>() + "…"
-    }
-}
-
-/// Return a colour class name for an error type.
-fn error_type_class(error_type: &str) -> &'static str {
-    let t = error_type.to_lowercase();
-    if t.contains("network") || t.contains("timeout") || t.contains("connect") {
-        "err-network"
-    } else if t.contains("auth") || t.contains("permission") || t.contains("forbidden") {
-        "err-auth"
-    } else if t.contains("download") || t.contains("yt") || t.contains("youtube") {
-        "err-download"
-    } else if t.contains("db") || t.contains("sql") || t.contains("database") {
-        "err-db"
-    } else {
-        "err-other"
-    }
 }
 
 fn render_admin_dashboard(stats: &AdminStats) -> String {
@@ -1473,36 +2437,6 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
     }
     if chart_html.is_empty() {
         chart_html = r#"<div class="empty-state">No download data yet.</div>"#.to_owned();
-    }
-
-    // --- Recent errors ---
-    let mut errors_html = String::new();
-    for (ts, error_type, msg, url, uid) in &stats.recent_errors {
-        let short_ts = ts.get(..16).unwrap_or(ts);
-        let ec = error_type_class(error_type);
-        let short_url = if url.chars().count() > 48 {
-            format!("{}…", url.chars().take(48).collect::<String>())
-        } else {
-            url.clone()
-        };
-        errors_html.push_str(&format!(
-            r#"<tr>
-                <td class="dim mono">{ts}</td>
-                <td><span class="err-badge {ec}">{etype}</span></td>
-                <td class="msg-cell">{msg}</td>
-                <td class="dim mono small">{url}</td>
-                <td class="dim mono">{uid}</td>
-            </tr>"#,
-            ts = html_escape(short_ts),
-            ec = ec,
-            etype = html_escape(error_type),
-            msg = html_escape(&truncate(msg, 80)),
-            url = html_escape(&short_url),
-            uid = html_escape(uid),
-        ));
-    }
-    if errors_html.is_empty() {
-        errors_html = r#"<tr><td colspan="5" class="empty-state">No errors. 🎉</td></tr>"#.to_owned();
     }
 
     // --- Format distribution ---
@@ -1618,7 +2552,11 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
         #tab-overview:checked ~ .tab-labels label[for="tab-overview"],
         #tab-users:checked   ~ .tab-labels label[for="tab-users"],
         #tab-dl:checked      ~ .tab-labels label[for="tab-dl"],
-        #tab-errors:checked  ~ .tab-labels label[for="tab-errors"] {{
+        #tab-errors:checked  ~ .tab-labels label[for="tab-errors"],
+        #tab-queue:checked   ~ .tab-labels label[for="tab-queue"],
+        #tab-health:checked  ~ .tab-labels label[for="tab-health"],
+        #tab-feedback:checked ~ .tab-labels label[for="tab-feedback"],
+        #tab-alerts:checked  ~ .tab-labels label[for="tab-alerts"] {{
             background: var(--card);
             color: var(--text);
             border: 1px solid var(--border2);
@@ -1628,7 +2566,11 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
         #tab-overview:checked ~ .tab-contents #pane-overview,
         #tab-users:checked   ~ .tab-contents #pane-users,
         #tab-dl:checked      ~ .tab-contents #pane-dl,
-        #tab-errors:checked  ~ .tab-contents #pane-errors {{
+        #tab-errors:checked  ~ .tab-contents #pane-errors,
+        #tab-queue:checked   ~ .tab-contents #pane-queue,
+        #tab-health:checked  ~ .tab-contents #pane-health,
+        #tab-feedback:checked ~ .tab-contents #pane-feedback,
+        #tab-alerts:checked  ~ .tab-contents #pane-alerts {{
             display: block;
         }}
 
@@ -1858,6 +2800,72 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
         .modal-btn.confirm {{ background: var(--accent); color: #fff; }}
         .modal-btn.confirm.danger {{ background: var(--red); }}
 
+        /* ── Severity / status badges ── */
+        .sev-critical {{ background: rgba(239,68,68,0.15); color: #f87171; }}
+        .sev-warning  {{ background: rgba(245,158,11,0.15); color: #fbbf24; }}
+        .sev-info     {{ background: rgba(59,130,246,0.15); color: #60a5fa; }}
+        .status-new      {{ background: rgba(59,130,246,0.15); color: #60a5fa; }}
+        .status-reviewed {{ background: rgba(245,158,11,0.15); color: #fbbf24; }}
+        .status-replied  {{ background: rgba(34,197,94,0.12); color: #22c55e; }}
+        .status-pending    {{ background: rgba(245,158,11,0.15); color: #fbbf24; }}
+        .status-processing {{ background: rgba(59,130,246,0.15); color: #60a5fa; }}
+        .status-uploading  {{ background: rgba(124,106,255,0.18); color: #a799ff; }}
+        .status-completed  {{ background: rgba(34,197,94,0.12); color: #22c55e; }}
+        .status-dead_letter {{ background: rgba(239,68,68,0.15); color: #f87171; }}
+        .status-leased     {{ background: rgba(168,85,247,0.15); color: #c084fc; }}
+        .resolved-yes {{ opacity: 0.5; }}
+
+        /* ── Health grid ── */
+        .health-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: 16px; margin-bottom: 28px;
+        }}
+        .health-card {{
+            background: var(--card); border: 1px solid var(--border); border-radius: 14px;
+            padding: 20px; display: flex; flex-direction: column; gap: 8px;
+        }}
+        .health-card .hc-label {{ color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.06em; }}
+        .health-card .hc-value {{ font-size: 1.3rem; font-weight: 700; font-variant-numeric: tabular-nums; }}
+
+        /* ── Detail drawer (right slide-in) ── */
+        .detail-overlay {{
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+            z-index: 250; justify-content: flex-end;
+        }}
+        .detail-overlay.open {{ display: flex; }}
+        .detail-panel {{
+            background: var(--bg); width: min(560px, 90vw); height: 100vh;
+            overflow-y: auto; border-left: 1px solid var(--border2); padding: 28px;
+        }}
+        .detail-panel h2 {{ margin-bottom: 20px; font-size: 1.1rem; display: flex; justify-content: space-between; align-items: center; }}
+        .detail-panel .close-btn {{
+            background: none; border: 1px solid var(--border2); border-radius: 8px;
+            color: var(--muted); padding: 4px 12px; cursor: pointer; font-size: 0.82rem;
+        }}
+        .detail-section {{ margin-bottom: 24px; }}
+        .detail-section h3 {{ font-size: 0.82rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }}
+        .detail-row {{ display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 0.88rem; }}
+        .detail-row span:first-child {{ color: var(--muted); }}
+
+        /* ── Broadcast form ── */
+        .broadcast-area {{
+            display: flex; flex-direction: column; gap: 12px; padding: 20px;
+        }}
+        .broadcast-area textarea {{
+            background: var(--surface); color: var(--text); border: 1px solid var(--border2);
+            border-radius: 8px; padding: 12px; font-size: 0.88rem; min-height: 100px;
+            resize: vertical; outline: none; font-family: inherit;
+        }}
+        .broadcast-area textarea:focus {{ border-color: var(--accent); }}
+        .broadcast-area .send-btn {{
+            align-self: flex-end; padding: 8px 20px; border-radius: 8px;
+            border: none; background: var(--accent); color: #fff;
+            font-size: 0.85rem; font-weight: 500; cursor: pointer;
+        }}
+        .broadcast-area .send-btn:disabled {{ opacity: 0.4; cursor: default; }}
+        .tab-labels {{ flex-wrap: wrap; }}
+
         /* ── Two-column layout ── */
         .two-col {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }}
         @media (max-width: 768px) {{
@@ -1876,6 +2884,7 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
     <div class="topbar-brand">dora<span>dura</span></div>
     <div class="topbar-right">
         <span style="color:var(--muted);font-size:0.8rem;">Admin Dashboard</span>
+        <button class="logout" style="cursor:pointer;background:none;" onclick="openBroadcastFor('')">Broadcast</button>
         <a href="/admin/logout" class="logout">Logout</a>
     </div>
 </div>
@@ -1886,14 +2895,22 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
     <input type="radio" name="tab" id="tab-overview" class="tab-radio" checked>
     <input type="radio" name="tab" id="tab-users"    class="tab-radio">
     <input type="radio" name="tab" id="tab-dl"       class="tab-radio">
+    <input type="radio" name="tab" id="tab-queue"    class="tab-radio">
     <input type="radio" name="tab" id="tab-errors"   class="tab-radio">
+    <input type="radio" name="tab" id="tab-health"   class="tab-radio">
+    <input type="radio" name="tab" id="tab-feedback" class="tab-radio">
+    <input type="radio" name="tab" id="tab-alerts"   class="tab-radio">
 
     <div class="tabs-wrap">
         <div class="tab-labels">
             <label for="tab-overview" class="tab-label">Overview</label>
             <label for="tab-users"    class="tab-label">Users</label>
             <label for="tab-dl"       class="tab-label">Downloads</label>
+            <label for="tab-queue"    class="tab-label">Queue</label>
             <label for="tab-errors"   class="tab-label">Errors</label>
+            <label for="tab-health"   class="tab-label">Health</label>
+            <label for="tab-feedback" class="tab-label">Feedback</label>
+            <label for="tab-alerts"   class="tab-label">Alerts</label>
         </div>
     </div>
 
@@ -2016,30 +3033,151 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
         </div><!-- /pane-dl -->
 
         <!-- ══════════════════════════════════════════
-             Pane: Errors
+             Pane: Queue (dynamic via JS)
         ══════════════════════════════════════════ -->
-        <div class="tab-content" id="pane-errors">
+        <div class="tab-content" id="pane-queue">
+            <div class="toolbar">
+                <div class="filter-group">
+                    <button class="filter-btn active" data-qfilter="all">All</button>
+                    <button class="filter-btn" data-qfilter="active">Active</button>
+                    <button class="filter-btn" data-qfilter="pending">Pending</button>
+                    <button class="filter-btn" data-qfilter="processing">Processing</button>
+                    <button class="filter-btn" data-qfilter="completed">Completed</button>
+                    <button class="filter-btn" data-qfilter="dead_letter">Dead</button>
+                </div>
+            </div>
             <div class="panel">
-                <div class="panel-head">Recent 20 Errors</div>
                 <div class="tbl-wrap">
                     <table>
                         <thead>
                             <tr>
-                                <th>Time</th>
-                                <th>Type</th>
-                                <th>Message</th>
-                                <th>URL</th>
-                                <th>User</th>
+                                <th>ID</th><th>User</th><th>URL</th><th>Format</th>
+                                <th>Status</th><th>Retries</th><th>Worker</th>
+                                <th>Created</th><th>Actions</th>
                             </tr>
                         </thead>
-                        <tbody>{errors}</tbody>
+                        <tbody id="queue-tbody"><tr><td colspan="9" class="empty-state">Loading...</td></tr></tbody>
                     </table>
                 </div>
             </div>
+            <div id="queue-pagination" class="pagination"></div>
+        </div><!-- /pane-queue -->
+
+        <!-- ══════════════════════════════════════════
+             Pane: Errors (dynamic via JS)
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-errors">
+            <div class="toolbar">
+                <div class="filter-group">
+                    <button class="filter-btn active" data-efilter="all">All</button>
+                    <button class="filter-btn" data-efilter="no">Unresolved</button>
+                    <button class="filter-btn" data-efilter="yes">Resolved</button>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th><th>Type</th><th>Message</th>
+                                <th>URL</th><th>User</th><th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="errors-tbody"><tr><td colspan="6" class="empty-state">Loading...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+            <div id="errors-pagination" class="pagination"></div>
         </div><!-- /pane-errors -->
+
+        <!-- ══════════════════════════════════════════
+             Pane: Health (dynamic via JS)
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-health">
+            <div id="health-content"><div class="empty-state">Loading...</div></div>
+        </div><!-- /pane-health -->
+
+        <!-- ══════════════════════════════════════════
+             Pane: Feedback (dynamic via JS)
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-feedback">
+            <div class="toolbar">
+                <div class="filter-group">
+                    <button class="filter-btn active" data-ffilter="all">All</button>
+                    <button class="filter-btn" data-ffilter="new">New</button>
+                    <button class="filter-btn" data-ffilter="reviewed">Reviewed</button>
+                    <button class="filter-btn" data-ffilter="replied">Replied</button>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>User</th><th>Name</th><th>Message</th>
+                                <th>Status</th><th>Time</th><th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="feedback-tbody"><tr><td colspan="6" class="empty-state">Loading...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+            <div id="feedback-pagination" class="pagination"></div>
+        </div><!-- /pane-feedback -->
+
+        <!-- ══════════════════════════════════════════
+             Pane: Alerts (dynamic via JS)
+        ══════════════════════════════════════════ -->
+        <div class="tab-content" id="pane-alerts">
+            <div class="toolbar">
+                <div class="filter-group">
+                    <button class="filter-btn active" data-afilter="all">All</button>
+                    <button class="filter-btn" data-afilter="critical">Critical</button>
+                    <button class="filter-btn" data-afilter="warning">Warning</button>
+                    <button class="filter-btn" data-afilter="unacked">Unacked</button>
+                </div>
+            </div>
+            <div class="panel">
+                <div class="tbl-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th><th>Type</th><th>Severity</th>
+                                <th>Message</th><th>Status</th><th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="alerts-tbody"><tr><td colspan="6" class="empty-state">Loading...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+            <div id="alerts-pagination" class="pagination"></div>
+        </div><!-- /pane-alerts -->
 
     </div><!-- /tab-contents -->
 </div><!-- /page -->
+
+<!-- User detail drawer -->
+<div class="detail-overlay" id="detail-drawer">
+    <div class="detail-panel" id="detail-content">
+        <h2><span id="detail-title">User Details</span> <button class="close-btn" onclick="closeDetail()">Close</button></h2>
+        <div id="detail-body"><div class="empty-state">Loading...</div></div>
+    </div>
+</div>
+
+<!-- Broadcast modal -->
+<div class="modal-overlay" id="broadcast-modal">
+    <div class="modal" style="min-width:400px;">
+        <h3 id="bc-title">Send Message</h3>
+        <div class="broadcast-area">
+            <input type="text" id="bc-target" class="search-input" placeholder="User ID or 'all' for broadcast" style="min-width:100%;">
+            <textarea id="bc-message" placeholder="Message text..."></textarea>
+            <div style="display:flex;gap:8px;justify-content:flex-end;">
+                <button class="modal-btn cancel" onclick="closeBroadcast()">Cancel</button>
+                <button class="send-btn" id="bc-send" onclick="sendBroadcast()">Send</button>
+            </div>
+        </div>
+    </div>
+</div>
 
 <!-- User action modal -->
 <div class="modal-overlay" id="modal">
@@ -2056,14 +3194,18 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
 <script>
 (function() {{
     // --- State ---
-    let usersPage = 1, usersFilter = 'all', usersSearch = '';
-    let dlPage = 1, dlSearch = '';
-    let usersLoaded = false, dlLoaded = false;
-    let usersDebounce = null, dlDebounce = null;
+    let usersPage=1, usersFilter='all', usersSearch='';
+    let dlPage=1, dlSearch='';
+    let queuePage=1, queueFilter='all';
+    let errorsPage=1, errorsResolved='all';
+    let feedbackPage=1, feedbackFilter='all';
+    let alertsPage=1, alertsFilter='all';
+    const loaded = {{}};
+    let usersDebounce=null, dlDebounce=null;
 
     // --- Helpers ---
-    const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
-    const fmtNum = n => n.toLocaleString();
+    const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    const fmtNum = n => Number(n).toLocaleString();
     const fmtSize = b => {{
         if (!b) return '';
         if (b < 1024) return b + ' B';
@@ -2076,6 +3218,14 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
         return h > 0 ? h+':'+(m<10?'0':'')+m+':'+(sec<10?'0':'')+sec : m+':'+(sec<10?'0':'')+sec;
     }};
     const fmtTime = ts => ts ? ts.substring(0, 16).replace('T',' ') : '';
+    const errClass = t => {{
+        t = t.toLowerCase();
+        if (t.includes('network')||t.includes('timeout')) return 'err-network';
+        if (t.includes('auth')||t.includes('forbidden')) return 'err-auth';
+        if (t.includes('download')||t.includes('yt')) return 'err-download';
+        if (t.includes('db')||t.includes('sql')) return 'err-db';
+        return 'err-other';
+    }};
 
     async function api(url, opts) {{
         const resp = await fetch(url, opts);
@@ -2083,86 +3233,7 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
         if (!resp.ok) {{ const t = await resp.text(); alert('Error: ' + t); return null; }}
         return resp.json();
     }}
-
-    // --- Users ---
-    async function loadUsers() {{
-        const params = new URLSearchParams({{ page: usersPage, filter: usersFilter }});
-        if (usersSearch) params.set('search', usersSearch);
-        const data = await api('/admin/api/users?' + params);
-        if (!data) return;
-        renderUsers(data);
-    }}
-
-    function renderUsers(data) {{
-        const tb = document.getElementById('users-tbody');
-        if (!data.items.length) {{
-            tb.innerHTML = '<tr><td colspan="7" class="empty-state">No users found.</td></tr>';
-            document.getElementById('users-pagination').innerHTML = '';
-            return;
-        }}
-        tb.innerHTML = data.items.map(u => {{
-            const planCls = u.plan === 'vip' ? 'plan-vip' : u.plan === 'premium' ? 'plan-premium' : 'plan-free';
-            const statusBadge = u.is_blocked
-                ? '<span class="pill" style="background:rgba(239,68,68,0.15);color:#f87171;">Blocked</span>'
-                : '<span class="pill" style="background:rgba(34,197,94,0.12);color:#22c55e;">Active</span>';
-            return `<tr>
-                <td class="mono">${{u.telegram_id}}</td>
-                <td class="mono">${{u.username ? '@'+esc(u.username) : '<span class="dim">—</span>'}}</td>
-                <td>
-                    <select class="plan-select" onchange="changePlan(${{u.telegram_id}}, this.value)" data-uid="${{u.telegram_id}}">
-                        <option value="free" ${{u.plan==='free'?'selected':''}}>free</option>
-                        <option value="premium" ${{u.plan==='premium'?'selected':''}}>premium</option>
-                        <option value="vip" ${{u.plan==='vip'?'selected':''}}>vip</option>
-                    </select>
-                </td>
-                <td>${{fmtNum(u.download_count)}}</td>
-                <td class="dim">${{esc(u.language)}}</td>
-                <td>${{statusBadge}}</td>
-                <td>
-                    <div class="action-group">
-                        ${{u.is_blocked
-                            ? `<button class="act-btn success" onclick="toggleBlock(${{u.telegram_id}}, false)">Unblock</button>`
-                            : `<button class="act-btn danger" onclick="toggleBlock(${{u.telegram_id}}, true)">Block</button>`
-                        }}
-                    </div>
-                </td>
-            </tr>`;
-        }}).join('');
-        renderPagination('users-pagination', data, p => {{ usersPage = p; loadUsers(); }});
-    }}
-
-    // --- Downloads ---
-    async function loadDownloads() {{
-        const params = new URLSearchParams({{ page: dlPage }});
-        if (dlSearch) params.set('search', dlSearch);
-        const data = await api('/admin/api/downloads?' + params);
-        if (!data) return;
-        renderDownloads(data);
-    }}
-
-    function renderDownloads(data) {{
-        const tb = document.getElementById('dl-tbody');
-        if (!data.items.length) {{
-            tb.innerHTML = '<tr><td colspan="7" class="empty-state">No downloads found.</td></tr>';
-            document.getElementById('dl-pagination').innerHTML = '';
-            return;
-        }}
-        tb.innerHTML = data.items.map(d => {{
-            const titleLine = esc(d.title.length > 45 ? d.title.slice(0,45)+'…' : d.title);
-            const authorLine = d.author ? `<div class="dim small">${{esc(d.author)}}</div>` : '';
-            const quality = d.video_quality || d.audio_bitrate || '';
-            return `<tr>
-                <td class="title-cell">${{titleLine}}${{authorLine}}</td>
-                <td class="mono">@${{esc(d.user)}}</td>
-                <td><span class="fmt-badge">${{esc(d.format)}}</span></td>
-                <td class="dim">${{esc(quality)}}</td>
-                <td class="dim mono small">${{fmtSize(d.file_size)}}</td>
-                <td class="dim mono small">${{fmtDur(d.duration)}}</td>
-                <td class="dim small">${{fmtTime(d.downloaded_at)}}</td>
-            </tr>`;
-        }}).join('');
-        renderPagination('dl-pagination', data, p => {{ dlPage = p; loadDownloads(); }});
-    }}
+    const postJson = (url, body) => api(url, {{ method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify(body) }});
 
     // --- Pagination ---
     function renderPagination(elId, data, onPage) {{
@@ -2170,24 +3241,261 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
         if (data.total_pages <= 1) {{ el.innerHTML = ''; return; }}
         let html = `<span class="page-info">${{fmtNum(data.total)}} total — page ${{data.page}} of ${{data.total_pages}}</span>`;
         html += `<button class="page-btn" ${{data.page<=1?'disabled':''}} onclick="void(0)">‹ Prev</button>`;
-        const start = Math.max(1, data.page - 2);
-        const end = Math.min(data.total_pages, data.page + 2);
-        for (let p = start; p <= end; p++) {{
+        for (let p = Math.max(1,data.page-2); p <= Math.min(data.total_pages,data.page+2); p++)
             html += `<button class="page-btn ${{p===data.page?'active':''}}" onclick="void(0)">${{p}}</button>`;
-        }}
         html += `<button class="page-btn" ${{data.page>=data.total_pages?'disabled':''}} onclick="void(0)">Next ›</button>`;
         el.innerHTML = html;
-        el.querySelectorAll('.page-btn').forEach(btn => {{
-            btn.addEventListener('click', () => {{
-                const t = btn.textContent.trim();
-                if (t === '‹ Prev' && data.page > 1) onPage(data.page - 1);
-                else if (t === 'Next ›' && data.page < data.total_pages) onPage(data.page + 1);
-                else {{ const n = parseInt(t); if (!isNaN(n)) onPage(n); }}
-            }});
-        }});
+        el.querySelectorAll('.page-btn').forEach(btn => btn.addEventListener('click', () => {{
+            const t = btn.textContent.trim();
+            if (t === '‹ Prev' && data.page > 1) onPage(data.page - 1);
+            else if (t === 'Next ›' && data.page < data.total_pages) onPage(data.page + 1);
+            else {{ const n = parseInt(t); if (!isNaN(n)) onPage(n); }}
+        }}));
     }}
 
-    // --- Actions ---
+    // ══════ Users ══════
+    async function loadUsers() {{
+        const p = new URLSearchParams({{page:usersPage, filter:usersFilter}});
+        if (usersSearch) p.set('search', usersSearch);
+        const data = await api('/admin/api/users?'+p);
+        if (!data) return;
+        const tb = document.getElementById('users-tbody');
+        if (!data.items.length) {{ tb.innerHTML='<tr><td colspan="7" class="empty-state">No users found.</td></tr>'; document.getElementById('users-pagination').innerHTML=''; return; }}
+        tb.innerHTML = data.items.map(u => {{
+            const st = u.is_blocked ? '<span class="pill" style="background:rgba(239,68,68,0.15);color:#f87171;">Blocked</span>' : '<span class="pill" style="background:rgba(34,197,94,0.12);color:#22c55e;">Active</span>';
+            return `<tr style="cursor:pointer" onclick="openUserDetail(${{u.telegram_id}})">
+                <td class="mono">${{u.telegram_id}}</td>
+                <td class="mono">${{u.username?'@'+esc(u.username):'<span class="dim">—</span>'}}</td>
+                <td><select class="plan-select" onclick="event.stopPropagation()" onchange="changePlan(${{u.telegram_id}},this.value)">
+                    <option value="free" ${{u.plan==='free'?'selected':''}}>free</option>
+                    <option value="premium" ${{u.plan==='premium'?'selected':''}}>premium</option>
+                    <option value="vip" ${{u.plan==='vip'?'selected':''}}>vip</option>
+                </select></td>
+                <td>${{fmtNum(u.download_count)}}</td>
+                <td class="dim">${{esc(u.language)}}</td>
+                <td>${{st}}</td>
+                <td><div class="action-group" onclick="event.stopPropagation()">
+                    ${{u.is_blocked
+                        ? `<button class="act-btn success" onclick="toggleBlock(${{u.telegram_id}},false)">Unblock</button>`
+                        : `<button class="act-btn danger" onclick="toggleBlock(${{u.telegram_id}},true)">Block</button>`}}
+                    <button class="act-btn" onclick="openBroadcastFor(${{u.telegram_id}})">Msg</button>
+                </div></td></tr>`;
+        }}).join('');
+        renderPagination('users-pagination', data, p => {{ usersPage=p; loadUsers(); }});
+    }}
+
+    // ══════ Downloads ══════
+    async function loadDownloads() {{
+        const p = new URLSearchParams({{page:dlPage}});
+        if (dlSearch) p.set('search', dlSearch);
+        const data = await api('/admin/api/downloads?'+p);
+        if (!data) return;
+        const tb = document.getElementById('dl-tbody');
+        if (!data.items.length) {{ tb.innerHTML='<tr><td colspan="7" class="empty-state">No downloads.</td></tr>'; document.getElementById('dl-pagination').innerHTML=''; return; }}
+        tb.innerHTML = data.items.map(d => {{
+            const tl = esc(d.title.length>45?d.title.slice(0,45)+'…':d.title);
+            const al = d.author?`<div class="dim small">${{esc(d.author)}}</div>`:'';
+            const q = d.video_quality||d.audio_bitrate||'';
+            return `<tr><td class="title-cell">${{tl}}${{al}}</td><td class="mono">@${{esc(d.user)}}</td>
+                <td><span class="fmt-badge">${{esc(d.format)}}</span></td><td class="dim">${{esc(q)}}</td>
+                <td class="dim mono small">${{fmtSize(d.file_size)}}</td><td class="dim mono small">${{fmtDur(d.duration)}}</td>
+                <td class="dim small">${{fmtTime(d.downloaded_at)}}</td></tr>`;
+        }}).join('');
+        renderPagination('dl-pagination', data, p => {{ dlPage=p; loadDownloads(); }});
+    }}
+
+    // ══════ Queue ══════
+    async function loadQueue() {{
+        const p = new URLSearchParams({{page:queuePage}});
+        if (queueFilter!=='all') p.set('status', queueFilter);
+        const data = await api('/admin/api/queue?'+p);
+        if (!data) return;
+        const tb = document.getElementById('queue-tbody');
+        if (!data.items.length) {{ tb.innerHTML='<tr><td colspan="9" class="empty-state">Queue empty.</td></tr>'; document.getElementById('queue-pagination').innerHTML=''; return; }}
+        tb.innerHTML = data.items.map(t => {{
+            const shortUrl = t.url.length>40 ? t.url.slice(0,40)+'…' : t.url;
+            const shortId = t.id.length>8 ? t.id.slice(0,8)+'…' : t.id;
+            const canRetry = t.status==='dead_letter';
+            const canCancel = t.status==='pending'||t.status==='leased';
+            return `<tr>
+                <td class="mono small" title="${{esc(t.id)}}">${{esc(shortId)}}</td>
+                <td class="mono">${{t.username?'@'+esc(t.username):t.user_id}}</td>
+                <td class="small" title="${{esc(t.url)}}">${{esc(shortUrl)}}</td>
+                <td><span class="fmt-badge">${{esc(t.format)}}</span></td>
+                <td><span class="pill status-${{t.status}}">${{esc(t.status)}}</span></td>
+                <td class="dim">${{t.retry_count}}</td>
+                <td class="dim mono small">${{esc(t.worker_id||'—')}}</td>
+                <td class="dim small">${{fmtTime(t.created_at)}}</td>
+                <td><div class="action-group">
+                    ${{canRetry?`<button class="act-btn success" onclick="retryTask('${{t.id}}')">Retry</button>`:''}}
+                    ${{canCancel?`<button class="act-btn danger" onclick="cancelTask('${{t.id}}')">Cancel</button>`:''}}
+                </div></td></tr>`;
+        }}).join('');
+        renderPagination('queue-pagination', data, p => {{ queuePage=p; loadQueue(); }});
+    }}
+    window.retryTask = async id => {{ if (await postJson(`/admin/api/queue/${{id}}/retry`, {{}})) loadQueue(); }};
+    window.cancelTask = async id => {{ if (await postJson(`/admin/api/queue/${{id}}/cancel`, {{}})) loadQueue(); }};
+
+    // ══════ Errors ══════
+    async function loadErrors() {{
+        const p = new URLSearchParams({{page:errorsPage}});
+        if (errorsResolved!=='all') p.set('resolved', errorsResolved);
+        const data = await api('/admin/api/errors?'+p);
+        if (!data) return;
+        const tb = document.getElementById('errors-tbody');
+        if (!data.items.length) {{ tb.innerHTML='<tr><td colspan="6" class="empty-state">No errors. 🎉</td></tr>'; document.getElementById('errors-pagination').innerHTML=''; return; }}
+        tb.innerHTML = data.items.map(e => {{
+            const cls = e.resolved?'resolved-yes':'';
+            const shortUrl = e.url.length>40?e.url.slice(0,40)+'…':e.url;
+            return `<tr class="${{cls}}">
+                <td class="dim mono small">${{fmtTime(e.timestamp)}}</td>
+                <td><span class="err-badge ${{errClass(e.error_type)}}">${{esc(e.error_type)}}</span></td>
+                <td class="msg-cell" title="${{esc(e.error_message)}}">${{esc(e.error_message.length>60?e.error_message.slice(0,60)+'…':e.error_message)}}</td>
+                <td class="dim mono small" title="${{esc(e.url)}}">${{esc(shortUrl)}}</td>
+                <td class="dim mono">${{e.user_id||''}}</td>
+                <td>${{e.resolved?'<span class="dim">Resolved</span>':`<button class="act-btn success" onclick="resolveError(${{e.id}})">Resolve</button>`}}</td>
+            </tr>`;
+        }}).join('');
+        renderPagination('errors-pagination', data, p => {{ errorsPage=p; loadErrors(); }});
+    }}
+    window.resolveError = async id => {{ if (await postJson(`/admin/api/errors/${{id}}/resolve`, {{}})) loadErrors(); }};
+
+    // ══════ Health ══════
+    async function loadHealth() {{
+        const data = await api('/admin/api/health');
+        if (!data) return;
+        const el = document.getElementById('health-content');
+        const q = data.queue || {{}};
+        const qTotal = Object.values(q).reduce((a,b) => a+b, 0);
+        const et = data.error_types || {{}};
+        let queueHtml = Object.entries(q).map(([s,c]) => `<div class="detail-row"><span>${{esc(s)}}</span><strong>${{c}}</strong></div>`).join('');
+        let errHtml = Object.entries(et).map(([t,c]) => `<div class="detail-row"><span>${{esc(t)}}</span><strong>${{c}}</strong></div>`).join('');
+        el.innerHTML = `
+            <div class="health-grid">
+                <div class="health-card"><div class="hc-label">yt-dlp version</div><div class="hc-value">${{esc(data.ytdlp_version)}}</div></div>
+                <div class="health-card"><div class="hc-label">Queue Total</div><div class="hc-value">${{qTotal}}</div></div>
+                <div class="health-card"><div class="hc-label">Errors (24h)</div><div class="hc-value" style="color:${{data.errors_24h>0?'var(--red)':'inherit'}}">${{data.errors_24h}}</div></div>
+                <div class="health-card"><div class="hc-label">Unacked Alerts</div><div class="hc-value" style="color:${{data.unacked_alerts>0?'var(--yellow)':'inherit'}}">${{data.unacked_alerts}}</div></div>
+                <div class="health-card"><div class="hc-label">Unread Feedback</div><div class="hc-value">${{data.unread_feedback}}</div></div>
+                <div class="health-card"><div class="hc-label">DB Size</div><div class="hc-value">${{fmtSize(data.db_size)}}</div></div>
+            </div>
+            <div class="two-col">
+                <div class="panel"><div class="panel-head">Queue by Status</div><div style="padding:16px 20px;">${{queueHtml||'<div class="empty-state">Empty</div>'}}</div></div>
+                <div class="panel"><div class="panel-head">Errors by Type (24h)</div><div style="padding:16px 20px;">${{errHtml||'<div class="empty-state">No errors</div>'}}</div></div>
+            </div>`;
+    }}
+
+    // ══════ Feedback ══════
+    async function loadFeedback() {{
+        const p = new URLSearchParams({{page:feedbackPage}});
+        if (feedbackFilter!=='all') p.set('status', feedbackFilter);
+        const data = await api('/admin/api/feedback?'+p);
+        if (!data) return;
+        const tb = document.getElementById('feedback-tbody');
+        if (!data.items.length) {{ tb.innerHTML='<tr><td colspan="6" class="empty-state">No feedback yet.</td></tr>'; document.getElementById('feedback-pagination').innerHTML=''; return; }}
+        tb.innerHTML = data.items.map(f => `<tr>
+            <td class="mono">${{f.username?'@'+esc(f.username):f.user_id}}</td>
+            <td>${{esc(f.first_name)}}</td>
+            <td class="msg-cell" title="${{esc(f.message)}}">${{esc(f.message.length>60?f.message.slice(0,60)+'…':f.message)}}</td>
+            <td><span class="pill status-${{f.status}}">${{esc(f.status)}}</span></td>
+            <td class="dim small">${{fmtTime(f.created_at)}}</td>
+            <td><div class="action-group">
+                ${{f.status==='new'?`<button class="act-btn" onclick="markFeedback(${{f.id}},'reviewed')">Mark Read</button>`:''}}
+                <button class="act-btn" onclick="openBroadcastFor(${{f.user_id}})">Reply</button>
+            </div></td></tr>`).join('');
+        renderPagination('feedback-pagination', data, p => {{ feedbackPage=p; loadFeedback(); }});
+    }}
+    window.markFeedback = async (id,status) => {{ if (await postJson(`/admin/api/feedback/${{id}}/status`, {{status}})) loadFeedback(); }};
+
+    // ══════ Alerts ══════
+    async function loadAlerts() {{
+        const p = new URLSearchParams({{page:alertsPage}});
+        if (alertsFilter!=='all') p.set('severity', alertsFilter);
+        const data = await api('/admin/api/alerts?'+p);
+        if (!data) return;
+        const tb = document.getElementById('alerts-tbody');
+        if (!data.items.length) {{ tb.innerHTML='<tr><td colspan="6" class="empty-state">No alerts.</td></tr>'; document.getElementById('alerts-pagination').innerHTML=''; return; }}
+        tb.innerHTML = data.items.map(a => {{
+            const resolved = a.resolved_at ? `<span class="dim">Resolved ${{fmtTime(a.resolved_at)}}</span>` : '<span style="color:var(--yellow)">Active</span>';
+            return `<tr>
+                <td class="dim small">${{fmtTime(a.triggered_at)}}</td>
+                <td class="mono small">${{esc(a.alert_type)}}</td>
+                <td><span class="pill sev-${{a.severity}}">${{esc(a.severity)}}</span></td>
+                <td class="msg-cell" title="${{esc(a.message)}}">${{esc(a.message.length>60?a.message.slice(0,60)+'…':a.message)}}</td>
+                <td>${{resolved}}</td>
+                <td>${{a.acknowledged?'<span class="dim">Acked</span>':`<button class="act-btn" onclick="ackAlert(${{a.id}})">Ack</button>`}}</td>
+            </tr>`;
+        }}).join('');
+        renderPagination('alerts-pagination', data, p => {{ alertsPage=p; loadAlerts(); }});
+    }}
+    window.ackAlert = async id => {{ if (await postJson(`/admin/api/alerts/${{id}}/acknowledge`, {{}})) loadAlerts(); }};
+
+    // ══════ User Detail Drawer ══════
+    window.openUserDetail = async function(uid) {{
+        const drawer = document.getElementById('detail-drawer');
+        const body = document.getElementById('detail-body');
+        drawer.classList.add('open');
+        body.innerHTML = '<div class="empty-state">Loading...</div>';
+        const data = await api(`/admin/api/users/${{uid}}/details`);
+        if (!data || data.error) {{ body.innerHTML = '<div class="empty-state">User not found.</div>'; return; }}
+        const u = data.user, s = data.stats, sub = data.subscription;
+        document.getElementById('detail-title').textContent = u.username ? '@'+u.username : 'User '+u.telegram_id;
+        let html = `<div class="detail-section"><h3>Profile</h3>
+            <div class="detail-row"><span>Telegram ID</span><span class="mono">${{u.telegram_id}}</span></div>
+            <div class="detail-row"><span>Plan</span><span>${{u.plan}}</span></div>
+            <div class="detail-row"><span>Language</span><span>${{u.language}}</span></div>
+            <div class="detail-row"><span>Status</span><span>${{u.is_blocked?'Blocked':'Active'}}</span></div>
+            ${{sub?`<div class="detail-row"><span>Subscription</span><span>${{sub.plan}}${{sub.expires_at?' until '+fmtTime(sub.expires_at):''}}</span></div>
+            <div class="detail-row"><span>Recurring</span><span>${{sub.is_recurring?'Yes':'No'}}</span></div>`:''}}
+        </div>`;
+        html += `<div class="detail-section"><h3>Stats</h3>
+            <div class="detail-row"><span>Total Downloads</span><strong>${{fmtNum(s.total_downloads)}}</strong></div>
+            <div class="detail-row"><span>Total Size</span><strong>${{fmtSize(s.total_size)}}</strong></div>
+            <div class="detail-row"><span>Active Days</span><strong>${{s.active_days}}</strong></div>
+        </div>`;
+        if (s.top_artists && s.top_artists.length) {{
+            html += `<div class="detail-section"><h3>Top Artists</h3>${{s.top_artists.map(a => `<div class="detail-row"><span>${{esc(a[0])}}</span><span>${{a[1]}}</span></div>`).join('')}}</div>`;
+        }}
+        if (data.charges && data.charges.length) {{
+            html += `<div class="detail-section"><h3>Payments</h3>${{data.charges.map(c => `<div class="detail-row"><span>${{esc(c.plan)}} ${{c.is_recurring?'🔄':''}}</span><span>${{c.amount}} ${{esc(c.currency)}} — ${{fmtTime(c.payment_date)}}</span></div>`).join('')}}</div>`;
+        }}
+        if (data.recent_downloads && data.recent_downloads.length) {{
+            html += `<div class="detail-section"><h3>Recent Downloads</h3>${{data.recent_downloads.slice(0,10).map(d => `<div class="detail-row"><span>${{esc(d.title.length>30?d.title.slice(0,30)+'…':d.title)}}</span><span class="dim small">${{esc(d.format)}} · ${{fmtTime(d.downloaded_at)}}</span></div>`).join('')}}</div>`;
+        }}
+        if (data.errors && data.errors.length) {{
+            html += `<div class="detail-section"><h3>Recent Errors</h3>${{data.errors.map(e => `<div class="detail-row"><span class="err-badge ${{errClass(e.error_type)}}">${{esc(e.error_type)}}</span><span class="dim small">${{esc(e.error_message.length>40?e.error_message.slice(0,40)+'…':e.error_message)}}</span></div>`).join('')}}</div>`;
+        }}
+        html += `<div style="margin-top:20px;"><button class="act-btn" onclick="openBroadcastFor(${{u.telegram_id}})">Send Message</button></div>`;
+        body.innerHTML = html;
+    }};
+    window.closeDetail = () => document.getElementById('detail-drawer').classList.remove('open');
+    document.getElementById('detail-drawer').addEventListener('click', e => {{ if (e.target.id==='detail-drawer') closeDetail(); }});
+
+    // ══════ Broadcast ══════
+    window.openBroadcastFor = function(uid) {{
+        document.getElementById('bc-target').value = uid || '';
+        document.getElementById('bc-message').value = '';
+        document.getElementById('broadcast-modal').classList.add('open');
+    }};
+    window.closeBroadcast = () => document.getElementById('broadcast-modal').classList.remove('open');
+    document.getElementById('broadcast-modal').addEventListener('click', e => {{ if (e.target.id==='broadcast-modal') closeBroadcast(); }});
+    window.sendBroadcast = async function() {{
+        const target = document.getElementById('bc-target').value.trim();
+        const message = document.getElementById('bc-message').value.trim();
+        if (!target || !message) {{ alert('Fill in target and message'); return; }}
+        const btn = document.getElementById('bc-send');
+        btn.disabled = true; btn.textContent = 'Sending...';
+        const data = await postJson('/admin/api/broadcast', {{ target, message }});
+        btn.disabled = false; btn.textContent = 'Send';
+        if (data && data.ok) {{
+            if (data.status === 'broadcasting') alert(`Broadcasting to ${{data.total}} users...`);
+            else if (data.blocked > 0) alert('User has blocked the bot.');
+            else alert('Message sent!');
+            closeBroadcast();
+        }}
+    }};
+
+    // ══════ Modal (block/unblock) ══════
     let modalCallback = null;
     function openModal(title, body, btnText, isDanger, cb) {{
         document.getElementById('modal-title').textContent = title;
@@ -2198,85 +3506,53 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
         modalCallback = cb;
         document.getElementById('modal').classList.add('open');
     }}
-    window.closeModal = function() {{
-        document.getElementById('modal').classList.remove('open');
-        modalCallback = null;
-    }};
-    document.getElementById('modal-confirm').addEventListener('click', async () => {{
-        if (modalCallback) await modalCallback();
-        closeModal();
-    }});
+    window.closeModal = () => {{ document.getElementById('modal').classList.remove('open'); modalCallback=null; }};
+    document.getElementById('modal-confirm').addEventListener('click', async () => {{ if (modalCallback) await modalCallback(); closeModal(); }});
 
-    window.changePlan = async function(uid, plan) {{
-        const data = await api(`/admin/api/users/${{uid}}/plan`, {{
-            method: 'POST',
-            headers: {{ 'Content-Type': 'application/json' }},
-            body: JSON.stringify({{ plan }})
-        }});
-        if (data && data.ok) loadUsers();
+    window.changePlan = async (uid,plan) => {{ if (await postJson(`/admin/api/users/${{uid}}/plan`, {{plan}})) loadUsers(); }};
+    window.toggleBlock = (uid,block) => {{
+        const a = block?'Block':'Unblock';
+        openModal(a+' User', `Are you sure you want to ${{a.toLowerCase()}} user ${{uid}}?`, a, block,
+            async () => {{ if (await postJson(`/admin/api/users/${{uid}}/block`, {{blocked:block}})) loadUsers(); }});
     }};
 
-    window.toggleBlock = function(uid, block) {{
-        const action = block ? 'Block' : 'Unblock';
-        openModal(
-            action + ' User',
-            `Are you sure you want to ${{action.toLowerCase()}} user ${{uid}}?`,
-            action,
-            block,
-            async () => {{
-                const data = await api(`/admin/api/users/${{uid}}/block`, {{
-                    method: 'POST',
-                    headers: {{ 'Content-Type': 'application/json' }},
-                    body: JSON.stringify({{ blocked: block }})
-                }});
-                if (data && data.ok) loadUsers();
-            }}
-        );
-    }};
+    // ══════ Tab switching ══════
+    document.querySelectorAll('.tab-radio').forEach(r => r.addEventListener('change', () => {{
+        if (r.id==='tab-users'    && !loaded.users)    {{ loaded.users=1;    loadUsers(); }}
+        if (r.id==='tab-dl'       && !loaded.dl)       {{ loaded.dl=1;       loadDownloads(); }}
+        if (r.id==='tab-queue'    && !loaded.queue)    {{ loaded.queue=1;    loadQueue(); }}
+        if (r.id==='tab-errors'   && !loaded.errors)   {{ loaded.errors=1;   loadErrors(); }}
+        if (r.id==='tab-health'   && !loaded.health)   {{ loaded.health=1;   loadHealth(); }}
+        if (r.id==='tab-feedback' && !loaded.feedback) {{ loaded.feedback=1; loadFeedback(); }}
+        if (r.id==='tab-alerts'   && !loaded.alerts)   {{ loaded.alerts=1;   loadAlerts(); }}
+    }}));
 
-    // --- Tab switching: lazy load data ---
-    document.querySelectorAll('.tab-radio').forEach(radio => {{
-        radio.addEventListener('change', () => {{
-            if (radio.id === 'tab-users' && !usersLoaded) {{ usersLoaded = true; loadUsers(); }}
-            if (radio.id === 'tab-dl' && !dlLoaded) {{ dlLoaded = true; loadDownloads(); }}
-        }});
-    }});
-
-    // --- Filters ---
-    document.querySelectorAll('.filter-btn').forEach(btn => {{
-        btn.addEventListener('click', () => {{
-            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    // ══════ Filter buttons ══════
+    function bindFilters(attr, setter, loader) {{
+        document.querySelectorAll(`[${{attr}}]`).forEach(btn => btn.addEventListener('click', () => {{
+            btn.closest('.filter-group').querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
-            usersFilter = btn.dataset.filter;
-            usersPage = 1;
-            loadUsers();
-        }});
-    }});
+            setter(btn.getAttribute(attr));
+            loader();
+        }}));
+    }}
+    bindFilters('data-filter', v => {{ usersFilter=v; usersPage=1; }}, loadUsers);
+    bindFilters('data-qfilter', v => {{ queueFilter=v; queuePage=1; }}, loadQueue);
+    bindFilters('data-efilter', v => {{ errorsResolved=v; errorsPage=1; }}, loadErrors);
+    bindFilters('data-ffilter', v => {{ feedbackFilter=v; feedbackPage=1; }}, loadFeedback);
+    bindFilters('data-afilter', v => {{ alertsFilter=v; alertsPage=1; }}, loadAlerts);
 
-    // --- Search with debounce ---
+    // ══════ Search ══════
     const userSearchEl = document.getElementById('user-search');
-    if (userSearchEl) {{
-        userSearchEl.addEventListener('input', () => {{
-            clearTimeout(usersDebounce);
-            usersDebounce = setTimeout(() => {{
-                usersSearch = userSearchEl.value.trim();
-                usersPage = 1;
-                loadUsers();
-            }}, 300);
-        }});
-    }}
-
+    if (userSearchEl) userSearchEl.addEventListener('input', () => {{
+        clearTimeout(usersDebounce);
+        usersDebounce = setTimeout(() => {{ usersSearch=userSearchEl.value.trim(); usersPage=1; loadUsers(); }}, 300);
+    }});
     const dlSearchEl = document.getElementById('dl-search');
-    if (dlSearchEl) {{
-        dlSearchEl.addEventListener('input', () => {{
-            clearTimeout(dlDebounce);
-            dlDebounce = setTimeout(() => {{
-                dlSearch = dlSearchEl.value.trim();
-                dlPage = 1;
-                loadDownloads();
-            }}, 300);
-        }});
-    }}
+    if (dlSearchEl) dlSearchEl.addEventListener('input', () => {{
+        clearTimeout(dlDebounce);
+        dlDebounce = setTimeout(() => {{ dlSearch=dlSearchEl.value.trim(); dlPage=1; loadDownloads(); }}, 300);
+    }});
 }})();
 </script>
 
@@ -2285,7 +3561,6 @@ fn render_admin_dashboard(stats: &AdminStats) -> String {
         cards = cards_html,
         chart = chart_html,
         fmt = fmt_html,
-        errors = errors_html,
         active_tasks = fmt_num(stats.active_tasks),
         total_users = fmt_num(stats.total_users),
         total_dl = fmt_num(stats.total_downloads),

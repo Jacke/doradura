@@ -1670,7 +1670,7 @@ dependencies = [
 
 [[package]]
 name = "doracore"
-version = "0.17.4"
+version = "0.18.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2734,7 +2734,7 @@ dependencies = [
 
 [[package]]
 name = "health-monitor"
-version = "0.25.2"
+version = "0.25.3"
 dependencies = [
  "env_logger 0.11.9",
  "log",

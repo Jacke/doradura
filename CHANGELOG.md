@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Admin panel: **Queue Monitor** tab — live view of task queue with status filters (active/pending/processing/completed/dead), retry and cancel actions
+- Admin panel: **System Health** tab — yt-dlp version, queue breakdown by status, error rate (24h) by type, DB size, unacked alerts/unread feedback counters
+- Admin panel: **User Detail** drawer — click any user row to see full profile (subscription, stats, top artists, payments, recent downloads, errors)
+- Admin panel: **Feedback Inbox** tab — paginated feedback messages with status filters (new/reviewed/replied), mark-as-read action
+- Admin panel: **Alerts** tab — paginated alert history with severity filters (critical/warning/info/unacked), acknowledge action
+- Admin panel: **Broadcast** — send message to specific user or broadcast to all from topbar button; fire-and-forget background broadcast with rate limiting
+- Admin panel: Errors tab converted from static (last 20) to dynamic API-driven with pagination, resolved/unresolved filter, and per-error resolve button
+- Admin API: 13 new endpoints (`/admin/api/queue`, `/admin/api/errors`, `/admin/api/feedback`, `/admin/api/alerts`, `/admin/api/users/{id}/details`, `/admin/api/health`, `/admin/api/broadcast`)
+
 ### Changed
 - Split monolithic modules for maintainability: `db/mod.rs` (4909 -> 1617 lines, 8 new modules), `callback_router.rs` (3 files), `admin.rs` (7-file directory module), `commands.rs` (4-file directory module), `downloads.rs` (3-file directory module)
 
