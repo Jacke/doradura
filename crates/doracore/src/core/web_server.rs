@@ -344,6 +344,12 @@ struct BulkCancelReq {
     status: Option<String>,
 }
 
+/// Wrap a search term for SQL `LIKE ? ESCAPE '\'`, escaping `%`, `_` and `\`.
+fn like_param(term: &str) -> String {
+    let escaped = term.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+    format!("%{escaped}%")
+}
+
 /// Constant-time byte-level string comparison to prevent timing side-channels.
 fn constant_time_eq(a: &str, b: &str) -> bool {
     if a.len() != b.len() {
@@ -1206,8 +1212,10 @@ async fn admin_api_users(State(state): State<WebState>, header_map: HeaderMap, Q
         }
 
         let search_param = if !search.is_empty() {
-            conditions.push("(u.username LIKE ?1 OR CAST(u.telegram_id AS TEXT) LIKE ?1)".to_string());
-            Some(format!("%{}%", search))
+            conditions.push(
+                "(u.username LIKE ?1 ESCAPE '\\' OR CAST(u.telegram_id AS TEXT) LIKE ?1 ESCAPE '\\')".to_string(),
+            );
+            Some(like_param(&search))
         } else {
             None
         };
@@ -1409,11 +1417,11 @@ async fn admin_api_downloads(
         let search_param: Option<String> = if search.is_empty() {
             None
         } else {
-            Some(format!("%{}%", search))
+            Some(like_param(&search))
         };
 
         let where_clause = if search_param.is_some() {
-            "WHERE d.title LIKE ?1 OR COALESCE(d.author,'') LIKE ?1 OR COALESCE(u.username,'') LIKE ?1 OR CAST(d.user_id AS TEXT) LIKE ?1"
+            "WHERE d.title LIKE ?1 ESCAPE '\\' OR COALESCE(d.author,'') LIKE ?1 ESCAPE '\\' OR COALESCE(u.username,'') LIKE ?1 ESCAPE '\\' OR CAST(d.user_id AS TEXT) LIKE ?1 ESCAPE '\\'"
         } else {
             ""
         };
@@ -1511,11 +1519,11 @@ async fn admin_api_queue(
         let mut conditions = Vec::new();
         let search_param = if !search.is_empty() {
             conditions.push(
-                "(t.url LIKE ?1 OR COALESCE(u.username,'') LIKE ?1 \
-                 OR CAST(t.user_id AS TEXT) LIKE ?1 OR t.id LIKE ?1)"
+                "(t.url LIKE ?1 ESCAPE '\\' OR COALESCE(u.username,'') LIKE ?1 ESCAPE '\\' \
+                 OR CAST(t.user_id AS TEXT) LIKE ?1 ESCAPE '\\' OR t.id LIKE ?1 ESCAPE '\\')"
                     .to_string(),
             );
-            Some(format!("%{}%", search))
+            Some(like_param(&search))
         } else {
             None
         };
@@ -1694,15 +1702,15 @@ async fn admin_api_errors(
 
         let mut conditions = Vec::new();
         let search_param = if !type_filter.is_empty() {
-            conditions.push("error_type LIKE ?1".to_string());
-            Some(format!("%{}%", type_filter))
+            conditions.push("error_type LIKE ?1 ESCAPE '\\'".to_string());
+            Some(like_param(&type_filter))
         } else if !search_filter.is_empty() {
             conditions.push(
-                "(error_message LIKE ?1 OR COALESCE(error_type,'') LIKE ?1 \
-                 OR COALESCE(url,'') LIKE ?1 OR CAST(COALESCE(user_id,0) AS TEXT) LIKE ?1)"
+                "(error_message LIKE ?1 ESCAPE '\\' OR COALESCE(error_type,'') LIKE ?1 ESCAPE '\\' \
+                 OR COALESCE(url,'') LIKE ?1 ESCAPE '\\' OR CAST(COALESCE(user_id,0) AS TEXT) LIKE ?1 ESCAPE '\\')"
                     .to_string(),
             );
-            Some(format!("%{}%", search_filter))
+            Some(like_param(&search_filter))
         } else {
             None
         };
@@ -1840,9 +1848,9 @@ async fn admin_api_feedback(
         }
         let search_param = if !search.is_empty() {
             conditions.push(
-                "(message LIKE ?1 OR COALESCE(username,'') LIKE ?1 OR COALESCE(first_name,'') LIKE ?1)".to_string(),
+                "(message LIKE ?1 ESCAPE '\\' OR COALESCE(username,'') LIKE ?1 ESCAPE '\\' OR COALESCE(first_name,'') LIKE ?1 ESCAPE '\\')".to_string(),
             );
-            Some(format!("%{}%", search))
+            Some(like_param(&search))
         } else {
             None
         };
@@ -1979,8 +1987,8 @@ async fn admin_api_alerts(
             _ => {}
         }
         let search_param = if !search.is_empty() {
-            conditions.push("(COALESCE(alert_type,'') LIKE ?1 OR message LIKE ?1)".to_string());
-            Some(format!("%{}%", search))
+            conditions.push("(COALESCE(alert_type,'') LIKE ?1 ESCAPE '\\' OR message LIKE ?1 ESCAPE '\\')".to_string());
+            Some(like_param(&search))
         } else {
             None
         };
