@@ -1981,18 +1981,8 @@ async fn send_as_voice_segment(
         if seg_dur > 0 {
             cmd.arg("-t").arg(seg_dur.to_string());
         }
-        cmd.args([
-            "-c:a",
-            "libopus",
-            "-b:a",
-            "64k",
-            "-ac",
-            "1",
-            "-application",
-            "voip",
-            "-y",
-        ])
-        .arg(&out_str);
+        cmd.args(["-vn", "-ac", "1", "-ar", "48000", "-c:a", "libopus", "-y"])
+            .arg(&out_str);
         let output = cmd.output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

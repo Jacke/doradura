@@ -47,21 +47,12 @@ pub fn convert_wav_to_ogg_opus(input_path: &str, output_path: &str) -> Result<Op
         ));
     }
 
-    // Convert to OGG Opus — match voice_effects.rs params (proven to produce waveform)
+    // Convert to OGG Opus — params from proven working bot (azhinu/tg_audio2voice_bot)
+    // No -application voip, no -b:a — just codec + mono + 48kHz
     let output = ProcessCommand::new("ffmpeg")
         .arg("-i")
         .arg(input_path)
-        .args([
-            "-c:a",
-            "libopus",
-            "-b:a",
-            "64k",
-            "-ac",
-            "1",
-            "-application",
-            "voip",
-            "-y",
-        ])
+        .args(["-vn", "-ac", "1", "-ar", "48000", "-c:a", "libopus", "-y"])
         .arg(output_path)
         .output()?;
 
