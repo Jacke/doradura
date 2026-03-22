@@ -2027,7 +2027,14 @@ async fn send_as_voice_segment(
 
     // Always set duration — required for waveform. Fall back to segment length.
     let dur = result.unwrap_or(duration_secs.max(1) as u32);
-    log::info!("Voice: sending OGG file {:?} (duration={}s)", output_path, dur);
+    let file_size = tokio::fs::metadata(&output_path).await.map(|m| m.len()).unwrap_or(0);
+    log::info!(
+        "Voice: sending OGG file {:?} (duration={}s, size={}B / {}KB)",
+        output_path,
+        dur,
+        file_size,
+        file_size / 1024
+    );
 
     // Send directly via official Telegram API — Local Bot API strips waveform metadata
     let file_bytes = tokio::fs::read(&output_path)
