@@ -401,6 +401,11 @@ async fn send_lyrics_highlights(
 
     // Skip if ANTHROPIC_API_KEY is not configured
     if std::env::var("ANTHROPIC_API_KEY").is_err() {
+        log::warn!(
+            "Lyrics highlights: ANTHROPIC_API_KEY not set, skipping LLM highlights for '{} - {}'",
+            artist,
+            title
+        );
         return;
     }
 

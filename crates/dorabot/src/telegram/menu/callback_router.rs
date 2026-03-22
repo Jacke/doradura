@@ -351,10 +351,13 @@ pub async fn handle_menu_callback(
                             }
 
                             let new_keyboard = teloxide::types::InlineKeyboardMarkup::new(new_buttons);
-                            let _ = bot
-                                .edit_message_reply_markup(chat_id, message_id)
-                                .reply_markup(new_keyboard)
-                                .await;
+                            let _ = crate::telegram::styled::edit_message_reply_markup_styled(
+                                &bot,
+                                chat_id,
+                                message_id,
+                                &new_keyboard,
+                            )
+                            .await;
                             log::info!(
                                 "Lyrics toggle: {} → {} for user {}",
                                 if currently_on { "ON" } else { "OFF" },
@@ -414,10 +417,13 @@ pub async fn handle_menu_callback(
                             }
 
                             let new_keyboard = teloxide::types::InlineKeyboardMarkup::new(new_buttons);
-                            let _ = bot
-                                .edit_message_reply_markup(chat_id, message_id)
-                                .reply_markup(new_keyboard)
-                                .await;
+                            let _ = crate::telegram::styled::edit_message_reply_markup_styled(
+                                &bot,
+                                chat_id,
+                                message_id,
+                                &new_keyboard,
+                            )
+                            .await;
                             log::info!(
                                 "MP3 toggle: {} → {} for user {}",
                                 if currently_on { "ON" } else { "OFF" },

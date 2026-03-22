@@ -1665,19 +1665,21 @@ pub async fn handle_downloads_callback(
                 .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
-                let display_title = if let Some(ref author) = download.author {
-                    format!("{} - {}", author, download.title)
+                // Use author from metadata directly when available — avoids misparse
+                // from titles like "Music Audio - Nirvana- Rape Me (Audio)"
+                let (artist, title) = if let Some(ref author) = download.author {
+                    (author.as_str(), download.title.as_str())
                 } else {
-                    download.title.clone()
+                    crate::lyrics::parse_artist_title(&download.title)
                 };
-                let (artist, title) = crate::lyrics::parse_artist_title(&display_title);
 
                 let status_msg = bot.send_message(chat_id, "🎵 Fetching lyrics…").await?;
 
                 match crate::lyrics::fetch_lyrics(artist, title, None).await {
                     None => {
                         bot.delete_message(chat_id, status_msg.id).await.ok();
-                        let escaped = escape_markdown(&display_title);
+                        let display = format!("{} - {}", artist, title);
+                        let escaped = escape_markdown(&display);
                         bot.send_message(chat_id, format!("❌ Lyrics not found for *{}*", escaped))
                             .parse_mode(ParseMode::MarkdownV2)
                             .await?;
@@ -1937,6 +1939,11 @@ pub async fn handle_downloads_callback(
 }
 
 /// Download an audio file from Telegram, convert to OGG Opus, and send as a voice message.
+/// Convert any Display error to teloxide::RequestError.
+fn to_req_err(e: impl std::fmt::Display) -> teloxide::RequestError {
+    teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+}
+
 /// Download audio, extract segment, convert to OGG Opus mono, send as voice.
 async fn send_as_voice_segment(
     bot: &Bot,
@@ -1947,9 +1954,7 @@ async fn send_as_voice_segment(
 ) -> ResponseResult<teloxide::types::Message> {
     // Use /tmp directly — /data gets cleaned by init-data script (removes subdirs with binlogs)
     let tmp_dir = std::path::PathBuf::from(format!("/tmp/voice_{}", uuid::Uuid::new_v4()));
-    tokio::fs::create_dir_all(&tmp_dir)
-        .await
-        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+    tokio::fs::create_dir_all(&tmp_dir).await.map_err(to_req_err)?;
 
     let input_path = tmp_dir.join("input.mp3");
     let output_path = tmp_dir.join("output.ogg");
@@ -2012,8 +2017,8 @@ async fn send_as_voice_segment(
         Ok(dur)
     })
     .await
-    .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
-    .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+    .map_err(to_req_err)?
+    .map_err(to_req_err)?;
 
     // Always set duration — required for waveform. Fall back to segment length.
     let dur = result.unwrap_or(duration_secs.max(1) as u32);
@@ -2026,49 +2031,53 @@ async fn send_as_voice_segment(
         file_size / 1024
     );
 
-    // Send directly via official Telegram API — Local Bot API strips waveform metadata
-    let file_bytes = tokio::fs::read(&output_path)
-        .await
-        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-    let voice_part = reqwest::multipart::Part::bytes(file_bytes)
-        .file_name("voice.ogg")
-        .mime_str("audio/ogg")
-        .unwrap();
-    let form = reqwest::multipart::Form::new()
-        .text("chat_id", chat_id.0.to_string())
-        .text("duration", dur.to_string())
-        .part("voice", voice_part);
-    let url = format!("https://api.telegram.org/bot{}/sendVoice", bot.token());
-    let resp: serde_json::Value = bot
-        .client()
-        .post(&url)
-        .multipart(form)
-        .send()
-        .await
-        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
-        .json()
-        .await
-        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-    log::info!(
-        "Voice: official API response ok={}",
-        resp.get("ok").and_then(|v| v.as_bool()).unwrap_or(false)
-    );
-
-    // Cleanup temp files
-    let _ = tokio::fs::remove_dir_all(tmp_dir).await;
-
-    // Return a dummy message — the real message was sent via raw API
-    if resp.get("ok").and_then(|v| v.as_bool()) == Some(true) {
-        // Parse the result message from raw API response
-        let msg: teloxide::types::Message = serde_json::from_value(resp["result"].clone())
-            .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-        Ok(msg)
-    } else {
-        let desc = resp.get("description").and_then(|v| v.as_str()).unwrap_or("unknown");
-        Err(teloxide::RequestError::Api(teloxide::ApiError::Unknown(
-            desc.to_string(),
-        )))
+    // Send directly via official Telegram API — Local Bot API strips waveform metadata.
+    // Guard: ensure temp dir cleanup even on error.
+    let send_result: Result<teloxide::types::Message, teloxide::RequestError> = async {
+        const MAX_VOICE_SIZE: u64 = 10 * 1024 * 1024; // 10 MB safety limit
+        if file_size > MAX_VOICE_SIZE {
+            return Err(to_req_err(format!("Voice file too large: {} bytes", file_size)));
+        }
+        let file_bytes = tokio::fs::read(&output_path).await.map_err(to_req_err)?;
+        let voice_part = reqwest::multipart::Part::bytes(file_bytes)
+            .file_name("voice.ogg")
+            .mime_str("audio/ogg")
+            .unwrap();
+        let form = reqwest::multipart::Form::new()
+            .text("chat_id", chat_id.0.to_string())
+            .text("duration", dur.to_string())
+            .part("voice", voice_part);
+        // Use official API (not BOT_API_URL) — local Bot API strips OGG waveform metadata
+        let url = format!("https://api.telegram.org/bot{}/sendVoice", bot.token());
+        let resp: serde_json::Value = bot
+            .client()
+            .post(&url)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(to_req_err)?
+            .json()
+            .await
+            .map_err(to_req_err)?;
+        log::info!(
+            "Voice: official API response ok={}",
+            resp.get("ok").and_then(|v| v.as_bool()).unwrap_or(false)
+        );
+        if resp.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+            let result_val = resp.get("result").cloned().unwrap_or(serde_json::Value::Null);
+            serde_json::from_value(result_val).map_err(to_req_err)
+        } else {
+            let desc = resp.get("description").and_then(|v| v.as_str()).unwrap_or("unknown");
+            Err(teloxide::RequestError::Api(teloxide::ApiError::Unknown(
+                desc.to_string(),
+            )))
+        }
     }
+    .await;
+
+    // Always cleanup temp files, even on error
+    let _ = tokio::fs::remove_dir_all(tmp_dir).await;
+    send_result
 }
 
 /// Build section picker keyboard for lyrics + audio re-send.

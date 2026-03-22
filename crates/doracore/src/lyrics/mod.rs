@@ -81,9 +81,11 @@ impl LyricsResult {
 }
 
 /// Parse artist and title from a display_title ("Artist - Title" or just "Title").
+/// Uses rfind to split on the LAST " - " separator — avoids misparse when title
+/// has prefixes like "Music Audio - Nirvana - Rape Me".
 /// Returns ("", display_title) when no separator is found.
 pub fn parse_artist_title(display_title: &str) -> (&str, &str) {
-    if let Some(pos) = display_title.find(" - ") {
+    if let Some(pos) = display_title.rfind(" - ") {
         (&display_title[..pos], &display_title[pos + 3..])
     } else {
         ("", display_title)
