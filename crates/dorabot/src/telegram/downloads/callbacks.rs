@@ -1685,8 +1685,8 @@ pub async fn handle_downloads_callback(
                     Some(lyr) => {
                         bot.delete_message(chat_id, status_msg.id).await.ok();
 
-                        // Save lyrics session (needed for lyrics_send to retrieve text)
-                        let session_id = uuid::Uuid::new_v4().to_string();
+                        // Save lyrics session — use short ID (Telegram callback data max 64 bytes)
+                        let session_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
                         let sections_json = serde_json::to_string(&lyr.sections).unwrap_or_default();
                         let _ = shared_storage
                             .create_lyrics_session(
@@ -1944,18 +1944,14 @@ async fn send_as_voice_segment(
     start_secs: i64,
     duration_secs: i64,
 ) -> ResponseResult<teloxide::types::Message> {
-    use crate::core::utils::TempDirGuard;
-
-    let guard = TempDirGuard::new("doradura_voice")
+    // Use /tmp directly — /data gets cleaned by init-data script (removes subdirs with binlogs)
+    let tmp_dir = std::path::PathBuf::from(format!("/tmp/voice_{}", uuid::Uuid::new_v4()));
+    tokio::fs::create_dir_all(&tmp_dir)
         .await
         .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
 
-    let input_path = guard
-        .path()
-        .join(format!("voice_input_{}_{}.mp3", chat_id.0, uuid::Uuid::new_v4()));
-    let output_path = guard
-        .path()
-        .join(format!("voice_output_{}_{}.ogg", chat_id.0, uuid::Uuid::new_v4()));
+    let input_path = tmp_dir.join("input.mp3");
+    let output_path = tmp_dir.join("output.ogg");
 
     log::info!("Voice: downloading file {} to {:?}", telegram_file_id, input_path);
     crate::telegram::download_file_from_telegram(bot, telegram_file_id, Some(input_path.clone()))
@@ -2033,9 +2029,13 @@ async fn send_as_voice_segment(
     // Always set duration — required for waveform. Fall back to segment length.
     let dur = result.unwrap_or(duration_secs.max(1) as u32);
     log::info!("Voice: sending OGG file {:?} (duration={}s)", output_path, dur);
-    bot.send_voice(chat_id, InputFile::file(output_path))
+    let send_result = bot
+        .send_voice(chat_id, InputFile::file(&output_path))
         .duration(dur)
-        .await
+        .await;
+    // Cleanup temp files
+    let _ = tokio::fs::remove_dir_all(tmp_dir).await;
+    send_result
 }
 
 /// Build section picker keyboard for lyrics + audio re-send.
