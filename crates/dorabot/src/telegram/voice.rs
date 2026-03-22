@@ -47,27 +47,21 @@ pub fn convert_wav_to_ogg_opus(input_path: &str, output_path: &str) -> Result<Op
         ));
     }
 
-    // Convert to OGG Opus — exact params for Telegram waveform/spectrogram
+    // Convert to OGG Opus — match voice_effects.rs params (proven to produce waveform)
     let output = ProcessCommand::new("ffmpeg")
         .arg("-i")
         .arg(input_path)
-        .arg("-c:a")
-        .arg("libopus")
-        .arg("-b:a")
-        .arg("48k")
-        .arg("-ac")
-        .arg("1")
-        .arg("-ar")
-        .arg("48000")
-        .arg("-vbr")
-        .arg("on")
-        .arg("-compression_level")
-        .arg("10")
-        .arg("-frame_duration")
-        .arg("60")
-        .arg("-application")
-        .arg("voip")
-        .arg("-y")
+        .args([
+            "-c:a",
+            "libopus",
+            "-b:a",
+            "64k",
+            "-ac",
+            "1",
+            "-application",
+            "voip",
+            "-y",
+        ])
         .arg(output_path)
         .output()?;
 
