@@ -144,7 +144,6 @@ bot_commands =
     .cuts = Mes extraits
     .history = Historique des téléchargements
     .stats = Mes stats
-    .global = Statistiques globales
     .export = Exporter l'historique
     .backup = Créer une sauvegarde de la base (admin uniquement)
     .plan = Infos sur l'abonnement
@@ -154,7 +153,6 @@ bot_commands =
     .player = Lecteur de musique
     .playlists = Mes playlists
     .playlist_integrations = Importer des playlists externes
-    .style = Style de barre de progression
 
 video_circle =
     .prompt = ⭕️ Envoie les intervalles pour la note vidéo au format `mm:ss-mm:ss` ou `hh:mm:ss-hh:mm:ss`\\.\nTu peux envoyer plusieurs intervalles séparés par des virgules\\.\n\nOu utilise les commandes:\n• `full` \\- vidéo entière\n• `first30` \\- premières 30 secondes\n• `last30` \\- dernières 30 secondes\n• `middle30` \\- 30 secondes du milieu\n\n💡 Tu peux ajouter la vitesse: `first30 2x`, `full 1\\.5x`\n\n💡 Si la durée dépasse 60 secondes \\(limite Telegram\\), la vidéo sera automatiquement coupée\\.\n\nExemple: `00:10-00:25` ou `first30 2x`

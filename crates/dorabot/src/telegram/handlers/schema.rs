@@ -640,6 +640,14 @@ fn command_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                                 )
                                 .await;
                             }
+                            Command::ProxyStats => {
+                                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+                                let _ = crate::telegram::handle_proxy_stats_command(&bot, msg.chat.id, user_id).await;
+                            }
+                            Command::ProxyReset => {
+                                let user_id = msg.from.as_ref().and_then(|u| i64::try_from(u.id.0).ok()).unwrap_or(0);
+                                let _ = crate::telegram::handle_proxy_reset_command(&bot, msg.chat.id, user_id).await;
+                            }
                         }
                         Ok(())
                     }

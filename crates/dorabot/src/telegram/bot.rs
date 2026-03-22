@@ -71,6 +71,10 @@ pub enum Command {
     BotApiSpeed,
     #[command(description = "version and update (admin only)")]
     Version,
+    #[command(rename = "proxy_stats", description = "proxy health stats (admin only)")]
+    ProxyStats,
+    #[command(rename = "proxy_reset", description = "reset proxy stats (admin only)")]
+    ProxyReset,
     #[command(description = "my content subscriptions")]
     Subscriptions,
     #[command(description = "music player")]
@@ -84,25 +88,13 @@ pub enum Command {
 const BOT_COMMAND_DEFINITIONS: &[(&str, &str)] = &[
     ("start", "bot_commands.start"),
     ("settings", "bot_commands.settings"),
-    ("info", "bot_commands.info"),
-    ("downsub", "bot_commands.downsub"),
-    // ("downsub_health", "bot_commands.downsub_health"),
     ("downloads", "bot_commands.downloads"),
-    ("uploads", "bot_commands.uploads"),
-    ("cuts", "bot_commands.cuts"),
-    //("history", "bot_commands.history"),
-    //("stats", "bot_commands.stats"),
-    //("global", "bot_commands.global"),
-    //("export", "bot_commands.export"),
-    //("backup", "bot_commands.backup"),
     ("plan", "bot_commands.plan"),
     ("subscriptions", "bot_commands.subscriptions"),
     ("player", "bot_commands.player"),
     ("playlists", "bot_commands.playlists"),
-    ("playlist_integrations", "bot_commands.playlist_integrations"),
-    //("users", "bot_commands.users"),
-    //("setplan", "bot_commands.setplan"),
-    //("transactions", "bot_commands.transactions"),
+    // Hidden from menu but still work: /info, /downsub, /uploads, /cuts,
+    // /history, /stats, /export, /playlist_integrations, /backup, admin commands
 ];
 
 fn build_bot_commands(lang: &LanguageIdentifier) -> Vec<BotCommand> {
