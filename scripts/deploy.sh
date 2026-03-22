@@ -85,17 +85,6 @@ if [ ! -z "$ADMIN_ID" ]; then
 fi
 
 # Optional: Mini App
-echo ""
-echo -e "${BLUE}🌐 Telegram Mini App (Optional)${NC}"
-echo "Do you want to enable Telegram Mini App? (y/n)"
-read -r enable_miniapp
-
-if [ "$enable_miniapp" = "y" ]; then
-    railway variables --set "WEBAPP_PORT=8080"
-    echo -e "${YELLOW}⚠️  After deployment, set WEBAPP_URL to your Railway domain${NC}"
-    echo "Example: railway variables --set \"WEBAPP_URL=https://your-project.railway.app\""
-fi
-
 # Deploy
 echo ""
 echo -e "${BLUE}🚀 Deploying to Railway...${NC}"

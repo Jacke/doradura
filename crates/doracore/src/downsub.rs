@@ -185,7 +185,6 @@ const DEFAULT_SUMMARY_TOKENS: i32 = 400;
 pub struct DownsubGateway {
     client: Option<proto::downsub_service_client::DownsubServiceClient<Channel>>,
     timeout: Duration,
-    api_key: Option<String>,
 }
 
 #[derive(thiserror::Error, Debug)]
@@ -257,11 +256,7 @@ impl DownsubGateway {
             }
         }
 
-        Self {
-            client,
-            timeout,
-            api_key: std::env::var("DOWNSUB_API_KEY").ok(),
-        }
+        Self { client, timeout }
     }
 
     pub fn is_available(&self) -> bool {
@@ -292,20 +287,7 @@ impl DownsubGateway {
             max_length_tokens: DEFAULT_SUMMARY_TOKENS,
         };
 
-        let mut grpc_request = Request::new(request);
-        if let Some(ref key) = self.api_key {
-            let header_value = match format!("Bearer {}", key).parse() {
-                Ok(val) => val,
-                Err(e) => {
-                    log::error!("Invalid DOWNSUB_API_KEY for gRPC metadata: {}", e);
-                    return Err(DownsubError::Status(Status::new(
-                        Code::Internal,
-                        "Invalid API key format",
-                    )));
-                }
-            };
-            grpc_request.metadata_mut().insert("authorization", header_value);
-        }
+        let grpc_request = Request::new(request);
 
         let response = timeout(self.timeout, client.get_summary(grpc_request))
             .await
@@ -357,20 +339,7 @@ impl DownsubGateway {
             format: format.clone(),
         };
 
-        let mut grpc_request = Request::new(request);
-        if let Some(ref key) = self.api_key {
-            let header_value = match format!("Bearer {}", key).parse() {
-                Ok(val) => val,
-                Err(e) => {
-                    log::error!("Invalid DOWNSUB_API_KEY for gRPC metadata: {}", e);
-                    return Err(DownsubError::Status(Status::new(
-                        Code::Internal,
-                        "Invalid API key format",
-                    )));
-                }
-            };
-            grpc_request.metadata_mut().insert("authorization", header_value);
-        }
+        let grpc_request = Request::new(request);
 
         let response = timeout(self.timeout, client.get_subtitles(grpc_request))
             .await
