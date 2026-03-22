@@ -117,15 +117,26 @@ pub async fn download_and_send_audio(
                 // Audio-specific: add effects button
                 add_audio_effects_button(&bot_clone, chat_id, &pipeline_result, shared_storage_clone.as_ref()).await;
 
-                // Lyrics highlights: fetch lyrics + LLM highlight in background, send as reply
+                // Lyrics: fetch and show section picker — user picks → caption is edited on audio msg
                 if with_lyrics {
                     let bot_lyr = bot_clone.clone();
                     let title_lyr = pipeline_result.title.clone();
                     let artist_lyr = pipeline_result.artist.clone();
-                    let sent_msg_id = pipeline_result.sent_message.id;
-                    tokio::spawn(async move {
-                        send_lyrics_highlights(&bot_lyr, chat_id, sent_msg_id, &artist_lyr, &title_lyr).await;
-                    });
+                    let audio_msg_id = pipeline_result.sent_message.id;
+                    if let Some(ref ss) = shared_storage_clone {
+                        let ss_clone = std::sync::Arc::clone(ss);
+                        tokio::spawn(async move {
+                            show_lyrics_picker_for_audio(
+                                &bot_lyr,
+                                chat_id,
+                                audio_msg_id,
+                                &artist_lyr,
+                                &title_lyr,
+                                &ss_clone,
+                            )
+                            .await;
+                        });
+                    }
                 }
 
                 // Share page: create after successful audio send (YouTube only, fire-and-forget)
@@ -380,67 +391,86 @@ async fn send_share_message(
     }
 }
 
-/// Fetch lyrics and extract key lines via LLM, then send as a reply to the audio message.
-///
-/// Silently does nothing if:
-/// - ANTHROPIC_API_KEY is not set
-/// - Lyrics are not found for this track
-/// - LLM fails to extract highlights
-/// - The track is not a song (no artist metadata)
-async fn send_lyrics_highlights(
+/// Fetch lyrics, show section picker. When user picks a section, the audio caption is edited.
+async fn show_lyrics_picker_for_audio(
     bot: &Bot,
     chat_id: ChatId,
-    reply_to: teloxide::types::MessageId,
+    audio_msg_id: teloxide::types::MessageId,
     artist: &str,
     title: &str,
+    shared_storage: &std::sync::Arc<crate::storage::SharedStorage>,
 ) {
-    // Skip if no artist — probably not a song (podcast, audiobook, etc.)
     if artist.trim().is_empty() || title.trim().is_empty() {
         return;
     }
 
-    // Skip if ANTHROPIC_API_KEY is not configured
-    if std::env::var("ANTHROPIC_API_KEY").is_err() {
-        log::warn!(
-            "Lyrics highlights: ANTHROPIC_API_KEY not set, skipping LLM highlights for '{} - {}'",
-            artist,
-            title
-        );
-        return;
-    }
-
-    // Step 1: Fetch lyrics
     let lyrics = match crate::lyrics::fetch_lyrics(artist, title, None).await {
         Some(lyr) => lyr,
         None => {
-            log::debug!("Lyrics highlights: no lyrics found for '{} - {}'", artist, title);
+            log::debug!("with_lyrics: no lyrics found for '{} - {}'", artist, title);
             return;
         }
     };
 
-    let full_text = lyrics.all_text();
+    let session_id = uuid::Uuid::new_v4().to_string()[..8].to_string();
+    let sections_json = serde_json::to_string(&lyrics.sections).unwrap_or_default();
+    let _ = shared_storage
+        .create_lyrics_session(
+            &session_id,
+            chat_id.0,
+            &lyrics.artist,
+            &lyrics.title,
+            &sections_json,
+            lyrics.has_structure,
+        )
+        .await;
 
-    // Step 2: Extract highlights via LLM
-    let highlights = match crate::lyrics::highlights::extract_highlights(artist, title, &full_text).await {
-        Some(h) => h,
-        None => {
-            log::debug!("Lyrics highlights: LLM returned nothing for '{} - {}'", artist, title);
-            return;
-        }
-    };
+    // Build picker with callbacks: downloads:lyr_cap:{audio_msg_id}:{session_id}:{idx}
+    use std::collections::HashMap;
+    let mut total: HashMap<String, usize> = HashMap::new();
+    for s in &lyrics.sections {
+        *total.entry(s.name.clone()).or_insert(0) += 1;
+    }
+    let mut seen: HashMap<String, usize> = HashMap::new();
 
-    // Step 3: Send as italic reply to the audio message
-    let escaped = crate::core::escape_markdown(&highlights);
-    let text = format!("_{}_", escaped);
+    let buttons: Vec<teloxide::types::InlineKeyboardButton> = lyrics
+        .sections
+        .iter()
+        .enumerate()
+        .map(|(idx, s)| {
+            let occ = seen.entry(s.name.clone()).or_insert(0);
+            *occ += 1;
+            let label = if total.get(&s.name).copied().unwrap_or(1) > 1 {
+                format!("{} ({})", s.name, occ)
+            } else {
+                s.name.clone()
+            };
+            crate::telegram::cb(
+                label,
+                format!("downloads:lyr_cap:{}:{}:{}", audio_msg_id.0, session_id, idx),
+            )
+        })
+        .collect();
 
-    if let Err(e) = bot
-        .send_message(chat_id, text)
-        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-        .reply_parameters(teloxide::types::ReplyParameters::new(reply_to))
-        .await
-    {
-        log::warn!("Failed to send lyrics highlights: {}", e);
+    let mut rows: Vec<Vec<teloxide::types::InlineKeyboardButton>> = buttons.chunks(3).map(|c| c.to_vec()).collect();
+    rows.push(vec![crate::telegram::cb(
+        "📄 All Lyrics".to_string(),
+        format!("downloads:lyr_cap:{}:{}:all", audio_msg_id.0, session_id),
+    )]);
+    rows.push(vec![crate::telegram::cb(
+        "❌ Skip".to_string(),
+        "downloads:cancel".to_string(),
+    )]);
+
+    let display = format!("{} – {}", lyrics.artist, lyrics.title);
+    let msg = if lyrics.has_structure && lyrics.sections.len() > 1 {
+        format!("🎵 {}\nChoose lyrics to add as caption:", display)
     } else {
-        log::info!("Lyrics highlights sent for '{} - {}'", artist, title);
+        format!("🎵 {}\nAdd lyrics as caption?", display)
+    };
+
+    let keyboard = teloxide::types::InlineKeyboardMarkup::new(rows);
+    if let Err(e) = bot.send_message(chat_id, msg).reply_markup(keyboard).await {
+        log::warn!("Failed to send lyrics picker for with_lyrics: {}", e);
     }
 }

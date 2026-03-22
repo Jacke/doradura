@@ -1715,6 +1715,53 @@ pub async fn handle_downloads_callback(
                 bot.delete_message(chat_id, message_id).await.ok();
             }
         }
+        // Edit audio message caption with selected lyrics (from with_lyrics toggle)
+        "lyr_cap" => {
+            // downloads:lyr_cap:{audio_msg_id}:{session_id}:{idx_or_all}
+            if parts.len() < 5 {
+                return Ok(());
+            }
+            let audio_msg_id = parts[2].parse::<i32>().unwrap_or(0);
+            let session_id = parts[3];
+            let idx_str = parts[4];
+
+            let lyrics_session = shared_storage.get_lyrics_session(session_id).await.ok().flatten();
+
+            if let Some((_artist, _title, sections_json, _has_struct)) = lyrics_session {
+                let sections: Vec<crate::lyrics::LyricsSection> =
+                    serde_json::from_str(&sections_json).unwrap_or_default();
+
+                let lyrics_text = if idx_str == "all" {
+                    sections
+                        .iter()
+                        .map(|s| format!("[{}]\n{}", s.name, s.text()))
+                        .collect::<Vec<_>>()
+                        .join("\n\n")
+                } else if let Ok(idx) = idx_str.parse::<usize>() {
+                    sections
+                        .get(idx)
+                        .map(|s| format!("[{}]\n{}", s.name, s.text()))
+                        .unwrap_or_default()
+                } else {
+                    String::new()
+                };
+
+                if !lyrics_text.is_empty() {
+                    let caption = if lyrics_text.chars().count() > 1024 {
+                        let truncated: String = lyrics_text.chars().take(1020).collect();
+                        format!("{truncated}…")
+                    } else {
+                        lyrics_text
+                    };
+                    let _ = bot
+                        .edit_message_caption(chat_id, MessageId(audio_msg_id))
+                        .caption(caption)
+                        .await;
+                }
+                // Delete the picker message
+                bot.delete_message(chat_id, message_id).await.ok();
+            }
+        }
         // Re-send audio file with selected lyrics as caption
         "lyrics_send" => {
             // downloads:lyrics_send:{download_id}:{session_id}:{idx_or_all}
