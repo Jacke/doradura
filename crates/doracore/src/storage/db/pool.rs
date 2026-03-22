@@ -188,14 +188,3 @@ pub async fn get_connection_with_retry(pool: &DbPool, max_retries: u32) -> Resul
     crate::core::metrics::record_error("db_pool_timeout", "get_connection_with_retry");
     Err(e)
 }
-
-/// Legacy function for backward compatibility (deprecated)
-/// Use get_connection(&pool) instead
-#[deprecated(note = "Use get_connection(&pool) instead")]
-pub fn get_connection_legacy() -> Result<Connection> {
-    let mut conn = Connection::open("database.sqlite")?;
-    if let Err(e) = migrations::run_migrations(&mut conn) {
-        log::warn!("Failed to run migrations: {}", e);
-    }
-    Ok(conn)
-}
