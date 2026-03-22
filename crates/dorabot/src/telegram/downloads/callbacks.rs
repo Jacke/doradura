@@ -1631,12 +1631,20 @@ pub async fn handle_downloads_callback(
                         _ => (0, duration_seconds.min(audio_duration)),
                     };
 
-                    let result = send_as_voice_segment(bot, chat_id, fid, start_secs, end_secs - start_secs).await;
+                    let seg_duration = end_secs - start_secs;
+                    log::info!(
+                        "Voice segment: start={}s, duration={}s for download {}",
+                        start_secs,
+                        seg_duration,
+                        download_id
+                    );
+                    let result = send_as_voice_segment(bot, chat_id, fid, start_secs, seg_duration).await;
 
                     bot.delete_message(chat_id, status_msg.id).await.ok();
                     match result {
-                        Ok(_) => {}
+                        Ok(_) => log::info!("Voice message sent successfully for download {}", download_id),
                         Err(e) => {
+                            log::error!("Voice conversion failed for download {}: {}", download_id, e);
                             bot.send_message(chat_id, format!("❌ Voice conversion failed: {e}"))
                                 .await
                                 .ok();
@@ -1692,17 +1700,14 @@ pub async fn handle_downloads_callback(
                             .await;
 
                         // Build section picker — callbacks go to downloads:lyrics_send:{download_id}:{session_id}:{idx}
-                        let display = escape_markdown(&format!("{} – {}", lyr.artist, lyr.title));
+                        let display = format!("{} – {}", lyr.artist, lyr.title);
                         let keyboard = build_lyrics_audio_keyboard(download_id, &session_id, &lyr.sections);
                         let msg = if lyr.has_structure && lyr.sections.len() > 1 {
-                            format!("🎵 *{}*\nChoose a section to send with audio:", display)
+                            format!("🎵 {}\nChoose a section to send with audio:", display)
                         } else {
-                            format!("🎵 *{}*\nSend audio with lyrics?", display)
+                            format!("🎵 {}\nSend audio with lyrics?", display)
                         };
-                        bot.send_message(chat_id, msg)
-                            .parse_mode(ParseMode::MarkdownV2)
-                            .reply_markup(keyboard)
-                            .await?;
+                        bot.send_message(chat_id, msg).reply_markup(keyboard).await?;
                     }
                 }
                 bot.delete_message(chat_id, message_id).await.ok();
@@ -1952,9 +1957,18 @@ async fn send_as_voice_segment(
         .path()
         .join(format!("voice_output_{}_{}.ogg", chat_id.0, uuid::Uuid::new_v4()));
 
+    log::info!("Voice: downloading file {} to {:?}", telegram_file_id, input_path);
     crate::telegram::download_file_from_telegram(bot, telegram_file_id, Some(input_path.clone()))
         .await
-        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+        .map_err(|e| {
+            log::error!("Voice: download failed: {}", e);
+            teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+        })?;
+    log::info!(
+        "Voice: download complete, converting segment start={}s dur={}s",
+        start_secs,
+        duration_secs
+    );
 
     // Extract segment + convert to OGG Opus mono
     let in_str = input_path.to_string_lossy().to_string();
@@ -2018,6 +2032,7 @@ async fn send_as_voice_segment(
 
     // Always set duration — required for waveform. Fall back to segment length.
     let dur = result.unwrap_or(duration_secs.max(1) as u32);
+    log::info!("Voice: sending OGG file {:?} (duration={}s)", output_path, dur);
     bot.send_voice(chat_id, InputFile::file(output_path))
         .duration(dur)
         .await
