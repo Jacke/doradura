@@ -1753,9 +1753,10 @@ pub async fn handle_downloads_callback(
                     if lyrics_text.is_empty() {
                         bot.send_message(chat_id, "❌ Section not found.").await?;
                     } else {
-                        // Telegram caption limit is 1024 chars
-                        let caption = if lyrics_text.len() > 1024 {
-                            format!("{}…", &lyrics_text[..1020])
+                        // Telegram caption limit is 1024 chars — truncate on char boundary
+                        let caption = if lyrics_text.chars().count() > 1024 {
+                            let truncated: String = lyrics_text.chars().take(1020).collect();
+                            format!("{truncated}…")
                         } else {
                             lyrics_text
                         };
