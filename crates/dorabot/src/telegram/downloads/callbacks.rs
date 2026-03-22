@@ -2028,13 +2028,50 @@ async fn send_as_voice_segment(
     // Always set duration — required for waveform. Fall back to segment length.
     let dur = result.unwrap_or(duration_secs.max(1) as u32);
     log::info!("Voice: sending OGG file {:?} (duration={}s)", output_path, dur);
-    let send_result = bot
-        .send_voice(chat_id, InputFile::file(&output_path))
-        .duration(dur)
-        .await;
+
+    // Send directly via official Telegram API — Local Bot API strips waveform metadata
+    let file_bytes = tokio::fs::read(&output_path)
+        .await
+        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+    let voice_part = reqwest::multipart::Part::bytes(file_bytes)
+        .file_name("voice.ogg")
+        .mime_str("audio/ogg")
+        .unwrap();
+    let form = reqwest::multipart::Form::new()
+        .text("chat_id", chat_id.0.to_string())
+        .text("duration", dur.to_string())
+        .part("voice", voice_part);
+    let url = format!("https://api.telegram.org/bot{}/sendVoice", bot.token());
+    let resp: serde_json::Value = bot
+        .client()
+        .post(&url)
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+        .json()
+        .await
+        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+    log::info!(
+        "Voice: official API response ok={}",
+        resp.get("ok").and_then(|v| v.as_bool()).unwrap_or(false)
+    );
+
     // Cleanup temp files
     let _ = tokio::fs::remove_dir_all(tmp_dir).await;
-    send_result
+
+    // Return a dummy message — the real message was sent via raw API
+    if resp.get("ok").and_then(|v| v.as_bool()) == Some(true) {
+        // Parse the result message from raw API response
+        let msg: teloxide::types::Message = serde_json::from_value(resp["result"].clone())
+            .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+        Ok(msg)
+    } else {
+        let desc = resp.get("description").and_then(|v| v.as_str()).unwrap_or("unknown");
+        Err(teloxide::RequestError::Api(teloxide::ApiError::Unknown(
+            desc.to_string(),
+        )))
+    }
 }
 
 /// Build section picker keyboard for lyrics + audio re-send.
