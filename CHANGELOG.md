@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Tech debt**: Split `shared.rs` (6,920 lines) into `storage/shared/` module with 18 sub-files by domain (task_queue, users, subscriptions, analytics, etc.) — no functional changes
+- **Tech debt**: Split `web_server.rs` (3,923 lines) into `core/web/` module with 9 sub-files (public, auth, dashboard, admin_users, admin_queue, admin_errors, admin_misc, types, helpers) — no functional changes
+- **Tech debt**: Split `callbacks.rs` (2,176 lines) into 6 sub-modules in `downloads/` (send, clipping, speed, voice_lyrics, categories, cb_helpers) with `CallbackCtx` struct — no functional changes
+- **Tech debt**: Split `bot_api_logger.rs` (1,677 lines) via `include!()` — macro-generated `@method` arms moved to `bot_api_logger_methods.rs` — no functional changes
+
 ### Added
 - **Plan change notifications** — users receive Telegram message whenever their plan changes (admin panel, payment, renewal, cancellation). Event channel between doracore web_server and dorabot dispatcher
 - Downloads menu: **Lyrics** button for MP3 — fetches lyrics via Genius/LRCLIB, shows section picker (Verse, Chorus, Bridge…) or full text
