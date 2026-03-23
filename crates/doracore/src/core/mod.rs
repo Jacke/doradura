@@ -16,7 +16,7 @@ pub mod share;
 pub mod types;
 pub mod utils;
 pub mod validation;
-pub mod web_server;
+pub mod web;
 
 // Re-exports for convenience
 pub use config::*;

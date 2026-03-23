@@ -18,7 +18,7 @@ pub use doracore::core::share;
 pub use doracore::core::types;
 pub use doracore::core::utils;
 pub use doracore::core::validation;
-pub use doracore::core::web_server;
+pub use doracore::core::web;
 
 pub use doracore::core::disk;
 
