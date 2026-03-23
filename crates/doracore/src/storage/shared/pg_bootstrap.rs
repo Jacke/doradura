@@ -575,4 +575,10 @@ CREATE TABLE IF NOT EXISTS preview_contexts (
 
 CREATE INDEX IF NOT EXISTS idx_preview_contexts_expires_at
     ON preview_contexts(expires_at);
+
+-- Migration: add audio_lang column to existing preview_contexts tables
+DO $$ BEGIN
+    ALTER TABLE preview_contexts ADD COLUMN audio_lang TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
 "#;
