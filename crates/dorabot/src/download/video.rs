@@ -104,6 +104,10 @@ pub async fn download_and_send_video(
                 None
             };
 
+            if let Some(ref lang) = audio_lang {
+                log::info!("🔊 Audio track language selected: '{}' for {}", lang, url);
+            }
+
             let format = PipelineFormat::Video {
                 quality: video_quality.clone(),
                 time_range,

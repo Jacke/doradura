@@ -609,12 +609,17 @@ pub fn build_telegram_safe_format(requested_height: Option<u32>, audio_lang: Opt
     }
 
     let mut parts: Vec<String> = Vec::new();
-    for h in heights {
+    for h in &heights {
         let filt = format!("[height<={h}]");
         if let Some(lang) = audio_lang {
+            // Language-specific: try AAC first, then any codec (opus, etc.)
             parts.push(format!("bv*{filt}[vcodec^=avc1]+ba[language={lang}][acodec^=mp4a]"));
-            parts.push(format!("bv*{filt}[vcodec^=avc1][ext=mp4]+ba[language={lang}][ext=m4a]"));
+            parts.push(format!("bv*{filt}[vcodec^=avc1]+ba[language={lang}]"));
         }
+    }
+    // After all language-specific heights, add generic fallbacks per height
+    for h in &heights {
+        let filt = format!("[height<={h}]");
         parts.push(format!("bv*{filt}[vcodec^=avc1]+ba[acodec^=mp4a]"));
         parts.push(format!("bv*{filt}[vcodec^=avc1][ext=mp4]+ba[ext=m4a]"));
     }

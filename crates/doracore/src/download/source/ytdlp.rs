@@ -262,6 +262,9 @@ impl YtDlpSource {
         let time_range = request.time_range.clone();
 
         let audio_lang = request.audio_lang.as_deref();
+        if let Some(lang) = audio_lang {
+            log::info!("🔊 yt-dlp video download with audio_lang={}", lang);
+        }
         let format_arg = match request.video_quality.as_deref() {
             Some("4320p") => build_telegram_safe_format(Some(4320), audio_lang),
             Some("2160p") => build_telegram_safe_format(Some(2160), audio_lang),
@@ -274,6 +277,7 @@ impl YtDlpSource {
             Some("144p") => build_telegram_safe_format(Some(144), audio_lang),
             _ => build_telegram_safe_format(None, audio_lang),
         };
+        log::debug!("yt-dlp video format string: {}", format_arg);
 
         let handle = tokio::task::spawn_blocking(move || {
             download_with_fallback_chain(

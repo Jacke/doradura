@@ -894,13 +894,26 @@ pub async fn handle_menu_callback(
                             };
 
                             if lang_code == "none" {
-                                let _ = shared_storage
+                                log::info!("🔊 Clearing audio_lang for user {} url {}", chat_id.0, url_str);
+                                if let Err(e) = shared_storage
                                     .set_preview_audio_lang(chat_id.0, &url_str, None, 3600)
-                                    .await;
+                                    .await
+                                {
+                                    log::error!("Failed to clear audio_lang: {:?}", e);
+                                }
                             } else {
-                                let _ = shared_storage
+                                log::info!(
+                                    "🔊 Setting audio_lang='{}' for user {} url {}",
+                                    lang_code,
+                                    chat_id.0,
+                                    url_str
+                                );
+                                if let Err(e) = shared_storage
                                     .set_preview_audio_lang(chat_id.0, &url_str, Some(&lang_code), 3600)
-                                    .await;
+                                    .await
+                                {
+                                    log::error!("Failed to set audio_lang: {:?}", e);
+                                }
                             }
 
                             // Rebuild the preview keyboard
