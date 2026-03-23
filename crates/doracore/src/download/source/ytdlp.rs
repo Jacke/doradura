@@ -288,7 +288,7 @@ impl YtDlpSource {
             "youtube:player_client=default;formats=missing_pot"
         };
         let tier2_extractor = if has_audio_lang {
-            "youtube:player_client=android,web_music"
+            "youtube:player_client=android,web_music;formats=missing_pot"
         } else {
             "youtube:player_client=default"
         };
