@@ -1,16 +1,35 @@
 pub mod callbacks;
+mod categories;
+mod cb_helpers;
+mod clipping;
+mod send;
+mod speed;
 pub mod subtitles;
+mod voice_lyrics;
 
 pub use callbacks::*;
 pub use subtitles::*;
 
 use crate::core::escape_markdown;
-use crate::storage::{DbPool, SharedStorage};
+use crate::downsub::DownsubGateway;
+use crate::storage::{DbPool, SharedStorage, SubtitleCache};
 use crate::telegram::Bot;
 use crate::timestamps::{format_timestamp, select_best_timestamps, VideoTimestamp};
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, ParseMode};
+
+/// Shared context for download callback handlers, avoiding 9-parameter signatures.
+pub(crate) struct CallbackCtx {
+    pub bot: Bot,
+    pub chat_id: ChatId,
+    pub message_id: teloxide::types::MessageId,
+    pub db_pool: Arc<DbPool>,
+    pub shared_storage: Arc<SharedStorage>,
+    pub username: Option<String>,
+    pub downsub_gateway: Arc<DownsubGateway>,
+    pub subtitle_cache: Arc<SubtitleCache>,
+}
 
 const ITEMS_PER_PAGE: usize = 5;
 
