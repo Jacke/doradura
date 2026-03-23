@@ -137,7 +137,7 @@ pub fn log_cookies_configuration() {
         log::error!("💡 Option 2: Export to file (macOS recommended):");
         log::error!("  1. Export cookies to youtube_cookies.txt");
         log::error!("  2. Set: export YTDL_COOKIES_FILE=youtube_cookies.txt");
-        log::error!("  3. Or run: ./scripts/run_with_cookies.sh");
+        log::error!("  3. Restart bot");
         log::error!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     }
 }

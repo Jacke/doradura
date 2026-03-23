@@ -79,8 +79,6 @@ pub struct VideoNoteOptions {
     pub start_time: Option<f64>,
     /// Speed multiplier (e.g., 1.5 for 1.5x speed)
     pub speed: Option<f64>,
-    /// Enable smart crop face tracking
-    pub smart_crop: bool,
 }
 
 /// Convert video to video note (circle format)
@@ -225,7 +223,6 @@ pub async fn to_video_notes_split<P: AsRef<Path>>(
             duration: Some(*part_duration),
             start_time: Some(start_time),
             speed,
-            smart_crop: true,
         };
 
         log::info!(

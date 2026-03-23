@@ -146,9 +146,7 @@ doradura/
 | | |
 |---|---|
 | [EXTENDING_SOURCES.md](docs/EXTENDING_SOURCES.md) | Add custom download backends |
-| [LOCAL_BOT_API_SETUP.md](docs/LOCAL_BOT_API_SETUP.md) | Files up to 2 GB via local Bot API |
 | [SUBSCRIPTIONS.md](docs/SUBSCRIPTIONS.md) | Subscription tier management |
-| [ADMIN_COMMANDS.md](docs/ADMIN_COMMANDS.md) | Admin bot commands |
 | [PROXY_SYSTEM.md](docs/PROXY_SYSTEM.md) | WARP/Tailscale proxy for YouTube |
 | [HEALTH_CHECK.md](docs/HEALTH_CHECK.md) | Health monitoring & avatar status |
 | [YTDLP.md](docs/YTDLP.md) | yt-dlp setup, updates & troubleshooting |

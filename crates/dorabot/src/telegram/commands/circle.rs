@@ -700,8 +700,6 @@ pub async fn process_video_clip(
         String::new()
     };
 
-    let smart_crop_filter: Option<String> = None;
-
     // Build subtitle filter fragment for post-crop burning (640x640 coordinates)
     let circle_sub_filter = circle_srt_path.as_ref().map(|srt_path| {
         let escaped = srt_path
@@ -719,15 +717,7 @@ pub async fn process_video_clip(
     let (filter_av, filter_v, map_v_label, map_a_label, crf) = if is_video_note && !video_note_needs_split {
         // Single circle - apply video note formatting in ffmpeg
         // Subtitles are burned AFTER scale+crop so they render at 640x640 coordinates
-        let video_note_post = if let Some(ref sc_filter) = smart_crop_filter {
-            // Smart crop filter already includes scale+crop+format
-            // Insert subtitles before format=yuv420p
-            if let Some(ref sub_filter) = circle_sub_filter {
-                sc_filter.replace(",format=yuv420p", &format!(",{sub_filter},format=yuv420p"))
-            } else {
-                sc_filter.clone()
-            }
-        } else if let Some(ref sub_filter) = circle_sub_filter {
+        let video_note_post = if let Some(ref sub_filter) = circle_sub_filter {
             format!("scale=640:640:force_original_aspect_ratio=increase,crop=640:640,{sub_filter},format=yuv420p")
         } else {
             "scale=640:640:force_original_aspect_ratio=increase,crop=640:640,format=yuv420p".to_string()

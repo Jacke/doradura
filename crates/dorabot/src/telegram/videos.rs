@@ -935,7 +935,6 @@ async fn handle_convert_callback(
                         duration: Some(duration),
                         start_time: None,
                         speed,
-                        smart_crop: true,
                     };
 
                     match to_video_note(&temp_input, options).await {
