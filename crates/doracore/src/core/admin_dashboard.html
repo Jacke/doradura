@@ -1200,7 +1200,15 @@
     window.closeModal = () => {{ document.getElementById('modal').classList.remove('open'); modalCallback=null; }};
     document.getElementById('modal-confirm').addEventListener('click', async () => {{ if (modalCallback) await modalCallback(); closeModal(); }});
 
-    window.changePlan = async (uid,plan) => {{ if (await postJson(`/admin/api/users/${{uid}}/plan`, {{plan}})) loadUsers(); }};
+    window.changePlan = async (uid,plan) => {{
+        let body = {{ plan }};
+        if (plan !== 'free') {{
+            const days = prompt(`Set expiry for ${{plan}} plan (days from now, empty = unlimited):`);
+            if (days === null) return; // cancelled
+            if (days.trim()) body.expires_days = parseInt(days.trim()) || 30;
+        }}
+        if (await postJson(`/admin/api/users/${{uid}}/plan`, body)) loadUsers();
+    }};
     window.toggleBlock = (uid,block) => {{
         const a = block?'Block':'Unblock';
         openModal(a+' User', `Are you sure you want to ${{a.toLowerCase()}} user ${{uid}}?`, a, block,
@@ -1317,11 +1325,18 @@
     }};
     window.updateUserSetting = async function(uid, field, value) {{
         const body = {{}};
-        if (field==='plan') body.plan = value;
+        if (field==='plan') {{
+            body.plan = value;
+            if (value !== 'free') {{
+                const days = prompt(`Set expiry for ${{value}} plan (days, empty = unlimited):`);
+                if (days === null) return;
+                if (days.trim()) body.plan_days = parseInt(days.trim()) || 30;
+            }}
+        }}
         else if (field==='language') body.language = value;
         else if (field==='is_blocked') body.is_blocked = value;
         const data = await postJson(`/admin/api/users/${{uid}}/settings`, body);
-        if (data && data.ok) {{ if (loaded.users) loadUsers(); }}
+        if (data && data.ok) {{ if (loaded['tab-users']) loadUsers(); }}
     }};
 
     // ══════ Reply to feedback + unified broadcast ══════

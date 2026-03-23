@@ -79,6 +79,8 @@ struct DownloadQuery {
 #[derive(Deserialize)]
 struct PlanUpdateReq {
     plan: String,
+    /// Optional expiry in days from now. If set, creates/updates subscription with expires_at.
+    expires_days: Option<i32>,
 }
 
 #[derive(Deserialize)]
@@ -1337,7 +1339,7 @@ async fn admin_api_users(State(state): State<WebState>, header_map: HeaderMap, Q
     }
 }
 
-/// POST /admin/api/users/:id/plan — change user plan.
+/// POST /admin/api/users/:id/plan — change user plan with optional expiry + notification.
 async fn admin_api_user_plan(
     State(state): State<WebState>,
     header_map: HeaderMap,
@@ -1354,12 +1356,54 @@ async fn admin_api_user_plan(
     }
     let db = state.shared_storage.sqlite_pool();
     let plan = body.plan.clone();
+    let expires_days = body.expires_days;
+    let plan_notifier = state.plan_notifier.clone();
     let result = tokio::task::spawn_blocking(move || {
         let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
+
+        // Get old plan for comparison
+        let old_plan: String = conn
+            .query_row(
+                "SELECT COALESCE(plan, 'free') FROM users WHERE telegram_id = ?1",
+                rusqlite::params![user_id],
+                |r| r.get(0),
+            )
+            .unwrap_or_else(|_| "free".to_string());
+
+        // Update subscriptions table with optional expiry
+        let expires_at = if let Some(days) = expires_days {
+            let clamped = days.clamp(1, 3650);
+            let expires_expr = format!("datetime('now', '+{} days')", clamped);
+            conn.execute(
+                &format!(
+                    "INSERT OR REPLACE INTO subscriptions (user_id, plan, expires_at) \
+                     VALUES (?1, ?2, {})",
+                    expires_expr
+                ),
+                rusqlite::params![user_id, plan],
+            )?;
+            conn.query_row(
+                "SELECT expires_at FROM subscriptions WHERE user_id = ?1",
+                rusqlite::params![user_id],
+                |r| r.get::<_, Option<String>>(0),
+            )
+            .ok()
+            .flatten()
+        } else {
+            // No expiry — update or create subscription without expires_at
+            conn.execute(
+                "INSERT OR REPLACE INTO subscriptions (user_id, plan) VALUES (?1, ?2)",
+                rusqlite::params![user_id, plan],
+            )?;
+            None
+        };
+
+        // Update users table
         let n = conn.execute(
             "UPDATE users SET plan = ?1 WHERE telegram_id = ?2",
             rusqlite::params![plan, user_id],
         )?;
+
         if n > 0 {
             log_audit(
                 &conn,
@@ -1367,18 +1411,43 @@ async fn admin_api_user_plan(
                 "plan_change",
                 "user",
                 &user_id.to_string(),
-                Some(&format!("plan={}", plan)),
+                Some(&format!(
+                    "plan={}, expires={}",
+                    plan,
+                    expires_at.as_deref().unwrap_or("unlimited")
+                )),
             );
         }
-        Ok::<_, rusqlite::Error>(n)
+        Ok::<_, rusqlite::Error>((n, old_plan, plan, expires_at))
     })
     .await;
 
     match result {
-        Ok(Ok(0)) => (StatusCode::NOT_FOUND, "User not found").into_response(),
-        Ok(Ok(_)) => {
-            log::info!("Admin {} changed plan for user {} to {}", admin_id, user_id, body.plan);
-            Json(json!({"ok": true, "plan": body.plan})).into_response()
+        Ok(Ok((0, _, _, _))) => (StatusCode::NOT_FOUND, "User not found").into_response(),
+        Ok(Ok((_, old_plan, new_plan, expires_at))) => {
+            log::info!(
+                "Admin {} changed plan for user {} to {} (expires: {:?})",
+                admin_id,
+                user_id,
+                new_plan,
+                expires_at
+            );
+            // Send plan change notification to user via Telegram
+            if old_plan != new_plan {
+                if let Some(ref tx) = plan_notifier {
+                    use std::str::FromStr;
+                    let old = super::Plan::from_str(&old_plan).unwrap_or_default();
+                    let new = super::Plan::from_str(&new_plan).unwrap_or_default();
+                    let _ = tx.send(super::PlanChangeEvent {
+                        user_id,
+                        old_plan: old,
+                        new_plan: new,
+                        reason: super::PlanChangeReason::Admin,
+                        expires_at: expires_at.clone(),
+                    });
+                }
+            }
+            Json(json!({"ok": true, "plan": new_plan, "expires_at": expires_at})).into_response()
         }
         Ok(Err(e)) => {
             log::error!("Failed to update plan: {}", e);
