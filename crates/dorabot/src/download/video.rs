@@ -111,7 +111,7 @@ pub async fn download_and_send_video(
             let format = PipelineFormat::Video {
                 quality: video_quality.clone(),
                 time_range,
-                audio_lang,
+                audio_lang: None, // audio_lang handled in post-processing below
             };
             let registry = bot_global();
 
@@ -179,6 +179,13 @@ pub async fn download_and_send_video(
                         log::warn!("Failed to verify video streams: {}. Continuing...", e);
                     }
                 }
+
+                // Replace audio track if user selected a specific language
+                let actual_file_path = if let Some(ref lang) = audio_lang {
+                    maybe_replace_audio_track(&actual_file_path, &url, lang).await
+                } else {
+                    actual_file_path
+                };
 
                 // Burn subtitles if user has the setting enabled
                 let actual_file_path =
@@ -535,6 +542,172 @@ async fn get_thumbnail_url(url: &Url) -> Option<String> {
         }
     } else {
         None
+    }
+}
+
+/// Download a specific audio track and replace the video's audio via ffmpeg.
+///
+/// Uses `player_client=android,web_music` to access YouTube's dubbed audio tracks,
+/// then merges the selected audio into the video with `ffmpeg -c:v copy`.
+/// Returns the new file path on success, or the original path on failure.
+async fn maybe_replace_audio_track(file_path: &str, url: &Url, lang: &str) -> String {
+    log::info!("🔊 Replacing audio track with language '{}' for {}", lang, url);
+
+    let ytdl_bin = &*config::YTDL_BIN;
+    let audio_path = format!("{}.audio_lang.m4a", file_path);
+
+    // Step 1: Download just the audio track in the selected language
+    let format_filter = format!("ba[language={}]", lang);
+    let mut cmd = TokioCommand::new(ytdl_bin);
+    cmd.args([
+        "--no-playlist",
+        "--format",
+        &format_filter,
+        "--extractor-args",
+        "youtube:player_client=android,web_music;formats=missing_pot",
+        "--js-runtimes",
+        "deno",
+        "--output",
+        &audio_path,
+        "--no-check-certificate",
+        "--age-limit",
+        "99",
+    ]);
+
+    // Add proxy
+    let proxy_chain = crate::download::metadata::get_proxy_chain();
+    if let Some(Some(proxy)) = proxy_chain.first() {
+        cmd.args(["--proxy", &proxy.url]);
+    }
+
+    cmd.arg(url.as_str());
+
+    log::info!("🔊 Downloading audio track lang={} to {}", lang, audio_path);
+    match timeout(config::download::ytdlp_timeout(), cmd.output()).await {
+        Ok(Ok(output)) if output.status.success() => {
+            log::info!("🔊 Audio track downloaded successfully");
+        }
+        Ok(Ok(output)) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::error!(
+                "🔊 Failed to download audio track: {}",
+                &stderr[..stderr.len().min(300)]
+            );
+            return file_path.to_string();
+        }
+        Ok(Err(e)) => {
+            log::error!("🔊 Failed to execute yt-dlp for audio track: {}", e);
+            return file_path.to_string();
+        }
+        Err(_) => {
+            log::error!("🔊 Timeout downloading audio track");
+            return file_path.to_string();
+        }
+    }
+
+    // Check audio file exists
+    if !std::path::Path::new(&audio_path).exists() {
+        // yt-dlp may have added extension - look for it
+        let mut found_audio = None;
+        if let Ok(entries) = std::fs::read_dir(
+            std::path::Path::new(file_path)
+                .parent()
+                .unwrap_or(std::path::Path::new(".")),
+        ) {
+            let stem = format!(
+                "{}.audio_lang",
+                std::path::Path::new(file_path)
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+            );
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with(&stem) || name.contains(".audio_lang.") {
+                    found_audio = Some(entry.path().to_string_lossy().to_string());
+                    break;
+                }
+            }
+        }
+        match found_audio {
+            Some(path) => {
+                log::info!("🔊 Found audio file at: {}", path);
+                // Continue with this path - update audio_path below
+                return merge_audio_track(file_path, &path).await;
+            }
+            None => {
+                log::error!("🔊 Audio track file not found after download");
+                return file_path.to_string();
+            }
+        }
+    }
+
+    merge_audio_track(file_path, &audio_path).await
+}
+
+/// Merge an audio file into a video, replacing the original audio track.
+async fn merge_audio_track(video_path: &str, audio_path: &str) -> String {
+    let output_path = format!("{}.merged.mp4", video_path);
+
+    // Step 2: Replace audio with ffmpeg
+    let mut ffmpeg_cmd = TokioCommand::new("ffmpeg");
+    ffmpeg_cmd.args([
+        "-y",
+        "-i",
+        video_path,
+        "-i",
+        audio_path,
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-movflags",
+        "+faststart",
+        &output_path,
+    ]);
+
+    log::info!("🔊 Merging audio track into video...");
+    match timeout(std::time::Duration::from_secs(120), ffmpeg_cmd.output()).await {
+        Ok(Ok(output)) if output.status.success() => {
+            log::info!("🔊 Audio track merged successfully");
+            // Replace original with merged
+            if let Err(e) = std::fs::rename(&output_path, video_path) {
+                log::error!("🔊 Failed to rename merged file: {}", e);
+                // Try copy instead
+                if std::fs::copy(&output_path, video_path).is_ok() {
+                    let _ = std::fs::remove_file(&output_path);
+                } else {
+                    return output_path;
+                }
+            }
+            // Clean up audio file
+            let _ = std::fs::remove_file(audio_path);
+            video_path.to_string()
+        }
+        Ok(Ok(output)) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::error!("🔊 ffmpeg merge failed: {}", &stderr[..stderr.len().min(300)]);
+            let _ = std::fs::remove_file(&output_path);
+            let _ = std::fs::remove_file(audio_path);
+            video_path.to_string()
+        }
+        Ok(Err(e)) => {
+            log::error!("🔊 Failed to run ffmpeg: {}", e);
+            let _ = std::fs::remove_file(audio_path);
+            video_path.to_string()
+        }
+        Err(_) => {
+            log::error!("🔊 ffmpeg merge timed out");
+            let _ = std::fs::remove_file(&output_path);
+            let _ = std::fs::remove_file(audio_path);
+            video_path.to_string()
+        }
     }
 }
 

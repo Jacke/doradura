@@ -279,19 +279,9 @@ impl YtDlpSource {
         };
         log::debug!("yt-dlp video format string: {}", format_arg);
 
-        // When audio_lang is set, use android,web_music player client to access dubbed audio tracks.
-        // YouTube only exposes multi-language audio via these clients, not via "default".
-        let has_audio_lang = audio_lang.is_some();
-        let tier1_extractor = if has_audio_lang {
-            "youtube:player_client=android,web_music;formats=missing_pot"
-        } else {
-            "youtube:player_client=default;formats=missing_pot"
-        };
-        let tier2_extractor = if has_audio_lang {
-            "youtube:player_client=android,web_music;formats=missing_pot"
-        } else {
-            "youtube:player_client=default"
-        };
+        // Audio language selection is handled in post-processing (video.rs)
+        // by downloading the audio track separately and merging with ffmpeg.
+        // The main download always uses player_client=default for reliability.
 
         let handle = tokio::task::spawn_blocking(move || {
             download_with_fallback_chain(
@@ -309,7 +299,7 @@ impl YtDlpSource {
                     args.push("Merger:-movflags +faststart");
                     add_no_cookies_args(args, proxy_option);
                     args.push("--extractor-args");
-                    args.push(tier1_extractor);
+                    args.push("youtube:player_client=default;formats=missing_pot");
                     args.push("--js-runtimes");
                     args.push("deno");
                     args.push("--no-check-certificate");
@@ -328,7 +318,7 @@ impl YtDlpSource {
                         } else {
                             add_cookies_args_with_proxy(args, proxy_option);
                             args.push("--extractor-args");
-                            args.push(tier2_extractor);
+                            args.push("youtube:player_client=default");
                         }
                         args.push("--js-runtimes");
                         args.push("deno");
@@ -344,7 +334,7 @@ impl YtDlpSource {
                     args.push("mp4");
                     add_cookies_args_with_proxy(args, proxy_option);
                     args.push("--extractor-args");
-                    args.push(tier2_extractor);
+                    args.push("youtube:player_client=default");
                     args.push("--js-runtimes");
                     args.push("deno");
                     args.push("--no-check-certificate");
