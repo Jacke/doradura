@@ -384,7 +384,7 @@ pub async fn show_subscription_info(
         text.push_str("*Available plans:*\n\n");
 
         // Premium plan
-        text.push_str("⭐ *Premium* \\- 350 Stars \\(~$6\\) every 30 days\n");
+        text.push_str("⭐ *Premium* \\- 3 Stars every 30 days\n");
         text.push_str("• 10 seconds between requests\n");
         text.push_str("• Unlimited downloads\n");
         text.push_str("• Files up to 100 MB\n");
@@ -392,7 +392,7 @@ pub async fn show_subscription_info(
         text.push_str("• Priority queue\n\n");
 
         // VIP plan
-        text.push_str("👑 *VIP* \\- 850 Stars \\(~$15\\) every 30 days\n");
+        text.push_str("👑 *VIP* \\- 5 Stars every 30 days\n");
         text.push_str("• 5 seconds between requests\n");
         text.push_str("• Unlimited downloads\n");
         text.push_str("• Files up to 200 MB\n");

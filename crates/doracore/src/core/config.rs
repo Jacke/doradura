@@ -398,22 +398,22 @@ pub mod subscription {
 
     /// Price for Premium subscription in Telegram Stars (charged every 30 days)
     /// Read from PREMIUM_PRICE_STARS environment variable
-    /// Default: 350 Stars (~$6/month)
+    /// Default: 3 Stars
     pub static PREMIUM_PRICE_STARS: Lazy<u32> = Lazy::new(|| {
         env::var("PREMIUM_PRICE_STARS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(350)
+            .unwrap_or(3)
     });
 
     /// Price for VIP subscription in Telegram Stars (charged every 30 days)
     /// Read from VIP_PRICE_STARS environment variable
-    /// Default: 850 Stars (~$15/month)
+    /// Default: 5 Stars
     pub static VIP_PRICE_STARS: Lazy<u32> = Lazy::new(|| {
         env::var("VIP_PRICE_STARS")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(850)
+            .unwrap_or(5)
     });
 
     /// Subscription period in seconds (30 days)
