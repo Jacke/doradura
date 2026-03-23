@@ -9,8 +9,6 @@ license = "MIT"
 [features]
 # Enables From<teloxide::RequestError> impl on AppError
 telegram = ["dep:teloxide"]
-# YOLOv8 ONNX smart crop for circle video notes (requires ort-sys build)
-smartcrop = ["dep:ort", "dep:ndarray", "dep:image"]
 
 [dependencies]
 tokio = { workspace = true }
@@ -45,10 +43,6 @@ bytes = { workspace = true }
 http = { workspace = true }
 futures-util = { workspace = true }
 prometheus = { workspace = true }
-# ONNX + image processing for smart crop (behind "smartcrop" feature)
-ort = { workspace = true, optional = true }
-ndarray = { workspace = true, optional = true }
-image = { version = "0.25", default-features = false, features = ["jpeg"], optional = true }
 # Non-workspace deps
 shellexpand = "3.1.0"
 select = "0.6.1"

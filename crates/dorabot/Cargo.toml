@@ -14,9 +14,6 @@ default-run = "doradura"
 [package.metadata.dist]
 dist = false
 
-[features]
-smartcrop = ["doracore/smartcrop"]
-
 [dependencies]
 doracore = { path = "../doracore", features = ["telegram"] }
 

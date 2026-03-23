@@ -12,8 +12,6 @@
 pub mod audio;
 pub mod document;
 pub mod image;
-#[cfg(feature = "smartcrop")]
-pub mod smartcrop;
 pub mod video;
 
 use std::path::Path;
