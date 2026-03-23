@@ -251,8 +251,8 @@ pub async fn send_preview(
                     has_audio_tracks,
                 )
             } else {
-                // When burn subs is active, use mp4 only (no MP3 alongside)
-                let format_for_keyboard = if burn_sub_lang.is_some() {
+                // When burn subs or audio lang is active, use mp4 only (no MP3 alongside)
+                let format_for_keyboard = if burn_sub_lang.is_some() || audio_lang.is_some() {
                     "mp4"
                 } else if default_format == "mp4" || default_format == "mp4+mp3" {
                     "mp4+mp3"
@@ -594,8 +594,12 @@ pub async fn update_preview_message(
                 has_audio_tracks,
             )
         } else {
-            // When burn subs is active, use mp4 only (no MP3 alongside)
-            let format_for_keyboard = if burn_sub_lang.is_some() { "mp4" } else { "mp4+mp3" };
+            // When burn subs or audio lang is active, use mp4 only (no MP3 alongside)
+            let format_for_keyboard = if burn_sub_lang.is_some() || audio_lang.is_some() {
+                "mp4"
+            } else {
+                "mp4+mp3"
+            };
             create_video_format_keyboard(
                 formats,
                 resolved_quality.as_deref(),
