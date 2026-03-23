@@ -567,6 +567,7 @@ CREATE TABLE IF NOT EXISTS preview_contexts (
     time_range_start TEXT,
     time_range_end TEXT,
     burn_sub_lang TEXT,
+    audio_lang TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (user_id, url)

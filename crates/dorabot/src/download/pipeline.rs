@@ -51,6 +51,7 @@ pub enum PipelineFormat {
     Video {
         quality: Option<String>,
         time_range: Option<(String, String)>,
+        audio_lang: Option<String>,
     },
 }
 
@@ -287,9 +288,16 @@ pub async fn download_phase(
                 builder = builder.audio_bitrate(br);
             }
         }
-        PipelineFormat::Video { ref quality, .. } => {
+        PipelineFormat::Video {
+            ref quality,
+            ref audio_lang,
+            ..
+        } => {
             if let Some(ref q) = quality {
                 builder = builder.video_quality(q);
+            }
+            if let Some(ref lang) = audio_lang {
+                builder = builder.audio_lang(lang);
             }
         }
     }

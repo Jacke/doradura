@@ -6,6 +6,13 @@ pub struct VideoFormatInfo {
     pub resolution: Option<String>, // e.g. "1920x1080"
 }
 
+/// Audio track language information extracted from yt-dlp metadata.
+#[derive(Debug, Clone)]
+pub struct AudioTrackInfo {
+    pub language: String,
+    pub display_name: Option<String>,
+}
+
 /// Preview metadata structure
 #[derive(Debug, Clone)]
 pub struct PreviewMetadata {
@@ -19,6 +26,7 @@ pub struct PreviewMetadata {
     pub timestamps: Vec<crate::timestamps::VideoTimestamp>, // extracted timestamps
     pub is_photo: bool,                              // true for Instagram photo posts (no audio/video to extract)
     pub carousel_count: u8,                          // 0 = not carousel, 2-10 = carousel item count
+    pub audio_tracks: Option<Vec<AudioTrackInfo>>,   // available audio tracks (multi-language)
 }
 
 impl PreviewMetadata {
@@ -100,6 +108,7 @@ mod tests {
             timestamps: Vec::new(),
             is_photo: false,
             carousel_count: 0,
+            audio_tracks: None,
         };
         assert_eq!(meta.format_duration(), "3:05");
     }
@@ -117,6 +126,7 @@ mod tests {
             timestamps: Vec::new(),
             is_photo: false,
             carousel_count: 0,
+            audio_tracks: None,
         };
         assert_eq!(meta.format_duration(), "0:00");
     }
@@ -134,6 +144,7 @@ mod tests {
             timestamps: Vec::new(),
             is_photo: false,
             carousel_count: 0,
+            audio_tracks: None,
         };
         assert_eq!(meta.format_duration(), "Unknown");
     }
@@ -151,6 +162,7 @@ mod tests {
             timestamps: Vec::new(),
             is_photo: false,
             carousel_count: 0,
+            audio_tracks: None,
         };
         assert_eq!(meta.format_duration(), "61:01");
     }
@@ -168,6 +180,7 @@ mod tests {
             timestamps: Vec::new(),
             is_photo: false,
             carousel_count: 0,
+            audio_tracks: None,
         };
         assert_eq!(meta.format_filesize(), "5.0 MB");
     }
@@ -185,6 +198,7 @@ mod tests {
             timestamps: Vec::new(),
             is_photo: false,
             carousel_count: 0,
+            audio_tracks: None,
         };
         assert_eq!(meta.format_filesize(), "512.0 KB");
     }
@@ -202,6 +216,7 @@ mod tests {
             timestamps: Vec::new(),
             is_photo: false,
             carousel_count: 0,
+            audio_tracks: None,
         };
         assert_eq!(meta.format_filesize(), "500 B");
     }
@@ -219,6 +234,7 @@ mod tests {
             timestamps: Vec::new(),
             is_photo: false,
             carousel_count: 0,
+            audio_tracks: None,
         };
         assert_eq!(meta.format_filesize(), "Unknown");
     }
@@ -236,6 +252,7 @@ mod tests {
             timestamps: Vec::new(),
             is_photo: false,
             carousel_count: 0,
+            audio_tracks: None,
         };
         assert_eq!(meta.display_title(), "Artist Name - Song Name");
     }
@@ -253,6 +270,7 @@ mod tests {
             timestamps: Vec::new(),
             is_photo: false,
             carousel_count: 0,
+            audio_tracks: None,
         };
         assert_eq!(meta.display_title(), "Song Name");
     }
@@ -270,6 +288,7 @@ mod tests {
             timestamps: Vec::new(),
             is_photo: false,
             carousel_count: 0,
+            audio_tracks: None,
         };
         assert_eq!(meta.display_title(), "Song Name");
     }
@@ -287,6 +306,7 @@ mod tests {
             timestamps: Vec::new(),
             is_photo: false,
             carousel_count: 0,
+            audio_tracks: None,
         };
         let debug = format!("{:?}", meta);
         assert!(debug.contains("PreviewMetadata"));
@@ -310,6 +330,7 @@ mod tests {
             timestamps: Vec::new(),
             is_photo: false,
             carousel_count: 0,
+            audio_tracks: None,
         };
         let cloned = meta.clone();
         assert_eq!(meta.title, cloned.title);
@@ -346,6 +367,7 @@ mod tests {
             timestamps: Vec::new(),
             is_photo: false,
             carousel_count: 0,
+            audio_tracks: None,
         };
 
         assert!(meta.video_formats.is_some());

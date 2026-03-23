@@ -963,7 +963,7 @@ mod download_tests {
 
     #[test]
     fn test_build_telegram_safe_format_default() {
-        let format = build_telegram_safe_format(None);
+        let format = build_telegram_safe_format(None, None);
         // Should contain avc1 codec preference for telegram compatibility
         assert!(format.contains("avc1"));
         assert!(format.contains("mp4a"));
@@ -973,40 +973,60 @@ mod download_tests {
 
     #[test]
     fn test_build_telegram_safe_format_1080p() {
-        let format = build_telegram_safe_format(Some(1080));
+        let format = build_telegram_safe_format(Some(1080), None);
         assert!(format.contains("[height<=1080]"));
         assert!(format.contains("avc1"));
     }
 
     #[test]
     fn test_build_telegram_safe_format_720p() {
-        let format = build_telegram_safe_format(Some(720));
+        let format = build_telegram_safe_format(Some(720), None);
         assert!(format.contains("[height<=720]"));
         assert!(format.contains("avc1"));
     }
 
     #[test]
     fn test_build_telegram_safe_format_480p() {
-        let format = build_telegram_safe_format(Some(480));
+        let format = build_telegram_safe_format(Some(480), None);
         assert!(format.contains("[height<=480]"));
     }
 
     #[test]
     fn test_build_telegram_safe_format_custom_height() {
-        let format = build_telegram_safe_format(Some(144));
+        let format = build_telegram_safe_format(Some(144), None);
         // Custom height should be first in the chain
         assert!(format.contains("[height<=144]"));
     }
 
     #[test]
     fn test_build_telegram_safe_format_has_fallbacks() {
-        let format = build_telegram_safe_format(Some(720));
+        let format = build_telegram_safe_format(Some(720), None);
         // Should have progressive fallback to lower qualities
         assert!(format.contains("[height<=720]"));
         assert!(format.contains("[height<=480]"));
         assert!(format.contains("[height<=360]"));
         // Final fallback
         assert!(format.contains("best[ext=mp4]"));
+        assert!(format.ends_with("/best"));
+    }
+
+    #[test]
+    fn test_build_telegram_safe_format_audio_lang() {
+        let format = build_telegram_safe_format(Some(1080), Some("en"));
+        // Language-filtered variants must precede generic ones for each height
+        let lang_pos = format.find("[language=en]").expect("language filter missing");
+        let generic_pos = format.find("ba[acodec^=mp4a]").expect("generic audio missing");
+        assert!(
+            lang_pos < generic_pos,
+            "language variant must come before generic fallback"
+        );
+        assert!(format.contains("avc1"));
+    }
+
+    #[test]
+    fn test_build_telegram_safe_format_audio_lang_no_height() {
+        let format = build_telegram_safe_format(None, Some("ru"));
+        assert!(format.contains("[language=ru]"));
         assert!(format.ends_with("/best"));
     }
 

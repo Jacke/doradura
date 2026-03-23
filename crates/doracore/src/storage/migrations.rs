@@ -132,6 +132,9 @@ fn ensure_tables(conn: &Connection) {
               AND status IN ('pending', 'leased', 'processing', 'uploading')",
     );
 
+    // preview_contexts: audio_lang column
+    let _ = conn.execute_batch("ALTER TABLE preview_contexts ADD COLUMN audio_lang TEXT");
+
     // V40: admin audit log
     let _ = conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS admin_audit_log (

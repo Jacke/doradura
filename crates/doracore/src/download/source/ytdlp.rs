@@ -261,17 +261,18 @@ impl YtDlpSource {
         let download_path = request.output_path.clone();
         let time_range = request.time_range.clone();
 
+        let audio_lang = request.audio_lang.as_deref();
         let format_arg = match request.video_quality.as_deref() {
-            Some("4320p") => build_telegram_safe_format(Some(4320)),
-            Some("2160p") => build_telegram_safe_format(Some(2160)),
-            Some("1440p") => build_telegram_safe_format(Some(1440)),
-            Some("1080p") => build_telegram_safe_format(Some(1080)),
-            Some("720p") => build_telegram_safe_format(Some(720)),
-            Some("480p") => build_telegram_safe_format(Some(480)),
-            Some("360p") => build_telegram_safe_format(Some(360)),
-            Some("240p") => build_telegram_safe_format(Some(240)),
-            Some("144p") => build_telegram_safe_format(Some(144)),
-            _ => build_telegram_safe_format(None),
+            Some("4320p") => build_telegram_safe_format(Some(4320), audio_lang),
+            Some("2160p") => build_telegram_safe_format(Some(2160), audio_lang),
+            Some("1440p") => build_telegram_safe_format(Some(1440), audio_lang),
+            Some("1080p") => build_telegram_safe_format(Some(1080), audio_lang),
+            Some("720p") => build_telegram_safe_format(Some(720), audio_lang),
+            Some("480p") => build_telegram_safe_format(Some(480), audio_lang),
+            Some("360p") => build_telegram_safe_format(Some(360), audio_lang),
+            Some("240p") => build_telegram_safe_format(Some(240), audio_lang),
+            Some("144p") => build_telegram_safe_format(Some(144), audio_lang),
+            _ => build_telegram_safe_format(None, audio_lang),
         };
 
         let handle = tokio::task::spawn_blocking(move || {

@@ -34,6 +34,7 @@ pub struct PreviewContext {
     pub original_message_id: Option<i32>,
     pub time_range: Option<(String, String)>,
     pub burn_sub_lang: Option<String>,
+    pub audio_lang: Option<String>,
 }
 
 #[derive(Debug, Clone)]

@@ -820,6 +820,153 @@ pub async fn handle_menu_callback(
                                 }
                             }
                         }
+                        "audio" => {
+                            let _ = bot.answer_callback_query(callback_id.clone()).await;
+                            let url_id = parts[2];
+
+                            // Get URL from cache
+                            let url_str = match cache::get_url(&db_pool, Some(shared_storage.as_ref()), url_id).await {
+                                Some(u) => u,
+                                None => {
+                                    bot.send_message(chat_id, "❌ Link expired, please send the URL again")
+                                        .await?;
+                                    return Ok(());
+                                }
+                            };
+
+                            // Get audio tracks from preview cache
+                            let audio_tracks = crate::telegram::cache::PREVIEW_CACHE
+                                .get(&url_str)
+                                .await
+                                .and_then(|meta| meta.audio_tracks);
+
+                            let mut rows: Vec<Vec<teloxide::types::InlineKeyboardButton>> = Vec::new();
+                            if let Some(tracks) = audio_tracks {
+                                let mut row = Vec::new();
+                                for track in &tracks {
+                                    let label = track
+                                        .display_name
+                                        .as_deref()
+                                        .map(|name| format!("{} ({})", track.language, name))
+                                        .unwrap_or_else(|| track.language.clone());
+                                    row.push(crate::telegram::cb(
+                                        label,
+                                        format!("pv:audio_lang:{}:{}", track.language, url_id),
+                                    ));
+                                    if row.len() == 3 {
+                                        rows.push(std::mem::take(&mut row));
+                                    }
+                                }
+                                if !row.is_empty() {
+                                    rows.push(row);
+                                }
+                            }
+                            // "Original (no preference)" reset button
+                            rows.push(vec![crate::telegram::cb(
+                                "🔊 Original".to_string(),
+                                format!("pv:audio_lang:none:{}", url_id),
+                            )]);
+
+                            let keyboard = teloxide::types::InlineKeyboardMarkup::new(rows);
+                            if let Err(e) = bot
+                                .edit_message_reply_markup(chat_id, message_id)
+                                .reply_markup(keyboard)
+                                .await
+                            {
+                                log::warn!("Failed to edit preview keyboard for audio picker: {:?}", e);
+                            }
+                        }
+                        "audio_lang" => {
+                            let _ = bot.answer_callback_query(callback_id.clone()).await;
+                            let rest = parts[2];
+                            let (lang_code, url_id) = match rest.split_once(':') {
+                                Some((l, u)) => (l.to_string(), u.to_string()),
+                                None => return Ok(()),
+                            };
+
+                            let url_str = match cache::get_url(&db_pool, Some(shared_storage.as_ref()), &url_id).await {
+                                Some(u) => u,
+                                None => {
+                                    bot.send_message(chat_id, "❌ Link expired, please send the URL again")
+                                        .await?;
+                                    return Ok(());
+                                }
+                            };
+
+                            if lang_code == "none" {
+                                let _ = shared_storage
+                                    .set_preview_audio_lang(chat_id.0, &url_str, None, 3600)
+                                    .await;
+                            } else {
+                                let _ = shared_storage
+                                    .set_preview_audio_lang(chat_id.0, &url_str, Some(&lang_code), 3600)
+                                    .await;
+                            }
+
+                            // Rebuild the preview keyboard
+                            let url = match Url::parse(&url_str) {
+                                Ok(u) => u,
+                                Err(e) => {
+                                    log::error!("Failed to parse URL from cache: {}", e);
+                                    let _ = bot.send_message(chat_id, "❌ Error: invalid link").await;
+                                    return Ok(());
+                                }
+                            };
+
+                            let current_format = shared_storage
+                                .get_user_download_format(chat_id.0)
+                                .await
+                                .unwrap_or_else(|_| "mp4".to_string());
+                            let video_quality = shared_storage.get_user_video_quality(chat_id.0).await.ok();
+
+                            match crate::telegram::preview::get_preview_metadata(
+                                &url,
+                                Some(&current_format),
+                                video_quality.as_deref(),
+                            )
+                            .await
+                            {
+                                Ok(metadata) => {
+                                    let preview_context = shared_storage
+                                        .get_preview_context(chat_id.0, url.as_str())
+                                        .await
+                                        .ok()
+                                        .flatten();
+                                    let time_range = preview_context.as_ref().and_then(|ctx| ctx.time_range.clone());
+                                    if let Err(e) = crate::telegram::preview::update_preview_message(
+                                        &bot,
+                                        chat_id,
+                                        message_id,
+                                        &url,
+                                        &metadata,
+                                        &current_format,
+                                        video_quality.as_deref(),
+                                        Arc::clone(&db_pool),
+                                        Arc::clone(&shared_storage),
+                                        time_range.as_ref(),
+                                    )
+                                    .await
+                                    {
+                                        log::error!("Failed to update preview after audio_lang selection: {:?}", e);
+                                        let _ = bot
+                                            .send_message(
+                                                chat_id,
+                                                "Failed to update preview. Please send the link again.",
+                                            )
+                                            .await;
+                                    }
+                                }
+                                Err(e) => {
+                                    log::error!(
+                                        "Failed to refresh preview metadata after audio_lang selection: {:?}",
+                                        e
+                                    );
+                                    let _ = bot
+                                        .send_message(chat_id, "⏰ Preview expired, please send the link again")
+                                        .await;
+                                }
+                            }
+                        }
                         _ => {
                             bot.answer_callback_query(callback_id.clone())
                                 .text("Unknown action")

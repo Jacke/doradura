@@ -3,7 +3,7 @@ use crate::core::error::AppError;
 use crate::download::error::DownloadError;
 use crate::download::metadata::{add_cookies_args_with_proxy, get_proxy_chain, is_proxy_related_error};
 use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message, YtDlpErrorType};
-use crate::telegram::types::VideoFormatInfo;
+use crate::telegram::types::{AudioTrackInfo, VideoFormatInfo};
 use serde_json::Value;
 use std::collections::HashMap;
 use tokio::process::Command as TokioCommand;
@@ -210,6 +210,50 @@ pub fn extract_video_formats_from_json(json: &Value) -> Vec<VideoFormatInfo> {
     }
 
     ordered
+}
+
+/// Extracts unique audio track languages from yt-dlp JSON metadata.
+///
+/// Iterates the `formats` array, collecting unique `language` values from
+/// audio-only entries (`vcodec == "none"`). Returns empty vec if fewer than
+/// 2 distinct languages (single track = no selection needed).
+pub fn extract_audio_tracks_from_json(json: &Value) -> Vec<AudioTrackInfo> {
+    let formats = match json.get("formats").and_then(|v| v.as_array()) {
+        Some(formats) => formats,
+        None => return Vec::new(),
+    };
+
+    let mut seen = std::collections::HashMap::<String, Option<String>>::new();
+
+    for format in formats {
+        let vcodec = format.get("vcodec").and_then(|v| v.as_str()).unwrap_or("");
+        if vcodec != "none" {
+            continue;
+        }
+
+        let language = match format.get("language").and_then(|v| v.as_str()) {
+            Some(lang) if !lang.is_empty() && lang != "und" => lang.to_string(),
+            _ => continue,
+        };
+
+        seen.entry(language).or_insert_with(|| {
+            format
+                .get("format_note")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        });
+    }
+
+    if seen.len() < 2 {
+        return Vec::new();
+    }
+
+    let mut tracks: Vec<AudioTrackInfo> = seen
+        .into_iter()
+        .map(|(language, display_name)| AudioTrackInfo { language, display_name })
+        .collect();
+    tracks.sort_by(|a, b| a.language.cmp(&b.language));
+    tracks
 }
 
 /// Fetches the list of available video formats with file sizes

@@ -314,6 +314,7 @@ impl SharedStorage {
                         time_range_start TEXT,
                         time_range_end TEXT,
                         burn_sub_lang TEXT,
+                        audio_lang TEXT,
                         created_at TEXT NOT NULL DEFAULT (datetime('now')),
                         expires_at TEXT NOT NULL,
                         PRIMARY KEY (user_id, url)
@@ -373,6 +374,7 @@ impl SharedStorage {
                         time_range_start TEXT,
                         time_range_end TEXT,
                         burn_sub_lang TEXT,
+                        audio_lang TEXT,
                         created_at TEXT NOT NULL DEFAULT (datetime('now')),
                         expires_at TEXT NOT NULL,
                         PRIMARY KEY (user_id, url)
@@ -434,6 +436,7 @@ impl SharedStorage {
                         time_range_start TEXT,
                         time_range_end TEXT,
                         burn_sub_lang TEXT,
+                        audio_lang TEXT,
                         created_at TEXT NOT NULL DEFAULT (datetime('now')),
                         expires_at TEXT NOT NULL,
                         PRIMARY KEY (user_id, url)
@@ -474,6 +477,65 @@ impl SharedStorage {
         }
     }
 
+    pub async fn set_preview_audio_lang(
+        &self,
+        user_id: i64,
+        url: &str,
+        audio_lang: Option<&str>,
+        ttl_secs: i64,
+    ) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite set_preview_audio_lang connection")?;
+                conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS preview_contexts (
+                        user_id INTEGER NOT NULL,
+                        url TEXT NOT NULL,
+                        original_message_id INTEGER,
+                        time_range_start TEXT,
+                        time_range_end TEXT,
+                        burn_sub_lang TEXT,
+                        audio_lang TEXT,
+                        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                        expires_at TEXT NOT NULL,
+                        PRIMARY KEY (user_id, url)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_preview_contexts_expires_at ON preview_contexts(expires_at);",
+                )
+                .context("sqlite ensure preview_contexts table")?;
+                conn.execute(
+                    "INSERT INTO preview_contexts (
+                        user_id, url, audio_lang, created_at, expires_at
+                     ) VALUES (?1, ?2, ?3, datetime('now'), datetime('now', '+' || ?4 || ' seconds'))
+                     ON CONFLICT(user_id, url) DO UPDATE SET
+                        audio_lang = excluded.audio_lang,
+                        expires_at = excluded.expires_at",
+                    rusqlite::params![user_id, url, audio_lang, ttl_secs],
+                )
+                .context("sqlite set_preview_audio_lang")?;
+                Ok(())
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query(
+                    "INSERT INTO preview_contexts (
+                        user_id, url, audio_lang, created_at, expires_at
+                     ) VALUES ($1, $2, $3, NOW(), NOW() + ($4 * INTERVAL '1 second'))
+                     ON CONFLICT (user_id, url) DO UPDATE SET
+                        audio_lang = EXCLUDED.audio_lang,
+                        expires_at = EXCLUDED.expires_at",
+                )
+                .bind(user_id)
+                .bind(url)
+                .bind(audio_lang)
+                .bind(ttl_secs)
+                .execute(pg_pool)
+                .await
+                .context("postgres set_preview_audio_lang")?;
+                Ok(())
+            }
+        }
+    }
+
     pub async fn get_preview_context(&self, user_id: i64, url: &str) -> Result<Option<PreviewContext>> {
         match self {
             Self::Sqlite { db_pool } => {
@@ -486,6 +548,7 @@ impl SharedStorage {
                         time_range_start TEXT,
                         time_range_end TEXT,
                         burn_sub_lang TEXT,
+                        audio_lang TEXT,
                         created_at TEXT NOT NULL DEFAULT (datetime('now')),
                         expires_at TEXT NOT NULL,
                         PRIMARY KEY (user_id, url)
@@ -495,7 +558,7 @@ impl SharedStorage {
                 .context("sqlite ensure preview_contexts table")?;
                 let row = conn
                     .query_row(
-                        "SELECT original_message_id, time_range_start, time_range_end, burn_sub_lang
+                        "SELECT original_message_id, time_range_start, time_range_end, burn_sub_lang, audio_lang
                          FROM preview_contexts
                          WHERE user_id = ?1
                            AND url = ?2
@@ -511,6 +574,7 @@ impl SharedStorage {
                                     _ => None,
                                 },
                                 burn_sub_lang: row.get(3)?,
+                                audio_lang: row.get(4)?,
                             })
                         },
                     )
@@ -520,7 +584,7 @@ impl SharedStorage {
             }
             Self::Postgres { pg_pool, .. } => {
                 let row = sqlx::query(
-                    "SELECT original_message_id, time_range_start, time_range_end, burn_sub_lang
+                    "SELECT original_message_id, time_range_start, time_range_end, burn_sub_lang, audio_lang
                      FROM preview_contexts
                      WHERE user_id = $1
                        AND url = $2
@@ -541,6 +605,7 @@ impl SharedStorage {
                         _ => None,
                     },
                     burn_sub_lang: row.get("burn_sub_lang"),
+                    audio_lang: row.get("audio_lang"),
                 }))
             }
         }

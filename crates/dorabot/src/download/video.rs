@@ -92,9 +92,22 @@ pub async fn download_and_send_video(
                 .with_label_values(&["mp4", quality])
                 .start_timer();
 
+            // Read audio_lang from preview context (set by the audio track picker button)
+            let audio_lang = if let Some(ref storage) = shared_storage_clone {
+                storage
+                    .get_preview_context(chat_id.0, url.as_str())
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|ctx| ctx.audio_lang)
+            } else {
+                None
+            };
+
             let format = PipelineFormat::Video {
                 quality: video_quality.clone(),
                 time_range,
+                audio_lang,
             };
             let registry = bot_global();
 

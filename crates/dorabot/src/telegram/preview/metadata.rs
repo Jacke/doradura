@@ -15,7 +15,7 @@ use tokio::process::Command as TokioCommand;
 use tokio::time::timeout;
 use url::Url;
 
-use super::formats::{extract_video_formats_from_json, get_video_formats_list};
+use super::formats::{extract_audio_tracks_from_json, extract_video_formats_from_json, get_video_formats_list};
 
 /// Fetches metadata from the yt-dlp JSON response
 ///
@@ -475,6 +475,16 @@ async fn get_preview_metadata_inner(
         }
     }
 
+    // Extract audio tracks from JSON metadata (for multi-language video selection)
+    let audio_tracks = {
+        let tracks = extract_audio_tracks_from_json(&json_metadata);
+        if tracks.len() >= 2 {
+            Some(tracks)
+        } else {
+            None
+        }
+    };
+
     // Fetch the approximate file size
     // For video: get the size for a specific quality via --list-formats (if needed)
     // For audio: use the filesize from JSON
@@ -534,6 +544,7 @@ async fn get_preview_metadata_inner(
         timestamps,
         is_photo: false,
         carousel_count: 0,
+        audio_tracks,
     };
 
     // Cache the extended metadata only if the title is non-empty and not "Unknown Track"
@@ -589,6 +600,7 @@ async fn get_instagram_preview_metadata(url: &Url) -> Result<PreviewMetadata, Ap
         timestamps: Vec::new(),
         is_photo: !info.is_video,
         carousel_count: info.carousel_count,
+        audio_tracks: None,
     };
 
     // Cache it

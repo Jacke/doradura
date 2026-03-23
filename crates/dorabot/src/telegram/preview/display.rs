@@ -192,15 +192,17 @@ pub async fn send_preview(
     log::debug!("Stored URL {} with ID: {}", url.as_str(), url_id);
 
     // Look up per-URL burn subtitle language from in-memory cache, falling back to persistent storage
+    let preview_ctx = shared_storage
+        .get_preview_context(chat_id.0, url.as_str())
+        .await
+        .ok()
+        .flatten();
     let burn_sub_lang = match crate::telegram::cache::get_burn_sub_lang(url.as_str()).await {
         Some(lang) => Some(lang),
-        None => shared_storage
-            .get_preview_context(chat_id.0, url.as_str())
-            .await
-            .ok()
-            .flatten()
-            .and_then(|context| context.burn_sub_lang),
+        None => preview_ctx.as_ref().and_then(|ctx| ctx.burn_sub_lang.clone()),
     };
+    let audio_lang = preview_ctx.and_then(|ctx| ctx.audio_lang);
+    let has_audio_tracks = metadata.audio_tracks.as_ref().is_some_and(|t| t.len() >= 2);
 
     let is_youtube = {
         let u = url.as_str();
@@ -245,6 +247,8 @@ pub async fn send_preview(
                     Some(audio_bitrate.as_str()),
                     is_youtube,
                     burn_sub_lang.as_deref(),
+                    audio_lang.as_deref(),
+                    has_audio_tracks,
                 )
             } else {
                 // When burn subs is active, use mp4 only (no MP3 alongside)
@@ -271,6 +275,8 @@ pub async fn send_preview(
                     Some(audio_bitrate.as_str()),
                     is_youtube,
                     burn_sub_lang.as_deref(),
+                    audio_lang.as_deref(),
+                    has_audio_tracks,
                 )
             }
         } else {
@@ -282,6 +288,8 @@ pub async fn send_preview(
                 Some(audio_bitrate.as_str()),
                 is_youtube,
                 burn_sub_lang.as_deref(),
+                audio_lang.as_deref(),
+                has_audio_tracks,
             )
         }
     } else {
@@ -298,6 +306,8 @@ pub async fn send_preview(
             Some(audio_bitrate.as_str()),
             is_youtube,
             burn_sub_lang.as_deref(),
+            audio_lang.as_deref(),
+            has_audio_tracks,
         )
     };
 
@@ -530,13 +540,15 @@ pub async fn update_preview_message(
     // Store URL in cache and get a short ID
     let url_id = cache::store_url(&db_pool, Some(shared_storage.as_ref()), url.as_str()).await;
 
-    // Look up per-URL burn subtitle language from cache
-    let burn_sub_lang = shared_storage
+    // Look up per-URL context from cache
+    let update_ctx = shared_storage
         .get_preview_context(chat_id.0, url.as_str())
         .await
         .ok()
-        .flatten()
-        .and_then(|context| context.burn_sub_lang);
+        .flatten();
+    let burn_sub_lang = update_ctx.as_ref().and_then(|ctx| ctx.burn_sub_lang.clone());
+    let audio_lang = update_ctx.and_then(|ctx| ctx.audio_lang);
+    let has_audio_tracks = metadata.audio_tracks.as_ref().is_some_and(|t| t.len() >= 2);
 
     let is_youtube = {
         let u = url.as_str();
@@ -578,6 +590,8 @@ pub async fn update_preview_message(
                 Some(audio_bitrate.as_str()),
                 is_youtube,
                 burn_sub_lang.as_deref(),
+                audio_lang.as_deref(),
+                has_audio_tracks,
             )
         } else {
             // When burn subs is active, use mp4 only (no MP3 alongside)
@@ -591,6 +605,8 @@ pub async fn update_preview_message(
                 Some(audio_bitrate.as_str()),
                 is_youtube,
                 burn_sub_lang.as_deref(),
+                audio_lang.as_deref(),
+                has_audio_tracks,
             )
         }
     } else {
@@ -601,6 +617,8 @@ pub async fn update_preview_message(
             Some(audio_bitrate.as_str()),
             is_youtube,
             burn_sub_lang.as_deref(),
+            audio_lang.as_deref(),
+            has_audio_tracks,
         )
     };
 
