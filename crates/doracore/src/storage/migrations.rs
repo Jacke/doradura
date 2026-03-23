@@ -131,6 +131,25 @@ fn ensure_tables(conn: &Connection) {
             WHERE idempotency_key IS NOT NULL
               AND status IN ('pending', 'leased', 'processing', 'uploading')",
     );
+
+    // V40: admin audit log
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS admin_audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            admin_id INTEGER NOT NULL,
+            action TEXT NOT NULL,
+            target_type TEXT NOT NULL,
+            target_id TEXT NOT NULL,
+            details TEXT,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )",
+    );
+    let _ = conn
+        .execute_batch("CREATE INDEX IF NOT EXISTS idx_admin_audit_log_created ON admin_audit_log(created_at DESC)");
+    let _ = conn.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_admin_audit_log_admin ON admin_audit_log(admin_id, created_at DESC)",
+    );
+    let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_admin_audit_log_action ON admin_audit_log(action)");
 }
 
 /// Run migrations for tests without the outer transaction wrapper
