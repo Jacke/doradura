@@ -680,6 +680,12 @@ where
                 // Will be updated to Success/Completed in the main function
                 log::debug!("File sent successfully, progress message will be updated by caller");
 
+                log::info!(
+                    "⏱️ [UPLOAD_COMPLETE] done in {:.1}s, size={:.1}MB (chat {})",
+                    send_start.elapsed().as_secs_f64(),
+                    file_size as f64 / (1024.0 * 1024.0),
+                    chat_id.0
+                );
                 metrics::TELEGRAM_SEND_DURATION_SECONDS
                     .with_label_values(&[file_type])
                     .observe(send_start.elapsed().as_secs_f64());

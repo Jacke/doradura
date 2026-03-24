@@ -245,6 +245,38 @@ impl SharedStorage {
         }
     }
 
+    /// Resets all in-progress tasks back to `pending` unconditionally.
+    /// Called once at startup when no worker from the previous session is still alive.
+    /// Returns the number of tasks reset.
+    pub async fn reset_in_progress_tasks_at_startup(&self) -> Result<u64> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn =
+                    db::get_connection(db_pool).context("sqlite reset_in_progress_tasks_at_startup connection")?;
+                Ok(
+                    db::reset_in_progress_tasks_at_startup(&conn)
+                        .context("sqlite reset_in_progress_tasks_at_startup")? as u64,
+                )
+            }
+            Self::Postgres { pg_pool, .. } => Ok(sqlx::query(
+                "UPDATE task_queue
+                 SET status = 'pending',
+                     worker_id = NULL,
+                     leased_at = NULL,
+                     lease_expires_at = NULL,
+                     last_heartbeat_at = NULL,
+                     execute_at = NULL,
+                     updated_at = NOW()
+                 WHERE status IN ('leased', 'processing', 'uploading')
+                   AND created_at > NOW() - INTERVAL '1 day'",
+            )
+            .execute(pg_pool)
+            .await
+            .context("postgres reset_in_progress_tasks_at_startup")?
+            .rows_affected()),
+        }
+    }
+
     pub async fn recover_expired_leases(&self, max_retries: i32) -> Result<u64> {
         match self {
             Self::Sqlite { db_pool } => {

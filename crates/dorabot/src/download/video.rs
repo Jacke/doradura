@@ -181,14 +181,24 @@ pub async fn download_and_send_video(
 
                 // Replace audio track if user selected a specific language
                 let actual_file_path = if let Some(ref lang) = audio_lang {
-                    replace_audio_track(&actual_file_path, &url, lang).await
+                    let audio_replace_start = std::time::Instant::now();
+                    let result = replace_audio_track(&actual_file_path, &url, lang).await;
+                    log::info!(
+                        "⏱️ [AUDIO_REPLACE] done in {:.1}s",
+                        audio_replace_start.elapsed().as_secs_f64()
+                    );
+                    result
                 } else {
                     actual_file_path
                 };
 
                 // Burn subtitles if user has the setting enabled
+                let subs_start = std::time::Instant::now();
                 let actual_file_path =
                     maybe_burn_subtitles(&actual_file_path, &url, shared_storage_clone.as_ref(), chat_id).await;
+                if subs_start.elapsed().as_secs_f64() > 1.0 {
+                    log::info!("⏱️ [BURN_SUBS] done in {:.1}s", subs_start.elapsed().as_secs_f64());
+                }
 
                 // Get user preference for send_as_document
                 let send_as_document = if let Some(ref storage) = shared_storage_clone {
@@ -351,6 +361,11 @@ pub async fn download_and_send_video(
 
                 // ── Phase 4: Success + cleanup ──
                 let elapsed_secs = start_time.elapsed().as_secs();
+                log::info!(
+                    "⏱️ [VIDEO_TOTAL] done in {:.1}s (chat {})",
+                    start_time.elapsed().as_secs_f64(),
+                    chat_id.0
+                );
                 let _ = progress_msg
                     .update(
                         &bot_clone,

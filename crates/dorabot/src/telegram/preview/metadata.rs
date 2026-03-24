@@ -336,7 +336,13 @@ async fn get_preview_metadata_inner(
     };
 
     // Fetch all metadata in a single JSON call (speed optimisation)
+    let metadata_start = std::time::Instant::now();
     let json_metadata = get_metadata_from_json(url, ytdl_bin).await?;
+    log::info!(
+        "⏱️ [METADATA_JSON] done in {:.1}s for {}",
+        metadata_start.elapsed().as_secs_f64(),
+        url
+    );
 
     // Extract title from JSON (use cache if available)
     let title = if let Some(cached) = cached_title {
@@ -426,6 +432,7 @@ async fn get_preview_metadata_inner(
 
     // Fetch the list of available formats with sizes (if the source provides them).
     // Use --list-formats because JSON doesn't always contain exact sizes for every format.
+    let formats_start = std::time::Instant::now();
     let mut video_formats: Option<Vec<VideoFormatInfo>> = match get_video_formats_list(url, ytdl_bin).await {
         Ok(formats) => {
             if formats.is_empty() {
@@ -446,6 +453,11 @@ async fn get_preview_metadata_inner(
             None
         }
     };
+    log::info!(
+        "⏱️ [FORMATS_LIST] done in {:.1}s for {}",
+        formats_start.elapsed().as_secs_f64(),
+        url
+    );
 
     if video_formats.as_ref().is_none_or(|formats| formats.is_empty()) {
         let json_formats = extract_video_formats_from_json(&json_metadata);

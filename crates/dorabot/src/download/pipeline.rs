@@ -150,6 +150,7 @@ pub async fn download_phase(
     message_id: Option<i32>,
     _shared_storage: Option<&Arc<SharedStorage>>,
 ) -> Result<DownloadPhaseResult, PipelineError> {
+    let pipeline_start = std::time::Instant::now();
     let file_format_str = format.label().to_string();
 
     // ── Step 1: Resolve source ──
@@ -242,7 +243,9 @@ pub async fn download_phase(
     // File size pre-check (skip when time_range is set — partial downloads are much smaller)
     let max_size = format.max_file_size();
     let has_time_range = format.time_range().is_some();
-    if !has_time_range {
+    if !has_time_range && matches!(format, PipelineFormat::Video { .. }) {
+        // Size pre-check only for video — audio estimate is unreliable
+        // (yt-dlp returns video size, not audio size)
         if let Some(estimated_size) = source.estimate_size(url).await {
             if estimated_size > max_size {
                 let size_mb = estimated_size as f64 / (1024.0 * 1024.0);
@@ -274,7 +277,7 @@ pub async fn download_phase(
                 return Err(PipelineError::PreCheck(format!("File too large: ~{:.2} MB", size_mb)));
             }
         }
-    } // end !has_time_range
+    } // end !has_time_range && video
 
     // ── Step 5: Build download request ──
     let mut builder = DownloadConfigBuilder::new(url.clone())
@@ -408,6 +411,11 @@ pub async fn download_phase(
         "Pipeline: {} downloaded ({:.2} MB)",
         format.label(),
         download_output.file_size as f64 / (1024.0 * 1024.0)
+    );
+    log::info!(
+        "⏱️ [PIPELINE_DOWNLOAD] done in {:.1}s (chat {})",
+        pipeline_start.elapsed().as_secs_f64(),
+        chat_id.0
     );
 
     Ok(DownloadPhaseResult {

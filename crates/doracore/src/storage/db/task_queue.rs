@@ -345,6 +345,26 @@ pub fn mark_task_failed(
     Ok(true)
 }
 
+/// Resets all in-progress tasks (`leased`, `processing`, `uploading`) back to `pending`
+/// unconditionally, regardless of lease expiry. Called once at startup when we know
+/// no worker from the previous session is still alive.
+/// Returns the number of tasks reset.
+pub fn reset_in_progress_tasks_at_startup(conn: &DbConnection) -> Result<usize> {
+    conn.execute(
+        "UPDATE task_queue
+         SET status = 'pending',
+             worker_id = NULL,
+             leased_at = NULL,
+             lease_expires_at = NULL,
+             last_heartbeat_at = NULL,
+             execute_at = NULL,
+             updated_at = CURRENT_TIMESTAMP
+         WHERE status IN ('leased', 'processing', 'uploading')
+           AND created_at > datetime('now', '-1 day')",
+        [],
+    )
+}
+
 pub fn recover_expired_leases(conn: &DbConnection, max_retries: i32) -> Result<usize> {
     conn.execute(
         "UPDATE task_queue

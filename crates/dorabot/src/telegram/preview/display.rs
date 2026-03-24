@@ -78,6 +78,7 @@ pub async fn send_preview(
     shared_storage: Arc<SharedStorage>,
     time_range: Option<&(String, String)>,
 ) -> ResponseResult<Message> {
+    let preview_start = std::time::Instant::now();
     let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     // Override format for photo posts (Instagram photos shouldn't show MP3 button)
@@ -367,6 +368,11 @@ pub async fn send_preview(
                             {
                                 Ok(Some(message)) => {
                                     log::info!("Styled preview photo sent: message_id={}", message.id);
+                                    log::info!(
+                                        "⏱️ [PREVIEW_SENT] done in {:.1}s (chat {})",
+                                        preview_start.elapsed().as_secs_f64(),
+                                        chat_id.0
+                                    );
                                     return Ok(message);
                                 }
                                 Ok(None) => {
@@ -386,6 +392,11 @@ pub async fn send_preview(
                                     if let Ok(ref message) = send_result {
                                         log::info!("Preview photo sent (fallback): message_id={}", message.id);
                                     }
+                                    log::info!(
+                                        "⏱️ [PREVIEW_SENT] done in {:.1}s (chat {})",
+                                        preview_start.elapsed().as_secs_f64(),
+                                        chat_id.0
+                                    );
                                     return send_result;
                                 }
                             }
@@ -417,6 +428,11 @@ pub async fn send_preview(
     if let Ok(ref message) = result {
         log::info!("Preview text sent: message_id={}", message.id);
     }
+    log::info!(
+        "⏱️ [PREVIEW_SENT] done in {:.1}s (chat {})",
+        preview_start.elapsed().as_secs_f64(),
+        chat_id.0
+    );
     result
 }
 
@@ -435,6 +451,7 @@ pub async fn update_preview_message(
     shared_storage: Arc<SharedStorage>,
     time_range: Option<&(String, String)>,
 ) -> ResponseResult<()> {
+    let update_start = std::time::Instant::now();
     let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     // Override format for photo posts (Instagram photos shouldn't show MP3 button)
@@ -667,7 +684,14 @@ pub async fn update_preview_message(
     )
     .await
     {
-        Ok(()) => return Ok(()),
+        Ok(()) => {
+            log::info!(
+                "⏱️ [PREVIEW_SENT] done in {:.1}s (chat {})",
+                update_start.elapsed().as_secs_f64(),
+                chat_id.0
+            );
+            return Ok(());
+        }
         Err(e) => {
             log::debug!(
                 "Styled edit caption failed for message_id={}, trying text: {}",
@@ -688,7 +712,14 @@ pub async fn update_preview_message(
     )
     .await
     {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            log::info!(
+                "⏱️ [PREVIEW_SENT] done in {:.1}s (chat {})",
+                update_start.elapsed().as_secs_f64(),
+                chat_id.0
+            );
+            Ok(())
+        }
         Err(e) => {
             log::debug!("Styled edit text also failed for message_id={}: {}", message_id, e);
             // Final fallback: standard teloxide
@@ -696,6 +727,11 @@ pub async fn update_preview_message(
                 .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                 .reply_markup(keyboard)
                 .await?;
+            log::info!(
+                "⏱️ [PREVIEW_SENT] done in {:.1}s (chat {})",
+                update_start.elapsed().as_secs_f64(),
+                chat_id.0
+            );
             Ok(())
         }
     }

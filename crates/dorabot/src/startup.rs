@@ -102,6 +102,15 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
 
     let download_queue = Arc::new(DownloadQueue::with_storage(Some(Arc::clone(&shared_storage))));
 
+    // Recover tasks that were in-progress when the previous session ended.
+    // Any task still in leased/processing/uploading state belongs to a dead worker —
+    // reset them all to pending so the queue processor picks them up immediately.
+    match shared_storage.reset_in_progress_tasks_at_startup().await {
+        Ok(0) => log::info!("Task recovery: no in-progress tasks from previous session"),
+        Ok(n) => log::info!("Task recovery: reset {} in-progress task(s) to pending", n),
+        Err(e) => log::warn!("Task recovery: failed to reset in-progress tasks: {}", e),
+    }
+
     let downsub_gateway = Arc::new(DownsubGateway::from_env());
     if downsub_gateway.is_available() {
         log::info!(

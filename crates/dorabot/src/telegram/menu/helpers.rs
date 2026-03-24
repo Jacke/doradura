@@ -57,6 +57,7 @@ pub(crate) async fn start_download_from_preview(
     download_queue: Arc<DownloadQueue>,
     rate_limiter: Arc<RateLimiter>,
 ) -> ResponseResult<()> {
+    let action_start = std::time::Instant::now();
     let url_str = match cache::get_url(&db_pool, Some(shared_storage.as_ref()), url_id).await {
         Some(url_str) => url_str,
         None => {
@@ -203,6 +204,12 @@ pub(crate) async fn start_download_from_preview(
         download_queue.set_queue_message_id(chat_id, msg_id.0).await;
     }
 
+    log::info!(
+        "⏱️ [TASK_QUEUED] done in {:.1}s (chat {}, format {})",
+        action_start.elapsed().as_secs_f64(),
+        chat_id.0,
+        format
+    );
     Ok(())
 }
 
