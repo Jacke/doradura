@@ -107,8 +107,13 @@ impl HttpSource {
                 if let Some(start) = cd_str.find("filename=") {
                     let value = &cd_str[start + 9..];
                     let filename = value.trim_start_matches('"').split('"').next().unwrap_or("download");
-                    if !filename.is_empty() {
-                        return filename.to_string();
+                    // Sanitize: strip path components to prevent traversal
+                    let safe_name = std::path::Path::new(filename)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("download");
+                    if !safe_name.is_empty() && !safe_name.contains('\0') {
+                        return safe_name.to_string();
                     }
                 }
             }
@@ -227,6 +232,9 @@ impl DownloadSource for HttpSource {
             .send()
             .await
             .map_err(|e| AppError::Download(DownloadError::Other(format!("HTTP request failed: {}", e))))?;
+
+        // SSRF: re-check final URL after redirects (reqwest follows 3xx by default)
+        check_ssrf(response.url())?;
 
         if !response.status().is_success() && response.status().as_u16() != 206 {
             return Err(AppError::Download(DownloadError::Other(format!(

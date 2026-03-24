@@ -658,12 +658,18 @@ pub async fn burn_subtitles_into_video(
     // Clean overlapping timestamps from YouTube auto-captions
     clean_srt_overlaps(subtitle_path);
 
-    // Escape subtitle path for ffmpeg filter
-    // Important: ffmpeg requires escaping special characters in the path
+    // Escape subtitle path for ffmpeg filter syntax.
+    // ffmpeg filter strings interpret: \ ' : [ ] ; , = as special chars.
+    // All must be escaped with backslash to prevent filter injection.
     let escaped_subtitle_path = subtitle_path
-        .replace("\\", "\\\\")
-        .replace(":", "\\:")
-        .replace("'", "\\'");
+        .replace('\\', "\\\\")
+        .replace('\'', "\\'")
+        .replace(':', "\\:")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
+        .replace(';', "\\;")
+        .replace(',', "\\,")
+        .replace('=', "\\=");
 
     let force_style = style.to_force_style();
     let vf_filter = format!("subtitles='{}':force_style='{}'", escaped_subtitle_path, force_style);

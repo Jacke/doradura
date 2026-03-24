@@ -90,9 +90,13 @@ impl RateLimiter {
     /// Gets the throttle duration for the given plan.
     fn get_duration_for_plan(&self, plan: &str) -> Duration {
         match plan {
+            "free" | "" => self.free_duration,
             "premium" => self.premium_duration,
             "vip" => self.vip_duration,
-            _ => self.free_duration,
+            other => {
+                log::warn!("Unknown plan '{}' in rate limiter, defaulting to free", other);
+                self.free_duration
+            }
         }
     }
 
