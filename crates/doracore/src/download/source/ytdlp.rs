@@ -293,8 +293,8 @@ impl YtDlpSource {
                 &progress_tx,
                 "video",
                 |args, proxy_option| {
-                    // Tier 1 (no cookies): always use default client
-                    // (android client needs PO token which isn't available without cookies)
+                    // Tier 1 (no cookies): use android,default when audio_lang is set
+                    // to access dubbed audio tracks
                     args.push("--format");
                     args.push("--merge-output-format");
                     args.push("mp4");
@@ -302,7 +302,11 @@ impl YtDlpSource {
                     args.push("Merger:-movflags +faststart");
                     add_no_cookies_args(args, proxy_option);
                     args.push("--extractor-args");
-                    args.push("youtube:player_client=default;formats=missing_pot");
+                    if has_audio_lang {
+                        args.push("youtube:player_client=android,default;formats=missing_pot");
+                    } else {
+                        args.push("youtube:player_client=default;formats=missing_pot");
+                    }
                     args.push("--js-runtimes");
                     args.push("deno");
                     args.push("--no-check-certificate");
