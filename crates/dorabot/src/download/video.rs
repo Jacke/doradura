@@ -556,53 +556,13 @@ async fn maybe_replace_audio_track(file_path: &str, url: &Url, lang: &str) -> St
     let ytdl_bin = &*config::YTDL_BIN;
     let audio_path = format!("{}.audio_lang.m4a", file_path);
 
-    // Step 1: Download just the audio track in the selected language
     let format_filter = format!("ba[language={}]", lang);
-    let mut cmd = TokioCommand::new(ytdl_bin);
-    cmd.args([
-        "--no-playlist",
-        "--format",
-        &format_filter,
-        "--extractor-args",
-        "youtube:player_client=android,web_music;formats=missing_pot",
-        "--js-runtimes",
-        "deno",
-        "--output",
-        &audio_path,
-        "--no-check-certificate",
-        "--age-limit",
-        "99",
-    ]);
+    let url_str = url.as_str();
 
-    // Add proxy
-    let proxy_chain = crate::download::metadata::get_proxy_chain();
-    if let Some(Some(proxy)) = proxy_chain.first() {
-        cmd.args(["--proxy", &proxy.url]);
-    }
-
-    cmd.arg(url.as_str());
-
-    log::info!("🔊 Downloading audio track lang={} to {}", lang, audio_path);
-    match timeout(config::download::ytdlp_timeout(), cmd.output()).await {
-        Ok(Ok(output)) if output.status.success() => {
-            log::info!("🔊 Audio track downloaded successfully");
-        }
-        Ok(Ok(output)) => {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            log::error!(
-                "🔊 Failed to download audio track: {}",
-                &stderr[..stderr.len().min(300)]
-            );
-            return file_path.to_string();
-        }
-        Ok(Err(e)) => {
-            log::error!("🔊 Failed to execute yt-dlp for audio track: {}", e);
-            return file_path.to_string();
-        }
-        Err(_) => {
-            log::error!("🔊 Timeout downloading audio track");
-            return file_path.to_string();
-        }
+    // Try downloading the audio track with fallback chain (no-cookies → cookies)
+    let downloaded = download_audio_track(ytdl_bin, url_str, &format_filter, &audio_path).await;
+    if !downloaded {
+        return file_path.to_string();
     }
 
     // Check audio file exists
@@ -643,6 +603,96 @@ async fn maybe_replace_audio_track(file_path: &str, url: &Url, lang: &str) -> St
     }
 
     merge_audio_track(file_path, &audio_path).await
+}
+
+/// Download an audio track using yt-dlp with fallback chain.
+///
+/// Tier 1: no cookies, android/web_music client (same as metadata preview)
+/// Tier 2: with cookies + PO token
+async fn download_audio_track(ytdl_bin: &str, url_str: &str, format_filter: &str, output_path: &str) -> bool {
+    use crate::download::metadata::{add_cookies_args_with_proxy, add_no_cookies_args, get_proxy_chain};
+
+    let proxy_chain = get_proxy_chain();
+    let proxy_option = proxy_chain.first().and_then(|p| p.as_ref());
+
+    // ── Tier 1: no cookies ──
+    log::info!("🔊 Audio track download: Tier 1 (no cookies)");
+    {
+        let mut args: Vec<&str> = vec![
+            "--no-playlist",
+            "--format",
+            format_filter,
+            "--extractor-args",
+            "youtube:player_client=android,web_music;formats=missing_pot",
+            "--js-runtimes",
+            "deno",
+            "--impersonate",
+            "Chrome-131:Android-14",
+            "--output",
+            output_path,
+            "--no-check-certificate",
+            "--age-limit",
+            "99",
+        ];
+        add_no_cookies_args(&mut args, proxy_option);
+        args.push(url_str);
+
+        let mut cmd = TokioCommand::new(ytdl_bin);
+        cmd.args(&args);
+
+        match timeout(config::download::ytdlp_timeout(), cmd.output()).await {
+            Ok(Ok(output)) if output.status.success() => {
+                log::info!("🔊 Audio track downloaded (Tier 1 success)");
+                return true;
+            }
+            Ok(Ok(output)) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                log::warn!("🔊 Tier 1 failed: {}", &stderr[..stderr.len().min(200)]);
+            }
+            Ok(Err(e)) => log::warn!("🔊 Tier 1 exec error: {}", e),
+            Err(_) => log::warn!("🔊 Tier 1 timed out"),
+        }
+    }
+
+    // ── Tier 2: with cookies + PO token ──
+    log::info!("🔊 Audio track download: Tier 2 (with cookies)");
+    {
+        let mut args: Vec<&str> = vec![
+            "--no-playlist",
+            "--format",
+            format_filter,
+            "--js-runtimes",
+            "deno",
+            "--output",
+            output_path,
+            "--no-check-certificate",
+            "--age-limit",
+            "99",
+        ];
+        add_cookies_args_with_proxy(&mut args, proxy_option);
+        args.push("--extractor-args");
+        args.push("youtube:player_client=android,web_music;formats=missing_pot");
+        args.push(url_str);
+
+        let mut cmd = TokioCommand::new(ytdl_bin);
+        cmd.args(&args);
+
+        match timeout(config::download::ytdlp_timeout(), cmd.output()).await {
+            Ok(Ok(output)) if output.status.success() => {
+                log::info!("🔊 Audio track downloaded (Tier 2 success)");
+                return true;
+            }
+            Ok(Ok(output)) => {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                log::error!("🔊 Tier 2 failed: {}", &stderr[..stderr.len().min(200)]);
+            }
+            Ok(Err(e)) => log::error!("🔊 Tier 2 exec error: {}", e),
+            Err(_) => log::error!("🔊 Tier 2 timed out"),
+        }
+    }
+
+    log::error!("🔊 All tiers failed for audio track download");
+    false
 }
 
 /// Merge an audio file into a video, replacing the original audio track.
