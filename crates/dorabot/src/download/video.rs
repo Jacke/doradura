@@ -948,13 +948,10 @@ async fn send_share_message(
         log::warn!("Invalid share URL: {}", share_url);
         return;
     };
-    let row2 = vec![InlineKeyboardButton::url("🔗 All platforms", share_parsed)];
+    // All streaming links + "All platforms" on one row
+    row1.push(InlineKeyboardButton::url("🔗 All", share_parsed));
 
-    let mut rows: Vec<Vec<InlineKeyboardButton>> = Vec::new();
-    if !row1.is_empty() {
-        rows.push(row1);
-    }
-    rows.push(row2);
+    let rows: Vec<Vec<InlineKeyboardButton>> = vec![row1];
 
     let keyboard = InlineKeyboardMarkup::new(rows);
 

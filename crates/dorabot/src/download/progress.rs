@@ -41,7 +41,7 @@ impl ProgressMessage {
     }
 
     /// Minimum interval between editMessageText calls (prevents Telegram 429).
-    const EDIT_THROTTLE: std::time::Duration = std::time::Duration::from_millis(1500);
+    const EDIT_THROTTLE: std::time::Duration = std::time::Duration::from_millis(1000);
 
     /// Creates a shallow copy suitable for `clear_after_delay` (shares message_id).
     pub fn clone_for_clear(&self) -> Self {

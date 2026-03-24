@@ -75,21 +75,26 @@ pub fn create_fallback_keyboard(
         rows.push(vec![crate::telegram::cb("☐ 📝 Lyrics", format!("dl:tl:{}", url_id))]);
     }
 
-    if (default_format == "mp4" || default_format == "mp4+mp3") && (is_youtube || burn_sub_lang.is_some()) {
-        let label = match burn_sub_lang {
-            Some(lang) => format!("🔤 Subs: {} ✓", lang),
-            None => "🔤 Burn subtitles".to_string(),
-        };
-        rows.push(vec![crate::telegram::cb(label, format!("pv:burn_subs:{}", url_id))]);
-    }
-
-    // Audio track selector (only shown when multiple audio tracks are available)
-    if (default_format == "mp4" || default_format == "mp4+mp3") && (has_audio_tracks || audio_lang.is_some()) {
-        let label = match audio_lang {
-            Some(lang) => format!("🔊 Audio: {} ✓", lang),
-            None => "🔊 Audio track".to_string(),
-        };
-        rows.push(vec![crate::telegram::cb(label, format!("pv:audio:{}", url_id))]);
+    // Burn subtitles + Audio track on one row
+    if default_format == "mp4" || default_format == "mp4+mp3" {
+        let mut feature_row = Vec::new();
+        if is_youtube || burn_sub_lang.is_some() {
+            let label = match burn_sub_lang {
+                Some(lang) => format!("🔤 Subs: {} ✓", lang),
+                None => "🔤 Burn subtitles".to_string(),
+            };
+            feature_row.push(crate::telegram::cb(label, format!("pv:burn_subs:{}", url_id)));
+        }
+        if has_audio_tracks || audio_lang.is_some() {
+            let label = match audio_lang {
+                Some(lang) => format!("🔊 Audio: {} ✓", lang),
+                None => "🔊 Audio track".to_string(),
+            };
+            feature_row.push(crate::telegram::cb(label, format!("pv:audio:{}", url_id)));
+        }
+        if !feature_row.is_empty() {
+            rows.push(feature_row);
+        }
     }
 
     rows.push(vec![crate::telegram::cb(
@@ -262,22 +267,26 @@ pub fn create_video_format_keyboard(
         format!("video_send_type:toggle:{}", url_id),
     )]);
 
-    // Burn subtitles button for YouTube videos (or when a language is already selected)
-    if is_youtube || burn_sub_lang.is_some() {
-        let label = match burn_sub_lang {
-            Some(lang) => format!("🔤 Subs: {} ✓", lang),
-            None => "🔤 Burn subtitles".to_string(),
-        };
-        buttons.push(vec![crate::telegram::cb(label, format!("pv:burn_subs:{}", url_id))]);
-    }
-
-    // Audio track selector (only shown when multiple audio tracks are available)
-    if has_audio_tracks || audio_lang.is_some() {
-        let label = match audio_lang {
-            Some(lang) => format!("🔊 Audio: {} ✓", lang),
-            None => "🔊 Audio track".to_string(),
-        };
-        buttons.push(vec![crate::telegram::cb(label, format!("pv:audio:{}", url_id))]);
+    // Burn subtitles + Audio track on one row
+    {
+        let mut feature_row = Vec::new();
+        if is_youtube || burn_sub_lang.is_some() {
+            let label = match burn_sub_lang {
+                Some(lang) => format!("🔤 Subs: {} ✓", lang),
+                None => "🔤 Burn subtitles".to_string(),
+            };
+            feature_row.push(crate::telegram::cb(label, format!("pv:burn_subs:{}", url_id)));
+        }
+        if has_audio_tracks || audio_lang.is_some() {
+            let label = match audio_lang {
+                Some(lang) => format!("🔊 Audio: {} ✓", lang),
+                None => "🔊 Audio track".to_string(),
+            };
+            feature_row.push(crate::telegram::cb(label, format!("pv:audio:{}", url_id)));
+        }
+        if !feature_row.is_empty() {
+            buttons.push(feature_row);
+        }
     }
 
     // Settings button
