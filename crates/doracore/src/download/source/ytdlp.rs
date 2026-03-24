@@ -279,9 +279,11 @@ impl YtDlpSource {
         };
         log::debug!("yt-dlp video format string: {}", format_arg);
 
-        // Audio language selection is handled in post-processing (video.rs)
-        // by downloading the audio track separately and merging with ffmpeg.
-        // The main download always uses player_client=default for reliability.
+        // When audio_lang is set, tiers with cookies (2, 3) use android,web_music
+        // to access dubbed audio tracks. Tier 1 (no cookies) stays on default since
+        // android client without PO token gets 403. The bgutil PO token server on
+        // Railway provides the auth needed for tier 2/3 to download dubbed tracks.
+        let has_audio_lang = audio_lang.is_some();
 
         let handle = tokio::task::spawn_blocking(move || {
             download_with_fallback_chain(
@@ -291,7 +293,8 @@ impl YtDlpSource {
                 &progress_tx,
                 "video",
                 |args, proxy_option| {
-                    // Video-specific yt-dlp args (Tier 1: no cookies)
+                    // Tier 1 (no cookies): always use default client
+                    // (android client needs PO token which isn't available without cookies)
                     args.push("--format");
                     args.push("--merge-output-format");
                     args.push("mp4");
@@ -307,7 +310,8 @@ impl YtDlpSource {
                 {
                     let url_for_tier2 = url_str.clone();
                     move |args: &mut Vec<&str>, proxy_option: Option<&crate::download::metadata::ProxyConfig>| {
-                        // Tier 2 (cookies): video-specific args
+                        // Tier 2 (cookies + PO token): use android,web_music when audio_lang
+                        // is set to see dubbed audio tracks
                         args.push("--format");
                         args.push("--merge-output-format");
                         args.push("mp4");
@@ -318,7 +322,11 @@ impl YtDlpSource {
                         } else {
                             add_cookies_args_with_proxy(args, proxy_option);
                             args.push("--extractor-args");
-                            args.push("youtube:player_client=default");
+                            if has_audio_lang {
+                                args.push("youtube:player_client=android,default;formats=missing_pot");
+                            } else {
+                                args.push("youtube:player_client=default");
+                            }
                         }
                         args.push("--js-runtimes");
                         args.push("deno");
@@ -326,7 +334,7 @@ impl YtDlpSource {
                     }
                 },
                 |args, proxy_option| {
-                    // Tier 3 (fixup never): video-specific args
+                    // Tier 3 (fixup never): same client logic as tier 2
                     args.push("--fixup");
                     args.push("never");
                     args.push("--format");
@@ -334,7 +342,11 @@ impl YtDlpSource {
                     args.push("mp4");
                     add_cookies_args_with_proxy(args, proxy_option);
                     args.push("--extractor-args");
-                    args.push("youtube:player_client=default");
+                    if has_audio_lang {
+                        args.push("youtube:player_client=android,default;formats=missing_pot");
+                    } else {
+                        args.push("youtube:player_client=default");
+                    }
                     args.push("--js-runtimes");
                     args.push("deno");
                     args.push("--no-check-certificate");
