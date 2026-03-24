@@ -731,13 +731,31 @@ pub async fn handle_message(
                                 download_queue.add_task(task, Some(Arc::clone(&db_pool_clone))).await;
                             }
                             Err(e) => {
-                                log::error!("Failed to get preview metadata for URL {}: {:?}", url, e);
+                                log::warn!(
+                                    "Failed to get preview metadata for URL {}: {:?}. Queuing anyway.",
+                                    url,
+                                    e
+                                );
                                 status_text.push_str(&format!(
                                     "{}. {} [{}]\n",
                                     idx + 1,
                                     url.as_str().chars().take(50).collect::<String>(),
-                                    i18n::t(&lang_clone, "commands.status_error")
+                                    i18n::t(&lang_clone, "commands.status_in_queue")
                                 ));
+                                // Still queue the download — yt-dlp will handle it
+                                let is_video = format == "mp4";
+                                let plan_for_task = plan_string.clone();
+                                let task = crate::download::queue::DownloadTask::from_plan(
+                                    url.as_str().to_string(),
+                                    chat_id,
+                                    Some(msg.id.0),
+                                    is_video,
+                                    format.clone(),
+                                    task_video_quality.clone(),
+                                    task_audio_bitrate.clone(),
+                                    &plan_for_task,
+                                );
+                                download_queue.add_task(task, Some(Arc::clone(&db_pool_clone))).await;
                             }
                         }
 
