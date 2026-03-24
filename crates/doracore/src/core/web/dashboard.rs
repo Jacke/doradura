@@ -242,7 +242,7 @@ fn render_admin_dashboard(stats: &AdminStats, csrf_token: &str) -> String {
         let short_date = date.get(5..).unwrap_or(date); // MM-DD
         chart_html.push_str(&format!(
             r#"<div class="bar-col">
-                <div class="bar-tip">{count}</div>
+                <div class="bar-tooltip">{count} downloads</div>
                 <div class="bar" style="height:{pct}%"></div>
                 <div class="bar-label">{date}</div>
             </div>"#,

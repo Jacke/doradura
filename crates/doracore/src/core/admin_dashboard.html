@@ -211,6 +211,7 @@
             height: 180px;
             display: flex; align-items: flex-end; gap: 3px;
             overflow-x: auto;
+            position: relative;
         }}
         .bar-col {{
             display: flex; flex-direction: column; align-items: center;
@@ -219,10 +220,23 @@
             position: relative;
             justify-content: flex-end;
         }}
-        .bar-tip {{
-            font-size: 0.6rem; color: var(--muted);
-            margin-bottom: 2px;
+        .bar-col:hover .bar {{ opacity: 1; }}
+        .bar-col:hover .bar-tooltip {{ display: block; }}
+        .bar-tooltip {{
+            display: none;
+            position: absolute;
+            top: -8px;
+            transform: translateY(-100%);
+            background: var(--card);
+            border: 1px solid var(--border2);
+            border-radius: 6px;
+            padding: 4px 8px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            color: var(--text);
             white-space: nowrap;
+            z-index: 10;
+            pointer-events: none;
         }}
         .bar {{
             width: 100%; background: var(--accent);
@@ -231,7 +245,6 @@
             opacity: 0.75;
             transition: opacity .15s;
         }}
-        .bar:hover {{ opacity: 1; }}
         .bar-label {{
             font-size: 0.58rem; color: var(--muted);
             margin-top: 4px; writing-mode: vertical-rl;
@@ -848,6 +861,8 @@
     let revPage=1, revFilter='all';
     const loaded = {{}};
     let debounces = {{}};
+    const taskCache = new Map();
+    const errorCache = new Map();
 
     // --- Helpers ---
     const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
@@ -1013,12 +1028,13 @@
         if (!data) return;
         const tb = document.getElementById('queue-tbody');
         if (!data.items.length) {{ tb.innerHTML='<tr><td colspan="9" class="empty-state">Queue empty.</td></tr>'; document.getElementById('queue-pagination').innerHTML=''; return; }}
+        data.items.forEach(t => taskCache.set(t.id, t));
         tb.innerHTML = data.items.map(t => {{
             const shortUrl = t.url.length>40 ? t.url.slice(0,40)+'…' : t.url;
             const shortId = t.id.length>8 ? t.id.slice(0,8)+'…' : t.id;
             const canRetry = t.status==='dead_letter';
             const canCancel = t.status==='pending'||t.status==='leased';
-            return `<tr>
+            return `<tr style="cursor:pointer" onclick="openTaskDetail('${{esc(t.id)}}')">
                 <td class="mono small" title="${{esc(t.id)}}">${{esc(shortId)}}</td>
                 <td class="mono">${{t.username?'@'+esc(t.username):t.user_id}}</td>
                 <td class="small" title="${{esc(t.url)}}">${{esc(shortUrl)}}</td>
@@ -1027,7 +1043,7 @@
                 <td class="dim">${{t.retry_count}}</td>
                 <td class="dim mono small">${{esc(t.worker_id||'—')}}</td>
                 <td class="dim small">${{fmtTime(t.created_at)}}</td>
-                <td><div class="action-group">
+                <td onclick="event.stopPropagation()"><div class="action-group">
                     ${{canRetry?`<button class="act-btn success" onclick="retryTask('${{t.id}}')">Retry</button>`:''}}
                     ${{canCancel?`<button class="act-btn danger" onclick="cancelTask('${{t.id}}')">Cancel</button>`:''}}
                 </div></td></tr>`;
@@ -1046,18 +1062,18 @@
         if (!data) return;
         const tb = document.getElementById('errors-tbody');
         if (!data.items.length) {{ tb.innerHTML='<tr><td colspan="6" class="empty-state">No errors. 🎉</td></tr>'; document.getElementById('errors-pagination').innerHTML=''; return; }}
+        data.items.forEach(e => errorCache.set(e.id, e));
         tb.innerHTML = data.items.map(e => {{
             const cls = e.resolved?'resolved-yes':'';
             const shortUrl = e.url.length>40?e.url.slice(0,40)+'…':e.url;
-            const ctx = e.context ? `<tr class="err-ctx" style="display:none" data-eid="${{e.id}}"><td colspan="6" class="mono small dim" style="padding:8px 18px;white-space:pre-wrap;background:var(--surface);">${{esc(e.context)}}</td></tr>` : '';
-            return `<tr class="${{cls}}" style="cursor:pointer" onclick="toggleErrCtx(${{e.id}})">
+            return `<tr class="${{cls}}" style="cursor:pointer" onclick="openErrorDetail(${{e.id}})">
                 <td class="dim mono small">${{fmtTime(e.timestamp)}}</td>
                 <td><span class="err-badge ${{errClass(e.error_type)}}">${{esc(e.error_type)}}</span></td>
                 <td class="msg-cell" title="${{esc(e.error_message)}}">${{esc(e.error_message.length>60?e.error_message.slice(0,60)+'…':e.error_message)}}</td>
                 <td class="dim mono small" title="${{esc(e.url)}}">${{esc(shortUrl)}}</td>
                 <td class="dim mono">${{e.user_id||''}}</td>
                 <td onclick="event.stopPropagation()">${{e.resolved?'<span class="dim">Resolved</span>':`<button class="act-btn success" onclick="resolveError(${{e.id}})">Resolve</button>`}}</td>
-            </tr>${{ctx}}`;
+            </tr>`;
         }}).join('');
         renderPagination('errors-pagination', data, p => {{ errorsPage=p; loadErrors(); }});
     }}
@@ -1097,7 +1113,7 @@
                 hourly.map(h => {{
                     const pct = (h[1]/maxH*100)|0;
                     const hr = h[0].substring(11,16);
-                    return `<div class="bar-col"><div class="bar-tip">${{h[1]}}</div><div class="bar" style="height:${{pct}}%;background:var(--red)"></div><div class="bar-label">${{hr}}</div></div>`;
+                    return `<div class="bar-col"><div class="bar-tooltip">${{h[1]}} errors</div><div class="bar" style="height:${{pct}}%;background:var(--red)"></div><div class="bar-label">${{hr}}</div></div>`;
                 }}).join('') + `</div></div>`;
         }}
         el.innerHTML = `
@@ -1215,10 +1231,65 @@
             async () => {{ if (await postJson(`/admin/api/users/${{uid}}/block`, {{blocked:block}})) loadUsers(); }});
     }};
 
-    // ══════ Error context toggle ══════
+    // ══════ Error context toggle (legacy — kept for compatibility) ══════
     window.toggleErrCtx = id => {{
         const row = document.querySelector(`.err-ctx[data-eid="${{id}}"]`);
         if (row) row.style.display = row.style.display==='none'?'table-row':'none';
+    }};
+
+    // ══════ Task detail drawer ══════
+    window.openTaskDetail = function(taskId) {{
+        const task = taskCache.get(taskId);
+        if (!task) return;
+        document.getElementById('detail-title').textContent = 'Task Details';
+        let html = '<div class="detail-section"><h3>Task Info</h3>';
+        html += `<div class="detail-row"><span>ID</span><span class="mono">${{esc(task.id||taskId)}}</span></div>`;
+        html += `<div class="detail-row"><span>Status</span><span><span class="pill status-${{task.status||'pending'}}">${{esc(task.status||'?')}}</span></span></div>`;
+        html += `<div class="detail-row"><span>User</span><span class="mono">${{task.username?'@'+esc(task.username):esc(String(task.user_id||'?'))}}</span></div>`;
+        html += `<div class="detail-row"><span>URL</span><span class="mono" style="word-break:break-all;max-width:300px">${{esc(task.url||'?')}}</span></div>`;
+        html += `<div class="detail-row"><span>Format</span><span>${{esc(task.format||'?')}}</span></div>`;
+        html += `<div class="detail-row"><span>Quality</span><span>${{esc(task.video_quality||task.audio_bitrate||'—')}}</span></div>`;
+        html += `<div class="detail-row"><span>Priority</span><span>${{esc(String(task.priority||'?'))}}</span></div>`;
+        html += `<div class="detail-row"><span>Retries</span><span>${{esc(String(task.retry_count||0))}}</span></div>`;
+        html += `<div class="detail-row"><span>Created</span><span>${{fmtTime(task.created_at)}}</span></div>`;
+        if (task.started_at) html += `<div class="detail-row"><span>Started</span><span>${{fmtTime(task.started_at)}}</span></div>`;
+        if (task.finished_at) html += `<div class="detail-row"><span>Finished</span><span>${{fmtTime(task.finished_at)}}</span></div>`;
+        if (task.worker_id) html += `<div class="detail-row"><span>Worker</span><span class="mono">${{esc(task.worker_id)}}</span></div>`;
+        if (task.error) html += `<div class="detail-row"><span>Error</span><span style="color:var(--red)">${{esc(task.error)}}</span></div>`;
+        html += '</div>';
+        document.getElementById('detail-body').innerHTML = html;
+        document.getElementById('detail-drawer').classList.add('open');
+    }};
+
+    // ══════ Error detail drawer ══════
+    window.openErrorDetail = function(errorId) {{
+        const err = errorCache.get(errorId);
+        if (!err) return;
+        document.getElementById('detail-title').textContent = 'Error Details';
+        let html = '<div class="detail-section"><h3>Error Info</h3>';
+        html += `<div class="detail-row"><span>Type</span><span><span class="err-badge ${{errClass(err.error_type)}}">${{esc(err.error_type)}}</span></span></div>`;
+        html += `<div class="detail-row"><span>User</span><span>${{esc(String(err.user_id||'?'))}} ${{err.username?'(@'+esc(err.username)+')':''}}</span></div>`;
+        html += `<div class="detail-row"><span>Time</span><span>${{fmtTime(err.timestamp)}}</span></div>`;
+        html += `<div class="detail-row"><span>Resolved</span><span>${{err.resolved?'Yes':'No'}}</span></div>`;
+        if (err.url) html += `<div class="detail-row"><span>URL</span><span class="mono" style="word-break:break-all;max-width:300px">${{esc(err.url)}}</span></div>`;
+        html += '</div>';
+        html += '<div class="detail-section"><h3>Error Message</h3>';
+        html += `<pre style="background:var(--surface);padding:12px;border-radius:8px;overflow-x:auto;font-size:0.82rem;white-space:pre-wrap;word-break:break-word">${{esc(err.error_message||'?')}}</pre>`;
+        html += '</div>';
+        if (err.context) {{
+            html += '<div class="detail-section"><h3>Context</h3>';
+            try {{
+                html += `<pre style="background:var(--surface);padding:12px;border-radius:8px;overflow-x:auto;font-size:0.82rem;white-space:pre-wrap">${{esc(JSON.stringify(JSON.parse(err.context), null, 2))}}</pre>`;
+            }} catch(_) {{
+                html += `<pre style="background:var(--surface);padding:12px;border-radius:8px;overflow-x:auto;font-size:0.82rem;white-space:pre-wrap">${{esc(err.context)}}</pre>`;
+            }}
+            html += '</div>';
+        }}
+        if (!err.resolved) {{
+            html += `<div style="margin-top:16px;"><button class="act-btn success" onclick="resolveError(${{err.id}});closeDetail()">Resolve</button></div>`;
+        }}
+        document.getElementById('detail-body').innerHTML = html;
+        document.getElementById('detail-drawer').classList.add('open');
     }};
 
     // ══════ Revenue ══════
@@ -1234,7 +1305,7 @@
         let chartH = rpd.map(d => {{
             const pct = (d[1]/maxR*100)|0;
             const dt = d[0].substring(5);
-            return `<div class="bar-col"><div class="bar-tip">${{d[1]}}</div><div class="bar" style="height:${{pct}}%;background:var(--green)"></div><div class="bar-label">${{dt}}</div></div>`;
+            return `<div class="bar-col"><div class="bar-tooltip">${{d[1]}} stars</div><div class="bar" style="height:${{pct}}%;background:var(--green)"></div><div class="bar-label">${{dt}}</div></div>`;
         }}).join('');
         el.innerHTML = `
             <div class="health-grid">
@@ -1459,7 +1530,7 @@
             html += `<div class="panel"><div class="panel-head">Daily Active Users — last 30 days</div><div class="chart-wrap">`;
             html += dau.map(d => {{
                 const pct = (d[1]/maxD*100)|0;
-                return `<div class="bar-col"><div class="bar-tip">${{d[1]}}</div><div class="bar" style="height:${{pct}}%;background:var(--green)"></div><div class="bar-label">${{d[0].substring(5)}}</div></div>`;
+                return `<div class="bar-col"><div class="bar-tooltip">${{d[1]}} users</div><div class="bar" style="height:${{pct}}%;background:var(--green)"></div><div class="bar-label">${{d[0].substring(5)}}</div></div>`;
             }}).join('');
             html += `</div><div class="chart-footer">Unique users per day</div></div>`;
         }}
@@ -1480,13 +1551,35 @@
         'tab-errors': loadErrors, 'tab-health': loadHealth, 'tab-feedback': loadFeedback,
         'tab-alerts': loadAlerts, 'tab-revenue': loadRevenue, 'tab-subs': loadSubs, 'tab-audit': loadAudit,
     }};
+
+    // ── Hash router ──
+    const hashToTab = {{
+        'overview': 'tab-overview', 'users': 'tab-users', 'downloads': 'tab-dl',
+        'queue': 'tab-queue', 'errors': 'tab-errors', 'health': 'tab-health',
+        'feedback': 'tab-feedback', 'alerts': 'tab-alerts', 'revenue': 'tab-revenue',
+        'subs': 'tab-subs', 'audit': 'tab-audit',
+    }};
+    const tabToHash = Object.fromEntries(Object.entries(hashToTab).map(([k,v]) => [v,k]));
+
     document.querySelectorAll('.tab-radio').forEach(r => r.addEventListener('change', () => {{
         const loader = tabLoaders[r.id];
         if (loader) {{
             if (!loaded[r.id]) {{ loaded[r.id]=1; loader(); }}
             else if (autoRefresh) loader(); // refresh on auto-refresh re-trigger
         }}
+        history.replaceState(null, '', '#' + (tabToHash[r.id] || 'overview'));
     }}));
+
+    function activateFromHash() {{
+        const hash = location.hash.slice(1) || 'overview';
+        const radioId = hashToTab[hash];
+        if (radioId) {{
+            const el = document.getElementById(radioId);
+            if (el && !el.checked) {{ el.checked = true; el.dispatchEvent(new Event('change')); }}
+        }}
+    }}
+    activateFromHash();
+    window.addEventListener('hashchange', activateFromHash);
 
     // ══════ Filter buttons ══════
     function bindFilters(attr, setter, loader) {{
