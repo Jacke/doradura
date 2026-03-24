@@ -129,14 +129,25 @@ pub async fn notify_admin_task_failed(
             None => format!("`{}`", user_id),
         };
 
+        let error_lower = error_message.to_lowercase();
+        let cookie_hint = if error_lower.contains("blocked")
+            || error_lower.contains("bot")
+            || error_lower.contains("403")
+            || error_lower.contains("sign in")
+        {
+            "\n\n🍪 *Cookies may need refresh\\!* Use /update\\_cookies"
+        } else {
+            ""
+        };
+
         let message = format!(
             "⚠️ *Task error*\n\n\
             Op: `{}`\n\
             User: {}\n\
             URL: {}\n\
-            Error: {}\n\n\
+            Error: {}{}\n\n\
             The task will be retried automatically\\.",
-            op, user_display, escaped_url, escaped_error
+            op, user_display, escaped_url, escaped_error, cookie_hint
         );
 
         if let Err(e) = bot

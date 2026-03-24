@@ -521,7 +521,12 @@ pub fn diagnose_cookies_content(content: &str) -> CookiesDiagnostic {
         diagnostic.issues.push("No YouTube cookies found".to_string());
     }
 
-    if !diagnostic.auth_cookies_missing.is_empty() {
+    // Check for __Secure- cookies which are critical for authenticated access
+    let has_secure_psid = diagnostic.secondary_cookies_found.iter().any(|n| n.contains("PSID"));
+
+    // Only warn about missing legacy cookies if __Secure-*PSID is also absent.
+    // YouTube 2025+ exports __Secure-3PSID instead of SID/HSID/SSID/APISID/SAPISID.
+    if !diagnostic.auth_cookies_missing.is_empty() && !has_secure_psid {
         diagnostic.issues.push(format!(
             "Missing required cookies: {}",
             diagnostic.auth_cookies_missing.join(", ")
@@ -534,9 +539,6 @@ pub fn diagnose_cookies_content(content: &str) -> CookiesDiagnostic {
             diagnostic.auth_cookies_expired.join(", ")
         ));
     }
-
-    // Check for __Secure- cookies which are critical for authenticated access
-    let has_secure_psid = diagnostic.secondary_cookies_found.iter().any(|n| n.contains("PSID"));
     if !has_secure_psid {
         diagnostic
             .issues
@@ -544,10 +546,14 @@ pub fn diagnose_cookies_content(content: &str) -> CookiesDiagnostic {
     }
 
     // Determine overall validity
-    diagnostic.is_valid = diagnostic.auth_cookies_missing.is_empty()
+    // YouTube 2025+ uses __Secure-3PSID as primary auth cookie.
+    // Old-style cookies (SID, HSID, SSID, APISID, SAPISID) are no longer
+    // exported by most cookie tools. Having __Secure-3PSID is sufficient.
+    let has_modern_auth = has_secure_psid;
+    let has_legacy_auth = diagnostic.auth_cookies_missing.is_empty();
+    diagnostic.is_valid = (has_modern_auth || has_legacy_auth)
         && diagnostic.auth_cookies_expired.is_empty()
-        && diagnostic.youtube_cookies > 0
-        && has_secure_psid;
+        && diagnostic.youtube_cookies > 0;
 
     diagnostic
 }
