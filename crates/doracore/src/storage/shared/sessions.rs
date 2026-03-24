@@ -418,12 +418,15 @@ impl SharedStorage {
             Self::Postgres { pg_pool, .. } => {
                 sqlx::query(
                     "INSERT INTO player_sessions (
-                        user_id, playlist_id, current_position, is_shuffle, player_message_id, sticker_message_id, updated_at
-                     ) VALUES ($1, $2, 0, 0, $3, $4, NOW())
+                        user_id, playlist_id, current_position, is_shuffle, repeat_mode, last_track_index,
+                        player_message_id, sticker_message_id, updated_at
+                     ) VALUES ($1, $2, 0, 0, 0, NULL, $3, $4, NOW())
                      ON CONFLICT (user_id) DO UPDATE SET
                         playlist_id = EXCLUDED.playlist_id,
                         current_position = 0,
                         is_shuffle = 0,
+                        repeat_mode = 0,
+                        last_track_index = NULL,
                         player_message_id = EXCLUDED.player_message_id,
                         sticker_message_id = EXCLUDED.sticker_message_id,
                         updated_at = NOW()",
@@ -448,7 +451,10 @@ impl SharedStorage {
             }
             Self::Postgres { pg_pool, .. } => {
                 let row = sqlx::query(
-                    "SELECT user_id, playlist_id, current_position, is_shuffle, player_message_id, sticker_message_id,
+                    "SELECT user_id, playlist_id, current_position, is_shuffle,
+                            COALESCE(repeat_mode, 0) AS repeat_mode,
+                            last_track_index,
+                            player_message_id, sticker_message_id,
                             updated_at::text AS updated_at
                      FROM player_sessions
                      WHERE user_id = $1",
@@ -462,10 +468,72 @@ impl SharedStorage {
                     playlist_id: row.get("playlist_id"),
                     current_position: row.get("current_position"),
                     is_shuffle: row.get::<i32, _>("is_shuffle") != 0,
+                    repeat_mode: row.get::<i32, _>("repeat_mode"),
+                    last_track_index: row.get("last_track_index"),
                     player_message_id: row.get("player_message_id"),
                     sticker_message_id: row.get("sticker_message_id"),
                     updated_at: row.get("updated_at"),
                 }))
+            }
+        }
+    }
+
+    pub async fn cycle_player_repeat(&self, user_id: i64) -> Result<i32> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite cycle_player_repeat connection")?;
+                db::cycle_player_repeat(&conn, user_id).context("sqlite cycle_player_repeat")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                let row = sqlx::query(
+                    "UPDATE player_sessions
+                     SET repeat_mode = (COALESCE(repeat_mode, 0) + 1) % 3,
+                         updated_at = NOW()
+                     WHERE user_id = $1
+                     RETURNING repeat_mode",
+                )
+                .bind(user_id)
+                .fetch_one(pg_pool)
+                .await
+                .context("postgres cycle_player_repeat")?;
+                Ok(row.get::<i32, _>("repeat_mode"))
+            }
+        }
+    }
+
+    pub async fn set_player_last_track_index(&self, user_id: i64, index: i32) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite set_player_last_track_index connection")?;
+                db::set_player_last_track_index(&conn, user_id, index).context("sqlite set_player_last_track_index")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query("UPDATE player_sessions SET last_track_index = $1, updated_at = NOW() WHERE user_id = $2")
+                    .bind(index)
+                    .bind(user_id)
+                    .execute(pg_pool)
+                    .await
+                    .context("postgres set_player_last_track_index")?;
+                Ok(())
+            }
+        }
+    }
+
+    pub async fn clear_player_last_track_index(&self, user_id: i64) -> Result<()> {
+        match self {
+            Self::Sqlite { db_pool } => {
+                let conn = db::get_connection(db_pool).context("sqlite clear_player_last_track_index connection")?;
+                db::clear_player_last_track_index(&conn, user_id).context("sqlite clear_player_last_track_index")
+            }
+            Self::Postgres { pg_pool, .. } => {
+                sqlx::query(
+                    "UPDATE player_sessions SET last_track_index = NULL, updated_at = NOW() WHERE user_id = $1",
+                )
+                .bind(user_id)
+                .execute(pg_pool)
+                .await
+                .context("postgres clear_player_last_track_index")?;
+                Ok(())
             }
         }
     }

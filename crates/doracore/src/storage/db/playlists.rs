@@ -2,6 +2,7 @@
 
 use super::DbConnection;
 use rusqlite::Result;
+use std::sync::Once;
 
 // ==================== Playlist Structs ====================
 
@@ -41,6 +42,10 @@ pub struct PlayerSession {
     pub playlist_id: i64,
     pub current_position: i32,
     pub is_shuffle: bool,
+    /// 0 = no repeat, 1 = repeat all, 2 = repeat one.
+    pub repeat_mode: i32,
+    /// Index of the last successfully sent track (for resume).
+    pub last_track_index: Option<i32>,
     pub player_message_id: Option<i32>,
     pub sticker_message_id: Option<i32>,
     pub updated_at: String,
@@ -374,6 +379,31 @@ pub fn count_playlist_items(conn: &DbConnection, playlist_id: i64) -> Result<i64
 
 // ==================== Player Sessions ====================
 
+static PLAYER_REPEAT_COLUMN_INIT: Once = Once::new();
+static PLAYER_LAST_TRACK_COLUMN_INIT: Once = Once::new();
+
+/// Ensure `repeat_mode` column exists (added in V41).
+fn ensure_player_repeat_column(conn: &DbConnection) {
+    PLAYER_REPEAT_COLUMN_INIT.call_once(|| {
+        let _ = conn.execute(
+            "ALTER TABLE player_sessions ADD COLUMN repeat_mode INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+    });
+}
+
+/// Ensure `last_track_index` column exists (added in V41).
+fn ensure_player_last_track_column(conn: &DbConnection) {
+    PLAYER_LAST_TRACK_COLUMN_INIT.call_once(|| {
+        let _ = conn.execute("ALTER TABLE player_sessions ADD COLUMN last_track_index INTEGER", []);
+    });
+}
+
+fn ensure_player_extra_columns(conn: &DbConnection) {
+    ensure_player_repeat_column(conn);
+    ensure_player_last_track_column(conn);
+}
+
 /// Create or replace a player session for a user.
 pub fn create_player_session(
     conn: &DbConnection,
@@ -382,9 +412,10 @@ pub fn create_player_session(
     player_message_id: Option<i32>,
     sticker_message_id: Option<i32>,
 ) -> Result<()> {
+    ensure_player_extra_columns(conn);
     conn.execute(
-        "INSERT OR REPLACE INTO player_sessions (user_id, playlist_id, current_position, is_shuffle, player_message_id, sticker_message_id, updated_at)
-         VALUES (?1, ?2, 0, 0, ?3, ?4, datetime('now'))",
+        "INSERT OR REPLACE INTO player_sessions (user_id, playlist_id, current_position, is_shuffle, repeat_mode, last_track_index, player_message_id, sticker_message_id, updated_at)
+         VALUES (?1, ?2, 0, 0, 0, NULL, ?3, ?4, datetime('now'))",
         rusqlite::params![user_id, playlist_id, player_message_id, sticker_message_id],
     )?;
     Ok(())
@@ -392,8 +423,9 @@ pub fn create_player_session(
 
 /// Get the player session for a user.
 pub fn get_player_session(conn: &DbConnection, user_id: i64) -> Result<Option<PlayerSession>> {
+    ensure_player_extra_columns(conn);
     let result = conn.query_row(
-        "SELECT user_id, playlist_id, current_position, is_shuffle, player_message_id, sticker_message_id, updated_at
+        "SELECT user_id, playlist_id, current_position, is_shuffle, repeat_mode, last_track_index, player_message_id, sticker_message_id, updated_at
          FROM player_sessions WHERE user_id = ?1",
         [user_id],
         |row| {
@@ -402,9 +434,11 @@ pub fn get_player_session(conn: &DbConnection, user_id: i64) -> Result<Option<Pl
                 playlist_id: row.get(1)?,
                 current_position: row.get(2)?,
                 is_shuffle: row.get::<_, i32>(3)? != 0,
-                player_message_id: row.get(4)?,
-                sticker_message_id: row.get(5)?,
-                updated_at: row.get(6)?,
+                repeat_mode: row.get::<_, i32>(4).unwrap_or(0),
+                last_track_index: row.get(5)?,
+                player_message_id: row.get(6)?,
+                sticker_message_id: row.get(7)?,
+                updated_at: row.get(8)?,
             })
         },
     );
@@ -449,6 +483,42 @@ pub fn toggle_player_shuffle(conn: &DbConnection, user_id: i64) -> Result<bool> 
         rusqlite::params![new_val, user_id],
     )?;
     Ok(new_val != 0)
+}
+
+/// Cycle repeat mode: 0 → 1 → 2 → 0.
+pub fn cycle_player_repeat(conn: &DbConnection, user_id: i64) -> Result<i32> {
+    ensure_player_repeat_column(conn);
+    let current: i32 = conn.query_row(
+        "SELECT repeat_mode FROM player_sessions WHERE user_id = ?1",
+        [user_id],
+        |row| row.get(0),
+    )?;
+    let new_val = (current + 1) % 3;
+    conn.execute(
+        "UPDATE player_sessions SET repeat_mode = ?1, updated_at = datetime('now') WHERE user_id = ?2",
+        rusqlite::params![new_val, user_id],
+    )?;
+    Ok(new_val)
+}
+
+/// Save the last played track index for resume functionality.
+pub fn set_player_last_track_index(conn: &DbConnection, user_id: i64, index: i32) -> Result<()> {
+    ensure_player_last_track_column(conn);
+    conn.execute(
+        "UPDATE player_sessions SET last_track_index = ?1, updated_at = datetime('now') WHERE user_id = ?2",
+        rusqlite::params![index, user_id],
+    )?;
+    Ok(())
+}
+
+/// Clear the last played track index (e.g. after playback completes normally).
+pub fn clear_player_last_track_index(conn: &DbConnection, user_id: i64) -> Result<()> {
+    ensure_player_last_track_column(conn);
+    conn.execute(
+        "UPDATE player_sessions SET last_track_index = NULL, updated_at = datetime('now') WHERE user_id = ?1",
+        [user_id],
+    )?;
+    Ok(())
 }
 
 /// Delete a player session.

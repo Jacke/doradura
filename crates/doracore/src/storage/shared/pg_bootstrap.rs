@@ -414,10 +414,22 @@ CREATE TABLE IF NOT EXISTS player_sessions (
     playlist_id BIGINT NOT NULL,
     current_position INTEGER NOT NULL DEFAULT 0,
     is_shuffle INTEGER NOT NULL DEFAULT 0,
+    repeat_mode INTEGER NOT NULL DEFAULT 0,
+    last_track_index INTEGER,
     player_message_id INTEGER,
     sticker_message_id INTEGER,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Migration: add repeat_mode and last_track_index to existing player_sessions tables
+DO $$ BEGIN
+    ALTER TABLE player_sessions ADD COLUMN repeat_mode INTEGER NOT NULL DEFAULT 0;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+DO $$ BEGIN
+    ALTER TABLE player_sessions ADD COLUMN last_track_index INTEGER;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
 
 CREATE TABLE IF NOT EXISTS player_messages (
     user_id BIGINT NOT NULL REFERENCES users(telegram_id) ON DELETE CASCADE,
