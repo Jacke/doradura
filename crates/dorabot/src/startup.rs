@@ -192,7 +192,7 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
         log::info!("Webhook mode requested with public URL {}", url);
         crate::webhook::run_webhook_mode(bot, handler, Arc::clone(&shared_storage), bot_id, bot_init_start).await
     } else {
-        run_polling_mode(bot, handler, bot_init_start).await
+        run_polling_mode(bot, handler, bot_init_start, Arc::clone(&shared_storage)).await
     };
 
     // Set offline avatar before shutdown
@@ -337,6 +337,7 @@ async fn run_polling_mode(
     bot: crate::telegram::Bot,
     handler: teloxide::dispatching::UpdateHandler<HandlerError>,
     bot_init_start: std::time::Instant,
+    shared_storage: Arc<SharedStorage>,
 ) -> Result<()> {
     let mut retry_count = 0;
     let max_retries = config::retry::MAX_DISPATCHER_RETRIES;
@@ -373,6 +374,7 @@ async fn run_polling_mode(
         signal(SignalKind::terminate()).expect("Failed to register SIGTERM handler")
     };
 
+    let shutdown_storage = Arc::clone(&shared_storage);
     loop {
         let bot_clone = bot.clone();
         let handler_clone = handler.clone();
@@ -401,6 +403,12 @@ async fn run_polling_mode(
             result = handle => Some(result),
             _ = sigterm.recv() => {
                 log::info!("SIGTERM received, shutting down gracefully");
+                // Reset in-progress tasks so they're recovered on next startup
+                match shutdown_storage.reset_in_progress_tasks_at_startup().await {
+                    Ok(0) => log::info!("Shutdown: no in-progress tasks to reset"),
+                    Ok(n) => log::info!("Shutdown: reset {} in-progress task(s) to pending for recovery", n),
+                    Err(e) => log::warn!("Shutdown: failed to reset tasks: {}", e),
+                }
                 None
             }
         };
