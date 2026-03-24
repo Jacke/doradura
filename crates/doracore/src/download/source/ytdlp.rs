@@ -293,8 +293,8 @@ impl YtDlpSource {
                 &progress_tx,
                 "video",
                 |args, proxy_option| {
-                    // Tier 1 (no cookies): use android,default when audio_lang is set
-                    // to access dubbed audio tracks
+                    // Tier 1 (no cookies): always player_client=default
+                    // android client causes 403 on Railway even with proxy
                     args.push("--format");
                     args.push("--merge-output-format");
                     args.push("mp4");
@@ -302,11 +302,7 @@ impl YtDlpSource {
                     args.push("Merger:-movflags +faststart");
                     add_no_cookies_args(args, proxy_option);
                     args.push("--extractor-args");
-                    if has_audio_lang {
-                        args.push("youtube:player_client=android,default;formats=missing_pot");
-                    } else {
-                        args.push("youtube:player_client=default;formats=missing_pot");
-                    }
+                    args.push("youtube:player_client=default;formats=missing_pot");
                     args.push("--js-runtimes");
                     args.push("deno");
                     args.push("--no-check-certificate");
@@ -326,11 +322,7 @@ impl YtDlpSource {
                         } else {
                             add_cookies_args_with_proxy(args, proxy_option);
                             args.push("--extractor-args");
-                            if has_audio_lang {
-                                args.push("youtube:player_client=android,default;formats=missing_pot");
-                            } else {
-                                args.push("youtube:player_client=default");
-                            }
+                            args.push("youtube:player_client=default");
                         }
                         args.push("--js-runtimes");
                         args.push("deno");
