@@ -502,7 +502,6 @@ mod tests {
             max_file_size: None,
             time_range: None,
             carousel_mask: None,
-            audio_lang: None,
         };
 
         let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();

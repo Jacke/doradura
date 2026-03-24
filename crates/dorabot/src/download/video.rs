@@ -111,7 +111,6 @@ pub async fn download_and_send_video(
             let format = PipelineFormat::Video {
                 quality: video_quality.clone(),
                 time_range,
-                audio_lang: audio_lang.clone(),
             };
             let registry = bot_global();
 

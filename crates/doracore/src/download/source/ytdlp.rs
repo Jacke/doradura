@@ -261,29 +261,19 @@ impl YtDlpSource {
         let download_path = request.output_path.clone();
         let time_range = request.time_range.clone();
 
-        let audio_lang = request.audio_lang.as_deref();
-        if let Some(lang) = audio_lang {
-            log::info!("🔊 yt-dlp video download with audio_lang={}", lang);
-        }
         let format_arg = match request.video_quality.as_deref() {
-            Some("4320p") => build_telegram_safe_format(Some(4320), audio_lang),
-            Some("2160p") => build_telegram_safe_format(Some(2160), audio_lang),
-            Some("1440p") => build_telegram_safe_format(Some(1440), audio_lang),
-            Some("1080p") => build_telegram_safe_format(Some(1080), audio_lang),
-            Some("720p") => build_telegram_safe_format(Some(720), audio_lang),
-            Some("480p") => build_telegram_safe_format(Some(480), audio_lang),
-            Some("360p") => build_telegram_safe_format(Some(360), audio_lang),
-            Some("240p") => build_telegram_safe_format(Some(240), audio_lang),
-            Some("144p") => build_telegram_safe_format(Some(144), audio_lang),
-            _ => build_telegram_safe_format(None, audio_lang),
+            Some("4320p") => build_telegram_safe_format(Some(4320)),
+            Some("2160p") => build_telegram_safe_format(Some(2160)),
+            Some("1440p") => build_telegram_safe_format(Some(1440)),
+            Some("1080p") => build_telegram_safe_format(Some(1080)),
+            Some("720p") => build_telegram_safe_format(Some(720)),
+            Some("480p") => build_telegram_safe_format(Some(480)),
+            Some("360p") => build_telegram_safe_format(Some(360)),
+            Some("240p") => build_telegram_safe_format(Some(240)),
+            Some("144p") => build_telegram_safe_format(Some(144)),
+            _ => build_telegram_safe_format(None),
         };
         log::debug!("yt-dlp video format string: {}", format_arg);
-
-        // When audio_lang is set, tiers with cookies (2, 3) use android,web_music
-        // to access dubbed audio tracks. Tier 1 (no cookies) stays on default since
-        // android client without PO token gets 403. The bgutil PO token server on
-        // Railway provides the auth needed for tier 2/3 to download dubbed tracks.
-        let has_audio_lang = audio_lang.is_some();
 
         let handle = tokio::task::spawn_blocking(move || {
             download_with_fallback_chain(
@@ -338,11 +328,7 @@ impl YtDlpSource {
                     args.push("mp4");
                     add_cookies_args_with_proxy(args, proxy_option);
                     args.push("--extractor-args");
-                    if has_audio_lang {
-                        args.push("youtube:player_client=android,default;formats=missing_pot");
-                    } else {
-                        args.push("youtube:player_client=default");
-                    }
+                    args.push("youtube:player_client=default");
                     args.push("--js-runtimes");
                     args.push("deno");
                     args.push("--no-check-certificate");

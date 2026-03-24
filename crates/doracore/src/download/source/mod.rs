@@ -61,8 +61,6 @@ pub struct DownloadRequest {
     /// Carousel bitmask: which items to download from a multi-item post.
     /// Bit N = item N selected. None = download all items.
     pub carousel_mask: Option<u32>,
-    /// Audio language code to select (e.g. "en", "ru"). None = default track.
-    pub audio_lang: Option<String>,
 }
 
 /// An additional media file from a multi-item post (e.g., Instagram carousel).
@@ -315,7 +313,6 @@ mod tests {
             max_file_size: None,
             time_range: None,
             carousel_mask: None,
-            audio_lang: None,
         };
 
         let (tx, mut rx) = mpsc::unbounded_channel();

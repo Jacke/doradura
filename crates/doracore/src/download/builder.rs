@@ -29,7 +29,6 @@ pub struct DownloadConfigBuilder {
     custom_output_path: Option<String>,
     time_range: Option<(String, String)>,
     carousel_mask: Option<u32>,
-    audio_lang: Option<String>,
 }
 
 impl DownloadConfigBuilder {
@@ -44,7 +43,6 @@ impl DownloadConfigBuilder {
             custom_output_path: None,
             time_range: None,
             carousel_mask: None,
-            audio_lang: None,
         }
     }
 
@@ -90,12 +88,6 @@ impl DownloadConfigBuilder {
         self
     }
 
-    /// Set audio language code for multi-language videos (e.g. "en", "ru").
-    pub fn audio_lang(mut self, lang: &str) -> Self {
-        self.audio_lang = Some(lang.to_string());
-        self
-    }
-
     /// Build the `DownloadRequest`, generating the output path from title and artist.
     ///
     /// Adds a timestamp to the filename to prevent race conditions with concurrent downloads.
@@ -115,7 +107,6 @@ impl DownloadConfigBuilder {
             max_file_size: self.max_file_size,
             time_range: self.time_range,
             carousel_mask: self.carousel_mask,
-            audio_lang: self.audio_lang,
         }
     }
 

@@ -900,6 +900,10 @@ pub async fn handle_menu_callback(
                                     .await
                                 {
                                     log::error!("Failed to clear audio_lang: {:?}", e);
+                                    let _ = bot
+                                        .send_message(chat_id, "❌ Failed to save audio language selection")
+                                        .await;
+                                    return Ok(());
                                 }
                             } else {
                                 log::info!(
@@ -913,6 +917,10 @@ pub async fn handle_menu_callback(
                                     .await
                                 {
                                     log::error!("Failed to set audio_lang: {:?}", e);
+                                    let _ = bot
+                                        .send_message(chat_id, "❌ Failed to save audio language selection")
+                                        .await;
+                                    return Ok(());
                                 }
                             }
 

@@ -573,31 +573,27 @@ pub fn probe_video_metadata(path: &str) -> Option<(u32, Option<u32>, Option<u32>
 /// correctly. Falls back through lower resolutions if the requested quality is
 /// unavailable with compatible codecs.
 ///
-/// When `audio_lang` is provided, language-filtered audio variants are inserted
-/// before the generic audio fallback for each height, so the specified language
-/// is tried first while still falling back to best audio if unavailable.
+/// Audio language selection is handled in post-processing via `replace_audio_track`
+/// in `video.rs`, not via format string filters.
 ///
 /// # Arguments
 ///
 /// * `requested_height` — Optional preferred video height (e.g., `720`, `1080`)
-/// * `audio_lang` — Optional BCP-47 / ISO 639 language code for audio track selection
-///   (e.g., `"en"`, `"ru"`, `"fr"`). Falls back to best audio if not found.
 ///
 /// # Examples
 ///
 /// ```
 /// use doracore::download::metadata::build_telegram_safe_format;
 ///
-/// // No language preference — normal Telegram-safe format
-/// let fmt = build_telegram_safe_format(Some(1080), None);
+/// let fmt = build_telegram_safe_format(Some(1080));
 /// assert!(fmt.contains("[height<=1080]"));
-///
-/// // With language preference — language variants appear before generic ones
-/// let fmt = build_telegram_safe_format(Some(720), Some("en"));
-/// assert!(fmt.contains("[language=en]"));
 /// assert!(fmt.contains("avc1"));
+///
+/// let fmt = build_telegram_safe_format(None);
+/// assert!(fmt.contains("avc1"));
+/// assert!(fmt.ends_with("/best"));
 /// ```
-pub fn build_telegram_safe_format(requested_height: Option<u32>, audio_lang: Option<&str>) -> String {
+pub fn build_telegram_safe_format(requested_height: Option<u32>) -> String {
     let mut heights = vec![1080u32, 720, 480, 360, 240];
     if let Some(h) = requested_height {
         if !heights.contains(&h) {
@@ -609,15 +605,6 @@ pub fn build_telegram_safe_format(requested_height: Option<u32>, audio_lang: Opt
     }
 
     let mut parts: Vec<String> = Vec::new();
-    for h in &heights {
-        let filt = format!("[height<={h}]");
-        if let Some(lang) = audio_lang {
-            // Language-specific: try AAC first, then any codec (opus, etc.)
-            parts.push(format!("bv*{filt}[vcodec^=avc1]+ba[language={lang}][acodec^=mp4a]"));
-            parts.push(format!("bv*{filt}[vcodec^=avc1]+ba[language={lang}]"));
-        }
-    }
-    // After all language-specific heights, add generic fallbacks per height
     for h in &heights {
         let filt = format!("[height<={h}]");
         parts.push(format!("bv*{filt}[vcodec^=avc1]+ba[acodec^=mp4a]"));
