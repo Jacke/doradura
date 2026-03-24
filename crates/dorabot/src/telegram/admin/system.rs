@@ -97,9 +97,12 @@ async fn check_pot_server_status() -> (bool, String) {
     }
 }
 
-/// Check YouTube cookies file and required cookies presence
+/// Check YouTube cookies file and required cookies presence.
+///
+/// YouTube 2025+ uses `__Secure-3PSID` as the primary auth cookie.
+/// Legacy cookies (SID, HSID etc.) are optional if `__Secure-3PSID` is present.
 async fn check_cookies_status() -> (bool, String, Vec<(&'static str, bool)>) {
-    const REQUIRED_COOKIES: &[&str] = &["APISID", "SAPISID", "HSID", "SID", "SSID"];
+    const KEY_COOKIES: &[&str] = &["__Secure-3PSID", "__Secure-3PAPISID", "LOGIN_INFO", "SID", "SAPISID"];
 
     let cookies_path = match crate::core::config::YTDL_COOKIES_FILE.as_ref() {
         Some(path) => path,
@@ -117,17 +120,20 @@ async fn check_cookies_status() -> (bool, String, Vec<(&'static str, bool)>) {
     };
 
     let mut found_cookies = Vec::new();
-    for &cookie_name in REQUIRED_COOKIES {
+    for &cookie_name in KEY_COOKIES {
         let found = content
             .lines()
             .any(|line| !line.starts_with('#') && line.contains(cookie_name));
         found_cookies.push((cookie_name, found));
     }
 
-    let all_found = found_cookies.iter().all(|(_, found)| *found);
-    let status = if all_found { "Found" } else { "Incomplete" };
+    // Valid if __Secure-3PSID is present (modern) OR SID is present (legacy)
+    let has_modern = found_cookies.iter().any(|(n, f)| *n == "__Secure-3PSID" && *f);
+    let has_legacy = found_cookies.iter().any(|(n, f)| *n == "SID" && *f);
+    let is_valid = has_modern || has_legacy;
+    let status = if is_valid { "Valid" } else { "Incomplete" };
 
-    (all_found, status.to_string(), found_cookies)
+    (is_valid, status.to_string(), found_cookies)
 }
 
 /// Handles the /version command (admin only)
@@ -159,6 +165,21 @@ pub async fn handle_version_command(bot: &Bot, chat_id: ChatId, user_id: i64) ->
     let ytdl_bin = &*config::YTDL_BIN;
 
     let (warp_ok, warp_msg, warp_url) = warp_status;
+
+    // Mask proxy credentials: http://user:password@host:port → http://***:***@host:port
+    let warp_display = warp_url.as_deref().map(|raw| {
+        if let Ok(parsed) = Url::parse(raw) {
+            let host = parsed.host_str().unwrap_or("?");
+            let port = parsed.port().map(|p| format!(":{}", p)).unwrap_or_default();
+            if !parsed.username().is_empty() {
+                format!("{}://***:***@{}{}", parsed.scheme(), host, port)
+            } else {
+                format!("{}://{}{}", parsed.scheme(), host, port)
+            }
+        } else {
+            "invalid URL".to_string()
+        }
+    });
     let (pot_ok, pot_msg) = pot_status;
     let (cookies_ok, cookies_msg, cookies_list) = cookies_status;
 
@@ -193,7 +214,7 @@ pub async fn handle_version_command(bot: &Bot, chat_id: ChatId, user_id: i64) ->
         escape_markdown(ytdl_bin),
         if warp_ok { "✅" } else { "❌" },
         escape_markdown(&warp_msg),
-        escape_markdown(warp_url.as_deref().unwrap_or("not set")),
+        escape_markdown(warp_display.as_deref().unwrap_or("not set")),
         if pot_ok { "✅" } else { "❌" },
         escape_markdown(&pot_msg),
         if cookies_ok { "✅" } else { "❌" },
