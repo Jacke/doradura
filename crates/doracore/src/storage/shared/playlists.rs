@@ -213,6 +213,10 @@ impl SharedStorage {
         file_id: Option<&str>,
         source: &str,
     ) -> Result<i64> {
+        // Reject non-video URLs (channels, playlists, user pages) — these hang yt-dlp
+        if url.contains("/channel/") || url.contains("/playlist?") || url.contains("/user/") || url.contains("/@") {
+            anyhow::bail!("Cannot add non-video URL to playlist: {}", url);
+        }
         match self {
             Self::Sqlite { db_pool } => {
                 let conn = db::get_connection(db_pool).context("sqlite add_playlist_item connection")?;

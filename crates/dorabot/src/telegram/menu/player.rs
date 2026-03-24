@@ -439,6 +439,15 @@ async fn download_player_track(
         || url_str.contains("/user/")
         || url_str.contains("/@")
     {
+        // Auto-remove invalid track from playlist
+        if let Err(e) = shared_storage.remove_playlist_item(item.id).await {
+            log::warn!("Failed to auto-remove invalid track {}: {}", item.id, e);
+        } else {
+            log::info!(
+                "🗑️ Auto-removed invalid track '{}' (non-video URL) from playlist",
+                item.title
+            );
+        }
         return Err(format!("Skipped non-video URL: {:.80}", url_str).into());
     }
     let url = Url::parse(url_str)?;
