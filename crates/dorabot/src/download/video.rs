@@ -561,7 +561,7 @@ async fn replace_audio_track(video_path: &str, url: &Url, lang: &str) -> String 
     let video_path_owned = video_path.to_string();
 
     // Use spawn_blocking for the yt-dlp download (same pattern as main download)
-    let download_result: Result<String, String> = tokio::task::spawn_blocking(move || {
+    let handle = tokio::task::spawn_blocking(move || {
         let proxy_chain = get_proxy_chain();
 
         for (attempt, proxy_option) in proxy_chain.iter().enumerate() {
@@ -656,9 +656,16 @@ async fn replace_audio_track(video_path: &str, url: &Url, lang: &str) -> String 
         }
 
         Err("All tiers/proxies failed for dubbed audio download".to_string())
-    })
-    .await
-    .unwrap_or_else(|e| Err(format!("spawn_blocking error: {}", e)));
+    });
+
+    // Timeout: max 3 minutes for dubbed audio download
+    let download_result = match timeout(std::time::Duration::from_secs(180), handle).await {
+        Ok(join_result) => join_result.unwrap_or_else(|e| Err(format!("spawn_blocking error: {}", e))),
+        Err(_) => {
+            log::error!("🔊 Dubbed audio download timed out (180s)");
+            Err("Timeout".to_string())
+        }
+    };
 
     let audio_path = match download_result {
         Ok(path) => path,
@@ -731,8 +738,12 @@ async fn replace_audio_track(video_path: &str, url: &Url, lang: &str) -> String 
             log::info!("🔊 Audio replaced successfully");
             // Replace original with merged
             if std::fs::rename(&merged_path, video_path).is_err() {
-                let _ = std::fs::copy(&merged_path, video_path);
-                let _ = std::fs::remove_file(&merged_path);
+                if let Err(e) = std::fs::copy(&merged_path, video_path) {
+                    log::error!("🔊 Failed to copy merged file: {}", e);
+                }
+                if let Err(e) = std::fs::remove_file(&merged_path) {
+                    log::warn!("🔊 Failed to clean up merged file: {}", e);
+                }
             }
             let _ = std::fs::remove_file(&actual_audio);
             video_path.to_string()

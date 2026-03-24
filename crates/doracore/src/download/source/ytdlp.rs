@@ -300,8 +300,7 @@ impl YtDlpSource {
                 {
                     let url_for_tier2 = url_str.clone();
                     move |args: &mut Vec<&str>, proxy_option: Option<&crate::download::metadata::ProxyConfig>| {
-                        // Tier 2 (cookies + PO token): use android,web_music when audio_lang
-                        // is set to see dubbed audio tracks
+                        // Tier 2 (cookies + PO token)
                         args.push("--format");
                         args.push("--merge-output-format");
                         args.push("mp4");
