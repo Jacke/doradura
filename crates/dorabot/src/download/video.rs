@@ -180,6 +180,13 @@ pub async fn download_and_send_video(
                     }
                 }
 
+                // Replace audio track if user selected a specific language
+                let actual_file_path = if let Some(ref lang) = audio_lang {
+                    replace_audio_track(&actual_file_path, &url, lang).await
+                } else {
+                    actual_file_path
+                };
+
                 // Burn subtitles if user has the setting enabled
                 let actual_file_path =
                     maybe_burn_subtitles(&actual_file_path, &url, shared_storage_clone.as_ref(), chat_id).await;
@@ -535,6 +542,214 @@ async fn get_thumbnail_url(url: &Url) -> Option<String> {
         }
     } else {
         None
+    }
+}
+
+/// Download dubbed audio track separately and merge it into the video via ffmpeg.
+///
+/// Uses yt-dlp `--extract-audio` with `player_client=android,default` + language filter.
+/// The android client sees dubbed tracks; cookies + PO token handle authentication.
+/// Falls back to original audio if download fails.
+async fn replace_audio_track(video_path: &str, url: &Url, lang: &str) -> String {
+    use crate::download::metadata::{add_cookies_args_with_proxy, add_no_cookies_args, get_proxy_chain};
+
+    log::info!("🔊 Downloading dubbed audio (lang={}) for {}", lang, url);
+
+    let ytdl_bin = config::YTDL_BIN.clone();
+    let audio_output = format!("{}.dubbed_audio.m4a", video_path);
+    let format_filter = format!("ba[language={}]/ba[language^={}]", lang, lang);
+    let url_str = url.to_string();
+    let video_path_owned = video_path.to_string();
+
+    // Use spawn_blocking for the yt-dlp download (same pattern as main download)
+    let download_result: Result<String, String> = tokio::task::spawn_blocking(move || {
+        let proxy_chain = get_proxy_chain();
+
+        for (attempt, proxy_option) in proxy_chain.iter().enumerate() {
+            let proxy_name = proxy_option
+                .as_ref()
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| "Direct".to_string());
+
+            // ── Tier 1: no cookies ──
+            {
+                let mut args: Vec<&str> = vec![
+                    "--no-playlist",
+                    "--extract-audio",
+                    "--audio-format",
+                    "m4a",
+                    "--format",
+                    &format_filter,
+                    "--output",
+                    &audio_output,
+                    "--no-check-certificate",
+                    "--age-limit",
+                    "99",
+                ];
+                add_no_cookies_args(&mut args, proxy_option.as_ref());
+                args.extend_from_slice(&[
+                    "--extractor-args",
+                    "youtube:player_client=android,default;formats=missing_pot",
+                    "--js-runtimes",
+                    "deno",
+                    "--impersonate",
+                    "Chrome-131:Android-14",
+                ]);
+                args.push(&url_str);
+
+                log::info!("🔊 Audio track tier1 attempt {}, proxy [{}]", attempt + 1, proxy_name);
+
+                let output = std::process::Command::new(&*ytdl_bin).args(&args).output();
+
+                match output {
+                    Ok(o) if o.status.success() => {
+                        log::info!("🔊 Dubbed audio downloaded (tier1)");
+                        return Ok(audio_output);
+                    }
+                    Ok(o) => {
+                        let stderr = String::from_utf8_lossy(&o.stderr);
+                        log::warn!("🔊 Tier1 failed: {}", &stderr[..stderr.len().min(200)]);
+                    }
+                    Err(e) => log::warn!("🔊 Tier1 exec error: {}", e),
+                }
+            }
+
+            // ── Tier 2: cookies + PO token ──
+            {
+                let mut args: Vec<&str> = vec![
+                    "--no-playlist",
+                    "--extract-audio",
+                    "--audio-format",
+                    "m4a",
+                    "--format",
+                    &format_filter,
+                    "--output",
+                    &audio_output,
+                    "--no-check-certificate",
+                    "--age-limit",
+                    "99",
+                ];
+                add_cookies_args_with_proxy(&mut args, proxy_option.as_ref());
+                args.extend_from_slice(&[
+                    "--extractor-args",
+                    "youtube:player_client=android,default;formats=missing_pot",
+                    "--js-runtimes",
+                    "deno",
+                ]);
+                args.push(&url_str);
+
+                log::info!("🔊 Audio track tier2 attempt {}, proxy [{}]", attempt + 1, proxy_name);
+
+                let output = std::process::Command::new(&*ytdl_bin).args(&args).output();
+
+                match output {
+                    Ok(o) if o.status.success() => {
+                        log::info!("🔊 Dubbed audio downloaded (tier2)");
+                        return Ok(audio_output);
+                    }
+                    Ok(o) => {
+                        let stderr = String::from_utf8_lossy(&o.stderr);
+                        log::warn!("🔊 Tier2 failed: {}", &stderr[..stderr.len().min(200)]);
+                    }
+                    Err(e) => log::warn!("🔊 Tier2 exec error: {}", e),
+                }
+            }
+        }
+
+        Err("All tiers/proxies failed for dubbed audio download".to_string())
+    })
+    .await
+    .unwrap_or_else(|e| Err(format!("spawn_blocking error: {}", e)));
+
+    let audio_path = match download_result {
+        Ok(path) => path,
+        Err(e) => {
+            log::error!("🔊 Failed to download dubbed audio: {}", e);
+            return video_path.to_string();
+        }
+    };
+
+    // Find the actual audio file (yt-dlp may change extension)
+    let actual_audio = if std::path::Path::new(&audio_path).exists() {
+        audio_path.clone()
+    } else {
+        // Look for files matching the pattern
+        let parent = std::path::Path::new(&audio_path)
+            .parent()
+            .unwrap_or(std::path::Path::new("."));
+        let found = std::fs::read_dir(parent)
+            .ok()
+            .and_then(|entries| {
+                entries.flatten().find(|e| {
+                    e.path().to_string_lossy().contains(".dubbed_audio.")
+                        && e.path().to_string_lossy().starts_with(&video_path_owned)
+                })
+            })
+            .map(|e| e.path().to_string_lossy().to_string());
+
+        match found {
+            Some(p) => {
+                log::info!("🔊 Found audio at: {}", p);
+                p
+            }
+            None => {
+                log::error!("🔊 Audio file not found after download");
+                return video_path.to_string();
+            }
+        }
+    };
+
+    // ffmpeg: replace audio in video
+    let merged_path = format!("{}.merged.mp4", video_path);
+    log::info!("🔊 Merging dubbed audio into video...");
+
+    let ffmpeg_result = TokioCommand::new("ffmpeg")
+        .args([
+            "-y",
+            "-i",
+            video_path,
+            "-i",
+            &actual_audio,
+            "-c:v",
+            "copy",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-map",
+            "0:v:0",
+            "-map",
+            "1:a:0",
+            "-movflags",
+            "+faststart",
+            &merged_path,
+        ])
+        .output()
+        .await;
+
+    match ffmpeg_result {
+        Ok(output) if output.status.success() => {
+            log::info!("🔊 Audio replaced successfully");
+            // Replace original with merged
+            if std::fs::rename(&merged_path, video_path).is_err() {
+                let _ = std::fs::copy(&merged_path, video_path);
+                let _ = std::fs::remove_file(&merged_path);
+            }
+            let _ = std::fs::remove_file(&actual_audio);
+            video_path.to_string()
+        }
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            log::error!("🔊 ffmpeg failed: {}", &stderr[..stderr.len().min(300)]);
+            let _ = std::fs::remove_file(&merged_path);
+            let _ = std::fs::remove_file(&actual_audio);
+            video_path.to_string()
+        }
+        Err(e) => {
+            log::error!("🔊 ffmpeg exec error: {}", e);
+            let _ = std::fs::remove_file(&actual_audio);
+            video_path.to_string()
+        }
     }
 }
 
