@@ -610,17 +610,34 @@ where
         }
 
         // ── Tier 1: No cookies ──
-        match try_tier1(
-            ytdl_bin,
-            download_path,
-            url_str,
-            media_type,
-            extra_arg,
-            section_spec.as_deref(),
-            proxy_option.as_ref(),
-            progress_tx,
-            &tier1_args_fn,
-        ) {
+        // YouTube: skip tier 1 (always gets BotDetection on datacenter IPs).
+        // Go straight to tier 2 with cookies — saves ~20-30s per download.
+        let is_youtube = crate::core::share::is_youtube_url(url_str);
+        if is_youtube {
+            log::info!("⚡ [SKIP_TIER1] YouTube URL — skipping no-cookies tier");
+        }
+
+        let tier1_result = if is_youtube {
+            // Fake a BotDetection error to trigger tier 2
+            Err((YtDlpErrorType::BotDetection, "Skipped: YouTube fast path".to_string()))
+        } else {
+            let tier1_start = std::time::Instant::now();
+            let result = try_tier1(
+                ytdl_bin,
+                download_path,
+                url_str,
+                media_type,
+                extra_arg,
+                section_spec.as_deref(),
+                proxy_option.as_ref(),
+                progress_tx,
+                &tier1_args_fn,
+            );
+            log::info!("⏱️ [TIER1] done in {:.1}s", tier1_start.elapsed().as_secs_f64());
+            result
+        };
+
+        match tier1_result {
             Ok(()) => {
                 crate::core::metrics::record_tier_attempt("tier1_no_cookies", true);
                 crate::core::metrics::PROXY_REQUESTS_TOTAL
@@ -673,7 +690,8 @@ where
                         error_type
                     );
 
-                    match try_tier2(
+                    let tier2_start = std::time::Instant::now();
+                    let tier2_result = try_tier2(
                         ytdl_bin,
                         download_path,
                         url_str,
@@ -684,7 +702,9 @@ where
                         progress_tx,
                         &tier2_args_fn,
                         &runtime_handle,
-                    ) {
+                    );
+                    log::info!("⏱️ [TIER2] done in {:.1}s", tier2_start.elapsed().as_secs_f64());
+                    match tier2_result {
                         Tier2Outcome::Success => {
                             crate::core::metrics::record_tier_attempt("tier2_cookies", true);
                             crate::core::metrics::PROXY_REQUESTS_TOTAL

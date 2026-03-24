@@ -56,7 +56,66 @@ pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<
             "Chrome-131:Android-14",
         ];
 
-        // v5.0 FALLBACK CHAIN: First try WITHOUT cookies (new yt-dlp 2026+ mode)
+        // YouTube: skip no-cookies tier (always gets BotDetection on datacenter IPs)
+        // Go straight to cookies+PO token which actually works.
+        let is_youtube = url
+            .host_str()
+            .map(|h| h.contains("youtube.com") || h.contains("youtu.be"))
+            .unwrap_or(false);
+        if is_youtube {
+            log::info!("⚡ [SKIP_TIER1] YouTube URL — skipping no-cookies tier, going straight to cookies");
+            // Jump directly to cookies fallback below
+            let _error_type = YtDlpErrorType::BotDetection;
+
+            // Build cookies args inline (same as the fallback block below)
+            let mut cookies_args: Vec<&str> = vec![
+                "--dump-json",
+                "--no-playlist",
+                "--socket-timeout",
+                "30",
+                "--retries",
+                "2",
+                "--age-limit",
+                "99",
+                "--extractor-args",
+                "youtube:player_client=web,web_safari",
+                "--js-runtimes",
+                "deno",
+            ];
+            add_cookies_args_with_proxy(&mut cookies_args, proxy_option.as_ref());
+            cookies_args.push(url.as_str());
+
+            log::info!("🔑 [WITH_COOKIES] Attempting preview metadata WITH cookies (YouTube fast path)...");
+
+            if let Ok(Ok(cookies_output)) = timeout(
+                config::download::ytdlp_timeout(),
+                TokioCommand::new(ytdl_bin).args(&cookies_args).output(),
+            )
+            .await
+            {
+                if cookies_output.status.success() {
+                    let json_str = String::from_utf8_lossy(&cookies_output.stdout);
+                    if let Ok(value) = serde_json::from_str(&json_str) {
+                        log::info!("✅ [WITH_COOKIES] Preview metadata succeeded (YouTube fast path)!");
+                        return Ok(value);
+                    }
+                } else {
+                    let cookies_stderr = String::from_utf8_lossy(&cookies_output.stderr);
+                    log::warn!(
+                        "❌ [WITH_COOKIES] YouTube fast path failed: {}",
+                        &cookies_stderr[..std::cmp::min(200, cookies_stderr.len())]
+                    );
+                }
+            }
+
+            // If fast path failed, continue to next proxy
+            last_error = Some(AppError::Download(DownloadError::YtDlp(
+                "YouTube cookies fast path failed".to_string(),
+            )));
+            continue;
+        }
+
+        // v5.0 FALLBACK CHAIN: First try WITHOUT cookies (non-YouTube URLs)
         add_no_cookies_args(&mut args, proxy_option.as_ref());
         args.push(url.as_str());
 
