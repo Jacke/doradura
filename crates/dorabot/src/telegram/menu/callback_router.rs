@@ -42,9 +42,6 @@ pub async fn handle_menu_callback(
     let message_clone = q.message.clone();
 
     if let Some(data) = q.data {
-        if data.starts_with("settings:") {
-            log::info!("📩 Callback received: data={}, from={}", data, q.from.id);
-        }
         let chat_id = q.message.as_ref().map(|m| m.chat().id);
         let message_id = q.message.as_ref().map(|m| m.id());
 

@@ -29,6 +29,26 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use url::Url;
 
+/// Convert `concurrent_fragments` to a static string for yt-dlp's `-N` flag.
+/// Returns `""` (no-op) for unsupported values including 1 (the default).
+fn concurrent_fragments_str(n: u8) -> &'static str {
+    match n {
+        2 => "2",
+        3 => "3",
+        4 => "4",
+        8 => "8",
+        _ => "",
+    }
+}
+
+/// Push `-N <n>` to the arg list when concurrent fragments are enabled.
+fn push_concurrent_fragments_arg<'a>(args: &mut Vec<&'a str>, cf_str: &'a str) {
+    if !cf_str.is_empty() {
+        args.push("-N");
+        args.push(cf_str);
+    }
+}
+
 /// Allowlist of domains that yt-dlp is permitted to handle.
 /// Only these domains are accepted — arbitrary URLs are rejected for security.
 const YTDLP_DOMAINS: &[&str] = &[
@@ -158,13 +178,7 @@ impl YtDlpSource {
                 request.concurrent_fragments
             );
         }
-        let cf_str: &str = match request.concurrent_fragments {
-            2 => "2",
-            3 => "3",
-            4 => "4",
-            8 => "8",
-            _ => "",
-        };
+        let cf_str = concurrent_fragments_str(request.concurrent_fragments);
 
         let handle = tokio::task::spawn_blocking(move || {
             let postprocessor_args = format!("ffmpeg:-acodec libmp3lame -b:a {}", bitrate_str);
@@ -195,10 +209,7 @@ impl YtDlpSource {
                     args.push("deno");
                     args.extend_from_slice(&["--no-check-certificate", "--postprocessor-args"]);
                     // NOTE: postprocessor_args is borrowed from the outer closure
-                    if !cf_str.is_empty() {
-                        args.push("-N");
-                        args.push(cf_str);
-                    }
+                    push_concurrent_fragments_arg(args, cf_str);
                 },
                 {
                     let url_for_tier2 = url_str.clone();
@@ -248,10 +259,7 @@ impl YtDlpSource {
                     args.push("--js-runtimes");
                     args.push("deno");
                     args.push("--no-check-certificate");
-                    if !cf_str.is_empty() {
-                        args.push("-N");
-                        args.push(cf_str);
-                    }
+                    push_concurrent_fragments_arg(args, cf_str);
                 },
                 &postprocessor_args,
                 time_range.as_ref(),
@@ -293,13 +301,7 @@ impl YtDlpSource {
                 request.concurrent_fragments
             );
         }
-        let cf_str: &str = match request.concurrent_fragments {
-            2 => "2",
-            3 => "3",
-            4 => "4",
-            8 => "8",
-            _ => "",
-        };
+        let cf_str = concurrent_fragments_str(request.concurrent_fragments);
 
         let format_arg = match request.video_quality.as_deref() {
             Some("4320p") => build_telegram_safe_format(Some(4320)),
@@ -336,10 +338,7 @@ impl YtDlpSource {
                     args.push("--js-runtimes");
                     args.push("deno");
                     args.push("--no-check-certificate");
-                    if !cf_str.is_empty() {
-                        args.push("-N");
-                        args.push(cf_str);
-                    }
+                    push_concurrent_fragments_arg(args, cf_str);
                 },
                 {
                     let url_for_tier2 = url_str.clone();
@@ -379,10 +378,7 @@ impl YtDlpSource {
                     args.push("--js-runtimes");
                     args.push("deno");
                     args.push("--no-check-certificate");
-                    if !cf_str.is_empty() {
-                        args.push("-N");
-                        args.push(cf_str);
-                    }
+                    push_concurrent_fragments_arg(args, cf_str);
                 },
                 &format_arg,
                 time_range.as_ref(),

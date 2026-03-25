@@ -13,7 +13,7 @@ use unic_langid::LanguageIdentifier;
 
 use super::helpers::edit_caption_or_text;
 
-async fn load_menu_user_state(shared_storage: &SharedStorage, chat_id: ChatId) -> (String, String, String, Plan) {
+async fn load_menu_user_state(shared_storage: &SharedStorage, chat_id: ChatId) -> (String, String, String, Plan, bool) {
     let user = shared_storage.get_user(chat_id.0).await.ok().flatten();
     let format = user
         .as_ref()
@@ -27,8 +27,19 @@ async fn load_menu_user_state(shared_storage: &SharedStorage, chat_id: ChatId) -
         .as_ref()
         .map(|user| user.audio_bitrate.clone())
         .unwrap_or_else(|| "320k".to_string());
+    let experimental = user
+        .as_ref()
+        .map(|user| user.experimental_features != 0)
+        .unwrap_or(false);
     let plan = user.map(|user| user.plan).unwrap_or_default();
-    (format, video_quality, audio_bitrate, plan)
+    (format, video_quality, audio_bitrate, plan, experimental)
+}
+
+fn experimental_button_row(experimental: bool) -> Vec<teloxide::types::InlineKeyboardButton> {
+    vec![crate::telegram::cb(
+        format!("\u{1f9ea} Experimental: {}", if experimental { "ON" } else { "OFF" }),
+        "settings:toggle_experimental",
+    )]
 }
 
 /// Shows the main settings menu for the download mode.
@@ -40,11 +51,7 @@ pub async fn show_main_menu(
     _db_pool: Arc<DbPool>,
     shared_storage: Arc<SharedStorage>,
 ) -> ResponseResult<Message> {
-    let (_, video_quality, audio_bitrate, _) = load_menu_user_state(&shared_storage, chat_id).await;
-    let experimental = shared_storage
-        .get_user_experimental_features(chat_id.0)
-        .await
-        .unwrap_or(false);
+    let (_, video_quality, audio_bitrate, _, experimental) = load_menu_user_state(&shared_storage, chat_id).await;
     let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     let quality_emoji = match video_quality.as_str() {
@@ -93,14 +100,7 @@ pub async fn show_main_menu(
             i18n::t(&lang, "menu.progress_bar_style_button"),
             "mode:progress_bar_style",
         )],
-        vec![crate::telegram::cb(
-            if experimental {
-                "\u{1f9ea} Experimental: ON".to_string()
-            } else {
-                "\u{1f9ea} Experimental: OFF".to_string()
-            },
-            "settings:toggle_experimental",
-        )],
+        experimental_button_row(experimental),
         vec![crate::telegram::cb(
             i18n::t(&lang, "menu.language_button"),
             "mode:language",
@@ -162,11 +162,7 @@ pub(crate) async fn edit_main_menu(
     url_id: Option<&str>,
     _preview_msg_id: Option<MessageId>,
 ) -> ResponseResult<()> {
-    let (_, video_quality, audio_bitrate, _) = load_menu_user_state(&shared_storage, chat_id).await;
-    let experimental = shared_storage
-        .get_user_experimental_features(chat_id.0)
-        .await
-        .unwrap_or(false);
+    let (_, video_quality, audio_bitrate, _, experimental) = load_menu_user_state(&shared_storage, chat_id).await;
     let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     let quality_emoji = match video_quality.as_str() {
@@ -185,7 +181,6 @@ pub(crate) async fn edit_main_menu(
         _ => "320 kbps",
     };
 
-    // Build callback data with url_id when it is provided
     let mode_callback = |mode: &str| {
         if let Some(id) = url_id {
             format!("mode:{}:preview:{}", mode, id)
@@ -224,14 +219,7 @@ pub(crate) async fn edit_main_menu(
             i18n::t(&lang, "menu.progress_bar_style_button"),
             mode_callback("progress_bar_style"),
         )],
-        vec![crate::telegram::cb(
-            if experimental {
-                "\u{1f9ea} Experimental: ON".to_string()
-            } else {
-                "\u{1f9ea} Experimental: OFF".to_string()
-            },
-            "settings:toggle_experimental",
-        )],
+        experimental_button_row(experimental),
         vec![crate::telegram::cb(
             i18n::t(&lang, "menu.language_button"),
             mode_callback("language"),
@@ -264,11 +252,7 @@ pub async fn send_main_menu_as_new(
     url_id: Option<&str>,
     preview_msg_id: Option<MessageId>,
 ) -> ResponseResult<()> {
-    let (_, video_quality, audio_bitrate, _) = load_menu_user_state(&shared_storage, chat_id).await;
-    let experimental = shared_storage
-        .get_user_experimental_features(chat_id.0)
-        .await
-        .unwrap_or(false);
+    let (_, video_quality, audio_bitrate, _, experimental) = load_menu_user_state(&shared_storage, chat_id).await;
     let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     let quality_emoji = match video_quality.as_str() {
@@ -287,7 +271,6 @@ pub async fn send_main_menu_as_new(
         _ => "320 kbps",
     };
 
-    // Build callback data with url_id and preview_msg_id when they are present
     let mode_callback = |mode: &str| {
         if let Some(id) = url_id {
             if let Some(preview_id) = preview_msg_id {
@@ -330,14 +313,7 @@ pub async fn send_main_menu_as_new(
             i18n::t(&lang, "menu.progress_bar_style_button"),
             mode_callback("progress_bar_style"),
         )],
-        vec![crate::telegram::cb(
-            if experimental {
-                "\u{1f9ea} Experimental: ON".to_string()
-            } else {
-                "\u{1f9ea} Experimental: OFF".to_string()
-            },
-            "settings:toggle_experimental",
-        )],
+        experimental_button_row(experimental),
         vec![crate::telegram::cb(
             i18n::t(&lang, "menu.language_button"),
             mode_callback("language"),
@@ -376,7 +352,7 @@ pub async fn show_enhanced_main_menu(
     shared_storage: Arc<SharedStorage>,
 ) -> ResponseResult<Message> {
     let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
-    let (format, video_quality, audio_bitrate, plan) = load_menu_user_state(&shared_storage, chat_id).await;
+    let (format, video_quality, audio_bitrate, plan, _) = load_menu_user_state(&shared_storage, chat_id).await;
 
     // Format emoji
     let format_emoji = match format.as_str() {
@@ -439,7 +415,7 @@ pub(crate) async fn edit_enhanced_main_menu(
     shared_storage: Arc<SharedStorage>,
 ) -> ResponseResult<()> {
     let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
-    let (format, video_quality, audio_bitrate, plan) = load_menu_user_state(&shared_storage, chat_id).await;
+    let (format, video_quality, audio_bitrate, plan, _) = load_menu_user_state(&shared_storage, chat_id).await;
 
     let format_emoji = match format.as_str() {
         "mp3" => "🎵 MP3",

@@ -135,6 +135,13 @@ fn ensure_tables(conn: &Connection) {
     // preview_contexts: audio_lang column
     let _ = conn.execute_batch("ALTER TABLE preview_contexts ADD COLUMN audio_lang TEXT");
 
+    // V41: player repeat/resume columns
+    let _ = conn.execute_batch("ALTER TABLE player_sessions ADD COLUMN repeat_mode INTEGER NOT NULL DEFAULT 0");
+    let _ = conn.execute_batch("ALTER TABLE player_sessions ADD COLUMN last_track_index INTEGER");
+
+    // V42: experimental features
+    let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN experimental_features INTEGER DEFAULT 0");
+
     // V40: admin audit log
     let _ = conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS admin_audit_log (
