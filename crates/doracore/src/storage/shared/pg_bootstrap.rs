@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
     subtitle_shadow INTEGER NOT NULL DEFAULT 1,
     subtitle_position TEXT NOT NULL DEFAULT 'bottom',
     is_blocked INTEGER NOT NULL DEFAULT 0,
+    experimental_features INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -591,6 +592,12 @@ CREATE INDEX IF NOT EXISTS idx_preview_contexts_expires_at
 -- Migration: add audio_lang column to existing preview_contexts tables
 DO $$ BEGIN
     ALTER TABLE preview_contexts ADD COLUMN audio_lang TEXT;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+-- Migration: add experimental_features column to existing users tables
+DO $$ BEGIN
+    ALTER TABLE users ADD COLUMN experimental_features INTEGER NOT NULL DEFAULT 0;
 EXCEPTION WHEN duplicate_column THEN NULL;
 END $$;
 "#;

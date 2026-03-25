@@ -329,22 +329,28 @@ pub(super) fn get_video_filesize_from_json(json: &Value, quality: &str) -> Optio
 /// * `url` - Video/audio URL
 /// * `format` - Download format ("mp3", "mp4", "srt", "txt")
 /// * `video_quality` - Video quality (mp4 only, e.g. "1080p", "720p", "480p", "360p")
+/// * `experimental` - Enable experimental optimisations (parallel fetch, skip formats for MP3)
 pub async fn get_preview_metadata(
     url: &Url,
     format: Option<&str>,
     video_quality: Option<&str>,
+    experimental: bool,
 ) -> Result<PreviewMetadata, AppError> {
-    get_preview_metadata_inner(url, format, video_quality, false).await
+    get_preview_metadata_inner(url, format, video_quality, false, experimental).await
 }
 
 /// Same as `get_preview_metadata` but skips the duration limit check when `has_time_range` is true,
 /// because partial downloads can handle arbitrarily long videos.
+///
+/// # Arguments
+/// * `experimental` - Enable experimental optimisations (parallel fetch, skip formats for MP3)
 pub async fn get_preview_metadata_with_time_range(
     url: &Url,
     format: Option<&str>,
     video_quality: Option<&str>,
+    experimental: bool,
 ) -> Result<PreviewMetadata, AppError> {
-    get_preview_metadata_inner(url, format, video_quality, true).await
+    get_preview_metadata_inner(url, format, video_quality, true, experimental).await
 }
 
 async fn get_preview_metadata_inner(
@@ -352,6 +358,7 @@ async fn get_preview_metadata_inner(
     format: Option<&str>,
     video_quality: Option<&str>,
     has_time_range: bool,
+    experimental: bool,
 ) -> Result<PreviewMetadata, AppError> {
     let ytdl_bin = &*config::YTDL_BIN;
     log::debug!("Getting preview metadata for URL: {}", url);
@@ -371,7 +378,9 @@ async fn get_preview_metadata_inner(
     if let Some(mut metadata) = PREVIEW_CACHE.get(url.as_str()).await {
         log::debug!("Preview metadata found in cache for URL: {}", url);
         let needs_video_formats = metadata.video_formats.as_ref().is_none_or(|formats| formats.is_empty());
-        if needs_video_formats {
+        // Skip formats refresh for MP3 when experimental mode is on — not needed for audio.
+        let skip_formats_refresh = experimental && format == Some("mp3");
+        if needs_video_formats && !skip_formats_refresh {
             match get_video_formats_list(url, ytdl_bin).await {
                 Ok(formats) if !formats.is_empty() => {
                     log::debug!("Refreshed video formats for cached preview ({} formats)", formats.len());
@@ -393,6 +402,20 @@ async fn get_preview_metadata_inner(
     } else {
         (None, None)
     };
+
+    // Experimental: spawn the formats fetch as a background task so it runs in parallel with
+    // the metadata JSON call.  Only for non-MP3 formats — MP3 never needs the formats list.
+    let parallel_formats_handle: Option<tokio::task::JoinHandle<Result<Vec<VideoFormatInfo>, AppError>>> =
+        if experimental && format != Some("mp3") {
+            log::info!("🧪 [EXPERIMENTAL] Starting parallel formats fetch");
+            let url_owned = url.clone();
+            let ytdl_bin_owned = ytdl_bin.to_string();
+            Some(tokio::spawn(async move {
+                get_video_formats_list(&url_owned, &ytdl_bin_owned).await
+            }))
+        } else {
+            None
+        };
 
     // Fetch all metadata in a single JSON call (speed optimisation)
     let metadata_start = std::time::Instant::now();
@@ -491,32 +514,65 @@ async fn get_preview_metadata_inner(
 
     // Fetch the list of available formats with sizes (if the source provides them).
     // Use --list-formats because JSON doesn't always contain exact sizes for every format.
-    let formats_start = std::time::Instant::now();
-    let mut video_formats: Option<Vec<VideoFormatInfo>> = match get_video_formats_list(url, ytdl_bin).await {
-        Ok(formats) => {
-            if formats.is_empty() {
-                log::warn!("get_video_formats_list returned empty list for URL: {}", url);
-                None
-            } else {
+    let mut video_formats: Option<Vec<VideoFormatInfo>> = if experimental && format == Some("mp3") {
+        // Experimental: MP3 never needs the formats list — skip the call entirely.
+        log::info!("🧪 [EXPERIMENTAL] Skipping formats list for MP3");
+        None
+    } else if let Some(handle) = parallel_formats_handle {
+        // Experimental: await the already-running parallel fetch.
+        match handle.await {
+            Ok(Ok(formats)) if !formats.is_empty() => {
+                log::info!("⏱️ [FORMATS_LIST] done (parallel) for {}", url);
                 log::debug!("Successfully got {} video formats for URL: {}", formats.len(), url);
                 Some(formats)
             }
+            Ok(Ok(_)) => {
+                log::warn!("get_video_formats_list returned empty list (parallel) for URL: {}", url);
+                None
+            }
+            Ok(Err(e)) => {
+                log::warn!(
+                    "Failed to get video formats list (parallel) for URL {}: {}. Will use fallback button.",
+                    url,
+                    e
+                );
+                None
+            }
+            Err(join_err) => {
+                log::warn!("Parallel formats task panicked for URL {}: {}", url, join_err);
+                None
+            }
         }
-        Err(e) => {
-            log::warn!(
-                "Failed to get video formats list for URL {}: {}. Will use fallback button.",
-                url,
-                e
-            );
-            // Do not return an error — just log it and create a standard button
-            None
-        }
+    } else {
+        // Sequential path (experimental == false).
+        let formats_start = std::time::Instant::now();
+        let result = match get_video_formats_list(url, ytdl_bin).await {
+            Ok(formats) => {
+                if formats.is_empty() {
+                    log::warn!("get_video_formats_list returned empty list for URL: {}", url);
+                    None
+                } else {
+                    log::debug!("Successfully got {} video formats for URL: {}", formats.len(), url);
+                    Some(formats)
+                }
+            }
+            Err(e) => {
+                log::warn!(
+                    "Failed to get video formats list for URL {}: {}. Will use fallback button.",
+                    url,
+                    e
+                );
+                // Do not return an error — just log it and create a standard button
+                None
+            }
+        };
+        log::info!(
+            "⏱️ [FORMATS_LIST] done in {:.1}s for {}",
+            formats_start.elapsed().as_secs_f64(),
+            url
+        );
+        result
     };
-    log::info!(
-        "⏱️ [FORMATS_LIST] done in {:.1}s for {}",
-        formats_start.elapsed().as_secs_f64(),
-        url
-    );
 
     if video_formats.as_ref().is_none_or(|formats| formats.is_empty()) {
         let json_formats = extract_video_formats_from_json(&json_metadata);

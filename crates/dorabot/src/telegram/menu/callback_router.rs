@@ -764,11 +764,16 @@ pub async fn handle_menu_callback(
                                 .await
                                 .unwrap_or_else(|_| "mp4".to_string());
                             let video_quality = shared_storage.get_user_video_quality(chat_id.0).await.ok();
+                            let experimental = shared_storage
+                                .get_user_experimental_features(chat_id.0)
+                                .await
+                                .unwrap_or(false);
 
                             match crate::telegram::preview::get_preview_metadata(
                                 &url,
                                 Some(&current_format),
                                 video_quality.as_deref(),
+                                experimental,
                             )
                             .await
                             {
@@ -939,11 +944,16 @@ pub async fn handle_menu_callback(
                                 .await
                                 .unwrap_or_else(|_| "mp4".to_string());
                             let video_quality = shared_storage.get_user_video_quality(chat_id.0).await.ok();
+                            let experimental = shared_storage
+                                .get_user_experimental_features(chat_id.0)
+                                .await
+                                .unwrap_or(false);
 
                             match crate::telegram::preview::get_preview_metadata(
                                 &url,
                                 Some(&current_format),
                                 video_quality.as_deref(),
+                                experimental,
                             )
                             .await
                             {

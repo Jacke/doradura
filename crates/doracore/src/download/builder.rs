@@ -29,6 +29,7 @@ pub struct DownloadConfigBuilder {
     custom_output_path: Option<String>,
     time_range: Option<(String, String)>,
     carousel_mask: Option<u32>,
+    concurrent_fragments: u8,
 }
 
 impl DownloadConfigBuilder {
@@ -43,6 +44,7 @@ impl DownloadConfigBuilder {
             custom_output_path: None,
             time_range: None,
             carousel_mask: None,
+            concurrent_fragments: 1,
         }
     }
 
@@ -88,6 +90,14 @@ impl DownloadConfigBuilder {
         self
     }
 
+    /// Set the number of concurrent fragments for yt-dlp (`-N` / `--concurrent-fragments`).
+    ///
+    /// Values above 1 are experimental. The default is 1 (sequential).
+    pub fn concurrent_fragments(mut self, n: u8) -> Self {
+        self.concurrent_fragments = n;
+        self
+    }
+
     /// Build the `DownloadRequest`, generating the output path from title and artist.
     ///
     /// Adds a timestamp to the filename to prevent race conditions with concurrent downloads.
@@ -107,6 +117,7 @@ impl DownloadConfigBuilder {
             max_file_size: self.max_file_size,
             time_range: self.time_range,
             carousel_mask: self.carousel_mask,
+            concurrent_fragments: self.concurrent_fragments,
         }
     }
 

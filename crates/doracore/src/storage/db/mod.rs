@@ -217,6 +217,7 @@ mod tests {
             burn_subtitles: 0,
             progress_bar_style: "classic".to_string(),
             is_blocked: false,
+            experimental_features: 0,
         };
 
         assert_eq!(user.telegram_id(), 123);

@@ -669,9 +669,15 @@ pub async fn handle_message(
                         None
                     };
 
+                    let experimental = shared_storage_clone
+                        .get_user_experimental_features(chat_id.0)
+                        .await
+                        .unwrap_or(false);
                     for (idx, url) in valid_urls.iter().enumerate() {
                         // Get metadata for preview
-                        match get_preview_metadata(url, Some(&format), preview_video_quality.as_deref()).await {
+                        match get_preview_metadata(url, Some(&format), preview_video_quality.as_deref(), experimental)
+                            .await
+                        {
                             Ok(metadata) => {
                                 let display_title = metadata.display_title();
 
@@ -934,10 +940,15 @@ pub async fn handle_message(
                     None
                 };
 
+                let experimental = shared_storage
+                    .get_user_experimental_features(msg.chat.id.0)
+                    .await
+                    .unwrap_or(false);
                 let metadata_result = if time_range.is_some() {
-                    get_preview_metadata_with_time_range(&url, Some(&format), video_quality.as_deref()).await
+                    get_preview_metadata_with_time_range(&url, Some(&format), video_quality.as_deref(), experimental)
+                        .await
                 } else {
-                    get_preview_metadata(&url, Some(&format), video_quality.as_deref()).await
+                    get_preview_metadata(&url, Some(&format), video_quality.as_deref(), experimental).await
                 };
 
                 match metadata_result {

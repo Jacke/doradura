@@ -61,6 +61,10 @@ pub struct DownloadRequest {
     /// Carousel bitmask: which items to download from a multi-item post.
     /// Bit N = item N selected. None = download all items.
     pub carousel_mask: Option<u32>,
+    /// Number of concurrent fragments for yt-dlp (`-N` / `--concurrent-fragments`).
+    /// Use 1 for the default sequential behaviour. Values above 1 are experimental
+    /// and may increase download speed at the cost of higher server load.
+    pub concurrent_fragments: u8,
 }
 
 /// An additional media file from a multi-item post (e.g., Instagram carousel).
@@ -313,6 +317,7 @@ mod tests {
             max_file_size: None,
             time_range: None,
             carousel_mask: None,
+            concurrent_fragments: 1,
         };
 
         let (tx, mut rx) = mpsc::unbounded_channel();

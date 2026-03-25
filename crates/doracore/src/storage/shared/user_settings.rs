@@ -100,6 +100,18 @@ impl SharedStorage {
             == 1)
     }
 
+    pub async fn get_user_experimental_features(&self, telegram_id: i64) -> Result<bool> {
+        Ok(self
+            .get_user_i32_setting(
+                telegram_id,
+                "experimental_features",
+                "SELECT COALESCE(experimental_features, 0) FROM users WHERE telegram_id = $1",
+                0,
+            )
+            .await?
+            == 1)
+    }
+
     pub async fn get_user_subtitle_style(&self, telegram_id: i64) -> Result<SubtitleStyle> {
         match self {
             Self::Sqlite { db_pool } => {
@@ -183,6 +195,16 @@ impl SharedStorage {
             "burn_subtitles",
             i32::from(enabled),
             "UPDATE users SET burn_subtitles = $2, updated_at = NOW() WHERE telegram_id = $1",
+        )
+        .await
+    }
+
+    pub async fn set_user_experimental_features(&self, telegram_id: i64, enabled: bool) -> Result<()> {
+        self.set_user_i32_setting(
+            telegram_id,
+            "experimental_features",
+            i32::from(enabled),
+            "UPDATE users SET experimental_features = $2, updated_at = NOW() WHERE telegram_id = $1",
         )
         .await
     }

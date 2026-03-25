@@ -152,6 +152,20 @@ impl YtDlpSource {
         let bitrate_str = request.audio_bitrate.clone().unwrap_or_else(|| "320k".to_string());
         let time_range = request.time_range.clone();
 
+        if request.concurrent_fragments > 1 {
+            log::info!(
+                "[EXPERIMENTAL] Using {} concurrent fragments for audio download",
+                request.concurrent_fragments
+            );
+        }
+        let cf_str: &str = match request.concurrent_fragments {
+            2 => "2",
+            3 => "3",
+            4 => "4",
+            8 => "8",
+            _ => "",
+        };
+
         let handle = tokio::task::spawn_blocking(move || {
             let postprocessor_args = format!("ffmpeg:-acodec libmp3lame -b:a {}", bitrate_str);
 
@@ -161,7 +175,7 @@ impl YtDlpSource {
                 &download_path,
                 &progress_tx,
                 "audio",
-                |args, proxy_option| {
+                move |args, proxy_option| {
                     // Audio-specific yt-dlp args
                     args.extend_from_slice(&[
                         "--extract-audio",
@@ -181,6 +195,10 @@ impl YtDlpSource {
                     args.push("deno");
                     args.extend_from_slice(&["--no-check-certificate", "--postprocessor-args"]);
                     // NOTE: postprocessor_args is borrowed from the outer closure
+                    if !cf_str.is_empty() {
+                        args.push("-N");
+                        args.push(cf_str);
+                    }
                 },
                 {
                     let url_for_tier2 = url_str.clone();
@@ -206,9 +224,13 @@ impl YtDlpSource {
                         args.push("deno");
                         args.push("--no-check-certificate");
                         args.push("--postprocessor-args");
+                        if !cf_str.is_empty() {
+                            args.push("-N");
+                            args.push(cf_str);
+                        }
                     }
                 },
-                |args, proxy_option| {
+                move |args, proxy_option| {
                     // Tier 3 (fixup never): audio-specific args
                     args.extend_from_slice(&[
                         "--fixup",
@@ -226,6 +248,10 @@ impl YtDlpSource {
                     args.push("--js-runtimes");
                     args.push("deno");
                     args.push("--no-check-certificate");
+                    if !cf_str.is_empty() {
+                        args.push("-N");
+                        args.push(cf_str);
+                    }
                 },
                 &postprocessor_args,
                 time_range.as_ref(),
@@ -261,6 +287,20 @@ impl YtDlpSource {
         let download_path = request.output_path.clone();
         let time_range = request.time_range.clone();
 
+        if request.concurrent_fragments > 1 {
+            log::info!(
+                "[EXPERIMENTAL] Using {} concurrent fragments for video download",
+                request.concurrent_fragments
+            );
+        }
+        let cf_str: &str = match request.concurrent_fragments {
+            2 => "2",
+            3 => "3",
+            4 => "4",
+            8 => "8",
+            _ => "",
+        };
+
         let format_arg = match request.video_quality.as_deref() {
             Some("4320p") => build_telegram_safe_format(Some(4320)),
             Some("2160p") => build_telegram_safe_format(Some(2160)),
@@ -282,7 +322,7 @@ impl YtDlpSource {
                 &download_path,
                 &progress_tx,
                 "video",
-                |args, proxy_option| {
+                move |args, proxy_option| {
                     // Tier 1 (no cookies): always player_client=default
                     // android client causes 403 on Railway even with proxy
                     args.push("--format");
@@ -296,6 +336,10 @@ impl YtDlpSource {
                     args.push("--js-runtimes");
                     args.push("deno");
                     args.push("--no-check-certificate");
+                    if !cf_str.is_empty() {
+                        args.push("-N");
+                        args.push(cf_str);
+                    }
                 },
                 {
                     let url_for_tier2 = url_str.clone();
@@ -316,9 +360,13 @@ impl YtDlpSource {
                         args.push("--js-runtimes");
                         args.push("deno");
                         args.push("--no-check-certificate");
+                        if !cf_str.is_empty() {
+                            args.push("-N");
+                            args.push(cf_str);
+                        }
                     }
                 },
-                |args, proxy_option| {
+                move |args, proxy_option| {
                     // Tier 3 (fixup never): same client logic as tier 2
                     args.push("--fixup");
                     args.push("never");
@@ -331,6 +379,10 @@ impl YtDlpSource {
                     args.push("--js-runtimes");
                     args.push("deno");
                     args.push("--no-check-certificate");
+                    if !cf_str.is_empty() {
+                        args.push("-N");
+                        args.push(cf_str);
+                    }
                 },
                 &format_arg,
                 time_range.as_ref(),

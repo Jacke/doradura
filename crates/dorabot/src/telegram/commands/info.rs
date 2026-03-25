@@ -106,7 +106,11 @@ pub async fn handle_info_command(
 
         // Get metadata with video formats
         log::info!("🔍 Fetching metadata from yt-dlp...");
-        match get_preview_metadata(&url, Some("mp4"), Some("best")).await {
+        let experimental = shared_storage
+            .get_user_experimental_features(msg.chat.id.0)
+            .await
+            .unwrap_or(false);
+        match get_preview_metadata(&url, Some("mp4"), Some("best"), experimental).await {
             Ok(metadata) => {
                 log::info!("✅ Metadata fetched successfully");
                 log::info!("📝 Title: {}", metadata.display_title());

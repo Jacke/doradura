@@ -216,7 +216,18 @@ pub async fn handle_instagram_callback(
                 None
             };
 
-            match crate::telegram::preview::get_preview_metadata(&url, Some(&format), video_quality.as_deref()).await {
+            let experimental = shared_storage
+                .get_user_experimental_features(chat_id.0)
+                .await
+                .unwrap_or(false);
+            match crate::telegram::preview::get_preview_metadata(
+                &url,
+                Some(&format),
+                video_quality.as_deref(),
+                experimental,
+            )
+            .await
+            {
                 Ok(metadata) => {
                     let default_quality = if format == "mp4" {
                         video_quality.as_deref()

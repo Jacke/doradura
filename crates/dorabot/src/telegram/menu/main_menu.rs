@@ -41,6 +41,10 @@ pub async fn show_main_menu(
     shared_storage: Arc<SharedStorage>,
 ) -> ResponseResult<Message> {
     let (_, video_quality, audio_bitrate, _) = load_menu_user_state(&shared_storage, chat_id).await;
+    let experimental = shared_storage
+        .get_user_experimental_features(chat_id.0)
+        .await
+        .unwrap_or(false);
     let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     let quality_emoji = match video_quality.as_str() {
@@ -88,6 +92,14 @@ pub async fn show_main_menu(
         vec![crate::telegram::cb(
             i18n::t(&lang, "menu.progress_bar_style_button"),
             "mode:progress_bar_style",
+        )],
+        vec![crate::telegram::cb(
+            if experimental {
+                "\u{1f9ea} Experimental: ON".to_string()
+            } else {
+                "\u{1f9ea} Experimental: OFF".to_string()
+            },
+            "settings:toggle_experimental",
         )],
         vec![crate::telegram::cb(
             i18n::t(&lang, "menu.language_button"),
@@ -151,6 +163,10 @@ pub(crate) async fn edit_main_menu(
     _preview_msg_id: Option<MessageId>,
 ) -> ResponseResult<()> {
     let (_, video_quality, audio_bitrate, _) = load_menu_user_state(&shared_storage, chat_id).await;
+    let experimental = shared_storage
+        .get_user_experimental_features(chat_id.0)
+        .await
+        .unwrap_or(false);
     let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     let quality_emoji = match video_quality.as_str() {
@@ -209,6 +225,14 @@ pub(crate) async fn edit_main_menu(
             mode_callback("progress_bar_style"),
         )],
         vec![crate::telegram::cb(
+            if experimental {
+                "\u{1f9ea} Experimental: ON".to_string()
+            } else {
+                "\u{1f9ea} Experimental: OFF".to_string()
+            },
+            "settings:toggle_experimental",
+        )],
+        vec![crate::telegram::cb(
             i18n::t(&lang, "menu.language_button"),
             mode_callback("language"),
         )],
@@ -241,6 +265,10 @@ pub async fn send_main_menu_as_new(
     preview_msg_id: Option<MessageId>,
 ) -> ResponseResult<()> {
     let (_, video_quality, audio_bitrate, _) = load_menu_user_state(&shared_storage, chat_id).await;
+    let experimental = shared_storage
+        .get_user_experimental_features(chat_id.0)
+        .await
+        .unwrap_or(false);
     let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
     let quality_emoji = match video_quality.as_str() {
@@ -301,6 +329,14 @@ pub async fn send_main_menu_as_new(
         vec![crate::telegram::cb(
             i18n::t(&lang, "menu.progress_bar_style_button"),
             mode_callback("progress_bar_style"),
+        )],
+        vec![crate::telegram::cb(
+            if experimental {
+                "\u{1f9ea} Experimental: ON".to_string()
+            } else {
+                "\u{1f9ea} Experimental: OFF".to_string()
+            },
+            "settings:toggle_experimental",
         )],
         vec![crate::telegram::cb(
             i18n::t(&lang, "menu.language_button"),

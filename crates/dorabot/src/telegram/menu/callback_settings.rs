@@ -23,8 +23,8 @@ use super::settings::{
 
 /// Handles settings-related callback queries: `mode:`, `main:`, `ext:`, `subscribe:`,
 /// `subscription:`, `language:select_new:`, `language:set:`, `quality:`, `send_type:toggle`,
-/// `video:toggle_burn_subs`, `bitrate:`, `audio_send_type:toggle`, `subtitle:`, `pbar_style:`,
-/// `video_send_type:toggle:`, and `back:` prefixes.
+/// `video:toggle_burn_subs`, `settings:toggle_experimental`, `bitrate:`, `audio_send_type:toggle`,
+/// `subtitle:`, `pbar_style:`, `video_send_type:toggle:`, and `back:` prefixes.
 ///
 /// Returns `Ok(true)` if the callback was handled, `Ok(false)` if it was not recognized.
 #[allow(clippy::too_many_arguments)]
@@ -527,6 +527,39 @@ pub async fn handle_settings_callback(
         return Ok(true);
     }
 
+    if data == "settings:toggle_experimental" {
+        let _ = bot.answer_callback_query(callback_id.clone()).await;
+        let current_value = shared_storage
+            .get_user_experimental_features(chat_id.0)
+            .await
+            .unwrap_or(false);
+        let new_value = !current_value;
+
+        shared_storage
+            .set_user_experimental_features(chat_id.0, new_value)
+            .await
+            .map_err(db_err)?;
+
+        log::info!(
+            "User {} toggled experimental_features: {} -> {}",
+            chat_id.0,
+            current_value,
+            new_value
+        );
+
+        edit_main_menu(
+            bot,
+            chat_id,
+            message_id,
+            Arc::clone(&db_pool),
+            Arc::clone(&shared_storage),
+            None,
+            None,
+        )
+        .await?;
+        return Ok(true);
+    }
+
     if let Some(bitrate) = data.strip_prefix("bitrate:") {
         let _ = bot.answer_callback_query(callback_id.clone()).await;
         const VALID_BITRATES: &[&str] = &["128k", "192k", "256k", "320k"];
@@ -780,10 +813,15 @@ pub async fn handle_settings_callback(
                             None
                         };
 
+                        let experimental = shared_storage
+                            .get_user_experimental_features(chat_id.0)
+                            .await
+                            .unwrap_or(false);
                         match crate::telegram::preview::get_preview_metadata(
                             &url,
                             Some(&current_format),
                             video_quality.as_deref(),
+                            experimental,
                         )
                         .await
                         {

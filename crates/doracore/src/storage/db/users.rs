@@ -38,6 +38,8 @@ pub struct User {
     pub progress_bar_style: String,
     /// Whether the user is blocked by admin
     pub is_blocked: bool,
+    /// Experimental features flag (0 = disabled, 1 = enabled)
+    pub experimental_features: i32,
 }
 
 impl User {
@@ -310,7 +312,8 @@ pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
             COALESCE(s.is_recurring, 0) as is_recurring,
             COALESCE(u.burn_subtitles, 0) as burn_subtitles,
             COALESCE(u.progress_bar_style, 'classic') as progress_bar_style,
-            COALESCE(u.is_blocked, 0) as is_blocked
+            COALESCE(u.is_blocked, 0) as is_blocked,
+            COALESCE(u.experimental_features, 0) as experimental_features
         FROM users u
         LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
         WHERE u.telegram_id = ?",
@@ -334,6 +337,7 @@ pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
         let burn_subtitles: i32 = row.get(13).unwrap_or(0);
         let progress_bar_style: String = row.get(14).unwrap_or_else(|_| "classic".to_string());
         let is_blocked: bool = row.get::<_, i32>(15).unwrap_or(0) != 0;
+        let experimental_features: i32 = row.get(16).unwrap_or(0);
 
         Ok(Some(User {
             telegram_id,
@@ -352,6 +356,7 @@ pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
             burn_subtitles,
             progress_bar_style,
             is_blocked,
+            experimental_features,
         }))
     } else {
         Ok(None)
@@ -614,6 +619,29 @@ pub fn set_user_burn_subtitles(conn: &DbConnection, telegram_id: i64, enabled: b
     let value = if enabled { 1 } else { 0 };
     conn.execute(
         "UPDATE users SET burn_subtitles = ?1 WHERE telegram_id = ?2",
+        [&value as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
+    )?;
+    Ok(())
+}
+
+/// Gets the experimental features setting for a user.
+pub fn get_user_experimental_features(conn: &DbConnection, telegram_id: i64) -> Result<bool> {
+    let mut stmt = conn.prepare("SELECT COALESCE(experimental_features, 0) FROM users WHERE telegram_id = ?")?;
+    let mut rows = stmt.query([&telegram_id as &dyn rusqlite::ToSql])?;
+
+    if let Some(row) = rows.next()? {
+        let experimental_features: i32 = row.get(0)?;
+        Ok(experimental_features == 1)
+    } else {
+        Ok(false)
+    }
+}
+
+/// Sets the experimental features setting for a user.
+pub fn set_user_experimental_features(conn: &DbConnection, telegram_id: i64, enabled: bool) -> Result<()> {
+    let value = if enabled { 1 } else { 0 };
+    conn.execute(
+        "UPDATE users SET experimental_features = ?1 WHERE telegram_id = ?2",
         [&value as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
     )?;
     Ok(())
@@ -902,7 +930,8 @@ pub fn get_users_paginated(
             COALESCE(s.is_recurring, 0) as is_recurring,
             COALESCE(u.burn_subtitles, 0) as burn_subtitles,
             COALESCE(u.progress_bar_style, 'classic') as progress_bar_style,
-            COALESCE(u.is_blocked, 0) as is_blocked
+            COALESCE(u.is_blocked, 0) as is_blocked,
+            COALESCE(u.experimental_features, 0) as experimental_features
         FROM users u
         LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
         {}
@@ -931,6 +960,7 @@ pub fn get_users_paginated(
                 burn_subtitles: row.get(13).unwrap_or(0),
                 progress_bar_style: row.get(14).unwrap_or_else(|_| "classic".to_string()),
                 is_blocked: row.get::<_, i32>(15).unwrap_or(0) != 0,
+                experimental_features: row.get(16).unwrap_or(0),
             })
         },
     )?;
@@ -986,7 +1016,8 @@ pub fn search_users(conn: &DbConnection, query: &str) -> Result<Vec<User>> {
             COALESCE(s.is_recurring, 0) as is_recurring,
             COALESCE(u.burn_subtitles, 0) as burn_subtitles,
             COALESCE(u.progress_bar_style, 'classic') as progress_bar_style,
-            COALESCE(u.is_blocked, 0) as is_blocked
+            COALESCE(u.is_blocked, 0) as is_blocked,
+            COALESCE(u.experimental_features, 0) as experimental_features
         FROM users u
         LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
         WHERE CAST(u.telegram_id AS TEXT) LIKE ?1 OR COALESCE(u.username, '') LIKE ?1
@@ -1011,6 +1042,7 @@ pub fn search_users(conn: &DbConnection, query: &str) -> Result<Vec<User>> {
             burn_subtitles: row.get(13).unwrap_or(0),
             progress_bar_style: row.get(14).unwrap_or_else(|_| "classic".to_string()),
             is_blocked: row.get::<_, i32>(15).unwrap_or(0) != 0,
+            experimental_features: row.get(16).unwrap_or(0),
         })
     })?;
 
@@ -1048,7 +1080,8 @@ pub fn get_all_users(conn: &DbConnection) -> Result<Vec<User>> {
             COALESCE(s.is_recurring, 0) as is_recurring,
             COALESCE(u.burn_subtitles, 0) as burn_subtitles,
             COALESCE(u.progress_bar_style, 'classic') as progress_bar_style,
-            COALESCE(u.is_blocked, 0) as is_blocked
+            COALESCE(u.is_blocked, 0) as is_blocked,
+            COALESCE(u.experimental_features, 0) as experimental_features
         FROM users u
         LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
         ORDER BY u.telegram_id",
@@ -1071,6 +1104,7 @@ pub fn get_all_users(conn: &DbConnection) -> Result<Vec<User>> {
             burn_subtitles: row.get(13).unwrap_or(0),
             progress_bar_style: row.get(14).unwrap_or_else(|_| "classic".to_string()),
             is_blocked: row.get::<_, i32>(15).unwrap_or(0) != 0,
+            experimental_features: row.get(16).unwrap_or(0),
         })
     })?;
 

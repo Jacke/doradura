@@ -33,7 +33,8 @@ impl SharedStorage {
                         COALESCE(s.is_recurring, 0) AS is_recurring,
                         COALESCE(u.burn_subtitles, 0) AS burn_subtitles,
                         COALESCE(u.progress_bar_style, 'classic') AS progress_bar_style,
-                        COALESCE(u.is_blocked, 0) AS is_blocked
+                        COALESCE(u.is_blocked, 0) AS is_blocked,
+                        COALESCE(u.experimental_features, 0) AS experimental_features
                      FROM users u
                      LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
                      WHERE u.telegram_id = $1",
@@ -137,7 +138,8 @@ impl SharedStorage {
                         COALESCE(s.is_recurring, 0) AS is_recurring,
                         COALESCE(u.burn_subtitles, 0) AS burn_subtitles,
                         COALESCE(u.progress_bar_style, 'classic') AS progress_bar_style,
-                        COALESCE(u.is_blocked, 0) AS is_blocked
+                        COALESCE(u.is_blocked, 0) AS is_blocked,
+                        COALESCE(u.experimental_features, 0) AS experimental_features
                      FROM users u
                      LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
                      {}
@@ -182,7 +184,8 @@ impl SharedStorage {
                         COALESCE(s.is_recurring, 0) AS is_recurring,
                         COALESCE(u.burn_subtitles, 0) AS burn_subtitles,
                         COALESCE(u.progress_bar_style, 'classic') AS progress_bar_style,
-                        COALESCE(u.is_blocked, 0) AS is_blocked
+                        COALESCE(u.is_blocked, 0) AS is_blocked,
+                        COALESCE(u.experimental_features, 0) AS experimental_features
                      FROM users u
                      LEFT JOIN subscriptions s ON s.user_id = u.telegram_id
                      WHERE CAST(u.telegram_id AS TEXT) LIKE $1
@@ -388,6 +391,7 @@ fn map_pg_user(row: sqlx::postgres::PgRow) -> Result<User> {
         burn_subtitles: row.get("burn_subtitles"),
         progress_bar_style: row.get("progress_bar_style"),
         is_blocked: row.get::<i32, _>("is_blocked") != 0,
+        experimental_features: row.get("experimental_features"),
     })
 }
 

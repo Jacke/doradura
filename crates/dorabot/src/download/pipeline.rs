@@ -148,7 +148,7 @@ pub async fn download_phase(
     registry: &SourceRegistry,
     progress_msg: &mut ProgressMessage,
     message_id: Option<i32>,
-    _shared_storage: Option<&Arc<SharedStorage>>,
+    shared_storage: Option<&Arc<SharedStorage>>,
 ) -> Result<DownloadPhaseResult, PipelineError> {
     let pipeline_start = std::time::Instant::now();
     let file_format_str = format.label().to_string();
@@ -300,6 +300,17 @@ pub async fn download_phase(
     if let Some((ref start, ref end)) = *format.time_range() {
         builder = builder.time_range(start, end);
     }
+
+    let concurrent_fragments = if let Some(storage) = shared_storage {
+        if storage.get_user_experimental_features(chat_id.0).await.unwrap_or(false) {
+            4u8
+        } else {
+            1u8
+        }
+    } else {
+        1u8
+    };
+    builder = builder.concurrent_fragments(concurrent_fragments);
 
     let request = builder.build(&title, &artist);
 
