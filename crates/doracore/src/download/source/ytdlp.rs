@@ -179,6 +179,7 @@ impl YtDlpSource {
             );
         }
         let cf_str = concurrent_fragments_str(request.concurrent_fragments);
+        let is_youtube = crate::core::share::is_youtube_url(request.url.as_str());
 
         let handle = tokio::task::spawn_blocking(move || {
             let postprocessor_args = format!("ffmpeg:-acodec libmp3lame -b:a {}", bitrate_str);
@@ -190,7 +191,6 @@ impl YtDlpSource {
                 &progress_tx,
                 "audio",
                 move |args, proxy_option| {
-                    // Audio-specific yt-dlp args
                     args.extend_from_slice(&[
                         "--extract-audio",
                         "--audio-format",
@@ -200,15 +200,19 @@ impl YtDlpSource {
                         "--add-metadata",
                         "--embed-thumbnail",
                     ]);
-                    // Tier 1: no cookies
-                    add_no_cookies_args(args, proxy_option);
-                    // Extractor + runtime
-                    args.push("--extractor-args");
-                    args.push("youtube:player_client=default;formats=missing_pot");
+                    if is_youtube {
+                        // YouTube: use cookies from the start (datacenter IPs are flagged)
+                        add_cookies_args_with_proxy(args, proxy_option);
+                        args.push("--extractor-args");
+                        args.push("youtube:player_client=default");
+                    } else {
+                        add_no_cookies_args(args, proxy_option);
+                        args.push("--extractor-args");
+                        args.push("youtube:player_client=default;formats=missing_pot");
+                    }
                     args.push("--js-runtimes");
                     args.push("deno");
                     args.extend_from_slice(&["--no-check-certificate", "--postprocessor-args"]);
-                    // NOTE: postprocessor_args is borrowed from the outer closure
                     push_concurrent_fragments_arg(args, cf_str);
                 },
                 {
@@ -302,6 +306,7 @@ impl YtDlpSource {
             );
         }
         let cf_str = concurrent_fragments_str(request.concurrent_fragments);
+        let is_youtube = crate::core::share::is_youtube_url(request.url.as_str());
 
         let format_arg = match request.video_quality.as_deref() {
             Some("4320p") => build_telegram_safe_format(Some(4320)),
@@ -325,16 +330,20 @@ impl YtDlpSource {
                 &progress_tx,
                 "video",
                 move |args, proxy_option| {
-                    // Tier 1 (no cookies): always player_client=default
-                    // android client causes 403 on Railway even with proxy
                     args.push("--format");
                     args.push("--merge-output-format");
                     args.push("mp4");
                     args.push("--postprocessor-args");
                     args.push("Merger:-movflags +faststart");
-                    add_no_cookies_args(args, proxy_option);
-                    args.push("--extractor-args");
-                    args.push("youtube:player_client=default;formats=missing_pot");
+                    if is_youtube {
+                        add_cookies_args_with_proxy(args, proxy_option);
+                        args.push("--extractor-args");
+                        args.push("youtube:player_client=default");
+                    } else {
+                        add_no_cookies_args(args, proxy_option);
+                        args.push("--extractor-args");
+                        args.push("youtube:player_client=default;formats=missing_pot");
+                    }
                     args.push("--js-runtimes");
                     args.push("deno");
                     args.push("--no-check-certificate");
@@ -657,33 +666,22 @@ where
             cleanup_partial_download(download_path);
         }
 
-        // ── Tier 1: No cookies ──
-        // YouTube: skip tier 1 (always gets BotDetection on datacenter IPs).
-        // Go straight to tier 2 with cookies — saves ~20-30s per download.
-        let is_youtube = crate::core::share::is_youtube_url(url_str);
-        if is_youtube {
-            log::info!("⚡ [SKIP_TIER1] YouTube URL — skipping no-cookies tier");
-        }
-
-        let tier1_result = if is_youtube {
-            // Fake a BotDetection error to trigger tier 2
-            Err((YtDlpErrorType::BotDetection, "Skipped: YouTube fast path".to_string()))
-        } else {
-            let tier1_start = std::time::Instant::now();
-            let result = try_tier1(
-                ytdl_bin,
-                download_path,
-                url_str,
-                media_type,
-                extra_arg,
-                section_spec.as_deref(),
-                proxy_option.as_ref(),
-                progress_tx,
-                &tier1_args_fn,
-            );
-            log::info!("⏱️ [TIER1] done in {:.1}s", tier1_start.elapsed().as_secs_f64());
-            result
-        };
+        // ── Tier 1 ──
+        // For YouTube: tier1 closure already uses cookies (datacenter IPs are flagged).
+        // For other sites: tier1 closure tries without cookies first.
+        let tier1_start = std::time::Instant::now();
+        let tier1_result = try_tier1(
+            ytdl_bin,
+            download_path,
+            url_str,
+            media_type,
+            extra_arg,
+            section_spec.as_deref(),
+            proxy_option.as_ref(),
+            progress_tx,
+            &tier1_args_fn,
+        );
+        log::info!("⏱️ [TIER1] done in {:.1}s", tier1_start.elapsed().as_secs_f64());
 
         match tier1_result {
             Ok(()) => {
