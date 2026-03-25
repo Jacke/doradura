@@ -153,6 +153,7 @@ pub async fn handle_menu_callback(
                 || data.starts_with("subtitle:")
                 || data.starts_with("pbar_style:")
                 || data.starts_with("video_send_type:toggle:")
+                || data.starts_with("settings:")
                 || data.starts_with("back:"))
                 && callback_settings::handle_settings_callback(
                     &bot,
