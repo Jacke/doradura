@@ -93,7 +93,7 @@ impl SharedStorage {
             .get_user_i32_setting(
                 telegram_id,
                 "burn_subtitles",
-                "SELECT COALESCE(burn_subtitles, 0) FROM users WHERE telegram_id = $1",
+                "SELECT COALESCE(burn_subtitles, 0) AS burn_subtitles FROM users WHERE telegram_id = $1",
                 0,
             )
             .await?
@@ -105,7 +105,7 @@ impl SharedStorage {
             .get_user_i32_setting(
                 telegram_id,
                 "experimental_features",
-                "SELECT COALESCE(experimental_features, 0) FROM users WHERE telegram_id = $1",
+                "SELECT COALESCE(experimental_features, 0) AS experimental_features FROM users WHERE telegram_id = $1",
                 0,
             )
             .await?

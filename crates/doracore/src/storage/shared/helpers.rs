@@ -102,6 +102,9 @@ impl SharedStorage {
                         db::get_user_download_subtitles(&conn, telegram_id).map(|value| value as i32)
                     }
                     "burn_subtitles" => db::get_user_burn_subtitles(&conn, telegram_id).map(|value| value as i32),
+                    "experimental_features" => {
+                        db::get_user_experimental_features(&conn, telegram_id).map(|value| value as i32)
+                    }
                     _ => Err(rusqlite::Error::InvalidQuery),
                 }
                 .map_err(anyhow::Error::from)
@@ -170,6 +173,7 @@ impl SharedStorage {
                     "burn_subtitles" => db::set_user_burn_subtitles(&conn, telegram_id, value != 0),
                     "subtitle_outline_width" => db::set_user_subtitle_outline_width(&conn, telegram_id, value),
                     "subtitle_shadow" => db::set_user_subtitle_shadow(&conn, telegram_id, value),
+                    "experimental_features" => db::set_user_experimental_features(&conn, telegram_id, value != 0),
                     _ => Err(rusqlite::Error::InvalidQuery),
                 }
                 .map_err(anyhow::Error::from)
