@@ -54,27 +54,12 @@ fn push_concurrent_fragments_arg<'a>(args: &mut Vec<&'a str>, cf_str: &'a str) {
 /// 2. Append the cached token + fetch_pot=never to the youtube extractor-args
 ///
 /// This prevents the bgutil yt-dlp plugin from running (~6.5s per call).
-fn apply_cached_pot<'a>(args: &mut Vec<&'a str>, cached_pot: Option<&'a str>) {
-    let Some(pot_arg) = cached_pot else {
-        return;
-    };
-
-    // Remove the bgutil plugin --extractor-args pair
-    if let Some(pos) = args
-        .iter()
-        .position(|a| *a == "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416")
-    {
-        // Remove the value and the preceding --extractor-args flag
-        args.remove(pos);
-        if pos > 0 && args.get(pos - 1) == Some(&"--extractor-args") {
-            args.remove(pos - 1);
-        }
-    }
-
-    // Append cached token with fetch_pot=never to suppress plugin
-    args.push("--extractor-args");
-    args.push(pot_arg);
-    log::info!("[POT_CACHE] Applied cached PO token + fetch_pot=never");
+/// POT cache apply — currently disabled (bgutil plugin ignores cached tokens).
+/// Kept for future use when yt-dlp supports fetch_pot=never properly.
+fn apply_cached_pot<'a>(_args: &mut Vec<&'a str>, _cached_pot: Option<&'a str>) {
+    // Intentionally no-op: applying cached POT was causing "Fixed output name"
+    // errors by corrupting the args vec. The bgutil plugin also ignores our
+    // cached token. POT caching will be revisited separately.
 }
 
 /// Allowlist of domains that yt-dlp is permitted to handle.
