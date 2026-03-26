@@ -55,10 +55,12 @@ fn replace_bgutil_with_cached_pot<'a>(args: &mut Vec<&'a str>, cached_pot: Optio
     if let Some(pot_arg) = cached_pot {
         for arg in args.iter_mut() {
             if *arg == "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416" {
+                log::info!("[POT_CACHE] Replaced bgutil plugin arg with cached token");
                 *arg = pot_arg;
                 return;
             }
         }
+        log::warn!("[POT_CACHE] bgutil arg not found in args — cached POT not applied");
     }
 }
 
