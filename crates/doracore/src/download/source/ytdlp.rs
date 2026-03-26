@@ -934,7 +934,7 @@ fn build_common_args(download_path: &str, experimental: bool) -> Vec<&str> {
     ];
 
     if experimental {
-        // Experimental: no rate limit, aria2c for parallel connections, maximize throughput
+        // Experimental: no rate limit, maximize throughput
         args.extend_from_slice(&[
             "--retries",
             "15",
@@ -942,10 +942,6 @@ fn build_common_args(download_path: &str, experimental: bool) -> Vec<&str> {
             "http:exp=1:30",
             "--retry-sleep",
             "fragment:exp=1:30",
-            "--downloader",
-            "aria2c",
-            "--downloader-args",
-            "aria2c:-x8 -s8 -k2M",
         ]);
     } else {
         // Conservative: rate limit + sleep to avoid YouTube bans
@@ -1001,18 +997,12 @@ fn run_ytdlp_with_progress(
     args: &[&str],
     progress_tx: &mpsc::UnboundedSender<SourceProgress>,
 ) -> Result<(), (YtDlpErrorType, String)> {
-    // When a cached PO token is present in args, disable all yt-dlp plugins
-    // to prevent the bgutil plugin from regenerating POT (~6.5s per call).
-    let has_cached_pot = args.iter().any(|a| a.contains("po_token=web+"));
-
     let ytdlp_start = std::time::Instant::now();
-    let mut cmd = Command::new(ytdl_bin);
-    cmd.args(args).stdout(Stdio::piped()).stderr(Stdio::piped());
-    if has_cached_pot {
-        cmd.env("YTDLP_NO_PLUGINS", "1");
-        log::info!("[POT_CACHE] YTDLP_NO_PLUGINS=1 set (cached PO token in args)");
-    }
-    let child_result = cmd.spawn();
+    let child_result = Command::new(ytdl_bin)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
 
     let mut child = match child_result {
         Ok(c) => c,
