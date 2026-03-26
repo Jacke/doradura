@@ -180,6 +180,7 @@ impl YtDlpSource {
         }
         let cf_str = concurrent_fragments_str(request.concurrent_fragments);
         let is_youtube = crate::core::share::is_youtube_url(request.url.as_str());
+        let experimental = request.concurrent_fragments > 1;
 
         let handle = tokio::task::spawn_blocking(move || {
             let postprocessor_args = format!("ffmpeg:-acodec libmp3lame -b:a {}", bitrate_str);
@@ -267,6 +268,7 @@ impl YtDlpSource {
                 },
                 &postprocessor_args,
                 time_range.as_ref(),
+                experimental,
             )
         });
 
@@ -307,6 +309,7 @@ impl YtDlpSource {
         }
         let cf_str = concurrent_fragments_str(request.concurrent_fragments);
         let is_youtube = crate::core::share::is_youtube_url(request.url.as_str());
+        let experimental = request.concurrent_fragments > 1;
 
         let format_arg = match request.video_quality.as_deref() {
             Some("4320p") => build_telegram_safe_format(Some(4320)),
@@ -391,6 +394,7 @@ impl YtDlpSource {
                 },
                 &format_arg,
                 time_range.as_ref(),
+                experimental,
             )
         });
 
@@ -443,11 +447,12 @@ fn try_tier1<F>(
     proxy_option: Option<&crate::download::metadata::ProxyConfig>,
     progress_tx: &mpsc::UnboundedSender<SourceProgress>,
     tier1_args_fn: &F,
+    experimental: bool,
 ) -> Result<(), (YtDlpErrorType, String)>
 where
     F: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
 {
-    let mut args: Vec<&str> = build_common_args(download_path);
+    let mut args: Vec<&str> = build_common_args(download_path, experimental);
     tier1_args_fn(&mut args, proxy_option);
 
     if media_type == "audio" {
@@ -625,6 +630,7 @@ fn download_with_fallback_chain<F1, F2, F3>(
     tier3_args_fn: F3,
     extra_arg: &str,
     time_range: Option<&(String, String)>,
+    experimental: bool,
 ) -> Result<Option<u32>, AppError>
 where
     F1: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
@@ -680,6 +686,7 @@ where
             proxy_option.as_ref(),
             progress_tx,
             &tier1_args_fn,
+            experimental,
         );
         log::info!("⏱️ [TIER1] done in {:.1}s", tier1_start.elapsed().as_secs_f64());
 
@@ -838,8 +845,8 @@ fn append_section_args<'a>(args: &mut Vec<&'a str>, section_spec: Option<&'a str
 }
 
 /// Build common yt-dlp arguments shared by all tiers (full set with rate limiting).
-fn build_common_args(download_path: &str) -> Vec<&str> {
-    vec![
+fn build_common_args(download_path: &str, experimental: bool) -> Vec<&str> {
+    let mut args = vec![
         "-o",
         download_path,
         "--newline",
@@ -855,21 +862,39 @@ fn build_common_args(download_path: &str) -> Vec<&str> {
         "30",
         "--http-chunk-size",
         "2097152",
-        "--sleep-requests",
-        "2",
-        "--sleep-interval",
-        "3",
-        "--max-sleep-interval",
-        "10",
-        "--limit-rate",
-        "5M",
-        "--retry-sleep",
-        "http:exp=1:30",
-        "--retry-sleep",
-        "fragment:exp=1:30",
-        "--retries",
-        "15",
-    ]
+    ];
+
+    if experimental {
+        // Experimental: no rate limit, minimal sleep — maximize throughput
+        args.extend_from_slice(&[
+            "--retries",
+            "15",
+            "--retry-sleep",
+            "http:exp=1:30",
+            "--retry-sleep",
+            "fragment:exp=1:30",
+        ]);
+    } else {
+        // Conservative: rate limit + sleep to avoid YouTube bans
+        args.extend_from_slice(&[
+            "--sleep-requests",
+            "2",
+            "--sleep-interval",
+            "3",
+            "--max-sleep-interval",
+            "10",
+            "--limit-rate",
+            "5M",
+            "--retry-sleep",
+            "http:exp=1:30",
+            "--retry-sleep",
+            "fragment:exp=1:30",
+            "--retries",
+            "15",
+        ]);
+    }
+
+    args
 }
 
 /// Build minimal common arguments (for Tier 2 and Tier 3 fallbacks).
@@ -892,6 +917,8 @@ fn build_common_args_minimal(download_path: &str) -> Vec<&str> {
         "2097152",
     ]
 }
+
+// Tier 2/3 already use build_common_args_minimal (no rate limiting), which is fine.
 
 /// Run yt-dlp with stdout/stderr capture and progress reporting.
 ///
