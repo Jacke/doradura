@@ -49,6 +49,19 @@ fn push_concurrent_fragments_arg<'a>(args: &mut Vec<&'a str>, cf_str: &'a str) {
     }
 }
 
+/// Replace the bgutil plugin extractor-arg with a cached PO token if available.
+/// Scans `args` for the bgutil base_url string and swaps it with the cached token.
+fn replace_bgutil_with_cached_pot<'a>(args: &mut Vec<&'a str>, cached_pot: Option<&'a str>) {
+    if let Some(pot_arg) = cached_pot {
+        for arg in args.iter_mut() {
+            if *arg == "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416" {
+                *arg = pot_arg;
+                return;
+            }
+        }
+    }
+}
+
 /// Allowlist of domains that yt-dlp is permitted to handle.
 /// Only these domains are accepted — arbitrary URLs are rejected for security.
 const YTDLP_DOMAINS: &[&str] = &[
@@ -182,6 +195,18 @@ impl YtDlpSource {
         let is_youtube = crate::core::share::is_youtube_url(request.url.as_str());
         let experimental = request.concurrent_fragments > 1;
 
+        // Pre-fetch PO Token (async) to avoid ~6.5s regeneration per yt-dlp call
+        let cached_pot: Option<String> = if experimental && is_youtube {
+            let video_id = crate::core::share::extract_youtube_video_id(request.url.as_str());
+            if let Some(vid) = video_id {
+                crate::download::pot_cache::get_or_fetch(&vid).await
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let handle = tokio::task::spawn_blocking(move || {
             let postprocessor_args = format!("ffmpeg:-acodec libmp3lame -b:a {}", bitrate_str);
 
@@ -203,7 +228,7 @@ impl YtDlpSource {
                     ]);
                     if is_youtube {
                         // YouTube: use cookies from the start (datacenter IPs are flagged)
-                        add_cookies_args_with_proxy(args, proxy_option);
+                        add_cookies_args_with_proxy(args, proxy_option, None);
                         args.push("--extractor-args");
                         args.push("youtube:player_client=default");
                     } else {
@@ -232,7 +257,7 @@ impl YtDlpSource {
                         if is_instagram_url(&url_for_tier2) {
                             add_instagram_cookies_args_with_proxy(args, proxy_option);
                         } else {
-                            add_cookies_args_with_proxy(args, proxy_option);
+                            add_cookies_args_with_proxy(args, proxy_option, None);
                             args.push("--extractor-args");
                             args.push("youtube:player_client=default");
                         }
@@ -258,7 +283,7 @@ impl YtDlpSource {
                         "0",
                         "--add-metadata",
                     ]);
-                    add_cookies_args_with_proxy(args, proxy_option);
+                    add_cookies_args_with_proxy(args, proxy_option, None);
                     args.push("--extractor-args");
                     args.push("youtube:player_client=default");
                     args.push("--js-runtimes");
@@ -269,6 +294,7 @@ impl YtDlpSource {
                 &postprocessor_args,
                 time_range.as_ref(),
                 experimental,
+                cached_pot,
             )
         });
 
@@ -325,6 +351,18 @@ impl YtDlpSource {
         };
         log::debug!("yt-dlp video format string: {}", format_arg);
 
+        // Pre-fetch PO Token (async) to avoid ~6.5s regeneration per yt-dlp call
+        let cached_pot: Option<String> = if experimental && is_youtube {
+            let video_id = crate::core::share::extract_youtube_video_id(request.url.as_str());
+            if let Some(vid) = video_id {
+                crate::download::pot_cache::get_or_fetch(&vid).await
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         let handle = tokio::task::spawn_blocking(move || {
             download_with_fallback_chain(
                 &ytdl_bin,
@@ -339,7 +377,7 @@ impl YtDlpSource {
                     args.push("--postprocessor-args");
                     args.push("Merger:-movflags +faststart");
                     if is_youtube {
-                        add_cookies_args_with_proxy(args, proxy_option);
+                        add_cookies_args_with_proxy(args, proxy_option, None);
                         args.push("--extractor-args");
                         args.push("youtube:player_client=default");
                     } else {
@@ -364,7 +402,7 @@ impl YtDlpSource {
                         if is_instagram_url(&url_for_tier2) {
                             add_instagram_cookies_args_with_proxy(args, proxy_option);
                         } else {
-                            add_cookies_args_with_proxy(args, proxy_option);
+                            add_cookies_args_with_proxy(args, proxy_option, None);
                             args.push("--extractor-args");
                             args.push("youtube:player_client=default");
                         }
@@ -384,7 +422,7 @@ impl YtDlpSource {
                     args.push("--format");
                     args.push("--merge-output-format");
                     args.push("mp4");
-                    add_cookies_args_with_proxy(args, proxy_option);
+                    add_cookies_args_with_proxy(args, proxy_option, None);
                     args.push("--extractor-args");
                     args.push("youtube:player_client=default");
                     args.push("--js-runtimes");
@@ -395,6 +433,7 @@ impl YtDlpSource {
                 &format_arg,
                 time_range.as_ref(),
                 experimental,
+                cached_pot,
             )
         });
 
@@ -448,12 +487,14 @@ fn try_tier1<F>(
     progress_tx: &mpsc::UnboundedSender<SourceProgress>,
     tier1_args_fn: &F,
     experimental: bool,
+    cached_pot_ref: Option<&str>,
 ) -> Result<(), (YtDlpErrorType, String)>
 where
     F: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
 {
     let mut args: Vec<&str> = build_common_args(download_path, experimental);
     tier1_args_fn(&mut args, proxy_option);
+    replace_bgutil_with_cached_pot(&mut args, cached_pot_ref);
 
     if media_type == "audio" {
         args.push(extra_arg);
@@ -489,6 +530,8 @@ fn try_tier2<F>(
     progress_tx: &mpsc::UnboundedSender<SourceProgress>,
     tier2_args_fn: &F,
     runtime_handle: &tokio::runtime::Handle,
+    experimental: bool,
+    cached_pot_ref: Option<&str>,
 ) -> Tier2Outcome
 where
     F: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
@@ -498,8 +541,9 @@ where
     let _ = std::fs::remove_file(download_path);
     cleanup_partial_download(download_path);
 
-    let mut cookies_args: Vec<&str> = build_common_args_minimal(download_path);
+    let mut cookies_args: Vec<&str> = build_common_args_minimal(download_path, experimental);
     tier2_args_fn(&mut cookies_args, proxy_option);
+    replace_bgutil_with_cached_pot(&mut cookies_args, cached_pot_ref);
     if media_type == "audio" {
         cookies_args.push(extra_arg);
     } else if let Some(pos) = cookies_args.iter().position(|a| *a == "--format") {
@@ -571,6 +615,8 @@ fn try_tier3<F>(
     proxy_option: Option<&crate::download::metadata::ProxyConfig>,
     progress_tx: &mpsc::UnboundedSender<SourceProgress>,
     tier3_args_fn: &F,
+    experimental: bool,
+    cached_pot_ref: Option<&str>,
 ) -> bool
 where
     F: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
@@ -580,8 +626,9 @@ where
     let _ = std::fs::remove_file(download_path);
     cleanup_partial_download(download_path);
 
-    let mut fixup_args: Vec<&str> = build_common_args_minimal(download_path);
+    let mut fixup_args: Vec<&str> = build_common_args_minimal(download_path, experimental);
     tier3_args_fn(&mut fixup_args, proxy_option);
+    replace_bgutil_with_cached_pot(&mut fixup_args, cached_pot_ref);
     if media_type == "video" {
         if let Some(pos) = fixup_args.iter().position(|a| *a == "--format") {
             fixup_args.insert(pos + 1, extra_arg);
@@ -631,6 +678,7 @@ fn download_with_fallback_chain<F1, F2, F3>(
     extra_arg: &str,
     time_range: Option<&(String, String)>,
     experimental: bool,
+    cached_pot: Option<String>,
 ) -> Result<Option<u32>, AppError>
 where
     F1: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
@@ -641,6 +689,7 @@ where
     let proxy_chain = get_proxy_chain();
     let total_proxies = proxy_chain.len();
     let mut last_error: Option<AppError> = None;
+    let pot_ref: Option<&str> = cached_pot.as_deref();
     let section_spec = time_range.map(|(start, end)| format!("*{}-{}", start, end));
 
     for (attempt, proxy_option) in proxy_chain.into_iter().enumerate() {
@@ -687,6 +736,7 @@ where
             progress_tx,
             &tier1_args_fn,
             experimental,
+            pot_ref,
         );
         log::info!("⏱️ [TIER1] done in {:.1}s", tier1_start.elapsed().as_secs_f64());
 
@@ -755,6 +805,8 @@ where
                         progress_tx,
                         &tier2_args_fn,
                         &runtime_handle,
+                        experimental,
+                        pot_ref,
                     );
                     log::info!("⏱️ [TIER2] done in {:.1}s", tier2_start.elapsed().as_secs_f64());
                     match tier2_result {
@@ -788,6 +840,8 @@ where
                         proxy_option.as_ref(),
                         progress_tx,
                         &tier3_args_fn,
+                        experimental,
+                        pot_ref,
                     );
                     crate::core::metrics::record_tier_attempt("tier3_fixup_never", tier3_ok);
                     if tier3_ok {
@@ -861,7 +915,7 @@ fn build_common_args(download_path: &str, experimental: bool) -> Vec<&str> {
         "--socket-timeout",
         "30",
         "--http-chunk-size",
-        "2097152",
+        if experimental { "10485760" } else { "2097152" },
     ];
 
     if experimental {
@@ -898,7 +952,7 @@ fn build_common_args(download_path: &str, experimental: bool) -> Vec<&str> {
 }
 
 /// Build minimal common arguments (for Tier 2 and Tier 3 fallbacks).
-fn build_common_args_minimal(download_path: &str) -> Vec<&str> {
+fn build_common_args_minimal(download_path: &str, experimental: bool) -> Vec<&str> {
     vec![
         "-o",
         download_path,
@@ -914,7 +968,7 @@ fn build_common_args_minimal(download_path: &str) -> Vec<&str> {
         "--socket-timeout",
         "30",
         "--http-chunk-size",
-        "2097152",
+        if experimental { "10485760" } else { "2097152" },
     ]
 }
 

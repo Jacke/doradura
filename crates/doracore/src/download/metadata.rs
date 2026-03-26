@@ -237,7 +237,7 @@ pub fn validate_cookies_file_format(cookies_file: &str) -> bool {
 pub fn add_cookies_args(args: &mut Vec<&str>) {
     let proxy_chain = get_proxy_chain();
     let first_proxy = proxy_chain.into_iter().find(|p| p.is_some()).flatten();
-    add_cookies_args_with_proxy(args, first_proxy.as_ref());
+    add_cookies_args_with_proxy(args, first_proxy.as_ref(), None);
 }
 
 /// Adds proxy, cookie, and PO Token arguments with a specific proxy configuration.
@@ -246,7 +246,11 @@ pub fn add_cookies_args(args: &mut Vec<&str>) {
 ///
 /// * `args` — Vector of yt-dlp arguments to extend
 /// * `proxy` — Optional proxy configuration; `None` means direct connection
-pub fn add_cookies_args_with_proxy(args: &mut Vec<&str>, proxy: Option<&ProxyConfig>) {
+pub fn add_cookies_args_with_proxy<'a>(
+    args: &mut Vec<&'a str>,
+    proxy: Option<&ProxyConfig>,
+    cached_pot_arg: Option<&'a str>,
+) {
     if let Some(proxy_config) = proxy {
         log::info!("Using proxy [{}]: {}", proxy_config.name, proxy_config.masked_url());
         args.push("--proxy");
@@ -265,9 +269,13 @@ pub fn add_cookies_args_with_proxy(args: &mut Vec<&str>, proxy: Option<&ProxyCon
         log::info!("No proxy configured, using direct connection");
     }
 
-    // PO Token provider for YouTube
+    // PO Token: use cached token when available, fall back to bgutil plugin
     args.push("--extractor-args");
-    args.push("youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416");
+    if let Some(pot_arg) = cached_pot_arg {
+        args.push(pot_arg);
+    } else {
+        args.push("youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416");
+    }
 
     // Priority 1: Cookies file (use cached path — no allocation)
     if let Some(cached_path) = get_cached_cookies_path() {

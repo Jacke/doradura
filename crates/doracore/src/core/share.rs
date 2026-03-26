@@ -99,7 +99,7 @@ pub fn youtube_thumbnail_url(url: &str) -> Option<String> {
     Some(format!("https://img.youtube.com/vi/{}/maxresdefault.jpg", video_id))
 }
 
-fn extract_youtube_video_id(url: &str) -> Option<String> {
+pub fn extract_youtube_video_id(url: &str) -> Option<String> {
     // youtu.be/VIDEO_ID
     if url.contains("youtu.be/") {
         let parts: Vec<&str> = url.splitn(2, "youtu.be/").collect();

@@ -643,7 +643,7 @@ async fn replace_audio_track(video_path: &str, url: &Url, lang: &str) -> String 
                     "--age-limit",
                     "99",
                 ];
-                add_cookies_args_with_proxy(&mut args, proxy_option.as_ref());
+                add_cookies_args_with_proxy(&mut args, proxy_option.as_ref(), None);
                 args.extend_from_slice(&[
                     "--extractor-args",
                     "youtube:player_client=android,default;formats=missing_pot",

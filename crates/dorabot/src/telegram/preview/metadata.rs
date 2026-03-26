@@ -60,7 +60,7 @@ pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<
         if is_youtube {
             // YouTube: use cookies from the start (datacenter IPs are flagged)
             args.extend_from_slice(&["--extractor-args", "youtube:player_client=web,web_safari"]);
-            add_cookies_args_with_proxy(&mut args, proxy_option.as_ref());
+            add_cookies_args_with_proxy(&mut args, proxy_option.as_ref(), None);
         } else {
             // Other sites: try without cookies first
             args.extend_from_slice(&[
@@ -164,7 +164,7 @@ pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<
                 cookies_args.push("youtube:player_client=web,web_safari");
                 cookies_args.push("--js-runtimes");
                 cookies_args.push("deno");
-                add_cookies_args_with_proxy(&mut cookies_args, proxy_option.as_ref());
+                add_cookies_args_with_proxy(&mut cookies_args, proxy_option.as_ref(), None);
             }
 
             cookies_args.push(url.as_str());
