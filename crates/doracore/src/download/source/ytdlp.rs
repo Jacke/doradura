@@ -238,8 +238,9 @@ impl YtDlpSource {
                     }
                     args.push("--js-runtimes");
                     args.push("deno");
-                    args.extend_from_slice(&["--no-check-certificate", "--postprocessor-args"]);
+                    args.push("--no-check-certificate");
                     push_concurrent_fragments_arg(args, cf_str);
+                    args.push("--postprocessor-args");
                 },
                 {
                     let url_for_tier2 = url_str.clone();
@@ -264,11 +265,8 @@ impl YtDlpSource {
                         args.push("--js-runtimes");
                         args.push("deno");
                         args.push("--no-check-certificate");
+                        push_concurrent_fragments_arg(args, cf_str);
                         args.push("--postprocessor-args");
-                        if !cf_str.is_empty() {
-                            args.push("-N");
-                            args.push(cf_str);
-                        }
                     }
                 },
                 move |args, proxy_option| {
@@ -409,10 +407,7 @@ impl YtDlpSource {
                         args.push("--js-runtimes");
                         args.push("deno");
                         args.push("--no-check-certificate");
-                        if !cf_str.is_empty() {
-                            args.push("-N");
-                            args.push(cf_str);
-                        }
+                        push_concurrent_fragments_arg(args, cf_str);
                     }
                 },
                 move |args, proxy_option| {
