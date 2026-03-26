@@ -96,7 +96,7 @@ async fn fetch_from_bgutil(video_id: &str) -> Option<String> {
         return None;
     }
 
-    let extractor_arg = format!("youtube:po_token=web+{}", token);
+    let extractor_arg = format!("youtube:po_token=web+{},fetch_pot=never", token);
     log::info!(
         "[POT_CACHE] Fetched PO token for {} ({}... len={})",
         video_id,

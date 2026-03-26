@@ -49,19 +49,32 @@ fn push_concurrent_fragments_arg<'a>(args: &mut Vec<&'a str>, cf_str: &'a str) {
     }
 }
 
-/// Replace the bgutil plugin extractor-arg with a cached PO token if available.
-/// Scans `args` for the bgutil base_url string and swaps it with the cached token.
-fn replace_bgutil_with_cached_pot<'a>(args: &mut Vec<&'a str>, cached_pot: Option<&'a str>) {
-    if let Some(pot_arg) = cached_pot {
-        for arg in args.iter_mut() {
-            if *arg == "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416" {
-                log::info!("[POT_CACHE] Replaced bgutil plugin arg with cached token");
-                *arg = pot_arg;
-                return;
-            }
+/// When a cached PO token is available, rewrite the args vec to:
+/// 1. Remove the bgutil plugin `--extractor-args` pair entirely
+/// 2. Append the cached token + fetch_pot=never to the youtube extractor-args
+///
+/// This prevents the bgutil yt-dlp plugin from running (~6.5s per call).
+fn apply_cached_pot<'a>(args: &mut Vec<&'a str>, cached_pot: Option<&'a str>) {
+    let Some(pot_arg) = cached_pot else {
+        return;
+    };
+
+    // Remove the bgutil plugin --extractor-args pair
+    if let Some(pos) = args
+        .iter()
+        .position(|a| *a == "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416")
+    {
+        // Remove the value and the preceding --extractor-args flag
+        args.remove(pos);
+        if pos > 0 && args.get(pos - 1) == Some(&"--extractor-args") {
+            args.remove(pos - 1);
         }
-        log::warn!("[POT_CACHE] bgutil arg not found in args — cached POT not applied");
     }
+
+    // Append cached token with fetch_pot=never to suppress plugin
+    args.push("--extractor-args");
+    args.push(pot_arg);
+    log::info!("[POT_CACHE] Applied cached PO token + fetch_pot=never");
 }
 
 /// Allowlist of domains that yt-dlp is permitted to handle.
@@ -496,7 +509,7 @@ where
 {
     let mut args: Vec<&str> = build_common_args(download_path, experimental);
     tier1_args_fn(&mut args, proxy_option);
-    replace_bgutil_with_cached_pot(&mut args, cached_pot_ref);
+    apply_cached_pot(&mut args, cached_pot_ref);
 
     if media_type == "audio" {
         args.push(extra_arg);
@@ -545,7 +558,7 @@ where
 
     let mut cookies_args: Vec<&str> = build_common_args_minimal(download_path, experimental);
     tier2_args_fn(&mut cookies_args, proxy_option);
-    replace_bgutil_with_cached_pot(&mut cookies_args, cached_pot_ref);
+    apply_cached_pot(&mut cookies_args, cached_pot_ref);
     if media_type == "audio" {
         cookies_args.push(extra_arg);
     } else if let Some(pos) = cookies_args.iter().position(|a| *a == "--format") {
@@ -630,7 +643,7 @@ where
 
     let mut fixup_args: Vec<&str> = build_common_args_minimal(download_path, experimental);
     tier3_args_fn(&mut fixup_args, proxy_option);
-    replace_bgutil_with_cached_pot(&mut fixup_args, cached_pot_ref);
+    apply_cached_pot(&mut fixup_args, cached_pot_ref);
     if media_type == "video" {
         if let Some(pos) = fixup_args.iter().position(|a| *a == "--format") {
             fixup_args.insert(pos + 1, extra_arg);
