@@ -82,7 +82,7 @@ RUN apk add --no-cache \
   ca-certificates musl libssl3 libcrypto3 \
   ffmpeg python3 py3-pip sqlite-libs \
   libgcc libstdc++ wget curl bash \
-  nodejs npm \
+  nodejs npm aria2 \
   cairo pango libjpeg-turbo giflib pixman \
   ttf-dejavu fontconfig && \
   fc-cache -f
