@@ -586,6 +586,23 @@ async fn get_preview_metadata_inner(
             .and_then(|s| s.parse::<u64>().ok())
     };
 
+    // MP3 fallback: estimate size from duration × bitrate when JSON has no filesize
+    if filesize.is_none() && format == Some("mp3") {
+        if let Some(duration_str) = get_json_value(&json_metadata, "duration") {
+            if let Ok(duration_secs) = duration_str.parse::<f64>() {
+                // Default MP3 bitrate 320kbps; actual bitrate chosen by user isn't available here,
+                // so use 320k as a conservative upper bound.  Result is approximate.
+                let estimated = (duration_secs * 320_000.0 / 8.0) as u64;
+                log::info!(
+                    "📊 MP3 size estimated from duration ({:.0}s × 320kbps): {:.1} MB",
+                    duration_secs,
+                    estimated as f64 / (1024.0 * 1024.0)
+                );
+                filesize = Some(estimated);
+            }
+        }
+    }
+
     // If filesize was not obtained from JSON for video with a specific quality, use the size from video_formats
     if filesize.is_none() && format == Some("mp4") {
         if let Some(quality) = video_quality {

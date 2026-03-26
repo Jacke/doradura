@@ -244,9 +244,34 @@ pub async fn download_phase(
     let max_size = format.max_file_size();
     let has_time_range = format.time_range().is_some();
     if !has_time_range && matches!(format, PipelineFormat::Video { .. }) {
-        // Size pre-check only for video — audio estimate is unreliable
-        // (yt-dlp returns video size, not audio size)
-        if let Some(estimated_size) = source.estimate_size(url).await {
+        // Try PREVIEW_CACHE first (avoids a separate yt-dlp call + PO Token generation)
+        let cached_size = crate::telegram::cache::PREVIEW_CACHE
+            .get(url.as_str())
+            .await
+            .and_then(|meta| {
+                // Use quality-specific size from video_formats if available
+                let quality = match &format {
+                    PipelineFormat::Video { quality, .. } => quality.as_deref(),
+                    _ => None,
+                };
+                if let Some(q) = quality {
+                    meta.video_formats
+                        .as_ref()
+                        .and_then(|fmts| fmts.iter().find(|f| f.quality == q).and_then(|f| f.size_bytes))
+                        .or(meta.filesize)
+                } else {
+                    meta.filesize
+                }
+            });
+
+        let estimated_size = if let Some(size) = cached_size {
+            log::info!("📊 Size from preview cache: {:.1} MB", size as f64 / (1024.0 * 1024.0));
+            Some(size)
+        } else {
+            source.estimate_size(url).await
+        };
+
+        if let Some(estimated_size) = estimated_size {
             if estimated_size > max_size {
                 let size_mb = estimated_size as f64 / (1024.0 * 1024.0);
                 let max_mb = max_size as f64 / (1024.0 * 1024.0);
