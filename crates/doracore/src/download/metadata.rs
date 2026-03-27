@@ -269,12 +269,20 @@ pub fn add_cookies_args_with_proxy<'a>(
         log::info!("No proxy configured, using direct connection");
     }
 
-    // PO Token: use cached token when available, fall back to bgutil plugin
-    args.push("--extractor-args");
-    if let Some(pot_arg) = cached_pot_arg {
-        args.push(pot_arg);
-    } else {
-        args.push("youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416");
+    // PO Token provider: None = bgutil plugin, Some("") = skip entirely (experimental),
+    // Some(token) = use cached token
+    match cached_pot_arg {
+        Some("") => {
+            // Experimental: skip bgutil POT provider — cookies are sufficient for YouTube
+        }
+        Some(pot_arg) => {
+            args.push("--extractor-args");
+            args.push(pot_arg);
+        }
+        None => {
+            args.push("--extractor-args");
+            args.push("youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416");
+        }
     }
 
     // Priority 1: Cookies file (use cached path — no allocation)

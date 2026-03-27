@@ -328,7 +328,7 @@ pub async fn download_phase(
 
     let concurrent_fragments = if let Some(storage) = shared_storage {
         if storage.get_user_experimental_features(chat_id.0).await.unwrap_or(false) {
-            4u8
+            8u8
         } else {
             1u8
         }

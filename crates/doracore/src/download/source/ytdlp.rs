@@ -227,8 +227,9 @@ impl YtDlpSource {
                         "--embed-thumbnail",
                     ]);
                     if is_youtube {
-                        // YouTube: use cookies from the start (datacenter IPs are flagged)
-                        add_cookies_args_with_proxy(args, proxy_option, None);
+                        // Experimental: skip bgutil POT provider (cookies sufficient, saves ~6s)
+                        let pot = if experimental { Some("") } else { None };
+                        add_cookies_args_with_proxy(args, proxy_option, pot);
                         args.push("--extractor-args");
                         args.push("youtube:player_client=default");
                     } else {
@@ -375,7 +376,8 @@ impl YtDlpSource {
                     args.push("--postprocessor-args");
                     args.push("Merger:-movflags +faststart");
                     if is_youtube {
-                        add_cookies_args_with_proxy(args, proxy_option, None);
+                        let pot = if experimental { Some("") } else { None };
+                        add_cookies_args_with_proxy(args, proxy_option, pot);
                         args.push("--extractor-args");
                         args.push("youtube:player_client=default");
                     } else {
@@ -914,7 +916,7 @@ fn build_common_args(download_path: &str, experimental: bool) -> Vec<&str> {
     ];
 
     if experimental {
-        // Experimental: no rate limit, maximize throughput
+        // Experimental: no rate limit, auto re-extract on throttle, maximize throughput
         args.extend_from_slice(&[
             "--retries",
             "15",
@@ -922,6 +924,8 @@ fn build_common_args(download_path: &str, experimental: bool) -> Vec<&str> {
             "http:exp=1:30",
             "--retry-sleep",
             "fragment:exp=1:30",
+            "--throttled-rate",
+            "100K",
         ]);
     } else {
         // Conservative: rate limit + sleep to avoid YouTube bans
