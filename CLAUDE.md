@@ -53,6 +53,24 @@ After fixing a bug, search the entire codebase for duplicate implementations of 
 
 When the user says to simplify or reduce visual noise, the problem is usually structural (too many items/options), not cosmetic. Propose structural changes (removing/merging menu entries, collapsing categories) before making style-only edits.
 
+## ⚠️ CRITICAL: yt-dlp Args Testing
+
+**ПЕРЕД ЛЮБЫМ изменением в файлах download/** (ytdlp.rs, metadata.rs, source/*, pipeline.rs):
+
+1. Сделай `cargo check`
+2. **ОБЯЗАТЕЛЬНО** запусти smoke test на Railway ПЕРЕД коммитом:
+```bash
+railway ssh --service doradura -- sh -c '
+yt-dlp -o /tmp/t1.mp3 --newline --force-overwrites --no-playlist --age-limit 99 --concurrent-fragments 1 --fragment-retries 10 --socket-timeout 30 --http-chunk-size 10485760 --retries 15 --extract-audio --audio-format mp3 --audio-quality 0 --add-metadata --embed-thumbnail --extractor-args youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416 --cookies /data/youtube_cookies.txt --extractor-args youtube:player_client=default --js-runtimes deno --no-check-certificate -N 4 --postprocessor-args "ffmpeg:-acodec libmp3lame -b:a 320k" "https://youtu.be/jNQXAC9IVRw" 2>&1 | tail -3
+ls -lh /tmp/t1.mp3 && echo "PASS" || echo "FAIL"
+rm -f /tmp/t1.mp3 /tmp/t1.webm
+'
+```
+3. Если тест FAIL — **НЕ КОММИТЬ**, найди проблему
+4. Полный тест (MP3+MP4): `scripts/test-ytdlp-args.sh`
+
+**Причина:** изменение порядка args yt-dlp ломает ВСЕ скачивания. `-N` между `--postprocessor-args` и его значением = production outage.
+
 ## ⚠️ CRITICAL: Railway Commands
 
 **`railway run` выполняется ЛОКАЛЬНО на Mac, НЕ в Railway контейнере!**
