@@ -195,17 +195,9 @@ impl YtDlpSource {
         let is_youtube = crate::core::share::is_youtube_url(request.url.as_str());
         let experimental = request.concurrent_fragments > 1;
 
-        // Pre-fetch PO Token (async) to avoid ~6.5s regeneration per yt-dlp call
-        let cached_pot: Option<String> = if experimental && is_youtube {
-            let video_id = crate::core::share::extract_youtube_video_id(request.url.as_str());
-            if let Some(vid) = video_id {
-                crate::download::pot_cache::get_or_fetch(&vid).await
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        // POT cache pre-fetch disabled: experimental tier1 skips bgutil entirely,
+        // and apply_cached_pot is a no-op. No need to waste ~6s on bgutil API call.
+        let cached_pot: Option<String> = None;
 
         let handle = tokio::task::spawn_blocking(move || {
             let postprocessor_args = format!("ffmpeg:-acodec libmp3lame -b:a {}", bitrate_str);
@@ -350,17 +342,9 @@ impl YtDlpSource {
         };
         log::debug!("yt-dlp video format string: {}", format_arg);
 
-        // Pre-fetch PO Token (async) to avoid ~6.5s regeneration per yt-dlp call
-        let cached_pot: Option<String> = if experimental && is_youtube {
-            let video_id = crate::core::share::extract_youtube_video_id(request.url.as_str());
-            if let Some(vid) = video_id {
-                crate::download::pot_cache::get_or_fetch(&vid).await
-            } else {
-                None
-            }
-        } else {
-            None
-        };
+        // POT cache pre-fetch disabled: experimental tier1 skips bgutil entirely,
+        // and apply_cached_pot is a no-op. No need to waste ~6s on bgutil API call.
+        let cached_pot: Option<String> = None;
 
         let handle = tokio::task::spawn_blocking(move || {
             download_with_fallback_chain(

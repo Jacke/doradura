@@ -21,7 +21,7 @@ use super::formats::{extract_audio_tracks_from_json, extract_video_formats_from_
 ///
 /// Uses --dump-json to retrieve all metadata in a single call.
 /// On proxy-related errors, automatically tries the next proxy in the chain.
-pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<Value, AppError> {
+pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str, experimental: bool) -> Result<Value, AppError> {
     let proxy_chain = get_proxy_chain();
     let total_proxies = proxy_chain.len();
     let mut last_error: Option<AppError> = None;
@@ -60,7 +60,8 @@ pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<
         if is_youtube {
             // YouTube: use cookies from the start (datacenter IPs are flagged)
             args.extend_from_slice(&["--extractor-args", "youtube:player_client=web,web_safari"]);
-            add_cookies_args_with_proxy(&mut args, proxy_option.as_ref(), None);
+            let pot = if experimental { Some("") } else { None };
+            add_cookies_args_with_proxy(&mut args, proxy_option.as_ref(), pot);
         } else {
             // Other sites: try without cookies first
             args.extend_from_slice(&[
@@ -164,7 +165,8 @@ pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<
                 cookies_args.push("youtube:player_client=web,web_safari");
                 cookies_args.push("--js-runtimes");
                 cookies_args.push("deno");
-                add_cookies_args_with_proxy(&mut cookies_args, proxy_option.as_ref(), None);
+                let pot = if experimental { Some("") } else { None };
+                add_cookies_args_with_proxy(&mut cookies_args, proxy_option.as_ref(), pot);
             }
 
             cookies_args.push(url.as_str());
@@ -373,7 +375,7 @@ async fn get_preview_metadata_inner(
 
     // Fetch all metadata in a single JSON call (speed optimisation)
     let metadata_start = std::time::Instant::now();
-    let json_metadata = get_metadata_from_json(url, ytdl_bin).await?;
+    let json_metadata = get_metadata_from_json(url, ytdl_bin, experimental).await?;
     log::info!(
         "⏱️ [METADATA_JSON] done in {:.1}s for {}",
         metadata_start.elapsed().as_secs_f64(),
