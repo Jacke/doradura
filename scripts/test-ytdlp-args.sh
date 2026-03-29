@@ -32,11 +32,12 @@ info() { printf "${YELLOW}TEST${NC}: %s\n" "$1"; }
 
 # ─── Common args (mirrors build_common_args in ytdlp.rs) ───
 
-# Experimental mode (no rate limit, 10MB chunks)
+# Experimental mode (no rate limit, 10MB chunks, no --concurrent-fragments here)
 COMMON_EXP="--newline --force-overwrites --no-playlist --age-limit 99 \
-  --concurrent-fragments 1 --fragment-retries 10 --socket-timeout 30 \
+  --fragment-retries 10 --socket-timeout 30 \
   --http-chunk-size 10485760 --retries 15 \
-  --retry-sleep http:exp=1:30 --retry-sleep fragment:exp=1:30"
+  --retry-sleep http:exp=1:30 --retry-sleep fragment:exp=1:30 \
+  --throttled-rate 100K"
 
 # Conservative mode (rate limit + sleep, 2MB chunks)
 COMMON_SAFE="--newline --force-overwrites --no-playlist --age-limit 99 \

@@ -49,19 +49,6 @@ fn push_concurrent_fragments_arg<'a>(args: &mut Vec<&'a str>, cf_str: &'a str) {
     }
 }
 
-/// When a cached PO token is available, rewrite the args vec to:
-/// 1. Remove the bgutil plugin `--extractor-args` pair entirely
-/// 2. Append the cached token + fetch_pot=never to the youtube extractor-args
-///
-/// This prevents the bgutil yt-dlp plugin from running (~6.5s per call).
-/// POT cache apply — currently disabled (bgutil plugin ignores cached tokens).
-/// Kept for future use when yt-dlp supports fetch_pot=never properly.
-fn apply_cached_pot<'a>(_args: &mut Vec<&'a str>, _cached_pot: Option<&'a str>) {
-    // Intentionally no-op: applying cached POT was causing "Fixed output name"
-    // errors by corrupting the args vec. The bgutil plugin also ignores our
-    // cached token. POT caching will be revisited separately.
-}
-
 /// Allowlist of domains that yt-dlp is permitted to handle.
 /// Only these domains are accepted — arbitrary URLs are rejected for security.
 const YTDLP_DOMAINS: &[&str] = &[
@@ -125,9 +112,12 @@ impl YtDlpSource {
     fn is_known_domain(url: &Url) -> bool {
         if let Some(host) = url.host_str() {
             let host_lower = host.to_lowercase();
-            YTDLP_DOMAINS
-                .iter()
-                .any(|d| host_lower == *d || host_lower.ends_with(&format!(".{}", d)))
+            YTDLP_DOMAINS.iter().any(|d| {
+                host_lower == *d
+                    || (host_lower.len() > d.len()
+                        && host_lower.ends_with(d)
+                        && host_lower.as_bytes()[host_lower.len() - d.len() - 1] == b'.')
+            })
         } else {
             false
         }
@@ -194,10 +184,6 @@ impl YtDlpSource {
         let cf_str = concurrent_fragments_str(request.concurrent_fragments);
         let is_youtube = crate::core::share::is_youtube_url(request.url.as_str());
         let experimental = request.concurrent_fragments > 1;
-
-        // POT cache pre-fetch disabled: experimental tier1 skips bgutil entirely,
-        // and apply_cached_pot is a no-op. No need to waste ~6s on bgutil API call.
-        let cached_pot: Option<String> = None;
 
         let handle = tokio::task::spawn_blocking(move || {
             let postprocessor_args = format!("ffmpeg:-acodec libmp3lame -b:a {}", bitrate_str);
@@ -288,7 +274,6 @@ impl YtDlpSource {
                 &postprocessor_args,
                 time_range.as_ref(),
                 experimental,
-                cached_pot,
             )
         });
 
@@ -344,10 +329,6 @@ impl YtDlpSource {
             _ => build_telegram_safe_format(None),
         };
         log::debug!("yt-dlp video format string: {}", format_arg);
-
-        // POT cache pre-fetch disabled: experimental tier1 skips bgutil entirely,
-        // and apply_cached_pot is a no-op. No need to waste ~6s on bgutil API call.
-        let cached_pot: Option<String> = None;
 
         let handle = tokio::task::spawn_blocking(move || {
             download_with_fallback_chain(
@@ -421,7 +402,6 @@ impl YtDlpSource {
                 &format_arg,
                 time_range.as_ref(),
                 experimental,
-                cached_pot,
             )
         });
 
@@ -475,14 +455,12 @@ fn try_tier1<F>(
     progress_tx: &mpsc::UnboundedSender<SourceProgress>,
     tier1_args_fn: &F,
     experimental: bool,
-    cached_pot_ref: Option<&str>,
 ) -> Result<(), (YtDlpErrorType, String)>
 where
     F: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
 {
     let mut args: Vec<&str> = build_common_args(download_path, experimental);
     tier1_args_fn(&mut args, proxy_option);
-    apply_cached_pot(&mut args, cached_pot_ref);
 
     if media_type == "audio" {
         args.push(extra_arg);
@@ -519,7 +497,6 @@ fn try_tier2<F>(
     tier2_args_fn: &F,
     runtime_handle: &tokio::runtime::Handle,
     experimental: bool,
-    cached_pot_ref: Option<&str>,
 ) -> Tier2Outcome
 where
     F: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
@@ -531,7 +508,6 @@ where
 
     let mut cookies_args: Vec<&str> = build_common_args_minimal(download_path, experimental);
     tier2_args_fn(&mut cookies_args, proxy_option);
-    apply_cached_pot(&mut cookies_args, cached_pot_ref);
     if media_type == "audio" {
         cookies_args.push(extra_arg);
     } else if let Some(pos) = cookies_args.iter().position(|a| *a == "--format") {
@@ -604,7 +580,6 @@ fn try_tier3<F>(
     progress_tx: &mpsc::UnboundedSender<SourceProgress>,
     tier3_args_fn: &F,
     experimental: bool,
-    cached_pot_ref: Option<&str>,
 ) -> bool
 where
     F: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
@@ -616,7 +591,6 @@ where
 
     let mut fixup_args: Vec<&str> = build_common_args_minimal(download_path, experimental);
     tier3_args_fn(&mut fixup_args, proxy_option);
-    apply_cached_pot(&mut fixup_args, cached_pot_ref);
     if media_type == "video" {
         if let Some(pos) = fixup_args.iter().position(|a| *a == "--format") {
             fixup_args.insert(pos + 1, extra_arg);
@@ -666,7 +640,6 @@ fn download_with_fallback_chain<F1, F2, F3>(
     extra_arg: &str,
     time_range: Option<&(String, String)>,
     experimental: bool,
-    cached_pot: Option<String>,
 ) -> Result<Option<u32>, AppError>
 where
     F1: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
@@ -677,7 +650,6 @@ where
     let proxy_chain = get_proxy_chain();
     let total_proxies = proxy_chain.len();
     let mut last_error: Option<AppError> = None;
-    let pot_ref: Option<&str> = cached_pot.as_deref();
     let section_spec = time_range.map(|(start, end)| format!("*{}-{}", start, end));
 
     for (attempt, proxy_option) in proxy_chain.into_iter().enumerate() {
@@ -724,7 +696,6 @@ where
             progress_tx,
             &tier1_args_fn,
             experimental,
-            pot_ref,
         );
         log::info!("⏱️ [TIER1] done in {:.1}s", tier1_start.elapsed().as_secs_f64());
 
@@ -794,7 +765,6 @@ where
                         &tier2_args_fn,
                         &runtime_handle,
                         experimental,
-                        pot_ref,
                     );
                     log::info!("⏱️ [TIER2] done in {:.1}s", tier2_start.elapsed().as_secs_f64());
                     match tier2_result {
@@ -829,7 +799,6 @@ where
                         progress_tx,
                         &tier3_args_fn,
                         experimental,
-                        pot_ref,
                     );
                     crate::core::metrics::record_tier_attempt("tier3_fixup_never", tier3_ok);
                     if tier3_ok {
@@ -896,8 +865,6 @@ fn build_common_args(download_path: &str, experimental: bool) -> Vec<&str> {
         "--no-playlist",
         "--age-limit",
         "99",
-        "--concurrent-fragments",
-        "1",
         "--fragment-retries",
         "10",
         "--socket-timeout",
@@ -908,6 +875,7 @@ fn build_common_args(download_path: &str, experimental: bool) -> Vec<&str> {
 
     if experimental {
         // Experimental: no rate limit, auto re-extract on throttle, maximize throughput
+        // Note: -N (concurrent fragments) is added later by push_concurrent_fragments_arg
         args.extend_from_slice(&[
             "--retries",
             "15",
@@ -919,8 +887,10 @@ fn build_common_args(download_path: &str, experimental: bool) -> Vec<&str> {
             "100K",
         ]);
     } else {
-        // Conservative: rate limit + sleep to avoid YouTube bans
+        // Conservative: single fragment, rate limit + sleep to avoid YouTube bans
         args.extend_from_slice(&[
+            "--concurrent-fragments",
+            "1",
             "--sleep-requests",
             "2",
             "--sleep-interval",
@@ -943,7 +913,7 @@ fn build_common_args(download_path: &str, experimental: bool) -> Vec<&str> {
 
 /// Build minimal common arguments (for Tier 2 and Tier 3 fallbacks).
 fn build_common_args_minimal(download_path: &str, experimental: bool) -> Vec<&str> {
-    vec![
+    let mut args = vec![
         "-o",
         download_path,
         "--newline",
@@ -951,15 +921,19 @@ fn build_common_args_minimal(download_path: &str, experimental: bool) -> Vec<&st
         "--no-playlist",
         "--age-limit",
         "99",
-        "--concurrent-fragments",
-        "1",
         "--fragment-retries",
         "10",
         "--socket-timeout",
         "30",
         "--http-chunk-size",
         if experimental { "10485760" } else { "2097152" },
-    ]
+    ];
+
+    if !experimental {
+        args.extend_from_slice(&["--concurrent-fragments", "1"]);
+    }
+
+    args
 }
 
 // Tier 2/3 already use build_common_args_minimal (no rate limiting), which is fine.

@@ -168,7 +168,7 @@ pub fn get_proxy_chain() -> Vec<Option<ProxyConfig>> {
                 "Custom Proxy"
             };
 
-            log::info!("Using proxy: {} ({})", proxy_name, proxy_url);
+            log::debug!("Using proxy: {} ({})", proxy_name, proxy_url);
             chain.push(Some(ProxyConfig::new(proxy_url.to_string(), proxy_name)));
         }
     }
@@ -176,7 +176,7 @@ pub fn get_proxy_chain() -> Vec<Option<ProxyConfig>> {
     // Last resort: no proxy (direct connection)
     chain.push(None);
 
-    log::info!("Proxy chain configured: {} proxy(ies)", chain.len());
+    log::debug!("Proxy chain configured: {} proxy(ies)", chain.len());
     chain
 }
 

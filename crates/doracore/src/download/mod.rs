@@ -8,7 +8,6 @@ pub mod error;
 pub mod fetch;
 pub mod metadata;
 pub mod playlist;
-pub mod pot_cache;
 pub mod progress;
 pub mod proxy;
 pub mod ringtone;
