@@ -205,12 +205,9 @@ impl YtDlpSource {
                         "--embed-thumbnail",
                     ]);
                     if is_youtube {
-                        if experimental {
-                            // Experimental: no proxy (direct 2× faster), no bgutil POT
-                            add_cookies_args_with_proxy(args, None, Some(""));
-                        } else {
-                            add_cookies_args_with_proxy(args, proxy_option, None);
-                        }
+                        // Experimental: skip bgutil POT (cookies + proxy sufficient)
+                        let pot = if experimental { Some("") } else { None };
+                        add_cookies_args_with_proxy(args, proxy_option, pot);
                         args.push("--extractor-args");
                         args.push("youtube:player_client=default");
                     } else {
@@ -344,12 +341,9 @@ impl YtDlpSource {
                     args.push("--postprocessor-args");
                     args.push("Merger:-movflags +faststart");
                     if is_youtube {
-                        if experimental {
-                            // Experimental: no proxy (direct 2× faster), no bgutil POT
-                            add_cookies_args_with_proxy(args, None, Some(""));
-                        } else {
-                            add_cookies_args_with_proxy(args, proxy_option, None);
-                        }
+                        // Experimental: skip bgutil POT (cookies + proxy sufficient)
+                        let pot = if experimental { Some("") } else { None };
+                        add_cookies_args_with_proxy(args, proxy_option, pot);
                         args.push("--extractor-args");
                         args.push("youtube:player_client=default");
                     } else {
