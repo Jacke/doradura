@@ -5,21 +5,6 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.33.0] - 2026-03-23
-
-### Added
-- **Audio track language selection** for video downloads — YouTube videos with multiple audio tracks (original + dubbed) now show a `🔊 Audio track` button in the preview keyboard. Users can pick which language track to download (e.g., Japanese original vs English dub). Selection is stored per-URL and passed to yt-dlp via `[language=XX]` format filter with automatic fallback to best audio.
-
-## [0.33.1] - 2026-03-30
-
-### Fixed
-- **WITH_COOKIES fallback missing cache write** — `--load-info-json` optimization now works even when first proxy attempt fails (common on Railway)
-
-### Changed
-- Extract `pot_for_experimental()` helper — eliminates 8× duplicated POT logic across download tiers
-- Extract `youtube_info_cache_path()` to `core::share` — single source of truth for cache path across crate boundary
-- Remove redundant comments that paraphrase code
-
 ## [Unreleased]
 
 ### Changed
@@ -74,6 +59,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added `first_line_of_stdout` helper and `--playlist-items 1` safety net to all 5 metadata `--print` calls
 - `sanitize_metadata()` now takes first line only instead of replacing newlines with spaces, and truncates excessively long metadata
 - Hardened cache validation to reject multi-line or oversized titles
+
+## [0.33.1] - 2026-03-30
+
+### Fixed
+- **WITH_COOKIES fallback missing cache write** — `--load-info-json` optimization now works even when first proxy attempt fails (common on Railway)
+
+### Changed
+- Extract `pot_for_experimental()` helper — eliminates 8× duplicated POT logic across download tiers
+- Extract `youtube_info_cache_path()` to `core::share` — single source of truth for cache path across crate boundary
+- Remove redundant comments that paraphrase code
+
+## [0.33.0] - 2026-03-23
+
+### Added
+- **Audio track language selection** for video downloads — YouTube videos with multiple audio tracks (original + dubbed) now show a `🔊 Audio track` button in the preview keyboard. Users can pick which language track to download (e.g., Japanese original vs English dub). Selection is stored per-URL and passed to yt-dlp via `[language=XX]` format filter with automatic fallback to best audio.
 
 ## [0.31.1] - 2026-03-20
 
