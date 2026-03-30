@@ -189,10 +189,7 @@ pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str, experiment
                     }
                 } else {
                     let cookies_stderr = String::from_utf8_lossy(&cookies_output.stderr);
-                    log::warn!(
-                        "❌ [WITH_COOKIES] Failed: {}",
-                        &cookies_stderr[..std::cmp::min(200, cookies_stderr.len())]
-                    );
+                    log::warn!("❌ [WITH_COOKIES] Failed: {}", &cookies_stderr);
                 }
             }
 

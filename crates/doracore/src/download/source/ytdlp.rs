@@ -619,10 +619,7 @@ where
             true
         }
         Err((_error_type, stderr_text)) => {
-            log::warn!(
-                "❌ [FIXUP_NEVER] Failed: {}",
-                &stderr_text[..std::cmp::min(500, stderr_text.len())]
-            );
+            log::warn!("❌ [FIXUP_NEVER] Failed: {}", &stderr_text);
             false
         }
     }
@@ -730,7 +727,7 @@ where
                     "❌ Download failed with [{}]: {:?} - {}",
                     proxy_name,
                     error_type,
-                    &stderr_text[..std::cmp::min(500, stderr_text.len())]
+                    &stderr_text
                 );
 
                 // Network-only errors: skip Tier 2/3, try next proxy
@@ -987,7 +984,13 @@ fn run_ytdlp_with_progress(
             let reader = BufReader::new(stderr_stream);
             for line in reader.lines() {
                 if let Ok(line_str) = line {
-                    log::debug!("yt-dlp stderr: {}", line_str);
+                    // Log ERROR/WARNING lines at warn level for visibility in production
+                    let lower = line_str.to_lowercase();
+                    if lower.contains("error") || lower.contains("warning") || lower.contains("failed") {
+                        log::warn!("yt-dlp stderr: {}", line_str);
+                    } else {
+                        log::debug!("yt-dlp stderr: {}", line_str);
+                    }
                     if let Ok(mut lines) = stderr_lines_clone.lock() {
                         lines.push_back(line_str.clone());
                         if lines.len() > 200 {
