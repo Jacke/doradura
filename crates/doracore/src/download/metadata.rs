@@ -240,6 +240,16 @@ pub fn add_cookies_args(args: &mut Vec<&str>) {
     add_cookies_args_with_proxy(args, first_proxy.as_ref(), None);
 }
 
+/// Returns POT argument for `add_cookies_args_with_proxy`:
+/// `Some("")` (skip bgutil) when experimental, `None` (use bgutil) otherwise.
+pub fn pot_for_experimental(experimental: bool) -> Option<&'static str> {
+    if experimental {
+        Some("")
+    } else {
+        None
+    }
+}
+
 /// Adds proxy, cookie, and PO Token arguments with a specific proxy configuration.
 ///
 /// # Arguments
@@ -269,7 +279,7 @@ pub fn add_cookies_args_with_proxy<'a>(
         log::info!("No proxy configured, using direct connection");
     }
 
-    // PO Token provider: None = bgutil plugin, Some("") = skip entirely (experimental),
+    // PO Token provider: None = bgutil plugin, Some("") = skip entirely (experimental)
     // Some(token) = use cached token
     match cached_pot_arg {
         Some("") => {

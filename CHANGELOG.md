@@ -10,6 +10,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **Audio track language selection** for video downloads — YouTube videos with multiple audio tracks (original + dubbed) now show a `🔊 Audio track` button in the preview keyboard. Users can pick which language track to download (e.g., Japanese original vs English dub). Selection is stored per-URL and passed to yt-dlp via `[language=XX]` format filter with automatic fallback to best audio.
 
+## [0.33.1] - 2026-03-30
+
+### Fixed
+- **WITH_COOKIES fallback missing cache write** — `--load-info-json` optimization now works even when first proxy attempt fails (common on Railway)
+
+### Changed
+- Extract `pot_for_experimental()` helper — eliminates 8× duplicated POT logic across download tiers
+- Extract `youtube_info_cache_path()` to `core::share` — single source of truth for cache path across crate boundary
+- Remove redundant comments that paraphrase code
+
 ## [Unreleased]
 
 ### Changed

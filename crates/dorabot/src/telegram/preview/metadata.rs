@@ -3,7 +3,7 @@ use crate::core::error::AppError;
 use crate::download::error::DownloadError;
 use crate::download::metadata::{
     add_cookies_args_with_proxy, add_instagram_cookies_args_with_proxy, add_no_cookies_args, get_proxy_chain,
-    is_proxy_related_error,
+    is_proxy_related_error, pot_for_experimental,
 };
 use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message, YtDlpErrorType};
 use crate::storage::cache;
@@ -60,7 +60,7 @@ pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str, experiment
         if is_youtube {
             // YouTube: use cookies from the start (datacenter IPs are flagged)
             args.extend_from_slice(&["--extractor-args", "youtube:player_client=web,web_safari"]);
-            let pot = if experimental { Some("") } else { None };
+            let pot = pot_for_experimental(experimental);
             add_cookies_args_with_proxy(&mut args, proxy_option.as_ref(), pot);
         } else {
             // Other sites: try without cookies first
@@ -106,15 +106,7 @@ pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str, experiment
             match serde_json::from_str(&json_str) {
                 Ok(value) => {
                     log::info!("✅ Preview metadata succeeded using [{}]", proxy_name);
-                    // Cache raw JSON for --load-info-json optimization in download phase
-                    if let Some(vid) = crate::core::share::extract_youtube_video_id(url.as_str()) {
-                        let cache_path = format!("/tmp/ytdlp-info-{}.json", vid);
-                        if let Err(e) = std::fs::write(&cache_path, json_str.as_bytes()) {
-                            log::debug!("Failed to cache info JSON: {}", e);
-                        } else {
-                            log::debug!("Cached info JSON to {}", cache_path);
-                        }
-                    }
+                    cache_info_json_for_download(url, &json_str);
                     return Ok(value);
                 }
                 Err(e) => {
@@ -174,7 +166,7 @@ pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str, experiment
                 cookies_args.push("youtube:player_client=web,web_safari");
                 cookies_args.push("--js-runtimes");
                 cookies_args.push("deno");
-                let pot = if experimental { Some("") } else { None };
+                let pot = pot_for_experimental(experimental);
                 add_cookies_args_with_proxy(&mut cookies_args, proxy_option.as_ref(), pot);
             }
 
@@ -192,6 +184,7 @@ pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str, experiment
                     let json_str = String::from_utf8_lossy(&cookies_output.stdout);
                     if let Ok(value) = serde_json::from_str(&json_str) {
                         log::info!("✅ [WITH_COOKIES] Preview metadata succeeded WITH cookies!");
+                        cache_info_json_for_download(url, &json_str);
                         return Ok(value);
                     }
                 } else {
@@ -716,6 +709,17 @@ async fn get_instagram_preview_metadata(url: &Url) -> Result<PreviewMetadata, Ap
     PREVIEW_CACHE.set(url.as_str().to_string(), metadata.clone()).await;
 
     Ok(metadata)
+}
+
+/// Cache yt-dlp info JSON to /tmp for --load-info-json reuse in download phase.
+fn cache_info_json_for_download(url: &Url, json_str: &str) {
+    if let Some(cache_path) = crate::core::share::youtube_info_cache_path(url.as_str()) {
+        if let Err(e) = std::fs::write(&cache_path, json_str.as_bytes()) {
+            log::debug!("Failed to cache info JSON: {}", e);
+        } else {
+            log::debug!("Cached info JSON to {}", cache_path);
+        }
+    }
 }
 
 #[cfg(test)]

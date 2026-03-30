@@ -125,6 +125,12 @@ pub fn extract_youtube_video_id(url: &str) -> Option<String> {
     None
 }
 
+/// Returns the `/tmp` cache path for yt-dlp info JSON, keyed by YouTube video ID.
+/// Used by preview (write) and download (read) phases.
+pub fn youtube_info_cache_path(url: &str) -> Option<String> {
+    extract_youtube_video_id(url).map(|vid| format!("/tmp/ytdlp-info-{}.json", vid))
+}
+
 /// Returns true if the URL is a YouTube URL.
 pub fn is_youtube_url(url: &str) -> bool {
     url.contains("youtube.com/") || url.contains("youtu.be/")
