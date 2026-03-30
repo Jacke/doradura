@@ -106,6 +106,15 @@ pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str, experiment
             match serde_json::from_str(&json_str) {
                 Ok(value) => {
                     log::info!("✅ Preview metadata succeeded using [{}]", proxy_name);
+                    // Cache raw JSON for --load-info-json optimization in download phase
+                    if let Some(vid) = crate::core::share::extract_youtube_video_id(url.as_str()) {
+                        let cache_path = format!("/tmp/ytdlp-info-{}.json", vid);
+                        if let Err(e) = std::fs::write(&cache_path, json_str.as_bytes()) {
+                            log::debug!("Failed to cache info JSON: {}", e);
+                        } else {
+                            log::debug!("Cached info JSON to {}", cache_path);
+                        }
+                    }
                     return Ok(value);
                 }
                 Err(e) => {

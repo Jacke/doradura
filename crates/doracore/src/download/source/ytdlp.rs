@@ -237,7 +237,8 @@ impl YtDlpSource {
                         if is_instagram_url(&url_for_tier2) {
                             add_instagram_cookies_args_with_proxy(args, proxy_option);
                         } else {
-                            add_cookies_args_with_proxy(args, proxy_option, None);
+                            let pot = if experimental { Some("") } else { None };
+                            add_cookies_args_with_proxy(args, proxy_option, pot);
                             args.push("--extractor-args");
                             args.push("youtube:player_client=default");
                         }
@@ -260,7 +261,8 @@ impl YtDlpSource {
                         "0",
                         "--add-metadata",
                     ]);
-                    add_cookies_args_with_proxy(args, proxy_option, None);
+                    let pot = if experimental { Some("") } else { None };
+                    add_cookies_args_with_proxy(args, proxy_option, pot);
                     args.push("--extractor-args");
                     args.push("youtube:player_client=default");
                     args.push("--js-runtimes");
@@ -368,7 +370,8 @@ impl YtDlpSource {
                         if is_instagram_url(&url_for_tier2) {
                             add_instagram_cookies_args_with_proxy(args, proxy_option);
                         } else {
-                            add_cookies_args_with_proxy(args, proxy_option, None);
+                            let pot = if experimental { Some("") } else { None };
+                            add_cookies_args_with_proxy(args, proxy_option, pot);
                             args.push("--extractor-args");
                             args.push("youtube:player_client=default");
                         }
@@ -385,7 +388,8 @@ impl YtDlpSource {
                     args.push("--format");
                     args.push("--merge-output-format");
                     args.push("mp4");
-                    add_cookies_args_with_proxy(args, proxy_option, None);
+                    let pot = if experimental { Some("") } else { None };
+                    add_cookies_args_with_proxy(args, proxy_option, pot);
                     args.push("--extractor-args");
                     args.push("youtube:player_client=default");
                     args.push("--js-runtimes");
@@ -462,7 +466,22 @@ where
         args.insert(pos + 1, extra_arg);
     }
     append_section_args(&mut args, section_spec);
-    args.push(url_str);
+
+    // Use cached info JSON from preview phase to skip yt-dlp extraction (~3-5s savings)
+    let info_json_path: Option<String> = if experimental {
+        crate::core::share::extract_youtube_video_id(url_str)
+            .map(|vid| format!("/tmp/ytdlp-info-{}.json", vid))
+            .filter(|p| std::path::Path::new(p).exists())
+    } else {
+        None
+    };
+    if let Some(ref path) = info_json_path {
+        args.push("--load-info-json");
+        args.push(path);
+        log::info!("[LOAD_INFO_JSON] Using cached JSON for {}", url_str);
+    } else {
+        args.push(url_str);
+    }
 
     log::debug!(
         "yt-dlp command for {} download: {} {}",
@@ -470,7 +489,14 @@ where
         ytdl_bin,
         args.join(" ")
     );
-    run_ytdlp_with_progress(ytdl_bin, &args, progress_tx)
+    let result = run_ytdlp_with_progress(ytdl_bin, &args, progress_tx);
+
+    // Cleanup cached JSON after use
+    if let Some(path) = info_json_path {
+        let _ = std::fs::remove_file(&path);
+    }
+
+    result
 }
 
 /// Try Tier 2 (cookies + PO token) download with progress reporting.

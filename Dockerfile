@@ -57,7 +57,7 @@ RUN apk add --no-cache \
   cairo-dev pango-dev jpeg-dev giflib-dev pixman-dev python3
 
 WORKDIR /opt/bgutil
-RUN git clone --single-branch --branch 1.2.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git .
+RUN git clone --single-branch --branch 1.3.1 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git .
 WORKDIR /opt/bgutil/server
 RUN npm install && npx tsc
 

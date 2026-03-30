@@ -140,8 +140,13 @@ pub async fn download_and_send_video(
 
                 // ── Phase 2: Video-specific post-processing ──
 
-                // Get thumbnail URL (best-effort, non-blocking)
-                let thumbnail_url = get_thumbnail_url(&url).await;
+                // Get thumbnail URL: use static YouTube URL when possible (saves ~7s yt-dlp call),
+                // fall back to yt-dlp --get-thumbnail for non-YouTube sites
+                let thumbnail_url = if let Some(yt_thumb) = crate::core::share::youtube_thumbnail_url(url.as_str()) {
+                    Some(yt_thumb)
+                } else {
+                    get_thumbnail_url(&url).await
+                };
 
                 // Find actual downloaded file (yt-dlp may rename with suffixes)
                 let actual_file_path = find_actual_downloaded_file(&download_output.file_path)
