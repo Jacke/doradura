@@ -250,6 +250,16 @@ pub fn pot_for_experimental(experimental: bool) -> Option<&'static str> {
     }
 }
 
+/// Returns YouTube extractor-args: `formats=dashy` for experimental (enables -N parallelism),
+/// plain `player_client=default` otherwise.
+pub fn youtube_extractor_args(experimental: bool) -> &'static str {
+    if experimental {
+        "youtube:player_client=default;formats=dashy"
+    } else {
+        "youtube:player_client=default"
+    }
+}
+
 /// Adds proxy, cookie, and PO Token arguments with a specific proxy configuration.
 ///
 /// # Arguments

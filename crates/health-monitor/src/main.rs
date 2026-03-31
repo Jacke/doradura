@@ -70,8 +70,15 @@ impl Config {
     }
 }
 
-/// Try to set bot name. Returns true on success.
-async fn try_set_name(client: &Client, token: &str, name: &str) -> bool {
+/// Result of a Telegram API call that may include a rate-limit backoff.
+enum ApiResult {
+    Success,
+    RateLimited(Duration),
+    Failed,
+}
+
+/// Try to set bot name. Returns `ApiResult` so the caller can respect `retry_after`.
+async fn try_set_name(client: &Client, token: &str, name: &str) -> ApiResult {
     let url = format!("{}/bot{}/setMyName", TELEGRAM_API_URL, token);
     info!("[API] POST setMyName name=\"{}\"", name);
 
@@ -85,28 +92,37 @@ async fn try_set_name(client: &Client, token: &str, name: &str) -> bool {
         Ok(r) => r,
         Err(e) => {
             error!("[API] setMyName request failed: {e}");
-            return false;
+            return ApiResult::Failed;
         }
     };
 
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
-    info!("[API] setMyName response: HTTP {} | {:.200}", status, body);
 
     if status.is_success() && body.contains("\"ok\":true") {
         info!("[API] setMyName: success");
-        return true;
+        return ApiResult::Success;
     }
     if status.as_u16() == 429 {
-        warn!("[API] setMyName: 429 — will retry next cycle");
-    } else {
-        warn!("[API] setMyName: HTTP {} — will retry next cycle", status);
+        let retry_secs = parse_retry_after(&body);
+        warn!("[API] setMyName: 429 — backing off {}s", retry_secs.as_secs());
+        return ApiResult::RateLimited(retry_secs);
     }
-    false
+    warn!("[API] setMyName: HTTP {} — {}", status, &body[..body.len().min(200)]);
+    ApiResult::Failed
 }
 
-/// Try to set bot avatar. Returns true on success.
-async fn try_set_avatar(client: &Client, _api_url: &str, token: &str, photo: &[u8]) -> bool {
+/// Parse `retry_after` from Telegram 429 response JSON, default to 1 hour.
+fn parse_retry_after(body: &str) -> Duration {
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v["parameters"]["retry_after"].as_u64())
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(3600))
+}
+
+/// Try to set bot avatar. Returns `ApiResult` so the caller can respect `retry_after`.
+async fn try_set_avatar(client: &Client, _api_url: &str, token: &str, photo: &[u8]) -> ApiResult {
     let photo_file = match reqwest::multipart::Part::bytes(photo.to_vec())
         .file_name("photo.png")
         .mime_str("image/png")
@@ -114,7 +130,7 @@ async fn try_set_avatar(client: &Client, _api_url: &str, token: &str, photo: &[u
         Ok(p) => p,
         Err(e) => {
             error!("[API] Failed to build multipart: {e}");
-            return false;
+            return ApiResult::Failed;
         }
     };
 
@@ -135,24 +151,28 @@ async fn try_set_avatar(client: &Client, _api_url: &str, token: &str, photo: &[u
         Ok(r) => r,
         Err(e) => {
             error!("[API] setMyProfilePhoto request failed: {e}");
-            return false;
+            return ApiResult::Failed;
         }
     };
 
     let status = resp.status();
     let body = resp.text().await.unwrap_or_default();
-    info!("[API] setMyProfilePhoto response: HTTP {} | {:.200}", status, body);
 
     if status.is_success() && body.contains("\"ok\":true") {
         info!("[API] setMyProfilePhoto: success");
-        return true;
+        return ApiResult::Success;
     }
     if status.as_u16() == 429 {
-        warn!("[API] setMyProfilePhoto: 429 — will retry next cycle");
-    } else {
-        warn!("[API] setMyProfilePhoto: HTTP {} — will retry next cycle", status);
+        let retry_secs = parse_retry_after(&body);
+        warn!("[API] setMyProfilePhoto: 429 — backing off {}s", retry_secs.as_secs());
+        return ApiResult::RateLimited(retry_secs);
     }
-    false
+    warn!(
+        "[API] setMyProfilePhoto: HTTP {} — {}",
+        status,
+        &body[..body.len().min(200)]
+    );
+    ApiResult::Failed
 }
 
 async fn check_health(client: &Client, health_url: &str) -> bool {
@@ -203,20 +223,35 @@ async fn main() {
     info!("Waiting {}s for bot startup...", config.startup_delay.as_secs());
     tokio::time::sleep(config.startup_delay).await;
 
+    // Backoff deadline: don't call Telegram API until this instant
+    let mut backoff_until = tokio::time::Instant::now();
+
     if check_health(&client, &config.health_url).await {
         info!("Bot is healthy after startup delay — setting ONLINE profile");
-        if try_set_name(&client, &config.bot_token, ONLINE_NAME).await {
+        if matches!(
+            try_set_name(&client, &config.bot_token, ONLINE_NAME).await,
+            ApiResult::Success
+        ) {
             actual_name = ActualState::Online;
         }
-        if try_set_avatar(&client, &config.bot_api_url, &config.bot_token, ONLINE_AVATAR).await {
+        if matches!(
+            try_set_avatar(&client, &config.bot_api_url, &config.bot_token, ONLINE_AVATAR).await,
+            ApiResult::Success
+        ) {
             actual_avatar = ActualState::Online;
         }
     } else {
         info!("Bot not healthy after startup, setting OFFLINE name");
-        if try_set_name(&client, &config.bot_token, OFFLINE_NAME).await {
+        if matches!(
+            try_set_name(&client, &config.bot_token, OFFLINE_NAME).await,
+            ApiResult::Success
+        ) {
             actual_name = ActualState::Offline;
         }
-        if try_set_avatar(&client, &config.bot_api_url, &config.bot_token, OFFLINE_AVATAR).await {
+        if matches!(
+            try_set_avatar(&client, &config.bot_api_url, &config.bot_token, OFFLINE_AVATAR).await,
+            ApiResult::Success
+        ) {
             actual_avatar = ActualState::Offline;
         }
     }
@@ -252,16 +287,28 @@ async fn main() {
             DesiredState::Offline => ActualState::Offline,
         };
 
+        // Skip API calls while rate-limited
+        let now = tokio::time::Instant::now();
+        if now < backoff_until {
+            tokio::time::sleep(config.interval).await;
+            continue;
+        }
+
         if actual_name != desired_name_state {
             let name = match desired {
                 DesiredState::Online => ONLINE_NAME,
                 DesiredState::Offline => OFFLINE_NAME,
             };
-            if try_set_name(&client, &config.bot_token, name).await {
-                actual_name = desired_name_state;
-                info!("Bot name updated successfully");
+            match try_set_name(&client, &config.bot_token, name).await {
+                ApiResult::Success => {
+                    actual_name = desired_name_state;
+                    info!("Bot name updated successfully");
+                }
+                ApiResult::RateLimited(d) => {
+                    backoff_until = tokio::time::Instant::now() + d;
+                }
+                ApiResult::Failed => {}
             }
-            // If 429, actual_name stays unchanged → will retry next cycle
         }
 
         // ── Set AVATAR ──
@@ -270,9 +317,15 @@ async fn main() {
                 DesiredState::Online => ONLINE_AVATAR,
                 DesiredState::Offline => OFFLINE_AVATAR,
             };
-            if try_set_avatar(&client, &config.bot_api_url, &config.bot_token, photo).await {
-                actual_avatar = desired_name_state;
-                info!("Bot avatar updated successfully");
+            match try_set_avatar(&client, &config.bot_api_url, &config.bot_token, photo).await {
+                ApiResult::Success => {
+                    actual_avatar = desired_name_state;
+                    info!("Bot avatar updated successfully");
+                }
+                ApiResult::RateLimited(d) => {
+                    backoff_until = tokio::time::Instant::now() + d;
+                }
+                ApiResult::Failed => {}
             }
         }
 
