@@ -136,11 +136,14 @@ pub fn extract_video_formats_from_json(json: &Value) -> Vec<VideoFormatInfo> {
             }
         }
 
-        let mut quality = quality_from_dimensions(width, height);
+        // Prefer format_note from yt-dlp (most accurate, e.g. "360p" for 640x352)
+        // then fall back to dimensions, then resolution string.
+        let mut quality = None;
+        if let Some(note) = format.get("format_note").and_then(|v| v.as_str()) {
+            quality = quality_from_note(note);
+        }
         if quality.is_none() {
-            if let Some(note) = format.get("format_note").and_then(|v| v.as_str()) {
-                quality = quality_from_note(note);
-            }
+            quality = quality_from_dimensions(width, height);
         }
         if quality.is_none() {
             if let Some(resolution) = resolution_field {
