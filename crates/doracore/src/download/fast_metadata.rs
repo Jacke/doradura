@@ -152,8 +152,6 @@ struct PipedVideoStream {
     content_length: Option<u64>,
     #[serde(default)]
     codec: Option<String>,
-    #[serde(default, alias = "videoOnly")]
-    video_only: Option<bool>,
 }
 
 async fn try_piped(video_id: &str) -> Result<FastMetadata, String> {
@@ -176,7 +174,6 @@ async fn try_piped(video_id: &str) -> Result<FastMetadata, String> {
                         let video_formats: Vec<FastVideoFormat> = data
                             .video_streams
                             .into_iter()
-                            .filter(|s| s.video_only != Some(true)) // Only muxed streams
                             .filter_map(|s| {
                                 let quality = s.quality?;
                                 if quality == "unknown" {

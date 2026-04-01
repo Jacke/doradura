@@ -429,12 +429,26 @@ async fn get_preview_metadata_inner(
             audio_tracks: None,
         };
 
-        // Cache the fast metadata
-        if !fast.title.is_empty() {
-            PREVIEW_CACHE.set(url.as_str().to_string(), metadata.clone()).await;
+        // Only use fast metadata if we have enough data:
+        // - MP3: title is sufficient (no video formats needed)
+        // - MP4: need video formats (only Piped provides them)
+        // Otherwise fall through to yt-dlp for full format info.
+        let has_formats = metadata.video_formats.as_ref().is_some_and(|f| !f.is_empty());
+        let is_audio_only = format == Some("mp3") || format == Some("wav") || format == Some("flac");
+
+        if has_formats || is_audio_only {
+            if !fast.title.is_empty() {
+                PREVIEW_CACHE.set(url.as_str().to_string(), metadata.clone()).await;
+            }
+            return Ok(metadata);
         }
 
-        return Ok(metadata);
+        log::info!(
+            "⚡ Fast metadata has no video formats (source: {:?}), falling back to yt-dlp for {}",
+            fast_source,
+            url
+        );
+        // Fall through to yt-dlp — but cache title/author for later use
     }
 
     // ── Slow path: yt-dlp --dump-json (fallback for non-YouTube or when fast APIs fail) ──
