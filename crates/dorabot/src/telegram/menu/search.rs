@@ -129,8 +129,11 @@ pub async fn handle_standalone_search(
 ) {
     let _ = db_pool;
     let source = SearchSource::YouTube;
+    let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
 
-    let status_msg = bot.send_message(chat_id, "Searching...").await;
+    let status_msg = bot
+        .send_message(chat_id, crate::i18n::t(&lang, "commands.searching"))
+        .await;
 
     match search(source, text, RESULTS_PER_PAGE as u8, Some(&db_pool)).await {
         Ok(results) => {
@@ -139,7 +142,7 @@ pub async fn handle_standalone_search(
             }
             if results.is_empty() {
                 if let Ok(msg) = bot
-                    .send_message(chat_id, "🔍 No results found. Try a different query!")
+                    .send_message(chat_id, crate::i18n::t(&lang, "commands.search-no-results"))
                     .await
                 {
                     if matches!(context, SearchContext::PlayerMode { .. }) {
@@ -167,7 +170,12 @@ pub async fn handle_standalone_search(
                 let _ = bot.delete_message(chat_id, msg.id).await;
             }
             log::error!("Search error: {}", e);
-            let _ = bot.send_message(chat_id, format!("Search failed: {}", e)).await;
+            let _ = bot
+                .send_message(
+                    chat_id,
+                    format!("{}: {}", crate::i18n::t(&lang, "commands.search-failed"), e),
+                )
+                .await;
         }
     }
 }
@@ -321,13 +329,18 @@ pub async fn handle_search_callback(
                     SearchContext::Standalone => {}
                 }
 
-                // Add to download queue as mp3 (queue sends its own progress messages)
+                // Add to download queue respecting user's format preference
+                let format = match shared_storage.get_user_download_format(chat_id.0).await {
+                    Ok(fmt) => fmt,
+                    Err(_) => "mp3".to_string(),
+                };
+                let is_video = format == "mp4";
                 let task = crate::download::queue::DownloadTask::new(
                     result.url.clone(),
                     chat_id,
                     None,
-                    false,
-                    "mp3".to_string(),
+                    is_video,
+                    format,
                     None,
                     None,
                 );

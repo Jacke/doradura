@@ -1111,6 +1111,28 @@ pub async fn handle_message(
                 return Ok(None);
             }
 
+            // Implicit search: treat plain text (3+ chars) as music search query
+            let trimmed = text.trim();
+            if trimmed.chars().count() >= 3 && trimmed.len() <= 200 {
+                let plan = match shared_storage.get_user(msg.chat.id.0).await {
+                    Ok(Some(user)) => user.plan.as_str().to_string(),
+                    _ => "free".to_string(),
+                };
+                if !handle_rate_limit(&bot, &msg, &rate_limiter, &plan, &db_pool, &shared_storage).await? {
+                    return Ok(None);
+                }
+                metrics::record_message_type("search");
+                crate::telegram::menu::search::handle_standalone_search(
+                    &bot,
+                    msg.chat.id,
+                    trimmed,
+                    db_pool.clone(),
+                    shared_storage.clone(),
+                    crate::telegram::menu::search::SearchContext::Standalone,
+                )
+                .await;
+                return Ok(None);
+            }
             metrics::record_message_type("text");
             bot.send_message(msg.chat.id, i18n::t(&lang, "commands.no_links"))
                 .parse_mode(ParseMode::MarkdownV2)
