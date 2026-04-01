@@ -482,12 +482,13 @@ pub async fn execute(
 ) -> Result<PipelineResult, PipelineError> {
     let start_time = std::time::Instant::now();
     let file_format_str = format.label().to_string();
+    let canonical_url = doracore::download::url_canonical::canonicalize_url(url.as_str());
 
     // ── Vault cache lookup (audio only) ──
     if matches!(format, PipelineFormat::Audio { .. }) {
         if let Some(shared_storage) = shared_storage {
             if let Some(cached_fid) =
-                crate::download::vault::check_vault_cache(shared_storage, chat_id.0, url.as_str()).await
+                crate::download::vault::check_vault_cache(shared_storage, chat_id.0, &canonical_url).await
             {
                 log::info!(
                     "Pipeline: vault cache hit for {} (chat {})",
@@ -533,13 +534,13 @@ pub async fn execute(
         };
         let cached_fid = if let Some(storage) = shared_storage {
             storage
-                .find_cached_file_id(url.as_str(), format.label(), vq, ab)
+                .find_cached_file_id(&canonical_url, format.label(), vq, ab)
                 .await
                 .ok()
                 .flatten()
         } else if let Some(pool) = db_pool {
             if let Ok(conn) = db::get_connection(pool) {
-                db::find_cached_file_id(&conn, url.as_str(), format.label(), vq, ab)
+                db::find_cached_file_id(&conn, &canonical_url, format.label(), vq, ab)
                     .ok()
                     .flatten()
             } else {
@@ -812,7 +813,7 @@ pub async fn execute(
         match storage
             .save_download_history(
                 chat_id.0,
-                url.as_str(),
+                &canonical_url,
                 title.as_str(),
                 format.label(),
                 file_id.as_deref(),
@@ -872,7 +873,7 @@ pub async fn execute(
                     bot.clone(),
                     Arc::clone(shared_storage),
                     chat_id.0,
-                    url.to_string(),
+                    canonical_url.clone(),
                     fid,
                     Some(title.clone()),
                     if artist.is_empty() { None } else { Some(artist.clone()) },

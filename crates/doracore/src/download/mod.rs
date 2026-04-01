@@ -13,6 +13,7 @@ pub mod proxy;
 pub mod ringtone;
 pub mod source;
 pub mod thumbnail;
+pub mod url_canonical;
 pub mod ytdlp;
 pub mod ytdlp_errors;
 

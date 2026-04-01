@@ -271,10 +271,11 @@ pub async fn download_and_send_video(
 
                         let duration = probe_video_metadata(part_path).map(|(d, _, _)| d as i64);
 
+                        let canonical_url = doracore::download::url_canonical::canonicalize_url(url.as_str());
                         match storage
                             .save_download_history(
                                 chat_id.0,
-                                url.as_str(),
+                                &canonical_url,
                                 title.as_str(),
                                 "mp4",
                                 file_id.as_deref(),
