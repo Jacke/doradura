@@ -5,6 +5,7 @@ pub mod builder;
 pub mod cookies;
 pub mod downloader;
 pub mod error;
+pub mod fast_metadata;
 pub mod fetch;
 pub mod metadata;
 pub mod playlist;
