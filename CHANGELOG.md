@@ -15,7 +15,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **Search by name** (v0.34.0) — type any song name (3+ chars) in chat → bot searches YouTube → shows results with download buttons. No URL needed. Rate-limited same as downloads
-- **Fast YouTube preview** (v0.34.1) — preview metadata via Piped API (~1-2s) or YouTube oEmbed (~200ms) before falling back to yt-dlp (5-15s). Up to 75x faster preview for YouTube links
 - **URL canonicalization** (v0.34.1) — normalizes URL variants for aggressive file_id cache. `youtu.be/ID`, `m.youtube.com/shorts/ID`, `music.youtube.com/watch?v=ID&si=...` all share the same cache entry. Covers 12 platforms: YouTube, Instagram, TikTok, Twitter/X, Spotify, SoundCloud, Vimeo, VK, Reddit, Facebook, Twitch, Bandcamp. Strips universal tracking params (utm_*, fbclid, gclid, si, etc.)
 - Search results now respect user's format preference (mp3/mp4) from settings instead of hardcoded mp3
 - Search status messages localized in all 4 languages (en, ru, fr, de)
