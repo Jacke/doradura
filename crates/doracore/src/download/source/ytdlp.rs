@@ -37,6 +37,7 @@ fn concurrent_fragments_str(n: u8) -> &'static str {
         3 => "3",
         4 => "4",
         8 => "8",
+        16 => "16",
         _ => "",
     }
 }

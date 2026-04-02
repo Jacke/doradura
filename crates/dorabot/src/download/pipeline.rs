@@ -165,15 +165,41 @@ pub async fn download_phase(
         sanitize_for_log(url.as_str())
     );
 
+    // ── Experimental flag (used in multiple steps below) ──
+    let is_experimental = if let Some(s) = shared_storage {
+        s.get_user_experimental_features(chat_id.0).await.unwrap_or(false)
+    } else {
+        false
+    };
+
     // ── Step 2: Get metadata ──
-    let MediaMetadata { title, artist } = match source.get_metadata(url).await {
-        Ok(meta) => meta,
-        Err(e) => {
-            log::error!("Pipeline: failed to get metadata: {:?}", e);
-            if e.to_string().contains("timed out") {
-                send_error_with_sticker(bot, chat_id).await;
-            }
-            return Err(PipelineError::Metadata(e));
+    // Experimental fast-path: preview cache already has title/artist from the preview fetch —
+    // skip the redundant yt-dlp --dump-json call (~6s saved).
+    let MediaMetadata { title, artist } = {
+        let from_cache = if is_experimental {
+            crate::telegram::cache::PREVIEW_CACHE.get(url.as_str()).await.map(|pm| {
+                log::info!("Pipeline: title/artist from preview cache (experimental, skipping yt-dlp metadata)");
+                MediaMetadata {
+                    title: pm.title.clone(),
+                    artist: pm.artist.clone(),
+                }
+            })
+        } else {
+            None
+        };
+
+        match from_cache {
+            Some(meta) => meta,
+            None => match source.get_metadata(url).await {
+                Ok(meta) => meta,
+                Err(e) => {
+                    log::error!("Pipeline: failed to get metadata: {:?}", e);
+                    if e.to_string().contains("timed out") {
+                        send_error_with_sticker(bot, chat_id).await;
+                    }
+                    return Err(PipelineError::Metadata(e));
+                }
+            },
         }
     };
 
@@ -326,15 +352,8 @@ pub async fn download_phase(
         builder = builder.time_range(start, end);
     }
 
-    let concurrent_fragments = if let Some(storage) = shared_storage {
-        if storage.get_user_experimental_features(chat_id.0).await.unwrap_or(false) {
-            8u8
-        } else {
-            1u8
-        }
-    } else {
-        1u8
-    };
+    // Experimental: 16 concurrent fragments (2× vs previous 8) for faster segmented downloads.
+    let concurrent_fragments = if is_experimental { 16u8 } else { 1u8 };
     builder = builder.concurrent_fragments(concurrent_fragments);
 
     let request = builder.build(&title, &artist);

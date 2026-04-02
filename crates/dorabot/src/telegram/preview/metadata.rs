@@ -382,9 +382,16 @@ async fn get_preview_metadata_inner(
                         std::collections::HashMap::new();
                     for f in &yt_meta.video_formats {
                         let label = f.quality_label.clone();
+                        // content_length is absent for high-quality adaptive streams (720p+);
+                        // fall back to bitrate × duration estimate (same as yt-dlp's filesize_approx)
+                        let size_bytes = f.content_length.or_else(|| {
+                            f.bitrate
+                                .zip(yt_meta.duration_secs.map(|d| d as u64))
+                                .map(|(bps, dur)| bps * dur / 8)
+                        });
                         let info = VideoFormatInfo {
                             quality: label.clone(),
-                            size_bytes: f.content_length,
+                            size_bytes,
                             resolution: f.width.and_then(|w| f.height.map(|h| format!("{}x{}", w, h))),
                         };
                         let replace = match (by_quality.get(&label).and_then(|e| e.size_bytes), info.size_bytes) {

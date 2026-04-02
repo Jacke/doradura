@@ -55,3 +55,6 @@ __pycache__/
 *.mkv
 *.webm
 *.avi
+tmp/
+# Private business document (competitive strategy, pricing, GTV plans)
+docs/PRD.md
