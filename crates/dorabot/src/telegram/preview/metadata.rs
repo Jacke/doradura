@@ -351,6 +351,89 @@ async fn get_preview_metadata_inner(
         return Ok(metadata);
     }
 
+    // ── Experimental: fast YouTube preview via HTML scraping (~1-2s vs 5-15s) ──
+    // Scrapes ytInitialPlayerResponse from YouTube page — has full format data
+    // without JS challenge solving. Falls through to yt-dlp on failure.
+    if experimental {
+        let is_youtube = url
+            .host_str()
+            .is_some_and(|h| h.contains("youtube.com") || h.contains("youtu.be"));
+
+        if is_youtube {
+            if let Some(yt_meta) = doracore::download::fast_metadata::scrape_youtube_metadata(url.as_str()).await {
+                // Check duration limit
+                if !has_time_range {
+                    if let Some(dur) = yt_meta.duration_secs {
+                        const MAX_DURATION_SECONDS: u32 = 14400;
+                        if dur > MAX_DURATION_SECONDS {
+                            let hours = dur / 3600;
+                            let minutes = (dur % 3600) / 60;
+                            return Err(AppError::Download(DownloadError::Other(format!(
+                                "Video is too long ({}h {}min). Maximum duration: 4 hours.",
+                                hours, minutes
+                            ))));
+                        }
+                    }
+                }
+
+                // Deduplicate video formats by quality label (keep largest per quality)
+                let video_formats = if !yt_meta.video_formats.is_empty() {
+                    let mut by_quality: std::collections::HashMap<String, VideoFormatInfo> =
+                        std::collections::HashMap::new();
+                    for f in &yt_meta.video_formats {
+                        let label = f.quality_label.clone();
+                        let info = VideoFormatInfo {
+                            quality: label.clone(),
+                            size_bytes: f.content_length,
+                            resolution: f.width.and_then(|w| f.height.map(|h| format!("{}x{}", w, h))),
+                        };
+                        let replace = match (by_quality.get(&label).and_then(|e| e.size_bytes), info.size_bytes) {
+                            (None, Some(_)) => true,
+                            (Some(cur), Some(new)) => new > cur,
+                            _ => !by_quality.contains_key(&label),
+                        };
+                        if replace {
+                            by_quality.insert(label, info);
+                        }
+                    }
+                    let fmts: Vec<VideoFormatInfo> = by_quality.into_values().collect();
+                    if fmts.is_empty() {
+                        None
+                    } else {
+                        Some(fmts)
+                    }
+                } else {
+                    None
+                };
+
+                // Estimate MP3 filesize from duration
+                let filesize = if format == Some("mp3") {
+                    yt_meta.duration_secs.map(|d| (d as u64) * 320_000 / 8)
+                } else {
+                    None
+                };
+
+                let metadata = PreviewMetadata {
+                    title: yt_meta.title.clone(),
+                    artist: yt_meta.author.unwrap_or_default(),
+                    thumbnail_url: yt_meta.thumbnail_url,
+                    duration: yt_meta.duration_secs,
+                    filesize,
+                    description: None,
+                    video_formats,
+                    timestamps: vec![],
+                    is_photo: false,
+                    carousel_count: 0,
+                    audio_tracks: None,
+                };
+
+                PREVIEW_CACHE.set(url.as_str().to_string(), metadata.clone()).await;
+                return Ok(metadata);
+            }
+            // Fast scrape failed — fall through to yt-dlp
+        }
+    }
+
     // Check the cache for basic metadata (legacy cache, if needed)
     let (cached_title, cached_artist) = if let Some((title, artist)) = cache::get_cached_metadata(url).await {
         (Some(title), Some(artist))
