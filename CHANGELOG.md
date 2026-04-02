@@ -14,11 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tech debt**: Split `bot_api_logger.rs` (1,677 lines) via `include!()` — macro-generated `@method` arms moved to `bot_api_logger_methods.rs` — no functional changes
 
 ### Added
-- **Download pipeline optimizations for experimental mode** (v0.34.2):
+- **Download pipeline optimizations for experimental mode** (v0.34.2–0.34.3):
   - Skip redundant yt-dlp metadata call (~6s) by reading title/artist from preview cache
   - Increase concurrent fragments from 8 → 16 for faster segmented downloads
   - Use `hqdefault.jpg` thumbnail instead of `maxresdefault.jpg` to skip compress step (~0.6s)
   - Preview format buttons now show estimated file sizes for all qualities (bitrate × duration fallback)
+  - Skip ~6.5s livestream check by reading `is_live` from cached info JSON instead of yt-dlp network call
 - **Search by name** (v0.34.0) — type any song name (3+ chars) in chat → bot searches YouTube → shows results with download buttons. No URL needed. Rate-limited same as downloads
 - **URL canonicalization** (v0.34.1) — normalizes URL variants for aggressive file_id cache. `youtu.be/ID`, `m.youtube.com/shorts/ID`, `music.youtube.com/watch?v=ID&si=...` all share the same cache entry. Covers 12 platforms: YouTube, Instagram, TikTok, Twitter/X, Spotify, SoundCloud, Vimeo, VK, Reddit, Facebook, Twitch, Bandcamp. Strips universal tracking params (utm_*, fbclid, gclid, si, etc.)
 - Search results now respect user's format preference (mp3/mp4) from settings instead of hardcoded mp3

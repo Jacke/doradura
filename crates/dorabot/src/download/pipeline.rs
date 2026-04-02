@@ -250,7 +250,23 @@ pub async fn download_phase(
     }
 
     // Livestream check
-    if source.is_livestream(url).await {
+    // Experimental fast-path: read is_live from cached info JSON (~0ms) instead of a
+    // separate yt-dlp --print call (~6.5s). Falls back to full check on cache miss.
+    let is_live = if is_experimental {
+        match doracore::download::metadata::check_is_live_from_cache(url) {
+            Some(live) => {
+                log::info!(
+                    "Pipeline: is_live={} from cached info JSON (experimental, skipping yt-dlp check)",
+                    live
+                );
+                live
+            }
+            None => source.is_livestream(url).await,
+        }
+    } else {
+        source.is_livestream(url).await
+    };
+    if is_live {
         log::warn!("Pipeline: rejected livestream URL: {}", sanitize_for_log(url.as_str()));
         send_error_with_sticker_and_message(bot, chat_id, Some("❌ Live streams are not supported")).await;
         let _ = progress_msg

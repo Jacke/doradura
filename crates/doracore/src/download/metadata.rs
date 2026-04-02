@@ -1040,6 +1040,21 @@ pub async fn get_estimated_filesize(url: &Url) -> Option<u64> {
     }
 }
 
+/// Fast livestream check using cached info JSON (experimental mode).
+///
+/// Returns `Some(true)` if live, `Some(false)` if not live, `None` on cache miss.
+/// The cache file is written during the preview phase at `/tmp/ytdlp-info-{id}.json`.
+/// Avoids a ~6.5s yt-dlp network call when the info is already on disk.
+pub fn check_is_live_from_cache(url: &Url) -> Option<bool> {
+    let cache_path = crate::core::share::youtube_info_cache_path(url.as_str())?;
+    let content = fs::read_to_string(&cache_path).ok()?;
+    let json: serde_json::Value = serde_json::from_str(&content).ok()?;
+    // yt-dlp sets is_live to null for non-live videos, false when explicitly not live,
+    // and true when live. Treat null/missing as false.
+    let is_live = json.get("is_live").and_then(|v| v.as_bool()).unwrap_or(false);
+    Some(is_live)
+}
+
 /// Returns `true` if the URL points to a live stream.
 ///
 /// Used to reject live stream URLs before starting a download.
