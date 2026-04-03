@@ -163,6 +163,17 @@ pub fn extract_video_formats_from_json(json: &Value) -> Vec<VideoFormatInfo> {
             .or_else(|| format.get("filesize_approx"))
             .and_then(|v| v.as_u64());
 
+        // Fallback: estimate from tbr (kbits/s) × duration when yt-dlp omits file size
+        // for adaptive DASH streams (common for 720p+). Same formula as yt-dlp filesize_approx.
+        if size_bytes.is_none() {
+            if let (Some(tbr), Some(dur)) = (
+                format.get("tbr").and_then(|v| v.as_f64()),
+                json.get("duration").and_then(|v| v.as_f64()),
+            ) {
+                size_bytes = Some((tbr * 125.0 * dur) as u64); // tbr kbps × 1000/8 × secs
+            }
+        }
+
         let acodec = format.get("acodec").and_then(|v| v.as_str()).unwrap_or("");
         if acodec == "none" {
             if let (Some(size), Some(audio_size)) = (size_bytes, best_audio_size) {
