@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Inline speed modifier** (v0.35.0) — append `2x`, `1.5x`, or `speed2` after a time range when sending a URL: `URL 2:48:45-2:49:59 2x` → bot downloads the clip and applies speed via ffmpeg `setpts`/`atempo`. Works for both MP4 and MP3 downloads. Speed stored in `preview_contexts` table alongside time range
+
 ### Changed
 - **Tech debt**: Split `shared.rs` (6,920 lines) into `storage/shared/` module with 18 sub-files by domain (task_queue, users, subscriptions, analytics, etc.) — no functional changes
 - **Tech debt**: Split `web_server.rs` (3,923 lines) into `core/web/` module with 9 sub-files (public, auth, dashboard, admin_users, admin_queue, admin_errors, admin_misc, types, helpers) — no functional changes

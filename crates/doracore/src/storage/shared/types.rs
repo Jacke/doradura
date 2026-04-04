@@ -29,12 +29,13 @@ pub struct QueueTaskInput<'a> {
     pub idempotency_key: &'a str,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct PreviewContext {
     pub original_message_id: Option<i32>,
     pub time_range: Option<(String, String)>,
     pub burn_sub_lang: Option<String>,
     pub audio_lang: Option<String>,
+    pub speed: Option<f32>,
 }
 
 #[derive(Debug, Clone)]

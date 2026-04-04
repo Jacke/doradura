@@ -82,9 +82,10 @@ pub fn parse_command_segment(text: &str, video_duration: Option<i64>) -> Option<
 
 /// Parse time range from text following a URL.
 /// Accepts "HH:MM:SS-HH:MM:SS" or "MM:SS-MM:SS" after the URL.
-pub fn parse_download_time_range(text: &str, url_text: &str) -> Option<(String, String)> {
+pub fn parse_download_time_range(text: &str, url_text: &str) -> Option<(String, String, Option<f32>)> {
     let after = text.split(url_text).nth(1)?.trim();
-    let range_text = after.split_whitespace().next()?;
+    let mut parts = after.split_whitespace();
+    let range_text = parts.next()?;
     if range_text.is_empty() {
         return None;
     }
@@ -95,7 +96,14 @@ pub fn parse_download_time_range(text: &str, url_text: &str) -> Option<(String, 
     if end_secs <= start_secs {
         return None;
     }
-    Some((start_str.to_string(), end_str.to_string()))
+    // Check remaining text for speed modifier (e.g., "2x", "1.5x", "speed2")
+    let remaining: String = parts.collect::<Vec<_>>().join(" ");
+    let speed = if remaining.is_empty() {
+        None
+    } else {
+        parse_speed_modifier(&remaining)
+    };
+    Some((start_str.to_string(), end_str.to_string(), speed))
 }
 
 pub fn parse_time_range_secs(text: &str) -> Option<(i64, i64)> {
@@ -1854,7 +1862,7 @@ mod tests {
         let text = "https://youtu.be/abc123 00:01:00-00:02:30";
         let url = "https://youtu.be/abc123";
         let result = parse_download_time_range(text, url);
-        assert_eq!(result, Some(("00:01:00".to_string(), "00:02:30".to_string())));
+        assert_eq!(result, Some(("00:01:00".to_string(), "00:02:30".to_string(), None)));
     }
 
     #[test]
@@ -1862,7 +1870,7 @@ mod tests {
         let text = "https://youtu.be/abc123 01:00-02:30";
         let url = "https://youtu.be/abc123";
         let result = parse_download_time_range(text, url);
-        assert_eq!(result, Some(("01:00".to_string(), "02:30".to_string())));
+        assert_eq!(result, Some(("01:00".to_string(), "02:30".to_string(), None)));
     }
 
     #[test]
@@ -1870,7 +1878,7 @@ mod tests {
         let text = "https://youtu.be/abc123 01:00\u{2014}02:30";
         let url = "https://youtu.be/abc123";
         let result = parse_download_time_range(text, url);
-        assert_eq!(result, Some(("01:00".to_string(), "02:30".to_string())));
+        assert_eq!(result, Some(("01:00".to_string(), "02:30".to_string(), None)));
     }
 
     #[test]
@@ -1878,7 +1886,7 @@ mod tests {
         let text = "https://youtu.be/abc123 01:00\u{2013}02:30";
         let url = "https://youtu.be/abc123";
         let result = parse_download_time_range(text, url);
-        assert_eq!(result, Some(("01:00".to_string(), "02:30".to_string())));
+        assert_eq!(result, Some(("01:00".to_string(), "02:30".to_string(), None)));
     }
 
     #[test]
@@ -1910,7 +1918,23 @@ mod tests {
         let text = "https://youtu.be/abc123 00:10-00:30 some extra text";
         let url = "https://youtu.be/abc123";
         let result = parse_download_time_range(text, url);
-        assert_eq!(result, Some(("00:10".to_string(), "00:30".to_string())));
+        assert_eq!(result, Some(("00:10".to_string(), "00:30".to_string(), None)));
+    }
+
+    #[test]
+    fn test_parse_download_time_range_with_speed() {
+        let text = "https://youtu.be/abc123 2:48:45-2:49:59 2x";
+        let url = "https://youtu.be/abc123";
+        let result = parse_download_time_range(text, url);
+        assert_eq!(result, Some(("2:48:45".to_string(), "2:49:59".to_string(), Some(2.0))));
+    }
+
+    #[test]
+    fn test_parse_download_time_range_with_speed_1_5x() {
+        let text = "https://youtu.be/abc123 00:10-00:30 1.5x";
+        let url = "https://youtu.be/abc123";
+        let result = parse_download_time_range(text, url);
+        assert_eq!(result, Some(("00:10".to_string(), "00:30".to_string(), Some(1.5))));
     }
 
     #[test]

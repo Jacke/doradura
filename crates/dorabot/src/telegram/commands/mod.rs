@@ -905,12 +905,28 @@ pub async fn handle_message(
                     return Ok(user_info);
                 }
 
-                // Parse time range from text following the URL (e.g. "00:01:00-00:02:30")
-                let time_range = parse_download_time_range(text, url_text);
+                // Parse time range and optional speed from text following the URL
+                // e.g. "00:01:00-00:02:30" or "2:48:45-2:49:59 2x"
+                let parsed_range = parse_download_time_range(text, url_text);
+                let time_range = parsed_range.as_ref().map(|(s, e, _)| (s.clone(), e.clone()));
+                let speed = parsed_range.as_ref().and_then(|(_, _, s)| *s);
                 if let Some(ref tr) = time_range {
-                    log::info!("Parsed time range for {}: {} - {}", url, tr.0, tr.1);
+                    log::info!(
+                        "Parsed time range for {}: {} - {}{}",
+                        url,
+                        tr.0,
+                        tr.1,
+                        speed.map(|s| format!(" (speed: {}x)", s)).unwrap_or_default()
+                    );
                     let _ = shared_storage
-                        .upsert_preview_time_range(msg.chat.id.0, url.as_str(), &tr.0, &tr.1, PREVIEW_CONTEXT_TTL_SECS)
+                        .upsert_preview_time_range(
+                            msg.chat.id.0,
+                            url.as_str(),
+                            &tr.0,
+                            &tr.1,
+                            speed,
+                            PREVIEW_CONTEXT_TTL_SECS,
+                        )
                         .await;
                 }
 

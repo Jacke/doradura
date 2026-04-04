@@ -361,6 +361,7 @@ impl SharedStorage {
         url: &str,
         start: &str,
         end: &str,
+        speed: Option<f32>,
         ttl_secs: i64,
     ) -> Result<()> {
         match self {
@@ -375,6 +376,7 @@ impl SharedStorage {
                         time_range_end TEXT,
                         burn_sub_lang TEXT,
                         audio_lang TEXT,
+                        speed REAL,
                         created_at TEXT NOT NULL DEFAULT (datetime('now')),
                         expires_at TEXT NOT NULL,
                         PRIMARY KEY (user_id, url)
@@ -382,33 +384,42 @@ impl SharedStorage {
                     CREATE INDEX IF NOT EXISTS idx_preview_contexts_expires_at ON preview_contexts(expires_at);",
                 )
                 .context("sqlite ensure preview_contexts table")?;
+                // Add speed column to existing tables (harmless if already exists)
+                let _ = conn.execute("ALTER TABLE preview_contexts ADD COLUMN speed REAL", []);
                 conn.execute(
                     "INSERT INTO preview_contexts (
-                        user_id, url, time_range_start, time_range_end, created_at, expires_at
-                     ) VALUES (?1, ?2, ?3, ?4, datetime('now'), datetime('now', '+' || ?5 || ' seconds'))
+                        user_id, url, time_range_start, time_range_end, speed, created_at, expires_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, datetime('now'), datetime('now', '+' || ?6 || ' seconds'))
                      ON CONFLICT(user_id, url) DO UPDATE SET
                         time_range_start = excluded.time_range_start,
                         time_range_end = excluded.time_range_end,
+                        speed = excluded.speed,
                         expires_at = excluded.expires_at",
-                    rusqlite::params![user_id, url, start, end, ttl_secs],
+                    rusqlite::params![user_id, url, start, end, speed, ttl_secs],
                 )
                 .context("sqlite upsert_preview_time_range")?;
                 Ok(())
             }
             Self::Postgres { pg_pool, .. } => {
+                // Add speed column to existing tables (harmless if already exists)
+                let _ = sqlx::query("ALTER TABLE preview_contexts ADD COLUMN IF NOT EXISTS speed REAL")
+                    .execute(pg_pool)
+                    .await;
                 sqlx::query(
                     "INSERT INTO preview_contexts (
-                        user_id, url, time_range_start, time_range_end, created_at, expires_at
-                     ) VALUES ($1, $2, $3, $4, NOW(), NOW() + ($5 * INTERVAL '1 second'))
+                        user_id, url, time_range_start, time_range_end, speed, created_at, expires_at
+                     ) VALUES ($1, $2, $3, $4, $5, NOW(), NOW() + ($6 * INTERVAL '1 second'))
                      ON CONFLICT (user_id, url) DO UPDATE SET
                         time_range_start = EXCLUDED.time_range_start,
                         time_range_end = EXCLUDED.time_range_end,
+                        speed = EXCLUDED.speed,
                         expires_at = EXCLUDED.expires_at",
                 )
                 .bind(user_id)
                 .bind(url)
                 .bind(start)
                 .bind(end)
+                .bind(speed)
                 .bind(ttl_secs)
                 .execute(pg_pool)
                 .await
@@ -549,6 +560,7 @@ impl SharedStorage {
                         time_range_end TEXT,
                         burn_sub_lang TEXT,
                         audio_lang TEXT,
+                        speed REAL,
                         created_at TEXT NOT NULL DEFAULT (datetime('now')),
                         expires_at TEXT NOT NULL,
                         PRIMARY KEY (user_id, url)
@@ -556,9 +568,11 @@ impl SharedStorage {
                     CREATE INDEX IF NOT EXISTS idx_preview_contexts_expires_at ON preview_contexts(expires_at);",
                 )
                 .context("sqlite ensure preview_contexts table")?;
+                // Add speed column to existing tables (harmless if already exists)
+                let _ = conn.execute("ALTER TABLE preview_contexts ADD COLUMN speed REAL", []);
                 let row = conn
                     .query_row(
-                        "SELECT original_message_id, time_range_start, time_range_end, burn_sub_lang, audio_lang
+                        "SELECT original_message_id, time_range_start, time_range_end, burn_sub_lang, audio_lang, speed
                          FROM preview_contexts
                          WHERE user_id = ?1
                            AND url = ?2
@@ -575,6 +589,7 @@ impl SharedStorage {
                                 },
                                 burn_sub_lang: row.get(3)?,
                                 audio_lang: row.get(4)?,
+                                speed: row.get(5)?,
                             })
                         },
                     )
@@ -583,8 +598,12 @@ impl SharedStorage {
                 Ok(row)
             }
             Self::Postgres { pg_pool, .. } => {
+                // Add speed column to existing tables (harmless if already exists)
+                let _ = sqlx::query("ALTER TABLE preview_contexts ADD COLUMN IF NOT EXISTS speed REAL")
+                    .execute(pg_pool)
+                    .await;
                 let row = sqlx::query(
-                    "SELECT original_message_id, time_range_start, time_range_end, burn_sub_lang, audio_lang
+                    "SELECT original_message_id, time_range_start, time_range_end, burn_sub_lang, audio_lang, speed
                      FROM preview_contexts
                      WHERE user_id = $1
                        AND url = $2
@@ -595,17 +614,21 @@ impl SharedStorage {
                 .fetch_optional(pg_pool)
                 .await
                 .context("postgres get_preview_context")?;
-                Ok(row.map(|row| PreviewContext {
-                    original_message_id: row.get("original_message_id"),
-                    time_range: match (
-                        row.get::<Option<String>, _>("time_range_start"),
-                        row.get::<Option<String>, _>("time_range_end"),
-                    ) {
-                        (Some(start), Some(end)) => Some((start, end)),
-                        _ => None,
-                    },
-                    burn_sub_lang: row.get("burn_sub_lang"),
-                    audio_lang: row.get("audio_lang"),
+                Ok(row.map(|row| {
+                    let speed_f64: Option<f64> = row.get("speed");
+                    PreviewContext {
+                        original_message_id: row.get("original_message_id"),
+                        time_range: match (
+                            row.get::<Option<String>, _>("time_range_start"),
+                            row.get::<Option<String>, _>("time_range_end"),
+                        ) {
+                            (Some(start), Some(end)) => Some((start, end)),
+                            _ => None,
+                        },
+                        burn_sub_lang: row.get("burn_sub_lang"),
+                        audio_lang: row.get("audio_lang"),
+                        speed: speed_f64.map(|f| f as f32),
+                    }
                 }))
             }
         }

@@ -92,17 +92,18 @@ pub async fn download_and_send_video(
                 .with_label_values(&["mp4", quality])
                 .start_timer();
 
-            // Read audio_lang from preview context (set by the audio track picker button)
-            let audio_lang = if let Some(ref storage) = shared_storage_clone {
+            // Read audio_lang and speed from preview context
+            let preview_ctx = if let Some(ref storage) = shared_storage_clone {
                 storage
                     .get_preview_context(chat_id.0, url.as_str())
                     .await
                     .ok()
                     .flatten()
-                    .and_then(|ctx| ctx.audio_lang)
             } else {
                 None
             };
+            let audio_lang = preview_ctx.as_ref().and_then(|ctx| ctx.audio_lang.clone());
+            let speed = preview_ctx.as_ref().and_then(|ctx| ctx.speed);
 
             if let Some(ref lang) = audio_lang {
                 log::info!("🔊 Audio track language selected: '{}' for {}", lang, url);
@@ -216,6 +217,19 @@ pub async fn download_and_send_video(
                 if subs_start.elapsed().as_secs_f64() > 1.0 {
                     log::info!("⏱️ [BURN_SUBS] done in {:.1}s", subs_start.elapsed().as_secs_f64());
                 }
+
+                // Apply speed modification if requested (e.g. "2x" after time range)
+                let actual_file_path = if let Some(spd) = speed {
+                    match pipeline::apply_speed_to_file(&actual_file_path, spd).await {
+                        Ok(path) => path,
+                        Err(e) => {
+                            log::warn!("Speed filter failed, sending at original speed: {}", e);
+                            actual_file_path
+                        }
+                    }
+                } else {
+                    actual_file_path
+                };
 
                 // Get user preference for send_as_document
                 let send_as_document = if let Some(ref storage) = shared_storage_clone {

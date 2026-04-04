@@ -32,6 +32,77 @@ use teloxide::prelude::*;
 use teloxide::types::Message;
 use url::Url;
 
+/// Apply speed modification to a downloaded media file using ffmpeg.
+/// Replaces the original file in-place. Returns the (possibly new) file path.
+pub(crate) async fn apply_speed_to_file(file_path: &str, speed: f32) -> Result<String, String> {
+    if (speed - 1.0).abs() < 0.01 {
+        return Ok(file_path.to_string());
+    }
+    let speed_start = std::time::Instant::now();
+    let setpts_factor = 1.0 / speed as f64;
+    let atempo = if speed > 2.0 {
+        format!("atempo=2.0,atempo={}", speed / 2.0)
+    } else if speed < 0.5 {
+        format!("atempo=0.5,atempo={}", speed / 0.5)
+    } else {
+        format!("atempo={}", speed)
+    };
+
+    let ext = std::path::Path::new(file_path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("mp4");
+    let tmp_path = format!("{}.speed.{}", file_path.trim_end_matches(&format!(".{}", ext)), ext);
+
+    let mut cmd = tokio::process::Command::new("ffmpeg");
+    cmd.args(["-y", "-i", file_path]);
+
+    if ext == "mp3" || ext == "m4a" || ext == "ogg" || ext == "opus" {
+        // Audio-only: just atempo
+        cmd.args(["-af", &atempo]);
+    } else {
+        // Video + audio: setpts + atempo
+        let filter = format!("[0:v]setpts={}*PTS[v];[0:a]{}[a]", setpts_factor, atempo);
+        cmd.args([
+            "-filter_complex",
+            &filter,
+            "-map",
+            "[v]",
+            "-map",
+            "[a]",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "23",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+        ]);
+    }
+    cmd.arg(&tmp_path);
+
+    let output = cmd.output().await.map_err(|e| format!("ffmpeg speed failed: {}", e))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        log::error!("ffmpeg speed error: {}", stderr);
+        // Clean up temp file on failure
+        let _ = std::fs::remove_file(&tmp_path);
+        return Err(format!("ffmpeg speed error: {}", stderr));
+    }
+
+    // Replace original with speed-adjusted version
+    std::fs::rename(&tmp_path, file_path).map_err(|e| format!("rename failed: {}", e))?;
+    log::info!(
+        "⏱️ [SPEED_FILTER] {}x applied in {:.1}s",
+        speed,
+        speed_start.elapsed().as_secs_f64()
+    );
+    Ok(file_path.to_string())
+}
+
 /// Sanitize a user-controlled string before including it in a log message.
 ///
 /// Replaces newline and carriage-return characters with their escaped
@@ -646,12 +717,42 @@ pub async fn execute(
     )
     .await?;
     let DownloadPhaseResult {
-        output: download_output,
+        output: mut download_output,
         title,
         artist,
         display_title,
         caption,
     } = phase;
+
+    // ── Speed post-processing (read from preview context) ──
+    if let Some(storage) = shared_storage {
+        if let Some(speed) = storage
+            .get_preview_context(chat_id.0, url.as_str())
+            .await
+            .ok()
+            .flatten()
+            .and_then(|ctx| ctx.speed)
+        {
+            match apply_speed_to_file(&download_output.file_path, speed).await {
+                Ok(_) => {
+                    // Update file size after speed change
+                    if let Ok(meta) = std::fs::metadata(&download_output.file_path) {
+                        download_output.file_size = meta.len();
+                    }
+                    // Update duration: original / speed
+                    if let Some(dur) = download_output.duration_secs {
+                        download_output.duration_secs = Some(((dur as f64) / speed as f64).round() as u32);
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Speed filter failed in audio pipeline, sending at original speed: {}",
+                        e
+                    );
+                }
+            }
+        }
+    }
 
     let max_size = format.max_file_size();
 
