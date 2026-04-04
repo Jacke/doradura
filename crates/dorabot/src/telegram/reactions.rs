@@ -10,20 +10,12 @@ pub mod emoji {
     pub const EYES: &str = "👀";
     /// "Thumbs up" reaction - for successful completion
     pub const THUMBS_UP: &str = "👍";
-    /// "Party" reaction - for successful completion (alternative)
-    pub const PARTY: &str = "🎉";
     /// "Fire" reaction - for active process indication
     pub const FIRE: &str = "🔥";
     /// "Lightning" reaction - for fast operations
     pub const ZAP: &str = "⚡";
-    /// "Heart" reaction - for favorites/likes
-    pub const HEART: &str = "❤️";
-    /// "Thinking" reaction - for processing/thinking
-    pub const THINKING: &str = "🤔";
     /// "Sad" reaction - for failures
     pub const SAD: &str = "😢";
-    /// "Developer" reaction - for technical operations
-    pub const DEVELOPER: &str = "👨‍💻";
 }
 
 /// Returns the appropriate success reaction emoji based on file format.

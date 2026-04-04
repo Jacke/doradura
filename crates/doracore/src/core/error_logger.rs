@@ -50,23 +50,6 @@ impl ErrorType {
             ErrorType::Other => "other",
         }
     }
-
-    /// Returns emoji for the error type
-    pub fn emoji(&self) -> &'static str {
-        match self {
-            ErrorType::DownloadFailed => "📥",
-            ErrorType::FileTooLarge => "📦",
-            ErrorType::MtProtoError => "🔌",
-            ErrorType::FileReferenceExpired => "⏰",
-            ErrorType::TelegramApiError => "📱",
-            ErrorType::FfmpegError => "🎬",
-            ErrorType::RateLimitExceeded => "🚦",
-            ErrorType::InvalidUrl => "🔗",
-            ErrorType::Timeout => "⏱️",
-            ErrorType::PermissionDenied => "🔒",
-            ErrorType::Other => "❓",
-        }
-    }
 }
 
 /// User context for error logging
@@ -82,10 +65,6 @@ impl UserContext {
             user_id: Some(user_id),
             username,
         }
-    }
-
-    pub fn anonymous() -> Self {
-        Self::default()
     }
 }
 
@@ -149,65 +128,6 @@ impl ErrorLogger {
             }
         });
     }
-
-    /// Logs a download failure
-    pub fn log_download_error(&self, user: &UserContext, url: &str, error_message: &str, format: Option<&str>) {
-        let context = format.map(|f| format!(r#"{{"format":"{}"}}"#, f));
-        self.log(
-            ErrorType::DownloadFailed,
-            error_message,
-            user,
-            Some(url),
-            context.as_deref(),
-        );
-    }
-
-    /// Logs a file too large error
-    pub fn log_file_too_large(&self, user: &UserContext, url: Option<&str>, file_size: u64, max_size: u64) {
-        let message = format!("File too large: {} bytes (max: {} bytes)", file_size, max_size);
-        let context = format!(r#"{{"file_size":{},"max_size":{}}}"#, file_size, max_size);
-        self.log(ErrorType::FileTooLarge, &message, user, url, Some(&context));
-    }
-
-    /// Logs an MTProto error
-    pub fn log_mtproto_error(&self, user: &UserContext, error_message: &str, message_id: Option<i32>) {
-        let context = message_id.map(|id| format!(r#"{{"message_id":{}}}"#, id));
-        self.log(ErrorType::MtProtoError, error_message, user, None, context.as_deref());
-    }
-
-    /// Logs a Telegram API error
-    pub fn log_telegram_error(&self, user: &UserContext, error_message: &str, file_id: Option<&str>) {
-        let context = file_id.map(|id| format!(r#"{{"file_id":"{}"}}"#, id));
-        self.log(
-            ErrorType::TelegramApiError,
-            error_message,
-            user,
-            None,
-            context.as_deref(),
-        );
-    }
-
-    /// Logs an FFmpeg error
-    pub fn log_ffmpeg_error(&self, user: &UserContext, error_message: &str, operation: &str) {
-        let context = format!(r#"{{"operation":"{}"}}"#, operation);
-        self.log(ErrorType::FfmpegError, error_message, user, None, Some(&context));
-    }
-
-    /// Logs an invalid URL error
-    pub fn log_invalid_url(&self, user: &UserContext, url: &str, reason: &str) {
-        self.log(ErrorType::InvalidUrl, reason, user, Some(url), None);
-    }
-
-    /// Logs a timeout error
-    pub fn log_timeout(&self, user: &UserContext, url: Option<&str>, operation: &str) {
-        let message = format!("Operation timed out: {}", operation);
-        self.log(ErrorType::Timeout, &message, user, url, None);
-    }
-
-    /// Logs a generic error
-    pub fn log_other(&self, user: &UserContext, error_message: &str, url: Option<&str>) {
-        self.log(ErrorType::Other, error_message, user, url, None);
-    }
 }
 
 /// Global error logger instance (initialized at startup)
@@ -217,11 +137,6 @@ static ERROR_LOGGER: std::sync::OnceLock<ErrorLogger> = std::sync::OnceLock::new
 pub fn init_error_logger(shared_storage: Arc<SharedStorage>) {
     let _ = ERROR_LOGGER.set(ErrorLogger::new(shared_storage));
     log::info!("Error logger initialized");
-}
-
-/// Gets the global error logger, or `None` if not yet initialized.
-pub fn get_error_logger() -> Option<&'static ErrorLogger> {
-    try_get_error_logger()
 }
 
 /// Tries to get the global error logger (returns None if not initialized)

@@ -313,33 +313,6 @@ impl RateLimiter {
             }
         });
     }
-
-    /// Spawns a background task with graceful shutdown support.
-    pub fn spawn_cleanup_task_with_shutdown(
-        self: Arc<Self>,
-        interval: Duration,
-        mut shutdown_rx: tokio::sync::broadcast::Receiver<()>,
-    ) -> tokio::task::JoinHandle<()> {
-        if matches!(self.backend, RateLimiterBackend::Redis(_)) {
-            return tokio::spawn(async move {
-                let _ = shutdown_rx.recv().await;
-            });
-        }
-        tokio::spawn(async move {
-            let mut interval_timer = tokio::time::interval(interval);
-            loop {
-                tokio::select! {
-                    _ = interval_timer.tick() => {
-                        self.cleanup_expired().await;
-                    }
-                    _ = shutdown_rx.recv() => {
-                        log::info!("Rate limiter cleanup task received shutdown signal");
-                        break;
-                    }
-                }
-            }
-        })
-    }
 }
 
 #[cfg(test)]
