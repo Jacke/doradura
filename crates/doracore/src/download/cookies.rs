@@ -272,21 +272,10 @@ impl ParsedCookie {
     pub fn expiration_date(&self) -> String {
         match self.expires {
             Some(0) => "session".to_string(),
-            Some(ts) => {
-                use std::time::{Duration, UNIX_EPOCH};
-                let datetime = UNIX_EPOCH + Duration::from_secs(ts as u64);
-                // Format as simple date
-                let secs_since_epoch = datetime.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-
-                // Simple date calculation
-                let days_since_1970 = secs_since_epoch / 86400;
-                let years = 1970 + (days_since_1970 / 365);
-                let remaining_days = days_since_1970 % 365;
-                let month = remaining_days / 30 + 1;
-                let day = remaining_days % 30 + 1;
-
-                format!("{:04}-{:02}-{:02}", years, month.min(12), day.min(31))
-            }
+            Some(ts) => match chrono::DateTime::from_timestamp(ts, 0) {
+                Some(dt) => dt.format("%Y-%m-%d").to_string(),
+                None => "Unknown".to_string(),
+            },
             None => "unknown".to_string(),
         }
     }

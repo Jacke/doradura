@@ -729,15 +729,21 @@ async fn replace_audio_track(video_path: &str, url: &Url, lang: &str) -> String 
         let parent = std::path::Path::new(&audio_path)
             .parent()
             .unwrap_or(std::path::Path::new("."));
-        let found = std::fs::read_dir(parent)
-            .ok()
-            .and_then(|entries| {
-                entries.flatten().find(|e| {
-                    e.path().to_string_lossy().contains(".dubbed_audio.")
+        let found = match tokio::fs::read_dir(parent).await {
+            Ok(mut entries) => {
+                let mut result = None;
+                while let Ok(Some(e)) = entries.next_entry().await {
+                    if e.path().to_string_lossy().contains(".dubbed_audio.")
                         && e.path().to_string_lossy().starts_with(&video_path_owned)
-                })
-            })
-            .map(|e| e.path().to_string_lossy().to_string());
+                    {
+                        result = Some(e.path().to_string_lossy().to_string());
+                        break;
+                    }
+                }
+                result
+            }
+            Err(_) => None,
+        };
 
         match found {
             Some(p) => {
@@ -783,27 +789,27 @@ async fn replace_audio_track(video_path: &str, url: &Url, lang: &str) -> String 
         Ok(output) if output.status.success() => {
             log::info!("🔊 Audio replaced successfully");
             // Replace original with merged
-            if std::fs::rename(&merged_path, video_path).is_err() {
-                if let Err(e) = std::fs::copy(&merged_path, video_path) {
+            if tokio::fs::rename(&merged_path, video_path).await.is_err() {
+                if let Err(e) = tokio::fs::copy(&merged_path, video_path).await {
                     log::error!("🔊 Failed to copy merged file: {}", e);
                 }
-                if let Err(e) = std::fs::remove_file(&merged_path) {
+                if let Err(e) = tokio::fs::remove_file(&merged_path).await {
                     log::warn!("🔊 Failed to clean up merged file: {}", e);
                 }
             }
-            let _ = std::fs::remove_file(&actual_audio);
+            let _ = tokio::fs::remove_file(&actual_audio).await;
             video_path.to_string()
         }
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             log::error!("🔊 ffmpeg failed: {}", &stderr[..stderr.len().min(300)]);
-            let _ = std::fs::remove_file(&merged_path);
-            let _ = std::fs::remove_file(&actual_audio);
+            let _ = tokio::fs::remove_file(&merged_path).await;
+            let _ = tokio::fs::remove_file(&actual_audio).await;
             video_path.to_string()
         }
         Err(e) => {
             log::error!("🔊 ffmpeg exec error: {}", e);
-            let _ = std::fs::remove_file(&actual_audio);
+            let _ = tokio::fs::remove_file(&actual_audio).await;
             video_path.to_string()
         }
     }
@@ -894,16 +900,21 @@ async fn maybe_burn_subtitles(
     match subtitle_output {
         Ok(output) if output.status.success() => {
             // Find actual subtitle file (yt-dlp may add language suffix)
-            let subtitle_file = std::fs::read_dir(&download_folder).ok().and_then(|entries| {
-                entries
-                    .filter_map(Result::ok)
-                    .find(|entry| {
+            let subtitle_file = match tokio::fs::read_dir(&download_folder).await {
+                Ok(mut entries) => {
+                    let mut result = None;
+                    while let Ok(Some(entry)) = entries.next_entry().await {
                         let name = entry.file_name();
                         let name_str = name.to_string_lossy();
-                        name_str.contains(safe_base) && name_str.ends_with(".srt")
-                    })
-                    .map(|entry| entry.path().display().to_string())
-            });
+                        if name_str.contains(safe_base) && name_str.ends_with(".srt") {
+                            result = Some(entry.path().display().to_string());
+                            break;
+                        }
+                    }
+                    result
+                }
+                Err(_) => None,
+            };
 
             if let Some(sub_file) = subtitle_file {
                 log::info!("Subtitles downloaded: {}", sub_file);
@@ -913,13 +924,13 @@ async fn maybe_burn_subtitles(
                 match burn_subtitles_into_video(file_path, &sub_file, &output_with_subs, &subtitle_style).await {
                     Ok(_) => {
                         log::info!("Successfully burned subtitles into video");
-                        let _ = std::fs::remove_file(file_path);
-                        let _ = std::fs::remove_file(&sub_file);
+                        let _ = tokio::fs::remove_file(file_path).await;
+                        let _ = tokio::fs::remove_file(&sub_file).await;
                         return output_with_subs;
                     }
                     Err(e) => {
                         log::error!("Failed to burn subtitles: {}. Using original.", e);
-                        let _ = std::fs::remove_file(&sub_file);
+                        let _ = tokio::fs::remove_file(&sub_file).await;
                     }
                 }
             } else {

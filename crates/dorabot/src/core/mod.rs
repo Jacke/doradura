@@ -46,3 +46,13 @@ pub use utils::{
 /// Alias for backward compatibility — use `escape_markdown_v2`.
 pub use utils::escape_markdown_v2 as escape_markdown;
 pub use utils::escape_markdown_v2_url as escape_markdown_url;
+
+/// Log a warning if the result is an error, but don't propagate it.
+///
+/// Use for fire-and-forget operations (DB cleanup, session deletion, cache writes)
+/// that should still be visible in logs rather than silently swallowed with `let _ =`.
+pub(crate) fn log_if_err<T, E: std::fmt::Display>(result: Result<T, E>, context: &str) {
+    if let Err(e) = result {
+        log::warn!("{}: {}", context, e);
+    }
+}

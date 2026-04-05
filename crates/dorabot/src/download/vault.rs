@@ -85,7 +85,10 @@ pub fn send_to_vault_background(
                     || err_str.contains("not enough rights")
                 {
                     log::warn!("Vault send failed (deactivating): {}", err_str);
-                    let _ = shared_storage.deactivate_user_vault(user_id).await;
+                    crate::core::log_if_err(
+                        shared_storage.deactivate_user_vault(user_id).await,
+                        "Failed to deactivate vault after send error",
+                    );
                 } else {
                     log::warn!("Vault send failed: {}", err_str);
                 }

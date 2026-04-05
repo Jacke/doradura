@@ -93,7 +93,10 @@ pub async fn get_search_session(shared_storage: &Arc<SharedStorage>, user_id: i6
 }
 
 pub async fn clear_search_session(shared_storage: &Arc<SharedStorage>, user_id: i64) {
-    let _ = shared_storage.delete_search_session(user_id).await;
+    crate::core::log_if_err(
+        shared_storage.delete_search_session(user_id).await,
+        "Failed to delete search session",
+    );
 }
 
 // ── Perform search and show results ───────────────────────────────────────

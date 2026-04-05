@@ -1,3 +1,5 @@
+use std::sync::OnceLock;
+
 use anyhow::{Context, Result};
 use rusqlite::OptionalExtension;
 use sqlx::Row;
@@ -6,6 +8,34 @@ use crate::storage::db;
 
 use super::types::PreviewContext;
 use super::SharedStorage;
+
+/// Ensures the `preview_contexts` table exists with all columns (including `speed`).
+/// Uses `OnceLock` so the DDL only executes once per process lifetime.
+fn ensure_preview_contexts_table(conn: &rusqlite::Connection) -> std::result::Result<(), rusqlite::Error> {
+    static INIT: OnceLock<()> = OnceLock::new();
+    INIT.get_or_init(|| {
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS preview_contexts (
+                user_id INTEGER NOT NULL,
+                url TEXT NOT NULL,
+                original_message_id INTEGER,
+                time_range_start TEXT,
+                time_range_end TEXT,
+                burn_sub_lang TEXT,
+                audio_lang TEXT,
+                speed REAL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                expires_at TEXT NOT NULL,
+                PRIMARY KEY (user_id, url)
+            );
+            CREATE INDEX IF NOT EXISTS idx_preview_contexts_expires_at ON preview_contexts(expires_at);",
+        )
+        .expect("failed to create preview_contexts table");
+        // Add speed column for tables that were created before this column existed.
+        let _ = conn.execute("ALTER TABLE preview_contexts ADD COLUMN speed REAL", []);
+    });
+    Ok(())
+}
 
 impl SharedStorage {
     pub async fn upsert_search_session(
@@ -306,22 +336,7 @@ impl SharedStorage {
         match self {
             Self::Sqlite { db_pool } => {
                 let conn = db::get_connection(db_pool).context("sqlite upsert_preview_link_message connection")?;
-                conn.execute_batch(
-                    "CREATE TABLE IF NOT EXISTS preview_contexts (
-                        user_id INTEGER NOT NULL,
-                        url TEXT NOT NULL,
-                        original_message_id INTEGER,
-                        time_range_start TEXT,
-                        time_range_end TEXT,
-                        burn_sub_lang TEXT,
-                        audio_lang TEXT,
-                        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                        expires_at TEXT NOT NULL,
-                        PRIMARY KEY (user_id, url)
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_preview_contexts_expires_at ON preview_contexts(expires_at);",
-                )
-                .context("sqlite ensure preview_contexts table")?;
+                ensure_preview_contexts_table(&conn).context("sqlite ensure preview_contexts table")?;
                 conn.execute(
                     "INSERT INTO preview_contexts (
                         user_id, url, original_message_id, created_at, expires_at
@@ -367,25 +382,7 @@ impl SharedStorage {
         match self {
             Self::Sqlite { db_pool } => {
                 let conn = db::get_connection(db_pool).context("sqlite upsert_preview_time_range connection")?;
-                conn.execute_batch(
-                    "CREATE TABLE IF NOT EXISTS preview_contexts (
-                        user_id INTEGER NOT NULL,
-                        url TEXT NOT NULL,
-                        original_message_id INTEGER,
-                        time_range_start TEXT,
-                        time_range_end TEXT,
-                        burn_sub_lang TEXT,
-                        audio_lang TEXT,
-                        speed REAL,
-                        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                        expires_at TEXT NOT NULL,
-                        PRIMARY KEY (user_id, url)
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_preview_contexts_expires_at ON preview_contexts(expires_at);",
-                )
-                .context("sqlite ensure preview_contexts table")?;
-                // Add speed column to existing tables (harmless if already exists)
-                let _ = conn.execute("ALTER TABLE preview_contexts ADD COLUMN speed REAL", []);
+                ensure_preview_contexts_table(&conn).context("sqlite ensure preview_contexts table")?;
                 conn.execute(
                     "INSERT INTO preview_contexts (
                         user_id, url, time_range_start, time_range_end, speed, created_at, expires_at
@@ -439,22 +436,7 @@ impl SharedStorage {
         match self {
             Self::Sqlite { db_pool } => {
                 let conn = db::get_connection(db_pool).context("sqlite set_preview_burn_sub_lang connection")?;
-                conn.execute_batch(
-                    "CREATE TABLE IF NOT EXISTS preview_contexts (
-                        user_id INTEGER NOT NULL,
-                        url TEXT NOT NULL,
-                        original_message_id INTEGER,
-                        time_range_start TEXT,
-                        time_range_end TEXT,
-                        burn_sub_lang TEXT,
-                        audio_lang TEXT,
-                        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                        expires_at TEXT NOT NULL,
-                        PRIMARY KEY (user_id, url)
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_preview_contexts_expires_at ON preview_contexts(expires_at);",
-                )
-                .context("sqlite ensure preview_contexts table")?;
+                ensure_preview_contexts_table(&conn).context("sqlite ensure preview_contexts table")?;
                 conn.execute(
                     "INSERT INTO preview_contexts (
                         user_id, url, burn_sub_lang, created_at, expires_at
@@ -498,22 +480,7 @@ impl SharedStorage {
         match self {
             Self::Sqlite { db_pool } => {
                 let conn = db::get_connection(db_pool).context("sqlite set_preview_audio_lang connection")?;
-                conn.execute_batch(
-                    "CREATE TABLE IF NOT EXISTS preview_contexts (
-                        user_id INTEGER NOT NULL,
-                        url TEXT NOT NULL,
-                        original_message_id INTEGER,
-                        time_range_start TEXT,
-                        time_range_end TEXT,
-                        burn_sub_lang TEXT,
-                        audio_lang TEXT,
-                        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                        expires_at TEXT NOT NULL,
-                        PRIMARY KEY (user_id, url)
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_preview_contexts_expires_at ON preview_contexts(expires_at);",
-                )
-                .context("sqlite ensure preview_contexts table")?;
+                ensure_preview_contexts_table(&conn).context("sqlite ensure preview_contexts table")?;
                 conn.execute(
                     "INSERT INTO preview_contexts (
                         user_id, url, audio_lang, created_at, expires_at
@@ -551,25 +518,7 @@ impl SharedStorage {
         match self {
             Self::Sqlite { db_pool } => {
                 let conn = db::get_connection(db_pool).context("sqlite get_preview_context connection")?;
-                conn.execute_batch(
-                    "CREATE TABLE IF NOT EXISTS preview_contexts (
-                        user_id INTEGER NOT NULL,
-                        url TEXT NOT NULL,
-                        original_message_id INTEGER,
-                        time_range_start TEXT,
-                        time_range_end TEXT,
-                        burn_sub_lang TEXT,
-                        audio_lang TEXT,
-                        speed REAL,
-                        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                        expires_at TEXT NOT NULL,
-                        PRIMARY KEY (user_id, url)
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_preview_contexts_expires_at ON preview_contexts(expires_at);",
-                )
-                .context("sqlite ensure preview_contexts table")?;
-                // Add speed column to existing tables (harmless if already exists)
-                let _ = conn.execute("ALTER TABLE preview_contexts ADD COLUMN speed REAL", []);
+                ensure_preview_contexts_table(&conn).context("sqlite ensure preview_contexts table")?;
                 let row = conn
                     .query_row(
                         "SELECT original_message_id, time_range_start, time_range_end, burn_sub_lang, audio_lang, speed

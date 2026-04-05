@@ -143,8 +143,14 @@ pub async fn stop_player(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbPool>, shar
             }
         }
 
-        let _ = shared_storage.delete_player_messages(chat_id.0).await;
-        let _ = shared_storage.delete_player_session(chat_id.0).await;
+        crate::core::log_if_err(
+            shared_storage.delete_player_messages(chat_id.0).await,
+            "Failed to delete player messages",
+        );
+        crate::core::log_if_err(
+            shared_storage.delete_player_session(chat_id.0).await,
+            "Failed to delete player session",
+        );
     }
 
     // Restore default bot commands for this chat

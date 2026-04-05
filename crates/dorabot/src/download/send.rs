@@ -19,7 +19,6 @@ use crate::download::thumbnail::{
 use crate::telegram::Bot;
 use rand::Rng;
 use std::collections::HashMap;
-use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -274,8 +273,7 @@ pub async fn send_error_with_sticker(bot: &Bot, chat_id: ChatId) {
 /// * `chat_id` - The chat ID to send the sticker to
 /// * `custom_message` - Optional custom error message (uses default if None)
 pub async fn send_error_with_sticker_and_message(bot: &Bot, chat_id: ChatId, custom_message: Option<&str>) {
-    // List of sticker file_ids from doraduradoradura sticker pack
-    let sticker_file_ids = vec![
+    static ERROR_STICKERS: &[&str] = &[
         "CAACAgIAAxUAAWj-ZokEQu5YpTnjl6IWPzCQZ0UUAAJCEwAC52QwSC6nTghQdw-KNgQ",
         "CAACAgIAAxUAAWj-ZomIQgQKKpbMZA0_VDzfavIiAAK1GgACt8dBSNRj5YvFS-dmNgQ",
         "CAACAgIAAxUAAWj-Zokct93wagdDXh1JbhxBIyJOAALzFwACoktASAOjHltqzx0ENgQ",
@@ -294,8 +292,8 @@ pub async fn send_error_with_sticker_and_message(bot: &Bot, chat_id: ChatId, cus
     ];
 
     // Generate random index using proper random number generator
-    let random_index = rand::thread_rng().gen_range(0..sticker_file_ids.len());
-    let random_sticker_id = sticker_file_ids[random_index];
+    let random_index = rand::thread_rng().gen_range(0..ERROR_STICKERS.len());
+    let random_sticker_id = ERROR_STICKERS[random_index];
 
     // Send random sticker
     if let Err(e) = bot
@@ -371,7 +369,8 @@ where
     let send_start = std::time::Instant::now();
 
     // Validate file size before sending
-    let file_size = fs::metadata(&download_path)
+    let file_size = tokio::fs::metadata(&download_path)
+        .await
         .map_err(|e| {
             AppError::Download(DownloadError::FileNotFound(format!(
                 "Failed to get file metadata: {}",
@@ -954,7 +953,8 @@ pub async fn send_video_with_retry(
     let height = video_metadata.and_then(|(_, _, h)| h);
 
     // Check file size
-    let file_size = fs::metadata(download_path)
+    let file_size = tokio::fs::metadata(download_path)
+        .await
         .map_err(|e| {
             AppError::Download(DownloadError::FileNotFound(format!(
                 "Failed to get file metadata: {}",
@@ -1125,7 +1125,7 @@ pub async fn send_video_with_retry(
                 .unwrap_or_else(|_| temp_path.clone())
         };
 
-        if fs::write(&abs_path, &final_bytes).is_ok() {
+        if tokio::fs::write(&abs_path, &final_bytes).await.is_ok() {
             log::info!(
                 "[THUMBNAIL] Saved thumbnail to temporary file: {:?} ({} bytes)",
                 abs_path,
@@ -1220,7 +1220,7 @@ pub async fn send_video_with_retry(
                             "[THUMBNAIL] Adding thumbnail from file: {} (exists: {}, size: {} bytes)",
                             abs_path_str,
                             thumb_path.exists(),
-                            fs::metadata(&thumb_path).map(|m| m.len()).unwrap_or(0)
+                            tokio::fs::metadata(&thumb_path).await.map(|m| m.len()).unwrap_or(0)
                         );
                         video_msg = video_msg.thumbnail(InputFile::file(abs_path_str));
                         log::info!("[THUMBNAIL] Thumbnail successfully added to video message");
@@ -1262,11 +1262,11 @@ pub async fn send_video_with_retry(
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
         if result.is_ok() {
-            let _ = fs::remove_file(&thumb_path);
+            let _ = tokio::fs::remove_file(&thumb_path).await;
             log::info!("[THUMBNAIL] Cleaned up temporary thumbnail file: {:?}", thumb_path);
         } else {
             // On error also delete, as retry will create new file
-            let _ = fs::remove_file(&thumb_path);
+            let _ = tokio::fs::remove_file(&thumb_path).await;
             log::info!(
                 "[THUMBNAIL] Cleaned up temporary thumbnail file after error: {:?}",
                 thumb_path

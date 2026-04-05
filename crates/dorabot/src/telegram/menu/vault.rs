@@ -70,15 +70,21 @@ _Or send the channel @username or t\\.me/username link_";
                 .await;
         }
         "disable" => {
-            let _ = shared_storage.deactivate_user_vault(chat_id.0).await;
+            crate::core::log_if_err(
+                shared_storage.deactivate_user_vault(chat_id.0).await,
+                "Failed to deactivate vault",
+            );
             show_vault_menu(bot, chat_id, message_id, &db_pool, &shared_storage).await;
         }
         "enable" => {
-            let _ = shared_storage.activate_user_vault(chat_id.0).await;
+            crate::core::log_if_err(
+                shared_storage.activate_user_vault(chat_id.0).await,
+                "Failed to activate vault",
+            );
             show_vault_menu(bot, chat_id, message_id, &db_pool, &shared_storage).await;
         }
         "clear" => {
-            let _ = shared_storage.clear_vault_cache(chat_id.0).await;
+            crate::core::log_if_err(shared_storage.clear_vault_cache(chat_id.0).await, "vault clear_cache");
             let _ = bot
                 .edit_message_text(chat_id, message_id, "\u{1f5d1} Cache cleared.")
                 .reply_markup(InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(
@@ -88,8 +94,8 @@ _Or send the channel @username or t\\.me/username link_";
                 .await;
         }
         "disconnect" => {
-            let _ = shared_storage.clear_vault_cache(chat_id.0).await;
-            let _ = shared_storage.delete_user_vault(chat_id.0).await;
+            crate::core::log_if_err(shared_storage.clear_vault_cache(chat_id.0).await, "vault clear_cache");
+            crate::core::log_if_err(shared_storage.delete_user_vault(chat_id.0).await, "vault delete");
             let _ = bot
                 .edit_message_text(chat_id, message_id, "\u{2705} Vault disconnected.")
                 .reply_markup(InlineKeyboardMarkup::new(vec![vec![InlineKeyboardButton::callback(

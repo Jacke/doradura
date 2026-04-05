@@ -4,9 +4,11 @@
 
 Do what the user asks directly. Do not suggest the user do tasks manually — execute them yourself using available tools. If a tool is restricted, find an alternative approach.
 
+Never delete, overwrite, or modify user files/assets without explicit permission. Always ask before destructive actions.
+
 ## Build & Verify
 
-Primary languages: Rust and Go. Use `cargo check` for Rust and `go build` for Go after every edit. For Rust, ensure no Send/Sync issues with async code — gather DB data before async calls.
+Primary languages: Rust and Go. Use `cargo check` for Rust and `go build` for Go after every edit. For Rust, ensure no Send/Sync issues with async code — gather DB data before async calls. Use `printf` instead of `echo` for anything with escape sequences in shell scripts.
 
 # ⛔⛔⛔ STOP! READ THIS FIRST ⛔⛔⛔
 

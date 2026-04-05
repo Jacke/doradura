@@ -535,8 +535,8 @@ pub async fn split_video_into_parts(path: &str, target_part_size_bytes: u64) -> 
 /// 1. Removes consecutive entries with identical text (YouTube "builds up" captions)
 /// 2. Trims end times so entry N-1 ends when entry N starts (no overlap)
 /// 3. Re-numbers entries sequentially
-pub fn clean_srt_overlaps(path: &str) {
-    let content = match fs::read_to_string(path) {
+pub async fn clean_srt_overlaps(path: &str) {
+    let content = match tokio::fs::read_to_string(path).await {
         Ok(c) => c,
         Err(e) => {
             log::warn!("Could not read SRT for cleanup: {e}");
@@ -606,7 +606,7 @@ pub fn clean_srt_overlaps(path: &str) {
         out.push_str(&format!("{}\n{} --> {}\n{}\n", i + 1, start, end, text));
     }
 
-    if let Err(e) = fs::write(path, &out) {
+    if let Err(e) = tokio::fs::write(path, &out).await {
         log::warn!("Could not write cleaned SRT: {e}");
     } else {
         log::info!("🧹 Cleaned SRT overlaps: {path}");
@@ -656,7 +656,7 @@ pub async fn burn_subtitles_into_video(
     }
 
     // Clean overlapping timestamps from YouTube auto-captions
-    clean_srt_overlaps(subtitle_path);
+    clean_srt_overlaps(subtitle_path).await;
 
     // Escape subtitle path for ffmpeg filter syntax.
     // ffmpeg filter strings interpret: \ ' : [ ] ; , = as special chars.

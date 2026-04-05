@@ -131,7 +131,22 @@ pub fn youtube_info_cache_path(url: &str) -> Option<String> {
     extract_youtube_video_id(url).map(|vid| format!("/tmp/ytdlp-info-{}.json", vid))
 }
 
-/// Returns true if the URL is a YouTube URL.
+/// YouTube domains to match against (host must equal or be a subdomain of these).
+const YOUTUBE_DOMAINS: &[&str] = &["youtube.com", "youtu.be"];
+
+/// Returns true if the URL belongs to YouTube (including music.youtube.com, m.youtube.com, etc.).
+///
+/// Uses proper URL parsing to avoid false positives like `notyoutube.com`.
 pub fn is_youtube_url(url: &str) -> bool {
-    url.contains("youtube.com/") || url.contains("youtu.be/")
+    let parsed = match url::Url::parse(url) {
+        Ok(u) => u,
+        Err(_) => return false,
+    };
+    let host = match parsed.host_str() {
+        Some(h) => h.to_lowercase(),
+        None => return false,
+    };
+    YOUTUBE_DOMAINS.iter().any(|d| {
+        host == *d || (host.len() > d.len() && host.ends_with(d) && host.as_bytes()[host.len() - d.len() - 1] == b'.')
+    })
 }
