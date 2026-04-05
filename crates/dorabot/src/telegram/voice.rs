@@ -139,7 +139,7 @@ pub async fn send_voice_with_waveform(bot: Bot, chat_id: ChatId, voice_file_path
             }
 
             // Remove temporary OGG file
-            if let Err(e) = std::fs::remove_file(&ogg_path) {
+            if let Err(e) = tokio::fs::remove_file(&ogg_path).await {
                 log::warn!("Failed to remove temporary OGG file {}: {}", ogg_path, e);
             }
         }

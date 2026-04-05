@@ -275,7 +275,8 @@ impl DownloadSource for VlipsySource {
             .await
             .map_err(|e| AppError::Download(DownloadError::Vlipsy(format!("Failed to flush file: {}", e))))?;
 
-        let file_size = std::fs::metadata(&request.output_path)
+        let file_size = tokio::fs::metadata(&request.output_path)
+            .await
             .map(|m| m.len())
             .unwrap_or(downloaded);
 

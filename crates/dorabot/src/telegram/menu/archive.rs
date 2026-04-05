@@ -497,7 +497,7 @@ async fn handle_build(
         .edit_message_text(chat_id, message_id, "📦 Sending archive...")
         .await;
 
-    let zip_file_size = std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);
+    let zip_file_size = tokio::fs::metadata(&zip_path).await.map(|m| m.len()).unwrap_or(0);
     let caption = format!(
         "📦 Archive: {} files ({})",
         downloaded_files.len(),

@@ -49,7 +49,7 @@ pub async fn download_file_from_telegram(
     } else {
         // Create downloads directory if it doesn't exist
         let downloads_dir = PathBuf::from("./downloads");
-        std::fs::create_dir_all(&downloads_dir)?;
+        tokio::fs::create_dir_all(&downloads_dir).await?;
 
         // Generate filename from file_id or use original filename from Telegram path
         // Telegram path format: "documents/file_123.pdf" or "photos/file_456.jpg"

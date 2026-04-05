@@ -241,7 +241,7 @@ async fn download_process_send(
 
     // Ensure directory exists
     if let Some(parent) = std::path::Path::new(&input_path).parent() {
-        std::fs::create_dir_all(parent)?;
+        tokio::fs::create_dir_all(parent).await?;
     }
 
     let resp = http.get(&info.mp4_url).send().await?;
@@ -249,7 +249,7 @@ async fn download_process_send(
         return Err(format!("HTTP {} downloading MP4", resp.status()).into());
     }
     let bytes = resp.bytes().await?;
-    std::fs::write(&input_path, &bytes)?;
+    tokio::fs::write(&input_path, &bytes).await?;
 
     log::info!(
         "Vlipsy downloaded {} ({:.1} KB) for {}",
@@ -285,9 +285,9 @@ async fn download_process_send(
     };
 
     // Cleanup temp files
-    let _ = std::fs::remove_file(&input_path);
+    let _ = tokio::fs::remove_file(&input_path).await;
     if repeat > 1 {
-        let _ = std::fs::remove_file(&repeated_path);
+        let _ = tokio::fs::remove_file(&repeated_path).await;
     }
 
     result
@@ -339,7 +339,7 @@ async fn send_as_circle(
 
     bot.send_video_note(chat_id, InputFile::file(&circle_path)).await?;
 
-    let _ = std::fs::remove_file(&circle_path);
+    let _ = tokio::fs::remove_file(&circle_path).await;
     Ok(())
 }
 
@@ -376,7 +376,7 @@ async fn send_as_mp3(
 
     bot.send_audio(chat_id, InputFile::file(&mp3_path)).title(title).await?;
 
-    let _ = std::fs::remove_file(&mp3_path);
+    let _ = tokio::fs::remove_file(&mp3_path).await;
     Ok(())
 }
 

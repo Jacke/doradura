@@ -6,21 +6,18 @@
 use crate::core::config;
 use crate::core::error::AppError;
 use crate::core::metrics;
-use crate::core::rate_limiter::RateLimiter;
 use crate::core::types::Plan;
+use crate::download::context::DownloadContext;
 use crate::download::error::DownloadError;
 use crate::download::pipeline::{self, PipelineFormat, PipelineResult};
 use crate::download::progress::{ProgressBarStyle, ProgressMessage};
 use crate::download::source::bot_global;
-use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
-use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use teloxide::prelude::*;
 use tokio::time::timeout;
 use tracing::Instrument;
-use url::Url;
 
 /// Download audio file and send it to user
 ///
@@ -28,26 +25,28 @@ use url::Url;
 /// validates file size, and sends the file to the user via Telegram.
 /// After successful send, adds audio effects buttons (Edit/Cut).
 pub async fn download_and_send_audio(
-    bot: Bot,
-    chat_id: ChatId,
-    url: Url,
-    rate_limiter: Arc<RateLimiter>,
-    _created_timestamp: DateTime<Utc>,
-    db_pool: Option<Arc<DbPool>>,
-    shared_storage: Option<Arc<SharedStorage>>,
+    ctx: DownloadContext,
     audio_bitrate: Option<String>,
-    message_id: Option<i32>,
-    alert_manager: Option<Arc<crate::core::alerts::AlertManager>>,
     time_range: Option<(String, String)>,
     with_lyrics: bool,
 ) -> ResponseResult<()> {
+    let DownloadContext {
+        bot,
+        chat_id,
+        url,
+        rate_limiter: _rate_limiter,
+        db_pool,
+        shared_storage,
+        message_id,
+        alert_manager,
+        created_timestamp: _created_timestamp,
+    } = ctx;
     log::info!(
         "Starting download_and_send_audio for chat {} with URL: {}",
         chat_id,
         url
     );
     let bot_clone = bot.clone();
-    let _rate_limiter = rate_limiter;
     let db_pool_clone = db_pool.clone();
     let shared_storage_clone = shared_storage.clone();
 
@@ -270,8 +269,8 @@ async fn add_audio_effects_button(
     let session_file_path_raw = audio_effects::get_original_file_path(&session_id, &config::DOWNLOAD_FOLDER);
     let session_file_path = shellexpand::tilde(&session_file_path_raw).into_owned();
 
-    // Copy file synchronously before it gets deleted
-    match std::fs::copy(&result.download_path, &session_file_path) {
+    // Copy file before it gets deleted
+    match tokio::fs::copy(&result.download_path, &session_file_path).await {
         Ok(bytes) => {
             log::info!("Audio effects: copied {} bytes to {}", bytes, session_file_path);
             let session = AudioEffectSession::new(

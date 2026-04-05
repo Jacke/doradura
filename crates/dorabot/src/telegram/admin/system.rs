@@ -114,7 +114,7 @@ async fn check_cookies_status() -> (bool, String, Vec<(&'static str, bool)>) {
         return (false, "File not found".to_string(), vec![]);
     }
 
-    let content = match std::fs::read_to_string(path) {
+    let content = match tokio::fs::read_to_string(path).await {
         Ok(c) => c,
         Err(_) => return (false, "Read error".to_string(), vec![]),
     };

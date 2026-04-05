@@ -170,7 +170,7 @@ pub async fn handle_export(
         format
     );
 
-    if let Err(e) = std::fs::write(&temp_file, content) {
+    if let Err(e) = tokio::fs::write(&temp_file, content).await {
         log::error!("Failed to write export file: {}", e);
         bot.send_message(chat_id, "Error creating export file\\.")
             .parse_mode(teloxide::types::ParseMode::MarkdownV2)
@@ -182,11 +182,11 @@ pub async fn handle_export(
     match bot.send_document(chat_id, InputFile::file(&temp_file)).await {
         Ok(_) => {
             // Delete the temporary file
-            let _ = std::fs::remove_file(&temp_file);
+            let _ = tokio::fs::remove_file(&temp_file).await;
         }
         Err(e) => {
             log::error!("Failed to send export file: {:?}", e);
-            let _ = std::fs::remove_file(&temp_file);
+            let _ = tokio::fs::remove_file(&temp_file).await;
             bot.send_message(chat_id, "Error sending file\\.")
                 .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                 .await?;

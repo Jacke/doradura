@@ -369,12 +369,15 @@ pub async fn handle_history_callback(
 
                             // Add task to the download queue
                             let is_video = format == "mp4";
+                            let dl_format = format
+                                .parse::<crate::download::queue::DownloadFormat>()
+                                .unwrap_or(crate::download::queue::DownloadFormat::Mp3);
                             let task = crate::download::queue::DownloadTask::from_plan(
                                 url.as_str().to_string(),
                                 chat_id,
                                 None, // Callback doesn't have original user message
                                 is_video,
-                                format.clone(),
+                                dl_format,
                                 video_quality,
                                 audio_bitrate,
                                 plan.as_str(),

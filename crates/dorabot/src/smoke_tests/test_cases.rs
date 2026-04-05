@@ -273,7 +273,7 @@ pub async fn test_audio_download(
                     let validation = validate_audio_file(Path::new(&output_path));
 
                     // Cleanup
-                    let _ = std::fs::remove_file(&output_path);
+                    let _ = tokio::fs::remove_file(&output_path).await;
 
                     if validation.is_valid {
                         let mut result = SmokeTestResult::passed(test_name, start.elapsed());
@@ -307,14 +307,14 @@ pub async fn test_audio_download(
             }
             Err(_) => {
                 // Timeout - don't try more proxies
-                let _ = std::fs::remove_file(&output_path);
+                let _ = tokio::fs::remove_file(&output_path).await;
                 return SmokeTestResult::timeout(test_name, test_timeout);
             }
         }
     }
 
     // All proxies failed
-    let _ = std::fs::remove_file(&output_path);
+    let _ = tokio::fs::remove_file(&output_path).await;
     SmokeTestResult::failed(test_name, start.elapsed(), "All proxies failed for audio download")
 }
 
@@ -373,7 +373,7 @@ pub async fn test_video_download(
                     let validation = validate_video_file(Path::new(&output_path));
 
                     // Cleanup
-                    let _ = std::fs::remove_file(&output_path);
+                    let _ = tokio::fs::remove_file(&output_path).await;
 
                     if validation.is_valid {
                         let mut result = SmokeTestResult::passed(test_name, start.elapsed());
@@ -406,14 +406,14 @@ pub async fn test_video_download(
                 continue;
             }
             Err(_) => {
-                let _ = std::fs::remove_file(&output_path);
+                let _ = tokio::fs::remove_file(&output_path).await;
                 return SmokeTestResult::timeout(test_name, test_timeout);
             }
         }
     }
 
     // All proxies failed
-    let _ = std::fs::remove_file(&output_path);
+    let _ = tokio::fs::remove_file(&output_path).await;
     SmokeTestResult::failed(test_name, start.elapsed(), "All proxies failed for video download")
 }
 
@@ -443,11 +443,6 @@ pub async fn test_ringtone_conversion(temp_dir: &str) -> SmokeTestResult {
     let input_path = format!("{}/smoke_ringtone_in_{}.mp3", temp_dir, ts);
     let output_path = format!("{}/smoke_ringtone_out_{}.m4r", temp_dir, ts);
 
-    let cleanup = |paths: &[&str]| {
-        for p in paths {
-            let _ = std::fs::remove_file(p);
-        }
-    };
     let all_files = [
         silence_path.as_str(),
         cover_path.as_str(),
@@ -473,7 +468,9 @@ pub async fn test_ringtone_conversion(temp_dir: &str) -> SmokeTestResult {
         .unwrap_or(false);
 
     if !silence_ok {
-        cleanup(&all_files);
+        for p in &all_files {
+            let _ = tokio::fs::remove_file(p).await;
+        }
         return SmokeTestResult::failed(test_name, start.elapsed(), "ffmpeg failed to generate silence MP3");
     }
 
@@ -497,8 +494,10 @@ pub async fn test_ringtone_conversion(temp_dir: &str) -> SmokeTestResult {
     if !cover_ok {
         // Cover generation failed — skip album-art regression, use plain silence
         log::warn!("[smoke_test] Could not generate cover art, testing without album art");
-        if let Err(e) = std::fs::copy(&silence_path, &input_path) {
-            cleanup(&all_files);
+        if let Err(e) = tokio::fs::copy(&silence_path, &input_path).await {
+            for p in &all_files {
+                let _ = tokio::fs::remove_file(p).await;
+            }
             return SmokeTestResult::failed(test_name, start.elapsed(), &format!("copy failed: {}", e));
         }
     } else {
@@ -528,7 +527,9 @@ pub async fn test_ringtone_conversion(temp_dir: &str) -> SmokeTestResult {
             .unwrap_or(false);
 
         if !embed_ok {
-            cleanup(&all_files);
+            for p in &all_files {
+                let _ = tokio::fs::remove_file(p).await;
+            }
             return SmokeTestResult::failed(test_name, start.elapsed(), "ffmpeg failed to embed album art");
         }
     }
@@ -537,7 +538,9 @@ pub async fn test_ringtone_conversion(temp_dir: &str) -> SmokeTestResult {
     match create_iphone_ringtone(&input_path, &output_path, 0, 5).await {
         Ok(()) => {}
         Err(e) => {
-            cleanup(&all_files);
+            for p in &all_files {
+                let _ = tokio::fs::remove_file(p).await;
+            }
             return SmokeTestResult::failed(
                 test_name,
                 start.elapsed(),
@@ -548,7 +551,9 @@ pub async fn test_ringtone_conversion(temp_dir: &str) -> SmokeTestResult {
 
     // Validate the output .m4r
     let validation = validate_ringtone_file(std::path::Path::new(&output_path));
-    cleanup(&all_files);
+    for p in &all_files {
+        let _ = tokio::fs::remove_file(p).await;
+    }
 
     if !validation.is_valid {
         return SmokeTestResult::failed(

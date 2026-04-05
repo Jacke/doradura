@@ -1,5 +1,5 @@
 use crate::core::rate_limiter::RateLimiter;
-use crate::download::queue::{DownloadQueue, DownloadTask};
+use crate::download::queue::{DownloadFormat, DownloadQueue, DownloadTask};
 use crate::i18n;
 use crate::storage::cache;
 use crate::storage::db::DbPool;
@@ -130,7 +130,7 @@ pub(crate) async fn start_download_from_preview(
             chat_id,
             original_message_id,
             true,
-            "mp4".to_string(),
+            DownloadFormat::Mp4,
             video_quality,
             None,
             plan.as_str(),
@@ -149,7 +149,7 @@ pub(crate) async fn start_download_from_preview(
             chat_id,
             original_message_id,
             false,
-            "mp3".to_string(),
+            DownloadFormat::Mp3,
             None,
             audio_bitrate,
             plan.as_str(),
@@ -183,12 +183,13 @@ pub(crate) async fn start_download_from_preview(
         };
 
         let is_video = format == "mp4";
+        let dl_format = format.parse::<DownloadFormat>().unwrap_or(DownloadFormat::Mp3);
         let mut task = DownloadTask::from_plan(
             url.as_str().to_string(),
             chat_id,
             original_message_id,
             is_video,
-            format.to_string(),
+            dl_format,
             video_quality,
             audio_bitrate,
             plan.as_str(),

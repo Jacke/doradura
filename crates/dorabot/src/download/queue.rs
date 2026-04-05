@@ -12,6 +12,61 @@ use std::time::Instant;
 use teloxide::types::ChatId;
 use tokio::sync::Mutex;
 
+/// The format of a download task.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DownloadFormat {
+    /// Audio file in MP3 format.
+    Mp3,
+    /// Video file in MP4 format.
+    Mp4,
+    /// Subtitles in SRT format.
+    Srt,
+    /// Subtitles / transcript in plain text format.
+    Txt,
+}
+
+impl DownloadFormat {
+    /// Returns the canonical lowercase extension string for this format.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Mp3 => "mp3",
+            Self::Mp4 => "mp4",
+            Self::Srt => "srt",
+            Self::Txt => "txt",
+        }
+    }
+
+    /// Returns `true` when the format produces a video file.
+    pub fn is_video(&self) -> bool {
+        matches!(self, Self::Mp4)
+    }
+
+    /// Returns `true` when the format produces an audio file.
+    pub fn is_audio(&self) -> bool {
+        matches!(self, Self::Mp3)
+    }
+}
+
+impl std::fmt::Display for DownloadFormat {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for DownloadFormat {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "mp3" => Ok(Self::Mp3),
+            "mp4" => Ok(Self::Mp4),
+            "srt" => Ok(Self::Srt),
+            "txt" => Ok(Self::Txt),
+            other => Err(format!("unknown download format: {other}")),
+        }
+    }
+}
+
 /// Task priority in the queue
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum TaskPriority {
@@ -50,8 +105,8 @@ pub struct DownloadTask {
     pub message_id: Option<i32>,
     /// Flag indicating whether this is a video download
     pub is_video: bool,
-    /// Download format: "mp3", "mp4", "srt", "txt"
-    pub format: String,
+    /// Download format.
+    pub format: DownloadFormat,
     /// Video quality: "best", "1080p", "720p", "480p", "360p" (video only)
     pub video_quality: Option<String>,
     /// Audio bitrate: "128k", "192k", "256k", "320k" (audio only)
@@ -80,7 +135,7 @@ impl DownloadTask {
     /// * `chat_id` - User's Telegram chat ID
     /// * `message_id` - User's message ID (optional, for reactions)
     /// * `is_video` - Flag indicating whether this is a video (true) or audio (false)
-    /// * `format` - Download format: "mp3", "mp4", "srt", "txt"
+    /// * `format` - Download format.
     /// * `video_quality` - Video quality (optional, video only)
     /// * `audio_bitrate` - Audio bitrate (optional, audio only)
     ///
@@ -92,14 +147,14 @@ impl DownloadTask {
     ///
     /// ```no_run
     /// use teloxide::types::ChatId;
-    /// use doradura::download::queue::DownloadTask;
+    /// use doradura::download::queue::{DownloadFormat, DownloadTask};
     ///
     /// let task = DownloadTask::new(
     ///     "https://youtube.com/watch?v=...".to_string(),
     ///     ChatId(123456789),
     ///     Some(12345),
     ///     false,
-    ///     "mp3".to_string(),
+    ///     DownloadFormat::Mp3,
     ///     None,
     ///     Some("320k".to_string())
     /// );
@@ -109,7 +164,7 @@ impl DownloadTask {
         chat_id: ChatId,
         message_id: Option<i32>,
         is_video: bool,
-        format: String,
+        format: DownloadFormat,
         video_quality: Option<String>,
         audio_bitrate: Option<String>,
     ) -> Self {
@@ -132,7 +187,7 @@ impl DownloadTask {
         chat_id: ChatId,
         message_id: Option<i32>,
         is_video: bool,
-        format: String,
+        format: DownloadFormat,
         video_quality: Option<String>,
         audio_bitrate: Option<String>,
         priority: TaskPriority,
@@ -163,7 +218,7 @@ impl DownloadTask {
         chat_id: ChatId,
         message_id: Option<i32>,
         is_video: bool,
-        format: String,
+        format: DownloadFormat,
         video_quality: Option<String>,
         audio_bitrate: Option<String>,
         plan: &str,
@@ -280,7 +335,7 @@ impl DownloadQueue {
     ///     ChatId(123456789),
     ///     Some(12345),
     ///     false,
-    ///     "mp3".to_string(),
+    ///     DownloadFormat::Mp3,
     ///     None,
     ///     Some("320k".to_string())
     /// );
@@ -291,7 +346,7 @@ impl DownloadQueue {
         info!("Adding task with priority {:?}: {:?}", task.priority, task);
 
         // Check for duplicates: skip if a task with the same URL, chat_id, and format already exists
-        let task_key = (task.url.clone(), task.chat_id.0, task.format.clone());
+        let task_key = (task.url.clone(), task.chat_id.0, task.format.to_string());
         let mut active_tasks = self.active_tasks.lock().await;
 
         if active_tasks.contains(&task_key) {
@@ -342,7 +397,7 @@ impl DownloadQueue {
                     user_id: task.chat_id.0,
                     url: &task.url,
                     message_id: task.message_id,
-                    format: &task.format,
+                    format: task.format.as_str(),
                     is_video: task.is_video,
                     video_quality: task.video_quality.as_deref(),
                     audio_bitrate: task.audio_bitrate.as_deref(),
@@ -668,7 +723,7 @@ impl DownloadQueue {
                 chat_id: ChatId(entry.user_id),
                 message_id: entry.message_id,
                 is_video: entry.is_video,
-                format: entry.format,
+                format: entry.format.parse::<DownloadFormat>().unwrap_or(DownloadFormat::Mp3),
                 video_quality: entry.video_quality,
                 audio_bitrate: entry.audio_bitrate,
                 created_timestamp: chrono::Utc::now(),
@@ -731,7 +786,7 @@ impl DownloadQueue {
                 task.chat_id.0,
                 &task.url,
                 task.message_id,
-                &task.format,
+                task.format.as_str(),
                 task.is_video,
                 task.video_quality.as_deref(),
                 task.audio_bitrate.as_deref(),
@@ -764,7 +819,7 @@ impl DownloadQueue {
             chat_id: ChatId(entry.user_id),
             message_id: entry.message_id,
             is_video: entry.is_video,
-            format: entry.format,
+            format: entry.format.parse::<DownloadFormat>().unwrap_or(DownloadFormat::Mp3),
             video_quality: entry.video_quality,
             audio_bitrate: entry.audio_bitrate,
             created_timestamp,
@@ -818,7 +873,7 @@ mod tests {
             ChatId(123),
             Some(456),
             false,
-            "mp3".to_string(),
+            DownloadFormat::Mp3,
             None,
             Some("320k".to_string()),
         );
@@ -827,7 +882,7 @@ mod tests {
         assert_eq!(task.chat_id, ChatId(123));
         assert_eq!(task.message_id, Some(456));
         assert!(!task.is_video);
-        assert_eq!(task.format, "mp3");
+        assert_eq!(task.format, DownloadFormat::Mp3);
         assert_eq!(task.video_quality, None);
         assert_eq!(task.audio_bitrate, Some("320k".to_string()));
         assert_eq!(task.priority, TaskPriority::Low);
@@ -840,7 +895,7 @@ mod tests {
             ChatId(123),
             None,
             true,
-            "mp4".to_string(),
+            DownloadFormat::Mp4,
             Some("1080p".to_string()),
             None,
             TaskPriority::High,
@@ -858,7 +913,7 @@ mod tests {
             ChatId(123),
             None,
             false,
-            "mp3".to_string(),
+            DownloadFormat::Mp3,
             None,
             None,
             "vip",
@@ -870,7 +925,7 @@ mod tests {
             ChatId(123),
             None,
             false,
-            "mp3".to_string(),
+            DownloadFormat::Mp3,
             None,
             None,
             "premium",
@@ -882,7 +937,7 @@ mod tests {
             ChatId(123),
             None,
             false,
-            "mp3".to_string(),
+            DownloadFormat::Mp3,
             None,
             None,
             "free",
@@ -907,7 +962,7 @@ mod tests {
             ChatId(123),
             Some(12345),
             false,
-            "mp3".to_string(),
+            DownloadFormat::Mp3,
             None,
             Some("320k".to_string()),
         );
@@ -939,7 +994,7 @@ mod tests {
             ChatId(1),
             None,
             false,
-            "mp3".to_string(),
+            DownloadFormat::Mp3,
             None,
             None,
             "free",
@@ -952,7 +1007,7 @@ mod tests {
             ChatId(2),
             None,
             false,
-            "mp3".to_string(),
+            DownloadFormat::Mp3,
             None,
             None,
             "vip",
@@ -978,7 +1033,7 @@ mod tests {
             ChatId(100),
             None,
             false,
-            "mp3".to_string(),
+            DownloadFormat::Mp3,
             None,
             None,
         );
@@ -987,7 +1042,7 @@ mod tests {
             ChatId(200),
             None,
             false,
-            "mp3".to_string(),
+            DownloadFormat::Mp3,
             None,
             None,
         );
@@ -996,7 +1051,7 @@ mod tests {
             ChatId(100),
             None,
             false,
-            "mp3".to_string(),
+            DownloadFormat::Mp3,
             None,
             None,
         );
@@ -1024,7 +1079,7 @@ mod tests {
             ChatId(100),
             None,
             false,
-            "mp3".to_string(),
+            DownloadFormat::Mp3,
             None,
             None,
         );
@@ -1033,7 +1088,7 @@ mod tests {
             ChatId(200),
             None,
             false,
-            "mp3".to_string(),
+            DownloadFormat::Mp3,
             None,
             None,
         );
@@ -1057,7 +1112,7 @@ mod tests {
             chat_id: ChatId(123),
             message_id: Some(11111),
             is_video: false,
-            format: "mp3".to_string(),
+            format: DownloadFormat::Mp3,
             video_quality: None,
             audio_bitrate: Some("320k".to_string()),
             created_timestamp: Utc::now() - Duration::days(2),
@@ -1072,7 +1127,7 @@ mod tests {
             ChatId(456),
             Some(22222),
             true,
-            "mp4".to_string(),
+            DownloadFormat::Mp4,
             Some("1080p".to_string()),
             None,
         );
@@ -1094,7 +1149,7 @@ mod tests {
             ChatId(123),
             None,
             false,
-            "mp3".to_string(),
+            DownloadFormat::Mp3,
             None,
             None,
         );

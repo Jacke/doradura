@@ -338,12 +338,15 @@ pub async fn handle_search_callback(
                     Err(_) => "mp3".to_string(),
                 };
                 let is_video = format == "mp4";
+                let dl_format = format
+                    .parse::<crate::download::queue::DownloadFormat>()
+                    .unwrap_or(crate::download::queue::DownloadFormat::Mp3);
                 let task = crate::download::queue::DownloadTask::new(
                     result.url.clone(),
                     chat_id,
                     None,
                     is_video,
-                    format,
+                    dl_format,
                     None,
                     None,
                 );

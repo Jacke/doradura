@@ -724,12 +724,15 @@ pub async fn handle_message(
 
                                 let is_video = format == "mp4";
                                 let plan_for_task = plan_string.clone();
+                                let dl_format = format
+                                    .parse::<crate::download::queue::DownloadFormat>()
+                                    .unwrap_or(crate::download::queue::DownloadFormat::Mp3);
                                 let task = crate::download::queue::DownloadTask::from_plan(
                                     url.as_str().to_string(),
                                     chat_id,
                                     Some(msg.id.0),
                                     is_video,
-                                    format.clone(),
+                                    dl_format,
                                     task_video_quality.clone(),
                                     task_audio_bitrate.clone(),
                                     &plan_for_task,
@@ -751,12 +754,15 @@ pub async fn handle_message(
                                 // Still queue the download — yt-dlp will handle it
                                 let is_video = format == "mp4";
                                 let plan_for_task = plan_string.clone();
+                                let dl_format2 = format
+                                    .parse::<crate::download::queue::DownloadFormat>()
+                                    .unwrap_or(crate::download::queue::DownloadFormat::Mp3);
                                 let task = crate::download::queue::DownloadTask::from_plan(
                                     url.as_str().to_string(),
                                     chat_id,
                                     Some(msg.id.0),
                                     is_video,
-                                    format.clone(),
+                                    dl_format2,
                                     task_video_quality.clone(),
                                     task_audio_bitrate.clone(),
                                     &plan_for_task,

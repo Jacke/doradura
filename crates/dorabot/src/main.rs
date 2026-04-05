@@ -100,6 +100,7 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    pub use doradura::download::queue::DownloadFormat;
     pub use doradura::download::queue::DownloadQueue;
     pub use doradura::download::queue::DownloadTask;
 
@@ -111,7 +112,7 @@ mod tests {
             teloxide::types::ChatId(123456789),
             None,
             true,
-            "mp4".to_string(),
+            DownloadFormat::Mp4,
             Some("1080p".to_string()),
             None,
         );
@@ -136,7 +137,7 @@ mod tests {
             teloxide::types::ChatId(987654321),
             None,
             false,
-            "mp3".to_string(),
+            DownloadFormat::Mp3,
             None,
             Some("320k".to_string()),
         );
@@ -159,7 +160,7 @@ mod tests {
             teloxide::types::ChatId(111111111),
             None,
             true,
-            "mp4".to_string(),
+            DownloadFormat::Mp4,
             Some("720p".to_string()),
             None,
         );
@@ -168,7 +169,7 @@ mod tests {
             teloxide::types::ChatId(111111111),
             None,
             false,
-            "mp3".to_string(),
+            DownloadFormat::Mp3,
             None,
             Some("256k".to_string()),
         );

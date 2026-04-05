@@ -135,7 +135,7 @@ pub async fn refresh_missing_metadata(
                 }
 
                 // Clean up temporary file
-                let _ = std::fs::remove_file(&file_path);
+                let _ = tokio::fs::remove_file(&file_path).await;
             }
             Err(e) => {
                 failed_count += 1;
@@ -201,7 +201,7 @@ async fn download_telegram_file(bot_token: &str, file_id: &str) -> Result<String
     let temp_file_name = format!("telegram_download_{}.tmp", uuid::Uuid::new_v4());
     let temp_file_path = temp_dir.join(temp_file_name);
 
-    std::fs::write(&temp_file_path, bytes)?;
+    tokio::fs::write(&temp_file_path, bytes).await?;
 
     Ok(temp_file_path.to_string_lossy().to_string())
 }
@@ -216,7 +216,7 @@ struct Metadata {
 
 async fn extract_metadata(file_path: &str, format: &str) -> Result<Metadata> {
     // Get file size
-    let file_size = std::fs::metadata(file_path)?.len() as i64;
+    let file_size = tokio::fs::metadata(file_path).await?.len() as i64;
 
     // Use ffprobe to get duration and quality/bitrate
     let mut cmd = Command::new("ffprobe");

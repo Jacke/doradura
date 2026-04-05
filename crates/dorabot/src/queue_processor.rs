@@ -11,6 +11,7 @@ use tracing::Instrument;
 
 use crate::core::retry::Retryable;
 use crate::core::{alerts, config, metrics, rate_limiter, subscription};
+use crate::download::context::DownloadContext;
 use crate::download::queue::{self as queue};
 use crate::download::ytdlp_errors::sanitize_user_error_message;
 use crate::download::{download_and_send_audio, download_and_send_subtitles, download_and_send_video, DownloadQueue};
@@ -202,7 +203,7 @@ async fn process_single_task(
                 log::error!("Failed to mark task {} as failed in DB: {}", task.id, db_err);
             }
             queue_for_cleanup
-                .remove_active_task(&task.url, task.chat_id, &task.format)
+                .remove_active_task(&task.url, task.chat_id, task.format.as_str())
                 .await;
             return; // No permit acquired, no CONCURRENT_DOWNLOADS.inc() happened
         }
@@ -284,7 +285,7 @@ async fn process_single_task(
             )
             .await;
             queue_for_cleanup
-                .remove_active_task(&task.url, task.chat_id, &task.format)
+                .remove_active_task(&task.url, task.chat_id, task.format.as_str())
                 .await;
             metrics::CONCURRENT_DOWNLOADS.dec();
             return;
@@ -343,7 +344,7 @@ async fn process_single_task(
                 )
                 .await;
             queue_for_cleanup
-                .remove_active_task(&task.url, task.chat_id, &task.format)
+                .remove_active_task(&task.url, task.chat_id, task.format.as_str())
                 .await;
             metrics::CONCURRENT_DOWNLOADS.dec();
             return;
@@ -395,56 +396,26 @@ async fn process_single_task(
     }
 
     // Dispatch by format
+    let task_format_str = task_format.to_string();
     let sqlite_pool = shared_storage.sqlite_pool();
-    let result = match task_format.as_str() {
-        "mp4" => {
-            download_and_send_video(
-                bot.clone(),
-                task_chat_id,
-                url,
-                rate_limiter.clone(),
-                created_timestamp,
-                Some(Arc::clone(&sqlite_pool)),
-                Some(Arc::clone(&shared_storage)),
-                video_quality,
-                task_message_id,
-                alert_manager.clone(),
-                time_range.clone(),
-            )
-            .await
+    let ctx = DownloadContext {
+        bot: bot.clone(),
+        chat_id: task_chat_id,
+        url,
+        rate_limiter: rate_limiter.clone(),
+        db_pool: Some(Arc::clone(&sqlite_pool)),
+        shared_storage: Some(Arc::clone(&shared_storage)),
+        message_id: task_message_id,
+        alert_manager: alert_manager.clone(),
+        created_timestamp,
+    };
+    let result = match task_format {
+        queue::DownloadFormat::Mp4 => download_and_send_video(ctx, video_quality, time_range.clone()).await,
+        queue::DownloadFormat::Srt | queue::DownloadFormat::Txt => {
+            download_and_send_subtitles(ctx, task_format_str.clone()).await
         }
-        "srt" | "txt" => {
-            download_and_send_subtitles(
-                bot.clone(),
-                task_chat_id,
-                url,
-                rate_limiter.clone(),
-                created_timestamp,
-                task_format.clone(),
-                Some(Arc::clone(&sqlite_pool)),
-                Some(Arc::clone(&shared_storage)),
-                task_message_id,
-                alert_manager.clone(),
-            )
-            .await
-        }
-        _ => {
-            // Default to audio (mp3)
-            download_and_send_audio(
-                bot.clone(),
-                task_chat_id,
-                url,
-                rate_limiter.clone(),
-                created_timestamp,
-                Some(Arc::clone(&sqlite_pool)),
-                Some(Arc::clone(&shared_storage)),
-                audio_bitrate,
-                task_message_id,
-                alert_manager.clone(),
-                time_range.clone(),
-                with_lyrics,
-            )
-            .await
+        queue::DownloadFormat::Mp3 => {
+            download_and_send_audio(ctx, audio_bitrate, time_range.clone(), with_lyrics).await
         }
     };
 
@@ -462,7 +433,7 @@ async fn process_single_task(
             log::error!(
                 "Failed to process task {} (format: {}): {}",
                 task_id,
-                task_format,
+                task_format_str,
                 admin_error_msg
             );
 
@@ -498,7 +469,7 @@ async fn process_single_task(
 
     // Cleanup
     queue_for_cleanup
-        .remove_active_task(&task_url, task_chat_id, &task_format)
+        .remove_active_task(&task_url, task_chat_id, &task_format_str)
         .await;
 
     {

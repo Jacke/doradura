@@ -53,21 +53,25 @@ pub async fn download_circle_subtitles(
         Ok(output) if output.status.success() => {
             let srt_dir = temp_dir.to_string_lossy().to_string();
             let srt_stem = format!("subs_{}_{}", chat_id, source_id);
-            let srt_file = std::fs::read_dir(&srt_dir).ok().and_then(|entries| {
-                entries
-                    .filter_map(Result::ok)
-                    .find(|entry| {
+            let srt_file = {
+                let mut found = None;
+                if let Ok(mut dir) = tokio::fs::read_dir(&srt_dir).await {
+                    while let Ok(Some(entry)) = dir.next_entry().await {
                         let name = entry.file_name();
-                        let name_str = name.to_string_lossy();
-                        name_str.contains(&srt_stem) && name_str.ends_with(".srt")
-                    })
-                    .map(|entry| entry.path())
-            });
+                        let name_str = name.to_string_lossy().into_owned();
+                        if name_str.contains(&srt_stem) && name_str.ends_with(".srt") {
+                            found = Some(entry.path());
+                            break;
+                        }
+                    }
+                }
+                found
+            };
 
             if let Some(sub_path) = srt_file {
                 log::info!("Downloaded subtitles for circle: {:?}", sub_path);
                 // Clean overlapping timestamps from YouTube auto-captions
-                crate::download::downloader::clean_srt_overlaps(sub_path.to_str().unwrap_or_default());
+                crate::download::downloader::clean_srt_overlaps(sub_path.to_str().unwrap_or_default()).await;
                 BurnSubsResult::SubtitleReady(sub_path)
             } else {
                 log::warn!("Subtitle file not found after yt-dlp download for circle");

@@ -8,17 +8,14 @@ use crate::core::error::AppError;
 use crate::core::error_logger::{self, ErrorType, UserContext};
 use crate::core::metrics;
 use crate::core::process::{run_with_timeout, FFMPEG_TIMEOUT};
-use crate::core::rate_limiter::RateLimiter;
 use crate::core::utils::escape_filename;
+use crate::download::context::DownloadContext;
 use crate::download::error::DownloadError;
 use crate::download::metadata::{add_cookies_args, get_metadata_from_ytdlp, probe_video_metadata};
 use crate::download::progress::{DownloadStatus, ProgressBarStyle, ProgressMessage};
 use crate::download::send::send_error_with_sticker;
 use crate::download::ytdlp_errors::sanitize_user_error_message;
-use crate::storage::db::{self as db, DbPool};
-use crate::storage::SharedStorage;
-use crate::telegram::Bot;
-use chrono::{DateTime, Utc};
+use crate::storage::db::{self as db};
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -27,7 +24,6 @@ use std::time::Duration;
 use teloxide::prelude::*;
 use teloxide::types::InputFile;
 use tokio::process::Command as TokioCommand;
-use url::Url;
 
 /// Legacy alias for backward compatibility
 /// Use AppError instead
@@ -71,28 +67,24 @@ pub fn spawn_downloader_with_fallback(ytdl_bin: &str, args: &[&str]) -> Result<s
 ///
 /// # Arguments
 ///
-/// * `bot` - Telegram bot instance
-/// * `chat_id` - User's chat ID
-/// * `url` - URL to download subtitles from
-/// * `rate_limiter` - Rate limiter instance (unused but kept for API consistency)
-/// * `_created_timestamp` - Timestamp when task was created (unused)
+/// * `ctx` - Shared download context (bot, chat_id, url, etc.)
 /// * `subtitle_format` - Subtitle format ("srt" or "txt")
 ///
 /// # Returns
 ///
 /// Returns `Ok(())` on success or a `ResponseResult` error.
-pub async fn download_and_send_subtitles(
-    bot: Bot,
-    chat_id: ChatId,
-    url: Url,
-    rate_limiter: Arc<RateLimiter>,
-    _created_timestamp: DateTime<Utc>,
-    subtitle_format: String,
-    db_pool: Option<Arc<DbPool>>,
-    shared_storage: Option<Arc<SharedStorage>>,
-    message_id: Option<i32>,
-    _alert_manager: Option<Arc<crate::core::alerts::AlertManager>>,
-) -> ResponseResult<()> {
+pub async fn download_and_send_subtitles(ctx: DownloadContext, subtitle_format: String) -> ResponseResult<()> {
+    let DownloadContext {
+        bot,
+        chat_id,
+        url,
+        rate_limiter,
+        db_pool,
+        shared_storage,
+        message_id,
+        alert_manager: _alert_manager,
+        created_timestamp: _created_timestamp,
+    } = ctx;
     let bot_clone = bot.clone();
     let _rate_limiter = Arc::clone(&rate_limiter);
     let db_pool_clone = db_pool.clone();

@@ -8,8 +8,8 @@ use crate::core::config;
 use crate::core::error::AppError;
 use crate::core::metrics;
 use crate::core::process::{run_with_timeout, FFPROBE_TIMEOUT};
-use crate::core::rate_limiter::RateLimiter;
 use crate::core::types::Plan;
+use crate::download::context::DownloadContext;
 use crate::download::downloader::{burn_subtitles_into_video, split_video_into_parts};
 use crate::download::error::DownloadError;
 use crate::download::metadata::{
@@ -19,11 +19,9 @@ use crate::download::pipeline::{self, DownloadPhaseResult, PipelineFormat};
 use crate::download::progress::{DownloadStatus, ProgressBarStyle, ProgressMessage};
 use crate::download::send::{send_error_with_sticker, send_video_with_retry};
 use crate::download::source::bot_global;
-use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::telegram::cache::PREVIEW_CACHE;
 use crate::telegram::Bot;
-use chrono::{DateTime, Utc};
 use std::fs;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -38,21 +36,22 @@ use url::Url;
 /// post-processing (stream verification, subtitle burning, splitting), and sends
 /// the file to the user via Telegram.
 pub async fn download_and_send_video(
-    bot: Bot,
-    chat_id: ChatId,
-    url: Url,
-    rate_limiter: Arc<RateLimiter>,
-    _created_timestamp: DateTime<Utc>,
-    db_pool: Option<Arc<DbPool>>,
-    shared_storage: Option<Arc<SharedStorage>>,
+    ctx: DownloadContext,
     video_quality: Option<String>,
-    message_id: Option<i32>,
-    alert_manager: Option<Arc<crate::core::alerts::AlertManager>>,
     time_range: Option<(String, String)>,
 ) -> ResponseResult<()> {
+    let DownloadContext {
+        bot,
+        chat_id,
+        url,
+        rate_limiter: _rate_limiter,
+        db_pool: _db_pool, // kept for API compatibility; subtitles now use SharedStorage
+        shared_storage,
+        message_id,
+        alert_manager,
+        created_timestamp: _created_timestamp,
+    } = ctx;
     let bot_clone = bot.clone();
-    let _rate_limiter = rate_limiter;
-    let _db_pool = db_pool; // kept for API compatibility; subtitles now use SharedStorage
     let shared_storage_clone = shared_storage.clone();
 
     // Inherit the parent span (from queue_processor) so all video logs carry op=...

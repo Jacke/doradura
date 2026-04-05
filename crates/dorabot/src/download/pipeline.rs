@@ -26,7 +26,6 @@ use crate::download::source::{DownloadOutput, DownloadSource, MediaMetadata, Sou
 use crate::storage::db::{self as db, DbPool};
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
-use std::fs;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::Message;
@@ -1067,14 +1066,14 @@ pub fn schedule_cleanup(download_path: String) {
 pub fn schedule_cleanup_with_extras(download_path: String, extra_paths: Vec<String>) {
     tokio::spawn(async move {
         tokio::time::sleep(config::download::cleanup_delay()).await;
-        if let Err(e) = fs::remove_file(&download_path) {
+        if let Err(e) = tokio::fs::remove_file(&download_path).await {
             if e.kind() != std::io::ErrorKind::NotFound {
                 log::warn!("Failed to delete file: {}", e);
             }
         }
         cleanup_partial_download(&download_path);
         for path in &extra_paths {
-            if let Err(e) = fs::remove_file(path) {
+            if let Err(e) = tokio::fs::remove_file(path).await {
                 if e.kind() != std::io::ErrorKind::NotFound {
                     log::warn!("Failed to delete extra file: {}", e);
                 }

@@ -70,13 +70,15 @@ impl MtProtoClient {
             // Ensure parent directory exists
             if let Some(parent) = session_path.parent() {
                 if !parent.as_os_str().is_empty() && !parent.exists() {
-                    std::fs::create_dir_all(parent)
+                    tokio::fs::create_dir_all(parent)
+                        .await
                         .map_err(|e| MtProtoError::Session(format!("Failed to create session directory: {}", e)))?;
                 }
             }
             // grammers-session 0.5 requires file to exist before saving (uses write, not create)
             if !session_path.exists() {
-                std::fs::File::create(session_path)
+                tokio::fs::File::create(session_path)
+                    .await
                     .map_err(|e| MtProtoError::Session(format!("Failed to create session file: {}", e)))?;
             }
             client
