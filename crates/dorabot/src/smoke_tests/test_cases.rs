@@ -54,12 +54,8 @@ fn add_smoke_test_args(args: &mut Vec<String>, proxy: Option<&ProxyConfig>) {
     args.push("--js-runtimes".to_string());
     args.push("deno".to_string());
 
-    // Impersonate browser TLS/HTTP fingerprint to avoid bot detection
-    args.push("--impersonate".to_string());
-    args.push("Chrome-131:Android-14".to_string());
-
-    // NO cookies - smoke tests should not use personal accounts
-    // This avoids risking account bans from hourly health checks
+    // --impersonate removed: requires curl_cffi which is not available in Alpine container.
+    // android_vr + web_safari clients + PO token are sufficient for bot detection bypass.
 }
 
 /// Test 1: Verify FFmpeg toolchain is available.

@@ -33,35 +33,30 @@ use teloxide::types::Message;
 use url::Url;
 
 /// Apply speed modification to a downloaded media file using ffmpeg.
-/// Replaces the original file in-place. Returns the (possibly new) file path.
+/// Replaces the original file in-place.
 pub(crate) async fn apply_speed_to_file(file_path: &str, speed: f32) -> Result<String, String> {
     if (speed - 1.0).abs() < 0.01 {
         return Ok(file_path.to_string());
     }
     let speed_start = std::time::Instant::now();
-    let setpts_factor = 1.0 / speed as f64;
-    let atempo = if speed > 2.0 {
-        format!("atempo=2.0,atempo={}", speed / 2.0)
-    } else if speed < 0.5 {
-        format!("atempo=0.5,atempo={}", speed / 0.5)
-    } else {
-        format!("atempo={}", speed)
-    };
+    let spd = speed as f64;
+    let setpts_factor = 1.0 / spd;
+    // Parser caps speed at 0.5..=2.0, so single atempo stage is always valid
+    let atempo = format!("atempo={}", spd);
 
-    let ext = std::path::Path::new(file_path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("mp4");
-    let tmp_path = format!("{}.speed.{}", file_path.trim_end_matches(&format!(".{}", ext)), ext);
+    let path = std::path::Path::new(file_path);
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("mp4");
+    let tmp_path = path
+        .with_extension(format!("speed.{}", ext))
+        .to_string_lossy()
+        .to_string();
 
     let mut cmd = tokio::process::Command::new("ffmpeg");
     cmd.args(["-y", "-i", file_path]);
 
     if ext == "mp3" || ext == "m4a" || ext == "ogg" || ext == "opus" {
-        // Audio-only: just atempo
         cmd.args(["-af", &atempo]);
     } else {
-        // Video + audio: setpts + atempo
         let filter = format!("[0:v]setpts={}*PTS[v];[0:a]{}[a]", setpts_factor, atempo);
         cmd.args([
             "-filter_complex",
@@ -88,13 +83,13 @@ pub(crate) async fn apply_speed_to_file(file_path: &str, speed: f32) -> Result<S
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         log::error!("ffmpeg speed error: {}", stderr);
-        // Clean up temp file on failure
-        let _ = std::fs::remove_file(&tmp_path);
+        let _ = tokio::fs::remove_file(&tmp_path).await;
         return Err(format!("ffmpeg speed error: {}", stderr));
     }
 
-    // Replace original with speed-adjusted version
-    std::fs::rename(&tmp_path, file_path).map_err(|e| format!("rename failed: {}", e))?;
+    tokio::fs::rename(&tmp_path, file_path)
+        .await
+        .map_err(|e| format!("rename failed: {}", e))?;
     log::info!(
         "⏱️ [SPEED_FILTER] {}x applied in {:.1}s",
         speed,
@@ -724,22 +719,24 @@ pub async fn execute(
         caption,
     } = phase;
 
-    // ── Speed post-processing (read from preview context) ──
-    if let Some(storage) = shared_storage {
-        if let Some(speed) = storage
-            .get_preview_context(chat_id.0, url.as_str())
-            .await
-            .ok()
-            .flatten()
-            .and_then(|ctx| ctx.speed)
-        {
+    // ── Speed post-processing (only when time_range is set — speed is always paired with it) ──
+    if format.time_range().is_some() {
+        let speed = if let Some(storage) = shared_storage {
+            storage
+                .get_preview_context(chat_id.0, url.as_str())
+                .await
+                .ok()
+                .flatten()
+                .and_then(|ctx| ctx.speed)
+        } else {
+            None
+        };
+        if let Some(speed) = speed {
             match apply_speed_to_file(&download_output.file_path, speed).await {
                 Ok(_) => {
-                    // Update file size after speed change
-                    if let Ok(meta) = std::fs::metadata(&download_output.file_path) {
+                    if let Ok(meta) = tokio::fs::metadata(&download_output.file_path).await {
                         download_output.file_size = meta.len();
                     }
-                    // Update duration: original / speed
                     if let Some(dur) = download_output.duration_secs {
                         download_output.duration_secs = Some(((dur as f64) / speed as f64).round() as u32);
                     }

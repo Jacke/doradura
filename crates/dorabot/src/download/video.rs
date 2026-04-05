@@ -218,7 +218,6 @@ pub async fn download_and_send_video(
                     log::info!("⏱️ [BURN_SUBS] done in {:.1}s", subs_start.elapsed().as_secs_f64());
                 }
 
-                // Apply speed modification if requested (e.g. "2x" after time range)
                 let actual_file_path = if let Some(spd) = speed {
                     match pipeline::apply_speed_to_file(&actual_file_path, spd).await {
                         Ok(path) => path,
