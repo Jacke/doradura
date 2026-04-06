@@ -326,7 +326,7 @@ impl DownloadQueue {
     ///
     /// ```no_run
     /// use teloxide::types::ChatId;
-    /// use doradura::download::queue::{DownloadQueue, DownloadTask};
+    /// use doradura::download::queue::{DownloadQueue, DownloadTask, DownloadFormat};
     ///
     /// # async fn example() {
     /// let queue = DownloadQueue::new();
