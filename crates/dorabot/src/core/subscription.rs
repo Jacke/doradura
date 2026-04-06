@@ -663,32 +663,34 @@ pub async fn handle_successful_payment(
             // If price was raised after the user subscribed, recurring charges still use
             // the old amount and that's expected behavior.
             #[allow(clippy::unnecessary_cast)]
-            if payment.total_amount as u32 != expected_price && !payment.is_recurring {
-                log::error!(
-                    "❌ Payment amount mismatch! Plan: {}, expected: {}, got: {}. Charge ID: {}",
-                    plan,
-                    expected_price,
-                    payment.total_amount,
-                    payment.telegram_payment_charge_id.0
-                );
-                crate::telegram::notifications::notify_admin_text(
-                    bot,
-                    &format!(
-                        "⚠️ PAYMENT AMOUNT MISMATCH\nPlan: {}\nExpected: {} Stars\nGot: {} Stars\nUser: {}\nCharge: {}",
-                        plan, expected_price, payment.total_amount, telegram_id, payment.telegram_payment_charge_id.0
-                    ),
-                )
-                .await;
-                return Ok(());
-            }
-            if payment.total_amount != expected_price && payment.is_recurring {
-                log::warn!(
-                    "⚠️ Recurring payment at old price: plan={}, current_price={}, paid={}, user={}. Accepting.",
-                    plan,
-                    expected_price,
-                    payment.total_amount,
-                    telegram_id
-                );
+            if payment.total_amount as u32 != expected_price {
+                if payment.is_recurring {
+                    // Recurring charges use the original invoice price, not current config.
+                    log::warn!(
+                        "⚠️ Recurring payment at old price: plan={}, current_price={}, paid={}, user={}. Accepting.",
+                        plan,
+                        expected_price,
+                        payment.total_amount,
+                        telegram_id
+                    );
+                } else {
+                    log::error!(
+                        "❌ Payment amount mismatch! Plan: {}, expected: {}, got: {}. Charge ID: {}",
+                        plan,
+                        expected_price,
+                        payment.total_amount,
+                        payment.telegram_payment_charge_id.0
+                    );
+                    crate::telegram::notifications::notify_admin_text(
+                        bot,
+                        &format!(
+                            "⚠️ PAYMENT AMOUNT MISMATCH\nPlan: {}\nExpected: {} Stars\nGot: {} Stars\nUser: {}\nCharge: {}",
+                            plan, expected_price, payment.total_amount, telegram_id, payment.telegram_payment_charge_id.0
+                        ),
+                    )
+                    .await;
+                    return Ok(());
+                }
             }
 
             let chat_id = msg.chat.id;

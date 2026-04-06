@@ -905,6 +905,19 @@ pub async fn process_video_clip(
             .arg("192k")
             .arg("-f")
             .arg("mp3");
+    } else if is_gif {
+        // GIF: video-only cut, skip audio entirely
+        cmd.arg("-filter_complex").arg(&filter_v);
+        cmd.arg("-map").arg(map_v_label);
+        cmd.arg("-an");
+        cmd.arg("-c:v")
+            .arg("libx264")
+            .arg("-preset")
+            .arg("ultrafast")
+            .arg("-crf")
+            .arg(crf)
+            .arg("-movflags")
+            .arg("+faststart");
     } else {
         cmd.arg("-filter_complex").arg(&filter_av);
         if has_video {
