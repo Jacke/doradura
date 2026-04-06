@@ -14,7 +14,7 @@ use crate::core::rate_limiter::RateLimiter;
 use crate::core::utils::pluralize_seconds;
 use crate::download::queue::DownloadQueue;
 use crate::i18n;
-use crate::storage::db::{self, DbPool};
+use crate::storage::db::{self, DbPool, OutputKind, SourceKind};
 use crate::storage::SharedStorage;
 use crate::telegram::preview::{get_preview_metadata, get_preview_metadata_with_time_range, send_preview};
 use crate::telegram::Bot;
@@ -333,20 +333,19 @@ pub async fn handle_message(
                     return Ok(None);
                 }
 
-                let video_duration = match session.source_kind.as_str() {
-                    "download" => shared_storage
+                let video_duration = match session.source_kind {
+                    SourceKind::Download => shared_storage
                         .get_download_history_entry(msg.chat.id.0, session.source_id)
                         .await
                         .ok()
                         .flatten()
                         .and_then(|d| d.duration),
-                    "cut" => shared_storage
+                    SourceKind::Cut => shared_storage
                         .get_cut_entry(msg.chat.id.0, session.source_id)
                         .await
                         .ok()
                         .flatten()
                         .and_then(|c| c.duration),
-                    _ => None,
                 };
 
                 if let Some((segments, segments_text, speed)) = parse_segments_spec(trimmed, video_duration) {
@@ -374,7 +373,7 @@ pub async fn handle_message(
 
                     return Ok(None);
                 } else {
-                    let extra_note = if session.output_kind == "video_note" {
+                    let extra_note = if session.output_kind == OutputKind::VideoNote {
                         "\n\n💡 If duration exceeds 60 seconds \\(Telegram limit for video notes\\), video will be automatically trimmed\\."
                     } else {
                         ""

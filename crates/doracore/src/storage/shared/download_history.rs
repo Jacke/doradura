@@ -617,13 +617,14 @@ pub(super) fn map_pg_download_history(row: sqlx::postgres::PgRow) -> DownloadHis
 }
 
 fn map_pg_cut(row: sqlx::postgres::PgRow) -> CutEntry {
+    use crate::storage::db::{OutputKind, SourceKind};
     CutEntry {
         id: row.get("id"),
         user_id: row.get("user_id"),
         original_url: row.get("original_url"),
-        source_kind: row.get("source_kind"),
+        source_kind: SourceKind::from_str_lossy(&row.get::<String, _>("source_kind")),
         source_id: row.get("source_id"),
-        output_kind: row.get("output_kind"),
+        output_kind: OutputKind::from_str_lossy(&row.get::<String, _>("output_kind")),
         segments_json: row.get("segments_json"),
         segments_text: row.get("segments_text"),
         title: row.get("title"),

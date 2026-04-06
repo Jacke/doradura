@@ -1,5 +1,5 @@
 use crate::i18n;
-use crate::storage::db::{self, DbPool};
+use crate::storage::db::{self, DbPool, OutputKind, SourceKind};
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use std::sync::Arc;
@@ -196,10 +196,10 @@ pub async fn start_ringtone_session(
         id: uuid::Uuid::new_v4().to_string(),
         user_id: chat_id.0,
         source_download_id: source_id,
-        source_kind: source_kind.to_string(),
+        source_kind: SourceKind::from_str_lossy(source_kind),
         source_id,
         original_url: String::new(),
-        output_kind: platform.output_kind().to_string(),
+        output_kind: OutputKind::from_str_lossy(platform.output_kind()),
         created_at: chrono::Utc::now(),
         expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
         subtitle_lang: None,

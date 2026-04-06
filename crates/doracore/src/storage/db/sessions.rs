@@ -344,15 +344,82 @@ pub fn delete_audio_cut_session_by_user(conn: &DbConnection, user_id: i64) -> Re
 
 // ==================== Video Clip Sessions ====================
 
+/// Kind of output produced by a video clip session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputKind {
+    Cut,
+    VideoNote,
+    Gif,
+    IphoneRingtone,
+    AndroidRingtone,
+}
+
+impl OutputKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Cut => "cut",
+            Self::VideoNote => "video_note",
+            Self::Gif => "gif",
+            Self::IphoneRingtone => "iphone_ringtone",
+            Self::AndroidRingtone => "android_ringtone",
+        }
+    }
+
+    pub fn from_str_lossy(s: &str) -> Self {
+        match s {
+            "video_note" => Self::VideoNote,
+            "gif" => Self::Gif,
+            "iphone_ringtone" => Self::IphoneRingtone,
+            "android_ringtone" => Self::AndroidRingtone,
+            _ => Self::Cut,
+        }
+    }
+}
+
+impl std::fmt::Display for OutputKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Source of a video clip (original download or a previous cut).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceKind {
+    Download,
+    Cut,
+}
+
+impl SourceKind {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Download => "download",
+            Self::Cut => "cut",
+        }
+    }
+
+    pub fn from_str_lossy(s: &str) -> Self {
+        match s {
+            "cut" => Self::Cut,
+            _ => Self::Download,
+        }
+    }
+}
+
+impl std::fmt::Display for SourceKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct VideoClipSession {
     pub id: String,
     pub user_id: i64,
     pub source_download_id: i64,
-    pub source_kind: String,
+    pub source_kind: SourceKind,
     pub source_id: i64,
     pub original_url: String,
-    pub output_kind: String,
+    pub output_kind: OutputKind,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub expires_at: chrono::DateTime<chrono::Utc>,
     pub subtitle_lang: Option<String>,
@@ -368,10 +435,10 @@ pub fn upsert_video_clip_session(conn: &DbConnection, session: &VideoClipSession
             session.id,
             session.user_id,
             session.source_download_id,
-            session.source_kind,
+            session.source_kind.as_str(),
             session.source_id,
             session.original_url,
-            session.output_kind,
+            session.output_kind.as_str(),
             session.created_at.to_rfc3339(),
             session.expires_at.to_rfc3339(),
             session.subtitle_lang,
@@ -396,10 +463,10 @@ pub fn get_active_video_clip_session(conn: &DbConnection, user_id: i64) -> Resul
         let source_id: Option<i64> = row.get(4)?;
         let original_url: Option<String> = row.get(5)?;
         let output_kind: Option<String> = row.get(6)?;
-        let resolved_source_kind = source_kind.unwrap_or_else(|| "download".to_string());
+        let resolved_source_kind = SourceKind::from_str_lossy(&source_kind.unwrap_or_default());
         let resolved_source_id = source_id.unwrap_or(source_download_id);
         let resolved_original_url = original_url.unwrap_or_default();
-        let resolved_output_kind = output_kind.unwrap_or_else(|| "cut".to_string());
+        let resolved_output_kind = OutputKind::from_str_lossy(&output_kind.unwrap_or_default());
         Ok(Some(VideoClipSession {
             id: row.get(0)?,
             user_id: row.get(1)?,

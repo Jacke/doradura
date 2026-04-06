@@ -6,7 +6,7 @@ use crate::core::config;
 use crate::core::error::AppError;
 use crate::core::escape_markdown;
 use crate::i18n;
-use crate::storage::db::{self, DbPool};
+use crate::storage::db::{self, DbPool, OutputKind, SourceKind};
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use fluent_templates::fluent_bundle::FluentArgs;
@@ -338,11 +338,11 @@ pub async fn process_video_clip(
     let _ = db_pool;
     let lang = i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
     let total_len: i64 = segments.iter().map(|s| (s.end_secs - s.start_secs).max(0)).sum();
-    let is_video_note = session.output_kind == "video_note";
-    let is_iphone_ringtone = session.output_kind == "iphone_ringtone";
-    let is_android_ringtone = session.output_kind == "android_ringtone";
+    let is_video_note = session.output_kind == OutputKind::VideoNote;
+    let is_iphone_ringtone = session.output_kind == OutputKind::IphoneRingtone;
+    let is_android_ringtone = session.output_kind == OutputKind::AndroidRingtone;
     let is_ringtone = is_iphone_ringtone || is_android_ringtone;
-    let is_gif = session.output_kind == "gif";
+    let is_gif = session.output_kind == OutputKind::Gif;
 
     // Effective duration accounting for speed (e.g., 86s at 2x = 43s)
     let effective_len = if let Some(spd) = speed {
@@ -465,8 +465,8 @@ pub async fn process_video_clip(
             .ok();
     }
 
-    let (file_id, original_url, base_title, video_quality) = match session.source_kind.as_str() {
-        "download" => {
+    let (file_id, original_url, base_title, video_quality) = match session.source_kind {
+        SourceKind::Download => {
             let download = match shared_storage
                 .get_download_history_entry(chat_id.0, session.source_id)
                 .await?
@@ -496,7 +496,7 @@ pub async fn process_video_clip(
             };
             (fid, download.url, download.title, download.video_quality)
         }
-        "cut" => {
+        SourceKind::Cut => {
             let cut = match shared_storage.get_cut_entry(chat_id.0, session.source_id).await? {
                 Some(c) => c,
                 None => {
@@ -526,27 +526,20 @@ pub async fn process_video_clip(
                 cut.video_quality,
             )
         }
-        _ => {
-            bot.send_message(chat_id, i18n::t(&lang, "commands.cut_unknown_source"))
-                .await
-                .ok();
-            return Ok(());
-        }
     };
 
     // Get message_id for MTProto fallback (if available)
-    let message_info = match session.source_kind.as_str() {
-        "download" => shared_storage
+    let message_info = match session.source_kind {
+        SourceKind::Download => shared_storage
             .get_download_message_info(session.source_id)
             .await
             .ok()
             .flatten(),
-        "cut" => shared_storage
+        SourceKind::Cut => shared_storage
             .get_cut_message_info(session.source_id)
             .await
             .ok()
             .flatten(),
-        _ => None,
     };
     let (fallback_message_id, fallback_chat_id) = message_info.unzip();
 
@@ -1332,7 +1325,7 @@ pub async fn process_video_clip(
             .create_cut(
                 chat_id.0,
                 &original_url,
-                &session.source_kind,
+                session.source_kind.as_str(),
                 session.source_id,
                 output_kind,
                 &segments_json,

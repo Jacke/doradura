@@ -1,5 +1,6 @@
 //! Audio/video clip (cut) history operations.
 
+use super::sessions::{OutputKind, SourceKind};
 use super::DbConnection;
 use rusqlite::Result;
 
@@ -8,9 +9,9 @@ pub struct CutEntry {
     pub id: i64,
     pub user_id: i64,
     pub original_url: String,
-    pub source_kind: String,
+    pub source_kind: SourceKind,
     pub source_id: i64,
-    pub output_kind: String,
+    pub output_kind: OutputKind,
     pub segments_json: String,
     pub segments_text: String,
     pub title: String,
@@ -81,9 +82,9 @@ pub fn get_cuts_page(conn: &DbConnection, user_id: i64, limit: i64, offset: i64)
             id: row.get(0)?,
             user_id: row.get(1)?,
             original_url: row.get(2)?,
-            source_kind: row.get(3)?,
+            source_kind: SourceKind::from_str_lossy(&row.get::<_, String>(3)?),
             source_id: row.get(4)?,
-            output_kind: row.get(5)?,
+            output_kind: OutputKind::from_str_lossy(&row.get::<_, String>(5)?),
             segments_json: row.get(6)?,
             segments_text: row.get(7)?,
             title: row.get(8)?,
@@ -111,9 +112,9 @@ pub fn get_cut_entry(conn: &DbConnection, user_id: i64, cut_id: i64) -> Result<O
             id: row.get(0)?,
             user_id: row.get(1)?,
             original_url: row.get(2)?,
-            source_kind: row.get(3)?,
+            source_kind: SourceKind::from_str_lossy(&row.get::<_, String>(3)?),
             source_id: row.get(4)?,
-            output_kind: row.get(5)?,
+            output_kind: OutputKind::from_str_lossy(&row.get::<_, String>(5)?),
             segments_json: row.get(6)?,
             segments_text: row.get(7)?,
             title: row.get(8)?,

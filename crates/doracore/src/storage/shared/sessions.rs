@@ -252,10 +252,10 @@ impl SharedStorage {
                 .bind(&session.id)
                 .bind(session.user_id)
                 .bind(session.source_download_id)
-                .bind(&session.source_kind)
+                .bind(session.source_kind.as_str())
                 .bind(session.source_id)
                 .bind(&session.original_url)
-                .bind(&session.output_kind)
+                .bind(session.output_kind.as_str())
                 .bind(session.created_at)
                 .bind(session.expires_at)
                 .bind(&session.subtitle_lang)
@@ -802,14 +802,15 @@ fn map_pg_audio_cut_session(row: sqlx::postgres::PgRow) -> Result<AudioCutSessio
 }
 
 fn map_pg_video_clip_session(row: sqlx::postgres::PgRow) -> Result<VideoClipSession> {
+    use crate::storage::db::{OutputKind, SourceKind};
     Ok(VideoClipSession {
         id: row.get("id"),
         user_id: row.get("user_id"),
         source_download_id: row.get("source_download_id"),
-        source_kind: row.get("source_kind"),
+        source_kind: SourceKind::from_str_lossy(&row.get::<String, _>("source_kind")),
         source_id: row.get("source_id"),
         original_url: row.get("original_url"),
-        output_kind: row.get("output_kind"),
+        output_kind: OutputKind::from_str_lossy(&row.get::<String, _>("output_kind")),
         created_at: row.get("created_at"),
         expires_at: row.get("expires_at"),
         subtitle_lang: row.get("subtitle_lang"),

@@ -1,5 +1,6 @@
 use crate::core::config;
-use crate::storage::{db, DbPool, SharedStorage};
+use crate::storage::db::{self, OutputKind, SourceKind};
+use crate::storage::{DbPool, SharedStorage};
 use crate::telegram::commands::{process_video_clip, CutSegment};
 use crate::telegram::Bot;
 use crate::timestamps::format_timestamp;
@@ -111,7 +112,7 @@ pub async fn show_cuts_page(
     let mut text = String::from("✂️ *Your clips*\n\n");
     for cut in &cuts {
         let title = crate::telegram::escape_markdown(&cut.title);
-        let icon = if cut.output_kind == "video_note" {
+        let icon = if cut.output_kind == OutputKind::VideoNote {
             "⭕️"
         } else {
             "✂️"
@@ -149,7 +150,7 @@ pub async fn show_cuts_page(
         rows.push(vec![crate::telegram::cb(
             format!(
                 "{} {}",
-                if cut.output_kind == "video_note" {
+                if cut.output_kind == OutputKind::VideoNote {
                     "⭕️"
                 } else {
                     "✂️"
@@ -502,10 +503,10 @@ This may take a few minutes\\.",
                     id: uuid::Uuid::new_v4().to_string(),
                     user_id: chat_id.0,
                     source_download_id: 0,
-                    source_kind: "cut".to_string(),
+                    source_kind: SourceKind::Cut,
                     source_id: cut_id,
                     original_url: cut.original_url.clone(),
-                    output_kind: "cut".to_string(),
+                    output_kind: OutputKind::Cut,
                     created_at: chrono::Utc::now(),
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
@@ -557,10 +558,10 @@ This may take a few minutes\\.",
                     id: uuid::Uuid::new_v4().to_string(),
                     user_id: chat_id.0,
                     source_download_id: 0,
-                    source_kind: "cut".to_string(),
+                    source_kind: SourceKind::Cut,
                     source_id: cut_id,
                     original_url: cut.original_url.clone(),
-                    output_kind: "video_note".to_string(),
+                    output_kind: OutputKind::VideoNote,
                     created_at: chrono::Utc::now(),
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
@@ -663,10 +664,10 @@ This may take a few minutes\\.",
                     id: uuid::Uuid::new_v4().to_string(),
                     user_id: chat_id.0,
                     source_download_id: 0,
-                    source_kind: "cut".to_string(),
+                    source_kind: SourceKind::Cut,
                     source_id: cut_id,
                     original_url: cut.original_url.clone(),
-                    output_kind: "video_note".to_string(),
+                    output_kind: OutputKind::VideoNote,
                     created_at: chrono::Utc::now(),
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
