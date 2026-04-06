@@ -1,4 +1,4 @@
-use crate::core::{escape_markdown, truncate_string_safe};
+use crate::core::escape_markdown;
 use crate::storage::{DbPool, SharedStorage};
 use crate::telegram::Bot;
 use std::sync::Arc;
@@ -142,65 +142,10 @@ pub async fn show_user_stats(
         .await
 }
 
-/// Shows global bot statistics
-pub async fn show_global_stats(
-    bot: &Bot,
-    chat_id: ChatId,
-    _db_pool: Arc<DbPool>,
-    shared_storage: Arc<SharedStorage>,
-) -> ResponseResult<Message> {
-    let stats = match shared_storage.get_global_stats().await {
-        Ok(stats) => stats,
-        Err(e) => {
-            log::error!("Failed to get global stats: {}", e);
-            return bot
-                .send_message(chat_id, "Failed to load statistics 😢 Please try again later\\.")
-                .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-                .await;
-        }
-    };
-
-    let mut text = "🌍 *Global Statistics*\n\n".to_string();
-
-    text.push_str(&format!("👥 Total users: {}\n", stats.total_users));
-    text.push_str(&format!("📥 Total downloads: {}\n\n", stats.total_downloads));
-
-    if !stats.top_tracks.is_empty() {
-        text.push_str("🔥 *Top\\-10 tracks:*\n");
-        for (idx, (title, count)) in stats.top_tracks.iter().enumerate() {
-            // Guard against empty or invalid titles
-            let safe_title = if title.is_empty() { "(Untitled)" } else { title };
-
-            let escaped_title = escape_markdown(safe_title);
-            // Safely truncate long titles to 50 characters
-            let display_title = truncate_string_safe(&escaped_title, 50);
-            text.push_str(&format!("{}\\. {} \\- {} times\n", idx + 1, display_title, count));
-        }
-        text.push('\n');
-    }
-
-    if !stats.top_formats.is_empty() {
-        text.push_str("📦 *Format breakdown:*\n");
-        for (format, count) in stats.top_formats.iter() {
-            let format_emoji = match format.as_str() {
-                "mp3" => "🎵",
-                "mp4" => "🎬",
-                "srt" => "📝",
-                "txt" => "📄",
-                _ => "📦",
-            };
-            text.push_str(&format!("{} {}: {}\n", format_emoji, format.to_uppercase(), count));
-        }
-    }
-
-    bot.send_message(chat_id, text)
-        .parse_mode(teloxide::types::ParseMode::MarkdownV2)
-        .await
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::truncate_string_safe;
 
     // ==================== format_size Tests ====================
 

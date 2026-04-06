@@ -217,7 +217,7 @@ pub struct LoadTestRunner {
     downloader: Arc<MockDownloader>,
     metrics: Arc<LoadTestMetrics>,
     running: Arc<AtomicBool>,
-    task_counter: AtomicU64,
+    task_counter: Arc<AtomicU64>,
 }
 
 impl LoadTestRunner {
@@ -229,7 +229,7 @@ impl LoadTestRunner {
             downloader: Arc::new(MockDownloader::new(mock_config)),
             metrics: Arc::new(LoadTestMetrics::new(MetricsConfig::default())),
             running: Arc::new(AtomicBool::new(false)),
-            task_counter: AtomicU64::new(0),
+            task_counter: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -311,8 +311,7 @@ impl LoadTestRunner {
         let queue = Arc::clone(&self.queue);
         let metrics = Arc::clone(&self.metrics);
         let running = Arc::clone(&self.running);
-        let task_counter = &self.task_counter as *const AtomicU64;
-        let task_counter = unsafe { &*task_counter };
+        let task_counter = Arc::clone(&self.task_counter);
         let duration = self.config.duration;
         let interval = user.request_interval;
 

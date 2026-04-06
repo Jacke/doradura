@@ -1131,7 +1131,10 @@ fn handle_lyrics_key(
             let a_tx = artist_tx.clone();
             tokio::spawn(async move {
                 let token = if g_token.is_empty() {
-                    doracore::core::config::GENIUS_CLIENT_TOKEN.as_ref().unwrap().clone()
+                    doracore::core::config::GENIUS_CLIENT_TOKEN
+                        .as_ref()
+                        .cloned()
+                        .unwrap_or_default()
                 } else {
                     g_token
                 };
@@ -1631,7 +1634,10 @@ fn handle_click_internal(
             let a_tx = artist_tx.clone();
             tokio::spawn(async move {
                 let token = if g_token.is_empty() {
-                    doracore::core::config::GENIUS_CLIENT_TOKEN.as_ref().unwrap().clone()
+                    doracore::core::config::GENIUS_CLIENT_TOKEN
+                        .as_ref()
+                        .cloned()
+                        .unwrap_or_default()
                 } else {
                     g_token
                 };
@@ -1740,7 +1746,10 @@ fn handle_click_internal(
             let a_tx = artist_tx.clone();
             tokio::spawn(async move {
                 let token = if g_token.is_empty() {
-                    doracore::core::config::GENIUS_CLIENT_TOKEN.as_ref().unwrap().clone()
+                    doracore::core::config::GENIUS_CLIENT_TOKEN
+                        .as_ref()
+                        .cloned()
+                        .unwrap_or_default()
                 } else {
                     g_token
                 };

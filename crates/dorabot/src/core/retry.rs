@@ -7,10 +7,8 @@
 //! - Different strategies for different error types
 
 use crate::core::metrics;
-use crate::telegram::Bot;
 use std::future::Future;
 use std::time::Duration;
-use teloxide::prelude::*;
 use thiserror::Error;
 
 /// Retry-related errors.
@@ -192,12 +190,12 @@ impl<T, E> RetryResult<T, E> {
     pub fn is_exhausted(&self) -> bool {
         matches!(self.result, Err(RetryError::MaxRetriesExhausted { .. }))
     }
+}
 
+#[cfg(test)]
+impl<T, E: std::fmt::Debug> RetryResult<T, E> {
     /// Unwraps the result, panicking on error.
-    pub fn unwrap(self) -> T
-    where
-        E: std::fmt::Debug,
-    {
+    pub fn unwrap(self) -> T {
         self.result.unwrap()
     }
 }
@@ -334,120 +332,6 @@ where
                 };
             }
         }
-    }
-}
-
-/// Executes an async operation with retry logic and user notification.
-///
-/// Similar to `retry`, but also notifies the user about retry attempts.
-pub async fn retry_with_notification<F, Fut, T, E>(
-    bot: &Bot,
-    chat_id: ChatId,
-    config: &RetryConfig,
-    operation_name: &str,
-    mut operation: F,
-) -> RetryResult<T, E>
-where
-    F: FnMut() -> Fut,
-    Fut: Future<Output = Result<T, E>>,
-    E: Retryable + std::fmt::Debug,
-{
-    let start = std::time::Instant::now();
-    let mut attempts = 0;
-
-    loop {
-        attempts += 1;
-
-        match operation().await {
-            Ok(value) => {
-                // If we had to retry, send success message
-                if attempts > 1 && config.notify_user {
-                    let _ = bot
-                        .send_message(chat_id, format!("✅ Done! ({} attempt(s))", attempts))
-                        .await;
-                }
-
-                return RetryResult {
-                    result: Ok(value),
-                    attempts,
-                    total_duration: start.elapsed(),
-                };
-            }
-            Err(e) if attempts <= config.max_retries && e.is_retryable() => {
-                // Record retry metric
-                metrics::TASK_RETRIES_TOTAL
-                    .with_label_values(&[&attempts.to_string()])
-                    .inc();
-
-                // Calculate delay
-                let delay = e
-                    .retry_after()
-                    .unwrap_or_else(|| config.delay_for_attempt(attempts - 1));
-
-                log::warn!(
-                    "Attempt {}/{} for {} failed (retrying in {:?}): {:?}",
-                    attempts,
-                    config.max_retries + 1,
-                    operation_name,
-                    delay,
-                    e
-                );
-
-                // Notify user about retry (only on first retry to avoid spam)
-                if attempts == 1 && config.notify_user {
-                    let _ = bot
-                        .send_message(
-                            chat_id,
-                            format!(
-                                "🔄 Retry {}/{}\n⏳ {}...",
-                                attempts + 1,
-                                config.max_retries + 1,
-                                operation_name
-                            ),
-                        )
-                        .await;
-                }
-
-                tokio::time::sleep(delay).await;
-            }
-            Err(e) => {
-                // Notify user about final failure
-                if config.notify_user {
-                    let _ = bot
-                        .send_message(chat_id, format!("❌ Failed after {} attempts", attempts))
-                        .await;
-                }
-
-                return RetryResult {
-                    result: Err(RetryError::MaxRetriesExhausted {
-                        max_retries: config.max_retries,
-                        last_error: e,
-                    }),
-                    attempts,
-                    total_duration: start.elapsed(),
-                };
-            }
-        }
-    }
-}
-
-/// A wrapper that makes any error retryable.
-#[derive(Debug)]
-pub struct AlwaysRetryable<E>(pub E);
-
-impl<E: std::fmt::Debug> Retryable for AlwaysRetryable<E> {
-    fn is_retryable(&self) -> bool {
-        true
-    }
-}
-
-/// A wrapper that makes any error non-retryable.
-#[derive(Debug)]
-pub struct NeverRetryable<E>(pub E);
-
-impl<E: std::fmt::Debug> Retryable for NeverRetryable<E> {
-    fn is_retryable(&self) -> bool {
-        false
     }
 }
 
