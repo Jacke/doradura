@@ -1,6 +1,6 @@
 use crate::conversion::video::{
-    calculate_video_note_split, is_too_long_for_split, to_video_notes_split, VIDEO_NOTE_MAX_DURATION,
-    VIDEO_NOTE_MAX_PARTS,
+    calculate_video_note_split, is_too_long_for_split, to_gif, to_video_notes_split, GifOptions,
+    VIDEO_NOTE_MAX_DURATION, VIDEO_NOTE_MAX_PARTS,
 };
 use crate::core::config;
 use crate::core::error::AppError;
@@ -342,6 +342,7 @@ pub async fn process_video_clip(
     let is_iphone_ringtone = session.output_kind == "iphone_ringtone";
     let is_android_ringtone = session.output_kind == "android_ringtone";
     let is_ringtone = is_iphone_ringtone || is_android_ringtone;
+    let is_gif = session.output_kind == "gif";
 
     // Effective duration accounting for speed (e.g., 86s at 2x = 43s)
     let effective_len = if let Some(spd) = speed {
@@ -375,13 +376,15 @@ pub async fn process_video_clip(
         crate::download::ringtone::MAX_IPHONE_DURATION_SECS as i64
     } else if is_android_ringtone {
         crate::download::ringtone::MAX_ANDROID_DURATION_SECS as i64
+    } else if is_gif {
+        30
     } else {
         60 * 10
     };
 
     // For ringtones only, truncate segments to fit within limit and notify user
     // Video notes with split don't need truncation
-    let (adjusted_segments, truncated) = if is_ringtone && total_len > max_len_secs {
+    let (adjusted_segments, truncated) = if (is_ringtone || is_gif) && total_len > max_len_secs {
         let mut adjusted = Vec::new();
         let mut accumulated = 0i64;
 
@@ -405,7 +408,7 @@ pub async fn process_video_clip(
         }
 
         (adjusted, true)
-    } else if !is_video_note && !is_ringtone && total_len > 600 {
+    } else if !is_video_note && !is_ringtone && !is_gif && total_len > 600 {
         // For regular cuts, reject if too long (10 min)
         bot.send_message(chat_id, i18n::t(&lang, "commands.cut_too_long"))
             .await
@@ -439,14 +442,20 @@ pub async fn process_video_clip(
         }
     }
 
-    // Notify user if segments were truncated (only for ringtones now)
+    // Notify user if segments were truncated (ringtones and GIF)
     if truncated {
         let max_secs = if is_iphone_ringtone {
             crate::download::ringtone::MAX_IPHONE_DURATION_SECS as i64
+        } else if is_gif {
+            30
         } else {
             crate::download::ringtone::MAX_ANDROID_DURATION_SECS as i64
         };
-        let limit_text = format!("{} ({}s)", i18n::t(&lang, "commands.cut_limit_ringtone"), max_secs);
+        let limit_text = if is_gif {
+            format!("GIF ({}s)", max_secs)
+        } else {
+            format!("{} ({}s)", i18n::t(&lang, "commands.cut_limit_ringtone"), max_secs)
+        };
         let mut args = FluentArgs::new();
         args.set("total", total_len);
         args.set("limit", limit_text);
@@ -556,6 +565,8 @@ pub async fn process_video_clip(
             i18n::t_args(&lang, "commands.cut_status_video_note_speed", &args)
         } else if is_ringtone {
             i18n::t_args(&lang, "commands.cut_status_ringtone_speed", &args)
+        } else if is_gif {
+            format!("🎞 Creating GIF {} at {}x...", segments_text, speed.unwrap_or(1.0))
         } else {
             i18n::t_args(&lang, "commands.cut_status_clip_speed", &args)
         }
@@ -566,6 +577,8 @@ pub async fn process_video_clip(
             i18n::t_args(&lang, "commands.cut_status_video_note", &args)
         } else if is_ringtone {
             i18n::t_args(&lang, "commands.cut_status_ringtone", &args)
+        } else if is_gif {
+            format!("🎞 Creating GIF {}...", segments_text)
         } else {
             i18n::t_args(&lang, "commands.cut_status_clip", &args)
         }
@@ -588,7 +601,13 @@ pub async fn process_video_clip(
     } else {
         guard.path().join(format!(
             "{}_{}_{}{}",
-            if is_video_note { "circle" } else { "cut" },
+            if is_video_note {
+                "circle"
+            } else if is_gif {
+                "gif_tmp"
+            } else {
+                "cut"
+            },
             chat_id.0,
             uuid::Uuid::new_v4(),
             ".mp4"
@@ -1017,6 +1036,51 @@ pub async fn process_video_clip(
     } else {
         format!("\n{}", timestamped_url)
     };
+
+    // === GIF PATH: convert the cut MP4 to GIF and send as animation ===
+    if is_gif {
+        let gif_title = format!("{} [gif {}]{}", base_title, segments_text, url_suffix);
+        bot.edit_message_text(chat_id, status.id, "🖼️ Converting to GIF...")
+            .await
+            .ok();
+        match to_gif(
+            &output_path,
+            GifOptions {
+                duration: Some(actual_total_len.max(1) as u64),
+                start_time: None,
+                width: Some(480),
+                fps: Some(12),
+            },
+        )
+        .await
+        {
+            Ok(gif_path) => {
+                guard.track_file(gif_path.clone());
+                bot.delete_message(chat_id, status.id).await.ok();
+                match bot
+                    .send_animation(chat_id, teloxide::types::InputFile::file(&gif_path))
+                    .caption(&gif_title)
+                    .await
+                {
+                    Ok(_) => {}
+                    Err(e) => {
+                        log::error!("❌ Failed to send GIF: {}", e);
+                        bot.send_message(chat_id, format!("❌ Failed to send GIF: {}", e))
+                            .await
+                            .ok();
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("❌ GIF conversion failed: {}", e);
+                bot.delete_message(chat_id, status.id).await.ok();
+                bot.send_message(chat_id, format!("❌ GIF conversion failed: {}", e))
+                    .await
+                    .ok();
+            }
+        }
+        return Ok(());
+    }
 
     let (output_kind, clip_title) = if is_video_note {
         (

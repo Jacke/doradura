@@ -163,6 +163,7 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                         options.push(vec![
                             crate::telegram::cb("✂️ Clip".to_string(), format!("downloads:clip:{}", download_id)),
                             crate::telegram::cb("⭕️ Circle".to_string(), format!("downloads:circle:{}", download_id)),
+                            crate::telegram::cb("🎞 GIF".to_string(), format!("downloads:gif:{}", download_id)),
                             crate::telegram::cb(
                                 "🔔 Ringtone".to_string(),
                                 format!("ringtone:select:download:{}", download_id),
@@ -256,6 +257,7 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                     options.push(vec![
                         crate::telegram::cb("✂️ Clip".to_string(), format!("downloads:clip_cut:{}", cut_id)),
                         crate::telegram::cb("⭕️ Circle".to_string(), format!("downloads:circle_cut:{}", cut_id)),
+                        crate::telegram::cb("🎞 GIF".to_string(), format!("downloads:gif_cut:{}", cut_id)),
                         crate::telegram::cb("🔔 Ringtone".to_string(), format!("ringtone:select:cut:{}", cut_id)),
                     ]);
 

@@ -53,7 +53,7 @@ pub async fn handle_downloads_callback(
         }
         // Clipping & circles
         "clip" | "clip_cut" | "circle" | "circle_cut" | "clip_cancel" | "circle_subs" | "circle_sub_lang" | "ts"
-        | "dur" => {
+        | "dur" | "gif" | "gif_cut" => {
             super::clipping::handle(&ctx, action, &parts).await?;
         }
         // Speed control

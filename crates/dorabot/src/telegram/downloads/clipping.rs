@@ -258,6 +258,124 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                 ctx.bot.delete_message(ctx.chat_id, ctx.message_id).await.ok();
             }
         }
+        "gif" => {
+            if parts.len() < 3 {
+                return Ok(());
+            }
+            let download_id = parts[2].parse::<i64>().unwrap_or(0);
+            if let Some(download) = ctx
+                .shared_storage
+                .get_download_history_entry(ctx.chat_id.0, download_id)
+                .await
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+            {
+                if download.format != "mp4" {
+                    ctx.bot
+                        .send_message(ctx.chat_id, "🎞 GIF is only available for MP4\\.")
+                        .parse_mode(ParseMode::MarkdownV2)
+                        .await
+                        .ok();
+                    return Ok(());
+                }
+                if download.file_id.is_none() {
+                    ctx.bot
+                        .send_message(ctx.chat_id, "❌ Could not find file\\_id for this file\\.")
+                        .parse_mode(ParseMode::MarkdownV2)
+                        .await
+                        .ok();
+                    return Ok(());
+                }
+                let session = crate::storage::db::VideoClipSession {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    user_id: ctx.chat_id.0,
+                    source_download_id: download_id,
+                    source_kind: "download".to_string(),
+                    source_id: download_id,
+                    original_url: download.url.clone(),
+                    output_kind: "gif".to_string(),
+                    created_at: chrono::Utc::now(),
+                    expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                    subtitle_lang: None,
+                };
+                ctx.shared_storage
+                    .clone()
+                    .upsert_video_clip_session(&session)
+                    .await
+                    .map_err(|e| {
+                        teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+                    })?;
+
+                let timestamps = ctx
+                    .shared_storage
+                    .get_video_timestamps(download_id)
+                    .await
+                    .unwrap_or_default();
+                let (ts_buttons, ts_text) = build_timestamp_ui(&timestamps, "gif", download_id);
+
+                let mut keyboard_rows = ts_buttons;
+                keyboard_rows.push(vec![crate::telegram::cb(
+                    "❌ Cancel".to_string(),
+                    "downloads:clip_cancel".to_string(),
+                )]);
+                let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
+
+                let base_message = "🎞 Send the time range for the GIF in the format `mm:ss-mm:ss`\\.\nMax 30 seconds\\.\n\nExample: `00:10-00:25`";
+                let message = format!("{}{}", base_message, ts_text);
+                ctx.bot
+                    .send_message(ctx.chat_id, message)
+                    .parse_mode(ParseMode::MarkdownV2)
+                    .reply_markup(keyboard)
+                    .await?;
+
+                ctx.bot.delete_message(ctx.chat_id, ctx.message_id).await.ok();
+            }
+        }
+        "gif_cut" => {
+            if parts.len() < 3 {
+                return Ok(());
+            }
+            let cut_id = parts[2].parse::<i64>().unwrap_or(0);
+            if let Some(cut) = ctx
+                .shared_storage
+                .get_cut_entry(ctx.chat_id.0, cut_id)
+                .await
+                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+            {
+                if cut.file_id.is_none() {
+                    ctx.bot
+                        .send_message(ctx.chat_id, "❌ Could not find file\\_id for this file\\.")
+                        .parse_mode(ParseMode::MarkdownV2)
+                        .await
+                        .ok();
+                    return Ok(());
+                }
+                let session = crate::storage::db::VideoClipSession {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    user_id: ctx.chat_id.0,
+                    source_download_id: 0,
+                    source_kind: "cut".to_string(),
+                    source_id: cut_id,
+                    original_url: cut.original_url.clone(),
+                    output_kind: "gif".to_string(),
+                    created_at: chrono::Utc::now(),
+                    expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+                    subtitle_lang: None,
+                };
+                ctx.shared_storage
+                    .clone()
+                    .upsert_video_clip_session(&session)
+                    .await
+                    .map_err(|e| {
+                        teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
+                    })?;
+                let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
+                    "❌ Cancel".to_string(),
+                    "downloads:clip_cancel".to_string(),
+                )]]);
+                ctx.bot.send_message(ctx.chat_id, "🎞 Send the time range for the GIF in the format `mm:ss-mm:ss`\\.\nMax 30 seconds\\.\n\nExample: `00:10-00:25`").parse_mode(ParseMode::MarkdownV2).reply_markup(keyboard).await?;
+                ctx.bot.delete_message(ctx.chat_id, ctx.message_id).await.ok();
+            }
+        }
         "clip_cancel" => {
             ctx.shared_storage
                 .clone()
@@ -419,6 +537,8 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                     original_url: download.url.clone(),
                     output_kind: if output_kind == "circle" {
                         "video_note".to_string()
+                    } else if output_kind == "gif" {
+                        "gif".to_string()
                     } else {
                         "cut".to_string()
                     },

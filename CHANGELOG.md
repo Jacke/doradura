@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **GIF creation from video** (v0.36.0) — after downloading any MP4 (or from a clip), press **🎞 GIF** to select a time range (max 30s) and get an animated GIF. Two-pass ffmpeg palette optimization for best quality. Works from both `/downloads` and `/cuts`. Segments over 30s are auto-truncated
+
 - **Inline speed modifier** (v0.35.0) — append `2x`, `1.5x`, or `speed2` after a time range when sending a URL: `URL 2:48:45-2:49:59 2x` → bot downloads the clip and applies speed via ffmpeg `setpts`/`atempo`. Works for both MP4 and MP3 downloads. Speed stored in `preview_contexts` table alongside time range
 
 ### Changed
