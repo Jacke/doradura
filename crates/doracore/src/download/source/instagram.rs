@@ -1297,7 +1297,7 @@ impl DownloadSource for InstagramSource {
                     .await?;
 
                 let duration_secs = if primary.is_video {
-                    crate::download::metadata::probe_duration_seconds(&request.output_path)
+                    crate::download::metadata::probe_duration_seconds(&request.output_path).await
                 } else {
                     None
                 };
@@ -1332,7 +1332,7 @@ impl DownloadSource for InstagramSource {
                         match self.download_media_url(item_url, &item_path, &extra_tx).await {
                             Ok(_) => {
                                 let item_duration = if item.is_video {
-                                    crate::download::metadata::probe_duration_seconds(&item_path)
+                                    crate::download::metadata::probe_duration_seconds(&item_path).await
                                 } else {
                                     None
                                 };

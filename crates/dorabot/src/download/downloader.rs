@@ -25,11 +25,6 @@ use teloxide::prelude::*;
 use teloxide::types::InputFile;
 use tokio::process::Command as TokioCommand;
 
-/// Legacy alias for backward compatibility
-/// Use AppError instead
-#[deprecated(note = "Use AppError instead")]
-pub type CommandError = AppError;
-
 pub fn spawn_downloader_with_fallback(ytdl_bin: &str, args: &[&str]) -> Result<std::process::Child, AppError> {
     Command::new(ytdl_bin)
         .args(args)
@@ -449,6 +444,7 @@ pub async fn split_video_into_parts(path: &str, target_part_size_bytes: u64) -> 
     }
 
     let metadata = probe_video_metadata(path)
+        .await
         .ok_or_else(|| AppError::Download(DownloadError::Ffmpeg(format!("Failed to probe video: {}", path))))?;
     let duration = metadata.0 as f64;
 
@@ -828,9 +824,9 @@ mod download_tests {
 
     // ==================== Existing Tests ====================
 
-    #[test]
-    fn test_probe_duration_seconds_handles_missing_file() {
-        assert_eq!(probe_duration_seconds("/no/such/file.mp3"), None);
+    #[tokio::test]
+    async fn test_probe_duration_seconds_handles_missing_file() {
+        assert_eq!(probe_duration_seconds("/no/such/file.mp3").await, None);
     }
 
     #[test]

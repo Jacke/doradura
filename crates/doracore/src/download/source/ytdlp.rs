@@ -404,7 +404,7 @@ impl YtDlpSource {
 
         let file_size = std::fs::metadata(&actual_path).map(|m| m.len()).unwrap_or(0);
 
-        let duration = probe_duration_seconds(&actual_path);
+        let duration = probe_duration_seconds(&actual_path).await;
 
         Ok(DownloadOutput {
             file_path: actual_path,
@@ -719,7 +719,7 @@ where
                     attempt + 1,
                     total_proxies
                 );
-                return Ok(probe_duration_seconds(download_path));
+                return Ok(runtime_handle.block_on(probe_duration_seconds(download_path)));
             }
             Err((error_type, stderr_text)) => {
                 crate::core::metrics::record_tier_attempt("tier1_no_cookies", false);
@@ -780,7 +780,7 @@ where
                             crate::core::metrics::PROXY_REQUESTS_TOTAL
                                 .with_label_values(&[proxy_label, "success"])
                                 .inc();
-                            return Ok(probe_duration_seconds(download_path));
+                            return Ok(runtime_handle.block_on(probe_duration_seconds(download_path)));
                         }
                         Tier2Outcome::CookieRefreshed => {
                             crate::core::metrics::record_tier_attempt("tier2_cookies", false);
@@ -812,7 +812,7 @@ where
                         crate::core::metrics::PROXY_REQUESTS_TOTAL
                             .with_label_values(&[proxy_label, "success"])
                             .inc();
-                        return Ok(probe_duration_seconds(download_path));
+                        return Ok(runtime_handle.block_on(probe_duration_seconds(download_path)));
                     }
                 }
 

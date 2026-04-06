@@ -944,7 +944,7 @@ pub async fn send_video_with_retry(
     artist: Option<String>,
 ) -> Result<(Message, u64), AppError> {
     // Get video metadata for correct Telegram sending
-    let video_metadata = probe_video_metadata(download_path);
+    let video_metadata = probe_video_metadata(download_path).await;
 
     log::info!("Video metadata for {}: {:?}", download_path, video_metadata);
 

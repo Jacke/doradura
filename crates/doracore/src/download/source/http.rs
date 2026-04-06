@@ -13,8 +13,7 @@ use crate::download::error::DownloadError;
 use crate::download::source::{DownloadOutput, DownloadRequest, DownloadSource, SourceProgress};
 use async_trait::async_trait;
 use reqwest::Client;
-use std::io::Write;
-use std::net::ToSocketAddrs;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use url::Url;
 
@@ -47,10 +46,14 @@ fn is_private_ip(ip: &std::net::IpAddr) -> bool {
 ///
 /// Blocks SSRF attacks that use internal hostnames (e.g. `http://169.254.169.254/latest/meta-data/`).
 /// Returns an error if any resolved address falls in a private range.
-fn check_ssrf(url: &Url) -> Result<(), AppError> {
+///
+/// Uses `tokio::net::lookup_host` for non-blocking DNS resolution.
+async fn check_ssrf(url: &Url) -> Result<(), AppError> {
     if let Some(host) = url.host_str() {
         // Port 80 is used for resolution only; the actual port is irrelevant here.
-        match (host, 80u16).to_socket_addrs() {
+        let lookup_addr = format!("{}:80", host);
+        let resolved = tokio::net::lookup_host(&lookup_addr).await;
+        match resolved {
             Ok(addrs) => {
                 for addr in addrs {
                     if is_private_ip(&addr.ip()) {
@@ -193,7 +196,7 @@ impl DownloadSource for HttpSource {
 
     async fn estimate_size(&self, url: &Url) -> Option<u64> {
         // SSRF guard — silently return None for private addresses rather than panicking.
-        check_ssrf(url).ok()?;
+        check_ssrf(url).await.ok()?;
         let response = tokio::time::timeout(
             std::time::Duration::from_secs(10),
             self.client.head(url.as_str()).send(),
@@ -216,10 +219,13 @@ impl DownloadSource for HttpSource {
         log::info!("📥 HTTP direct download: {}", request.url);
 
         // MED-02: SSRF guard — reject URLs that resolve to private/internal addresses.
-        check_ssrf(&request.url)?;
+        check_ssrf(&request.url).await?;
 
         // Check if we can resume (file already partially downloaded)
-        let existing_size = std::fs::metadata(&request.output_path).map(|m| m.len()).unwrap_or(0);
+        let existing_size = tokio::fs::metadata(&request.output_path)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
 
         let mut req = self.client.get(request.url.as_str());
 
@@ -234,7 +240,7 @@ impl DownloadSource for HttpSource {
             .map_err(|e| AppError::Download(DownloadError::Other(format!("HTTP request failed: {}", e))))?;
 
         // SSRF: re-check final URL after redirects (reqwest follows 3xx by default)
-        check_ssrf(response.url())?;
+        check_ssrf(response.url()).await?;
 
         if !response.status().is_success() && response.status().as_u16() != 206 {
             return Err(AppError::Download(DownloadError::Other(format!(
@@ -265,16 +271,18 @@ impl DownloadSource for HttpSource {
             .map(|s| s.to_string())
             .or_else(|| Self::mime_from_extension(&request.output_path));
 
-        // Open file for writing (append if resuming)
+        // Open file for writing (append if resuming) — async to avoid blocking the runtime
         let mut file = if is_partial && existing_size > 0 {
-            std::fs::OpenOptions::new()
+            tokio::fs::OpenOptions::new()
                 .append(true)
                 .open(&request.output_path)
+                .await
                 .map_err(|e| {
                     AppError::Download(DownloadError::Other(format!("Failed to open file for resume: {}", e)))
                 })?
         } else {
-            std::fs::File::create(&request.output_path)
+            tokio::fs::File::create(&request.output_path)
+                .await
                 .map_err(|e| AppError::Download(DownloadError::Other(format!("Failed to create file: {}", e))))?
         };
 
@@ -290,6 +298,7 @@ impl DownloadSource for HttpSource {
                 .map_err(|e| AppError::Download(DownloadError::Other(format!("Error reading chunk: {}", e))))?;
 
             file.write_all(&chunk)
+                .await
                 .map_err(|e| AppError::Download(DownloadError::Other(format!("Error writing to file: {}", e))))?;
 
             downloaded += chunk.len() as u64;
@@ -297,7 +306,7 @@ impl DownloadSource for HttpSource {
             // Check max file size
             if let Some(max_size) = request.max_file_size {
                 if downloaded > max_size {
-                    let _ = std::fs::remove_file(&request.output_path);
+                    let _ = tokio::fs::remove_file(&request.output_path).await;
                     return Err(AppError::Validation(format!(
                         "File exceeds maximum size: {} bytes > {} bytes",
                         downloaded, max_size
@@ -329,9 +338,11 @@ impl DownloadSource for HttpSource {
         }
 
         file.flush()
+            .await
             .map_err(|e| AppError::Download(DownloadError::Other(format!("Failed to flush file: {}", e))))?;
 
-        let file_size = std::fs::metadata(&request.output_path)
+        let file_size = tokio::fs::metadata(&request.output_path)
+            .await
             .map(|m| m.len())
             .unwrap_or(downloaded);
 
@@ -342,7 +353,7 @@ impl DownloadSource for HttpSource {
         );
 
         // Probe duration if it's a media file
-        let duration_secs = crate::download::metadata::probe_duration_seconds(&request.output_path);
+        let duration_secs = crate::download::metadata::probe_duration_seconds(&request.output_path).await;
 
         Ok(DownloadOutput {
             file_path: request.output_path.clone(),
@@ -443,21 +454,21 @@ mod tests {
         assert!(!is_private_ip(&"93.184.216.34".parse::<IpAddr>().unwrap()));
     }
 
-    #[test]
-    fn test_check_ssrf_rejects_localhost() {
+    #[tokio::test]
+    async fn test_check_ssrf_rejects_localhost() {
         let url = Url::parse("http://localhost/secret.mp3").unwrap();
-        assert!(check_ssrf(&url).is_err());
+        assert!(check_ssrf(&url).await.is_err());
     }
 
-    #[test]
-    fn test_check_ssrf_rejects_127_0_0_1() {
+    #[tokio::test]
+    async fn test_check_ssrf_rejects_127_0_0_1() {
         let url = Url::parse("http://127.0.0.1/file.mp3").unwrap();
-        assert!(check_ssrf(&url).is_err());
+        assert!(check_ssrf(&url).await.is_err());
     }
 
-    #[test]
-    fn test_check_ssrf_rejects_metadata_ip() {
+    #[tokio::test]
+    async fn test_check_ssrf_rejects_metadata_ip() {
         let url = Url::parse("http://169.254.169.254/latest/meta-data/file.mp3").unwrap();
-        assert!(check_ssrf(&url).is_err());
+        assert!(check_ssrf(&url).await.is_err());
     }
 }

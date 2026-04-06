@@ -165,7 +165,7 @@ pub async fn download_and_send_video(
                     .unwrap_or_else(|_| download_output.file_path.clone());
 
                 // Verify both video and audio streams are present
-                match has_both_video_and_audio(&actual_file_path) {
+                match has_both_video_and_audio(&actual_file_path).await {
                     Ok(true) => {
                         log::info!("Video verified: both streams present");
                     }
@@ -293,7 +293,7 @@ pub async fn download_and_send_video(
                             None
                         };
 
-                        let duration = probe_video_metadata(part_path).map(|(d, _, _)| d as i64);
+                        let duration = probe_video_metadata(part_path).await.map(|(d, _, _)| d as i64);
 
                         let canonical_url = doracore::download::url_canonical::canonicalize_url(url.as_str());
                         match storage

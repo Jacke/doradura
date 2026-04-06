@@ -10,7 +10,6 @@ use crate::storage::cache;
 use once_cell::sync::Lazy;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 use tokio::process::Command as TokioCommand;
 use tokio::time::timeout;
 use url::Url;
@@ -493,22 +492,26 @@ pub fn add_po_token_only_args(args: &mut Vec<&str>, proxy: Option<&ProxyConfig>)
 
 /// Probes media file duration using `ffprobe`.
 ///
+/// Uses `tokio::process::Command` with a 30-second timeout to avoid blocking
+/// the async runtime.
+///
 /// # Returns
 ///
 /// Duration in seconds if successful, `None` otherwise.
-pub fn probe_duration_seconds(path: &str) -> Option<u32> {
-    let output = Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            path,
-        ])
-        .output()
-        .ok()?;
+pub async fn probe_duration_seconds(path: &str) -> Option<u32> {
+    use crate::core::process::{run_with_timeout, FFPROBE_TIMEOUT};
+
+    let mut cmd = TokioCommand::new("ffprobe");
+    cmd.args([
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        path,
+    ]);
+    let output = run_with_timeout(&mut cmd, FFPROBE_TIMEOUT).await.ok()?;
 
     let duration_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
     if duration_str.is_empty() {
@@ -519,37 +522,43 @@ pub fn probe_duration_seconds(path: &str) -> Option<u32> {
 }
 
 /// Returns `true` if the media file at `path` contains both a video and an audio stream.
-pub fn has_both_video_and_audio(path: &str) -> Result<bool, AppError> {
-    let video_output = Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=codec_type",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            path,
-        ])
-        .output()
+///
+/// Uses `tokio::process::Command` with a 30-second timeout per probe.
+pub async fn has_both_video_and_audio(path: &str) -> Result<bool, AppError> {
+    use crate::core::process::{run_with_timeout, FFPROBE_TIMEOUT};
+
+    let mut video_cmd = TokioCommand::new("ffprobe");
+    video_cmd.args([
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=codec_type",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        path,
+    ]);
+    let video_output = run_with_timeout(&mut video_cmd, FFPROBE_TIMEOUT)
+        .await
         .map_err(|e| AppError::Download(DownloadError::Other(format!("Failed to check video stream: {}", e))))?;
 
     let has_video = !String::from_utf8_lossy(&video_output.stdout).trim().is_empty();
 
-    let audio_output = Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-select_streams",
-            "a:0",
-            "-show_entries",
-            "stream=codec_type",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            path,
-        ])
-        .output()
+    let mut audio_cmd = TokioCommand::new("ffprobe");
+    audio_cmd.args([
+        "-v",
+        "error",
+        "-select_streams",
+        "a:0",
+        "-show_entries",
+        "stream=codec_type",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        path,
+    ]);
+    let audio_output = run_with_timeout(&mut audio_cmd, FFPROBE_TIMEOUT)
+        .await
         .map_err(|e| AppError::Download(DownloadError::Other(format!("Failed to check audio stream: {}", e))))?;
 
     let has_audio = !String::from_utf8_lossy(&audio_output.stdout).trim().is_empty();
@@ -560,40 +569,41 @@ pub fn has_both_video_and_audio(path: &str) -> Result<bool, AppError> {
 /// Probes video metadata: `(duration_seconds, width, height)`.
 ///
 /// Used to supply the parameters Telegram requires when sending videos.
-pub fn probe_video_metadata(path: &str) -> Option<(u32, Option<u32>, Option<u32>)> {
-    let duration = probe_duration_seconds(path)?;
+/// Uses `tokio::process::Command` with a 30-second timeout per probe.
+pub async fn probe_video_metadata(path: &str) -> Option<(u32, Option<u32>, Option<u32>)> {
+    use crate::core::process::{run_with_timeout, FFPROBE_TIMEOUT};
 
-    let width_output = Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=width",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            path,
-        ])
-        .output()
-        .ok()?;
+    let duration = probe_duration_seconds(path).await?;
+
+    let mut width_cmd = TokioCommand::new("ffprobe");
+    width_cmd.args([
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        path,
+    ]);
+    let width_output = run_with_timeout(&mut width_cmd, FFPROBE_TIMEOUT).await.ok()?;
 
     let width = String::from_utf8_lossy(&width_output.stdout).trim().parse::<u32>().ok();
 
-    let height_output = Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=height",
-            "-of",
-            "default=noprint_wrappers=1:nokey=1",
-            path,
-        ])
-        .output()
-        .ok()?;
+    let mut height_cmd = TokioCommand::new("ffprobe");
+    height_cmd.args([
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=height",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        path,
+    ]);
+    let height_output = run_with_timeout(&mut height_cmd, FFPROBE_TIMEOUT).await.ok()?;
 
     let height = String::from_utf8_lossy(&height_output.stdout)
         .trim()
