@@ -64,20 +64,32 @@ use crate::timestamps::{TimestampSource, VideoTimestamp};
 
 /// Save timestamps extracted from a video for later use in clip suggestions
 pub fn save_video_timestamps(conn: &DbConnection, download_id: i64, timestamps: &[VideoTimestamp]) -> Result<()> {
-    for ts in timestamps {
-        conn.execute(
-            "INSERT INTO video_timestamps (download_id, source, time_seconds, end_seconds, label)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![
-                download_id,
-                ts.source.as_str(),
-                ts.time_seconds,
-                ts.end_seconds,
-                ts.label,
-            ],
-        )?;
+    if timestamps.is_empty() {
+        return Ok(());
     }
-    Ok(())
+    conn.execute("BEGIN", [])?;
+    let result = (|| {
+        for ts in timestamps {
+            conn.execute(
+                "INSERT INTO video_timestamps (download_id, source, time_seconds, end_seconds, label)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![
+                    download_id,
+                    ts.source.as_str(),
+                    ts.time_seconds,
+                    ts.end_seconds,
+                    ts.label,
+                ],
+            )?;
+        }
+        Ok(())
+    })();
+    if result.is_ok() {
+        conn.execute("COMMIT", [])?;
+    } else {
+        let _ = conn.execute("ROLLBACK", []);
+    }
+    result
 }
 
 /// Get timestamps for a download entry

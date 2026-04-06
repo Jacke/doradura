@@ -375,33 +375,42 @@ pub fn get_user(conn: &DbConnection, telegram_id: i64) -> Result<Option<User>> {
 ///
 /// Returns `Ok(())` on success or a database error.
 pub fn update_user_plan(conn: &DbConnection, telegram_id: i64, plan: &str) -> Result<()> {
-    if plan == "free" {
+    conn.execute("BEGIN IMMEDIATE", [])?;
+    let result = (|| {
+        if plan == "free" {
+            conn.execute(
+                "INSERT INTO subscriptions (user_id, plan, expires_at, telegram_charge_id, is_recurring)
+                 VALUES (?1, ?2, NULL, NULL, 0)
+                 ON CONFLICT(user_id) DO UPDATE SET
+                    plan = excluded.plan,
+                    expires_at = NULL,
+                    telegram_charge_id = NULL,
+                    is_recurring = 0,
+                    updated_at = CURRENT_TIMESTAMP",
+                [&telegram_id as &dyn rusqlite::ToSql, &plan as &dyn rusqlite::ToSql],
+            )?;
+        } else {
+            conn.execute(
+                "INSERT INTO subscriptions (user_id, plan)
+                 VALUES (?1, ?2)
+                 ON CONFLICT(user_id) DO UPDATE SET
+                    plan = excluded.plan,
+                    updated_at = CURRENT_TIMESTAMP",
+                [&telegram_id as &dyn rusqlite::ToSql, &plan as &dyn rusqlite::ToSql],
+            )?;
+        }
         conn.execute(
-            "INSERT INTO subscriptions (user_id, plan, expires_at, telegram_charge_id, is_recurring)
-             VALUES (?1, ?2, NULL, NULL, 0)
-             ON CONFLICT(user_id) DO UPDATE SET
-                plan = excluded.plan,
-                expires_at = NULL,
-                telegram_charge_id = NULL,
-                is_recurring = 0,
-                updated_at = CURRENT_TIMESTAMP",
-            [&telegram_id as &dyn rusqlite::ToSql, &plan as &dyn rusqlite::ToSql],
+            "UPDATE users SET plan = ?1 WHERE telegram_id = ?2",
+            [&plan as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
         )?;
+        Ok(())
+    })();
+    if result.is_ok() {
+        conn.execute("COMMIT", [])?;
     } else {
-        conn.execute(
-            "INSERT INTO subscriptions (user_id, plan)
-             VALUES (?1, ?2)
-             ON CONFLICT(user_id) DO UPDATE SET
-                plan = excluded.plan,
-                updated_at = CURRENT_TIMESTAMP",
-            [&telegram_id as &dyn rusqlite::ToSql, &plan as &dyn rusqlite::ToSql],
-        )?;
+        let _ = conn.execute("ROLLBACK", []);
     }
-    conn.execute(
-        "UPDATE users SET plan = ?1 WHERE telegram_id = ?2",
-        [&plan as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
-    )?;
-    Ok(())
+    result
 }
 
 /// Updates the user's plan and sets the subscription expiry date.
@@ -422,42 +431,47 @@ pub fn update_user_plan_with_expiry(
     plan: &str,
     days: Option<i32>,
 ) -> Result<()> {
-    if let Some(days_count) = days {
-        // Set expiry date N days from now
-        conn.execute(
-            "INSERT INTO subscriptions (user_id, plan, expires_at)
-             VALUES (?1, ?2, datetime('now', '+' || ?3 || ' days'))
-             ON CONFLICT(user_id) DO UPDATE SET
-                plan = excluded.plan,
-                expires_at = excluded.expires_at,
-                updated_at = CURRENT_TIMESTAMP",
-            [
-                &telegram_id as &dyn rusqlite::ToSql,
-                &plan as &dyn rusqlite::ToSql,
-                &days_count as &dyn rusqlite::ToSql,
-            ],
-        )?;
+    conn.execute("BEGIN IMMEDIATE", [])?;
+    let result = (|| {
+        if let Some(days_count) = days {
+            // Set expiry date N days from now
+            conn.execute(
+                "INSERT INTO subscriptions (user_id, plan, expires_at)
+                 VALUES (?1, ?2, datetime('now', '+' || ?3 || ' days'))
+                 ON CONFLICT(user_id) DO UPDATE SET
+                    plan = excluded.plan,
+                    expires_at = excluded.expires_at,
+                    updated_at = CURRENT_TIMESTAMP",
+                [
+                    &telegram_id as &dyn rusqlite::ToSql,
+                    &plan as &dyn rusqlite::ToSql,
+                    &days_count as &dyn rusqlite::ToSql,
+                ],
+            )?;
+        } else {
+            // For free plan or unlimited subscriptions, clear expiry date
+            conn.execute(
+                "INSERT INTO subscriptions (user_id, plan, expires_at)
+                 VALUES (?1, ?2, NULL)
+                 ON CONFLICT(user_id) DO UPDATE SET
+                    plan = excluded.plan,
+                    expires_at = NULL,
+                    updated_at = CURRENT_TIMESTAMP",
+                [&telegram_id as &dyn rusqlite::ToSql, &plan as &dyn rusqlite::ToSql],
+            )?;
+        }
         conn.execute(
             "UPDATE users SET plan = ?1 WHERE telegram_id = ?2",
             [&plan as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
         )?;
+        Ok(())
+    })();
+    if result.is_ok() {
+        conn.execute("COMMIT", [])?;
     } else {
-        // For free plan or unlimited subscriptions, clear expiry date
-        conn.execute(
-            "INSERT INTO subscriptions (user_id, plan, expires_at)
-             VALUES (?1, ?2, NULL)
-             ON CONFLICT(user_id) DO UPDATE SET
-                plan = excluded.plan,
-                expires_at = NULL,
-                updated_at = CURRENT_TIMESTAMP",
-            [&telegram_id as &dyn rusqlite::ToSql, &plan as &dyn rusqlite::ToSql],
-        )?;
-        conn.execute(
-            "UPDATE users SET plan = ?1 WHERE telegram_id = ?2",
-            [&plan as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
-        )?;
+        let _ = conn.execute("ROLLBACK", []);
     }
-    Ok(())
+    result
 }
 
 /// Checks and updates expired subscriptions by downgrading them to free.
@@ -490,25 +504,40 @@ pub fn expire_old_subscriptions(conn: &DbConnection) -> Result<usize> {
         return Ok(0);
     }
 
-    conn.execute(
-        "UPDATE subscriptions
-         SET plan = 'free',
-             expires_at = NULL,
-             telegram_charge_id = NULL,
-             is_recurring = 0,
-             updated_at = CURRENT_TIMESTAMP
-         WHERE user_id IN (
-             SELECT user_id FROM subscriptions
-             WHERE expires_at IS NOT NULL
-               AND expires_at < datetime('now', 'utc')
-               AND plan != 'free'
-         )",
-        [],
-    )?;
+    conn.execute("BEGIN IMMEDIATE", [])?;
+    let result: Result<()> = (|| {
+        conn.execute(
+            "UPDATE subscriptions
+             SET plan = 'free',
+                 expires_at = NULL,
+                 telegram_charge_id = NULL,
+                 is_recurring = 0,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE user_id IN (
+                 SELECT user_id FROM subscriptions
+                 WHERE expires_at IS NOT NULL
+                   AND expires_at < datetime('now', 'utc')
+                   AND plan != 'free'
+             )",
+            [],
+        )?;
 
-    for user_id in &expired_user_ids {
-        conn.execute("UPDATE users SET plan = 'free' WHERE telegram_id = ?1", [user_id])?;
+        let placeholders: String = expired_user_ids
+            .iter()
+            .enumerate()
+            .map(|(i, _)| format!("?{}", i + 1))
+            .collect::<Vec<_>>()
+            .join(",");
+        let sql = format!("UPDATE users SET plan = 'free' WHERE telegram_id IN ({})", placeholders);
+        conn.execute(&sql, rusqlite::params_from_iter(&expired_user_ids))?;
+        Ok(())
+    })();
+    if result.is_ok() {
+        conn.execute("COMMIT", [])?;
+    } else {
+        let _ = conn.execute("ROLLBACK", []);
     }
+    result?;
 
     if !expired_user_ids.is_empty() {
         log::info!("Expired {} subscription(s)", expired_user_ids.len());
