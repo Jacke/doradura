@@ -12,8 +12,8 @@ use super::SharedStorage;
 /// Ensures the `preview_contexts` table exists with all columns (including `speed`).
 /// Uses `OnceLock` so the DDL only executes once per process lifetime.
 fn ensure_preview_contexts_table(conn: &rusqlite::Connection) -> std::result::Result<(), rusqlite::Error> {
-    static INIT: OnceLock<()> = OnceLock::new();
-    INIT.get_or_init(|| {
+    static INIT: OnceLock<std::result::Result<(), String>> = OnceLock::new();
+    let result = INIT.get_or_init(|| {
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS preview_contexts (
                 user_id INTEGER NOT NULL,
@@ -30,11 +30,21 @@ fn ensure_preview_contexts_table(conn: &rusqlite::Connection) -> std::result::Re
             );
             CREATE INDEX IF NOT EXISTS idx_preview_contexts_expires_at ON preview_contexts(expires_at);",
         )
-        .expect("failed to create preview_contexts table");
+        .map_err(|e| {
+            log::error!("Failed to create preview_contexts table: {}", e);
+            e.to_string()
+        })?;
         // Add speed column for tables that were created before this column existed.
         let _ = conn.execute("ALTER TABLE preview_contexts ADD COLUMN speed REAL", []);
+        Ok(())
     });
-    Ok(())
+    match result {
+        Ok(()) => Ok(()),
+        Err(msg) => Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+            Some(msg.clone()),
+        )),
+    }
 }
 
 impl SharedStorage {

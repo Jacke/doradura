@@ -100,28 +100,37 @@ pub fn update_subscription_data(
     subscription_expires_at: &str,
     is_recurring: bool,
 ) -> Result<()> {
-    conn.execute(
-        "INSERT INTO subscriptions (user_id, plan, expires_at, telegram_charge_id, is_recurring)
-         VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT(user_id) DO UPDATE SET
-            plan = excluded.plan,
-            expires_at = excluded.expires_at,
-            telegram_charge_id = excluded.telegram_charge_id,
-            is_recurring = excluded.is_recurring,
-            updated_at = CURRENT_TIMESTAMP",
-        [
-            &telegram_id as &dyn rusqlite::ToSql,
-            &plan as &dyn rusqlite::ToSql,
-            &subscription_expires_at as &dyn rusqlite::ToSql,
-            &charge_id as &dyn rusqlite::ToSql,
-            &(if is_recurring { 1 } else { 0 }) as &dyn rusqlite::ToSql,
-        ],
-    )?;
-    conn.execute(
-        "UPDATE users SET plan = ?1 WHERE telegram_id = ?2",
-        [&plan as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
-    )?;
-    Ok(())
+    conn.execute("BEGIN IMMEDIATE", [])?;
+    let result = (|| {
+        conn.execute(
+            "INSERT INTO subscriptions (user_id, plan, expires_at, telegram_charge_id, is_recurring)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(user_id) DO UPDATE SET
+                plan = excluded.plan,
+                expires_at = excluded.expires_at,
+                telegram_charge_id = excluded.telegram_charge_id,
+                is_recurring = excluded.is_recurring,
+                updated_at = CURRENT_TIMESTAMP",
+            [
+                &telegram_id as &dyn rusqlite::ToSql,
+                &plan as &dyn rusqlite::ToSql,
+                &subscription_expires_at as &dyn rusqlite::ToSql,
+                &charge_id as &dyn rusqlite::ToSql,
+                &(if is_recurring { 1 } else { 0 }) as &dyn rusqlite::ToSql,
+            ],
+        )?;
+        conn.execute(
+            "UPDATE users SET plan = ?1 WHERE telegram_id = ?2",
+            [&plan as &dyn rusqlite::ToSql, &telegram_id as &dyn rusqlite::ToSql],
+        )?;
+        Ok(())
+    })();
+    if result.is_ok() {
+        conn.execute("COMMIT", [])?;
+    } else {
+        let _ = conn.execute("ROLLBACK", []);
+    }
+    result
 }
 
 /// Checks whether the subscription for a user is active.
@@ -170,19 +179,28 @@ pub fn is_subscription_active(conn: &DbConnection, telegram_id: i64) -> Result<b
 /// This function only removes the auto-renewal flag. The user retains
 /// access until the subscription expiry date (subscription_expires_at).
 pub fn cancel_subscription(conn: &DbConnection, telegram_id: i64) -> Result<()> {
-    conn.execute(
-        "INSERT INTO subscriptions (user_id, plan, is_recurring)
-         VALUES (?1, 'free', 0)
-         ON CONFLICT(user_id) DO UPDATE SET
-            is_recurring = 0,
-            updated_at = CURRENT_TIMESTAMP",
-        [&telegram_id as &dyn rusqlite::ToSql],
-    )?;
-    conn.execute(
-        "UPDATE users SET plan = 'free' WHERE telegram_id = ?1",
-        [&telegram_id as &dyn rusqlite::ToSql],
-    )?;
-    Ok(())
+    conn.execute("BEGIN IMMEDIATE", [])?;
+    let result = (|| {
+        conn.execute(
+            "INSERT INTO subscriptions (user_id, plan, is_recurring)
+             VALUES (?1, 'free', 0)
+             ON CONFLICT(user_id) DO UPDATE SET
+                is_recurring = 0,
+                updated_at = CURRENT_TIMESTAMP",
+            [&telegram_id as &dyn rusqlite::ToSql],
+        )?;
+        conn.execute(
+            "UPDATE users SET plan = 'free' WHERE telegram_id = ?1",
+            [&telegram_id as &dyn rusqlite::ToSql],
+        )?;
+        Ok(())
+    })();
+    if result.is_ok() {
+        conn.execute("COMMIT", [])?;
+    } else {
+        let _ = conn.execute("ROLLBACK", []);
+    }
+    result
 }
 
 /// Saves payment (charge) information to the database.
@@ -299,35 +317,39 @@ pub fn get_all_charges(
     limit: Option<i64>,
     offset: i64,
 ) -> Result<Vec<Charge>> {
-    let query = if let Some(plan) = plan_filter {
-        format!(
+    let limit_val = limit.unwrap_or(-1);
+
+    let (query, params): (&str, Vec<Box<dyn rusqlite::ToSql>>) = if let Some(plan) = plan_filter {
+        (
             "SELECT id, user_id, plan, telegram_charge_id, provider_charge_id, currency,
                     total_amount, invoice_payload, is_recurring, is_first_recurring,
                     subscription_expiration_date, payment_date, created_at
              FROM charges
-             WHERE plan = '{}'
+             WHERE plan = ?1
              ORDER BY payment_date DESC
-             LIMIT {} OFFSET {}",
-            plan,
-            limit.unwrap_or(-1),
-            offset
+             LIMIT ?2 OFFSET ?3",
+            vec![
+                Box::new(plan.to_owned()) as Box<dyn rusqlite::ToSql>,
+                Box::new(limit_val),
+                Box::new(offset),
+            ],
         )
     } else {
-        format!(
+        (
             "SELECT id, user_id, plan, telegram_charge_id, provider_charge_id, currency,
                     total_amount, invoice_payload, is_recurring, is_first_recurring,
                     subscription_expiration_date, payment_date, created_at
              FROM charges
              ORDER BY payment_date DESC
-             LIMIT {} OFFSET {}",
-            limit.unwrap_or(-1),
-            offset
+             LIMIT ?1 OFFSET ?2",
+            vec![Box::new(limit_val) as Box<dyn rusqlite::ToSql>, Box::new(offset)],
         )
     };
 
-    let mut stmt = conn.prepare(&query)?;
+    let mut stmt = conn.prepare(query)?;
+    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
-    let charges = stmt.query_map([], |row| {
+    let charges = stmt.query_map(param_refs.as_slice(), |row| {
         Ok(Charge {
             id: row.get(0)?,
             user_id: row.get(1)?,

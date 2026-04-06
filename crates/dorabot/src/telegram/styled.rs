@@ -61,7 +61,9 @@ pub fn inject_styles(keyboard: &InlineKeyboardMarkup) -> Value {
 
             if let Some(cb_data) = btn_json.get("callback_data").and_then(Value::as_str) {
                 if let Some(style) = style_for_callback(cb_data) {
-                    btn_json.as_object_mut().unwrap().insert("style".into(), json!(style));
+                    if let Some(obj) = btn_json.as_object_mut() {
+                        obj.insert("style".into(), json!(style));
+                    }
                 }
             }
 
