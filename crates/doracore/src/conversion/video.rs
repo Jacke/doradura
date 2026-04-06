@@ -13,6 +13,9 @@ use tokio::process::Command;
 /// Maximum duration for video notes in seconds
 pub const VIDEO_NOTE_MAX_DURATION: u64 = 60;
 
+/// Maximum duration for GIF output in seconds
+pub const GIF_MAX_DURATION_SECS: i64 = 30;
+
 /// Maximum number of video note parts for split
 pub const VIDEO_NOTE_MAX_PARTS: u32 = 6;
 

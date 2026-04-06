@@ -1,5 +1,5 @@
 use crate::conversion::video::{
-    calculate_video_note_split, is_too_long_for_split, to_gif, to_video_notes_split, GifOptions,
+    calculate_video_note_split, is_too_long_for_split, to_gif, to_video_notes_split, GifOptions, GIF_MAX_DURATION_SECS,
     VIDEO_NOTE_MAX_DURATION, VIDEO_NOTE_MAX_PARTS,
 };
 use crate::core::config;
@@ -377,7 +377,7 @@ pub async fn process_video_clip(
     } else if is_android_ringtone {
         crate::download::ringtone::MAX_ANDROID_DURATION_SECS as i64
     } else if is_gif {
-        30
+        GIF_MAX_DURATION_SECS
     } else {
         60 * 10
     };
@@ -447,7 +447,7 @@ pub async fn process_video_clip(
         let max_secs = if is_iphone_ringtone {
             crate::download::ringtone::MAX_IPHONE_DURATION_SECS as i64
         } else if is_gif {
-            30
+            GIF_MAX_DURATION_SECS
         } else {
             crate::download::ringtone::MAX_ANDROID_DURATION_SECS as i64
         };
@@ -559,7 +559,7 @@ pub async fn process_video_clip(
         } else if is_ringtone {
             i18n::t_args(&lang, "commands.cut_status_ringtone_speed", &args)
         } else if is_gif {
-            format!("🎞 Creating GIF {} at {}x...", segments_text, speed.unwrap_or(1.0))
+            i18n::t_args(&lang, "commands.cut_status_gif_speed", &args)
         } else {
             i18n::t_args(&lang, "commands.cut_status_clip_speed", &args)
         }
@@ -571,7 +571,7 @@ pub async fn process_video_clip(
         } else if is_ringtone {
             i18n::t_args(&lang, "commands.cut_status_ringtone", &args)
         } else if is_gif {
-            format!("🎞 Creating GIF {}...", segments_text)
+            i18n::t_args(&lang, "commands.cut_status_gif", &args)
         } else {
             i18n::t_args(&lang, "commands.cut_status_clip", &args)
         }
@@ -1071,7 +1071,9 @@ pub async fn process_video_clip(
                     Ok(_) => {}
                     Err(e) => {
                         log::error!("❌ Failed to send GIF: {}", e);
-                        bot.send_message(chat_id, format!("❌ Failed to send GIF: {}", e))
+                        let mut args = FluentArgs::new();
+                        args.set("error", e.to_string());
+                        bot.send_message(chat_id, i18n::t_args(&lang, "commands.gif_send_failed", &args))
                             .await
                             .ok();
                     }
@@ -1080,7 +1082,9 @@ pub async fn process_video_clip(
             Err(e) => {
                 log::error!("❌ GIF conversion failed: {}", e);
                 bot.delete_message(chat_id, status.id).await.ok();
-                bot.send_message(chat_id, format!("❌ GIF conversion failed: {}", e))
+                let mut args = FluentArgs::new();
+                args.set("error", e.to_string());
+                bot.send_message(chat_id, i18n::t_args(&lang, "commands.gif_conversion_failed", &args))
                     .await
                     .ok();
             }
