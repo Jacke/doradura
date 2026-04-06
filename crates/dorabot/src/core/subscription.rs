@@ -658,8 +658,12 @@ pub async fn handle_successful_payment(
                     return Ok(());
                 }
             };
+            // Validate payment amount — but skip for recurring payments because
+            // Telegram charges the original invoice price, not the current config price.
+            // If price was raised after the user subscribed, recurring charges still use
+            // the old amount and that's expected behavior.
             #[allow(clippy::unnecessary_cast)]
-            if payment.total_amount as u32 != expected_price {
+            if payment.total_amount as u32 != expected_price && !payment.is_recurring {
                 log::error!(
                     "❌ Payment amount mismatch! Plan: {}, expected: {}, got: {}. Charge ID: {}",
                     plan,
@@ -676,6 +680,15 @@ pub async fn handle_successful_payment(
                 )
                 .await;
                 return Ok(());
+            }
+            if payment.total_amount != expected_price && payment.is_recurring {
+                log::warn!(
+                    "⚠️ Recurring payment at old price: plan={}, current_price={}, paid={}, user={}. Accepting.",
+                    plan,
+                    expected_price,
+                    payment.total_amount,
+                    telegram_id
+                );
             }
 
             let chat_id = msg.chat.id;
