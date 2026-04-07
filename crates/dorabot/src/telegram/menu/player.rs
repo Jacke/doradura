@@ -722,6 +722,7 @@ async fn download_player_track(
         false,
         None,
         artist,
+        None,
     )
     .await;
 

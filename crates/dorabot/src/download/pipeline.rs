@@ -812,6 +812,23 @@ pub async fn execute(
         .map(|m| m.starts_with("image/"))
         .unwrap_or(false);
 
+    // Resolve thumbnail URL for audio cover art.
+    // Try preview cache first (already has thumbnail_url), then YouTube helper.
+    let audio_thumbnail_url: Option<String> = if matches!(format, PipelineFormat::Audio { .. }) && !is_photo {
+        let from_cache = crate::telegram::cache::PREVIEW_CACHE
+            .get(url.as_str())
+            .await
+            .and_then(|pm| pm.thumbnail_url);
+        if from_cache.is_some() {
+            log::info!("Pipeline: thumbnail URL from preview cache");
+            from_cache
+        } else {
+            crate::core::share::youtube_thumbnail_url(url.as_str())
+        }
+    } else {
+        None
+    };
+
     let (sent_message, file_size) = if is_photo {
         // Send photo via send_photo
         use teloxide::types::InputFile;
@@ -840,6 +857,7 @@ pub async fn execute(
                 send_as_document,
                 message_id,
                 Some(artist.clone()),
+                audio_thumbnail_url.as_deref(),
             )
             .await
             .map_err(PipelineError::Operational)?,
