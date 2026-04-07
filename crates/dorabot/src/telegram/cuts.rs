@@ -510,6 +510,7 @@ This may take a few minutes\\.",
                     created_at: chrono::Utc::now(),
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
+                    custom_audio_file_id: None,
                 };
                 shared_storage
                     .clone()
@@ -565,6 +566,7 @@ This may take a few minutes\\.",
                     created_at: chrono::Utc::now(),
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
+                    custom_audio_file_id: None,
                 };
                 shared_storage
                     .clone()
@@ -671,6 +673,7 @@ This may take a few minutes\\.",
                     created_at: chrono::Utc::now(),
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
+                    custom_audio_file_id: None,
                 };
 
                 // Delete any existing session first

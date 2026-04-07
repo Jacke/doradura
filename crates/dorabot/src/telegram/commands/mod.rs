@@ -185,6 +185,36 @@ pub async fn handle_message(
         }
     }
 
+    // Custom audio for circle sessions: if user sends audio/voice while a VideoNote session is active
+    if let Ok(Some(mut session)) = shared_storage.get_active_video_clip_session(msg.chat.id.0).await {
+        if session.output_kind == OutputKind::VideoNote {
+            let audio_file_id = msg
+                .audio()
+                .map(|a| a.file.id.0.clone())
+                .or_else(|| msg.voice().map(|v| v.file.id.0.clone()))
+                .or_else(|| {
+                    msg.document().and_then(|d| {
+                        d.mime_type.as_ref().and_then(|m| {
+                            if m.type_() == mime::AUDIO {
+                                Some(d.file.id.0.clone())
+                            } else {
+                                None
+                            }
+                        })
+                    })
+                });
+
+            if let Some(file_id) = audio_file_id {
+                session.custom_audio_file_id = Some(file_id);
+                let _ = shared_storage.upsert_video_clip_session(&session).await;
+                bot.send_message(msg.chat.id, "🎵 Custom audio saved! Now send the time range.")
+                    .await
+                    .ok();
+                return Ok(None);
+            }
+        }
+    }
+
     if let Some(text) = msg.text() {
         log::debug!("handle_message: {:?}", text);
         if text.starts_with("/start") || text.starts_with("/help") {

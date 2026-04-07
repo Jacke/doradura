@@ -370,7 +370,8 @@ CREATE TABLE IF NOT EXISTS video_clip_sessions (
     output_kind TEXT NOT NULL DEFAULT 'cut',
     created_at TIMESTAMPTZ NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL,
-    subtitle_lang TEXT
+    subtitle_lang TEXT,
+    custom_audio_file_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_video_clip_sessions_user_expires
@@ -598,6 +599,12 @@ END $$;
 -- Migration: add experimental_features column to existing users tables
 DO $$ BEGIN
     ALTER TABLE users ADD COLUMN experimental_features INTEGER NOT NULL DEFAULT 0;
+EXCEPTION WHEN duplicate_column THEN NULL;
+END $$;
+
+-- Migration: add custom_audio_file_id column to existing video_clip_sessions tables
+DO $$ BEGIN
+    ALTER TABLE video_clip_sessions ADD COLUMN custom_audio_file_id TEXT;
 EXCEPTION WHEN duplicate_column THEN NULL;
 END $$;
 "#;

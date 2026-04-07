@@ -39,6 +39,9 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
     // V26: category on download_history
     let _ = conn.execute_batch("ALTER TABLE download_history ADD COLUMN category TEXT;");
 
+    // custom_audio_file_id for video_clip_sessions (circle custom audio)
+    let _ = conn.execute_batch("ALTER TABLE video_clip_sessions ADD COLUMN custom_audio_file_id TEXT");
+
     match embedded::migrations::runner().run(conn).map(|_| ()) {
         Ok(()) => {
             log::info!("Database migrations applied successfully");

@@ -246,8 +246,8 @@ impl SharedStorage {
                 sqlx::query(
                     "INSERT INTO video_clip_sessions (
                         id, user_id, source_download_id, source_kind, source_id, original_url,
-                        output_kind, created_at, expires_at, subtitle_lang
-                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                        output_kind, created_at, expires_at, subtitle_lang, custom_audio_file_id
+                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
                 )
                 .bind(&session.id)
                 .bind(session.user_id)
@@ -259,6 +259,7 @@ impl SharedStorage {
                 .bind(session.created_at)
                 .bind(session.expires_at)
                 .bind(&session.subtitle_lang)
+                .bind(&session.custom_audio_file_id)
                 .execute(&mut *tx)
                 .await
                 .context("postgres upsert_video_clip_session insert")?;
@@ -814,6 +815,7 @@ fn map_pg_video_clip_session(row: sqlx::postgres::PgRow) -> Result<VideoClipSess
         created_at: row.get("created_at"),
         expires_at: row.get("expires_at"),
         subtitle_lang: row.get("subtitle_lang"),
+        custom_audio_file_id: row.get("custom_audio_file_id"),
     })
 }
 

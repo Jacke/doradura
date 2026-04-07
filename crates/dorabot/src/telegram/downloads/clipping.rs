@@ -64,6 +64,7 @@ async fn start_session_from_download(
         created_at: chrono::Utc::now(),
         expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
         subtitle_lang: None,
+        custom_audio_file_id: None,
     };
     ctx.shared_storage
         .clone()
@@ -162,6 +163,7 @@ async fn start_session_from_cut(
         created_at: chrono::Utc::now(),
         expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
         subtitle_lang: None,
+        custom_audio_file_id: None,
     };
     ctx.shared_storage
         .clone()
@@ -445,6 +447,7 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                     created_at: chrono::Utc::now(),
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
+                    custom_audio_file_id: None,
                 };
 
                 // Delete any existing session first
@@ -544,6 +547,7 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                     created_at: chrono::Utc::now(),
                     expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
                     subtitle_lang: None,
+                    custom_audio_file_id: None,
                 };
 
                 // Delete any existing session first

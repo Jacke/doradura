@@ -423,14 +423,15 @@ pub struct VideoClipSession {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub expires_at: chrono::DateTime<chrono::Utc>,
     pub subtitle_lang: Option<String>,
+    pub custom_audio_file_id: Option<String>,
 }
 
 pub fn upsert_video_clip_session(conn: &DbConnection, session: &VideoClipSession) -> Result<()> {
     conn.execute("DELETE FROM video_clip_sessions WHERE user_id = ?1", [session.user_id])?;
     conn.execute(
         "INSERT INTO video_clip_sessions (
-            id, user_id, source_download_id, source_kind, source_id, original_url, output_kind, created_at, expires_at, subtitle_lang
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            id, user_id, source_download_id, source_kind, source_id, original_url, output_kind, created_at, expires_at, subtitle_lang, custom_audio_file_id
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         rusqlite::params![
             session.id,
             session.user_id,
@@ -442,6 +443,7 @@ pub fn upsert_video_clip_session(conn: &DbConnection, session: &VideoClipSession
             session.created_at.to_rfc3339(),
             session.expires_at.to_rfc3339(),
             session.subtitle_lang,
+            session.custom_audio_file_id,
         ],
     )?;
     Ok(())
@@ -450,7 +452,7 @@ pub fn upsert_video_clip_session(conn: &DbConnection, session: &VideoClipSession
 pub fn get_active_video_clip_session(conn: &DbConnection, user_id: i64) -> Result<Option<VideoClipSession>> {
     let now = chrono::Utc::now().to_rfc3339();
     let mut stmt = conn.prepare(
-        "SELECT id, user_id, source_download_id, source_kind, source_id, original_url, output_kind, created_at, expires_at, subtitle_lang
+        "SELECT id, user_id, source_download_id, source_kind, source_id, original_url, output_kind, created_at, expires_at, subtitle_lang, custom_audio_file_id
          FROM video_clip_sessions
          WHERE user_id = ?1 AND expires_at > ?2
          ORDER BY created_at DESC
@@ -481,6 +483,7 @@ pub fn get_active_video_clip_session(conn: &DbConnection, user_id: i64) -> Resul
                 chrono::Utc::now() + chrono::Duration::minutes(10),
             ),
             subtitle_lang: row.get(9)?,
+            custom_audio_file_id: row.get(10)?,
         }))
     } else {
         Ok(None)

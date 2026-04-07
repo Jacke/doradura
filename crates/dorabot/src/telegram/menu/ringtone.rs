@@ -203,6 +203,7 @@ pub async fn start_ringtone_session(
         created_at: chrono::Utc::now(),
         expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
         subtitle_lang: None,
+        custom_audio_file_id: None,
     };
 
     shared_storage

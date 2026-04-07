@@ -662,6 +662,30 @@ pub async fn process_video_clip(
     } else {
         None
     };
+
+    // --- Custom audio for circles ---
+    let custom_audio_path = if is_video_note {
+        if let Some(ref audio_fid) = session.custom_audio_file_id {
+            let audio_path = guard.path().join("custom_audio.tmp");
+            match crate::telegram::download_file_with_fallback(&bot, audio_fid, None, None, Some(audio_path.clone()))
+                .await
+            {
+                Ok(_) => {
+                    log::info!("✅ Custom audio downloaded: {:?}", audio_path);
+                    Some(audio_path)
+                }
+                Err(e) => {
+                    log::warn!("Failed to download custom audio: {}, using original", e);
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     let actual_input_path = input_path.clone();
 
     // Probe file for video stream
@@ -871,6 +895,11 @@ pub async fn process_video_clip(
 
     cmd.arg("-i").arg(&actual_input_path);
 
+    // Add custom audio as second input if present (for circle with replaced audio)
+    if let Some(ref audio_path) = custom_audio_path {
+        cmd.arg("-i").arg(audio_path);
+    }
+
     if is_iphone_ringtone {
         // For iPhone ringtone: AAC in MPEG-4 container (.m4r)
         // -vn strips embedded album art to avoid exit code 234 with -f ipod
@@ -909,6 +938,31 @@ pub async fn process_video_clip(
             .arg("ultrafast")
             .arg("-crf")
             .arg(crf)
+            .arg("-movflags")
+            .arg("+faststart");
+    } else if custom_audio_path.is_some() && is_video_note {
+        // Custom audio: use video-only filter, take audio from custom file (input 1)
+        cmd.arg("-filter_complex").arg(&filter_v);
+        cmd.arg("-map").arg(map_v_label);
+        cmd.arg("-map").arg("1:a");
+        // No speed modification on custom audio - user chose specific audio
+        cmd.arg("-c:v")
+            .arg("libx264")
+            .arg("-preset")
+            .arg("medium")
+            .arg("-crf")
+            .arg(crf)
+            .arg("-maxrate")
+            .arg("1400k")
+            .arg("-bufsize")
+            .arg("2800k")
+            .arg("-profile:v")
+            .arg("high");
+        cmd.arg("-c:a")
+            .arg("aac")
+            .arg("-b:a")
+            .arg("128k")
+            .arg("-shortest")
             .arg("-movflags")
             .arg("+faststart");
     } else {

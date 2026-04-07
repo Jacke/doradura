@@ -1227,6 +1227,7 @@ mod tests {
             created_at: chrono::Utc::now(),
             expires_at: chrono::Utc::now() + chrono::Duration::hours(1),
             subtitle_lang: None,
+            custom_audio_file_id: None,
         };
 
         upsert_video_clip_session(&conn, &session).unwrap();
