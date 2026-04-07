@@ -45,15 +45,13 @@ pub fn run_migrations(conn: &mut Connection) -> Result<()> {
         }
         Err(e) => {
             let msg = format!("{:#}", e);
-            log::error!("Migration error (full): {}", msg);
-
             // If error is about duplicate column or already applied schema,
             // continue anyway — the schema is likely correct from init script
             if msg.contains("duplicate column")
                 || msg.contains("already exists")
                 || msg.contains("table users already exists")
             {
-                log::warn!("Migration error is about existing schema, continuing: {}", msg);
+                log::info!("Migration: existing schema detected, continuing: {}", msg);
             } else {
                 return Err(e).context("apply migrations");
             }

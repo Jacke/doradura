@@ -22,7 +22,7 @@ use url::Url;
 
 use crate::download::ytdlp;
 
-const DEFAULT_BOT_API_LOG_PATH: &str = "bot-api-data/logs/telegram-bot-api.log";
+const DEFAULT_BOT_API_LOG_PATH: &str = "/data/logs/telegram-bot-api.log";
 const DEFAULT_BOT_API_LOG_TAIL_BYTES: u64 = 2 * 1024 * 1024;
 
 #[derive(Default)]

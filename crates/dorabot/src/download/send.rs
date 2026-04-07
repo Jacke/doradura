@@ -32,7 +32,7 @@ use teloxide::RequestError;
 use tokio::fs::File as TokioFile;
 use tokio::io::{AsyncRead, ReadBuf};
 
-const DEFAULT_BOT_API_LOG_PATH: &str = "bot-api-data/logs/telegram-bot-api.log";
+const DEFAULT_BOT_API_LOG_PATH: &str = "/data/logs/telegram-bot-api.log";
 const DEFAULT_BOT_API_LOG_TAIL_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Reads the tail of a log file up to `max_bytes`.

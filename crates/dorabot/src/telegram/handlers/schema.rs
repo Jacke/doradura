@@ -703,7 +703,7 @@ fn message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                     match &user_info_result {
                         Ok(Some(user)) => {
                             if let Err(e) = deps.shared_storage.log_request(user.telegram_id(), text).await {
-                                log::error!("Failed to log request: {}", e);
+                                log::warn!("Failed to log request: {}", e);
                             }
                         }
                         Ok(None) | Err(_) => {
@@ -711,7 +711,7 @@ fn message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                             match deps.shared_storage.get_user(chat_id).await {
                                 Ok(Some(user)) => {
                                     if let Err(e) = deps.shared_storage.log_request(user.telegram_id(), text).await {
-                                        log::error!("Failed to log request: {}", e);
+                                        log::warn!("Failed to log request: {}", e);
                                     }
                                 }
                                 Ok(None) => {
@@ -725,7 +725,7 @@ fn message_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
                                         log::error!("Failed to create user: {}", e);
                                     } else {
                                         if let Err(e) = deps.shared_storage.log_request(chat_id, text).await {
-                                            log::error!("Failed to log request for new user: {}", e);
+                                            log::warn!("Failed to log request for new user: {}", e);
                                         }
                                         // Notify admins about new user
                                         use crate::telegram::notifications::notify_admin_new_user;

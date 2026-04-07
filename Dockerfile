@@ -201,7 +201,7 @@ RUN printf '%s\n' \
     '  /bin/sh -c "' \
     '    for d in /data/*/; do' \
     '      if [ -d \"\$d\" ]; then' \
-    '        if [ -f \"\${d}binlog\" ] || ls \"\${d}\"*.binlog 2>/dev/null | head -1 > /dev/null; then' \
+    '        if [ -f \"\${d}binlog\" ] || find \"\$d\" -maxdepth 1 -name \"*.binlog\" 2>/dev/null | grep -q .; then' \
     '          echo Removing Bot API directory: \$d' \
     '          rm -rf \"\$d\"' \
     '        fi' \
