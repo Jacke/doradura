@@ -183,7 +183,8 @@ fn cover_caption(emoji: &str, title: &str, url: &str) -> String {
     format!("{} {}\n<a href=\"{}\">\u{200d}</a>", emoji, escaped_title, escaped_url)
 }
 
-/// Resolve thumbnail URL from video URL (YouTube → maxresdefault.jpg)
+/// Resolve thumbnail URL from video URL (YouTube → maxresdefault.jpg).
+/// Returns None for non-YouTube URLs.
 fn resolve_thumbnail_url(url: &str) -> Option<String> {
     doracore::download::fast_metadata::extract_youtube_id(url)
         .map(|id| format!("https://img.youtube.com/vi/{}/maxresdefault.jpg", id))
@@ -249,4 +250,103 @@ async fn download_video_fragment(
     }
 
     Ok(output_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── cover_caption ──────────────────────────────────────────────
+
+    #[test]
+    fn cover_caption_basic() {
+        let cap = cover_caption("🖼", "Song Title", "https://youtu.be/abc");
+        assert!(cap.starts_with("🖼 Song Title\n"));
+        assert!(cap.contains("<a href=\"https://youtu.be/abc\">"));
+        assert!(cap.contains("\u{200d}"));
+    }
+
+    #[test]
+    fn cover_caption_escapes_html_in_title() {
+        let cap = cover_caption("📸", "Tom & Jerry <3>", "https://youtu.be/x");
+        assert!(cap.contains("Tom &amp; Jerry &lt;3&gt;"));
+        assert!(!cap.contains("<3>"));
+    }
+
+    #[test]
+    fn cover_caption_escapes_ampersand_in_url() {
+        let cap = cover_caption("🎬", "Title", "https://youtube.com/watch?v=a&t=10");
+        assert!(cap.contains("href=\"https://youtube.com/watch?v=a&amp;t=10\""));
+    }
+
+    #[test]
+    fn cover_caption_escapes_quotes_in_url() {
+        let cap = cover_caption("🎞", "T", "https://example.com/\"test\"");
+        assert!(cap.contains("href=\"https://example.com/&quot;test&quot;\""));
+    }
+
+    #[test]
+    fn cover_caption_empty_title() {
+        let cap = cover_caption("📸", "", "https://youtu.be/x");
+        assert!(cap.starts_with("📸 \n"));
+    }
+
+    // ── resolve_thumbnail_url ──────────────────────────────────────
+
+    #[test]
+    fn resolve_thumbnail_youtube_standard() {
+        let url = resolve_thumbnail_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
+        assert_eq!(url.unwrap(), "https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg");
+    }
+
+    #[test]
+    fn resolve_thumbnail_youtube_short_link() {
+        let url = resolve_thumbnail_url("https://youtu.be/dQw4w9WgXcQ");
+        assert_eq!(url.unwrap(), "https://img.youtube.com/vi/dQw4w9WgXcQ/maxresdefault.jpg");
+    }
+
+    #[test]
+    fn resolve_thumbnail_youtube_shorts() {
+        let url = resolve_thumbnail_url("https://www.youtube.com/shorts/abc123");
+        assert_eq!(url.unwrap(), "https://img.youtube.com/vi/abc123/maxresdefault.jpg");
+    }
+
+    #[test]
+    fn resolve_thumbnail_non_youtube_returns_none() {
+        assert!(resolve_thumbnail_url("https://soundcloud.com/artist/track").is_none());
+        assert!(resolve_thumbnail_url("https://vimeo.com/123456").is_none());
+        assert!(resolve_thumbnail_url("https://instagram.com/p/abc").is_none());
+    }
+
+    #[test]
+    fn resolve_thumbnail_empty_url() {
+        assert!(resolve_thumbnail_url("").is_none());
+    }
+
+    #[test]
+    fn resolve_thumbnail_invalid_url() {
+        assert!(resolve_thumbnail_url("not a url at all").is_none());
+    }
+
+    // ── download_video_fragment (integration, requires yt-dlp + ffmpeg) ──
+
+    #[tokio::test]
+    #[ignore] // requires yt-dlp + ffmpeg + network
+    async fn download_fragment_produces_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = download_video_fragment("https://youtu.be/jNQXAC9IVRw", 5, dir.path()).await;
+        assert!(result.is_ok(), "download_video_fragment failed: {:?}", result.err());
+        let path = result.unwrap();
+        assert!(path.exists());
+        let meta = tokio::fs::metadata(&path).await.unwrap();
+        assert!(meta.len() > 1000, "fragment file too small: {} bytes", meta.len());
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn download_fragment_invalid_url_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let result = download_video_fragment("https://youtube.com/watch?v=NONEXISTENT999", 5, dir.path()).await;
+        assert!(result.is_err());
+    }
 }
