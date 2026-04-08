@@ -173,5 +173,11 @@ pub fn run_migrations_for_test(conn: &mut Connection) -> Result<()> {
     embedded::migrations::runner()
         .run(conn)
         .map(|_| ())
-        .context("apply migrations")
+        .context("apply migrations")?;
+
+    // Post-migration columns that are added via ALTER in production's run_migrations
+    // but not present in the original migration SQL files.
+    let _ = conn.execute_batch("ALTER TABLE video_clip_sessions ADD COLUMN custom_audio_file_id TEXT");
+
+    Ok(())
 }
