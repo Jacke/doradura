@@ -239,24 +239,18 @@ pub fn add_cookies_args(args: &mut Vec<&str>) {
     add_cookies_args_with_proxy(args, first_proxy.as_ref(), None);
 }
 
+// Experimental features graduated to main workflow
+
 /// Returns POT argument for `add_cookies_args_with_proxy`:
-/// `Some("")` (skip bgutil) when experimental, `None` (use bgutil) otherwise.
-pub fn pot_for_experimental(experimental: bool) -> Option<&'static str> {
-    if experimental {
-        Some("")
-    } else {
-        None
-    }
+/// Always returns `Some("")` (skip bgutil) — graduated from experimental.
+pub fn default_pot_token() -> Option<&'static str> {
+    Some("")
 }
 
-/// Returns YouTube extractor-args: `formats=dashy` for experimental (enables -N parallelism),
-/// plain `player_client=default` otherwise.
-pub fn youtube_extractor_args(experimental: bool) -> &'static str {
-    if experimental {
-        "youtube:player_client=default;formats=dashy"
-    } else {
-        "youtube:player_client=default"
-    }
+/// Returns YouTube extractor-args with `formats=dashy` (enables -N parallelism).
+/// Graduated from experimental to default.
+pub fn default_youtube_extractor_args() -> &'static str {
+    "youtube:player_client=default;formats=dashy"
 }
 
 /// Adds proxy, cookie, and PO Token arguments with a specific proxy configuration.

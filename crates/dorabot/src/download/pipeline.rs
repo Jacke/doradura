@@ -213,7 +213,7 @@ pub async fn download_phase(
     registry: &SourceRegistry,
     progress_msg: &mut ProgressMessage,
     message_id: Option<i32>,
-    shared_storage: Option<&Arc<SharedStorage>>,
+    _shared_storage: Option<&Arc<SharedStorage>>,
 ) -> Result<DownloadPhaseResult, PipelineError> {
     let pipeline_start = std::time::Instant::now();
     let file_format_str = format.label().to_string();
@@ -230,28 +230,19 @@ pub async fn download_phase(
         sanitize_for_log(url.as_str())
     );
 
-    // ── Experimental flag (used in multiple steps below) ──
-    let is_experimental = if let Some(s) = shared_storage {
-        s.get_user_experimental_features(chat_id.0).await.unwrap_or(false)
-    } else {
-        false
-    };
+    // Experimental features graduated to main workflow
 
     // ── Step 2: Get metadata ──
-    // Experimental fast-path: preview cache already has title/artist from the preview fetch —
+    // Fast-path: preview cache already has title/artist from the preview fetch —
     // skip the redundant yt-dlp --dump-json call (~6s saved).
     let MediaMetadata { title, artist } = {
-        let from_cache = if is_experimental {
-            crate::telegram::cache::PREVIEW_CACHE.get(url.as_str()).await.map(|pm| {
-                log::info!("Pipeline: title/artist from preview cache (experimental, skipping yt-dlp metadata)");
-                MediaMetadata {
-                    title: pm.title.clone(),
-                    artist: pm.artist.clone(),
-                }
-            })
-        } else {
-            None
-        };
+        let from_cache = crate::telegram::cache::PREVIEW_CACHE.get(url.as_str()).await.map(|pm| {
+            log::info!("Pipeline: title/artist from preview cache (skipping yt-dlp metadata)");
+            MediaMetadata {
+                title: pm.title.clone(),
+                artist: pm.artist.clone(),
+            }
+        });
 
         match from_cache {
             Some(meta) => meta,
@@ -315,21 +306,17 @@ pub async fn download_phase(
     }
 
     // Livestream check
-    // Experimental fast-path: read is_live from cached info JSON (~0ms) instead of a
-    // separate yt-dlp --print call (~6.5s). Falls back to full check on cache miss.
-    let is_live = if is_experimental {
-        match doracore::download::metadata::check_is_live_from_cache(url) {
-            Some(live) => {
-                log::info!(
-                    "Pipeline: is_live={} from cached info JSON (experimental, skipping yt-dlp check)",
-                    live
-                );
+    // Experimental features graduated to main workflow — always try cache first (~0ms),
+    // fall back to full yt-dlp check on cache miss.
+    let is_live = match doracore::download::metadata::check_is_live_from_cache(url) {
+        Some(live) => {
+            log::info!(
+                "Pipeline: is_live={} from cached info JSON (skipping yt-dlp check)",
                 live
-            }
-            None => source.is_livestream(url).await,
+            );
+            live
         }
-    } else {
-        source.is_livestream(url).await
+        None => source.is_livestream(url).await,
     };
     if is_live {
         log::warn!("Pipeline: rejected livestream URL: {}", sanitize_for_log(url.as_str()));
@@ -433,8 +420,8 @@ pub async fn download_phase(
         builder = builder.time_range(start, end);
     }
 
-    // Experimental: 16 concurrent fragments (2× vs previous 8) for faster segmented downloads.
-    let concurrent_fragments = if is_experimental { 16u8 } else { 1u8 };
+    // Experimental features graduated to main workflow — always use 16 concurrent fragments.
+    let concurrent_fragments = 16u8;
     builder = builder.concurrent_fragments(concurrent_fragments);
 
     let request = builder.build(&title, &artist);

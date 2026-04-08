@@ -15,8 +15,8 @@ use crate::download::downloader::{cleanup_partial_download, parse_progress};
 use crate::download::error::DownloadError;
 use crate::download::metadata::{
     add_cookies_args_with_proxy, add_instagram_cookies_args_with_proxy, add_no_cookies_args,
-    build_telegram_safe_format, find_actual_downloaded_file, get_estimated_filesize, get_metadata_from_ytdlp,
-    get_proxy_chain, is_proxy_related_error, pot_for_experimental, probe_duration_seconds, youtube_extractor_args,
+    build_telegram_safe_format, default_pot_token, default_youtube_extractor_args, find_actual_downloaded_file,
+    get_estimated_filesize, get_metadata_from_ytdlp, get_proxy_chain, is_proxy_related_error, probe_duration_seconds,
 };
 use crate::download::source::{DownloadOutput, DownloadRequest, DownloadSource, SourceProgress};
 use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message, YtDlpErrorType};
@@ -176,15 +176,15 @@ impl YtDlpSource {
         let bitrate_str = request.audio_bitrate.clone().unwrap_or_else(|| "320k".to_string());
         let time_range = request.time_range.clone();
 
+        // Experimental features graduated to main workflow
         if request.concurrent_fragments > 1 {
             log::info!(
-                "[EXPERIMENTAL] Using {} concurrent fragments for audio download",
+                "Using {} concurrent fragments for audio download",
                 request.concurrent_fragments
             );
         }
         let cf_str = concurrent_fragments_str(request.concurrent_fragments);
         let is_youtube = crate::core::share::is_youtube_url(request.url.as_str());
-        let experimental = request.concurrent_fragments > 1;
 
         let handle = tokio::task::spawn_blocking(move || {
             let postprocessor_args = format!("ffmpeg:-acodec libmp3lame -b:a {}", bitrate_str);
@@ -206,9 +206,9 @@ impl YtDlpSource {
                         "--embed-thumbnail",
                     ]);
                     if is_youtube {
-                        add_cookies_args_with_proxy(args, proxy_option, pot_for_experimental(experimental));
+                        add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
                         args.push("--extractor-args");
-                        args.push(youtube_extractor_args(experimental));
+                        args.push(default_youtube_extractor_args());
                     } else {
                         add_no_cookies_args(args, proxy_option);
                         args.push("--extractor-args");
@@ -236,9 +236,9 @@ impl YtDlpSource {
                         if is_instagram_url(&url_for_tier2) {
                             add_instagram_cookies_args_with_proxy(args, proxy_option);
                         } else {
-                            add_cookies_args_with_proxy(args, proxy_option, pot_for_experimental(experimental));
+                            add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
                             args.push("--extractor-args");
-                            args.push(youtube_extractor_args(experimental));
+                            args.push(default_youtube_extractor_args());
                         }
                         args.push("--js-runtimes");
                         args.push("deno");
@@ -259,9 +259,9 @@ impl YtDlpSource {
                         "0",
                         "--add-metadata",
                     ]);
-                    add_cookies_args_with_proxy(args, proxy_option, pot_for_experimental(experimental));
+                    add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
                     args.push("--extractor-args");
-                    args.push(youtube_extractor_args(experimental));
+                    args.push(default_youtube_extractor_args());
                     args.push("--js-runtimes");
                     args.push("deno");
                     args.push("--no-check-certificate");
@@ -269,7 +269,6 @@ impl YtDlpSource {
                 },
                 &postprocessor_args,
                 time_range.as_ref(),
-                experimental,
             )
         });
 
@@ -302,15 +301,15 @@ impl YtDlpSource {
         let download_path = request.output_path.clone();
         let time_range = request.time_range.clone();
 
+        // Experimental features graduated to main workflow
         if request.concurrent_fragments > 1 {
             log::info!(
-                "[EXPERIMENTAL] Using {} concurrent fragments for video download",
+                "Using {} concurrent fragments for video download",
                 request.concurrent_fragments
             );
         }
         let cf_str = concurrent_fragments_str(request.concurrent_fragments);
         let is_youtube = crate::core::share::is_youtube_url(request.url.as_str());
-        let experimental = request.concurrent_fragments > 1;
 
         let format_arg = match request.video_quality.as_deref() {
             Some("4320p") => build_telegram_safe_format(Some(4320)),
@@ -340,9 +339,9 @@ impl YtDlpSource {
                     args.push("--postprocessor-args");
                     args.push("Merger:-movflags +faststart");
                     if is_youtube {
-                        add_cookies_args_with_proxy(args, proxy_option, pot_for_experimental(experimental));
+                        add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
                         args.push("--extractor-args");
-                        args.push(youtube_extractor_args(experimental));
+                        args.push(default_youtube_extractor_args());
                     } else {
                         add_no_cookies_args(args, proxy_option);
                         args.push("--extractor-args");
@@ -365,9 +364,9 @@ impl YtDlpSource {
                         if is_instagram_url(&url_for_tier2) {
                             add_instagram_cookies_args_with_proxy(args, proxy_option);
                         } else {
-                            add_cookies_args_with_proxy(args, proxy_option, pot_for_experimental(experimental));
+                            add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
                             args.push("--extractor-args");
-                            args.push(youtube_extractor_args(experimental));
+                            args.push(default_youtube_extractor_args());
                         }
                         args.push("--js-runtimes");
                         args.push("deno");
@@ -382,9 +381,9 @@ impl YtDlpSource {
                     args.push("--format");
                     args.push("--merge-output-format");
                     args.push("mp4");
-                    add_cookies_args_with_proxy(args, proxy_option, pot_for_experimental(experimental));
+                    add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
                     args.push("--extractor-args");
-                    args.push(youtube_extractor_args(experimental));
+                    args.push(default_youtube_extractor_args());
                     args.push("--js-runtimes");
                     args.push("deno");
                     args.push("--no-check-certificate");
@@ -392,7 +391,6 @@ impl YtDlpSource {
                 },
                 &format_arg,
                 time_range.as_ref(),
-                experimental,
             )
         });
 
@@ -445,12 +443,12 @@ fn try_tier1<F>(
     proxy_option: Option<&crate::download::metadata::ProxyConfig>,
     progress_tx: &mpsc::UnboundedSender<SourceProgress>,
     tier1_args_fn: &F,
-    experimental: bool,
 ) -> Result<(), (YtDlpErrorType, String)>
 where
     F: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
 {
-    let mut args: Vec<&str> = build_common_args(download_path, experimental);
+    // Experimental features graduated to main workflow
+    let mut args: Vec<&str> = build_common_args(download_path);
     tier1_args_fn(&mut args, proxy_option);
 
     if media_type == "audio" {
@@ -461,11 +459,8 @@ where
     append_section_args(&mut args, section_spec);
 
     // Use cached info JSON from preview phase to skip yt-dlp extraction (~3-5s savings)
-    let info_json_path: Option<String> = if experimental {
-        crate::core::share::youtube_info_cache_path(url_str).filter(|p| std::path::Path::new(p).exists())
-    } else {
-        None
-    };
+    let info_json_path: Option<String> =
+        crate::core::share::youtube_info_cache_path(url_str).filter(|p| std::path::Path::new(p).exists());
     if let Some(ref path) = info_json_path {
         args.push("--load-info-json");
         args.push(path);
@@ -506,17 +501,17 @@ fn try_tier2<F>(
     progress_tx: &mpsc::UnboundedSender<SourceProgress>,
     tier2_args_fn: &F,
     runtime_handle: &tokio::runtime::Handle,
-    experimental: bool,
 ) -> Tier2Outcome
 where
     F: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
 {
+    // Experimental features graduated to main workflow
     crate::download::cookies::log_cookie_file_diagnostics(&format!("{}_TIER2_BEFORE", media_type.to_uppercase()));
 
     let _ = std::fs::remove_file(download_path);
     cleanup_partial_download(download_path);
 
-    let mut cookies_args: Vec<&str> = build_common_args_minimal(download_path, experimental);
+    let mut cookies_args: Vec<&str> = build_common_args_minimal(download_path);
     tier2_args_fn(&mut cookies_args, proxy_option);
     if media_type == "audio" {
         cookies_args.push(extra_arg);
@@ -589,17 +584,17 @@ fn try_tier3<F>(
     proxy_option: Option<&crate::download::metadata::ProxyConfig>,
     progress_tx: &mpsc::UnboundedSender<SourceProgress>,
     tier3_args_fn: &F,
-    experimental: bool,
 ) -> bool
 where
     F: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
 {
+    // Experimental features graduated to main workflow
     log::warn!("🔧 Postprocessing error, retrying with --fixup never...");
 
     let _ = std::fs::remove_file(download_path);
     cleanup_partial_download(download_path);
 
-    let mut fixup_args: Vec<&str> = build_common_args_minimal(download_path, experimental);
+    let mut fixup_args: Vec<&str> = build_common_args_minimal(download_path);
     tier3_args_fn(&mut fixup_args, proxy_option);
     if media_type == "video" {
         if let Some(pos) = fixup_args.iter().position(|a| *a == "--format") {
@@ -646,13 +641,13 @@ fn download_with_fallback_chain<F1, F2, F3>(
     tier3_args_fn: F3,
     extra_arg: &str,
     time_range: Option<&(String, String)>,
-    experimental: bool,
 ) -> Result<Option<u32>, AppError>
 where
     F1: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
     F2: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
     F3: Fn(&mut Vec<&str>, Option<&crate::download::metadata::ProxyConfig>),
 {
+    // Experimental features graduated to main workflow
     let runtime_handle = tokio::runtime::Handle::current();
     let proxy_chain = get_proxy_chain();
     let total_proxies = proxy_chain.len();
@@ -702,7 +697,6 @@ where
             proxy_option.as_ref(),
             progress_tx,
             &tier1_args_fn,
-            experimental,
         );
         log::info!("⏱️ [TIER1] done in {:.1}s", tier1_start.elapsed().as_secs_f64());
 
@@ -771,7 +765,6 @@ where
                         progress_tx,
                         &tier2_args_fn,
                         &runtime_handle,
-                        experimental,
                     );
                     log::info!("⏱️ [TIER2] done in {:.1}s", tier2_start.elapsed().as_secs_f64());
                     match tier2_result {
@@ -805,7 +798,6 @@ where
                         proxy_option.as_ref(),
                         progress_tx,
                         &tier3_args_fn,
-                        experimental,
                     );
                     crate::core::metrics::record_tier_attempt("tier3_fixup_never", tier3_ok);
                     if tier3_ok {
@@ -863,7 +855,8 @@ fn append_section_args<'a>(args: &mut Vec<&'a str>, section_spec: Option<&'a str
 }
 
 /// Build common yt-dlp arguments shared by all tiers (full set with rate limiting).
-fn build_common_args(download_path: &str, experimental: bool) -> Vec<&str> {
+/// Experimental features graduated to main workflow — always uses fast path.
+fn build_common_args(download_path: &str) -> Vec<&str> {
     let mut args = vec![
         "-o",
         download_path,
@@ -877,50 +870,29 @@ fn build_common_args(download_path: &str, experimental: bool) -> Vec<&str> {
         "--socket-timeout",
         "30",
         "--http-chunk-size",
-        if experimental { "10485760" } else { "2097152" },
+        "10485760",
     ];
 
-    if experimental {
-        // Experimental: no rate limit, auto re-extract on throttle, maximize throughput
-        // Note: -N (concurrent fragments) is added later by push_concurrent_fragments_arg
-        args.extend_from_slice(&[
-            "--retries",
-            "15",
-            "--retry-sleep",
-            "http:exp=1:30",
-            "--retry-sleep",
-            "fragment:exp=1:30",
-            "--throttled-rate",
-            "100K",
-        ]);
-    } else {
-        // Conservative: single fragment, rate limit + sleep to avoid YouTube bans
-        args.extend_from_slice(&[
-            "--concurrent-fragments",
-            "1",
-            "--sleep-requests",
-            "2",
-            "--sleep-interval",
-            "3",
-            "--max-sleep-interval",
-            "10",
-            "--limit-rate",
-            "5M",
-            "--retry-sleep",
-            "http:exp=1:30",
-            "--retry-sleep",
-            "fragment:exp=1:30",
-            "--retries",
-            "15",
-        ]);
-    }
+    // No rate limit, auto re-extract on throttle, maximize throughput
+    // Note: -N (concurrent fragments) is added later by push_concurrent_fragments_arg
+    args.extend_from_slice(&[
+        "--retries",
+        "15",
+        "--retry-sleep",
+        "http:exp=1:30",
+        "--retry-sleep",
+        "fragment:exp=1:30",
+        "--throttled-rate",
+        "100K",
+    ]);
 
     args
 }
 
 /// Build minimal common arguments (for Tier 2 and Tier 3 fallbacks).
-fn build_common_args_minimal(download_path: &str, experimental: bool) -> Vec<&str> {
-    let mut args = vec![
+/// Experimental features graduated to main workflow — always uses fast path.
+fn build_common_args_minimal(download_path: &str) -> Vec<&str> {
+    vec![
         "-o",
         download_path,
         "--newline",
@@ -933,14 +905,8 @@ fn build_common_args_minimal(download_path: &str, experimental: bool) -> Vec<&st
         "--socket-timeout",
         "30",
         "--http-chunk-size",
-        if experimental { "10485760" } else { "2097152" },
-    ];
-
-    if !experimental {
-        args.extend_from_slice(&["--concurrent-fragments", "1"]);
-    }
-
-    args
+        "10485760",
+    ]
 }
 
 // Tier 2/3 already use build_common_args_minimal (no rate limiting), which is fine.

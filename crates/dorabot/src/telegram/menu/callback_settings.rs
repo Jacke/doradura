@@ -528,35 +528,12 @@ pub async fn handle_settings_callback(
     }
 
     if data == "settings:toggle_experimental" {
-        let _ = bot.answer_callback_query(callback_id.clone()).await;
-        let current_value = shared_storage
-            .get_user_experimental_features(chat_id.0)
-            .await
-            .unwrap_or(false);
-        let new_value = !current_value;
-
-        shared_storage
-            .set_user_experimental_features(chat_id.0, new_value)
-            .await
-            .map_err(db_err)?;
-
-        log::info!(
-            "User {} toggled experimental_features: {} -> {}",
-            chat_id.0,
-            current_value,
-            new_value
-        );
-
-        edit_main_menu(
-            bot,
-            chat_id,
-            message_id,
-            Arc::clone(&db_pool),
-            Arc::clone(&shared_storage),
-            None,
-            None,
-        )
-        .await?;
+        // Experimental features have been graduated to the main workflow.
+        // The toggle is kept for backward compatibility but has no effect.
+        let _ = bot
+            .answer_callback_query(callback_id.clone())
+            .text("Experimental features are now enabled for everyone!")
+            .await;
         return Ok(true);
     }
 
@@ -813,15 +790,11 @@ pub async fn handle_settings_callback(
                             None
                         };
 
-                        let experimental = shared_storage
-                            .get_user_experimental_features(chat_id.0)
-                            .await
-                            .unwrap_or(false);
+                        // Experimental features graduated to main workflow
                         match crate::telegram::preview::get_preview_metadata(
                             &url,
                             Some(&current_format),
                             video_quality.as_deref(),
-                            experimental,
                         )
                         .await
                         {

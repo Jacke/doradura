@@ -142,20 +142,12 @@ pub async fn download_and_send_video(
 
                 // Get thumbnail URL: use static YouTube URL when possible (saves ~7s yt-dlp call),
                 // fall back to yt-dlp --get-thumbnail for non-YouTube sites.
-                // Experimental: use hqdefault.jpg (~20-40 KB) instead of maxresdefault.jpg
-                // (~200-300 KB) to skip the compress step in send.rs (~0.6s saved).
-                let is_experimental = if let Some(s) = shared_storage_clone.as_ref() {
-                    s.get_user_experimental_features(chat_id.0).await.unwrap_or(false)
-                } else {
-                    false
-                };
+                // Experimental features graduated to main workflow — always use hqdefault.jpg
+                // (~20-40 KB) instead of maxresdefault.jpg (~200-300 KB) to skip the
+                // compress step in send.rs (~0.6s saved).
                 let thumbnail_url = if let Some(yt_thumb) = crate::core::share::youtube_thumbnail_url(url.as_str()) {
-                    if is_experimental {
-                        // hqdefault.jpg is under the 200 KB Telegram limit — no compress needed
-                        Some(yt_thumb.replace("maxresdefault.jpg", "hqdefault.jpg"))
-                    } else {
-                        Some(yt_thumb)
-                    }
+                    // hqdefault.jpg is under the 200 KB Telegram limit — no compress needed
+                    Some(yt_thumb.replace("maxresdefault.jpg", "hqdefault.jpg"))
                 } else {
                     get_thumbnail_url(&url).await
                 };

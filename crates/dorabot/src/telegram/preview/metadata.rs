@@ -2,8 +2,8 @@ use crate::core::config;
 use crate::core::error::AppError;
 use crate::download::error::DownloadError;
 use crate::download::metadata::{
-    add_cookies_args_with_proxy, add_instagram_cookies_args_with_proxy, add_no_cookies_args, get_proxy_chain,
-    is_proxy_related_error, pot_for_experimental,
+    add_cookies_args_with_proxy, add_instagram_cookies_args_with_proxy, add_no_cookies_args, default_pot_token,
+    get_proxy_chain, is_proxy_related_error,
 };
 use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message, YtDlpErrorType};
 use crate::storage::cache;
@@ -21,7 +21,8 @@ use super::formats::{extract_audio_tracks_from_json, extract_video_formats_from_
 ///
 /// Uses --dump-json to retrieve all metadata in a single call.
 /// On proxy-related errors, automatically tries the next proxy in the chain.
-pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str, experimental: bool) -> Result<Value, AppError> {
+// Experimental features graduated to main workflow
+pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str) -> Result<Value, AppError> {
     let proxy_chain = get_proxy_chain();
     let total_proxies = proxy_chain.len();
     let mut last_error: Option<AppError> = None;
@@ -60,8 +61,7 @@ pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str, experiment
         if is_youtube {
             // YouTube: use cookies from the start (datacenter IPs are flagged)
             args.extend_from_slice(&["--extractor-args", "youtube:player_client=web,web_safari"]);
-            let pot = pot_for_experimental(experimental);
-            add_cookies_args_with_proxy(&mut args, proxy_option.as_ref(), pot);
+            add_cookies_args_with_proxy(&mut args, proxy_option.as_ref(), default_pot_token());
         } else {
             // Other sites: try without cookies first
             args.extend_from_slice(&[
@@ -166,8 +166,7 @@ pub(super) async fn get_metadata_from_json(url: &Url, ytdl_bin: &str, experiment
                 cookies_args.push("youtube:player_client=web,web_safari");
                 cookies_args.push("--js-runtimes");
                 cookies_args.push("deno");
-                let pot = pot_for_experimental(experimental);
-                add_cookies_args_with_proxy(&mut cookies_args, proxy_option.as_ref(), pot);
+                add_cookies_args_with_proxy(&mut cookies_args, proxy_option.as_ref(), default_pot_token());
             }
 
             cookies_args.push(url.as_str());
@@ -284,28 +283,24 @@ pub(super) fn get_video_filesize_from_json(json: &Value, quality: &str) -> Optio
 /// * `url` - Video/audio URL
 /// * `format` - Download format ("mp3", "mp4", "srt", "txt")
 /// * `video_quality` - Video quality (mp4 only, e.g. "1080p", "720p", "480p", "360p")
-/// * `experimental` - Enable experimental optimisations (parallel fetch, skip formats for MP3)
+// Experimental features graduated to main workflow — all optimisations are always on.
 pub async fn get_preview_metadata(
     url: &Url,
     format: Option<&str>,
     video_quality: Option<&str>,
-    experimental: bool,
 ) -> Result<PreviewMetadata, AppError> {
-    get_preview_metadata_inner(url, format, video_quality, false, experimental).await
+    get_preview_metadata_inner(url, format, video_quality, false).await
 }
 
 /// Same as `get_preview_metadata` but skips the duration limit check when `has_time_range` is true,
 /// because partial downloads can handle arbitrarily long videos.
-///
-/// # Arguments
-/// * `experimental` - Enable experimental optimisations (parallel fetch, skip formats for MP3)
+// Experimental features graduated to main workflow — all optimisations are always on.
 pub async fn get_preview_metadata_with_time_range(
     url: &Url,
     format: Option<&str>,
     video_quality: Option<&str>,
-    experimental: bool,
 ) -> Result<PreviewMetadata, AppError> {
-    get_preview_metadata_inner(url, format, video_quality, true, experimental).await
+    get_preview_metadata_inner(url, format, video_quality, true).await
 }
 
 async fn get_preview_metadata_inner(
@@ -313,7 +308,6 @@ async fn get_preview_metadata_inner(
     format: Option<&str>,
     video_quality: Option<&str>,
     has_time_range: bool,
-    experimental: bool,
 ) -> Result<PreviewMetadata, AppError> {
     let ytdl_bin = &*config::YTDL_BIN;
     log::debug!("Getting preview metadata for URL: {}", url);
@@ -333,8 +327,8 @@ async fn get_preview_metadata_inner(
     if let Some(mut metadata) = PREVIEW_CACHE.get(url.as_str()).await {
         log::debug!("Preview metadata found in cache for URL: {}", url);
         let needs_video_formats = metadata.video_formats.as_ref().is_none_or(|formats| formats.is_empty());
-        // Skip formats refresh for MP3 when experimental mode is on — not needed for audio.
-        let skip_formats_refresh = experimental && format == Some("mp3");
+        // Experimental features graduated to main workflow — skip formats refresh for MP3 (not needed for audio).
+        let skip_formats_refresh = format == Some("mp3");
         if needs_video_formats && !skip_formats_refresh {
             match get_video_formats_list(url, ytdl_bin).await {
                 Ok(formats) if !formats.is_empty() => {
@@ -351,10 +345,10 @@ async fn get_preview_metadata_inner(
         return Ok(metadata);
     }
 
-    // ── Experimental: fast YouTube preview via HTML scraping (~1-2s vs 5-15s) ──
-    // Scrapes ytInitialPlayerResponse from YouTube page — has full format data
+    // Experimental features graduated to main workflow — fast YouTube preview via HTML scraping
+    // (~1-2s vs 5-15s). Scrapes ytInitialPlayerResponse from YouTube page — has full format data
     // without JS challenge solving. Falls through to yt-dlp on failure.
-    if experimental {
+    {
         let is_youtube = url
             .host_str()
             .is_some_and(|h| h.contains("youtube.com") || h.contains("youtu.be"));
@@ -448,11 +442,10 @@ async fn get_preview_metadata_inner(
         (None, None)
     };
 
-    // Experimental: spawn the formats fetch as a background task so it runs in parallel with
-    // the metadata JSON call.  Only for non-MP3 formats — MP3 never needs the formats list.
+    // Experimental features graduated to main workflow — parallel formats fetch for non-MP3.
     let parallel_formats_handle: Option<tokio::task::JoinHandle<Result<Vec<VideoFormatInfo>, AppError>>> =
-        if experimental && format != Some("mp3") {
-            log::info!("🧪 [EXPERIMENTAL] Starting parallel formats fetch");
+        if format != Some("mp3") {
+            log::info!("Starting parallel formats fetch");
             let url_owned = url.clone();
             let ytdl_bin_owned = ytdl_bin.to_string();
             Some(tokio::spawn(async move {
@@ -464,7 +457,7 @@ async fn get_preview_metadata_inner(
 
     // Fetch all metadata in a single JSON call (speed optimisation)
     let metadata_start = std::time::Instant::now();
-    let json_metadata = get_metadata_from_json(url, ytdl_bin, experimental).await?;
+    let json_metadata = get_metadata_from_json(url, ytdl_bin).await?;
     log::info!(
         "⏱️ [METADATA_JSON] done in {:.1}s for {}",
         metadata_start.elapsed().as_secs_f64(),
@@ -559,12 +552,13 @@ async fn get_preview_metadata_inner(
 
     // Fetch the list of available formats with sizes (if the source provides them).
     // Use --list-formats because JSON doesn't always contain exact sizes for every format.
-    let mut video_formats: Option<Vec<VideoFormatInfo>> = if experimental && format == Some("mp3") {
-        // Experimental: MP3 never needs the formats list — skip the call entirely.
-        log::info!("🧪 [EXPERIMENTAL] Skipping formats list for MP3");
+    // Experimental features graduated to main workflow
+    let mut video_formats: Option<Vec<VideoFormatInfo>> = if format == Some("mp3") {
+        // MP3 never needs the formats list — skip the call entirely.
+        log::info!("Skipping formats list for MP3");
         None
     } else if let Some(handle) = parallel_formats_handle {
-        // Experimental: await the already-running parallel fetch.
+        // Await the already-running parallel fetch.
         match handle.await {
             Ok(Ok(formats)) if !formats.is_empty() => {
                 log::info!("⏱️ [FORMATS_LIST] done (parallel) for {}", url);
@@ -589,7 +583,7 @@ async fn get_preview_metadata_inner(
             }
         }
     } else {
-        // Sequential path (experimental == false).
+        // Sequential fallback path (parallel handle was None).
         let formats_start = std::time::Instant::now();
         let result = match get_video_formats_list(url, ytdl_bin).await {
             Ok(formats) => {
