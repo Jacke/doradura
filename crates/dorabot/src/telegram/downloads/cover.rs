@@ -5,7 +5,7 @@
 
 use super::CallbackCtx;
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardMarkup, InputFile};
+use teloxide::types::{InlineKeyboardMarkup, InputFile, ParseMode};
 
 /// Show cover type picker: Photo / GIF / Video clip
 pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> ResponseResult<()> {
@@ -118,7 +118,8 @@ async fn generate_and_send_cover(
                     tokio::fs::write(&photo_path, &final_bytes).await?;
                     bot.delete_message(chat_id, status.id).await.ok();
                     bot.send_photo(chat_id, InputFile::file(&photo_path))
-                        .caption(format!("🖼 {}", title))
+                        .caption(cover_caption("🖼", title, url))
+                        .parse_mode(ParseMode::Html)
                         .await?;
                     return Ok(());
                 }
@@ -149,7 +150,8 @@ async fn generate_and_send_cover(
 
             bot.delete_message(chat_id, status.id).await.ok();
             bot.send_animation(chat_id, InputFile::file(&gif_path))
-                .caption(format!("🎞 {}", title))
+                .caption(cover_caption("🎞", title, url))
+                .parse_mode(ParseMode::Html)
                 .await?;
         }
         "clip" => {
@@ -159,7 +161,8 @@ async fn generate_and_send_cover(
 
             bot.delete_message(chat_id, status.id).await.ok();
             bot.send_video(chat_id, InputFile::file(&video_path))
-                .caption(format!("🎬 {}", title))
+                .caption(cover_caption("🎬", title, url))
+                .parse_mode(ParseMode::Html)
                 .await?;
         }
         _ => {
@@ -168,6 +171,16 @@ async fn generate_and_send_cover(
     }
 
     Ok(())
+}
+
+/// Build caption with a hidden (zero-width) link to the source video.
+/// Uses HTML: `<a href="url">&#8205;</a>` (zero-width joiner) so the URL
+/// is clickable but invisible, and Telegram won't show a link preview
+/// because the media message itself is the preview.
+fn cover_caption(emoji: &str, title: &str, url: &str) -> String {
+    let escaped_title = title.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+    let escaped_url = url.replace('&', "&amp;").replace('"', "&quot;");
+    format!("{} {}\n<a href=\"{}\">\u{200d}</a>", emoji, escaped_title, escaped_url)
 }
 
 /// Resolve thumbnail URL from video URL (YouTube → maxresdefault.jpg)
