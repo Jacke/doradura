@@ -831,169 +831,6 @@ where
     ))))
 }
 
-/// Result of downloading and preparing a thumbnail image for Telegram.
-///
-/// Contains both the raw bytes (for memory-based fallback) and an optional
-/// temporary file path (preferred by Telegram for proper MIME detection).
-struct PreparedThumbnail {
-    /// Raw thumbnail bytes (JPEG after conversion/compression)
-    bytes: Vec<u8>,
-    /// Temporary file on disk (absolute path); caller must clean up after send.
-    temp_path: Option<PathBuf>,
-}
-
-/// Download a thumbnail from `url`, convert WebP to JPEG, compress if > 200 KB,
-/// and write to a temporary file.  Returns `None` if any step fails (non-fatal).
-///
-/// Shared by both audio and video send paths.
-async fn download_and_prepare_thumbnail(url: &str) -> Option<PreparedThumbnail> {
-    log::info!("[THUMBNAIL] Starting thumbnail download from URL: {}", url);
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .unwrap_or_default();
-
-    let response = match client.get(url).send().await {
-        Ok(r) => r,
-        Err(e) => {
-            log::warn!("[THUMBNAIL] Failed to download thumbnail: {}", e);
-            return None;
-        }
-    };
-
-    log::info!("[THUMBNAIL] Thumbnail HTTP response status: {}", response.status());
-    if let Some(ct) = response.headers().get("content-type") {
-        log::info!(
-            "[THUMBNAIL] Thumbnail Content-Type: {}",
-            ct.to_str().unwrap_or("unknown")
-        );
-    }
-
-    if !response.status().is_success() {
-        log::warn!(
-            "[THUMBNAIL] Thumbnail request failed with status: {}",
-            response.status()
-        );
-        return None;
-    }
-
-    let raw_bytes = match response.bytes().await {
-        Ok(b) => b.to_vec(),
-        Err(e) => {
-            log::warn!("[THUMBNAIL] Failed to get thumbnail bytes: {}", e);
-            return None;
-        }
-    };
-
-    log::info!(
-        "[THUMBNAIL] Successfully downloaded thumbnail: {} bytes ({:.1} KB)",
-        raw_bytes.len(),
-        raw_bytes.len() as f64 / 1024.0
-    );
-
-    let format = detect_image_format(&raw_bytes);
-    log::info!("[THUMBNAIL] Detected image format: {:?}", format);
-
-    // Convert WebP → JPEG (Telegram works better with JPEG)
-    let (mut final_bytes, file_ext) = if format == ImageFormat::WebP {
-        log::info!("[THUMBNAIL] Converting WebP thumbnail to JPEG for better Telegram compatibility");
-        match convert_webp_to_jpeg(&raw_bytes).await {
-            Ok(jpeg) => {
-                log::info!("[THUMBNAIL] Successfully converted WebP to JPEG: {} bytes", jpeg.len());
-                (jpeg, "jpg")
-            }
-            Err(e) => {
-                log::warn!("[THUMBNAIL] Failed to convert WebP to JPEG: {}. Using original.", e);
-                (raw_bytes, "webp")
-            }
-        }
-    } else {
-        let ext = match format {
-            ImageFormat::Jpeg => "jpg",
-            ImageFormat::Png => "png",
-            _ => "jpg",
-        };
-        (raw_bytes, ext)
-    };
-
-    // Compress if > 200 KB (Telegram thumbnail limit)
-    if final_bytes.len() > 200 * 1024 {
-        log::warn!(
-            "[THUMBNAIL] Thumbnail too large ({:.1} KB), trying to compress",
-            final_bytes.len() as f64 / 1024.0
-        );
-        final_bytes = compress_thumbnail_jpeg(&final_bytes).await.unwrap_or(final_bytes);
-    }
-
-    // Write to temp file (Telegram prefers file-based thumbnails for MIME detection)
-    let temp_dir = std::env::temp_dir();
-    let temp_path = temp_dir.join(format!(
-        "thumb_{}.{}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis(),
-        file_ext
-    ));
-
-    let abs_path = if temp_path.exists() {
-        temp_path.canonicalize().unwrap_or_else(|_| temp_path.clone())
-    } else {
-        temp_dir
-            .canonicalize()
-            .map(|d| d.join(temp_path.file_name().unwrap_or_default()))
-            .unwrap_or_else(|_| temp_path.clone())
-    };
-
-    let temp_path_opt = if tokio::fs::write(&abs_path, &final_bytes).await.is_ok() {
-        log::info!(
-            "[THUMBNAIL] Saved thumbnail to temporary file: {:?} ({} bytes)",
-            abs_path,
-            final_bytes.len()
-        );
-        Some(abs_path)
-    } else {
-        log::warn!("[THUMBNAIL] Failed to save thumbnail to temporary file");
-        None
-    };
-
-    Some(PreparedThumbnail {
-        bytes: final_bytes,
-        temp_path: temp_path_opt,
-    })
-}
-
-/// Clean up a temporary thumbnail file after sending.
-async fn cleanup_thumbnail(thumb: &PreparedThumbnail) {
-    if let Some(ref path) = thumb.temp_path {
-        // Small delay so teloxide has time to read the file
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-        let _ = tokio::fs::remove_file(path).await;
-        log::info!("[THUMBNAIL] Cleaned up temporary thumbnail file: {:?}", path);
-    }
-}
-
-/// Build an `InputFile` for a prepared thumbnail, preferring file path over memory.
-fn thumbnail_input_file(thumb: &PreparedThumbnail) -> InputFile {
-    if let Some(ref path) = thumb.temp_path {
-        if path.exists() {
-            let s = path.to_str().unwrap_or("thumb.jpg");
-            log::info!(
-                "[THUMBNAIL] Using thumbnail from file: {} ({} bytes)",
-                s,
-                thumb.bytes.len()
-            );
-            return InputFile::file(s);
-        }
-        log::warn!(
-            "[THUMBNAIL] Thumbnail file does not exist: {:?}, falling back to memory",
-            path
-        );
-    }
-    log::info!("[THUMBNAIL] Using thumbnail from memory: {} bytes", thumb.bytes.len());
-    InputFile::memory(thumb.bytes.clone())
-}
-
 /// Send audio file with retry logic.
 ///
 /// # Arguments
@@ -1005,7 +842,6 @@ fn thumbnail_input_file(thumb: &PreparedThumbnail) -> InputFile {
 /// * `progress_msg` - Progress message handler
 /// * `caption` - Formatted caption with MarkdownV2
 /// * `send_as_document` - If true, send as document instead of audio
-/// * `thumbnail_url` - Optional URL for audio cover art thumbnail
 ///
 /// # Returns
 ///
@@ -1021,19 +857,10 @@ pub async fn send_audio_with_retry(
     send_as_document: bool,
     message_id: Option<i32>,
     artist: Option<String>,
-    thumbnail_url: Option<&str>,
 ) -> Result<(Message, u64), AppError> {
-    // Download and prepare thumbnail if URL provided
-    let prepared_thumb = if let Some(url) = thumbnail_url {
-        download_and_prepare_thumbnail(url).await
-    } else {
-        None
-    };
-
-    let result = if send_as_document {
+    if send_as_document {
         log::info!("User preference: sending audio as document");
         let caption_clone = caption.to_string();
-        let thumb_input = prepared_thumb.as_ref().map(thumbnail_input_file);
         send_file_with_retry(
             bot,
             chat_id,
@@ -1043,17 +870,12 @@ pub async fn send_audio_with_retry(
             "audio",
             move |bot, chat_id, path, progress| {
                 let caption_clone = caption_clone.clone();
-                let thumb_input = thumb_input.clone();
                 async move {
                     let input_file = input_file_with_progress(&path, progress).await?;
-                    let mut msg = bot
-                        .send_document(chat_id, input_file)
+                    bot.send_document(chat_id, input_file)
                         .caption(&caption_clone)
-                        .parse_mode(ParseMode::MarkdownV2);
-                    if let Some(thumb) = thumb_input {
-                        msg = msg.thumbnail(thumb);
-                    }
-                    msg.await
+                        .parse_mode(ParseMode::MarkdownV2)
+                        .await
                 }
             },
             message_id,
@@ -1062,7 +884,6 @@ pub async fn send_audio_with_retry(
         .await
     } else {
         let caption_clone = caption.to_string();
-        let thumb_input = prepared_thumb.as_ref().map(thumbnail_input_file);
         send_file_with_retry(
             bot,
             chat_id,
@@ -1073,32 +894,20 @@ pub async fn send_audio_with_retry(
             move |bot, chat_id, path, progress| {
                 let duration = duration;
                 let caption_clone = caption_clone.clone();
-                let thumb_input = thumb_input.clone();
                 async move {
                     let input_file = input_file_with_progress(&path, progress).await?;
-                    let mut msg = bot
-                        .send_audio(chat_id, input_file)
+                    bot.send_audio(chat_id, input_file)
                         .caption(&caption_clone)
                         .parse_mode(ParseMode::MarkdownV2)
-                        .duration(duration);
-                    if let Some(thumb) = thumb_input {
-                        msg = msg.thumbnail(thumb);
-                    }
-                    msg.await
+                        .duration(duration)
+                        .await
                 }
             },
             message_id,
             artist,
         )
         .await
-    };
-
-    // Clean up temporary thumbnail file
-    if let Some(ref thumb) = prepared_thumb {
-        cleanup_thumbnail(thumb).await;
     }
-
-    result
 }
 
 /// Send video file with retry logic and fallback to send_document for large files.
@@ -1166,52 +975,169 @@ pub async fn send_video_with_retry(
         );
     }
 
-    // Download thumbnail from URL, or generate from video as fallback
-    let prepared_thumb = if let Some(thumb_url) = thumbnail_url {
-        download_and_prepare_thumbnail(thumb_url).await
+    // Download thumbnail if available, otherwise generate from video
+    let thumbnail_bytes = if let Some(thumb_url) = thumbnail_url {
+        log::info!("[THUMBNAIL] Starting thumbnail download from URL: {}", thumb_url);
+        let thumb_client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .unwrap_or_default();
+        match thumb_client.get(thumb_url).send().await {
+            Ok(response) => {
+                log::info!("[THUMBNAIL] Thumbnail HTTP response status: {}", response.status());
+
+                // Check Content-Type
+                if let Some(content_type) = response.headers().get("content-type") {
+                    let content_type_str = content_type.to_str().unwrap_or("unknown");
+                    log::info!("[THUMBNAIL] Thumbnail Content-Type: {}", content_type_str);
+                }
+
+                if response.status().is_success() {
+                    match response.bytes().await {
+                        Ok(bytes) => {
+                            let bytes_vec = bytes.to_vec();
+                            log::info!(
+                                "[THUMBNAIL] Successfully downloaded thumbnail: {} bytes ({} KB)",
+                                bytes_vec.len(),
+                                bytes_vec.len() as f64 / 1024.0
+                            );
+
+                            // Check file format by magic bytes
+                            let format = detect_image_format(&bytes_vec);
+                            log::info!("[THUMBNAIL] Detected image format: {:?}", format);
+
+                            // Check size (Telegram requires <= 200 KB)
+                            if bytes_vec.len() > 200 * 1024 {
+                                log::warn!("[THUMBNAIL] Thumbnail size ({} KB) exceeds Telegram limit (200 KB). May cause issues.",
+                                    bytes_vec.len() as f64 / 1024.0);
+                            }
+
+                            // Check format (Telegram requires JPEG or PNG)
+                            match format {
+                                ImageFormat::Jpeg | ImageFormat::Png => {
+                                    log::info!("[THUMBNAIL] Thumbnail format is valid (JPEG/PNG), will use it");
+                                    Some(bytes_vec)
+                                }
+                                ImageFormat::WebP => {
+                                    log::warn!("[THUMBNAIL] Thumbnail is WebP format, Telegram may not support it properly. Trying anyway...");
+                                    Some(bytes_vec)
+                                }
+                                ImageFormat::Unknown => {
+                                    log::warn!("[THUMBNAIL] Unknown thumbnail format, may cause black screen. First bytes: {:?}",
+                                        bytes_vec.iter().take(10).collect::<Vec<_>>());
+                                    Some(bytes_vec)
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("[THUMBNAIL] Failed to get thumbnail bytes: {}", e);
+                            None
+                        }
+                    }
+                } else {
+                    log::warn!(
+                        "[THUMBNAIL] Thumbnail request failed with status: {}",
+                        response.status()
+                    );
+                    None
+                }
+            }
+            Err(e) => {
+                log::warn!("[THUMBNAIL] Failed to download thumbnail: {}", e);
+                None
+            }
+        }
     } else {
+        log::info!("[THUMBNAIL] No thumbnail URL provided");
         None
     };
-    // If URL thumbnail not available, try generating from video frame
-    let prepared_thumb = if prepared_thumb.is_some() {
-        prepared_thumb
+
+    // If thumbnail from URL is not available, generate from video
+    let thumbnail_bytes = if thumbnail_bytes.is_some() {
+        thumbnail_bytes
     } else {
         log::info!("[THUMBNAIL] Thumbnail URL not available, trying to generate from video file");
-        match generate_thumbnail_from_video(download_path).await {
-            Some(bytes) => {
-                // Write generated bytes through the same temp-file path
-                let temp_dir = std::env::temp_dir();
-                let temp_path = temp_dir.join(format!(
-                    "thumb_{}.jpg",
-                    std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap_or_default()
-                        .as_millis(),
-                ));
-                let abs_path = temp_dir
-                    .canonicalize()
-                    .map(|d| d.join(temp_path.file_name().unwrap_or_default()))
-                    .unwrap_or_else(|_| temp_path);
+        generate_thumbnail_from_video(download_path).await
+    };
 
-                // Compress if needed
-                let final_bytes = if bytes.len() > 200 * 1024 {
-                    compress_thumbnail_jpeg(&bytes).await.unwrap_or(bytes)
-                } else {
-                    bytes
-                };
+    // Create temporary file for thumbnail if available
+    // This is needed for proper thumbnail transmission to Telegram with file name
+    // Convert WebP to JPEG if needed, as Telegram works better with JPEG
+    let temp_thumb_path: Option<std::path::PathBuf> = if let Some(ref thumb_bytes) = thumbnail_bytes {
+        let format = detect_image_format(thumb_bytes);
 
-                let temp_path_opt = if tokio::fs::write(&abs_path, &final_bytes).await.is_ok() {
-                    Some(abs_path)
-                } else {
-                    None
-                };
-                Some(PreparedThumbnail {
-                    bytes: final_bytes,
-                    temp_path: temp_path_opt,
-                })
+        // Convert WebP to JPEG if needed (Telegram works better with JPEG)
+        let (final_bytes, file_ext) = if format == ImageFormat::WebP {
+            log::info!("[THUMBNAIL] Converting WebP thumbnail to JPEG for better Telegram compatibility");
+            // Try to use ffmpeg to convert WebP to JPEG
+            match convert_webp_to_jpeg(thumb_bytes).await {
+                Ok(jpeg_bytes) => {
+                    log::info!(
+                        "[THUMBNAIL] Successfully converted WebP to JPEG: {} bytes",
+                        jpeg_bytes.len()
+                    );
+                    (jpeg_bytes, "jpg")
+                }
+                Err(e) => {
+                    log::warn!("[THUMBNAIL] Failed to convert WebP to JPEG: {}. Using original.", e);
+                    (thumb_bytes.clone(), "webp")
+                }
             }
-            None => None,
+        } else {
+            let ext = match format {
+                ImageFormat::Jpeg => "jpg",
+                ImageFormat::Png => "png",
+                ImageFormat::Unknown => "jpg",
+                _ => "jpg",
+            };
+            (thumb_bytes.clone(), ext)
+        };
+
+        // Check size - if larger than 200KB, compress
+        let final_bytes = if final_bytes.len() > 200 * 1024 {
+            log::warn!(
+                "[THUMBNAIL] Thumbnail too large ({} KB), trying to compress",
+                final_bytes.len() as f64 / 1024.0
+            );
+            compress_thumbnail_jpeg(&final_bytes).await.unwrap_or(final_bytes)
+        } else {
+            final_bytes
+        };
+
+        let temp_dir = std::env::temp_dir();
+        let temp_path = temp_dir.join(format!(
+            "thumb_{}.{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis(),
+            file_ext
+        ));
+
+        // Get absolute path (canonicalize only works for existing files)
+        let abs_path = if temp_path.exists() {
+            temp_path.canonicalize().unwrap_or_else(|_| temp_path.clone())
+        } else {
+            // If file not created yet, get absolute path through parent
+            temp_dir
+                .canonicalize()
+                .map(|canon_dir| canon_dir.join(temp_path.file_name().unwrap_or_default()))
+                .unwrap_or_else(|_| temp_path.clone())
+        };
+
+        if tokio::fs::write(&abs_path, &final_bytes).await.is_ok() {
+            log::info!(
+                "[THUMBNAIL] Saved thumbnail to temporary file: {:?} ({} bytes)",
+                abs_path,
+                final_bytes.len()
+            );
+            Some(abs_path)
+        } else {
+            log::warn!("[THUMBNAIL] Failed to save thumbnail to temporary file");
+            None
         }
+    } else {
+        None
     };
 
     // Clone values for use in closure
@@ -1220,8 +1146,7 @@ pub async fn send_video_with_retry(
     if send_as_document {
         log::info!("User preference: sending video as document (skip send_video)");
         let title_for_doc = title.to_string();
-        let thumb_input = prepared_thumb.as_ref().map(thumbnail_input_file);
-        let result = send_file_with_retry(
+        return send_file_with_retry(
             bot,
             chat_id,
             download_path,
@@ -1230,32 +1155,24 @@ pub async fn send_video_with_retry(
             "video",
             move |bot, chat_id, path, progress| {
                 let title_for_doc = title_for_doc.clone();
-                let thumb_input = thumb_input.clone();
                 async move {
                     let input_file = input_file_with_progress(&path, progress).await?;
-                    let mut msg = bot
-                        .send_document(chat_id, input_file)
+                    bot.send_document(chat_id, input_file)
                         .caption(&title_for_doc)
-                        .parse_mode(ParseMode::MarkdownV2);
-                    if let Some(thumb) = thumb_input {
-                        msg = msg.thumbnail(thumb);
-                    }
-                    msg.await
+                        .parse_mode(ParseMode::MarkdownV2)
+                        .await
                 }
             },
             message_id,
             artist,
         )
         .await;
-        if let Some(ref thumb) = prepared_thumb {
-            cleanup_thumbnail(thumb).await;
-        }
-        return result;
     }
 
     let width_clone = width;
     let height_clone = height;
-    let thumb_input = prepared_thumb.as_ref().map(thumbnail_input_file);
+    let thumbnail_bytes_clone = thumbnail_bytes.clone();
+    let temp_thumb_path_clone = temp_thumb_path.clone();
     let title_clone = title.to_string();
 
     // Try to send as video
@@ -1271,7 +1188,8 @@ pub async fn send_video_with_retry(
             let duration_clone = duration_clone;
             let width_clone = width_clone;
             let height_clone = height_clone;
-            let thumb_input = thumb_input.clone();
+            let thumbnail_bytes_clone = thumbnail_bytes_clone.clone();
+            let temp_thumb_path_clone = temp_thumb_path_clone.clone();
             let title_clone = title_clone.clone();
 
             async move {
@@ -1293,11 +1211,37 @@ pub async fn send_video_with_retry(
                 }
 
                 // Add thumbnail if available
-                if let Some(thumb) = thumb_input {
-                    log::info!("[THUMBNAIL] Adding thumbnail to video message");
-                    video_msg = video_msg.thumbnail(thumb);
+                // IMPORTANT: Use absolute path and ensure file exists
+                if let Some(thumb_path) = temp_thumb_path_clone {
+                    // Check that file exists before sending
+                    if thumb_path.exists() {
+                        let abs_path_str = thumb_path.to_str().unwrap_or("thumb.jpg");
+                        log::info!(
+                            "[THUMBNAIL] Adding thumbnail from file: {} (exists: {}, size: {} bytes)",
+                            abs_path_str,
+                            thumb_path.exists(),
+                            tokio::fs::metadata(&thumb_path).await.map(|m| m.len()).unwrap_or(0)
+                        );
+                        video_msg = video_msg.thumbnail(InputFile::file(abs_path_str));
+                        log::info!("[THUMBNAIL] Thumbnail successfully added to video message");
+                    } else {
+                        log::warn!(
+                            "[THUMBNAIL] Thumbnail file does not exist: {:?}, trying memory fallback",
+                            thumb_path
+                        );
+                        // Fallback to memory if file doesn't exist
+                        if let Some(thumb_bytes) = thumbnail_bytes_clone {
+                            log::info!("[THUMBNAIL] Adding thumbnail from memory: {} bytes", thumb_bytes.len());
+                            video_msg = video_msg.thumbnail(InputFile::memory(thumb_bytes));
+                        }
+                    }
+                } else if let Some(thumb_bytes) = thumbnail_bytes_clone {
+                    log::info!("[THUMBNAIL] Adding thumbnail from memory: {} bytes", thumb_bytes.len());
+                    // Fallback to InputFile::memory if temporary file not created
+                    video_msg = video_msg.thumbnail(InputFile::memory(thumb_bytes));
+                    log::info!("[THUMBNAIL] Thumbnail successfully added to video message");
                 } else {
-                    log::info!("[THUMBNAIL] No thumbnail available, sending video without thumbnail");
+                    log::info!("[THUMBNAIL] No thumbnail bytes available, sending video without thumbnail");
                 }
 
                 // Enable streaming support for better compatibility
@@ -1311,9 +1255,23 @@ pub async fn send_video_with_retry(
     )
     .await;
 
-    // Clean up temporary thumbnail file
-    if let Some(ref thumb) = prepared_thumb {
-        cleanup_thumbnail(thumb).await;
+    // Delete temporary thumbnail file after successful send
+    // Add small delay so teloxide has time to read the file
+    if let Some(thumb_path) = temp_thumb_path {
+        // Give teloxide time to read file before deleting
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+        if result.is_ok() {
+            let _ = tokio::fs::remove_file(&thumb_path).await;
+            log::info!("[THUMBNAIL] Cleaned up temporary thumbnail file: {:?}", thumb_path);
+        } else {
+            // On error also delete, as retry will create new file
+            let _ = tokio::fs::remove_file(&thumb_path).await;
+            log::info!(
+                "[THUMBNAIL] Cleaned up temporary thumbnail file after error: {:?}",
+                thumb_path
+            );
+        }
     }
 
     // If sending as video failed and file > 50 MB, try as document

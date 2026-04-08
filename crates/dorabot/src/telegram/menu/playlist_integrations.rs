@@ -682,7 +682,6 @@ async fn play_all(
                         false,
                         None,
                         artist,
-                        None,
                     )
                     .await;
 
@@ -997,7 +996,6 @@ async fn download_single_track(
                 false,
                 None,
                 artist,
-                None,
             )
             .await;
 
