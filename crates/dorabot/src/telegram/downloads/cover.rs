@@ -173,14 +173,13 @@ async fn generate_and_send_cover(
     Ok(())
 }
 
-/// Build caption with a hidden (zero-width) link to the source video.
-/// Uses HTML: `<a href="url">&#8205;</a>` (zero-width joiner) so the URL
-/// is clickable but invisible, and Telegram won't show a link preview
-/// because the media message itself is the preview.
+/// Build caption with a small link to the source video.
+/// Uses HTML `<a href="url">🔗</a>` so the link is visible but compact,
+/// and no link preview is shown since the media message itself is the preview.
 fn cover_caption(emoji: &str, title: &str, url: &str) -> String {
     let escaped_title = title.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
     let escaped_url = url.replace('&', "&amp;").replace('"', "&quot;");
-    format!("{} {}\n<a href=\"{}\">\u{200d}</a>", emoji, escaped_title, escaped_url)
+    format!("{} {} <a href=\"{}\">🔗</a>", emoji, escaped_title, escaped_url)
 }
 
 /// Resolve thumbnail URL from video URL (YouTube → maxresdefault.jpg).
@@ -190,64 +189,84 @@ fn resolve_thumbnail_url(url: &str) -> Option<String> {
         .map(|id| format!("https://img.youtube.com/vi/{}/maxresdefault.jpg", id))
 }
 
-/// Download first N seconds of video using yt-dlp + ffmpeg
+/// Download first N seconds of video using yt-dlp with full proxy/cookie support.
+///
+/// Uses the same arg infrastructure as the main download pipeline so it works
+/// on Railway (where YouTube IPs are blocked without proxy).
 async fn download_video_fragment(
     url: &str,
     duration_secs: u64,
     work_dir: &std::path::Path,
 ) -> Result<std::path::PathBuf, anyhow::Error> {
+    use doracore::download::metadata;
     use tokio::process::Command;
 
     let output_path = work_dir.join("fragment.mp4");
+    let output_str = output_path.to_string_lossy().to_string();
 
-    // Use yt-dlp to get the direct video URL, then ffmpeg to download a fragment
-    let yt_output = Command::new("yt-dlp")
-        .args(["--no-playlist", "-f", "best[height<=720]", "--get-url", url])
-        .output()
-        .await?;
+    // Collect cookie/proxy args first (borrows static strings)
+    let mut cookie_args: Vec<&str> = Vec::new();
+    metadata::add_cookies_args(&mut cookie_args);
+    let cookie_args_owned: Vec<String> = cookie_args.iter().map(|s| s.to_string()).collect();
 
-    let direct_url = String::from_utf8_lossy(&yt_output.stdout).trim().to_string();
-    if direct_url.is_empty() {
-        return Err(anyhow::anyhow!("Could not resolve video URL"));
-    }
+    // Build yt-dlp args with cookies + proxy (same as main pipeline)
+    let mut args: Vec<String> = vec![
+        "--no-playlist".into(),
+        "-f".into(),
+        "best[height<=720]/best".into(),
+        "--download-sections".into(),
+        format!("*0-{}", duration_secs),
+        "--force-keyframes-at-cuts".into(),
+        "-o".into(),
+        output_str,
+        "--no-part".into(),
+        "--retries".into(),
+        "3".into(),
+        "--socket-timeout".into(),
+        "30".into(),
+        "--no-check-certificate".into(),
+        "--no-warnings".into(),
+    ];
 
-    // Use first URL if multiple lines (video + audio)
-    let first_url = direct_url.lines().next().unwrap_or(&direct_url);
+    // Add extractor args for YouTube
+    let extractor_args = metadata::default_youtube_extractor_args();
+    args.push("--extractor-args".into());
+    args.push(extractor_args.into());
 
-    let ffmpeg_result = tokio::time::timeout(
-        std::time::Duration::from_secs(60),
-        Command::new("ffmpeg")
-            .args([
-                "-hide_banner",
-                "-loglevel",
-                "error",
-                "-y",
-                "-i",
-                first_url,
-                "-t",
-                &duration_secs.to_string(),
-                "-c:v",
-                "libx264",
-                "-preset",
-                "ultrafast",
-                "-crf",
-                "28",
-                "-c:a",
-                "aac",
-                "-b:a",
-                "128k",
-                "-movflags",
-                "+faststart",
-            ])
-            .arg(&output_path)
-            .output(),
+    // Add cookies + proxy from the main pipeline infrastructure
+    args.extend(cookie_args_owned);
+
+    args.push(url.into());
+
+    // Log args (mask cookies path for security)
+    let safe_args: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    log::info!(
+        "[cover] Downloading {}s fragment from {} ({} args: {:?})",
+        duration_secs,
+        &url[..url.len().min(60)],
+        args.len(),
+        &safe_args[..safe_args.len().saturating_sub(1)] // skip URL at end
+    );
+
+    let yt_result = tokio::time::timeout(
+        std::time::Duration::from_secs(90),
+        Command::new("yt-dlp").args(&args).output(),
     )
-    .await??;
+    .await
+    .map_err(|_| anyhow::anyhow!("yt-dlp timed out after 90s"))??;
 
-    if !ffmpeg_result.status.success() {
-        let stderr = String::from_utf8_lossy(&ffmpeg_result.stderr);
-        return Err(anyhow::anyhow!("ffmpeg failed: {}", stderr));
+    if !yt_result.status.success() {
+        let stderr = String::from_utf8_lossy(&yt_result.stderr);
+        log::error!("[cover] yt-dlp fragment download failed: {}", stderr);
+        return Err(anyhow::anyhow!("yt-dlp failed: {}", &stderr[..stderr.len().min(200)]));
     }
+
+    if !output_path.exists() {
+        return Err(anyhow::anyhow!("yt-dlp produced no output file"));
+    }
+
+    let size = tokio::fs::metadata(&output_path).await?.len();
+    log::info!("[cover] Fragment downloaded: {} bytes", size);
 
     Ok(output_path)
 }
@@ -261,9 +280,8 @@ mod tests {
     #[test]
     fn cover_caption_basic() {
         let cap = cover_caption("🖼", "Song Title", "https://youtu.be/abc");
-        assert!(cap.starts_with("🖼 Song Title\n"));
-        assert!(cap.contains("<a href=\"https://youtu.be/abc\">"));
-        assert!(cap.contains("\u{200d}"));
+        assert!(cap.contains("🖼 Song Title"));
+        assert!(cap.contains("<a href=\"https://youtu.be/abc\">🔗</a>"));
     }
 
     #[test]
@@ -288,7 +306,8 @@ mod tests {
     #[test]
     fn cover_caption_empty_title() {
         let cap = cover_caption("📸", "", "https://youtu.be/x");
-        assert!(cap.starts_with("📸 \n"));
+        assert!(cap.contains("📸 "));
+        assert!(cap.contains("🔗</a>"));
     }
 
     // ── resolve_thumbnail_url ──────────────────────────────────────
