@@ -2,6 +2,7 @@ pub mod callbacks;
 mod categories;
 mod cb_helpers;
 mod clipping;
+mod cover;
 mod send;
 mod speed;
 pub mod subtitles;

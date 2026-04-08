@@ -142,10 +142,11 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                                 format!("ringtone:select:download:{}", download_id),
                             ),
                         ]);
-                        // Row 3: speed + lyrics
+                        // Row 3: speed + lyrics + cover
                         options.push(vec![
                             crate::telegram::cb("⚙️ Speed".to_string(), format!("downloads:speed:{}", download_id)),
                             crate::telegram::cb("📝 Lyrics".to_string(), format!("downloads:lyrics:{}", download_id)),
+                            crate::telegram::cb("🖼 Cover".to_string(), format!("downloads:cover:{}", download_id)),
                         ]);
                     } else {
                         // Row 1: send formats

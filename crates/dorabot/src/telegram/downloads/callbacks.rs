@@ -64,6 +64,10 @@ pub async fn handle_downloads_callback(
         "subtitles" | "burn_subs" | "burn_subs_lang" | "voice" | "voice_dur" | "lyrics" | "lyr_cap" | "lyrics_send" => {
             super::voice_lyrics::handle(&ctx, action, &parts).await?;
         }
+        // Cover (photo/gif/clip from video source)
+        "cover" | "cover_do" => {
+            super::cover::handle(&ctx, action, &parts).await?;
+        }
         // Categories
         "setcat" | "savecat" | "newcat" => {
             super::categories::handle(&ctx, action, &parts).await?;
