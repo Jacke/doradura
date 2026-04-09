@@ -351,8 +351,9 @@ pub async fn process_video_clip(
         total_len
     };
 
-    // For video notes, determine if we need multi-circle split (using effective duration)
-    let video_note_needs_split =
+    // For video notes, determine if we need multi-circle split (using effective duration).
+    // Mutable because we re-check after probing the real output file below.
+    let mut video_note_needs_split =
         is_video_note && effective_len > VIDEO_NOTE_MAX_DURATION as i64 && !is_too_long_for_split(effective_len as u64);
 
     // Check if video note is too long for splitting (> 360s)
@@ -419,13 +420,14 @@ pub async fn process_video_clip(
     };
 
     // Calculate actual length after truncation
-    let actual_total_len: i64 = adjusted_segments
+    let mut actual_total_len: i64 = adjusted_segments
         .iter()
         .map(|s| (s.end_secs - s.start_secs).max(0))
         .sum();
 
-    // Effective length after speed for video note split calculations
-    let effective_total_len = if let Some(spd) = speed {
+    // Effective length after speed for video note split calculations.
+    // Both `mut` because we re-compute after probing the real output file below.
+    let mut effective_total_len = if let Some(spd) = speed {
         (actual_total_len as f32 / spd).ceil() as i64
     } else {
         actual_total_len
@@ -1077,6 +1079,45 @@ pub async fn process_video_clip(
         .await
         .map(|m| m.len() as i64)
         .unwrap_or(0);
+
+    // PROBE the ACTUAL output duration instead of trusting the theoretical
+    // `actual_total_len`/`effective_total_len` values (which are computed from
+    // user input and may diverge from reality when:
+    //   - the source file is shorter than the requested trim range
+    //   - ffmpeg atempo/setpts produces a slightly different duration
+    //   - download.duration in history was wrong/stale
+    //
+    // Without this probe, to_video_notes_split below tries to seek past EOF
+    // and produces garbage circles for the missing tail (observed: 6×60s
+    // circles from a 120s source).
+    //
+    // The ffmpeg cut ALREADY applied the speed modifier via setpts/atempo,
+    // so the probed duration IS the effective (post-speed) duration.
+    if let Some(probed) = doracore::download::metadata::probe_duration_seconds(&output_path.to_string_lossy()).await {
+        let probed = probed as i64;
+        if probed > 0 {
+            if (probed - effective_total_len).abs() > 2 {
+                log::warn!(
+                    "⏱ Output duration mismatch: theoretical effective={}s, probed={}s — using probed",
+                    effective_total_len,
+                    probed
+                );
+            }
+            // Trust the real file: use probed as the effective duration, and
+            // back-calculate the raw (speed-adjusted) length for accounting.
+            effective_total_len = probed.max(1);
+            actual_total_len = if let Some(spd) = speed {
+                (effective_total_len as f32 * spd).round() as i64
+            } else {
+                effective_total_len
+            };
+            // Recompute split flag from the real length — the file may be
+            // shorter than expected and no longer need splitting.
+            video_note_needs_split = is_video_note
+                && effective_total_len > VIDEO_NOTE_MAX_DURATION as i64
+                && !is_too_long_for_split(effective_total_len as u64);
+        }
+    }
 
     // Build a timestamped URL linking to the start of the first segment
     let timestamped_url = if !original_url.is_empty() {
