@@ -6,6 +6,7 @@ use axum::response::{IntoResponse, Json, Response};
 use serde_json::json;
 
 use crate::storage::get_connection;
+use crate::storage::shared::QueueTaskInput;
 
 use super::auth::{verify_admin, verify_admin_post};
 use super::helpers::{like_param, log_audit};
@@ -152,6 +153,239 @@ pub(super) async fn admin_api_error_resolve(
         }
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
     }
+}
+
+/// POST /admin/api/errors/:id/retry — re-queue the failed download for the affected user.
+///
+/// Flow:
+///   1. Load the error_log row and extract user_id + url.
+///   2. Fetch the user's preferred format / quality / bitrate from the users table.
+///   3. Enqueue a new download task via save_task_to_queue (new idempotency key
+///      so it bypasses the old failed-task guard).
+///   4. Mark the error_log row as resolved.
+///   5. Send the user a Telegram message that their download has been re-queued.
+pub(super) async fn admin_api_error_retry(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Path(error_id): Path<i64>,
+) -> Response {
+    let admin_id = match verify_admin_post(&header_map, &state) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+
+    // Step 1 + 2: load error row + user preferences in the blocking pool.
+    let db = state.shared_storage.sqlite_pool();
+    let loaded = tokio::task::spawn_blocking(move || -> Result<Option<RetryContext>, rusqlite::Error> {
+        let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
+        let row: Option<(Option<i64>, Option<String>)> = conn
+            .query_row(
+                "SELECT user_id, url FROM error_log WHERE id = ?1",
+                rusqlite::params![error_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok();
+        let (user_id, url) = match row {
+            Some((Some(uid), Some(url))) if !url.is_empty() => (uid, url),
+            _ => return Ok(None),
+        };
+
+        // Fetch the user's current download preferences.
+        let prefs: (String, String, String) = conn
+            .query_row(
+                "SELECT COALESCE(download_format, 'mp3'), \
+                        COALESCE(video_quality, 'best'), \
+                        COALESCE(audio_bitrate, '320k') \
+                 FROM users WHERE telegram_id = ?1",
+                rusqlite::params![user_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .unwrap_or_else(|_| ("mp3".into(), "best".into(), "320k".into()));
+
+        Ok(Some(RetryContext {
+            user_id,
+            url,
+            format: prefs.0,
+            video_quality: prefs.1,
+            audio_bitrate: prefs.2,
+        }))
+    })
+    .await;
+
+    let ctx = match loaded {
+        Ok(Ok(Some(ctx))) => ctx,
+        Ok(Ok(None)) => return (StatusCode::NOT_FOUND, "Error has no user/URL context").into_response(),
+        _ => return (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    };
+
+    // Step 3: enqueue a new download task.
+    let task_id = uuid::Uuid::new_v4().to_string();
+    let idempotency_key = format!("admin_retry_err_{}_{}", error_id, task_id);
+    let is_video = ctx.format == "mp4";
+    let input = QueueTaskInput {
+        task_id: &task_id,
+        user_id: ctx.user_id,
+        url: &ctx.url,
+        message_id: None,
+        format: &ctx.format,
+        is_video,
+        video_quality: if is_video {
+            Some(ctx.video_quality.as_str())
+        } else {
+            None
+        },
+        audio_bitrate: if !is_video {
+            Some(ctx.audio_bitrate.as_str())
+        } else {
+            None
+        },
+        time_range_start: None,
+        time_range_end: None,
+        carousel_mask: None,
+        priority: 10, // higher than default so admin retries jump the queue
+        idempotency_key: &idempotency_key,
+    };
+
+    if let Err(e) = state.shared_storage.save_task_to_queue(input).await {
+        log::error!("Admin retry enqueue failed for error {}: {}", error_id, e);
+        return (StatusCode::INTERNAL_SERVER_ERROR, "enqueue failed").into_response();
+    }
+
+    // Step 4: mark the error resolved + audit.
+    let db2 = state.shared_storage.sqlite_pool();
+    let err_id = error_id;
+    let admin = admin_id;
+    let _ = tokio::task::spawn_blocking(move || {
+        if let Ok(conn) = get_connection(&db2) {
+            let _ = conn.execute(
+                "UPDATE error_log SET resolved = 1 WHERE id = ?1",
+                rusqlite::params![err_id],
+            );
+            log_audit(&conn, admin, "retry_task", "error", &err_id.to_string(), None);
+        }
+    })
+    .await;
+
+    // Step 5: DM the user.
+    let user_text = format!(
+        "✅ Good news! The admin has retried your failed download:\n\n{}\n\nYour file will arrive shortly.",
+        ctx.url
+    );
+    if let Err(e) = send_telegram_message(&state.bot_token, ctx.user_id, &user_text).await {
+        log::warn!("Failed to notify user {} of retry: {}", ctx.user_id, e);
+    }
+
+    log::info!(
+        "Admin {} retried failed download (error_id={}, user={}, url={})",
+        admin_id,
+        error_id,
+        ctx.user_id,
+        ctx.url
+    );
+    Json(json!({"ok": true, "task_id": task_id, "user_id": ctx.user_id})).into_response()
+}
+
+/// POST /admin/api/errors/:id/notify — send a message to the affected user that
+/// their issue has been addressed (without re-queuing the task).
+pub(super) async fn admin_api_error_notify(
+    State(state): State<WebState>,
+    header_map: HeaderMap,
+    Path(error_id): Path<i64>,
+    Json(body): Json<NotifyUserReq>,
+) -> Response {
+    let admin_id = match verify_admin_post(&header_map, &state) {
+        Ok(id) => id,
+        Err(resp) => return resp,
+    };
+
+    // Look up user_id.
+    let db = state.shared_storage.sqlite_pool();
+    let user_id: Option<i64> = tokio::task::spawn_blocking(move || {
+        let conn = get_connection(&db).ok()?;
+        conn.query_row(
+            "SELECT user_id FROM error_log WHERE id = ?1",
+            rusqlite::params![error_id],
+            |r| r.get::<_, Option<i64>>(0),
+        )
+        .ok()
+        .flatten()
+    })
+    .await
+    .ok()
+    .flatten();
+
+    let Some(user_id) = user_id else {
+        return (StatusCode::NOT_FOUND, "Error has no associated user").into_response();
+    };
+
+    let text = if body.message.trim().is_empty() {
+        "✅ The issue with your recent download has been resolved. Feel free to try again!".to_string()
+    } else {
+        body.message.clone()
+    };
+
+    if let Err(e) = send_telegram_message(&state.bot_token, user_id, &text).await {
+        log::error!("Failed to notify user {} about error {}: {}", user_id, error_id, e);
+        return (StatusCode::BAD_GATEWAY, "failed to send message").into_response();
+    }
+
+    // Audit log + mark resolved if requested.
+    let db2 = state.shared_storage.sqlite_pool();
+    let eid = error_id;
+    let admin = admin_id;
+    let mark_resolved = body.mark_resolved;
+    let _ = tokio::task::spawn_blocking(move || {
+        if let Ok(conn) = get_connection(&db2) {
+            if mark_resolved {
+                let _ = conn.execute(
+                    "UPDATE error_log SET resolved = 1 WHERE id = ?1",
+                    rusqlite::params![eid],
+                );
+            }
+            log_audit(&conn, admin, "notify_user", "error", &eid.to_string(), None);
+        }
+    })
+    .await;
+
+    Json(json!({"ok": true, "user_id": user_id})).into_response()
+}
+
+/// Context loaded from the error_log row for retry.
+struct RetryContext {
+    user_id: i64,
+    url: String,
+    format: String,
+    video_quality: String,
+    audio_bitrate: String,
+}
+
+/// Minimal direct Telegram Bot API call — we can't depend on teloxide inside
+/// doracore, so we use reqwest against the official endpoint.
+async fn send_telegram_message(bot_token: &str, chat_id: i64, text: &str) -> Result<(), String> {
+    let url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| e.to_string())?;
+    let resp = client
+        .post(&url)
+        .json(&json!({
+            "chat_id": chat_id,
+            "text": text,
+            "disable_web_page_preview": true,
+        }))
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !resp.status().is_success() {
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!(
+            "telegram {}: {}",
+            body.chars().take(200).collect::<String>(),
+            ""
+        ));
+    }
+    Ok(())
 }
 
 /// POST /admin/api/errors/bulk-resolve — resolve all unresolved errors, optionally by type.

@@ -311,4 +311,16 @@ pub(super) struct BulkCancelReq {
     pub status: Option<String>,
 }
 
+/// Body for POST /admin/api/errors/:id/notify — send a custom message to the
+/// affected user about the error, optionally also marking it resolved.
+#[derive(Deserialize)]
+pub(super) struct NotifyUserReq {
+    /// Message to send. If empty, uses a default "your issue has been resolved" text.
+    #[serde(default)]
+    pub message: String,
+    /// Whether to also mark the error as resolved in the same action.
+    #[serde(default)]
+    pub mark_resolved: bool,
+}
+
 // AdminStats is defined locally in dashboard.rs where it is used.

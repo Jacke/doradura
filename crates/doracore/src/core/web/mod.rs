@@ -144,6 +144,8 @@ pub async fn start_web_server(
         // Errors API (paginated)
         .route("/admin/api/errors", get(admin_errors::admin_api_errors))
         .route("/admin/api/errors/{id}/resolve", post(admin_errors::admin_api_error_resolve))
+        .route("/admin/api/errors/{id}/retry", post(admin_errors::admin_api_error_retry))
+        .route("/admin/api/errors/{id}/notify", post(admin_errors::admin_api_error_notify))
         // Feedback API
         .route("/admin/api/feedback", get(admin_misc::admin_api_feedback))
         .route("/admin/api/feedback/{id}/status", post(admin_misc::admin_api_feedback_status))
