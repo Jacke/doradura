@@ -85,7 +85,11 @@ pub async fn download_and_send_subtitles(ctx: DownloadContext, subtitle_format: 
     let db_pool_clone = db_pool.clone();
     let shared_storage_clone = shared_storage.clone();
 
-    tokio::spawn(async move {
+    // Run inline (awaited) so queue_processor waits for actual completion.
+    // Previously this was tokio::spawn(...), causing the queue permit to be
+    // released ~50ms into the job and multiple subtitle downloads to run in
+    // parallel despite max_concurrent=1.
+    async move {
         let lang = if let Some(storage) = shared_storage_clone.as_ref() {
             crate::i18n::user_lang_from_storage(storage, chat_id.0).await
         } else {
@@ -392,7 +396,8 @@ pub async fn download_and_send_subtitles(ctx: DownloadContext, subtitle_format: 
                 )
                 .await;
         }
-    });
+    }
+    .await;
     Ok(())
 }
 
