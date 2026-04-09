@@ -24,7 +24,7 @@ pub(super) async fn admin_api_feedback(
     header_map: HeaderMap,
     Query(q): Query<FeedbackQuery>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+    if let Err(resp) = verify_admin(&header_map, &state) {
         return resp;
     }
     let page = q.page.unwrap_or(1).max(1);
@@ -123,7 +123,7 @@ pub(super) async fn admin_api_feedback_status(
     Path(feedback_id): Path<i64>,
     Json(body): Json<FeedbackStatusReq>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state.bot_token) {
+    let admin_id = match verify_admin_post(&header_map, &state) {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -176,7 +176,7 @@ pub(super) async fn admin_api_alerts(
     header_map: HeaderMap,
     Query(q): Query<AlertQuery>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+    if let Err(resp) = verify_admin(&header_map, &state) {
         return resp;
     }
     let page = q.page.unwrap_or(1).max(1);
@@ -276,7 +276,7 @@ pub(super) async fn admin_api_alert_acknowledge(
     header_map: HeaderMap,
     Path(alert_id): Path<i64>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state.bot_token) {
+    let admin_id = match verify_admin_post(&header_map, &state) {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -310,7 +310,7 @@ pub(super) async fn admin_api_alert_acknowledge(
 
 /// GET /admin/api/health — system health overview.
 pub(super) async fn admin_api_health(State(state): State<WebState>, header_map: HeaderMap) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+    if let Err(resp) = verify_admin(&header_map, &state) {
         return resp;
     }
     let db = state.shared_storage.sqlite_pool();
@@ -469,7 +469,7 @@ pub(super) async fn admin_api_broadcast(
     header_map: HeaderMap,
     Json(body): Json<BroadcastReq>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state.bot_token) {
+    let admin_id = match verify_admin_post(&header_map, &state) {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -603,7 +603,7 @@ pub(super) async fn admin_api_revenue(
     header_map: HeaderMap,
     Query(q): Query<RevenueQuery>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+    if let Err(resp) = verify_admin(&header_map, &state) {
         return resp;
     }
     let page = q.page.unwrap_or(1).max(1);
@@ -718,7 +718,7 @@ pub(super) async fn admin_api_analytics(
     header_map: HeaderMap,
     Query(q): Query<AnalyticsQuery>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+    if let Err(resp) = verify_admin(&header_map, &state) {
         return resp;
     }
     let days = q.days.unwrap_or(30).min(90) as i64;
@@ -866,7 +866,7 @@ pub(super) async fn admin_api_audit(
     header_map: HeaderMap,
     Query(q): Query<AuditQuery>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+    if let Err(resp) = verify_admin(&header_map, &state) {
         return resp;
     }
     let page = q.page.unwrap_or(1).max(1);
@@ -985,7 +985,7 @@ pub(super) async fn admin_api_subscriptions(
     header_map: HeaderMap,
     Query(q): Query<SubsQuery>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+    if let Err(resp) = verify_admin(&header_map, &state) {
         return resp;
     }
     let page = q.page.unwrap_or(1).max(1);
@@ -1136,7 +1136,7 @@ pub(super) async fn admin_api_sub_toggle(
     Path(sub_id): Path<i64>,
     Json(body): Json<SubToggleReq>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state.bot_token) {
+    let admin_id = match verify_admin_post(&header_map, &state) {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -1173,7 +1173,7 @@ pub(super) async fn admin_api_sub_toggle(
 
 /// GET /admin/api/counts — quick counts for tab badges.
 pub(super) async fn admin_api_counts(State(state): State<WebState>, header_map: HeaderMap) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+    if let Err(resp) = verify_admin(&header_map, &state) {
         return resp;
     }
     let db = state.shared_storage.sqlite_pool();

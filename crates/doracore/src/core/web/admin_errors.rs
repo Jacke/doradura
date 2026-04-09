@@ -19,7 +19,7 @@ pub(super) async fn admin_api_errors(
     header_map: HeaderMap,
     Query(q): Query<ErrorQuery>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+    if let Err(resp) = verify_admin(&header_map, &state) {
         return resp;
     }
     let page = q.page.unwrap_or(1).max(1);
@@ -126,7 +126,7 @@ pub(super) async fn admin_api_error_resolve(
     header_map: HeaderMap,
     Path(error_id): Path<i64>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state.bot_token) {
+    let admin_id = match verify_admin_post(&header_map, &state) {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -160,7 +160,7 @@ pub(super) async fn admin_api_errors_bulk_resolve(
     header_map: HeaderMap,
     Json(body): Json<BulkResolveReq>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state.bot_token) {
+    let admin_id = match verify_admin_post(&header_map, &state) {
         Ok(id) => id,
         Err(resp) => return resp,
     };

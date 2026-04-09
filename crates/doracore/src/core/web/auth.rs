@@ -155,47 +155,126 @@ pub(super) fn verify_telegram_hash(auth: &TelegramAuth, bot_token: &str) -> bool
     constant_time_eq(&hex::encode(result), &auth.hash)
 }
 
-/// Generate a secure token for the admin cookie.
-pub(super) fn generate_admin_token(user_id: i64, bot_token: &str) -> String {
+// --- Session tokens (DB-backed) ---
+//
+// The previous implementation generated a deterministic sha256(user_id:bot_token)
+// cookie that was:
+//   * identical for every login (no nonce),
+//   * not stored server-side (no expiry enforcement),
+//   * not revocable on logout (Set-Cookie Max-Age=0 only hints the browser).
+// This meant BOT_TOKEN leak = permanent global admin access with no recourse.
+//
+// The new design stores only SHA-256(raw_token) in a DB table with an
+// `expires_at` timestamp. verify_admin looks up the hash; logout deletes
+// the row. The raw token is the cookie value; it is never persisted.
+
+/// Generate a cryptographically random 32-byte session token (hex-encoded, 64 chars).
+pub(super) fn new_session_token() -> String {
+    use rand::RngCore;
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    hex::encode(bytes)
+}
+
+/// SHA-256 the raw token for DB storage. We never store the raw token.
+fn hash_session_token(token: &str) -> Vec<u8> {
     let mut hasher = Sha256::new();
-    hasher.update(format!("{}:{}", user_id, bot_token));
-    hex::encode(hasher.finalize())
+    hasher.update(token.as_bytes());
+    hasher.finalize().to_vec()
+}
+
+/// Create and persist a new admin session. Returns the raw token to set as cookie.
+pub(super) fn create_admin_session(
+    conn: &rusqlite::Connection,
+    admin_id: i64,
+    user_agent: Option<&str>,
+    ip: Option<&str>,
+) -> Result<String, rusqlite::Error> {
+    let token = new_session_token();
+    let hash = hash_session_token(&token);
+    conn.execute(
+        "INSERT INTO admin_sessions (token_hash, admin_id, expires_at, user_agent, ip) \
+         VALUES (?1, ?2, datetime('now', '+24 hours'), ?3, ?4)",
+        rusqlite::params![hash, admin_id, user_agent, ip],
+    )?;
+    Ok(token)
+}
+
+/// Look up an admin session by raw token. Returns `admin_id` if valid + not expired.
+pub(super) fn lookup_admin_session(conn: &rusqlite::Connection, raw_token: &str) -> Option<i64> {
+    let hash = hash_session_token(raw_token);
+    let result = conn
+        .query_row(
+            "SELECT admin_id FROM admin_sessions \
+             WHERE token_hash = ?1 AND expires_at > datetime('now')",
+            rusqlite::params![hash],
+            |row| row.get::<_, i64>(0),
+        )
+        .ok();
+
+    // Update last_seen on successful lookup (best-effort; ignore errors).
+    if result.is_some() {
+        let _ = conn.execute(
+            "UPDATE admin_sessions SET last_seen = datetime('now') WHERE token_hash = ?1",
+            rusqlite::params![hash_session_token(raw_token)],
+        );
+    }
+    result
+}
+
+/// Revoke a specific admin session (logout).
+pub(super) fn revoke_admin_session(conn: &rusqlite::Connection, raw_token: &str) -> Result<(), rusqlite::Error> {
+    let hash = hash_session_token(raw_token);
+    conn.execute(
+        "DELETE FROM admin_sessions WHERE token_hash = ?1",
+        rusqlite::params![hash],
+    )?;
+    Ok(())
+}
+
+/// Best-effort periodic cleanup of expired sessions (called from verify_admin).
+fn cleanup_expired_sessions(conn: &rusqlite::Connection) {
+    let _ = conn.execute("DELETE FROM admin_sessions WHERE expires_at <= datetime('now')", []);
+}
+
+/// Extract the `admin_token` cookie value from a header map.
+fn extract_admin_cookie(header_map: &HeaderMap) -> Option<String> {
+    let cookie_str = header_map.get(header::COOKIE).and_then(|c| c.to_str().ok())?;
+    cookie_str
+        .split(';')
+        .find_map(|s| s.trim().strip_prefix("admin_token=").map(|v| v.to_string()))
 }
 
 // --- Admin auth helpers ---
 
 /// Verify admin cookie + CSRF token for POST requests.
 #[allow(clippy::result_large_err)]
-pub(super) fn verify_admin_post(header_map: &HeaderMap, bot_token: &str) -> Result<i64, Response> {
-    let admin_id = verify_admin(header_map, bot_token)?;
-    if !verify_csrf(header_map, bot_token) {
+pub(super) fn verify_admin_post(header_map: &HeaderMap, state: &WebState) -> Result<i64, Response> {
+    let admin_id = verify_admin(header_map, state)?;
+    if !verify_csrf(header_map, "") {
         return Err((StatusCode::FORBIDDEN, "Invalid CSRF token").into_response());
     }
     Ok(admin_id)
 }
 
-/// Verify admin cookie and return admin user ID, or an error response.
+/// Verify admin cookie against the DB session store. Returns admin_id on success.
 #[allow(clippy::result_large_err)]
-pub(super) fn verify_admin(header_map: &HeaderMap, bot_token: &str) -> Result<i64, Response> {
-    let cookie_str = header_map
-        .get(header::COOKIE)
-        .and_then(|c| c.to_str().ok())
-        .unwrap_or("");
+pub(super) fn verify_admin(header_map: &HeaderMap, state: &WebState) -> Result<i64, Response> {
+    let raw_token = extract_admin_cookie(header_map)
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, "Not authenticated").into_response())?;
 
-    if let Some(token) = cookie_str.split(';').find(|s| s.trim().starts_with("admin_token=")) {
-        let token_val = token.trim().strip_prefix("admin_token=").unwrap();
-        for &admin_id in config::admin::ADMIN_IDS.iter() {
-            if constant_time_eq(&generate_admin_token(admin_id, bot_token), token_val) {
-                return Ok(admin_id);
-            }
-        }
-        if *config::admin::ADMIN_USER_ID != 0
-            && constant_time_eq(
-                &generate_admin_token(*config::admin::ADMIN_USER_ID, bot_token),
-                token_val,
-            )
-        {
-            return Ok(*config::admin::ADMIN_USER_ID);
+    let pool = state.shared_storage.sqlite_pool();
+    let conn = crate::storage::get_connection(&pool)
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response())?;
+
+    if let Some(admin_id) = lookup_admin_session(&conn, &raw_token) {
+        // Defense in depth: verify admin_id is still in the allowlist
+        // (in case they were removed from ADMIN_IDS after issuance).
+        if config::admin::ADMIN_IDS.contains(&admin_id) || *config::admin::ADMIN_USER_ID == admin_id {
+            // Periodically clean up expired rows (every verification is fine —
+            // cheap query with an index; happens ~once per admin request).
+            cleanup_expired_sessions(&conn);
+            return Ok(admin_id);
         }
     }
     Err((StatusCode::UNAUTHORIZED, "Not authenticated").into_response())
@@ -339,11 +418,27 @@ pub(super) async fn admin_auth_handler(
         return (StatusCode::FORBIDDEN, "Not an admin").into_response();
     }
 
-    // 4. Set admin cookie (Path scoped to /admin, Secure flag required)
-    let admin_token = generate_admin_token(auth.id, &state.bot_token);
+    // 4. Create a random session token, persist its hash in the DB, return raw to client.
+    let user_agent = header_map.get(header::USER_AGENT).and_then(|v| v.to_str().ok());
+    let ip_for_session = if ip != "unknown" { Some(ip.as_str()) } else { None };
+
+    let pool = state.shared_storage.sqlite_pool();
+    let conn = match crate::storage::get_connection(&pool) {
+        Ok(c) => c,
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
+    };
+
+    let raw_token = match create_admin_session(&conn, auth.id, user_agent, ip_for_session) {
+        Ok(t) => t,
+        Err(e) => {
+            log::error!("Failed to create admin session: {}", e);
+            return (StatusCode::INTERNAL_SERVER_ERROR, "Session store error").into_response();
+        }
+    };
+
     let cookie = format!(
         "admin_token={}; Path=/admin; HttpOnly; Secure; SameSite=Lax; Max-Age=86400",
-        admin_token
+        raw_token
     );
 
     Response::builder()
@@ -354,8 +449,17 @@ pub(super) async fn admin_auth_handler(
         .unwrap()
 }
 
-/// GET /admin/logout -- Clear admin cookie and redirect to login.
-pub(super) async fn admin_logout_handler() -> Response {
+/// GET /admin/logout -- Revoke the session server-side and clear the cookie.
+pub(super) async fn admin_logout_handler(State(state): State<WebState>, header_map: HeaderMap) -> Response {
+    // Server-side revocation: delete the session row so the cookie stops working
+    // even if the browser keeps it.
+    if let Some(raw_token) = extract_admin_cookie(&header_map) {
+        let pool = state.shared_storage.sqlite_pool();
+        if let Ok(conn) = crate::storage::get_connection(&pool) {
+            let _ = revoke_admin_session(&conn, &raw_token);
+        }
+    }
+
     let cookie = "admin_token=; Path=/admin; HttpOnly; Secure; SameSite=Lax; Max-Age=0";
     Response::builder()
         .status(StatusCode::FOUND)

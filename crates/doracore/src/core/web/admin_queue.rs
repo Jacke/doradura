@@ -19,7 +19,7 @@ pub(super) async fn admin_api_queue(
     header_map: HeaderMap,
     Query(q): Query<QueueQuery>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+    if let Err(resp) = verify_admin(&header_map, &state) {
         return resp;
     }
     let page = q.page.unwrap_or(1).max(1);
@@ -132,7 +132,7 @@ pub(super) async fn admin_api_queue_retry(
     header_map: HeaderMap,
     Path(task_id): Path<String>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state.bot_token) {
+    let admin_id = match verify_admin_post(&header_map, &state) {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -170,7 +170,7 @@ pub(super) async fn admin_api_queue_cancel(
     header_map: HeaderMap,
     Path(task_id): Path<String>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state.bot_token) {
+    let admin_id = match verify_admin_post(&header_map, &state) {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -206,7 +206,7 @@ pub(super) async fn admin_api_queue_bulk_cancel(
     header_map: HeaderMap,
     Json(body): Json<BulkCancelReq>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state.bot_token) {
+    let admin_id = match verify_admin_post(&header_map, &state) {
         Ok(id) => id,
         Err(resp) => return resp,
     };

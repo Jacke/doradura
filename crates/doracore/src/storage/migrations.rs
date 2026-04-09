@@ -161,6 +161,21 @@ fn ensure_tables(conn: &Connection) {
         "CREATE INDEX IF NOT EXISTS idx_admin_audit_log_admin ON admin_audit_log(admin_id, created_at DESC)",
     );
     let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_admin_audit_log_action ON admin_audit_log(action)");
+
+    // V43: admin_sessions (DB-backed random tokens instead of deterministic sha256)
+    let _ = conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS admin_sessions (
+            token_hash BLOB PRIMARY KEY,
+            admin_id   INTEGER NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            expires_at TEXT NOT NULL,
+            last_seen  TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            user_agent TEXT,
+            ip         TEXT
+        )",
+    );
+    let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_admin_sessions_admin ON admin_sessions(admin_id)");
+    let _ = conn.execute_batch("CREATE INDEX IF NOT EXISTS idx_admin_sessions_expires ON admin_sessions(expires_at)");
 }
 
 /// Run migrations for tests without the outer transaction wrapper

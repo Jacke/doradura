@@ -20,7 +20,7 @@ pub(super) async fn admin_api_users(
     header_map: HeaderMap,
     Query(q): Query<UserQuery>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+    if let Err(resp) = verify_admin(&header_map, &state) {
         return resp;
     }
     let page = q.page.unwrap_or(1).max(1);
@@ -138,7 +138,7 @@ pub(super) async fn admin_api_user_plan(
     Path(user_id): Path<i64>,
     Json(body): Json<PlanUpdateReq>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state.bot_token) {
+    let admin_id = match verify_admin_post(&header_map, &state) {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -266,7 +266,7 @@ pub(super) async fn admin_api_user_block(
     Path(user_id): Path<i64>,
     Json(body): Json<BlockUpdateReq>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state.bot_token) {
+    let admin_id = match verify_admin_post(&header_map, &state) {
         Ok(id) => id,
         Err(resp) => return resp,
     };
@@ -312,7 +312,7 @@ pub(super) async fn admin_api_downloads(
     header_map: HeaderMap,
     Query(q): Query<DownloadQuery>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+    if let Err(resp) = verify_admin(&header_map, &state) {
         return resp;
     }
     let page = q.page.unwrap_or(1).max(1);
@@ -410,7 +410,7 @@ pub(super) async fn admin_api_user_details(
     header_map: HeaderMap,
     Path(user_id): Path<i64>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+    if let Err(resp) = verify_admin(&header_map, &state) {
         return resp;
     }
     let db = state.shared_storage.sqlite_pool();
@@ -610,7 +610,7 @@ pub(super) async fn admin_api_user_settings(
     Path(user_id): Path<i64>,
     Json(body): Json<UserSettingsReq>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state.bot_token) {
+    let admin_id = match verify_admin_post(&header_map, &state) {
         Ok(id) => id,
         Err(resp) => return resp,
     };

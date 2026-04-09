@@ -21,7 +21,7 @@ use super::types::WebState;
 /// GET /admin — Admin Dashboard.
 pub(super) async fn admin_dashboard_handler(State(state): State<WebState>, header_map: header::HeaderMap) -> Response {
     // 1. Check admin cookie
-    if let Err(resp) = verify_admin(&header_map, &state.bot_token) {
+    if let Err(resp) = verify_admin(&header_map, &state) {
         return resp;
     }
 
