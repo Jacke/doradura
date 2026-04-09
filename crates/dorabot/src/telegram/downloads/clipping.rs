@@ -512,27 +512,42 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
 
                 let video_duration = download.duration.unwrap_or(duration_seconds);
 
-                // Calculate segment based on position
+                // Calculate segment based on position.
+                //
+                // Telegram video notes are capped at 60s per message, but
+                // process_video_clip supports auto-splitting into up to 6
+                // consecutive circles (360s total) when the segment is
+                // longer than 60s. So `full` MUST pass the whole video
+                // duration (not clamp to 60s) to let split kick in.
+                // first/last/middle are explicit short cuts and keep their
+                // 60s per-segment cap as before.
+                const SINGLE_CIRCLE_MAX: i64 = 60;
+                const SPLIT_TOTAL_MAX: i64 = 360;
                 let (start_secs, end_secs) = match position {
                     "first" => {
-                        let end = std::cmp::min(duration_seconds, video_duration).min(60);
+                        let end = std::cmp::min(duration_seconds, video_duration).min(SINGLE_CIRCLE_MAX);
                         (0, end)
                     }
                     "last" => {
-                        let duration = std::cmp::min(duration_seconds, video_duration).min(60);
+                        let duration = std::cmp::min(duration_seconds, video_duration).min(SINGLE_CIRCLE_MAX);
                         let start = (video_duration - duration).max(0);
-                        (start, video_duration.min(start + 60))
+                        (start, video_duration.min(start + SINGLE_CIRCLE_MAX))
                     }
                     "middle" => {
-                        let duration = std::cmp::min(duration_seconds, video_duration).min(60);
+                        let duration = std::cmp::min(duration_seconds, video_duration).min(SINGLE_CIRCLE_MAX);
                         let start = ((video_duration - duration) / 2).max(0);
                         (start, (start + duration).min(video_duration))
                     }
                     "full" => {
-                        let end = video_duration.min(60);
+                        // Whole video, capped at 6×60s = 360s (the hard
+                        // auto-split ceiling in process_video_clip). Anything
+                        // longer than that would be rejected by the split
+                        // guard anyway; we prefer to send as many circles as
+                        // fit within the limit.
+                        let end = video_duration.min(SPLIT_TOTAL_MAX);
                         (0, end)
                     }
-                    _ => (0, std::cmp::min(duration_seconds, 60)),
+                    _ => (0, std::cmp::min(duration_seconds, SINGLE_CIRCLE_MAX)),
                 };
 
                 // Create session
