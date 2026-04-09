@@ -7,6 +7,36 @@ use super::CallbackCtx;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardMarkup, InputFile, ParseMode};
 
+/// Duration (seconds) of the GIF fragment extracted from the video.
+const GIF_DURATION_SECS: u64 = 10;
+/// Duration (seconds) of the MP4 video clip fragment.
+const CLIP_DURATION_SECS: u64 = 15;
+/// Width (pixels) for the generated GIF. Height preserves aspect ratio.
+const GIF_WIDTH: u32 = 480;
+/// Frames-per-second for the generated GIF.
+const GIF_FPS: u8 = 12;
+/// Maximum time (seconds) yt-dlp may take to download a fragment.
+const YTDLP_FRAGMENT_TIMEOUT_SECS: u64 = 90;
+
+/// Cover variant selected by the user.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CoverType {
+    Photo,
+    Gif,
+    Clip,
+}
+
+impl CoverType {
+    fn from_str_lossy(s: &str) -> Option<Self> {
+        match s {
+            "photo" => Some(Self::Photo),
+            "gif" => Some(Self::Gif),
+            "clip" => Some(Self::Clip),
+            _ => None,
+        }
+    }
+}
+
 /// Show cover type picker: Photo / GIF / Video clip
 pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> ResponseResult<()> {
     match action {
@@ -43,7 +73,9 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
             if parts.len() < 4 {
                 return Ok(());
             }
-            let cover_type = parts[2]; // "photo", "gif", "clip"
+            let Some(cover_type) = CoverType::from_str_lossy(parts[2]) else {
+                return Ok(());
+            };
             let download_id = parts[3].parse::<i64>().unwrap_or(0);
 
             let download = match ctx
@@ -62,12 +94,9 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
             let title = download.title.clone();
             let bot = ctx.bot.clone();
             let chat_id = ctx.chat_id;
-            let shared_storage = ctx.shared_storage.clone();
-            let cover_type = cover_type.to_string();
 
             tokio::spawn(async move {
-                if let Err(e) = generate_and_send_cover(&bot, chat_id, &url, &title, &cover_type, &shared_storage).await
-                {
+                if let Err(e) = generate_and_send_cover(&bot, chat_id, &url, &title, cover_type).await {
                     log::error!("Cover generation failed: {}", e);
                     bot.send_message(chat_id, format!("❌ Cover generation failed: {}", e))
                         .await
@@ -85,8 +114,7 @@ async fn generate_and_send_cover(
     chat_id: ChatId,
     url: &str,
     title: &str,
-    cover_type: &str,
-    _shared_storage: &std::sync::Arc<crate::storage::SharedStorage>,
+    cover_type: CoverType,
 ) -> Result<(), anyhow::Error> {
     use crate::core::utils::TempDirGuard;
 
@@ -95,7 +123,7 @@ async fn generate_and_send_cover(
     let mut guard = TempDirGuard::new("doradura_cover").await?;
 
     match cover_type {
-        "photo" => {
+        CoverType::Photo => {
             // Download YouTube thumbnail
             let thumb_url = resolve_thumbnail_url(url);
             if let Some(thumb_url) = thumb_url {
@@ -127,9 +155,8 @@ async fn generate_and_send_cover(
             bot.delete_message(chat_id, status.id).await.ok();
             bot.send_message(chat_id, "❌ Could not fetch video thumbnail.").await?;
         }
-        "gif" => {
-            // Download first 10s of video, convert to GIF
-            let video_path = download_video_fragment(url, 10, guard.path()).await?;
+        CoverType::Gif => {
+            let video_path = download_video_fragment(url, GIF_DURATION_SECS, guard.path()).await?;
             guard.track_file(video_path.clone());
 
             bot.edit_message_text(chat_id, status.id, "🎞 Converting to GIF...")
@@ -139,10 +166,10 @@ async fn generate_and_send_cover(
             let gif_path = doracore::conversion::video::to_gif(
                 &video_path,
                 doracore::conversion::video::GifOptions {
-                    duration: Some(10),
+                    duration: Some(GIF_DURATION_SECS),
                     start_time: None,
-                    width: Some(480),
-                    fps: Some(12),
+                    width: Some(GIF_WIDTH),
+                    fps: Some(GIF_FPS),
                 },
             )
             .await?;
@@ -154,9 +181,8 @@ async fn generate_and_send_cover(
                 .parse_mode(ParseMode::Html)
                 .await?;
         }
-        "clip" => {
-            // Download first 15s of video as MP4
-            let video_path = download_video_fragment(url, 15, guard.path()).await?;
+        CoverType::Clip => {
+            let video_path = download_video_fragment(url, CLIP_DURATION_SECS, guard.path()).await?;
             guard.track_file(video_path.clone());
 
             bot.delete_message(chat_id, status.id).await.ok();
@@ -165,21 +191,34 @@ async fn generate_and_send_cover(
                 .parse_mode(ParseMode::Html)
                 .await?;
         }
-        _ => {
-            bot.delete_message(chat_id, status.id).await.ok();
-        }
     }
 
     Ok(())
+}
+
+/// Escape a string for safe interpolation into HTML text content.
+fn html_escape_text(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('\'', "&#39;")
+}
+
+/// Escape a URL for safe interpolation into an HTML attribute value.
+fn html_escape_attr(s: &str) -> String {
+    s.replace('&', "&amp;").replace('"', "&quot;").replace('\'', "&#39;")
 }
 
 /// Build caption with a small link to the source video.
 /// Uses HTML `<a href="url">🔗</a>` so the link is visible but compact,
 /// and no link preview is shown since the media message itself is the preview.
 fn cover_caption(emoji: &str, title: &str, url: &str) -> String {
-    let escaped_title = title.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
-    let escaped_url = url.replace('&', "&amp;").replace('"', "&quot;");
-    format!("{} {} <a href=\"{}\">🔗</a>", emoji, escaped_title, escaped_url)
+    format!(
+        "{} {} <a href=\"{}\">🔗</a>",
+        emoji,
+        html_escape_text(title),
+        html_escape_attr(url)
+    )
 }
 
 /// Resolve thumbnail URL from video URL (YouTube → maxresdefault.jpg).
@@ -238,22 +277,19 @@ async fn download_video_fragment(
 
     args.push(url.into());
 
-    // Log args (mask cookies path for security)
-    let safe_args: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     log::info!(
-        "[cover] Downloading {}s fragment from {} ({} args: {:?})",
+        "[cover] Downloading {}s fragment from {} ({} args)",
         duration_secs,
         &url[..url.len().min(60)],
-        args.len(),
-        &safe_args[..safe_args.len().saturating_sub(1)] // skip URL at end
+        args.len()
     );
 
     let yt_result = tokio::time::timeout(
-        std::time::Duration::from_secs(90),
+        std::time::Duration::from_secs(YTDLP_FRAGMENT_TIMEOUT_SECS),
         Command::new("yt-dlp").args(&args).output(),
     )
     .await
-    .map_err(|_| anyhow::anyhow!("yt-dlp timed out after 90s"))??;
+    .map_err(|_| anyhow::anyhow!("yt-dlp timed out after {}s", YTDLP_FRAGMENT_TIMEOUT_SECS))??;
 
     if !yt_result.status.success() {
         let stderr = String::from_utf8_lossy(&yt_result.stderr);
@@ -308,6 +344,24 @@ mod tests {
         let cap = cover_caption("📸", "", "https://youtu.be/x");
         assert!(cap.contains("📸 "));
         assert!(cap.contains("🔗</a>"));
+    }
+
+    #[test]
+    fn cover_caption_escapes_apostrophe_in_title() {
+        let cap = cover_caption("🖼", "Don't Stop", "https://youtu.be/x");
+        assert!(cap.contains("Don&#39;t Stop"));
+        assert!(!cap.contains("Don't"));
+    }
+
+    // ── CoverType ─────────────────────────────────────────────────
+
+    #[test]
+    fn cover_type_from_str() {
+        assert_eq!(CoverType::from_str_lossy("photo"), Some(CoverType::Photo));
+        assert_eq!(CoverType::from_str_lossy("gif"), Some(CoverType::Gif));
+        assert_eq!(CoverType::from_str_lossy("clip"), Some(CoverType::Clip));
+        assert_eq!(CoverType::from_str_lossy("invalid"), None);
+        assert_eq!(CoverType::from_str_lossy(""), None);
     }
 
     // ── resolve_thumbnail_url ──────────────────────────────────────
