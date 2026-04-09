@@ -302,6 +302,7 @@ pub async fn download_and_send_video(
                                 None,
                                 first_part_db_id,
                                 if total_parts > 1 { Some(part_index) } else { None },
+                                speed,
                             )
                             .await
                         {

@@ -119,6 +119,7 @@ pub fn get_cuts_history_filtered(
                 source_id: None,
                 part_index: None,
                 category: None,
+                speed: None,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;

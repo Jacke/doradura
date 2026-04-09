@@ -350,7 +350,8 @@
       "WebFetch(domain:docs.piped.video)",
       "Bash(/tmp/check_unused.sh)",
       "Bash(xargs -I {} sh -c 'grep -l \"#\\\\[test\\\\]\" {} && echo \"     \\(unit tests\\)\"')",
-      "mcp__railway-mcp-server__list-variables"
+      "mcp__railway-mcp-server__list-variables",
+      "Bash(mcp__claude_ai_test__shell_execute)"
     ],
     "deny": [],
     "ask": []

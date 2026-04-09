@@ -1,0 +1,1 @@
+ALTER TABLE download_history ADD COLUMN speed REAL DEFAULT NULL;

@@ -153,6 +153,7 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                                         None,
                                         None,
                                         None,
+                                        Some(speed),
                                     )
                                     .await
                                 {
@@ -244,6 +245,7 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                                         None,
                                         None,
                                         None,
+                                        Some(speed),
                                     )
                                     .await
                                 {

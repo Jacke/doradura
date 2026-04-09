@@ -286,6 +286,16 @@ pub async fn show_downloads_page(
             metadata_parts.push(bitrate.clone());
         }
 
+        if let Some(spd) = download.speed {
+            // Format as "2x" for whole numbers, "1.5x" otherwise
+            let formatted = if spd.fract() == 0.0 {
+                format!("{}x", spd as i32)
+            } else {
+                format!("{}x", spd)
+            };
+            metadata_parts.push(formatted);
+        }
+
         if !metadata_parts.is_empty() {
             let date_only: String = download.downloaded_at.chars().take(10).collect();
             let metadata_str = escape_markdown(&metadata_parts.join(" · "));

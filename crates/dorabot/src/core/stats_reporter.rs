@@ -46,7 +46,7 @@ pub async fn get_period_stats(shared_storage: &Arc<SharedStorage>, hours: i64) -
             let mut stmt = conn.prepare(
                 "SELECT id, url, title, format, downloaded_at, file_id, author,
                         file_size, duration, video_quality, audio_bitrate, bot_api_url, bot_api_is_local,
-                        source_id, part_index, category
+                        source_id, part_index, category, speed
                  FROM download_history
                  WHERE downloaded_at >= ?1
                  ORDER BY downloaded_at DESC",
@@ -69,6 +69,7 @@ pub async fn get_period_stats(shared_storage: &Arc<SharedStorage>, hours: i64) -
                     source_id: row.get(13)?,
                     part_index: row.get(14)?,
                     category: row.get(15)?,
+                    speed: row.get(16)?,
                 })
             })?;
             rows.filter_map(|r| match r {
@@ -84,7 +85,7 @@ pub async fn get_period_stats(shared_storage: &Arc<SharedStorage>, hours: i64) -
             let rows = sqlx::query(
                 "SELECT id, url, title, format, downloaded_at::text AS downloaded_at, file_id, author,
                         file_size, duration, video_quality, audio_bitrate, bot_api_url, bot_api_is_local,
-                        source_id, part_index, category
+                        source_id, part_index, category, speed
                  FROM download_history
                  WHERE downloaded_at >= $1::timestamptz
                  ORDER BY downloaded_at DESC",
@@ -110,6 +111,7 @@ pub async fn get_period_stats(shared_storage: &Arc<SharedStorage>, hours: i64) -
                     source_id: row.get("source_id"),
                     part_index: row.get("part_index"),
                     category: row.get("category"),
+                    speed: row.try_get::<Option<f32>, _>("speed").ok().flatten(),
                 })
                 .collect()
         }

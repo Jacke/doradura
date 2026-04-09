@@ -8,6 +8,7 @@ use crate::timestamps::{TimestampSource, VideoTimestamp};
 use super::SharedStorage;
 
 impl SharedStorage {
+    #[allow(clippy::too_many_arguments)]
     pub async fn save_download_history(
         &self,
         telegram_id: i64,
@@ -22,6 +23,7 @@ impl SharedStorage {
         audio_bitrate: Option<&str>,
         source_id: Option<i64>,
         part_index: Option<i32>,
+        speed: Option<f32>,
     ) -> Result<i64> {
         match self {
             Self::Sqlite { db_pool } => {
@@ -40,6 +42,7 @@ impl SharedStorage {
                     audio_bitrate,
                     source_id,
                     part_index,
+                    speed,
                 )
                 .context("sqlite save_download_history")
             }
@@ -49,8 +52,8 @@ impl SharedStorage {
                 let row = sqlx::query(
                     "INSERT INTO download_history (
                         user_id, url, title, format, file_id, author, file_size, duration,
-                        video_quality, audio_bitrate, bot_api_url, bot_api_is_local, source_id, part_index
-                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                        video_quality, audio_bitrate, bot_api_url, bot_api_is_local, source_id, part_index, speed
+                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
                      RETURNING id",
                 )
                 .bind(telegram_id)
@@ -67,6 +70,7 @@ impl SharedStorage {
                 .bind(bot_api_is_local)
                 .bind(source_id)
                 .bind(part_index)
+                .bind(speed)
                 .fetch_one(pg_pool)
                 .await
                 .context("postgres save_download_history")?;
@@ -129,7 +133,7 @@ impl SharedStorage {
                 let rows = sqlx::query(
                     "SELECT id, url, title, format, downloaded_at::text AS downloaded_at, file_id, author,
                             file_size, duration, video_quality, audio_bitrate, bot_api_url, bot_api_is_local,
-                            source_id, part_index, category
+                            source_id, part_index, category, speed
                      FROM download_history
                      WHERE user_id = $1
                      ORDER BY downloaded_at DESC
@@ -206,7 +210,7 @@ impl SharedStorage {
                 let row = sqlx::query(
                     "SELECT id, url, title, format, downloaded_at::text AS downloaded_at, file_id, author,
                             file_size, duration, video_quality, audio_bitrate, bot_api_url, bot_api_is_local,
-                            source_id, part_index, category
+                            source_id, part_index, category, speed
                      FROM download_history
                      WHERE id = $1 AND user_id = $2",
                 )
@@ -237,7 +241,7 @@ impl SharedStorage {
                 let rows = sqlx::query(
                     "SELECT id, url, title, format, downloaded_at::text AS downloaded_at, file_id, author,
                             file_size, duration, video_quality, audio_bitrate, bot_api_url, bot_api_is_local,
-                            source_id, part_index, category
+                            source_id, part_index, category, speed
                      FROM download_history
                      WHERE user_id = $1
                        AND file_id IS NOT NULL
@@ -351,7 +355,7 @@ impl SharedStorage {
                     "SELECT id, original_url AS url, title, output_kind AS format, created_at::text AS downloaded_at,
                             file_id, NULL::text AS author, file_size, duration, video_quality,
                             NULL::text AS audio_bitrate, NULL::text AS bot_api_url, 0::bigint AS bot_api_is_local,
-                            source_id, NULL::integer AS part_index, NULL::text AS category
+                            source_id, NULL::integer AS part_index, NULL::text AS category, NULL::real AS speed
                      FROM cuts
                      WHERE user_id = $1
                        AND ($2::text IS NULL OR title ILIKE $2)
@@ -613,6 +617,9 @@ pub(super) fn map_pg_download_history(row: sqlx::postgres::PgRow) -> DownloadHis
         source_id: row.get("source_id"),
         part_index: row.get("part_index"),
         category: row.get("category"),
+        // Use try_get for backward compatibility: older deployments may not have
+        // the `speed` column yet at runtime.
+        speed: row.try_get::<Option<f32>, _>("speed").ok().flatten(),
     }
 }
 

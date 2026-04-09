@@ -545,6 +545,7 @@ mod tests {
             Some("320k"),
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -580,6 +581,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -598,6 +600,7 @@ mod tests {
             None,
             Some(main_id),
             Some(1),
+            None,
         )
         .unwrap();
 
@@ -618,6 +621,7 @@ mod tests {
             "https://example.com",
             "Test",
             "mp3",
+            None,
             None,
             None,
             None,
@@ -651,6 +655,7 @@ mod tests {
             "https://example.com",
             "Test",
             "mp3",
+            None,
             None,
             None,
             None,
@@ -693,6 +698,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .unwrap();
         }
@@ -723,6 +729,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -738,6 +745,7 @@ mod tests {
             None,
             None,
             Some("720p"),
+            None,
             None,
             None,
             None,
@@ -759,6 +767,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -770,6 +779,7 @@ mod tests {
             "Subtitles",
             "srt",
             Some("file4"),
+            None,
             None,
             None,
             None,
@@ -988,6 +998,7 @@ mod tests {
                 None,
                 None,
                 None,
+                None,
             )
             .unwrap();
         }
@@ -1019,6 +1030,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -1028,6 +1040,7 @@ mod tests {
             "https://example.com/2",
             "Song 1",
             "mp3",
+            None,
             None,
             None,
             None,
@@ -1371,6 +1384,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -1413,6 +1427,7 @@ mod tests {
             "Test File",
             "mp3",
             Some("sent_file_id"),
+            None,
             None,
             None,
             None,

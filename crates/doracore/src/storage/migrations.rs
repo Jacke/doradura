@@ -143,6 +143,9 @@ fn ensure_tables(conn: &Connection) {
     // V42: experimental features
     let _ = conn.execute_batch("ALTER TABLE users ADD COLUMN experimental_features INTEGER DEFAULT 0");
 
+    // V44: speed column on download_history (stores speed modifier like 2.0 for 2x playback)
+    let _ = conn.execute_batch("ALTER TABLE download_history ADD COLUMN speed REAL DEFAULT NULL");
+
     // V40: admin audit log
     let _ = conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS admin_audit_log (
@@ -193,6 +196,7 @@ pub fn run_migrations_for_test(conn: &mut Connection) -> Result<()> {
     // Post-migration columns that are added via ALTER in production's run_migrations
     // but not present in the original migration SQL files.
     let _ = conn.execute_batch("ALTER TABLE video_clip_sessions ADD COLUMN custom_audio_file_id TEXT");
+    let _ = conn.execute_batch("ALTER TABLE download_history ADD COLUMN speed REAL DEFAULT NULL");
 
     Ok(())
 }

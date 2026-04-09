@@ -943,6 +943,7 @@ pub async fn execute(
                 audio_bitrate_opt,
                 None,
                 None,
+                None,
             )
             .await
         {

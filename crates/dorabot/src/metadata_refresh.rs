@@ -46,6 +46,7 @@ pub async fn refresh_missing_metadata(
             source_id: row.get(13).ok(),
             part_index: row.get(14).ok(),
             category: None,
+            speed: None,
         })
     })?;
 

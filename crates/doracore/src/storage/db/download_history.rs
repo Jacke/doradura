@@ -38,6 +38,8 @@ pub struct DownloadHistoryEntry {
     pub part_index: Option<i32>,
     /// User-defined category name (optional)
     pub category: Option<String>,
+    /// Speed modifier applied during download (e.g., 2.0 for 2x playback)
+    pub speed: Option<f32>,
 }
 
 fn current_bot_api_info() -> (Option<String>, i64) {
@@ -81,14 +83,15 @@ pub fn save_download_history(
     audio_bitrate: Option<&str>,
     source_id: Option<i64>,
     part_index: Option<i32>,
+    speed: Option<f32>,
 ) -> Result<i64> {
     let (bot_api_url, bot_api_is_local) = current_bot_api_info();
     conn.execute(
         "INSERT INTO download_history (
             user_id, url, title, format, file_id, author, file_size, duration, video_quality, audio_bitrate,
-            bot_api_url, bot_api_is_local, source_id, part_index
+            bot_api_url, bot_api_is_local, source_id, part_index, speed
          )
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
         rusqlite::params![
             telegram_id,
             url,
@@ -103,7 +106,8 @@ pub fn save_download_history(
             bot_api_url,
             bot_api_is_local,
             source_id,
-            part_index
+            part_index,
+            speed
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -185,7 +189,7 @@ pub fn get_download_history(
     let limit = limit.unwrap_or(20);
     let mut stmt = conn.prepare(
         "SELECT id, url, title, format, downloaded_at, file_id, author, file_size, duration, video_quality, audio_bitrate,
-                bot_api_url, bot_api_is_local, source_id, part_index, category
+                bot_api_url, bot_api_is_local, source_id, part_index, category, speed
          FROM download_history
          WHERE user_id = ? ORDER BY downloaded_at DESC LIMIT ?",
     )?;
@@ -207,6 +211,7 @@ pub fn get_download_history(
             source_id: row.get(13)?,
             part_index: row.get(14)?,
             category: row.get(15)?,
+            speed: row.get(16)?,
         })
     })?;
 
@@ -325,7 +330,7 @@ pub fn get_download_history_entry(
 ) -> Result<Option<DownloadHistoryEntry>> {
     let mut stmt = conn.prepare(
         "SELECT id, url, title, format, downloaded_at, file_id, author, file_size, duration, video_quality, audio_bitrate,
-                bot_api_url, bot_api_is_local, source_id, part_index, category
+                bot_api_url, bot_api_is_local, source_id, part_index, category, speed
          FROM download_history
          WHERE id = ?1 AND user_id = ?2",
     )?;
@@ -347,6 +352,7 @@ pub fn get_download_history_entry(
             source_id: row.get(13)?,
             part_index: row.get(14)?,
             category: row.get(15)?,
+            speed: row.get(16)?,
         })
     })?;
 
@@ -527,7 +533,7 @@ pub fn get_global_stats(conn: &DbConnection) -> Result<GlobalStats> {
 pub fn get_all_download_history(conn: &DbConnection, telegram_id: i64) -> Result<Vec<DownloadHistoryEntry>> {
     let mut stmt = conn.prepare(
         "SELECT id, url, title, format, downloaded_at, file_id, author, file_size, duration, video_quality, audio_bitrate,
-                bot_api_url, bot_api_is_local, source_id, part_index, category
+                bot_api_url, bot_api_is_local, source_id, part_index, category, speed
          FROM download_history
          WHERE user_id = ? ORDER BY downloaded_at DESC",
     )?;
@@ -549,6 +555,7 @@ pub fn get_all_download_history(conn: &DbConnection, telegram_id: i64) -> Result
             source_id: row.get(13)?,
             part_index: row.get(14)?,
             category: row.get(15)?,
+            speed: row.get(16)?,
         })
     })?;
 
@@ -572,7 +579,7 @@ pub fn get_download_history_filtered(
 ) -> Result<Vec<DownloadHistoryEntry>> {
     let mut query = String::from(
         "SELECT id, url, title, format, downloaded_at, file_id, author, file_size,
-         duration, video_quality, audio_bitrate, bot_api_url, bot_api_is_local, source_id, part_index, category
+         duration, video_quality, audio_bitrate, bot_api_url, bot_api_is_local, source_id, part_index, category, speed
          FROM download_history WHERE user_id = ?",
     );
 
@@ -625,6 +632,7 @@ pub fn get_download_history_filtered(
                 source_id: row.get(13)?,
                 part_index: row.get(14)?,
                 category: row.get(15)?,
+                speed: row.get(16)?,
             })
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
