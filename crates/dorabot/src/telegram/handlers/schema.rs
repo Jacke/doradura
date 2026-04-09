@@ -69,6 +69,7 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
     let deps_voice = deps.clone();
     let deps_messages = deps.clone();
     let deps_precheckout = deps.clone();
+    let deps_refunded = deps.clone();
     let deps_callback = deps.clone();
     let deps_browser_login = deps.clone();
     let deps_browser_status = deps.clone();
@@ -79,6 +80,7 @@ pub fn schema(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
     dptree::entry()
         // ── Payment handlers: NEVER skip, regardless of message age ──
         .branch(successful_payment_handler(deps_payment))
+        .branch(refunded_payment_handler(deps_refunded))
         .branch(pre_checkout_handler(deps_precheckout))
         // ── All other message handlers: skip stale messages to avoid flood after restart ──
         .branch(update_cookies_handler(deps_cookies))
@@ -118,6 +120,46 @@ fn successful_payment_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> 
                     notify_admin_text(
                         &bot,
                         &format!("PAYMENT HANDLER ERROR\nchat_id: {}\nerror: {:?}", msg.chat.id.0, e),
+                    )
+                    .await;
+                }
+                Ok(())
+            }
+        })
+}
+
+/// Handler for refunded Telegram payments.
+///
+/// Previously this update was silently dropped — users who received a refund
+/// kept premium access until expiry. This handler revokes the subscription
+/// immediately.
+fn refunded_payment_handler(deps: HandlerDeps) -> UpdateHandler<HandlerError> {
+    Update::filter_message()
+        .filter(|msg: Message| matches!(msg.kind, teloxide::types::MessageKind::RefundedPayment(_)))
+        .endpoint(move |bot: Bot, msg: Message| {
+            let deps = deps.clone();
+            async move {
+                use crate::core::subscription;
+                use crate::telegram::notifications::notify_admin_text;
+
+                log::info!("Received refunded_payment message");
+
+                // Extract the refunded_payment from MessageKind
+                let refund = match &msg.kind {
+                    teloxide::types::MessageKind::RefundedPayment(mrp) => mrp.refunded_payment.clone(),
+                    _ => {
+                        log::error!("refunded_payment_handler fired but MessageKind is not RefundedPayment");
+                        return Ok(());
+                    }
+                };
+
+                if let Err(e) =
+                    subscription::handle_refunded_payment(&bot, &msg, &refund, Arc::clone(&deps.shared_storage)).await
+                {
+                    log::error!("Failed to handle refunded payment: {:?}", e);
+                    notify_admin_text(
+                        &bot,
+                        &format!("REFUND HANDLER ERROR\nchat_id: {}\nerror: {:?}", msg.chat.id.0, e),
                     )
                     .await;
                 }

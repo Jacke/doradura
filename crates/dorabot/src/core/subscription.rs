@@ -605,6 +605,92 @@ pub async fn activate_subscription(
 /// # Returns
 ///
 /// Returns `ResponseResult<()>` or an error if processing fails.
+/// Handle a refunded Telegram payment notification.
+///
+/// When a user (or Telegram support) refunds Stars for a subscription, the
+/// bot receives a service message with `MessageKind::RefundedPayment`. We:
+///   1. Look up the user_id via the charge_id.
+///   2. Atomically revoke the subscription (users.plan = free, is_recurring
+///      = 0, expires_at = now) in one DB transaction.
+///   3. Notify the user their subscription has been cancelled.
+///   4. Notify admin about the refund.
+pub async fn handle_refunded_payment(
+    bot: &Bot,
+    msg: &teloxide::types::Message,
+    refund: &teloxide::types::RefundedPayment,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
+    let charge_id = &refund.telegram_payment_charge_id.0;
+    log::warn!(
+        "💸 Refund received: charge_id={} amount={} {} payload={}",
+        charge_id,
+        refund.total_amount,
+        refund.currency,
+        refund.invoice_payload
+    );
+
+    // Look up user by charge_id
+    let user_id = match shared_storage.get_user_id_by_charge(charge_id).await {
+        Ok(Some(uid)) => uid,
+        Ok(None) => {
+            log::error!("Refund for unknown charge_id: {}", charge_id);
+            crate::telegram::notifications::notify_admin_text(
+                bot,
+                &format!(
+                    "⚠️ REFUND for UNKNOWN charge_id\nCharge: {}\nAmount: {} {}\nPayload: {}",
+                    charge_id, refund.total_amount, refund.currency, refund.invoice_payload
+                ),
+            )
+            .await;
+            return Ok(());
+        }
+        Err(e) => {
+            log::error!("Failed to look up refunded charge: {}", e);
+            return Ok(());
+        }
+    };
+
+    // Atomically revoke the subscription
+    if let Err(e) = shared_storage.revoke_subscription_for_refund(user_id, charge_id).await {
+        log::error!("Failed to revoke subscription on refund: {}", e);
+        crate::telegram::notifications::notify_admin_text(
+            bot,
+            &format!(
+                "⚠️ REFUND REVOKE FAILED\nUser: {}\nCharge: {}\nError: {}",
+                user_id, charge_id, e
+            ),
+        )
+        .await;
+        return Ok(());
+    }
+
+    log::info!("✅ Subscription revoked for user {} after refund", user_id);
+
+    // Notify the user
+    let plan_name = refund.invoice_payload.split(':').nth(1).unwrap_or("subscription");
+    let user_msg = format!(
+        "💸 Your payment has been refunded.\n\nPlan: {}\nAmount: {} {}\n\nYour subscription has been cancelled.",
+        plan_name, refund.total_amount, refund.currency
+    );
+    let _ = bot.send_message(teloxide::types::ChatId(user_id), user_msg).await;
+
+    // Notify admin
+    crate::telegram::notifications::notify_admin_text(
+        bot,
+        &format!(
+            "💸 REFUND processed\nUser: {}\nPlan: {}\nCharge: {}\nAmount: {} {}",
+            user_id, plan_name, charge_id, refund.total_amount, refund.currency
+        ),
+    )
+    .await;
+
+    // Track metrics
+    metrics::record_payment_failure(plan_name, "refunded");
+
+    let _ = msg;
+    Ok(())
+}
+
 pub async fn handle_successful_payment(
     bot: &Bot,
     msg: &teloxide::types::Message,
@@ -647,6 +733,31 @@ pub async fn handle_successful_payment(
             if telegram_id == 0 {
                 log::error!("Invalid telegram_id in payment payload: {}", payment.invoice_payload);
                 return Ok(());
+            }
+
+            // SEC #12: Cross-check that the user who actually sent this successful_payment
+            // matches the user_id embedded in the invoice payload. Invoice links can be
+            // shared/forwarded, so an attacker could craft an invoice for themselves,
+            // get someone else to pay it, and have the payer's Stars credit the attacker.
+            // We reject any such divergence and notify admin.
+            if let Some(from_id) = msg.from.as_ref().map(|u| u.id.0 as i64) {
+                if from_id != telegram_id {
+                    log::error!(
+                        "❌ Payment payload user_id mismatch: msg.from.id={} payload_user_id={} charge={}",
+                        from_id,
+                        telegram_id,
+                        payment.telegram_payment_charge_id.0
+                    );
+                    crate::telegram::notifications::notify_admin_text(
+                        bot,
+                        &format!(
+                            "⚠️ PAYLOAD HIJACK ATTEMPT\nSender: {}\nPayload user_id: {}\nCharge: {}",
+                            from_id, telegram_id, payment.telegram_payment_charge_id.0
+                        ),
+                    )
+                    .await;
+                    return Ok(());
+                }
             }
 
             // HIGH-14: Validate payment amount matches expected price for plan
@@ -728,12 +839,14 @@ pub async fn handle_successful_payment(
             log::info!("  • Is recurring: {}", is_recurring);
             log::info!("  • Is first recurring: {}", is_first_recurring);
 
-            // HIGH-15: Save payment (charge) information to DB for accounting.
-            // telegram_charge_id has a UNIQUE constraint — if this fails with a duplicate,
-            // it means this payment was already processed (replay attack). Do NOT activate.
-            log::info!("💾 Saving charge data for accounting...");
+            // SEC #7: Atomic payment recording — insert charge + upsert subscription
+            // + update users.plan in ONE transaction. Previously save_charge and
+            // update_subscription_data were separate calls; if step 2 failed after
+            // step 1 succeeded, the UNIQUE constraint on telegram_charge_id blocked
+            // retry and left the user paid-but-not-activated with no recovery path.
+            log::info!("💾 Recording payment atomically...");
             if let Err(e) = shared_storage
-                .save_charge(
+                .record_successful_payment(
                     telegram_id,
                     plan,
                     &charge_id_str,
@@ -743,27 +856,39 @@ pub async fn handle_successful_payment(
                     &payment.invoice_payload,
                     is_recurring,
                     is_first_recurring,
-                    Some(&subscription_expires_at),
+                    &subscription_expires_at,
                 )
                 .await
             {
-                log::error!(
-                    "❌ Failed to save charge data: {} (possible duplicate charge_id replay)",
-                    e
-                );
+                let msg_lower = e.to_string().to_lowercase();
+                if msg_lower.contains("unique") || msg_lower.contains("duplicate") {
+                    log::warn!(
+                        "⚠️ Duplicate charge_id — payment already processed. Charge: {}",
+                        charge_id_str
+                    );
+                    // Don't notify admin for legitimate replay — Telegram may redeliver.
+                    return Ok(());
+                }
+                log::error!("❌ Failed to record payment atomically: {}", e);
+                metrics::record_payment_failure(plan, "database_error");
                 crate::telegram::notifications::notify_admin_text(
                     bot,
                     &format!(
-                        "⚠️ CHARGE SAVE FAILED (possible replay)\nCharge ID: {}\nUser: {}\nPlan: {}\nError: {}",
-                        charge_id_str, telegram_id, plan, e
+                        "PAYMENT FAILURE (atomic record)\nuser_id: {}\nplan: {}\ncharge_id: {}\nerror: {}",
+                        telegram_id, plan, charge_id_str, e
                     ),
                 )
                 .await;
+                bot.send_message(
+                    chat_id,
+                    "❌ An error occurred while activating the subscription. Please contact the administrator.",
+                )
+                .await?;
                 return Ok(());
             }
-            log::info!("✅ Charge data saved successfully");
+            log::info!("✅ Payment recorded atomically");
 
-            // Track payment success metrics
+            // Track payment success metrics (after successful record)
             metrics::record_payment_success(plan, is_recurring);
             metrics::record_revenue(plan, payment.total_amount as f64);
 
@@ -774,41 +899,6 @@ pub async fn handle_successful_payment(
                     .with_label_values(&[plan, is_recurring_str])
                     .inc();
             }
-
-            // Update subscription data in the DB
-            log::info!("💾 Updating subscription data in database...");
-            if let Err(e) = shared_storage
-                .update_subscription_data(
-                    telegram_id,
-                    plan,
-                    &charge_id_str,
-                    &subscription_expires_at,
-                    is_recurring,
-                )
-                .await
-            {
-                log::error!("❌ Failed to update subscription data: {}", e);
-
-                // Track payment failure (database error)
-                metrics::record_payment_failure(plan, "database_error");
-
-                crate::telegram::notifications::notify_admin_text(
-                    bot,
-                    &format!(
-                        "PAYMENT FAILURE (db update)\nuser_id: {}\nplan: {}\ncharge_id: {}\nerror: {}",
-                        telegram_id, plan, charge_id_str, e
-                    ),
-                )
-                .await;
-
-                bot.send_message(
-                    chat_id,
-                    "❌ An error occurred while activating the subscription. Please contact the administrator.",
-                )
-                .await?;
-                return Ok(());
-            }
-            log::info!("✅ Subscription data updated successfully");
 
             // Determine subscription type for the message
             let subscription_type_msg = if is_recurring {
