@@ -394,10 +394,19 @@ Introduce `is_subscription_active(user: &User) -> bool` that checks both plan AN
 
 ## Fixes Applied in This Session
 
-| Commit | Finding | Files |
+| Commit | Findings | Files |
 |---|---|---|
-| `6de099b85051` | #1, #2, #3 (SSRF hardening) | `download/source/http.rs` |
-| `68748d58db20` | #4 (SQL injection in admin audit) | `web/admin_misc.rs` |
+| `6de099b85051` | #1, #2, #3, #4 (SSRF hardening — all 4) | `download/source/http.rs` |
+| `68748d58db20` | #5 old-num (SQL injection in admin audit) | `web/admin_misc.rs` |
 | `fbd987ecad38` | #9 (INSERT OR REPLACE → ON CONFLICT) | `web/admin_users.rs`, `storage/db/mod.rs` |
+| `2e7b376f41eb` | #11 (subscription expiry) + #8 (pg tx wrap) | `storage/db/users.rs`, `storage/db/sessions.rs`, `storage/shared/subscriptions.rs`, `menu/audio_effects.rs` |
+| `9e9b1baa0005` | #6 (IP allowlist) + #13 (X-Forwarded-For) | `web/mod.rs`, `web/auth.rs` |
+| `0311be59db18` | #5 (deterministic admin cookie) | `migrations/V43__admin_sessions.sql`, `storage/migrations.rs`, `web/auth.rs`, 5× admin handlers |
+| `c1c43d3c9291` | #7 (atomic payment) + #10 (refund handler) + #12 (from.id check) | `storage/shared/subscriptions.rs`, `core/subscription.rs`, `handlers/schema.rs` |
 
-All three commits passed `cargo fmt`, `cargo clippy -D warnings`, and the full workspace test suite. 11 new SSRF unit tests added; 25 pass.
+All commits passed `cargo fmt`, `cargo clippy -D warnings`, and the full workspace test suite. 11 new SSRF unit tests added; 25 pass.
+
+### Status: all 11 confirmed CRITICAL findings are now **fixed** 🎉
+
+The 13 additional High/Medium findings remain open — they are documented
+above for future work but do not block the immediate production deploy.
