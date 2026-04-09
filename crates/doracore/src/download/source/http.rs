@@ -12,7 +12,9 @@ use crate::core::error::AppError;
 use crate::download::error::DownloadError;
 use crate::download::source::{DownloadOutput, DownloadRequest, DownloadSource, SourceProgress};
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use reqwest::Client;
+use std::net::SocketAddr;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use url::Url;
@@ -30,58 +32,162 @@ const DIRECT_FILE_EXTENSIONS: &[&str] = &[
 fn is_private_ip(ip: &std::net::IpAddr) -> bool {
     match ip {
         std::net::IpAddr::V4(v4) => {
+            let o = v4.octets();
             v4.is_loopback()
                 || v4.is_private()
                 || v4.is_link_local()
-                // 169.254.x.x — cloud metadata services (AWS IMDSv1/v2, GCP, Azure)
-                || (v4.octets()[0] == 169 && v4.octets()[1] == 254)
                 || v4.is_broadcast()
                 || v4.is_unspecified()
+                || v4.is_multicast()
+                || o[0] == 0                                       // 0.0.0.0/8
+                || (o[0] == 100 && (o[1] & 0xc0) == 64)            // 100.64/10 CGNAT
+                || o[0] == 127                                     // loopback (belt+braces)
+                || (o[0] == 169 && o[1] == 254)                    // link-local + AWS/GCP/Azure metadata
+                || (o[0] == 192 && o[1] == 0 && o[2] == 0)         // 192.0.0/24 IETF protocol assignments
+                || (o[0] == 192 && o[1] == 0 && o[2] == 2)         // TEST-NET-1
+                || (o[0] == 198 && (o[1] == 18 || o[1] == 19))     // benchmark 198.18/15
+                || (o[0] == 198 && o[1] == 51 && o[2] == 100)      // TEST-NET-2
+                || (o[0] == 203 && o[1] == 0 && o[2] == 113)       // TEST-NET-3
+                || o[0] >= 240                                     // class E (240/4) + 255.255.255.255
+                // Cloud metadata endpoints on public ranges:
+                || o == [100, 100, 100, 200]                       // Alibaba Cloud ECS metadata
+                || o == [192, 0, 0, 192] // Oracle OCI metadata
         }
-        std::net::IpAddr::V6(v6) => v6.is_loopback() || v6.is_unspecified(),
+        std::net::IpAddr::V6(v6) => {
+            if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
+                return true;
+            }
+            let seg = v6.segments();
+            // fc00::/7 Unique Local Addresses
+            if (seg[0] & 0xfe00) == 0xfc00 {
+                return true;
+            }
+            // fe80::/10 link-local
+            if (seg[0] & 0xffc0) == 0xfe80 {
+                return true;
+            }
+            // ::ffff:0:0/96 IPv4-mapped — unwrap and recheck as v4.
+            // Manual check for broader rustc compat: first 5 segments are zero, 6th is 0xffff.
+            if seg[0] == 0 && seg[1] == 0 && seg[2] == 0 && seg[3] == 0 && seg[4] == 0 && seg[5] == 0xffff {
+                let v4 = std::net::Ipv4Addr::new(
+                    (seg[6] >> 8) as u8,
+                    (seg[6] & 0xff) as u8,
+                    (seg[7] >> 8) as u8,
+                    (seg[7] & 0xff) as u8,
+                );
+                return is_private_ip(&std::net::IpAddr::V4(v4));
+            }
+            // 2001:db8::/32 documentation range
+            if seg[0] == 0x2001 && seg[1] == 0x0db8 {
+                return true;
+            }
+            false
+        }
     }
 }
 
-/// Resolve the hostname in `url` and reject it if any resolved address is private.
+/// Result of `check_ssrf`: the validated host string and the pinned list of
+/// resolved `SocketAddr`s that passed the private-IP filter.
 ///
-/// Blocks SSRF attacks that use internal hostnames (e.g. `http://169.254.169.254/latest/meta-data/`).
-/// Returns an error if any resolved address falls in a private range.
+/// The caller should pass these addresses to `reqwest::ClientBuilder::resolve_to_addrs`
+/// so that reqwest uses the **exact** IPs we validated — defeating DNS rebinding
+/// attacks where an attacker's DNS server returns a public IP on the first lookup
+/// and a private IP on the second.
+struct SsrfCheck {
+    host: String,
+    addrs: Vec<SocketAddr>,
+}
+
+/// Resolve the hostname in `url`, reject it if any resolved address is private,
+/// and return the pinned (host, addrs) pair so the caller can force reqwest to
+/// connect to those exact IPs.
 ///
-/// Uses `tokio::net::lookup_host` for non-blocking DNS resolution.
-async fn check_ssrf(url: &Url) -> Result<(), AppError> {
-    if let Some(host) = url.host_str() {
-        // Port 80 is used for resolution only; the actual port is irrelevant here.
-        let lookup_addr = format!("{}:80", host);
-        let resolved = tokio::net::lookup_host(&lookup_addr).await;
-        match resolved {
-            Ok(addrs) => {
-                for addr in addrs {
-                    if is_private_ip(&addr.ip()) {
-                        log::warn!("SSRF blocked: URL {} resolves to private IP {}", url, addr.ip());
-                        return Err(AppError::Validation(format!(
-                            "URL resolves to a private/internal IP address ({}): blocked for security",
-                            addr.ip()
-                        )));
-                    }
-                }
-            }
-            Err(e) => {
-                // If the hostname cannot be resolved, refuse the request.
-                log::warn!("SSRF check: hostname resolution failed for {}: {}", host, e);
-                return Err(AppError::Validation(format!(
-                    "Could not resolve hostname '{}': {}",
-                    host, e
-                )));
-            }
+/// Blocks SSRF attacks that use internal hostnames (e.g. `http://169.254.169.254/latest/meta-data/`)
+/// AND DNS rebinding attacks (where DNS is re-resolved between the check and the actual
+/// connection and returns a different IP the second time).
+///
+/// Also enforces a scheme whitelist — only `http` and `https` are allowed. Schemes like
+/// `file://`, `gopher://`, `ftp://` are rejected outright.
+async fn check_ssrf(url: &Url) -> Result<SsrfCheck, AppError> {
+    // Scheme whitelist — reject anything exotic (file, gopher, ftp, data, ...).
+    let scheme = url.scheme();
+    if scheme != "http" && scheme != "https" {
+        log::warn!("SSRF blocked: non-http(s) scheme '{}' in URL {}", scheme, url);
+        return Err(AppError::Validation(format!(
+            "Unsupported URL scheme '{}': only http/https allowed",
+            scheme
+        )));
+    }
+
+    let host = url.host_str().ok_or_else(|| {
+        log::warn!("SSRF blocked: URL has no host: {}", url);
+        AppError::Validation("URL has no host component".to_string())
+    })?;
+
+    // Use the URL's port if present, otherwise the scheme default. This matters
+    // because `resolve_to_addrs` needs the same port the client will connect to.
+    let port = url
+        .port_or_known_default()
+        .unwrap_or(if scheme == "https" { 443 } else { 80 });
+    let lookup_addr = format!("{}:{}", host, port);
+
+    let resolved = tokio::net::lookup_host(&lookup_addr).await.map_err(|e| {
+        log::warn!("SSRF check: hostname resolution failed for {}: {}", host, e);
+        AppError::Validation(format!("Could not resolve hostname '{}': {}", host, e))
+    })?;
+
+    let addrs: Vec<SocketAddr> = resolved.collect();
+    if addrs.is_empty() {
+        return Err(AppError::Validation(format!(
+            "Hostname '{}' resolved to no addresses",
+            host
+        )));
+    }
+
+    for addr in &addrs {
+        if is_private_ip(&addr.ip()) {
+            log::warn!("SSRF blocked: URL {} resolves to private IP {}", url, addr.ip());
+            return Err(AppError::Validation(format!(
+                "URL resolves to a private/internal IP address ({}): blocked for security",
+                addr.ip()
+            )));
         }
     }
-    Ok(())
+
+    Ok(SsrfCheck {
+        host: host.to_string(),
+        addrs,
+    })
 }
+
+/// Build an ad-hoc `reqwest::Client` that is pinned to the exact resolved
+/// addresses returned by `check_ssrf`, with redirects **disabled** so the
+/// caller can validate each hop manually.
+///
+/// This is the cornerstone of our SSRF defense — by pinning `resolve_to_addrs`,
+/// reqwest never performs its own DNS lookup for this host, so a malicious
+/// DNS server cannot flip the IP between our check and the actual connection.
+fn build_pinned_client(check: &SsrfCheck) -> Result<Client, AppError> {
+    Client::builder()
+        .user_agent("Mozilla/5.0 (compatible; doradura/0.2)")
+        .timeout(std::time::Duration::from_secs(600))
+        .connect_timeout(std::time::Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
+        .resolve_to_addrs(&check.host, &check.addrs)
+        .build()
+        .map_err(|e| AppError::Download(DownloadError::Other(format!("pinned client build failed: {}", e))))
+}
+
+/// Maximum number of redirect hops we'll follow manually. Each hop gets its own
+/// SSRF re-validation so redirects cannot escape into the private network.
+const MAX_REDIRECT_HOPS: u8 = 5;
 
 /// Download source for direct HTTP file downloads.
-pub struct HttpSource {
-    client: Client,
-}
+///
+/// Each request builds its own pinned `reqwest::Client` via `build_pinned_client`
+/// so the resolved IPs cannot be changed by a DNS server between our SSRF check
+/// and the actual connection (DNS rebinding defense).
+pub struct HttpSource;
 
 impl Default for HttpSource {
     fn default() -> Self {
@@ -91,14 +197,7 @@ impl Default for HttpSource {
 
 impl HttpSource {
     pub fn new() -> Self {
-        let client = Client::builder()
-            .user_agent("Mozilla/5.0 (compatible; doradura/0.2)")
-            .timeout(std::time::Duration::from_secs(600))
-            .connect_timeout(std::time::Duration::from_secs(30))
-            .build()
-            .expect("HTTP client build failed: user_agent + timeout config should always succeed");
-
-        Self { client }
+        Self
     }
 
     /// Extract filename from Content-Disposition header or URL path.
@@ -195,16 +294,36 @@ impl DownloadSource for HttpSource {
     }
 
     async fn estimate_size(&self, url: &Url) -> Option<u64> {
-        // SSRF guard — silently return None for private addresses rather than panicking.
-        check_ssrf(url).await.ok()?;
-        let response = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            self.client.head(url.as_str()).send(),
-        )
-        .await
-        .ok()?
-        .ok()?;
-        response.content_length()
+        // SSRF guard — resolve and validate, then build a pinned client that connects
+        // only to the validated IPs (defeats DNS rebinding).
+        let check = check_ssrf(url).await.ok()?;
+        let pinned = build_pinned_client(&check).ok()?;
+
+        // Manual redirect loop (up to 3 hops for HEAD, each re-validated)
+        let mut current = url.clone();
+        for _ in 0..3 {
+            let response =
+                tokio::time::timeout(std::time::Duration::from_secs(10), pinned.head(current.as_str()).send())
+                    .await
+                    .ok()?
+                    .ok()?;
+
+            if response.status().is_redirection() {
+                let loc = response.headers().get(reqwest::header::LOCATION)?.to_str().ok()?;
+                current = current.join(loc).ok()?;
+                // Re-validate the redirect target before following
+                let _ = check_ssrf(&current).await.ok()?;
+                // Note: different host means the pinned client's resolve map no longer
+                // applies — we'd need a new client. For safety, abort cross-host redirects.
+                if current.host_str() != url.host_str() {
+                    log::warn!("estimate_size: cross-host redirect rejected");
+                    return None;
+                }
+                continue;
+            }
+            return response.content_length();
+        }
+        None
     }
 
     async fn is_livestream(&self, _url: &Url) -> bool {
@@ -218,8 +337,10 @@ impl DownloadSource for HttpSource {
     ) -> Result<DownloadOutput, AppError> {
         log::info!("📥 HTTP direct download: {}", request.url);
 
-        // MED-02: SSRF guard — reject URLs that resolve to private/internal addresses.
-        check_ssrf(&request.url).await?;
+        // SSRF guard — resolve and validate, pin reqwest to the validated IPs so
+        // a second DNS lookup cannot return a different (private) address.
+        let ssrf_check = check_ssrf(&request.url).await?;
+        let pinned_client = build_pinned_client(&ssrf_check)?;
 
         // Check if we can resume (file already partially downloaded)
         let existing_size = tokio::fs::metadata(&request.output_path)
@@ -227,20 +348,63 @@ impl DownloadSource for HttpSource {
             .map(|m| m.len())
             .unwrap_or(0);
 
-        let mut req = self.client.get(request.url.as_str());
+        // Manual redirect loop: each hop gets SSRF re-validated before the connection.
+        // Cross-host redirects rebuild a new pinned client with fresh DNS validation.
+        let mut current = request.url.clone();
+        let mut current_client = pinned_client;
+        let mut current_host = ssrf_check.host.clone();
+        let response: reqwest::Response;
 
-        if existing_size > 0 {
-            log::info!("Resuming download from byte {}: {}", existing_size, request.output_path);
-            req = req.header("Range", format!("bytes={}-", existing_size));
+        let mut hops: u8 = 0;
+        loop {
+            if hops >= MAX_REDIRECT_HOPS {
+                return Err(AppError::Download(DownloadError::Other(
+                    "too many redirects".to_string(),
+                )));
+            }
+            hops += 1;
+
+            let mut req = current_client.get(current.as_str());
+            if existing_size > 0 && hops == 1 {
+                log::info!("Resuming download from byte {}: {}", existing_size, request.output_path);
+                req = req.header("Range", format!("bytes={}-", existing_size));
+            }
+
+            let resp = req
+                .send()
+                .await
+                .map_err(|e| AppError::Download(DownloadError::Other(format!("HTTP request failed: {}", e))))?;
+
+            if resp.status().is_redirection() {
+                let loc = resp
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .ok_or_else(|| AppError::Download(DownloadError::Other("redirect missing Location".into())))?
+                    .to_str()
+                    .map_err(|_| AppError::Download(DownloadError::Other("invalid Location header".into())))?
+                    .to_string();
+
+                drop(resp);
+                let next = current
+                    .join(&loc)
+                    .map_err(|e| AppError::Download(DownloadError::Other(format!("invalid redirect URL: {}", e))))?;
+
+                // Re-validate EVERY redirect hop BEFORE connecting.
+                let next_check = check_ssrf(&next).await?;
+
+                // Cross-host redirect → rebuild pinned client for the new host.
+                if next_check.host != current_host {
+                    log::info!("cross-host redirect: {} -> {}", current_host, next_check.host);
+                    current_client = build_pinned_client(&next_check)?;
+                    current_host = next_check.host.clone();
+                }
+                current = next;
+                continue;
+            }
+
+            response = resp;
+            break;
         }
-
-        let response = req
-            .send()
-            .await
-            .map_err(|e| AppError::Download(DownloadError::Other(format!("HTTP request failed: {}", e))))?;
-
-        // SSRF: re-check final URL after redirects (reqwest follows 3xx by default)
-        check_ssrf(response.url()).await?;
 
         if !response.status().is_success() && response.status().as_u16() != 206 {
             return Err(AppError::Download(DownloadError::Other(format!(
@@ -291,7 +455,6 @@ impl DownloadSource for HttpSource {
 
         // Stream response body in chunks
         let mut stream = response.bytes_stream();
-        use futures_util::StreamExt;
 
         while let Some(chunk_result) = stream.next().await {
             let chunk = chunk_result
@@ -469,6 +632,83 @@ mod tests {
     #[tokio::test]
     async fn test_check_ssrf_rejects_metadata_ip() {
         let url = Url::parse("http://169.254.169.254/latest/meta-data/file.mp3").unwrap();
+        assert!(check_ssrf(&url).await.is_err());
+    }
+
+    // ── Extended deny-list tests ──
+
+    #[test]
+    fn test_is_private_ip_cgnat() {
+        use std::net::IpAddr;
+        // Railway/Tailscale CGNAT 100.64.0.0/10
+        assert!(is_private_ip(&"100.64.0.1".parse::<IpAddr>().unwrap()));
+        assert!(is_private_ip(&"100.127.255.255".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_zero_network() {
+        use std::net::IpAddr;
+        // 0.0.0.0/8 routes to localhost on Linux
+        assert!(is_private_ip(&"0.0.0.0".parse::<IpAddr>().unwrap()));
+        assert!(is_private_ip(&"0.1.2.3".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_alibaba_metadata() {
+        use std::net::IpAddr;
+        assert!(is_private_ip(&"100.100.100.200".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_oracle_metadata() {
+        use std::net::IpAddr;
+        assert!(is_private_ip(&"192.0.0.192".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_class_e() {
+        use std::net::IpAddr;
+        assert!(is_private_ip(&"240.0.0.1".parse::<IpAddr>().unwrap()));
+        assert!(is_private_ip(&"255.255.255.255".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_v6_ula() {
+        use std::net::IpAddr;
+        assert!(is_private_ip(&"fc00::1".parse::<IpAddr>().unwrap()));
+        assert!(is_private_ip(&"fd12:3456::1".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_v6_link_local() {
+        use std::net::IpAddr;
+        assert!(is_private_ip(&"fe80::1".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_v6_ipv4_mapped_loopback() {
+        use std::net::IpAddr;
+        // Classic SSRF bypass: ::ffff:127.0.0.1
+        assert!(is_private_ip(&"::ffff:127.0.0.1".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_v6_ipv4_mapped_metadata() {
+        use std::net::IpAddr;
+        // SSRF bypass: ::ffff:169.254.169.254
+        assert!(is_private_ip(&"::ffff:169.254.169.254".parse::<IpAddr>().unwrap()));
+    }
+
+    #[test]
+    fn test_is_private_ip_v6_documentation() {
+        use std::net::IpAddr;
+        assert!(is_private_ip(&"2001:db8::1".parse::<IpAddr>().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn test_check_ssrf_rejects_non_http_scheme() {
+        // file:// and gopher:// must be rejected by the scheme whitelist
+        let url = Url::parse("file:///etc/passwd").unwrap();
         assert!(check_ssrf(&url).await.is_err());
     }
 }
