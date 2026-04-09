@@ -57,13 +57,35 @@ pub(super) fn verify_csrf(header_map: &HeaderMap, _bot_token: &str) -> bool {
 // --- Rate limiting helpers ---
 
 /// Extract best-effort IP string from request headers.
+///
+/// Uses `TRUSTED_PROXY_HOPS=N` to pick the *Nth-from-right* entry of
+/// `X-Forwarded-For`. The rightmost entries are added by trusted reverse
+/// proxies; anything further left is attacker-controlled and must not be
+/// trusted. If `TRUSTED_PROXY_HOPS` is unset or zero, the function returns
+/// `"unknown"` — callers should rely on the socket peer address instead.
+///
+/// The previous version took `.next()` (i.e. the FIRST entry), which
+/// trusted attacker-supplied values and allowed trivial rate-limit bypass.
 pub(super) fn extract_ip(header_map: &HeaderMap) -> String {
+    let hops: usize = std::env::var("TRUSTED_PROXY_HOPS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    if hops == 0 {
+        return "unknown".to_string();
+    }
     header_map
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.split(',').next())
+        .and_then(|s| {
+            let parts: Vec<&str> = s.split(',').map(str::trim).collect();
+            if parts.len() >= hops {
+                parts.get(parts.len() - hops).copied()
+            } else {
+                None
+            }
+        })
         .unwrap_or("unknown")
-        .trim()
         .to_string()
 }
 

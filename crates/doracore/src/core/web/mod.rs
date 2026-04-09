@@ -6,13 +6,14 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{DefaultBodyLimit, Request},
+    extract::{ConnectInfo, DefaultBodyLimit, Request},
+    http::StatusCode,
     middleware::{self, Next},
-    response::Response,
+    response::{IntoResponse, Response},
     routing::{get, post},
     Router,
 };
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use tokio::net::TcpListener;
 
 use crate::core::config;
@@ -30,6 +31,65 @@ mod public;
 mod types;
 
 use types::WebState;
+
+/// Derive the trusted client IP for an incoming request.
+///
+/// By default, trust the socket peer address (set by axum via `ConnectInfo`).
+/// If `TRUSTED_PROXY_HOPS=N` is set, trust the N-th-from-right entry of
+/// `X-Forwarded-For` (the *rightmost* entries are added by trusted proxies;
+/// anything further left is attacker-controlled). Fails closed — unknown = deny.
+fn trusted_client_ip(req: &Request, socket_addr: IpAddr) -> IpAddr {
+    let hops: usize = std::env::var("TRUSTED_PROXY_HOPS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+
+    if hops == 0 {
+        return socket_addr;
+    }
+
+    if let Some(xff) = req.headers().get("x-forwarded-for").and_then(|v| v.to_str().ok()) {
+        let parts: Vec<&str> = xff.split(',').map(str::trim).collect();
+        if parts.len() >= hops {
+            if let Ok(ip) = parts[parts.len() - hops].parse::<IpAddr>() {
+                return ip;
+            }
+        }
+    }
+    socket_addr
+}
+
+/// IP allowlist middleware for `/admin/*` routes.
+///
+/// Fails **closed**: if `ADMIN_IP_ALLOWLIST` is empty, ALL admin routes are
+/// blocked with 404 (indistinguishable from "route not found" to the attacker).
+/// Non-admin routes pass through unchanged.
+async fn admin_ip_guard(ConnectInfo(socket_addr): ConnectInfo<SocketAddr>, req: Request, next: Next) -> Response {
+    if !req.uri().path().starts_with("/admin") {
+        return next.run(req).await;
+    }
+
+    let allowlist_str = std::env::var("ADMIN_IP_ALLOWLIST").unwrap_or_default();
+    if allowlist_str.trim().is_empty() {
+        log::error!("ADMIN_IP_ALLOWLIST not configured — blocking all admin routes");
+        return (StatusCode::NOT_FOUND, "Not Found").into_response();
+    }
+
+    let allowlist: Vec<IpAddr> = allowlist_str.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+
+    if allowlist.is_empty() {
+        log::error!("ADMIN_IP_ALLOWLIST is set but contains no valid IPs — blocking");
+        return (StatusCode::NOT_FOUND, "Not Found").into_response();
+    }
+
+    let peer = trusted_client_ip(&req, socket_addr.ip());
+    if allowlist.contains(&peer) {
+        next.run(req).await
+    } else {
+        log::warn!("Admin access denied from {} (path {})", peer, req.uri().path());
+        (StatusCode::NOT_FOUND, "Not Found").into_response()
+    }
+}
 
 /// Middleware that injects standard security headers into every response.
 async fn security_headers(request: Request, next: Next) -> Response {
@@ -109,6 +169,9 @@ pub async fn start_web_server(
         .route("/metrics", get(public::metrics_handler))
         .with_state(state)
         .layer(DefaultBodyLimit::max(1024 * 1024)) // 1 MB
+        // IP allowlist MUST run before security_headers so that a denied
+        // admin request returns a plain 404 (not a response with headers).
+        .layer(middleware::from_fn(admin_ip_guard))
         .layer(middleware::from_fn(security_headers));
 
     log::info!("Starting web server on http://{}", addr);
@@ -119,8 +182,15 @@ pub async fn start_web_server(
     log::info!("  /health     - Health check");
     log::info!("  /metrics    - Prometheus metrics (Bearer auth)");
 
+    let allowlist_env = std::env::var("ADMIN_IP_ALLOWLIST").unwrap_or_default();
+    if allowlist_env.trim().is_empty() {
+        log::error!("⚠️  ADMIN_IP_ALLOWLIST is empty — admin panel is DISABLED (fails closed)");
+    } else {
+        log::info!("Admin IP allowlist: {}", allowlist_env);
+    }
+
     let listener = TcpListener::bind(&addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
 
     Ok(())
 }
