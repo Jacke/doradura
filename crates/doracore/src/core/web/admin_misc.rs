@@ -876,45 +876,86 @@ pub(super) async fn admin_api_audit(
 
     let result = tokio::task::spawn_blocking(move || -> Result<PaginatedResponse<ApiAuditEntry>, rusqlite::Error> {
         let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
-        let where_clause = if !action_filter.is_empty() {
-            format!("WHERE action = '{}'", action_filter)
-        } else {
-            String::new()
-        };
-
-        let total: i64 = conn
-            .query_row(
-                &format!("SELECT COUNT(*) FROM admin_audit_log {}", where_clause),
-                [],
-                |r| r.get(0),
-            )
-            .unwrap_or(0);
-        let total_pages = ((total as f64) / AUDIT_PER_PAGE as f64).ceil() as u32;
-
-        let sql = format!(
-            "SELECT id, admin_id, action, target_type, target_id, \
-                    COALESCE(details, ''), created_at \
-             FROM admin_audit_log {} ORDER BY created_at DESC LIMIT {} OFFSET {}",
-            where_clause, AUDIT_PER_PAGE, offset
+        // Allowlist the action filter — anything else is treated as "no filter".
+        // Previously this was a raw format!() into SQL, which was a SQL injection
+        // vector (the only unallowlisted format!() into SQL in this file).
+        let action_allowed = matches!(
+            action_filter.as_str(),
+            "plan_change"
+                | "block"
+                | "unblock"
+                | "feedback_status"
+                | "ack_alert"
+                | "send_message"
+                | "broadcast"
+                | "resolve_error"
+                | "bulk_resolve"
+                | "retry_task"
+                | "cancel_task"
+                | "bulk_cancel"
+                | "reactivate_sub"
+                | "deactivate_sub"
+                | "user_settings"
         );
 
-        let entries: Vec<ApiAuditEntry> = conn
-            .prepare(&sql)
-            .and_then(|mut s| {
-                let rows = s.query_map([], |r| {
-                    Ok(ApiAuditEntry {
-                        id: r.get(0)?,
-                        admin_id: r.get(1)?,
-                        action: r.get(2)?,
-                        target_type: r.get(3)?,
-                        target_id: r.get(4)?,
-                        details: r.get(5)?,
-                        created_at: r.get(6)?,
+        let total: i64 = if action_allowed {
+            conn.query_row(
+                "SELECT COUNT(*) FROM admin_audit_log WHERE action = ?1",
+                rusqlite::params![action_filter.as_str()],
+                |r| r.get(0),
+            )
+            .unwrap_or(0)
+        } else {
+            conn.query_row("SELECT COUNT(*) FROM admin_audit_log", [], |r| r.get(0))
+                .unwrap_or(0)
+        };
+        let total_pages = ((total as f64) / AUDIT_PER_PAGE as f64).ceil() as u32;
+
+        // LIMIT / OFFSET are integers derived from u32 query params, safe to format!.
+        let sql = if action_allowed {
+            format!(
+                "SELECT id, admin_id, action, target_type, target_id, \
+                        COALESCE(details, ''), created_at \
+                 FROM admin_audit_log WHERE action = ?1 ORDER BY created_at DESC LIMIT {} OFFSET {}",
+                AUDIT_PER_PAGE, offset
+            )
+        } else {
+            format!(
+                "SELECT id, admin_id, action, target_type, target_id, \
+                        COALESCE(details, ''), created_at \
+                 FROM admin_audit_log ORDER BY created_at DESC LIMIT {} OFFSET {}",
+                AUDIT_PER_PAGE, offset
+            )
+        };
+
+        let entries: Vec<ApiAuditEntry> = {
+            let map_row = |r: &rusqlite::Row| -> rusqlite::Result<ApiAuditEntry> {
+                Ok(ApiAuditEntry {
+                    id: r.get(0)?,
+                    admin_id: r.get(1)?,
+                    action: r.get(2)?,
+                    target_type: r.get(3)?,
+                    target_id: r.get(4)?,
+                    details: r.get(5)?,
+                    created_at: r.get(6)?,
+                })
+            };
+            if action_allowed {
+                conn.prepare(&sql)
+                    .and_then(|mut s| {
+                        let rows = s.query_map(rusqlite::params![action_filter.as_str()], map_row)?;
+                        Ok(rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
                     })
-                })?;
-                Ok(rows.filter_map(|r| r.ok()).collect())
-            })
-            .unwrap_or_default();
+                    .unwrap_or_default()
+            } else {
+                conn.prepare(&sql)
+                    .and_then(|mut s| {
+                        let rows = s.query_map([], map_row)?;
+                        Ok(rows.filter_map(|r| r.ok()).collect::<Vec<_>>())
+                    })
+                    .unwrap_or_default()
+            }
+        };
 
         Ok(PaginatedResponse {
             items: entries,
