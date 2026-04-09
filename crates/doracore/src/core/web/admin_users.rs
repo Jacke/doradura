@@ -162,17 +162,23 @@ pub(super) async fn admin_api_user_plan(
             )
             .unwrap_or_else(|_| "free".to_string());
 
-        // Update subscriptions table with optional expiry
+        // Update subscriptions table with optional expiry.
+        //
+        // IMPORTANT: use ON CONFLICT ... DO UPDATE instead of INSERT OR REPLACE.
+        // INSERT OR REPLACE = DELETE + INSERT, which wipes unlisted columns like
+        // `telegram_charge_id` and `is_recurring`. Losing `telegram_charge_id` leaves
+        // the user in a recurring subscription that the bot can no longer cancel
+        // via the Telegram API — a real money-loss bug.
         let expires_at = if let Some(days) = expires_days {
             let clamped = days.clamp(1, 3650);
-            let expires_expr = format!("datetime('now', '+{} days')", clamped);
             conn.execute(
-                &format!(
-                    "INSERT OR REPLACE INTO subscriptions (user_id, plan, expires_at) \
-                     VALUES (?1, ?2, {})",
-                    expires_expr
-                ),
-                rusqlite::params![user_id, plan],
+                "INSERT INTO subscriptions (user_id, plan, expires_at, updated_at) \
+                 VALUES (?1, ?2, datetime('now', '+' || ?3 || ' days'), datetime('now')) \
+                 ON CONFLICT(user_id) DO UPDATE SET \
+                    plan = excluded.plan, \
+                    expires_at = excluded.expires_at, \
+                    updated_at = datetime('now')",
+                rusqlite::params![user_id, plan, clamped],
             )?;
             conn.query_row(
                 "SELECT expires_at FROM subscriptions WHERE user_id = ?1",
@@ -182,9 +188,13 @@ pub(super) async fn admin_api_user_plan(
             .ok()
             .flatten()
         } else {
-            // No expiry — update or create subscription without expires_at
+            // No expiry — upsert plan while preserving telegram_charge_id / is_recurring.
             conn.execute(
-                "INSERT OR REPLACE INTO subscriptions (user_id, plan) VALUES (?1, ?2)",
+                "INSERT INTO subscriptions (user_id, plan, updated_at) \
+                 VALUES (?1, ?2, datetime('now')) \
+                 ON CONFLICT(user_id) DO UPDATE SET \
+                    plan = excluded.plan, \
+                    updated_at = datetime('now')",
                 rusqlite::params![user_id, plan],
             )?;
             None
@@ -633,16 +643,18 @@ pub(super) async fn admin_api_user_settings(
                     )
                     .unwrap_or_else(|_| "free".to_string());
 
+                // ON CONFLICT DO UPDATE preserves telegram_charge_id / is_recurring
+                // (INSERT OR REPLACE would wipe them and break subscription cancellation).
                 let expires_at = if let Some(days) = body.plan_days {
                     let clamped = days.clamp(1, 3650);
-                    let expires = format!("datetime('now', '+{} days')", clamped);
                     conn.execute(
-                        &format!(
-                            "INSERT OR REPLACE INTO subscriptions (user_id, plan, expires_at) \
-                             VALUES (?1, ?2, {})",
-                            expires
-                        ),
-                        rusqlite::params![user_id, plan],
+                        "INSERT INTO subscriptions (user_id, plan, expires_at, updated_at) \
+                         VALUES (?1, ?2, datetime('now', '+' || ?3 || ' days'), datetime('now')) \
+                         ON CONFLICT(user_id) DO UPDATE SET \
+                            plan = excluded.plan, \
+                            expires_at = excluded.expires_at, \
+                            updated_at = datetime('now')",
+                        rusqlite::params![user_id, plan, clamped],
                     )?;
                     let exp_str: Option<String> = conn
                         .query_row(

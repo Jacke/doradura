@@ -1594,10 +1594,12 @@ mod tests {
         // Create a few users with different plans
         create_user(&conn, 1001, Some("user_free".to_string())).unwrap();
         create_user(&conn, 1002, Some("user_premium".to_string())).unwrap();
-        // Upgrade one user to premium via subscription
+        // Upgrade one user to premium via subscription.
+        // Use ON CONFLICT DO UPDATE (INSERT OR REPLACE would wipe telegram_charge_id).
         conn.execute(
-            "INSERT OR REPLACE INTO subscriptions (user_id, plan, expires_at)
-             VALUES (1002, 'premium', datetime('now', '+30 days'))",
+            "INSERT INTO subscriptions (user_id, plan, expires_at)
+             VALUES (1002, 'premium', datetime('now', '+30 days'))
+             ON CONFLICT(user_id) DO UPDATE SET plan = excluded.plan, expires_at = excluded.expires_at",
             [],
         )
         .unwrap();
