@@ -34,7 +34,7 @@ pub(crate) async fn handle_audio_cut_callback(
             .get_user(chat_id.0)
             .await
             .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
-        if !user.map(|u| u.plan.is_paid()).unwrap_or(false) {
+        if !user.map(|u| u.is_subscription_active()).unwrap_or(false) {
             bot.answer_callback_query(callback_id)
                 .text("⭐ This feature is available in Premium for ~$6/month → /plan")
                 .show_alert(true)
@@ -333,11 +333,11 @@ pub async fn handle_audio_effects_callback(
 
     let action = parts[1];
 
-    // Check Premium/VIP access
+    // Check Premium/VIP access (authoritative: plan + unexpired expires_at)
     if !shared_storage
         .get_user(chat_id.0)
         .await?
-        .map(|u| u.plan.is_paid())
+        .map(|u| u.is_subscription_active())
         .unwrap_or(false)
     {
         bot.answer_callback_query(callback_id)

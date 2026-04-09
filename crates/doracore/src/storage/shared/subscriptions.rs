@@ -241,6 +241,10 @@ impl SharedStorage {
                 .context("sqlite update_subscription_data")
             }
             Self::Postgres { pg_pool, .. } => {
+                // Wrap in a transaction so subscriptions + users never diverge.
+                // Previously these were two independent auto-commits; a failure
+                // between them left users.plan stale relative to subscriptions.
+                let mut tx = pg_pool.begin().await.context("begin pg update_subscription_data")?;
                 sqlx::query(
                     "INSERT INTO subscriptions (user_id, plan, expires_at, telegram_charge_id, is_recurring, updated_at)
                      VALUES ($1, $2, $3, $4, $5, NOW())
@@ -256,15 +260,16 @@ impl SharedStorage {
                 .bind(subscription_expires_at)
                 .bind(charge_id)
                 .bind(i32::from(is_recurring))
-                .execute(pg_pool)
+                .execute(&mut *tx)
                 .await
                 .context("postgres update_subscription_data subscriptions")?;
                 sqlx::query("UPDATE users SET plan = $2, updated_at = NOW() WHERE telegram_id = $1")
                     .bind(telegram_id)
                     .bind(plan)
-                    .execute(pg_pool)
+                    .execute(&mut *tx)
                     .await
                     .context("postgres update_subscription_data users")?;
+                tx.commit().await.context("commit pg update_subscription_data")?;
                 Ok(())
             }
         }
@@ -277,6 +282,8 @@ impl SharedStorage {
                 db::cancel_subscription(&conn, telegram_id).context("sqlite cancel_subscription")
             }
             Self::Postgres { pg_pool, .. } => {
+                // Wrap in a transaction — see update_subscription_data for rationale.
+                let mut tx = pg_pool.begin().await.context("begin pg cancel_subscription")?;
                 sqlx::query(
                     "INSERT INTO subscriptions (user_id, plan, is_recurring, updated_at)
                      VALUES ($1, 'free', 0, NOW())
@@ -285,14 +292,15 @@ impl SharedStorage {
                         updated_at = NOW()",
                 )
                 .bind(telegram_id)
-                .execute(pg_pool)
+                .execute(&mut *tx)
                 .await
                 .context("postgres cancel_subscription subscriptions")?;
                 sqlx::query("UPDATE users SET plan = 'free', updated_at = NOW() WHERE telegram_id = $1")
                     .bind(telegram_id)
-                    .execute(pg_pool)
+                    .execute(&mut *tx)
                     .await
                     .context("postgres cancel_subscription users")?;
+                tx.commit().await.context("commit pg cancel_subscription")?;
                 Ok(())
             }
         }

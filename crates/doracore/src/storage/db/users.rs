@@ -60,6 +60,40 @@ impl User {
     pub fn download_format(&self) -> &str {
         &self.download_format
     }
+
+    /// Returns `true` iff the user currently has an ACTIVE paid subscription.
+    ///
+    /// This is the authoritative check for paid-feature gates. Unlike
+    /// `Plan::is_paid()` which only looks at the plan enum, this method also
+    /// verifies `subscription_expires_at > now()` — closing the window between
+    /// real subscription expiry and the hourly reaper that demotes the plan
+    /// column in the users table.
+    ///
+    /// Use this instead of `user.plan.is_paid()` in any hot-path gate.
+    pub fn is_subscription_active(&self) -> bool {
+        if !self.plan.is_paid() {
+            return false;
+        }
+        match self.subscription_expires_at.as_deref() {
+            // No expiry recorded — treat as active (e.g., lifetime grants).
+            None => true,
+            Some(expires_at) => {
+                // Try both ISO-8601 ("2026-04-09T12:34:56Z") and SQLite
+                // default ("2026-04-09 12:34:56") formats.
+                let parsed = chrono::DateTime::parse_from_rfc3339(expires_at)
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .or_else(|_| {
+                        chrono::NaiveDateTime::parse_from_str(expires_at, "%Y-%m-%d %H:%M:%S")
+                            .map(|ndt| ndt.and_utc().fixed_offset().with_timezone(&chrono::Utc))
+                    });
+                match parsed {
+                    Ok(expires) => expires > chrono::Utc::now(),
+                    // Fail-closed on parse error: treat as expired.
+                    Err(_) => false,
+                }
+            }
+        }
+    }
 }
 
 /// Aggregated user counts.

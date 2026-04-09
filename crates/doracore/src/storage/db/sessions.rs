@@ -8,10 +8,13 @@ use std::sync::Once;
 
 // ==================== Audio Effect Sessions ====================
 
-/// Check if user is Premium or VIP
+/// Check if user has an ACTIVE paid subscription (plan + unexpired expires_at).
+///
+/// Uses `User::is_subscription_active()` which verifies expiry, closing the
+/// ~1-hour window between real expiry and the hourly reaper.
 pub fn is_premium_or_vip(conn: &DbConnection, user_id: i64) -> Result<bool> {
     let user = get_user(conn, user_id)?;
-    Ok(user.map(|u| u.plan.is_paid()).unwrap_or(false))
+    Ok(user.map(|u| u.is_subscription_active()).unwrap_or(false))
 }
 
 static BASS_COLUMN_INIT: Once = Once::new();
