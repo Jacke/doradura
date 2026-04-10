@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **SoundCloud track with `?in=...sets/...` query parameter misclassified as playlist** (v0.36.1) — `is_playlist_url` used substring matching against the entire URL string, so any SoundCloud track URL navigated to from inside a playlist (SoundCloud appends `?in=user/sets/foo`) triggered the `/sets/` check and was routed through `extract_latest_from_channel`, which returned a raw m3u8 CDN link that failed the source allowlist with "This website is not supported". Now all host/path checks in `is_playlist_url` operate on `url.host_str()` / `url.path()` separately — query parameters can no longer trigger false positives. Same fix also protects YouTube `/playlist`, `/@`, `/c/`, `/user/`, `/channel/` and Spotify `/playlist/`, `/album/` checks. Added two regression tests
+- Updated all workspace dependencies to latest compatible versions (`cargo update`): tokio 1.50→1.51, reqwest stack, wasm-bindgen, uuid, sqlx transient deps, etc.
+
 ### Added
 - **GIF creation from video** (v0.36.0) — after downloading any MP4 (or from a clip), press **🎞 GIF** to select a time range (max 30s) and get an animated GIF. Two-pass ffmpeg palette optimization for best quality. Works from both `/downloads` and `/cuts`. Segments over 30s are auto-truncated
 

@@ -65,32 +65,34 @@ struct YtdlpEntryJson {
 }
 
 /// Checks if a URL is a playlist URL
+///
+/// IMPORTANT: All path checks operate on `url.path()` (lowercased), NOT the full URL
+/// string. Matching against the full URL would let query parameters trigger false
+/// positives — e.g. `?in=user/sets/foo` on a SoundCloud track URL would otherwise be
+/// misclassified as a playlist.
 pub fn is_playlist_url(url: &Url) -> bool {
-    let url_str = url.as_str().to_lowercase();
+    let host = url.host_str().unwrap_or("").to_lowercase();
+    let path = url.path().to_lowercase();
 
     // YouTube playlists
-    if url_str.contains("youtube.com") || url_str.contains("youtu.be") {
+    if host.contains("youtube.com") || host.contains("youtu.be") {
         // Has list parameter
         if url.query_pairs().any(|(key, _)| key == "list") {
             return true;
         }
         // Is a playlist page
-        if url_str.contains("/playlist") {
+        if path.contains("/playlist") {
             return true;
         }
         // Is a channel or user
-        if url_str.contains("/channel/")
-            || url_str.contains("/c/")
-            || url_str.contains("/user/")
-            || url_str.contains("/@")
-        {
+        if path.contains("/channel/") || path.contains("/c/") || path.contains("/user/") || path.contains("/@") {
             return true;
         }
     }
 
     // SoundCloud sets/albums and artist profiles
-    if url_str.contains("soundcloud.com") {
-        if url_str.contains("/sets/") {
+    if host.contains("soundcloud.com") {
+        if path.contains("/sets/") {
             return true;
         }
         // Artist profiles and collection pages
@@ -108,7 +110,7 @@ pub fn is_playlist_url(url: &Url) -> bool {
     }
 
     // Spotify playlists/albums
-    if url_str.contains("spotify.com") && (url_str.contains("/playlist/") || url_str.contains("/album/")) {
+    if host.contains("spotify.com") && (path.contains("/playlist/") || path.contains("/album/")) {
         return true;
     }
 
@@ -396,6 +398,26 @@ mod tests {
     fn test_is_playlist_url_soundcloud_tracks_page() {
         let url = Url::parse("https://soundcloud.com/kareful/tracks").unwrap();
         assert!(is_playlist_url(&url));
+    }
+
+    /// Regression: a track URL with `?in=user/sets/foo` (the "navigated from playlist"
+    /// hint Soundcloud appends) must NOT be misclassified as a playlist. Previous
+    /// implementation matched `/sets/` against the full URL string, including the query.
+    #[test]
+    fn test_is_playlist_url_soundcloud_track_with_in_set_query() {
+        let url = Url::parse(
+            "https://soundcloud.com/apashe/apashe-dabin-kai-wachi-forsaken?in=stantracks/sets/bestbestbest2",
+        )
+        .unwrap();
+        assert!(!is_playlist_url(&url));
+    }
+
+    /// Regression: a YouTube watch URL with `/playlist` somewhere in the query must
+    /// not be misclassified. (The genuine `list=` query parameter still triggers it.)
+    #[test]
+    fn test_is_playlist_url_youtube_track_with_playlist_in_query() {
+        let url = Url::parse("https://www.youtube.com/watch?v=abc&ref=/playlist").unwrap();
+        assert!(!is_playlist_url(&url));
     }
 
     #[test]
