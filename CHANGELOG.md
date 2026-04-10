@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Inline HTML extracted to `include_str!`** (v0.36.12) — three large HTML templates (200+ lines total) previously embedded as `format!(r#"..."#)` strings inside `auth.rs::admin_login_handler`, `public.rs::render_privacy_page`, and `public.rs::render_share_page` were moved to sibling `.html` files in `crates/doracore/src/core/web/html/`: `admin_login.html`, `privacy_layout.html`, `share_page.html`. Loaded at compile time via `include_str!` and templated with plain `.replace("{PLACEHOLDER}", value)`. Benefits: CSS brace escaping (`{{ }}` → `{`) is gone, HTML files get proper editor syntax highlighting, no more wrestling with `format!`'s positional args, zero runtime cost (same `&'static str` baked into the binary). Rust files shrink by ~200 lines of noise
+
 - **`BotExt` extension trait for MarkdownV2 send/edit chains** (v0.36.11) — new `crates/dorabot/src/telegram/ext.rs` module with four methods (`send_md`, `send_md_kb`, `edit_md`, `edit_md_kb`) that collapse the repetitive
 
   ```rust

@@ -337,97 +337,12 @@ fn render_privacy_page(lang: &str) -> String {
         de_active = if lang == "de" { "active" } else { "" },
     );
 
-    format!(
-        r#"<!DOCTYPE html>
-<html lang="{lang}">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{title}</title>
-    <style>
-        :root {{
-            --bg: #0d0d0d;
-            --surface: #141414;
-            --text: #e0e0e0;
-            --muted: #888;
-            --accent: #7c6aff;
-            --border: #252525;
-        }}
-        body {{
-            background: var(--bg);
-            color: var(--text);
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-            line-height: 1.6;
-            margin: 0;
-            padding: 40px 20px;
-            display: flex;
-            justify-content: center;
-        }}
-        .container {{
-            max-width: 700px;
-            width: 100%;
-        }}
-        .logo {{
-            font-size: 1.5rem;
-            font-weight: 800;
-            margin-bottom: 40px;
-            text-align: center;
-        }}
-        .logo span {{ color: var(--accent); }}
-        h1 {{ font-size: 2rem; font-weight: 700; margin-bottom: 16px; color: #fff; }}
-        h2 {{ font-size: 1.25rem; font-weight: 600; margin-top: 32px; margin-bottom: 12px; color: #fff; }}
-        p {{ margin-bottom: 16px; color: var(--text); }}
-        .lead {{ font-size: 1.15rem; color: var(--muted); margin-bottom: 32px; }}
-        ul {{ margin-bottom: 24px; padding-left: 20px; }}
-        li {{ margin-bottom: 8px; }}
-        strong {{ color: #fff; }}
-        section {{ border-top: 1px solid var(--border); padding-top: 8px; margin-top: 32px; }}
-        .lang-switcher {{
-            display: flex;
-            justify-content: center;
-            gap: 12px;
-            margin-bottom: 40px;
-        }}
-        .lang-switcher a {{
-            color: var(--muted);
-            text-decoration: none;
-            font-size: 0.85rem;
-            font-weight: 600;
-            padding: 4px 12px;
-            border-radius: 6px;
-            border: 1px solid var(--border);
-            transition: all 0.2s;
-        }}
-        .lang-switcher a:hover {{ border-color: var(--accent); color: #fff; }}
-        .lang-switcher a.active {{ background: var(--accent); border-color: var(--accent); color: #fff; }}
-        footer {{
-            margin-top: 60px;
-            padding-top: 20px;
-            border-top: 1px solid var(--border);
-            text-align: center;
-            color: var(--muted);
-            font-size: 0.85rem;
-        }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="logo">dora<span>dura</span></div>
-        {lang_switcher}
-        <article>
-            {content}
-        </article>
-        <footer>
-            &copy; 2026 Doradura. All rights reserved.
-        </footer>
-    </div>
-</body>
-</html>"#,
-        lang = lang,
-        title = title,
-        lang_switcher = lang_switcher,
-        content = content
-    )
+    const LAYOUT: &str = include_str!("html/privacy_layout.html");
+    LAYOUT
+        .replace("{LANG}", lang)
+        .replace("{TITLE}", title)
+        .replace("{LANG_SWITCHER}", &lang_switcher)
+        .replace("{CONTENT}", content)
 }
 
 /// Render the share page HTML with ambilight UI.
@@ -477,64 +392,21 @@ fn render_share_page(row: &SharePageRecord) -> String {
 
     let streaming_btns = render_streaming_buttons(&streaming_links, &row.youtube_url);
 
-    format!(
-        r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>{title} — Listen</title>
-<meta property="og:title" content="{title}">
-<meta property="og:description" content="Listen on your favourite streaming service">
-{og_image}
-<style>
-*{{box-sizing:border-box;margin:0;padding:0}}
-body{{background:#0d0d0d;min-height:100vh;display:flex;justify-content:center;align-items:center;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:20px}}
-.ambilight-bg{{position:fixed;inset:-60px;background-size:cover;background-position:center;filter:blur(60px) saturate(160%) brightness(50%);z-index:0;opacity:.85}}
-.card{{position:relative;z-index:1;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);border-radius:24px;padding:32px;max-width:480px;width:100%;text-align:center;color:#fff}}
-.thumb{{width:100%;border-radius:16px;box-shadow:0 8px 40px rgba(0,0,0,.6);margin-bottom:20px;display:block}}
-h1{{font-size:1.4rem;font-weight:700;line-height:1.3;margin-bottom:8px}}
-.artist{{color:rgba(255,255,255,.7);font-size:.95rem;margin-bottom:4px}}
-.duration{{color:rgba(255,255,255,.5);font-size:.85rem;margin-bottom:24px}}
-.streaming-links{{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-bottom:20px}}
-.btn{{display:inline-block;padding:10px 20px;border-radius:50px;text-decoration:none;font-weight:600;font-size:.9rem;transition:opacity .15s}}
-.btn:hover{{opacity:.85}}
-.btn.spotify{{background:#1DB954;color:#000}}
-.btn.apple{{background:#fc3c44;color:#fff}}
-.btn.yt{{background:#ff0000;color:#fff}}
-.btn.deezer{{background:#a238ff;color:#fff}}
-.btn.tidal{{background:#000;color:#fff;border:1px solid #444}}
-.btn.amazon{{background:#00a8e1;color:#fff}}
-.btn.youtube-src{{background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.2)}}
-.disclaimer{{color:rgba(255,255,255,.35);font-size:.75rem;line-height:1.4}}
-</style>
-</head>
-<body>
-{ambilight_bg}
-<div class="card">
-{thumb_html}
-<h1>{title}</h1>
-{artist_html}
-{duration_html}
-<div class="streaming-links">
-{streaming_btns}
-</div>
-<p class="disclaimer">Content belongs to respective rights holders.<br>Links provided for legal streaming only.</p>
-</div>
-</body>
-</html>"#,
-        title = title,
-        og_image = if thumbnail_url.is_empty() {
-            String::new()
-        } else {
-            format!(r#"<meta property="og:image" content="{}">"#, html_escape(thumbnail_url))
-        },
-        ambilight_bg = ambilight_bg,
-        thumb_html = thumb_html,
-        artist_html = artist_html,
-        duration_html = duration_html,
-        streaming_btns = streaming_btns,
-    )
+    let og_image = if thumbnail_url.is_empty() {
+        String::new()
+    } else {
+        format!(r#"<meta property="og:image" content="{}">"#, html_escape(thumbnail_url))
+    };
+
+    const TEMPLATE: &str = include_str!("html/share_page.html");
+    TEMPLATE
+        .replace("{TITLE}", &title)
+        .replace("{OG_IMAGE}", &og_image)
+        .replace("{AMBILIGHT_BG}", &ambilight_bg)
+        .replace("{THUMB_HTML}", &thumb_html)
+        .replace("{ARTIST_HTML}", &artist_html)
+        .replace("{DURATION_HTML}", &duration_html)
+        .replace("{STREAMING_BTNS}", &streaming_btns)
 }
 
 fn render_streaming_buttons(links: &serde_json::Value, youtube_url: &str) -> String {

@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="{LANG}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{TITLE}</title>
+    <style>
+        :root {
+            --bg: #0d0d0d;
+            --surface: #141414;
+            --text: #e0e0e0;
+            --muted: #888;
+            --accent: #7c6aff;
+            --border: #252525;
+        }
+        body {
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 40px 20px;
+            display: flex;
+            justify-content: center;
+        }
+        .container {
+            max-width: 700px;
+            width: 100%;
+        }
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 800;
+            margin-bottom: 40px;
+            text-align: center;
+        }
+        .logo span { color: var(--accent); }
+        h1 { font-size: 2rem; font-weight: 700; margin-bottom: 16px; color: #fff; }
+        h2 { font-size: 1.25rem; font-weight: 600; margin-top: 32px; margin-bottom: 12px; color: #fff; }
+        p { margin-bottom: 16px; color: var(--text); }
+        .lead { font-size: 1.15rem; color: var(--muted); margin-bottom: 32px; }
+        ul { margin-bottom: 24px; padding-left: 20px; }
+        li { margin-bottom: 8px; }
+        strong { color: #fff; }
+        section { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 32px; }
+        .lang-switcher {
+            display: flex;
+            justify-content: center;
+            gap: 12px;
+            margin-bottom: 40px;
+        }
+        .lang-switcher a {
+            color: var(--muted);
+            text-decoration: none;
+            font-size: 0.85rem;
+            font-weight: 600;
+            padding: 4px 12px;
+            border-radius: 6px;
+            border: 1px solid var(--border);
+            transition: all 0.2s;
+        }
+        .lang-switcher a:hover { border-color: var(--accent); color: #fff; }
+        .lang-switcher a.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+        footer {
+            margin-top: 60px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border);
+            text-align: center;
+            color: var(--muted);
+            font-size: 0.85rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="logo">dora<span>dura</span></div>
+        {LANG_SWITCHER}
+        <article>
+            {CONTENT}
+        </article>
+        <footer>
+            &copy; 2026 Doradura. All rights reserved.
+        </footer>
+    </div>
+</body>
+</html>
+</content>
+</invoke>

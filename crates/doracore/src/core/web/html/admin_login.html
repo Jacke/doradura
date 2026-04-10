@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Admin Login — Doradura</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background: #0d0d0d;
+            color: #fff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        .login-wrap {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 32px;
+        }
+        .logo {
+            font-size: 2rem;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            color: #fff;
+        }
+        .logo span { color: #7c6aff; }
+        .card {
+            background: #1a1a1a;
+            border: 1px solid #2a2a2a;
+            border-radius: 20px;
+            padding: 40px 48px;
+            text-align: center;
+            box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+            min-width: 320px;
+        }
+        .card h1 {
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #fff;
+        }
+        .card p {
+            color: #666;
+            font-size: 0.88rem;
+            margin-bottom: 28px;
+            line-height: 1.5;
+        }
+        .tg-wrap {
+            display: flex;
+            justify-content: center;
+        }
+        .footer {
+            color: #444;
+            font-size: 0.78rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-wrap">
+        <div class="logo">dora<span>dura</span></div>
+        <div class="card">
+            <h1>Admin Access</h1>
+            <p>Sign in with your Telegram account<br>to access the dashboard.</p>
+            <div class="tg-wrap">
+                <script async src="https://telegram.org/js/telegram-widget.js?22"
+                        data-telegram-login="{BOT_USERNAME}"
+                        data-size="large"
+                        data-auth-url="/admin/auth"
+                        data-request-access="write"></script>
+            </div>
+        </div>
+        <div class="footer">Only authorised admins can log in.</div>
+    </div>
+</body>
+</html>
+</content>
+</invoke>
