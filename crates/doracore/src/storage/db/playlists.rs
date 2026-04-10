@@ -20,7 +20,7 @@ pub struct Playlist {
 }
 
 /// An item in a playlist.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct PlaylistItem {
     pub id: i64,
     pub playlist_id: i64,

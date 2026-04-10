@@ -83,18 +83,15 @@ impl SharedStorage {
                     .context("sqlite get_share_page_record")?;
                 Ok(result)
             }
-            Self::Postgres { pg_pool, .. } => {
-                let row = sqlx::query(
-                    "SELECT id, youtube_url, title, artist, thumbnail_url, duration_secs,
-                            streaming_links, created_at::text AS created_at
-                     FROM share_pages WHERE id = $1",
-                )
-                .bind(id)
-                .fetch_optional(pg_pool)
-                .await
-                .context("postgres get_share_page_record")?;
-                Ok(row.map(map_pg_share_page_record))
-            }
+            Self::Postgres { pg_pool, .. } => sqlx::query_as::<_, SharePageRecord>(
+                "SELECT id, youtube_url, title, artist, thumbnail_url, duration_secs,
+                        streaming_links, created_at::text AS created_at
+                 FROM share_pages WHERE id = $1",
+            )
+            .bind(id)
+            .fetch_optional(pg_pool)
+            .await
+            .context("postgres get_share_page_record"),
         }
     }
 
@@ -168,18 +165,5 @@ impl SharedStorage {
                 Ok(result.rows_affected() as usize)
             }
         }
-    }
-}
-
-fn map_pg_share_page_record(row: sqlx::postgres::PgRow) -> SharePageRecord {
-    SharePageRecord {
-        id: row.get("id"),
-        youtube_url: row.get("youtube_url"),
-        title: row.get("title"),
-        artist: row.get("artist"),
-        thumbnail_url: row.get("thumbnail_url"),
-        duration_secs: row.get("duration_secs"),
-        streaming_links_json: row.get("streaming_links"),
-        created_at: row.get("created_at"),
     }
 }

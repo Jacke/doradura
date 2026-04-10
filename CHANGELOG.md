@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **`#[derive(sqlx::FromRow)]` rollout** (v0.36.4) — enabled the `sqlx` `macros` feature and replaced hand-written `map_pg_*` helpers with `#[derive(sqlx::FromRow)]` for the three structs whose Postgres columns map 1:1 to fields without any bool-as-i32 / enum-as-string / JSON parsing quirks: `SharePageRecord`, `PlaylistItem`, `SyncedTrack`. Call sites switched from `sqlx::query(...).fetch_*(...)` + manual `.map(map_pg_...)` to `sqlx::query_as::<_, T>(...).fetch_*(...)`. The remaining 14 `map_pg_*` helpers (Charge, DownloadHistoryEntry, ErrorLogEntry, Playlist, SubtitleStyle, etc.) are intentionally kept — they do real conversion work (bool↔i32, enum parsing, JSON decoding) that isn't mechanically expressible via `FromRow` attributes and would regress readability to port. ~45 LOC deleted, zero behavior change
+
 ### Fixed
 - **Subprocess zombie leak on timeout** (v0.36.3) — every inline `tokio::time::timeout(dur, cmd.output())` call site across the codebase was missing `cmd.kill_on_drop(true)`. When the timeout fired, the tokio future was dropped but the subprocess kept running until it finished naturally — ffmpeg/LibreOffice can easily hold CPU, RAM, file handles, and worker slots for many minutes past the nominal timeout. Added a new `core::process::run_with_timeout_raw(cmd, dur) -> Result<io::Result<Output>, Elapsed>` helper that always sets `kill_on_drop` and exposes the raw nested result so callers can keep their custom user-facing error handling. Migrated 6 call sites: `conversion/document.rs` (LibreOffice), `telegram/commands/circle.rs` ×3 (ffmpeg video/retry/audio), `telegram/cuts.rs` (ffmpeg speed change), `telegram/voice_effects.rs` (ffmpeg voice effect). Download-path yt-dlp sites intentionally deferred — per CLAUDE.md they require a Railway smoke test before touching
 

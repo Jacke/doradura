@@ -1,6 +1,6 @@
 use serde_json::Value as JsonValue;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct SharePageRecord {
     pub id: String,
     pub youtube_url: String,
@@ -8,6 +8,8 @@ pub struct SharePageRecord {
     pub artist: Option<String>,
     pub thumbnail_url: Option<String>,
     pub duration_secs: Option<i64>,
+    /// Maps to the Postgres column `streaming_links` (sqlx column name differs from field).
+    #[sqlx(rename = "streaming_links")]
     pub streaming_links_json: Option<String>,
     pub created_at: String,
 }

@@ -22,7 +22,7 @@ pub struct SyncedPlaylist {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct SyncedTrack {
     pub id: i64,
     pub playlist_id: i64,

@@ -348,20 +348,17 @@ impl SharedStorage {
                 let conn = db::get_connection(db_pool).context("sqlite get_playlist_items connection")?;
                 db::get_playlist_items(&conn, playlist_id).context("sqlite get_playlist_items")
             }
-            Self::Postgres { pg_pool, .. } => {
-                let rows = sqlx::query(
-                    "SELECT id, playlist_id, position, download_history_id, title, artist, url,
-                            duration_secs, file_id, source, CAST(added_at AS TEXT) AS added_at
-                     FROM playlist_items
-                     WHERE playlist_id = $1
-                     ORDER BY position",
-                )
-                .bind(playlist_id)
-                .fetch_all(pg_pool)
-                .await
-                .context("postgres get_playlist_items")?;
-                rows.into_iter().map(map_pg_playlist_item).collect()
-            }
+            Self::Postgres { pg_pool, .. } => sqlx::query_as::<_, PlaylistItem>(
+                "SELECT id, playlist_id, position, download_history_id, title, artist, url,
+                        duration_secs, file_id, source, CAST(added_at AS TEXT) AS added_at
+                 FROM playlist_items
+                 WHERE playlist_id = $1
+                 ORDER BY position",
+            )
+            .bind(playlist_id)
+            .fetch_all(pg_pool)
+            .await
+            .context("postgres get_playlist_items"),
         }
     }
 
@@ -376,23 +373,20 @@ impl SharedStorage {
                 let conn = db::get_connection(db_pool).context("sqlite get_playlist_items_page connection")?;
                 db::get_playlist_items_page(&conn, playlist_id, offset, limit).context("sqlite get_playlist_items_page")
             }
-            Self::Postgres { pg_pool, .. } => {
-                let rows = sqlx::query(
-                    "SELECT id, playlist_id, position, download_history_id, title, artist, url,
-                            duration_secs, file_id, source, CAST(added_at AS TEXT) AS added_at
-                     FROM playlist_items
-                     WHERE playlist_id = $1
-                     ORDER BY position
-                     LIMIT $2 OFFSET $3",
-                )
-                .bind(playlist_id)
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(pg_pool)
-                .await
-                .context("postgres get_playlist_items_page")?;
-                rows.into_iter().map(map_pg_playlist_item).collect()
-            }
+            Self::Postgres { pg_pool, .. } => sqlx::query_as::<_, PlaylistItem>(
+                "SELECT id, playlist_id, position, download_history_id, title, artist, url,
+                        duration_secs, file_id, source, CAST(added_at AS TEXT) AS added_at
+                 FROM playlist_items
+                 WHERE playlist_id = $1
+                 ORDER BY position
+                 LIMIT $2 OFFSET $3",
+            )
+            .bind(playlist_id)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pg_pool)
+            .await
+            .context("postgres get_playlist_items_page"),
         }
     }
 
@@ -449,18 +443,5 @@ fn map_pg_playlist(row: sqlx::postgres::PgRow) -> Result<Playlist> {
     })
 }
 
-fn map_pg_playlist_item(row: sqlx::postgres::PgRow) -> Result<PlaylistItem> {
-    Ok(PlaylistItem {
-        id: row.get("id"),
-        playlist_id: row.get("playlist_id"),
-        position: row.get("position"),
-        download_history_id: row.get("download_history_id"),
-        title: row.get("title"),
-        artist: row.get("artist"),
-        url: row.get("url"),
-        duration_secs: row.get("duration_secs"),
-        file_id: row.get("file_id"),
-        source: row.get("source"),
-        added_at: row.get("added_at"),
-    })
-}
+// `map_pg_playlist_item` removed — replaced by `#[derive(sqlx::FromRow)]` on
+// `PlaylistItem` + `sqlx::query_as::<_, PlaylistItem>` at call sites.

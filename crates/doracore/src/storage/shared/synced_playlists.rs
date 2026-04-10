@@ -293,21 +293,18 @@ impl SharedStorage {
                 let conn = db::get_connection(db_pool).context("sqlite get_synced_tracks connection")?;
                 db::get_synced_tracks(&conn, playlist_id).context("sqlite get_synced_tracks")
             }
-            Self::Postgres { pg_pool, .. } => {
-                let rows = sqlx::query(
-                    "SELECT id, playlist_id, position, title, artist, duration_secs, external_id,
-                            source_url, resolved_url, import_status, file_id,
-                            CAST(added_at AS TEXT) AS added_at
-                     FROM synced_tracks
-                     WHERE playlist_id = $1
-                     ORDER BY position ASC",
-                )
-                .bind(playlist_id)
-                .fetch_all(pg_pool)
-                .await
-                .context("postgres get_synced_tracks")?;
-                rows.into_iter().map(map_pg_synced_track).collect()
-            }
+            Self::Postgres { pg_pool, .. } => sqlx::query_as::<_, SyncedTrack>(
+                "SELECT id, playlist_id, position, title, artist, duration_secs, external_id,
+                        source_url, resolved_url, import_status, file_id,
+                        CAST(added_at AS TEXT) AS added_at
+                 FROM synced_tracks
+                 WHERE playlist_id = $1
+                 ORDER BY position ASC",
+            )
+            .bind(playlist_id)
+            .fetch_all(pg_pool)
+            .await
+            .context("postgres get_synced_tracks"),
         }
     }
 
@@ -317,24 +314,21 @@ impl SharedStorage {
                 let conn = db::get_connection(db_pool).context("sqlite get_synced_tracks_page connection")?;
                 db::get_synced_tracks_page(&conn, playlist_id, offset, limit).context("sqlite get_synced_tracks_page")
             }
-            Self::Postgres { pg_pool, .. } => {
-                let rows = sqlx::query(
-                    "SELECT id, playlist_id, position, title, artist, duration_secs, external_id,
-                            source_url, resolved_url, import_status, file_id,
-                            CAST(added_at AS TEXT) AS added_at
-                     FROM synced_tracks
-                     WHERE playlist_id = $1
-                     ORDER BY position ASC
-                     LIMIT $2 OFFSET $3",
-                )
-                .bind(playlist_id)
-                .bind(limit)
-                .bind(offset)
-                .fetch_all(pg_pool)
-                .await
-                .context("postgres get_synced_tracks_page")?;
-                rows.into_iter().map(map_pg_synced_track).collect()
-            }
+            Self::Postgres { pg_pool, .. } => sqlx::query_as::<_, SyncedTrack>(
+                "SELECT id, playlist_id, position, title, artist, duration_secs, external_id,
+                        source_url, resolved_url, import_status, file_id,
+                        CAST(added_at AS TEXT) AS added_at
+                 FROM synced_tracks
+                 WHERE playlist_id = $1
+                 ORDER BY position ASC
+                 LIMIT $2 OFFSET $3",
+            )
+            .bind(playlist_id)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pg_pool)
+            .await
+            .context("postgres get_synced_tracks_page"),
         }
     }
 
@@ -344,20 +338,17 @@ impl SharedStorage {
                 let conn = db::get_connection(db_pool).context("sqlite get_synced_track connection")?;
                 db::get_synced_track(&conn, track_id).context("sqlite get_synced_track")
             }
-            Self::Postgres { pg_pool, .. } => {
-                let row = sqlx::query(
-                    "SELECT id, playlist_id, position, title, artist, duration_secs, external_id,
-                            source_url, resolved_url, import_status, file_id,
-                            CAST(added_at AS TEXT) AS added_at
-                     FROM synced_tracks
-                     WHERE id = $1",
-                )
-                .bind(track_id)
-                .fetch_optional(pg_pool)
-                .await
-                .context("postgres get_synced_track")?;
-                row.map(map_pg_synced_track).transpose()
-            }
+            Self::Postgres { pg_pool, .. } => sqlx::query_as::<_, SyncedTrack>(
+                "SELECT id, playlist_id, position, title, artist, duration_secs, external_id,
+                        source_url, resolved_url, import_status, file_id,
+                        CAST(added_at AS TEXT) AS added_at
+                 FROM synced_tracks
+                 WHERE id = $1",
+            )
+            .bind(track_id)
+            .fetch_optional(pg_pool)
+            .await
+            .context("postgres get_synced_track"),
         }
     }
 
@@ -465,19 +456,5 @@ fn map_pg_synced_playlist(row: sqlx::postgres::PgRow) -> Result<SyncedPlaylist> 
     })
 }
 
-fn map_pg_synced_track(row: sqlx::postgres::PgRow) -> Result<SyncedTrack> {
-    Ok(SyncedTrack {
-        id: row.get("id"),
-        playlist_id: row.get("playlist_id"),
-        position: row.get("position"),
-        title: row.get("title"),
-        artist: row.get("artist"),
-        duration_secs: row.get("duration_secs"),
-        external_id: row.get("external_id"),
-        source_url: row.get("source_url"),
-        resolved_url: row.get("resolved_url"),
-        import_status: row.get("import_status"),
-        file_id: row.get("file_id"),
-        added_at: row.get("added_at"),
-    })
-}
+// map_pg_synced_track removed — replaced by `#[derive(sqlx::FromRow)]` on
+// `SyncedTrack` + `sqlx::query_as::<_, SyncedTrack>` at call sites.
