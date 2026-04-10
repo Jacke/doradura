@@ -1,5 +1,6 @@
 use super::{escape_markdown, is_admin};
 use crate::telegram::Bot;
+use crate::telegram::BotExt;
 use anyhow::Result;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode};
@@ -458,11 +459,10 @@ pub async fn handle_proxy_stats_command(bot: &Bot, chat_id: ChatId, _user_id: i6
     use crate::download::proxy::ProxyListManager;
 
     if config::proxy::WARP_PROXY.is_none() && config::proxy::PROXY_FILE.is_none() {
-        bot.send_message(
+        bot.send_md(
             chat_id,
             "❌ *No proxies configured*\n\nSet WARP_PROXY or PROXY_FILE environment variables.",
         )
-        .parse_mode(ParseMode::MarkdownV2)
         .await?;
         return Ok(());
     }
@@ -471,8 +471,7 @@ pub async fn handle_proxy_stats_command(bot: &Bot, chat_id: ChatId, _user_id: i6
     let stats = manager.all_stats().await;
 
     if stats.is_empty() {
-        bot.send_message(chat_id, "ℹ️ *Proxy system configured but no proxies loaded yet*")
-            .parse_mode(ParseMode::MarkdownV2)
+        bot.send_md(chat_id, "ℹ️ *Proxy system configured but no proxies loaded yet*")
             .await?;
         return Ok(());
     }
@@ -517,9 +516,7 @@ pub async fn handle_proxy_stats_command(bot: &Bot, chat_id: ChatId, _user_id: i6
         message.push_str(&format!("\n_... and {} more proxies_", stats.len() - 10));
     }
 
-    bot.send_message(chat_id, message)
-        .parse_mode(ParseMode::MarkdownV2)
-        .await?;
+    bot.send_md(chat_id, message).await?;
 
     Ok(())
 }
@@ -530,20 +527,17 @@ pub async fn handle_proxy_reset_command(bot: &Bot, chat_id: ChatId, _user_id: i6
     use crate::download::proxy::ProxyListManager;
 
     if config::proxy::WARP_PROXY.is_none() && config::proxy::PROXY_FILE.is_none() {
-        bot.send_message(chat_id, "❌ *No proxies configured*")
-            .parse_mode(ParseMode::MarkdownV2)
-            .await?;
+        bot.send_md(chat_id, "❌ *No proxies configured*").await?;
         return Ok(());
     }
 
     let manager = ProxyListManager::new(config::proxy::get_selection_strategy());
     manager.reset_stats().await;
 
-    bot.send_message(
+    bot.send_md(
         chat_id,
         "✅ *Proxy statistics reset*\n\nAll health counters have been cleared.",
     )
-    .parse_mode(ParseMode::MarkdownV2)
     .await?;
 
     Ok(())

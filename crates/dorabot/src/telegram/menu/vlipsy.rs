@@ -11,6 +11,7 @@ use crate::i18n;
 use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
+use crate::telegram::BotExt;
 use crate::vlipsy::VlipsyClient;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -201,10 +202,7 @@ async fn show_results_page(
 
     let text = format!("{}\n{}", title_text, page_text);
 
-    bot.send_message(chat_id, text)
-        .parse_mode(ParseMode::MarkdownV2)
-        .reply_markup(keyboard)
-        .await?;
+    bot.send_md_kb(chat_id, text, keyboard).await?;
 
     Ok(())
 }

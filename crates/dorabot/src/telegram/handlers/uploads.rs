@@ -5,6 +5,7 @@ use teloxide::types::Message;
 
 use super::types::{HandlerDeps, HandlerError};
 use crate::telegram::Bot;
+use crate::telegram::BotExt;
 
 /// Handler for media uploads (photo/video/document) from premium/vip users
 pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::UpdateHandler<HandlerError> {
@@ -341,10 +342,7 @@ pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::
                         let keyboard = build_upload_keyboard(media_type, upload_id);
                         let upload_text = build_upload_text(media_type, media_icon, &escaped_title, &escaped_info);
 
-                        bot.send_message(chat_id, upload_text)
-                            .parse_mode(ParseMode::MarkdownV2)
-                            .reply_markup(keyboard)
-                            .await?;
+                        bot.send_md_kb(chat_id, upload_text, keyboard).await?;
                     }
                     Err(e) => {
                         log::error!("Failed to save upload: {}", e);

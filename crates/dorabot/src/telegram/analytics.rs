@@ -9,9 +9,10 @@ use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::telegram::admin;
 use crate::telegram::Bot;
+use crate::telegram::BotExt;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardMarkup, ParseMode};
+use teloxide::types::InlineKeyboardMarkup;
 
 /// Handles /analytics command - shows overview dashboard
 ///
@@ -50,10 +51,7 @@ pub async fn handle_analytics_command(
         vec![crate::telegram::cb("🔙 Close", "analytics:close")],
     ]);
 
-    bot.send_message(chat_id, dashboard)
-        .parse_mode(ParseMode::MarkdownV2)
-        .reply_markup(keyboard)
-        .await?;
+    bot.send_md_kb(chat_id, dashboard, keyboard).await?;
 
     Ok(())
 }
@@ -86,9 +84,7 @@ pub async fn handle_health_command(
 
     let health_report = generate_health_report(&db_pool).await;
 
-    bot.send_message(chat_id, health_report)
-        .parse_mode(ParseMode::MarkdownV2)
-        .await?;
+    bot.send_md(chat_id, health_report).await?;
 
     Ok(())
 }
@@ -128,9 +124,7 @@ pub async fn handle_metrics_command(
         _ => generate_all_metrics(&db_pool, &shared_storage).await,
     };
 
-    bot.send_message(chat_id, metrics_report)
-        .parse_mode(ParseMode::MarkdownV2)
-        .await?;
+    bot.send_md(chat_id, metrics_report).await?;
 
     Ok(())
 }
@@ -162,9 +156,7 @@ pub async fn handle_revenue_command(
 
     let revenue_report = generate_revenue_report(&db_pool, &shared_storage).await;
 
-    bot.send_message(chat_id, revenue_report)
-        .parse_mode(ParseMode::MarkdownV2)
-        .await?;
+    bot.send_md(chat_id, revenue_report).await?;
 
     Ok(())
 }

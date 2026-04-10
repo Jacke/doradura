@@ -54,6 +54,7 @@ pub mod commands;
 pub mod cuts;
 pub mod downloads;
 pub mod draft;
+pub mod ext;
 pub mod feedback;
 pub mod handlers;
 pub mod inline_query;
@@ -87,6 +88,7 @@ pub use analytics::{handle_analytics_command, handle_health_command, handle_metr
 pub use bot::{create_bot, is_message_addressed_to_bot, setup_all_language_commands, setup_chat_bot_commands, Command};
 pub use bot_api_logger::Bot;
 pub use commands::{handle_downsub_command, handle_info_command, handle_message};
+pub use ext::BotExt;
 pub use handlers::{schema, HandlerDeps, HandlerError};
 pub use markdown::send_message_markdown_v2;
 pub use menu::{

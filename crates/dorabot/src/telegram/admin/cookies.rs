@@ -5,6 +5,7 @@ use crate::download::cookies;
 use crate::download::ytdlp;
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
+use crate::telegram::BotExt;
 use anyhow::Result;
 use std::sync::LazyLock;
 use std::sync::{Arc, Mutex};
@@ -40,9 +41,7 @@ pub async fn handle_diagnose_cookies_command(bot: &Bot, chat_id: ChatId, user_id
     // Send report
     let message = format!("🍪 *YouTube Cookies Diagnostics*\n\n{}", escape_markdown(&report));
 
-    bot.send_message(chat_id, message)
-        .parse_mode(ParseMode::MarkdownV2)
-        .await?;
+    bot.send_md(chat_id, message).await?;
 
     // If cookies look valid structurally, offer to test with yt-dlp
     if diagnostic.is_valid {
@@ -51,9 +50,7 @@ pub async fn handle_diagnose_cookies_command(bot: &Bot, chat_id: ChatId, user_id
             "admin:test_cookies",
         )]]);
 
-        bot.send_message(chat_id, "Do you want to test cookies with yt\\-dlp?")
-            .parse_mode(ParseMode::MarkdownV2)
-            .reply_markup(keyboard)
+        bot.send_md_kb(chat_id, "Do you want to test cookies with yt\\-dlp?", keyboard)
             .await?;
     }
 
@@ -99,7 +96,7 @@ pub async fn handle_update_cookies_command(
 
     log::info!("✅ Created cookies upload session for admin {}", user_id);
 
-    bot.send_message(
+    bot.send_md(
         chat_id,
         "📤 *Send your cookies file*\n\n\
         Send a txt file with cookies in Netscape HTTP Cookie File format\\.\n\n\
@@ -109,7 +106,6 @@ pub async fn handle_update_cookies_command(
         3\\. Send the file here\n\n\
         ⏱ Session expires in 10 minutes\\.",
     )
-    .parse_mode(ParseMode::MarkdownV2)
     .await?;
 
     log::info!("🏁 /update_cookies command handler finished for admin {}", user_id);
@@ -337,9 +333,7 @@ pub async fn handle_cookies_file_upload(
                                             escape_markdown(&diagnostic_report)
                                         );
 
-                                        bot.send_message(chat_id, success_message)
-                                            .parse_mode(ParseMode::MarkdownV2)
-                                            .await?;
+                                        bot.send_md(chat_id, success_message).await?;
 
                                         log::info!("✅ Cookies update completed successfully for admin {}", user_id);
                                     }
@@ -362,9 +356,7 @@ pub async fn handle_cookies_file_upload(
                                             escape_markdown(&reason.to_string())
                                         );
 
-                                        bot.send_message(chat_id, warning_message)
-                                            .parse_mode(ParseMode::MarkdownV2)
-                                            .await?;
+                                        bot.send_md(chat_id, warning_message).await?;
 
                                         log::warn!(
                                             "⚠️ Cookies update: file valid but yt-dlp test failed for admin {}",
@@ -386,9 +378,7 @@ pub async fn handle_cookies_file_upload(
                                     escape_markdown(&diagnostic_report)
                                 );
 
-                                bot.send_message(chat_id, warning_message)
-                                    .parse_mode(ParseMode::MarkdownV2)
-                                    .await?;
+                                bot.send_md(chat_id, warning_message).await?;
 
                                 log::warn!(
                                     "⚠️ Cookies update: structural issues found for admin {}: {:?}",
@@ -412,9 +402,7 @@ pub async fn handle_cookies_file_upload(
                                 escape_markdown(&e.to_string())
                             );
 
-                            bot.send_message(chat_id, error_message)
-                                .parse_mode(ParseMode::MarkdownV2)
-                                .await?;
+                            bot.send_md(chat_id, error_message).await?;
                         }
                     }
                 }
@@ -568,9 +556,7 @@ pub async fn handle_ig_cookies_file_upload(
                                         escape_markdown(&diagnostic_report)
                                     );
 
-                                    bot.send_message(chat_id, success_message)
-                                        .parse_mode(ParseMode::MarkdownV2)
-                                        .await?;
+                                    bot.send_md(chat_id, success_message).await?;
                                 }
                                 Err(reason) => {
                                     let warning_message = format!(
@@ -584,9 +570,7 @@ pub async fn handle_ig_cookies_file_upload(
                                         escape_markdown(&reason.to_string())
                                     );
 
-                                    bot.send_message(chat_id, warning_message)
-                                        .parse_mode(ParseMode::MarkdownV2)
-                                        .await?;
+                                    bot.send_md(chat_id, warning_message).await?;
                                 }
                             }
                         } else {
@@ -601,9 +585,7 @@ pub async fn handle_ig_cookies_file_upload(
                                 escape_markdown(&diagnostic_report)
                             );
 
-                            bot.send_message(chat_id, warning_message)
-                                .parse_mode(ParseMode::MarkdownV2)
-                                .await?;
+                            bot.send_md(chat_id, warning_message).await?;
                         }
                     }
                     Err(e) => {
@@ -620,9 +602,7 @@ pub async fn handle_ig_cookies_file_upload(
                             escape_markdown(&e.to_string())
                         );
 
-                        bot.send_message(chat_id, error_message)
-                            .parse_mode(ParseMode::MarkdownV2)
-                            .await?;
+                        bot.send_md(chat_id, error_message).await?;
                     }
                 }
             }
@@ -659,8 +639,7 @@ pub async fn handle_ig_cookies_file_upload(
 
 /// Handles the admin:test_cookies callback - tests cookies with yt-dlp
 pub async fn handle_test_cookies_callback(bot: &Bot, chat_id: ChatId, message_id: MessageId) -> Result<()> {
-    bot.edit_message_text(chat_id, message_id, "⏳ Testing cookies with yt\\-dlp\\.\\.\\.")
-        .parse_mode(ParseMode::MarkdownV2)
+    bot.edit_md(chat_id, message_id, "⏳ Testing cookies with yt\\-dlp\\.\\.\\.")
         .await?;
 
     let result = cookies::validate_cookies().await;
@@ -684,9 +663,7 @@ pub async fn handle_test_cookies_callback(bot: &Bot, chat_id: ChatId, message_id
         }
     };
 
-    bot.edit_message_text(chat_id, message_id, text)
-        .parse_mode(ParseMode::MarkdownV2)
-        .await?;
+    bot.edit_md(chat_id, message_id, text).await?;
 
     Ok(())
 }

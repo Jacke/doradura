@@ -7,6 +7,7 @@
 use crate::lyrics::{self, LyricsSection};
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
+use crate::telegram::BotExt;
 use std::collections::HashMap;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -136,10 +137,7 @@ async fn send_section_picker(
     let display = escape_md(&format!("{} – {}", artist, title));
     let header = format!("🎵 *{}*\nChoose a section:", display);
     let keyboard = build_section_keyboard(session_id, sections);
-    bot.send_message(chat_id, header)
-        .parse_mode(ParseMode::MarkdownV2)
-        .reply_markup(keyboard)
-        .await?;
+    bot.send_md_kb(chat_id, header, keyboard).await?;
     Ok(())
 }
 

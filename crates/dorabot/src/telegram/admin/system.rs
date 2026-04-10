@@ -4,6 +4,7 @@ use crate::core::{BOT_API_RESPONSE_REGEX, BOT_API_START_SIMPLE_REGEX};
 use crate::downsub::DownsubGateway;
 use crate::storage::backup::{create_backup, list_backups};
 use crate::telegram::Bot;
+use crate::telegram::BotExt;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::fs::File;
@@ -12,9 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use teloxide::prelude::*;
-use teloxide::types::{
-    InlineKeyboardMarkup, MessageId, ParseMode, Seconds, TransactionPartner, TransactionPartnerUserKind,
-};
+use teloxide::types::{InlineKeyboardMarkup, MessageId, Seconds, TransactionPartner, TransactionPartnerUserKind};
 use tokio::net::TcpStream;
 use tokio::process::Command as TokioCommand;
 use tokio::time::timeout;
@@ -228,10 +227,7 @@ pub async fn handle_version_command(bot: &Bot, chat_id: ChatId, user_id: i64) ->
         "admin:update_ytdlp".to_string(),
     )]]);
 
-    bot.send_message(chat_id, text)
-        .parse_mode(ParseMode::MarkdownV2)
-        .reply_markup(keyboard)
-        .await?;
+    bot.send_md_kb(chat_id, text, keyboard).await?;
 
     Ok(())
 }
@@ -268,10 +264,7 @@ pub async fn handle_update_ytdlp_callback(bot: &Bot, chat_id: ChatId, message_id
                 "admin:check_ytdlp_version".to_string(),
             )]]);
 
-            bot.edit_message_text(chat_id, message_id, text)
-                .parse_mode(ParseMode::MarkdownV2)
-                .reply_markup(keyboard)
-                .await?;
+            bot.edit_md_kb(chat_id, message_id, text, keyboard).await?;
         }
         Err(e) => {
             let text = format!(
@@ -279,9 +272,7 @@ pub async fn handle_update_ytdlp_callback(bot: &Bot, chat_id: ChatId, message_id
                 Error: `{}`",
                 escape_markdown(&e.to_string())
             );
-            bot.edit_message_text(chat_id, message_id, text)
-                .parse_mode(ParseMode::MarkdownV2)
-                .await?;
+            bot.edit_md(chat_id, message_id, text).await?;
         }
     }
 
@@ -309,10 +300,7 @@ pub async fn handle_check_ytdlp_version_callback(bot: &Bot, chat_id: ChatId, mes
         "admin:update_ytdlp".to_string(),
     )]]);
 
-    bot.edit_message_text(chat_id, message_id, text)
-        .parse_mode(ParseMode::MarkdownV2)
-        .reply_markup(keyboard)
-        .await?;
+    bot.edit_md_kb(chat_id, message_id, text, keyboard).await?;
 
     Ok(())
 }
@@ -473,9 +461,7 @@ pub async fn handle_botapi_speed_command(bot: &Bot, chat_id: ChatId, user_id: i6
 
     if completed.is_empty() && pending.is_empty() {
         text.push_str("\nNo send* entries found in the latest log.");
-        bot.send_message(chat_id, text)
-            .parse_mode(ParseMode::MarkdownV2)
-            .await?;
+        bot.send_md(chat_id, text).await?;
         return Ok(());
     }
 
@@ -512,9 +498,7 @@ pub async fn handle_botapi_speed_command(bot: &Bot, chat_id: ChatId, user_id: i6
         }
     }
 
-    bot.send_message(chat_id, text)
-        .parse_mode(ParseMode::MarkdownV2)
-        .await?;
+    bot.send_md(chat_id, text).await?;
     Ok(())
 }
 
@@ -664,9 +648,7 @@ pub async fn handle_transactions_command(bot: &Bot, chat_id: ChatId, user_id: i6
                 }
             }
 
-            bot.send_message(chat_id, text)
-                .parse_mode(ParseMode::MarkdownV2)
-                .await?;
+            bot.send_md(chat_id, text).await?;
         }
         Err(e) => {
             log::error!("❌ Failed to fetch star transactions: {:?}", e);

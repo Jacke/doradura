@@ -9,6 +9,7 @@ use crate::conversion::video::{
 use crate::core::escape_markdown;
 use crate::storage::uploads::UploadEntry;
 use crate::storage::{DbPool, SharedStorage};
+use crate::telegram::BotExt;
 use crate::telegram::{download_file_from_telegram, Bot};
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -245,10 +246,7 @@ pub async fn show_videos_page(
 
     let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
 
-    bot.send_message(chat_id, text)
-        .parse_mode(ParseMode::MarkdownV2)
-        .reply_markup(keyboard)
-        .await
+    bot.send_md_kb(chat_id, text, keyboard).await
 }
 
 /// Build Level 1 action keyboard for a specific upload (category selection)
@@ -477,10 +475,7 @@ pub async fn handle_videos_callback(
 
                 if edit_result.is_err() {
                     // Fall back to send + delete (for /videos list click)
-                    bot.send_message(chat_id, text)
-                        .parse_mode(ParseMode::MarkdownV2)
-                        .reply_markup(keyboard)
-                        .await?;
+                    bot.send_md_kb(chat_id, text, keyboard).await?;
                     bot.delete_message(chat_id, message_id).await.ok();
                 }
             }
@@ -510,10 +505,7 @@ pub async fn handle_videos_callback(
                     _ => return Ok(()),
                 };
 
-                bot.edit_message_text(chat_id, message_id, text)
-                    .parse_mode(ParseMode::MarkdownV2)
-                    .reply_markup(keyboard)
-                    .await?;
+                bot.edit_md_kb(chat_id, message_id, text, keyboard).await?;
             } else {
                 bot.edit_message_text(chat_id, message_id, "❌ File not found").await?;
             }
@@ -710,10 +702,7 @@ pub async fn handle_videos_callback(
                             )
                         };
 
-                        bot.edit_message_text(chat_id, message_id, status_text)
-                            .parse_mode(ParseMode::MarkdownV2)
-                            .reply_markup(keyboard)
-                            .await?;
+                        bot.edit_md_kb(chat_id, message_id, status_text, keyboard).await?;
                     }
                     "audio" | "gif" | "compress" => {
                         // Route to working conversion handler
@@ -820,11 +809,10 @@ async fn handle_convert_callback(
 
                 // Check if video is too long for splitting (> 360s)
                 if is_too_long_for_split(duration) {
-                    bot.send_message(
+                    bot.send_md(
                         chat_id,
                         "❌ Video is too long\\. Maximum 6 minutes for splitting into circles\\.",
                     )
-                    .parse_mode(ParseMode::MarkdownV2)
                     .await?;
                     return Ok(());
                 }

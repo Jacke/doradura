@@ -3,6 +3,7 @@ use crate::storage::db::{self, OutputKind, SourceKind};
 use crate::storage::{DbPool, SharedStorage};
 use crate::telegram::commands::{process_video_clip, CutSegment};
 use crate::telegram::Bot;
+use crate::telegram::BotExt;
 use crate::timestamps::format_timestamp;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -517,12 +518,11 @@ This may take a few minutes\\.",
                     "cuts:clip_cancel".to_string(),
                 )]]);
 
-                bot.send_message(
+                bot.send_md_kb(
                     chat_id,
                     "✂️ Send intervals for the clip in format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nMultiple intervals separated by commas\\.\n\nExample: `00:10-00:25, 01:00-01:10`",
+                    keyboard,
                 )
-                .parse_mode(ParseMode::MarkdownV2)
-                .reply_markup(keyboard)
                 .await?;
 
                 if !cut.original_url.trim().is_empty() {
@@ -580,10 +580,7 @@ This may take a few minutes\\.",
                 let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
 
                 let message = crate::i18n::t(&lang, "video_circle.select_part");
-                bot.send_message(chat_id, message)
-                    .parse_mode(ParseMode::MarkdownV2)
-                    .reply_markup(keyboard)
-                    .await?;
+                bot.send_md_kb(chat_id, message, keyboard).await?;
 
                 if !cut.original_url.trim().is_empty() {
                     bot.send_message(chat_id, cut.original_url).await.ok();

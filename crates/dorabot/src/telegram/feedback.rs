@@ -5,6 +5,7 @@
 use crate::core::escape_markdown;
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
+use crate::telegram::BotExt;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::ParseMode;
@@ -47,9 +48,7 @@ pub async fn send_feedback_prompt(
 ) -> ResponseResult<()> {
     let message = i18n::t(lang, "feedback.prompt");
 
-    bot.send_message(chat_id, message)
-        .parse_mode(ParseMode::MarkdownV2)
-        .await?;
+    bot.send_md(chat_id, message).await?;
 
     // Set state: waiting for feedback
     set_waiting_for_feedback(shared_storage, chat_id.0, true).await;
@@ -66,9 +65,7 @@ pub async fn send_feedback_confirmation(
 ) -> ResponseResult<()> {
     let message = i18n::t(lang, "feedback.sent");
 
-    bot.send_message(chat_id, message)
-        .parse_mode(ParseMode::MarkdownV2)
-        .await?;
+    bot.send_md(chat_id, message).await?;
 
     // Clear state
     set_waiting_for_feedback(shared_storage, chat_id.0, false).await;

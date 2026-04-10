@@ -2,6 +2,7 @@ use crate::i18n;
 use crate::storage::db::{self, DbPool, OutputKind, SourceKind};
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
+use crate::telegram::BotExt;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::CallbackQueryId;
@@ -217,10 +218,7 @@ pub async fn start_ringtone_session(
 
     let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb("❌ Cancel", "downloads:clip_cancel")]]);
 
-    bot.send_message(chat_id, prompt_text)
-        .parse_mode(ParseMode::MarkdownV2)
-        .reply_markup(keyboard)
-        .await?;
+    bot.send_md_kb(chat_id, prompt_text, keyboard).await?;
 
     Ok(())
 }
@@ -278,9 +276,7 @@ pub async fn send_ringtone_instructions(
 
     if total == 0 {
         // No images available — fall back to text-only
-        bot.send_message(chat_id, instruction_text)
-            .parse_mode(ParseMode::MarkdownV2)
-            .await?;
+        bot.send_md(chat_id, instruction_text).await?;
         return Ok(());
     }
 
@@ -336,9 +332,7 @@ pub async fn send_ringtone_instructions(
                     e
                 );
                 // Fall back to text-only
-                bot.send_message(chat_id, instruction_text)
-                    .parse_mode(ParseMode::MarkdownV2)
-                    .await?;
+                bot.send_md(chat_id, instruction_text).await?;
             }
         }
     }

@@ -3,6 +3,7 @@ use crate::core::types::Plan;
 use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
+use crate::telegram::BotExt;
 use anyhow::Result;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -32,8 +33,7 @@ pub async fn handle_users_command(
     log::debug!("Found {} users in database", users.len());
 
     if users.is_empty() {
-        bot.send_message(chat_id, "👥 *User List*\n\nNo users in the database yet\\.")
-            .parse_mode(ParseMode::MarkdownV2)
+        bot.send_md(chat_id, "👥 *User List*\n\nNo users in the database yet\\.")
             .await?;
         return Ok(());
     }
@@ -315,9 +315,7 @@ pub async fn handle_charges_command(
                     🔄 Recurring: {}",
                     total_charges, total_amount, premium_count, vip_count, recurring_count
                 );
-                bot.send_message(chat_id, text)
-                    .parse_mode(ParseMode::MarkdownV2)
-                    .await?;
+                bot.send_md(chat_id, text).await?;
             }
             Err(e) => {
                 bot.send_message(chat_id, format!("❌ Error fetching statistics: {}", e))
@@ -408,9 +406,7 @@ pub async fn handle_charges_command(
             }
 
             if !text.trim().is_empty() {
-                bot.send_message(chat_id, text)
-                    .parse_mode(ParseMode::MarkdownV2)
-                    .await?;
+                bot.send_md(chat_id, text).await?;
             }
         }
         Err(e) => {
@@ -490,9 +486,7 @@ pub async fn handle_download_tg_command(
             let _ = bot.delete_message(chat_id, processing_msg.id).await;
 
             // Send success message
-            bot.send_message(chat_id, success_message)
-                .parse_mode(ParseMode::MarkdownV2)
-                .await?;
+            bot.send_md(chat_id, success_message).await?;
 
             log::info!("✅ Successfully downloaded file_id {} to {:?}", file_id, path);
         }
@@ -513,9 +507,7 @@ pub async fn handle_download_tg_command(
                 escape_markdown(&e.to_string())
             );
 
-            bot.send_message(chat_id, error_message)
-                .parse_mode(ParseMode::MarkdownV2)
-                .await?;
+            bot.send_md(chat_id, error_message).await?;
         }
     }
 
@@ -558,12 +550,11 @@ pub async fn handle_sent_files_command(
     match shared_storage.get_sent_files(limit).await {
         Ok(files) => {
             if files.is_empty() {
-                bot.send_message(
+                bot.send_md(
                     chat_id,
                     "📭 *No sent files*\n\n\
                     Files with file\\_id will appear here after successfully sending to users\\.",
                 )
-                .parse_mode(ParseMode::MarkdownV2)
                 .await?;
                 return Ok(());
             }
@@ -607,9 +598,7 @@ pub async fn handle_sent_files_command(
             );
 
             // Send response with MarkdownV2
-            bot.send_message(chat_id, response)
-                .parse_mode(ParseMode::MarkdownV2)
-                .await?;
+            bot.send_md(chat_id, response).await?;
 
             log::info!(
                 "✅ Sent files list delivered to admin {}",

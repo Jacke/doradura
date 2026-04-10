@@ -2,9 +2,10 @@ use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::telegram::admin;
 use crate::telegram::Bot;
+use crate::telegram::BotExt;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{CallbackQueryId, InlineKeyboardMarkup, ParseMode};
+use teloxide::types::{CallbackQueryId, InlineKeyboardMarkup};
 
 use super::admin_users;
 
@@ -45,10 +46,7 @@ pub async fn handle_admin_callback(
                     vec![crate::telegram::cb("🔙 Close", "analytics:close")],
                 ]);
 
-                bot.edit_message_text(chat_id, message_id, dashboard)
-                    .parse_mode(ParseMode::MarkdownV2)
-                    .reply_markup(keyboard)
-                    .await?;
+                bot.edit_md_kb(chat_id, message_id, dashboard, keyboard).await?;
             }
             "analytics:details" => {
                 let details_text = "📊 *Detailed Metrics*\n\nSelect a category:";
@@ -59,10 +57,7 @@ pub async fn handle_admin_callback(
                     vec![crate::telegram::cb("🔙 Back", "analytics:refresh")],
                 ]);
 
-                bot.edit_message_text(chat_id, message_id, details_text)
-                    .parse_mode(ParseMode::MarkdownV2)
-                    .reply_markup(keyboard)
-                    .await?;
+                bot.edit_md_kb(chat_id, message_id, details_text, keyboard).await?;
             }
             "analytics:close" => {
                 let _ = bot.delete_message(chat_id, message_id).await;
@@ -94,10 +89,7 @@ pub async fn handle_admin_callback(
             "analytics:refresh",
         )]]);
 
-        bot.edit_message_text(chat_id, message_id, metrics_text)
-            .parse_mode(ParseMode::MarkdownV2)
-            .reply_markup(keyboard)
-            .await?;
+        bot.edit_md_kb(chat_id, message_id, metrics_text, keyboard).await?;
 
         return Ok(true);
     }

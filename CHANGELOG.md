@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`BotExt` extension trait for MarkdownV2 send/edit chains** (v0.36.11) — new `crates/dorabot/src/telegram/ext.rs` module with four methods (`send_md`, `send_md_kb`, `edit_md`, `edit_md_kb`) that collapse the repetitive
+
+  ```rust
+  bot.send_message(chat_id, text)
+      .parse_mode(ParseMode::MarkdownV2)
+      .reply_markup(kb)
+      .await
+  ```
+
+  into a single `bot.send_md_kb(chat_id, text, kb).await` call. Migrated **55 call sites across 14 files**: `analytics.rs`, `cuts.rs`, `feedback.rs`, `videos.rs`, `preview/vlipsy.rs`, `handlers/uploads.rs`, `admin/{users, cookies, system, browser}.rs`, `menu/{lyrics, ringtone, callback_admin, vlipsy}.rs`. The trait is `async fn in trait` (stable in Rust 1.75+, no `async_trait` needed) and delegates to the existing teloxide builder — zero new state, zero allocations. Removed now-unused `ParseMode` imports from 3 files
+
 - **Typed JSON envelopes in admin handlers** (v0.36.10) — replaced 18 stringly-typed `Json(json!({"ok": true, ...}))` sites across `admin_errors.rs`, `admin_queue.rs`, `admin_misc.rs`, `admin_users.rs`, and `public.rs` with 12 new `#[derive(Serialize)]` structs in `core/web/types.rs`: `OkResponse`, `ErrorResponse`, `RetryOk`, `NotifyOk`, `BulkCountOk`, `PlanChangeOk`, `BlockOk`, `SettingsUpdatedOk`, `FeedbackStatusOk`, `BroadcastSingleOk`, `BroadcastStartOk`, `ToggleOk`. The wire-format JSON shape is **bytewise-identical** to what the admin SPA already consumes; the change is purely compile-time schema enforcement. Complex nested `json!(...)` builders in `admin_users::admin_api_user_details` and the dashboard stats stay as-is — those are genuine dynamic JSON, not envelope shapes
 
 - **`once_cell::sync::Lazy` → `std::sync::LazyLock` migration** (v0.36.9) — the codebase had 37 `once_cell::sync::Lazy` sites across 14 files mixed with 13 existing `std::sync::LazyLock` sites (inconsistent). `LazyLock` has been stable in stdlib since Rust 1.80, so the `once_cell` crate is no longer needed for this. Migrated all 37 sites and **removed `once_cell` as a direct dependency** from all three crates (`doracore`, `dorabot`, `doratui`) and from the workspace root. It may still appear transitively via `fluent-templates` / `regex` etc., but it's no longer in our own Cargo.tomls. Net: one fewer dep to compile, one fewer API to remember, one consistent pattern across the whole workspace

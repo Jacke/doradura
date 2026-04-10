@@ -16,6 +16,7 @@ use crate::storage::cache;
 use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
+use crate::telegram::BotExt;
 use reqwest::Client;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -92,10 +93,7 @@ pub async fn send_vlipsy_preview(
     }
 
     // Fallback: text-only preview
-    bot.send_message(chat_id, &text)
-        .parse_mode(ParseMode::MarkdownV2)
-        .reply_markup(keyboard)
-        .await?;
+    bot.send_md_kb(chat_id, &text, keyboard).await?;
 
     Ok(())
 }
