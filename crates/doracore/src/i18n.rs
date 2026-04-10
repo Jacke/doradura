@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use fluent_templates::{
-    fluent_bundle::{FluentArgs, FluentValue},
-    static_loader, Loader,
-};
+use fluent_templates::{fluent_bundle::FluentValue, static_loader, Loader};
 use once_cell::sync::Lazy;
 use unic_langid::LanguageIdentifier;
+
+/// Re-export `FluentArgs` publicly so downstream crates (and the
+/// `fluent_args!` macro) can reference it via `doracore::i18n::FluentArgs`
+/// without pulling in `fluent_templates` directly.
+pub use fluent_templates::fluent_bundle::FluentArgs;
 
 use crate::storage::db;
 use crate::storage::SharedStorage;
@@ -137,6 +139,26 @@ pub fn t(lang: &LanguageIdentifier, key: &str) -> String {
     text.replace("\\n", "\n")
 }
 
+/// Build a `FluentArgs` from key/value pairs without the repeated
+/// `let mut args = FluentArgs::new(); args.set("k1", v1); args.set("k2", v2);`
+/// ceremony at every call site.
+///
+/// Exported at the crate root, so downstream callers invoke it as either
+/// `doracore::fluent_args!("count" => n)` or import it with
+/// `use doracore::fluent_args;` and then `fluent_args!(...)`.
+///
+/// Each value must implement `Into<FluentValue<'_>>` — strings, integers,
+/// floats, and `&str` all work. Trailing commas are allowed.
+#[macro_export]
+macro_rules! fluent_args {
+    ($($key:expr => $val:expr),* $(,)?) => {{
+        #[allow(unused_mut)]
+        let mut args = $crate::i18n::FluentArgs::new();
+        $(args.set($key, $val);)*
+        args
+    }};
+}
+
 /// Returns a localized string with arguments for interpolation.
 /// Converts literal `\n` sequences to actual newlines for proper Telegram formatting.
 pub fn t_args(lang: &LanguageIdentifier, key: &str, args: &FluentArgs) -> String {
@@ -183,7 +205,31 @@ pub fn is_language_supported(code: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The `fluent_args!` macro is brought into scope by `#[macro_export]` at
+    // the crate root; we call it via the absolute `crate::...` path to make
+    // the test self-contained without an extra `use` statement.
     use fluent_templates::fluent_bundle::FluentArgs;
+
+    #[test]
+    fn fluent_args_macro_empty() {
+        // Empty macro invocation should give an empty FluentArgs
+        let args = crate::fluent_args!();
+        assert_eq!(args.iter().count(), 0);
+    }
+
+    #[test]
+    fn fluent_args_macro_populates() {
+        let args = crate::fluent_args!("count" => 5_i64, "name" => "Alice");
+        let keys: std::collections::HashSet<&str> = args.iter().map(|(k, _)| k).collect();
+        assert!(keys.contains("count"));
+        assert!(keys.contains("name"));
+    }
+
+    #[test]
+    fn fluent_args_macro_trailing_comma() {
+        let args = crate::fluent_args!("a" => 1_i64, "b" => 2_i64,);
+        assert_eq!(args.iter().count(), 2);
+    }
 
     #[test]
     fn loads_known_translation() {
@@ -302,8 +348,7 @@ mod tests {
     fn test_t_args_with_interpolation() {
         let en = lang_from_code("en");
 
-        let mut args = FluentArgs::new();
-        args.set("count", 5);
+        let args = crate::fluent_args!("count" => 5);
 
         // Test that t_args works (even if it returns key on missing)
         let result = t_args(&en, "test.key.with.args", &args);

@@ -186,17 +186,11 @@ pub async fn get_period_stats(shared_storage: &Arc<SharedStorage>, hours: i64) -
     })
 }
 
-/// Formats size in human-readable format
+/// Formats size in human-readable format.
+/// Thin re-export of `doracore::core::format_bytes_i64` — keep this file's
+/// call sites unchanged.
 fn format_size(bytes: i64) -> String {
-    if bytes >= 1024 * 1024 * 1024 {
-        format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
-    } else if bytes >= 1024 * 1024 {
-        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
-    } else if bytes >= 1024 {
-        format!("{:.1} KB", bytes as f64 / 1024.0)
-    } else {
-        format!("{} B", bytes)
-    }
+    doracore::core::format_bytes_i64(bytes)
 }
 
 /// Formats the period stats as a Telegram message

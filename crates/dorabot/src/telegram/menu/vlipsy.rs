@@ -193,13 +193,10 @@ async fn show_results_page(
     let keyboard = InlineKeyboardMarkup::new(rows);
 
     // Build title with query and page info
-    let mut title_args = fluent_templates::fluent_bundle::FluentArgs::new();
-    title_args.set("query", query.to_string());
+    let title_args = doracore::fluent_args!("query" => query.to_string());
     let title_text = i18n::t_args(lang, "vlipsy.result_title", &title_args);
 
-    let mut page_args = fluent_templates::fluent_bundle::FluentArgs::new();
-    page_args.set("page", (page + 1) as i64);
-    page_args.set("total_pages", total_pages as i64);
+    let page_args = doracore::fluent_args!("page" => (page + 1) as i64, "total_pages" => total_pages as i64);
     let page_text = i18n::t_args(lang, "vlipsy.page_info", &page_args);
 
     let text = format!("{}\n{}", title_text, page_text);

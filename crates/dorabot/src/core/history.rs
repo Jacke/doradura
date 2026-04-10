@@ -321,8 +321,7 @@ pub async fn handle_history_callback(
                             match rate_limiter.check_and_update(chat_id, plan.as_str()).await {
                                 Ok(Some(remaining_time)) => {
                                     let remaining_seconds = remaining_time.as_secs();
-                                    let mut args = fluent_templates::fluent_bundle::FluentArgs::new();
-                                    args.set("seconds", remaining_seconds);
+                                    let args = doracore::fluent_args!("seconds" => remaining_seconds);
                                     bot.answer_callback_query(callback_id)
                                         .text(crate::i18n::t_args(&lang, "commands.wait_seconds", &args))
                                         .await?;

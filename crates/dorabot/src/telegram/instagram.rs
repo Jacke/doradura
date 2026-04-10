@@ -7,7 +7,6 @@
 use crate::download::source::instagram::InstagramSource;
 use crate::i18n;
 use crate::telegram::Bot;
-use fluent_templates::fluent_bundle::FluentArgs;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, InputFile};
 use unic_langid::LanguageIdentifier;
@@ -20,8 +19,7 @@ pub async fn show_instagram_profile(bot: &Bot, chat_id: ChatId, username: &str, 
         Ok(p) => p,
         Err(e) => {
             log::warn!("Failed to fetch Instagram profile @{}: {}", username, e);
-            let mut args = FluentArgs::new();
-            args.set("username", username.to_string());
+            let args = doracore::fluent_args!("username" => username.to_string());
             let msg = if e.to_string().contains("Private") || e.to_string().contains("login required") {
                 i18n::t_args(lang, "instagram-private", &args)
             } else {
@@ -33,8 +31,7 @@ pub async fn show_instagram_profile(bot: &Bot, chat_id: ChatId, username: &str, 
     };
 
     if profile.is_private {
-        let mut args = FluentArgs::new();
-        args.set("username", username.to_string());
+        let args = doracore::fluent_args!("username" => username.to_string());
         let _ = bot
             .send_message(chat_id, i18n::t_args(lang, "instagram-private", &args))
             .await;
@@ -82,9 +79,7 @@ fn build_profile_caption(
         profile.biography.clone()
     };
 
-    let mut stats_args = FluentArgs::new();
-    stats_args.set("posts", format_count(profile.post_count));
-    stats_args.set("followers", format_count(profile.follower_count));
+    let stats_args = doracore::fluent_args!("posts" => format_count(profile.post_count), "followers" => format_count(profile.follower_count));
     let stats_line = i18n::t_args(lang, "instagram-profile-posts", &stats_args);
 
     format!(

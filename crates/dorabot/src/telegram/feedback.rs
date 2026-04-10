@@ -122,14 +122,9 @@ pub async fn notify_admin_feedback(
     log::info!("📤 Sending notification to admin (ID: {})...", admin_id);
 
     // Create notification message
-    use fluent_templates::fluent_bundle::FluentArgs;
     let lang = i18n::lang_from_code("ru"); // Admin language
 
-    let mut args = FluentArgs::new();
-    args.set("user_id", user_id);
-    args.set("username", escape_markdown(username.unwrap_or("N/A")));
-    args.set("first_name", escape_markdown(first_name));
-    args.set("message", escape_markdown(message_text));
+    let args = doracore::fluent_args!("user_id" => user_id, "username" => escape_markdown(username.unwrap_or("N/A")), "first_name" => escape_markdown(first_name), "message" => escape_markdown(message_text));
 
     let notification = i18n::t_args(&lang, "feedback.admin_notification", &args);
 

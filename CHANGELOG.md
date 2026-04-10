@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`fluent_args!` macro + centralized `format_bytes`** (v0.36.5):
+  - New `doracore::fluent_args!` macro replaces the repeated `let mut args = FluentArgs::new(); args.set("k1", v1); args.set("k2", v2);` ceremony at 58 call sites across 15 files. Usage: `let args = doracore::fluent_args!("count" => n, "name" => username);` (trailing commas allowed, inside doracore itself use `crate::fluent_args!`)
+  - New `doracore::core::format_bytes(u64)` / `format_bytes_i64(i64)` helpers replace 7 duplicated `format_file_size` / `format_size` / `format_bytes` / `fmt_size` functions scattered across `core/stats.rs`, `core/stats_reporter.rs`, `telegram/preview/display.rs`, `telegram/downloads/mod.rs`, `telegram/videos.rs`, `telegram/cuts.rs`, `telegram/menu/archive.rs`, and `doratui/src/video_info.rs`. Each file now just re-exports the canonical helper under its local name. Added TB handling (old helpers topped out at GB and would have shown "1024.00 GB" for 1.5 TB files)
+  - Evaluated `humansize` crate for format_bytes but dropped it — its default output is SI-style "1 kB" (lowercase k) which doesn't match the user-visible "1 KB" users see today. The 10-line custom helper preserves the exact existing format
+  - Net: ~160 LOC deleted, zero user-visible behavior change, 6 new tests
+
 - **`#[derive(sqlx::FromRow)]` rollout** (v0.36.4) — enabled the `sqlx` `macros` feature and replaced hand-written `map_pg_*` helpers with `#[derive(sqlx::FromRow)]` for the three structs whose Postgres columns map 1:1 to fields without any bool-as-i32 / enum-as-string / JSON parsing quirks: `SharePageRecord`, `PlaylistItem`, `SyncedTrack`. Call sites switched from `sqlx::query(...).fetch_*(...)` + manual `.map(map_pg_...)` to `sqlx::query_as::<_, T>(...).fetch_*(...)`. The remaining 14 `map_pg_*` helpers (Charge, DownloadHistoryEntry, ErrorLogEntry, Playlist, SubtitleStyle, etc.) are intentionally kept — they do real conversion work (bool↔i32, enum parsing, JSON decoding) that isn't mechanically expressible via `FromRow` attributes and would regress readability to port. ~45 LOC deleted, zero behavior change
 
 ### Fixed

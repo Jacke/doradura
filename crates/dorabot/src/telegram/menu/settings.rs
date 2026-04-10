@@ -2,7 +2,6 @@ use crate::core::escape_markdown;
 use crate::i18n;
 use crate::storage::{DbPool, SharedStorage};
 use crate::telegram::Bot;
-use fluent_templates::fluent_bundle::FluentArgs;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardMarkup, MessageId};
@@ -117,8 +116,7 @@ pub async fn show_download_type_menu(
     };
 
     let escaped_format = escape_markdown(format_display);
-    let mut args = FluentArgs::new();
-    args.set("format", escaped_format.clone());
+    let args = doracore::fluent_args!("format" => escaped_format.clone());
     edit_caption_or_text(
         bot,
         chat_id,
@@ -237,8 +235,7 @@ pub async fn send_download_type_menu_as_new(
         _ => "🎵 MP3",
     };
     let escaped_format = escape_markdown(format_display);
-    let mut args = FluentArgs::new();
-    args.set("format", escaped_format.clone());
+    let args = doracore::fluent_args!("format" => escaped_format.clone());
     bot.send_message(chat_id, i18n::t_args(&lang, "menu.download_type_title", &args))
         .parse_mode(teloxide::types::ParseMode::MarkdownV2)
         .reply_markup(keyboard)
@@ -332,13 +329,12 @@ pub async fn show_video_quality_menu(
 
     // Add burn_subtitles button only if download_subtitles is enabled
     if download_subs {
-        let mut burn_args = FluentArgs::new();
         let status = if burn_subs {
             i18n::t(&lang, "menu.burn_subtitles_on")
         } else {
             i18n::t(&lang, "menu.burn_subtitles_off")
         };
-        burn_args.set("status", status);
+        let burn_args = doracore::fluent_args!("status" => status);
 
         keyboard_rows.push(vec![crate::telegram::cb(
             i18n::t_args(&lang, "menu.burn_subtitles_button", &burn_args),
@@ -369,9 +365,7 @@ pub async fn show_video_quality_menu(
 
     let escaped_quality = escape_markdown(quality_display);
     let escaped_send_type = escape_markdown(&send_type_display);
-    let mut args = FluentArgs::new();
-    args.set("quality", escaped_quality.clone());
-    args.set("send_type", escaped_send_type.clone());
+    let args = doracore::fluent_args!("quality" => escaped_quality.clone(), "send_type" => escaped_send_type.clone());
     edit_caption_or_text(
         bot,
         chat_id,
@@ -468,9 +462,7 @@ pub async fn show_audio_bitrate_menu(
 
     let escaped_bitrate = escape_markdown(&current_bitrate);
     let escaped_send_type = escape_markdown(&send_type_display);
-    let mut args = FluentArgs::new();
-    args.set("bitrate", escaped_bitrate.clone());
-    args.set("send_type", escaped_send_type.clone());
+    let args = doracore::fluent_args!("bitrate" => escaped_bitrate.clone(), "send_type" => escaped_send_type.clone());
 
     edit_caption_or_text(
         bot,
@@ -612,18 +604,12 @@ pub async fn show_subtitle_style_menu(
         _ => i18n::t(&lang, "menu.subtitle_pos_bottom"),
     };
 
-    let mut size_args = FluentArgs::new();
-    size_args.set("value", size_label);
-    let mut color_args = FluentArgs::new();
-    color_args.set("value", color_label);
-    let mut outline_args = FluentArgs::new();
-    outline_args.set("value", outline_label);
-    let mut width_args = FluentArgs::new();
-    width_args.set("value", format!("{}", style.outline_width));
-    let mut shadow_args = FluentArgs::new();
-    shadow_args.set("value", format!("{}", style.shadow));
-    let mut pos_args = FluentArgs::new();
-    pos_args.set("value", position_label);
+    let size_args = doracore::fluent_args!("value" => size_label);
+    let color_args = doracore::fluent_args!("value" => color_label);
+    let outline_args = doracore::fluent_args!("value" => outline_label);
+    let width_args = doracore::fluent_args!("value" => format!("{}", style.outline_width));
+    let shadow_args = doracore::fluent_args!("value" => format!("{}", style.shadow));
+    let pos_args = doracore::fluent_args!("value" => position_label);
 
     let keyboard = InlineKeyboardMarkup::new(vec![
         vec![crate::telegram::cb(

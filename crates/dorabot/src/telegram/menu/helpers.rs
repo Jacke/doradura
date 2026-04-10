@@ -5,7 +5,6 @@ use crate::storage::cache;
 use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
-use fluent_templates::fluent_bundle::FluentArgs;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{CallbackQueryId, InlineKeyboardMarkup, MessageId, ParseMode};
@@ -233,9 +232,8 @@ pub(crate) async fn send_queue_position_message(
 
     let message = if queue_size > 0 {
         // Show position in queue
-        let mut args = FluentArgs::new();
-        args.set("position", position.unwrap_or(queue_size) as i64);
-        args.set("total", queue_size as i64);
+        let args =
+            doracore::fluent_args!("position" => position.unwrap_or(queue_size) as i64, "total" => queue_size as i64);
 
         let mut msg = i18n::t_args(&lang, "commands.task_added_position", &args);
 

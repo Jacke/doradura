@@ -134,8 +134,7 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                     ctx.bot.delete_message(ctx.chat_id, ctx.message_id).await.ok();
 
                     let user_lang = crate::i18n::user_lang_from_storage(&ctx.shared_storage, ctx.chat_id.0).await;
-                    let mut args = fluent_templates::fluent_bundle::FluentArgs::new();
-                    args.set("lang", lang_code.as_str());
+                    let args = doracore::fluent_args!("lang" => lang_code.as_str());
                     let status_text = crate::i18n::t_args(&user_lang, "video_circle.burn_subs_status", &args);
                     let processing_msg = ctx.bot.send_message(ctx.chat_id, status_text).await?;
 

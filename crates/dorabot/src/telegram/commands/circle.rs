@@ -9,7 +9,6 @@ use crate::i18n;
 use crate::storage::db::{self, DbPool, OutputKind, SourceKind};
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
-use fluent_templates::fluent_bundle::FluentArgs;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::ParseMode;
@@ -374,8 +373,7 @@ pub async fn process_video_clip(
 
     // Check if video note is too long for splitting (> 360s)
     if is_video_note && is_too_long_for_split(effective_len as u64) {
-        let mut args = FluentArgs::new();
-        args.set("max_minutes", VIDEO_NOTE_MAX_PARTS as i64);
+        let args = doracore::fluent_args!("max_minutes" => VIDEO_NOTE_MAX_PARTS as i64);
         bot.send_message(
             chat_id,
             i18n::t_args(&lang, "commands.video_note_too_long_for_split", &args),
@@ -452,8 +450,7 @@ pub async fn process_video_clip(
     // Notify user about multi-circle split
     if video_note_needs_split {
         if let Some(split_info) = calculate_video_note_split(effective_total_len as u64) {
-            let mut args = FluentArgs::new();
-            args.set("count", split_info.num_parts as i64);
+            let args = doracore::fluent_args!("count" => split_info.num_parts as i64);
             bot.send_message(chat_id, i18n::t_args(&lang, "commands.video_note_will_split", &args))
                 .await
                 .ok();
@@ -474,10 +471,7 @@ pub async fn process_video_clip(
         } else {
             format!("{} ({}s)", i18n::t(&lang, "commands.cut_limit_ringtone"), max_secs)
         };
-        let mut args = FluentArgs::new();
-        args.set("total", total_len);
-        args.set("limit", limit_text);
-        args.set("actual", actual_total_len);
+        let args = doracore::fluent_args!("total" => total_len, "limit" => limit_text, "actual" => actual_total_len);
         bot.send_message(chat_id, i18n::t_args(&lang, "commands.cut_truncated", &args))
             .await
             .ok();
@@ -569,9 +563,7 @@ pub async fn process_video_clip(
     );
 
     let status_msg = if let Some(spd) = speed {
-        let mut args = FluentArgs::new();
-        args.set("segments", segments_text.as_str());
-        args.set("speed", spd as f64);
+        let args = doracore::fluent_args!("segments" => segments_text.as_str(), "speed" => spd as f64);
         if is_video_note {
             i18n::t_args(&lang, "commands.cut_status_video_note_speed", &args)
         } else if is_ringtone {
@@ -582,8 +574,7 @@ pub async fn process_video_clip(
             i18n::t_args(&lang, "commands.cut_status_clip_speed", &args)
         }
     } else {
-        let mut args = FluentArgs::new();
-        args.set("segments", segments_text.as_str());
+        let args = doracore::fluent_args!("segments" => segments_text.as_str());
         if is_video_note {
             i18n::t_args(&lang, "commands.cut_status_video_note", &args)
         } else if is_ringtone {
@@ -1051,9 +1042,7 @@ pub async fn process_video_clip(
         if !retry_output.status.success() {
             let stderr2 = String::from_utf8_lossy(&retry_output.stderr);
             bot.delete_message(chat_id, status.id).await.ok();
-            let mut args = FluentArgs::new();
-            args.set("stderr", stderr.to_string());
-            args.set("stderr2", stderr2.to_string());
+            let args = doracore::fluent_args!("stderr" => stderr.to_string(), "stderr2" => stderr2.to_string());
             bot.send_message(chat_id, i18n::t_args(&lang, "commands.ffmpeg_error_dual", &args))
                 .await
                 .ok();
@@ -1152,8 +1141,7 @@ pub async fn process_video_clip(
                     Ok(_) => {}
                     Err(e) => {
                         log::error!("❌ Failed to send GIF: {}", e);
-                        let mut args = FluentArgs::new();
-                        args.set("error", e.to_string());
+                        let args = doracore::fluent_args!("error" => e.to_string());
                         bot.send_message(chat_id, i18n::t_args(&lang, "commands.gif_send_failed", &args))
                             .await
                             .ok();
@@ -1163,8 +1151,7 @@ pub async fn process_video_clip(
             Err(e) => {
                 log::error!("❌ GIF conversion failed: {}", e);
                 bot.delete_message(chat_id, status.id).await.ok();
-                let mut args = FluentArgs::new();
-                args.set("error", e.to_string());
+                let args = doracore::fluent_args!("error" => e.to_string());
                 bot.send_message(chat_id, i18n::t_args(&lang, "commands.gif_conversion_failed", &args))
                     .await
                     .ok();
@@ -1231,9 +1218,7 @@ pub async fn process_video_clip(
                     };
 
                     // Update status message with progress
-                    let mut args = FluentArgs::new();
-                    args.set("current", (i + 1) as i64);
-                    args.set("total", total_circles as i64);
+                    let args = doracore::fluent_args!("current" => (i + 1) as i64, "total" => total_circles as i64);
                     bot.edit_message_text(
                         chat_id,
                         status.id,
@@ -1255,8 +1240,7 @@ pub async fn process_video_clip(
                             let msg = if e.to_string().to_lowercase().contains("file is too big") {
                                 i18n::t(&lang, "commands.video_note_too_big")
                             } else {
-                                let mut args = FluentArgs::new();
-                                args.set("error", e.to_string());
+                                let args = doracore::fluent_args!("error" => e.to_string());
                                 i18n::t_args(&lang, "commands.video_note_send_failed", &args)
                             };
                             bot.send_message(chat_id, msg).await.ok();
@@ -1278,8 +1262,7 @@ pub async fn process_video_clip(
             Err(e) => {
                 log::error!("❌ Failed to split video into circles: {}", e);
                 bot.delete_message(chat_id, status.id).await.ok();
-                let mut args = FluentArgs::new();
-                args.set("error", e.to_string());
+                let args = doracore::fluent_args!("error" => e.to_string());
                 bot.send_message(chat_id, i18n::t_args(&lang, "commands.video_note_split_failed", &args))
                     .await
                     .ok();
@@ -1301,8 +1284,7 @@ pub async fn process_video_clip(
                 let msg = if e.to_string().to_lowercase().contains("file is too big") {
                     i18n::t(&lang, "commands.video_note_too_big")
                 } else {
-                    let mut args = FluentArgs::new();
-                    args.set("error", e.to_string());
+                    let args = doracore::fluent_args!("error" => e.to_string());
                     i18n::t_args(&lang, "commands.video_note_send_failed", &args)
                 };
                 bot.send_message(chat_id, msg).await.ok();
@@ -1320,8 +1302,7 @@ pub async fn process_video_clip(
             Ok(m) => m,
             Err(e) => {
                 bot.delete_message(chat_id, status.id).await.ok();
-                let mut args = FluentArgs::new();
-                args.set("error", e.to_string());
+                let args = doracore::fluent_args!("error" => e.to_string());
                 bot.send_message(chat_id, i18n::t_args(&lang, "commands.ringtone_send_failed", &args))
                     .await
                     .ok();
@@ -1357,8 +1338,7 @@ pub async fn process_video_clip(
             Ok(m) => m,
             Err(e) => {
                 bot.delete_message(chat_id, status.id).await.ok();
-                let mut args = FluentArgs::new();
-                args.set("error", e.to_string());
+                let args = doracore::fluent_args!("error" => e.to_string());
                 bot.send_message(chat_id, i18n::t_args(&lang, "commands.clip_send_failed", &args))
                     .await
                     .ok();
@@ -1374,8 +1354,7 @@ pub async fn process_video_clip(
             Ok(m) => m,
             Err(e) => {
                 bot.delete_message(chat_id, status.id).await.ok();
-                let mut args = FluentArgs::new();
-                args.set("error", e.to_string());
+                let args = doracore::fluent_args!("error" => e.to_string());
                 bot.send_message(chat_id, i18n::t_args(&lang, "commands.audio_send_failed", &args))
                     .await
                     .ok();
@@ -1460,8 +1439,7 @@ pub async fn process_audio_cut(
         return Ok(());
     }
 
-    let mut args = FluentArgs::new();
-    args.set("segments", segments_text.as_str());
+    let args = doracore::fluent_args!("segments" => segments_text.as_str());
     let status = bot
         .send_message(chat_id, i18n::t_args(&lang, "commands.audio_cut_processing", &args))
         .await?;
@@ -1525,8 +1503,7 @@ pub async fn process_audio_cut(
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bot.delete_message(chat_id, status.id).await.ok();
-        let mut args = FluentArgs::new();
-        args.set("stderr", stderr.to_string());
+        let args = doracore::fluent_args!("stderr" => stderr.to_string());
         bot.send_message(chat_id, i18n::t_args(&lang, "commands.ffmpeg_error_single", &args))
             .await
             .ok();
@@ -1569,8 +1546,7 @@ pub async fn process_audio_cut(
 
     if let Err(e) = send_res {
         bot.delete_message(chat_id, status.id).await.ok();
-        let mut args = FluentArgs::new();
-        args.set("error", e.to_string());
+        let args = doracore::fluent_args!("error" => e.to_string());
         bot.send_message(chat_id, i18n::t_args(&lang, "commands.audio_send_failed", &args))
             .await
             .ok();

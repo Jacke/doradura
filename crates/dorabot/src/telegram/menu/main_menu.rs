@@ -5,7 +5,6 @@ use crate::i18n;
 use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
-use fluent_templates::fluent_bundle::FluentArgs;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardMarkup, MessageId};
@@ -60,10 +59,8 @@ pub async fn show_main_menu(
         _ => "320 kbps",
     };
 
-    let mut quality_args = FluentArgs::new();
-    quality_args.set("quality", quality_emoji);
-    let mut bitrate_args = FluentArgs::new();
-    bitrate_args.set("bitrate", bitrate_display);
+    let quality_args = doracore::fluent_args!("quality" => quality_emoji);
+    let bitrate_args = doracore::fluent_args!("bitrate" => bitrate_display);
 
     let keyboard = InlineKeyboardMarkup::new(vec![
         vec![crate::telegram::cb(
@@ -108,10 +105,7 @@ pub(crate) fn build_enhanced_menu(
     quality_line: &str,
     plan_display: &str,
 ) -> (String, InlineKeyboardMarkup) {
-    let mut args = FluentArgs::new();
-    args.set("format", format_emoji);
-    args.set("quality", quality_line);
-    args.set("plan", plan_display);
+    let args = doracore::fluent_args!("format" => format_emoji, "quality" => quality_line, "plan" => plan_display);
 
     let text = i18n::t_args(lang, "menu.enhanced_text", &args);
 
@@ -178,10 +172,8 @@ pub(crate) async fn edit_main_menu(
         }
     };
 
-    let mut quality_args = FluentArgs::new();
-    quality_args.set("quality", quality_emoji);
-    let mut bitrate_args = FluentArgs::new();
-    bitrate_args.set("bitrate", bitrate_display);
+    let quality_args = doracore::fluent_args!("quality" => quality_emoji);
+    let bitrate_args = doracore::fluent_args!("bitrate" => bitrate_display);
 
     let mut keyboard_rows = vec![
         vec![crate::telegram::cb(
@@ -271,10 +263,8 @@ pub async fn send_main_menu_as_new(
         }
     };
 
-    let mut quality_args = FluentArgs::new();
-    quality_args.set("quality", quality_emoji);
-    let mut bitrate_args = FluentArgs::new();
-    bitrate_args.set("bitrate", bitrate_display);
+    let quality_args = doracore::fluent_args!("quality" => quality_emoji);
+    let bitrate_args = doracore::fluent_args!("bitrate" => bitrate_display);
 
     let mut keyboard_rows = vec![
         vec![crate::telegram::cb(
@@ -360,8 +350,7 @@ pub async fn show_enhanced_main_menu(
             "360p" => "360p",
             _ => "Best",
         };
-        let mut args = FluentArgs::new();
-        args.set("value", quality_display);
+        let args = doracore::fluent_args!("value" => quality_display);
         i18n::t_args(&lang, "menu.quality_line", &args)
     } else {
         let bitrate_display = match audio_bitrate.as_str() {
@@ -371,8 +360,7 @@ pub async fn show_enhanced_main_menu(
             "320k" => "320 kbps",
             _ => "320 kbps",
         };
-        let mut args = FluentArgs::new();
-        args.set("value", bitrate_display);
+        let args = doracore::fluent_args!("value" => bitrate_display);
         i18n::t_args(&lang, "menu.bitrate_line", &args)
     };
 
@@ -421,8 +409,7 @@ pub(crate) async fn edit_enhanced_main_menu(
             "360p" => "360p",
             _ => "Best",
         };
-        let mut args = FluentArgs::new();
-        args.set("value", quality_display);
+        let args = doracore::fluent_args!("value" => quality_display);
         i18n::t_args(&lang, "menu.quality_line", &args)
     } else {
         let bitrate_display = match audio_bitrate.as_str() {
@@ -432,8 +419,7 @@ pub(crate) async fn edit_enhanced_main_menu(
             "320k" => "320 kbps",
             _ => "320 kbps",
         };
-        let mut args = FluentArgs::new();
-        args.set("value", bitrate_display);
+        let args = doracore::fluent_args!("value" => bitrate_display);
         i18n::t_args(&lang, "menu.bitrate_line", &args)
     };
 

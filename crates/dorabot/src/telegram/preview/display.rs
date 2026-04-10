@@ -42,15 +42,9 @@ fn format_secs_duration(secs: u32) -> String {
     }
 }
 
-fn format_bytes(size: u64) -> String {
-    if size > 1024 * 1024 {
-        format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
-    } else if size > 1024 {
-        format!("{:.1} KB", size as f64 / 1024.0)
-    } else {
-        format!("{} B", size)
-    }
-}
+/// Re-export of the shared byte formatter — keep the local name so call
+/// sites in this file don't need to change.
+use doracore::core::format_bytes;
 
 /// Sends a preview with metadata and confirmation buttons
 ///
@@ -114,9 +108,7 @@ pub async fn send_preview(
     }
 
     if let Some((start, end)) = time_range {
-        let mut args = fluent_templates::fluent_bundle::FluentArgs::new();
-        args.set("start", start.clone());
-        args.set("end", end.clone());
+        let args = doracore::fluent_args!("start" => start.clone(), "end" => end.clone());
         let tr_text = crate::i18n::t_args(&lang, "preview.time_range_detected", &args);
         text.push_str(&format!("{}\n", escape_markdown(&tr_text)));
     }
@@ -487,9 +479,7 @@ pub async fn update_preview_message(
     }
 
     if let Some((start, end)) = time_range {
-        let mut args = fluent_templates::fluent_bundle::FluentArgs::new();
-        args.set("start", start.clone());
-        args.set("end", end.clone());
+        let args = doracore::fluent_args!("start" => start.clone(), "end" => end.clone());
         let tr_text = crate::i18n::t_args(&lang, "preview.time_range_detected", &args);
         text.push_str(&format!("{}\n", escape_markdown(&tr_text)));
     }

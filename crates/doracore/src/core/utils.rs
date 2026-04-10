@@ -54,6 +54,50 @@ pub fn extract_retry_after(error_str: &str) -> Option<u64> {
     None
 }
 
+/// Format a byte count for user-facing display using 1024-based units and
+/// the Windows-style uppercase suffix (`B` / `KB` / `MB` / `GB` / `TB`).
+///
+/// Single source of truth — replaces the half-dozen hand-rolled
+/// `format_file_size` / `format_size` / `format_bytes` / `fmt_size` helpers
+/// that used to live in `core/stats.rs`, `core/stats_reporter.rs`,
+/// `telegram/preview/display.rs`, `telegram/downloads/mod.rs`,
+/// `telegram/videos.rs`, `telegram/cuts.rs`, `telegram/menu/archive.rs`,
+/// and `doratui/src/video_info.rs`.
+///
+/// Format rules (preserved from the old helpers verbatim so users see the
+/// same strings in Telegram messages):
+/// - `< 1024` → `{N} B`
+/// - `< 1024²` → `{N.N} KB` (1 decimal)
+/// - `< 1024³` → `{N.N} MB` (1 decimal)
+/// - `< 1024⁴` → `{N.NN} GB` (2 decimals — matches the old stats helpers)
+/// - `≥ 1024⁴` → `{N.NN} TB` (2 decimals — new; old helpers would have
+///   shown "1500.00 GB" for 1.5 TB)
+pub fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+    const TB: u64 = GB * 1024;
+    if bytes >= TB {
+        format!("{:.2} TB", bytes as f64 / TB as f64)
+    } else if bytes >= GB {
+        format!("{:.2} GB", bytes as f64 / GB as f64)
+    } else if bytes >= MB {
+        format!("{:.1} MB", bytes as f64 / MB as f64)
+    } else if bytes >= KB {
+        format!("{:.1} KB", bytes as f64 / KB as f64)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+/// Signed variant for call sites that pass `i64` (DB column types).
+///
+/// Negative values are clamped to zero — file sizes can't meaningfully be
+/// negative, and the old helpers silently produced nonsense in that case.
+pub fn format_bytes_i64(bytes: i64) -> String {
+    format_bytes(bytes.max(0) as u64)
+}
+
 /// Check if an error is a timeout or network error that should be retried.
 pub fn is_timeout_or_network_error(error_str: &str) -> bool {
     let lower = error_str.to_lowercase();
@@ -693,7 +737,40 @@ impl Drop for TempDirGuard {
 
 #[cfg(test)]
 mod tests {
-    use super::{escape_filename, escape_markdown_v2, format_media_caption, pluralize_seconds, sanitize_filename};
+    use super::{
+        escape_filename, escape_markdown_v2, format_bytes, format_bytes_i64, format_media_caption, pluralize_seconds,
+        sanitize_filename,
+    };
+
+    #[test]
+    fn test_format_bytes_unit_thresholds() {
+        // Below 1 KB: bytes, no decimals
+        assert_eq!(format_bytes(0), "0 B");
+        assert_eq!(format_bytes(512), "512 B");
+        assert_eq!(format_bytes(1023), "1023 B");
+
+        // 1 KB boundary — 1 decimal
+        assert_eq!(format_bytes(1024), "1.0 KB");
+        assert_eq!(format_bytes(1536), "1.5 KB");
+
+        // 1 MB boundary — 1 decimal
+        assert_eq!(format_bytes(1_048_576), "1.0 MB");
+        assert_eq!(format_bytes(1_572_864), "1.5 MB");
+
+        // 1 GB boundary — 2 decimals (matches the old stats helpers)
+        assert_eq!(format_bytes(1_073_741_824), "1.00 GB");
+        assert_eq!(format_bytes(1_610_612_736), "1.50 GB");
+
+        // 1 TB boundary — new; old helpers would have shown "1024.00 GB"
+        assert_eq!(format_bytes(1_099_511_627_776), "1.00 TB");
+    }
+
+    #[test]
+    fn test_format_bytes_i64_clamps_negative() {
+        assert_eq!(format_bytes_i64(-1), "0 B");
+        assert_eq!(format_bytes_i64(0), "0 B");
+        assert_eq!(format_bytes_i64(1024), "1.0 KB");
+    }
 
     #[test]
     fn test_escape_filename() {

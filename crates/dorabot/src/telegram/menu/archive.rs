@@ -28,17 +28,9 @@ fn max_archive_size() -> i64 {
     }
 }
 
-fn format_file_size(bytes: i64) -> String {
-    if bytes < 1024 {
-        format!("{} B", bytes)
-    } else if bytes < 1024 * 1024 {
-        format!("{:.1} KB", bytes as f64 / 1024.0)
-    } else if bytes < 1024 * 1024 * 1024 {
-        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
-    } else {
-        format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
-    }
-}
+/// Re-export of the shared byte formatter under the local name so call
+/// sites in this file don't need to change.
+use doracore::core::format_bytes_i64 as format_file_size;
 
 /// Main callback dispatcher for `arc:*` callbacks.
 pub async fn handle_archive_callback(

@@ -4,21 +4,10 @@ use crate::telegram::Bot;
 use std::sync::Arc;
 use teloxide::prelude::*;
 
-/// Formats a byte size into a human-readable string
-/// Escapes dots for MarkdownV2
+/// Format a byte size for MarkdownV2 output — wraps the shared
+/// `doracore::core::format_bytes_i64` and escapes the dot for MDv2.
 fn format_size(bytes: i64) -> String {
-    let size_str = if bytes >= 1024 * 1024 * 1024 {
-        format!("{:.2} GB", bytes as f64 / (1024.0 * 1024.0 * 1024.0))
-    } else if bytes >= 1024 * 1024 {
-        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
-    } else if bytes >= 1024 {
-        format!("{:.1} KB", bytes as f64 / 1024.0)
-    } else {
-        format!("{} B", bytes)
-    };
-
-    // Escape the dot for MarkdownV2
-    size_str.replace('.', "\\.")
+    doracore::core::format_bytes_i64(bytes).replace('.', "\\.")
 }
 
 // truncate_string_safe is now imported from crate::core

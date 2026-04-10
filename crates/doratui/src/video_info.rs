@@ -275,17 +275,9 @@ pub fn fmt_count(n: u64) -> String {
     }
 }
 
-pub fn fmt_size(bytes: u64) -> String {
-    if bytes >= 1_073_741_824 {
-        format!("{:.1} GB", bytes as f64 / 1_073_741_824.0)
-    } else if bytes >= 1_048_576 {
-        format!("{:.1} MB", bytes as f64 / 1_048_576.0)
-    } else if bytes >= 1_024 {
-        format!("{:.1} KB", bytes as f64 / 1_024.0)
-    } else {
-        format!("{} B", bytes)
-    }
-}
+/// Re-export of the shared byte formatter under the local name so call
+/// sites in this file don't need to change.
+pub use doracore::core::format_bytes as fmt_size;
 
 #[cfg(test)]
 mod tests {

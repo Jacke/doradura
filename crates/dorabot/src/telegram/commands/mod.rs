@@ -18,7 +18,6 @@ use crate::storage::db::{self, DbPool, OutputKind, SourceKind};
 use crate::storage::SharedStorage;
 use crate::telegram::preview::{get_preview_metadata, get_preview_metadata_with_time_range, send_preview};
 use crate::telegram::Bot;
-use fluent_templates::fluent_bundle::FluentArgs;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use std::sync::Arc;
@@ -69,9 +68,7 @@ pub async fn handle_rate_limit(
             } else {
                 i18n::t(&lang, "common.seconds")
             };
-            let mut args = FluentArgs::new();
-            args.set("time", remaining_seconds as i64);
-            args.set("unit", unit);
+            let args = doracore::fluent_args!("time" => remaining_seconds as i64, "unit" => unit);
             let text = i18n::t_args(&lang, "commands.rate_limited_with_eta", &args);
             bot.send_message(msg.chat.id, text).await?;
             Ok(false)
@@ -662,8 +659,7 @@ pub async fn handle_message(
                 }
 
                 // Send confirmation message
-                let mut args = FluentArgs::new();
-                args.set("count", valid_urls.len() as i64);
+                let args = doracore::fluent_args!("count" => valid_urls.len() as i64);
                 let confirmation_msg = i18n::t_args(&lang, "commands.group_added", &args);
                 let status_message = bot.send_message(msg.chat.id, &confirmation_msg).await?;
 
@@ -825,8 +821,7 @@ pub async fn handle_message(
                         url_text.len(),
                         crate::config::validation::MAX_URL_LENGTH
                     );
-                    let mut args = FluentArgs::new();
-                    args.set("max", crate::config::validation::MAX_URL_LENGTH as i64);
+                    let args = doracore::fluent_args!("max" => crate::config::validation::MAX_URL_LENGTH as i64);
                     bot.send_message(msg.chat.id, i18n::t_args(&lang, "commands.url_too_long", &args))
                         .await?;
                     return Ok(user_info);
@@ -1011,9 +1006,7 @@ pub async fn handle_message(
                                         max_mb
                                     );
 
-                                    let mut args = FluentArgs::new();
-                                    args.set("size", format!("{:.1}", size_mb));
-                                    args.set("max", format!("{:.1}", max_mb));
+                                    let args = doracore::fluent_args!("size" => format!("{:.1}", size_mb), "max" => format!("{:.1}", max_mb));
                                     let error_message = i18n::t_args(&lang, "commands.audio_too_large", &args);
 
                                     // Delete processing message

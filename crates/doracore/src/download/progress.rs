@@ -1,6 +1,5 @@
 use crate::core::escape_markdown_v2 as escape_markdown;
 use crate::i18n;
-use fluent_templates::fluent_bundle::FluentArgs;
 use unic_langid::LanguageIdentifier;
 
 // ======================== Progress Bar Styles ========================
@@ -507,8 +506,7 @@ impl DownloadStatus {
             } => {
                 let escaped = escape_markdown(title);
                 let emoji = Self::get_emoji(file_format.as_ref());
-                let mut args = FluentArgs::new();
-                args.set("elapsed", *elapsed_secs as i64);
+                let args = crate::fluent_args!("elapsed" => *elapsed_secs as i64);
                 let success_text = escape_markdown(&i18n::t_args(lang, "progress.success", &args));
                 let mut s = String::with_capacity(escaped.len() + success_text.len() + 20);
                 s.push_str(emoji);

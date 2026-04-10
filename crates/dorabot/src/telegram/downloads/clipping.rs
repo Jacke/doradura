@@ -374,8 +374,7 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                 // Subtitle button with current state
                 let subs_label = match &session.subtitle_lang {
                     Some(sl) => {
-                        let mut args = fluent_templates::fluent_bundle::FluentArgs::new();
-                        args.set("lang", sl.as_str());
+                        let args = doracore::fluent_args!("lang" => sl.as_str());
                         crate::i18n::t_args(&lang, "video_circle.subtitles_button_active", &args)
                     }
                     None => crate::i18n::t(&lang, "video_circle.subtitles_button"),
