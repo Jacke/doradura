@@ -285,7 +285,7 @@ async fn run_loop(
                                 }
                             }
                             Err(e) => {
-                                let _ = p_tx.send(Err(e)).await;
+                                let _ = p_tx.send(Err(e.to_string())).await;
                             }
                         }
                     });
@@ -317,7 +317,7 @@ async fn run_loop(
                         }
                     }
                     Err(e) => {
-                        let _ = p_tx.send(Err(e)).await;
+                        let _ = p_tx.send(Err(e.to_string())).await;
                     }
                 }
             });

@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`Result<T, String>` → `anyhow::Result<T>` rollout** (v0.36.8) — migrated **40+ function signatures** across 20+ files from the lazy `Result<T, String>` escape hatch to proper `anyhow::Result<T>`. Callers now get:
+  - Error source chains preserved (`.source()` walks the underlying error)
+  - `.with_context(|| "...")` for contextual layering instead of manual `format!` wrapping
+  - `?`-propagation across error types without boilerplate conversion
+  - Consistent error type across subsystems that previously returned String
+
+  Files touched: `core/alerts.rs` (12 methods), `watcher/{db,traits,scheduler,instagram}.rs`, `core/subscription.rs`, `core/stats_reporter.rs`, `telegram/{menu/vault, menu/archive, admin/browser, admin/cookies, downloads/subtitles, menu/callback_settings}.rs`, `download/{search, pipeline, playlist_import}.rs`, `download/playlist_sync/{mod, resolver, spotify, soundcloud, yandex_music}.rs`, `vlipsy.rs`, `doracore/download/{cookies, playlist}.rs`, `doracore/core/web/admin_errors.rs`, `doratui/{video_info, download_runner}.rs`. Also updated the `DiskAlertFn` type alias in `doracore/core/disk.rs`.
+
+  Internal `.map_err(|e| format!(...))` patterns converted to `.with_context(|| "...")`. Inline `return Err("literal".to_string())` converted to `anyhow::bail!("literal")`. Ocassional `e.to_string().contains(...)` patches added where a caller was doing string-matching on what used to be a raw error string.
+
+- **`strum` rollout extended** (v0.36.8) — `OutputKind` and `SourceKind` in `doracore/storage/db/sessions.rs` (missed in Batch B because they live inside the `CutEntry` struct whose other fields made it a skip-candidate for FromRow) now derive `strum::Display` + `strum::AsRefStr` + `strum::IntoStaticStr`. Their manual `fmt::Display` impls and positional match blocks are gone; `as_str()` is aliased to `Into::<&'static str>::into`. `from_str_lossy` stays manual because it has a "fall back to Cut on unknown input" contract strum's `EnumString` doesn't express.
+
 - **`pretty_assertions` added as a dev-dependency** (v0.36.7) — nicer colorized diffs on `assert_eq!` failures in tests. Opt-in per test module via `use pretty_assertions::assert_eq;`, no runtime cost, no production impact
 
 - **`strum` derive rollout** (v0.36.6) — added `strum = "0.26"` (derive feature) and replaced hand-written `impl Display` / `impl FromStr` / `as_str()` match blocks on six enums with derive macros:

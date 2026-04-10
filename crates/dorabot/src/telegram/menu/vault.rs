@@ -5,6 +5,7 @@
 use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
+use anyhow::Context;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{CallbackQueryId, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId};
@@ -208,7 +209,7 @@ pub async fn handle_vault_setup_input(
         )
         .await
         {
-            let _ = bot.send_message(chat_id, reason).await;
+            let _ = bot.send_message(chat_id, reason.to_string()).await;
         }
         return;
     }
@@ -272,7 +273,7 @@ pub async fn handle_vault_setup_input(
                     )
                     .await
                     {
-                        let _ = bot.send_message(chat_id, reason).await;
+                        let _ = bot.send_message(chat_id, reason.to_string()).await;
                     }
                 } else {
                     let _ = bot
@@ -297,7 +298,7 @@ async fn verify_and_save_vault(
     user_id: i64,
     channel_id: i64,
     channel_title: Option<&str>,
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     let channel_chat_id = ChatId(channel_id);
 
     // Verify bot is admin: send a test message and delete it
@@ -305,7 +306,7 @@ async fn verify_and_save_vault(
         .send_message(channel_chat_id, "\u{2705} Vault connection test (will be deleted)")
         .await
         .map_err(|e| {
-            format!(
+            anyhow::anyhow!(
                 "\u{274c} Cannot post to channel: {}. Make sure the bot is admin with post permissions.",
                 e
             )
@@ -318,7 +319,7 @@ async fn verify_and_save_vault(
     shared_storage
         .set_user_vault(user_id, channel_id, channel_title)
         .await
-        .map_err(|e| format!("DB error: {}", e))?;
+        .with_context(|| "DB error")?;
 
     let title = channel_title.unwrap_or("your channel");
     let _ = bot

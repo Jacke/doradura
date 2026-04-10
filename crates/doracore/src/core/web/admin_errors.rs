@@ -344,12 +344,11 @@ struct RetryContext {
 
 /// Minimal direct Telegram Bot API call — we can't depend on teloxide inside
 /// doracore, so we use reqwest against the official endpoint.
-async fn send_telegram_message(bot_token: &str, chat_id: i64, text: &str) -> Result<(), String> {
+async fn send_telegram_message(bot_token: &str, chat_id: i64, text: &str) -> anyhow::Result<()> {
     let url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .map_err(|e| e.to_string())?;
+        .build()?;
     let resp = client
         .post(&url)
         .json(&json!({
@@ -358,15 +357,10 @@ async fn send_telegram_message(bot_token: &str, chat_id: i64, text: &str) -> Res
             "disable_web_page_preview": true,
         }))
         .send()
-        .await
-        .map_err(|e| e.to_string())?;
+        .await?;
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!(
-            "telegram {}: {}",
-            body.chars().take(200).collect::<String>(),
-            ""
-        ));
+        anyhow::bail!("telegram {}: {}", body.chars().take(200).collect::<String>(), "");
     }
     Ok(())
 }

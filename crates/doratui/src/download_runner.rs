@@ -9,6 +9,7 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
+use anyhow::Context;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
 
@@ -361,7 +362,7 @@ async fn burn_subtitles(
     sub_opts: &SubtitleOptions,
     settings: &DoraSettings,
     tx: &mpsc::Sender<(usize, SlotEvent)>,
-) -> Result<String, String> {
+) -> anyhow::Result<String> {
     // 0. Pre-flight: check that ffmpeg is available
     if tokio::process::Command::new("ffmpeg")
         .arg("-version")
@@ -371,7 +372,7 @@ async fn burn_subtitles(
         .await
         .is_err()
     {
-        return Err("ffmpeg not found — install it to burn subtitles".to_string());
+        anyhow::bail!("ffmpeg not found — install it to burn subtitles");
     }
 
     let _ = tx.send((slot_id, SlotEvent::BurningSubtitles)).await;
@@ -424,7 +425,7 @@ async fn burn_subtitles(
         .args(&sub_args)
         .output()
         .await
-        .map_err(|e| format!("Cannot run yt-dlp for subtitles: {e}"))?;
+        .context("Cannot run yt-dlp for subtitles")?;
 
     if !sub_output.status.success() {
         let stderr = String::from_utf8_lossy(&sub_output.stderr);
@@ -441,7 +442,7 @@ async fn burn_subtitles(
         let reason = reason.trim_start_matches("ERROR: ").trim();
         // Cleanup any partial SRT files
         cleanup_srt_files(parent, stem);
-        return Err(format!("Subtitles: {reason}"));
+        anyhow::bail!("Subtitles: {reason}");
     }
 
     // 2. Find the SRT file (yt-dlp adds language suffix like `stem.en.srt`)
@@ -449,7 +450,7 @@ async fn burn_subtitles(
         Ok(p) => p,
         Err(e) => {
             cleanup_srt_files(parent, stem);
-            return Err(e);
+            return Err(anyhow::anyhow!(e));
         }
     };
     log::info!("[slot {}] found SRT: {}", slot_id, srt_path.display());
@@ -489,7 +490,7 @@ async fn burn_subtitles(
         .stderr(std::process::Stdio::piped())
         .output()
         .await
-        .map_err(|e| format!("Cannot run ffmpeg: {e}"))?;
+        .context("Cannot run ffmpeg")?;
 
     // Always cleanup temp SRT
     let _ = tokio::fs::remove_file(&srt_path).await;
@@ -498,7 +499,7 @@ async fn burn_subtitles(
         let stderr = String::from_utf8_lossy(&ffmpeg_output.stderr);
         log::warn!("[slot {}] ffmpeg burn failed: {}", slot_id, stderr);
         let _ = tokio::fs::remove_file(&burned_path).await;
-        return Err("ffmpeg subtitle burn failed".to_string());
+        anyhow::bail!("ffmpeg subtitle burn failed");
     }
 
     // 4. Replace original with burned version — SAFE order:
@@ -530,7 +531,7 @@ fn cleanup_srt_files(dir: &std::path::Path, stem: &str) {
 /// Find the SRT file that yt-dlp created.
 /// Tries exact lang match first, then lang prefix (e.g. "en" matches "en-US"),
 /// then any .srt matching the stem as last resort.
-fn find_srt_file(dir: &std::path::Path, stem: &str, lang: &str) -> Result<PathBuf, String> {
+fn find_srt_file(dir: &std::path::Path, stem: &str, lang: &str) -> anyhow::Result<PathBuf> {
     // Try exact match: stem.lang.srt
     let exact = dir.join(format!("{}.{}.srt", stem, lang));
     if exact.exists() {
@@ -550,7 +551,7 @@ fn find_srt_file(dir: &std::path::Path, stem: &str, lang: &str) -> Result<PathBu
     }
 
     if candidates.is_empty() {
-        return Err(format!("No SRT file found for {}.{}.srt", stem, lang));
+        anyhow::bail!("No SRT file found for {}.{}.srt", stem, lang);
     }
 
     // Prefer files whose lang part starts with the requested lang
@@ -627,7 +628,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let result = find_srt_file(dir.path(), "video", "en");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("No SRT file found"));
+        assert!(result.unwrap_err().to_string().contains("No SRT file found"));
     }
 
     #[test]

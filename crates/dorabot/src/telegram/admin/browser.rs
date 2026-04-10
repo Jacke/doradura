@@ -8,32 +8,30 @@ use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, MessageId, Par
 const COOKIE_MANAGER_URL: &str = "http://127.0.0.1:9876";
 
 /// Send an HTTP request to the cookie_manager.py API
-pub(super) async fn cookie_manager_request(method: &str, path: &str) -> std::result::Result<serde_json::Value, String> {
+pub(super) async fn cookie_manager_request(method: &str, path: &str) -> anyhow::Result<serde_json::Value> {
     let url = format!("{}{}", COOKIE_MANAGER_URL, path);
     // login_start launches Xvfb + Chromium + VNC — needs more time
     let timeout_secs = if path.contains("login_start") { 90 } else { 30 };
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(timeout_secs))
-        .build()
-        .map_err(|e| format!("HTTP client error: {}", e))?;
+        .build()?;
 
     let response = match method {
         "POST" => client.post(&url).send().await,
         _ => client.get(&url).send().await,
     };
 
-    let resp = response.map_err(|e| format!("Request failed: {}", e))?;
+    let resp = response?;
     let status = resp.status();
-    let body = resp
-        .text()
-        .await
-        .map_err(|e| format!("Failed to read response: {}", e))?;
+    let body = resp.text().await?;
 
     if !status.is_success() {
-        return Err(format!("HTTP {}: {}", status, body));
+        anyhow::bail!("HTTP {}: {}", status, body);
     }
 
-    serde_json::from_str(&body).map_err(|e| format!("JSON parse error: {} (body: {})", e, body))
+    let val: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| anyhow::anyhow!("JSON parse error: {} (body: {})", e, body))?;
+    Ok(val)
 }
 
 /// Handles the /browser_login command (admin only)

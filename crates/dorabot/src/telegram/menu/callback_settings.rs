@@ -282,7 +282,7 @@ pub async fn handle_settings_callback(
                     Err(e) => {
                         log::error!("Failed to cancel subscription: {}", e);
 
-                        let message = if e.contains("already non-recurring") {
+                        let message = if e.to_string().contains("already non-recurring") {
                             "ℹ️ You have a one-time subscription without auto-renewal. It will remain active until the end of the paid period."
                         } else {
                             "❌ Failed to cancel subscription. Please try again later or contact the administrator."

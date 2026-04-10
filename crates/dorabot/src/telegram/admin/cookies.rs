@@ -359,7 +359,7 @@ pub async fn handle_cookies_file_upload(
                                             3\\. Export cookies again",
                                             escape_markdown(&path.display().to_string()),
                                             escape_markdown(&diagnostic_report),
-                                            escape_markdown(&reason)
+                                            escape_markdown(&reason.to_string())
                                         );
 
                                         bot.send_message(chat_id, warning_message)
@@ -581,7 +581,7 @@ pub async fn handle_ig_cookies_file_upload(
                                             Cookies saved and will be used for GraphQL requests\\.",
                                         escape_markdown(&path.display().to_string()),
                                         escape_markdown(&diagnostic_report),
-                                        escape_markdown(&reason)
+                                        escape_markdown(&reason.to_string())
                                     );
 
                                     bot.send_message(chat_id, warning_message)
@@ -679,7 +679,7 @@ pub async fn handle_test_cookies_callback(bot: &Bot, chat_id: ChatId, message_id
                 • Cookies expired or were rotated\n\
                 • Account requires confirmation\n\n\
                 Use /update\\_cookies to upload new ones\\.",
-                escape_markdown(&reason)
+                escape_markdown(&reason.to_string())
             )
         }
     };

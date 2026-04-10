@@ -84,11 +84,11 @@ pub trait ContentWatcher: Send + Sync {
         watch_mask: u32,
         last_state: Option<&serde_json::Value>,
         source_meta: Option<&serde_json::Value>,
-    ) -> Result<CheckResult, String>;
+    ) -> anyhow::Result<CheckResult>;
 
     /// Resolve a user-provided source ID (e.g. username) to a canonical form.
     /// Returns `(display_name, optional_source_meta)`.
-    async fn resolve_source(&self, source_id: &str) -> Result<(String, Option<serde_json::Value>), String>;
+    async fn resolve_source(&self, source_id: &str) -> anyhow::Result<(String, Option<serde_json::Value>)>;
 
     /// Estimated number of API requests needed per check for this watch mask.
     fn requests_per_check(&self, watch_mask: u32) -> u32 {

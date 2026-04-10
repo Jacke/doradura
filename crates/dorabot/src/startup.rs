@@ -135,7 +135,7 @@ pub async fn run_bot(use_webhook: bool) -> Result<()> {
         std::sync::Arc::new(move |available_gb: f64, threshold_gb: f64| {
             let am = am.clone();
             Box::pin(async move { am.alert_low_disk_space(available_gb, threshold_gb).await })
-                as std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>
+                as std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>>
         }) as crate::core::disk::DiskAlertFn
     });
     let _disk_monitor_handle = crate::core::disk::start_disk_monitor_task(disk_alert_fn);

@@ -1,5 +1,6 @@
 //! Yandex Music playlist resolver using yt-dlp with Russian proxy and cookies.
 
+use anyhow::Context;
 use async_trait::async_trait;
 use std::time::Duration;
 use tokio::process::Command as TokioCommand;
@@ -30,10 +31,10 @@ impl PlaylistResolver for YandexMusicResolver {
         lower.contains("music.yandex.ru/") || lower.contains("music.yandex.com/")
     }
 
-    async fn resolve(&self, url: &str, progress: Option<ProgressFn>) -> Result<ResolvedPlaylist, String> {
+    async fn resolve(&self, url: &str, progress: Option<ProgressFn>) -> anyhow::Result<ResolvedPlaylist> {
         let cookies_file = config::yandex_music::COOKIES_FILE
             .as_deref()
-            .ok_or("Yandex Music requires authentication. Admin: set YM_COOKIES_FILE")?;
+            .ok_or_else(|| anyhow::anyhow!("Yandex Music requires authentication. Admin: set YM_COOKIES_FILE"))?;
 
         let ytdl_bin = &*config::YTDL_BIN;
 
@@ -66,16 +67,16 @@ impl PlaylistResolver for YandexMusicResolver {
             TokioCommand::new(ytdl_bin).args(&args).output(),
         )
         .await
-        .map_err(|_| "Yandex Music import timed out".to_string())?
-        .map_err(|e| format!("Failed to execute yt-dlp: {}", e))?;
+        .map_err(|_| anyhow::anyhow!("Yandex Music import timed out"))?
+        .with_context(|| "Failed to execute yt-dlp")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let last_line = stderr.lines().last().unwrap_or("unknown error");
             if last_line.contains("geo") || last_line.contains("country") || last_line.contains("403") {
-                return Err("Yandex Music unavailable from this region. A Russian proxy is required.".to_string());
+                anyhow::bail!("Yandex Music unavailable from this region. A Russian proxy is required.");
             }
-            return Err(format!("yt-dlp error: {}", last_line));
+            anyhow::bail!("yt-dlp error: {}", last_line);
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -114,7 +115,7 @@ impl PlaylistResolver for YandexMusicResolver {
         }
 
         if tracks.is_empty() {
-            return Err("No tracks found in this Yandex Music playlist".to_string());
+            anyhow::bail!("No tracks found in this Yandex Music playlist");
         }
 
         let name = extract_playlist_name(url);

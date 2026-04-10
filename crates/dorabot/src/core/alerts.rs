@@ -345,7 +345,7 @@ impl AlertManager {
     }
 
     /// Sends an alert to the admin
-    pub async fn send_alert(&self, alert: Alert) -> Result<(), String> {
+    pub async fn send_alert(&self, alert: Alert) -> anyhow::Result<()> {
         // Check throttling
         if !self.should_send_alert(&alert.alert_type).await {
             return Ok(()); // Silently skip throttled alerts
@@ -362,7 +362,7 @@ impl AlertManager {
             .await
         {
             log::error!("Failed to send alert to admin: {:?}", e);
-            return Err(format!("Failed to send alert: {:?}", e));
+            anyhow::bail!("Failed to send alert: {:?}", e);
         }
 
         // Record alert metric
@@ -410,7 +410,7 @@ impl AlertManager {
     }
 
     /// Checks if an alert condition is resolved and sends resolution notification
-    pub async fn check_resolution(&self, alert_type: &AlertType) -> Result<(), String> {
+    pub async fn check_resolution(&self, alert_type: &AlertType) -> anyhow::Result<()> {
         let mut active = self.active_alerts.lock().await;
 
         if let Some(alert) = active.remove(alert_type) {
@@ -428,7 +428,7 @@ impl AlertManager {
                 .await
             {
                 log::error!("Failed to send resolution notification: {:?}", e);
-                return Err(format!("Failed to send resolution: {:?}", e));
+                anyhow::bail!("Failed to send resolution: {:?}", e);
             }
 
             // Update database
@@ -445,7 +445,7 @@ impl AlertManager {
     }
 
     /// Monitors metrics and triggers alerts based on thresholds
-    pub async fn check_all_conditions(&self) -> Result<(), String> {
+    pub async fn check_all_conditions(&self) -> anyhow::Result<()> {
         // Only run checks if alerts are enabled
         if !*config::alerts::ENABLED {
             return Ok(());
@@ -459,7 +459,7 @@ impl AlertManager {
     }
 
     /// Checks error rate and sends alert if threshold exceeded
-    async fn check_error_rate(&self) -> Result<(), String> {
+    async fn check_error_rate(&self) -> anyhow::Result<()> {
         use prometheus::core::Collector;
 
         // Get current counter values
@@ -562,7 +562,7 @@ impl AlertManager {
     }
 
     /// Checks queue depth and sends alert if threshold exceeded
-    async fn check_queue_depth(&self) -> Result<(), String> {
+    async fn check_queue_depth(&self) -> anyhow::Result<()> {
         use prometheus::core::Collector;
 
         let mut total_queue_depth = 0.0;
@@ -596,7 +596,7 @@ impl AlertManager {
     }
 
     /// Checks retry rate and sends alert if threshold exceeded
-    async fn check_retry_rate(&self) -> Result<(), String> {
+    async fn check_retry_rate(&self) -> anyhow::Result<()> {
         use prometheus::core::Collector;
 
         let mut total_retries = 0.0;
@@ -643,7 +643,7 @@ impl AlertManager {
     }
 
     /// Sends a payment failure alert (called directly when payment fails)
-    pub async fn alert_payment_failure(&self, plan: &str, reason: &str) -> Result<(), String> {
+    pub async fn alert_payment_failure(&self, plan: &str, reason: &str) -> anyhow::Result<()> {
         let alert = Alert::new(
             AlertType::PaymentFailure,
             Severity::Critical,
@@ -656,7 +656,7 @@ impl AlertManager {
     }
 
     /// Sends a cookies expired alert
-    pub async fn alert_cookies_expired(&self, reason: &str) -> Result<(), String> {
+    pub async fn alert_cookies_expired(&self, reason: &str) -> anyhow::Result<()> {
         // Record metric
         metrics::record_alert("cookies_expired", "critical");
 
@@ -675,7 +675,7 @@ impl AlertManager {
     }
 
     /// Sends a download timeout alert
-    pub async fn alert_high_timeout_rate(&self, timeout_rate: f64, threshold: f64) -> Result<(), String> {
+    pub async fn alert_high_timeout_rate(&self, timeout_rate: f64, threshold: f64) -> anyhow::Result<()> {
         metrics::record_alert("high_timeout_rate", "warning");
 
         let alert = Alert::new(
@@ -693,7 +693,7 @@ impl AlertManager {
     }
 
     /// Sends a low disk space alert
-    pub async fn alert_low_disk_space(&self, available_gb: f64, threshold_gb: f64) -> Result<(), String> {
+    pub async fn alert_low_disk_space(&self, available_gb: f64, threshold_gb: f64) -> anyhow::Result<()> {
         metrics::record_alert("low_disk_space", "critical");
 
         let alert = Alert::new(
@@ -716,7 +716,7 @@ impl AlertManager {
         user_id: i64,
         username: Option<&str>,
         feedback: &str,
-    ) -> Result<(), String> {
+    ) -> anyhow::Result<()> {
         metrics::record_alert("user_complaint", "warning");
 
         let user_display = username.map_or(format!("ID: {}", user_id), |u| format!("@{} ({})", u, user_id));
@@ -742,7 +742,7 @@ impl AlertManager {
         error: &str,
         retry_count: u32,
         context: Option<&DownloadContext>,
-    ) -> Result<(), String> {
+    ) -> anyhow::Result<()> {
         // Only alert if retries exhausted
         if retry_count < 3 {
             return Ok(());

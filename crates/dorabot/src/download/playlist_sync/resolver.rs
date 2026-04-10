@@ -112,5 +112,5 @@ pub type ProgressFn = Arc<dyn Fn(usize, usize, &str) + Send + Sync>;
 pub trait PlaylistResolver: Send + Sync {
     fn platform(&self) -> Platform;
     fn supports_url(&self, url: &str) -> bool;
-    async fn resolve(&self, url: &str, progress: Option<ProgressFn>) -> Result<ResolvedPlaylist, String>;
+    async fn resolve(&self, url: &str, progress: Option<ProgressFn>) -> anyhow::Result<ResolvedPlaylist>;
 }

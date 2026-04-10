@@ -1,5 +1,6 @@
 //! Spotify playlist resolver using Spotify Web API + YouTube search for track matching.
 
+use anyhow::Context;
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -37,13 +38,13 @@ impl PlaylistResolver for SpotifyResolver {
         lower.contains("open.spotify.com/playlist/") || lower.contains("open.spotify.com/album/")
     }
 
-    async fn resolve(&self, url: &str, progress: Option<ProgressFn>) -> Result<ResolvedPlaylist, String> {
+    async fn resolve(&self, url: &str, progress: Option<ProgressFn>) -> anyhow::Result<ResolvedPlaylist> {
         let client_id = config::spotify::CLIENT_ID
             .as_deref()
-            .ok_or("Spotify import unavailable. Admin: set SPOTIFY_CLIENT_ID")?;
+            .ok_or_else(|| anyhow::anyhow!("Spotify import unavailable. Admin: set SPOTIFY_CLIENT_ID"))?;
         let client_secret = config::spotify::CLIENT_SECRET
             .as_deref()
-            .ok_or("Spotify import unavailable. Admin: set SPOTIFY_CLIENT_SECRET")?;
+            .ok_or_else(|| anyhow::anyhow!("Spotify import unavailable. Admin: set SPOTIFY_CLIENT_SECRET"))?;
 
         let token = get_token(client_id, client_secret).await?;
         let (kind, spotify_id) = parse_spotify_url(url)?;
@@ -53,7 +54,7 @@ impl PlaylistResolver for SpotifyResolver {
         let (name, description, raw_tracks) = match kind.as_str() {
             "playlist" => fetch_playlist_tracks(&client, &token, &spotify_id).await?,
             "album" => fetch_album_tracks(&client, &token, &spotify_id).await?,
-            _ => return Err(format!("Unsupported Spotify URL type: {}", kind)),
+            _ => anyhow::bail!("Unsupported Spotify URL type: {}", kind),
         };
 
         let total = raw_tracks.len();
@@ -161,7 +162,7 @@ struct SpotifyArtist {
 
 // ==================== Token Management ====================
 
-async fn get_token(client_id: &str, client_secret: &str) -> Result<String, String> {
+async fn get_token(client_id: &str, client_secret: &str) -> anyhow::Result<String> {
     // Check cache — reuse if created within ~55 min (tokens expire in 1h)
     {
         let cache = TOKEN_CACHE.read().await;
@@ -182,18 +183,15 @@ async fn get_token(client_id: &str, client_secret: &str) -> Result<String, Strin
         .timeout(Duration::from_secs(10))
         .send()
         .await
-        .map_err(|e| format!("Spotify auth failed: {}", e))?;
+        .with_context(|| "Spotify auth failed")?;
 
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Spotify auth error {}: {}", status, body));
+        anyhow::bail!("Spotify auth error {}: {}", status, body);
     }
 
-    let token_resp: TokenResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse Spotify token: {}", e))?;
+    let token_resp: TokenResponse = resp.json().await.with_context(|| "Failed to parse Spotify token")?;
 
     let token = token_resp.access_token.clone();
 
@@ -208,7 +206,7 @@ async fn get_token(client_id: &str, client_secret: &str) -> Result<String, Strin
 
 // ==================== API Helpers ====================
 
-fn parse_spotify_url(url: &str) -> Result<(String, String), String> {
+fn parse_spotify_url(url: &str) -> anyhow::Result<(String, String)> {
     // https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M?si=...
     // https://open.spotify.com/album/1DFixLWuPkv3KT3TnV35m3
     let parts: Vec<&str> = url.split('/').collect();
@@ -218,21 +216,20 @@ fn parse_spotify_url(url: &str) -> Result<(String, String), String> {
             return Ok((part.to_string(), id.to_string()));
         }
     }
-    Err("Invalid Spotify URL. Expected /playlist/ or /album/ URL".to_string())
+    Err(anyhow::anyhow!(
+        "Invalid Spotify URL. Expected /playlist/ or /album/ URL"
+    ))
 }
 
 async fn fetch_playlist_tracks(
     client: &reqwest::Client,
     token: &str,
     playlist_id: &str,
-) -> Result<(String, Option<String>, Vec<RawSpotifyTrack>), String> {
+) -> anyhow::Result<(String, Option<String>, Vec<RawSpotifyTrack>)> {
     let url = format!("https://api.spotify.com/v1/playlists/{}?fields=name,description,tracks(items(track(id,name,artists,duration_ms)),next,total)", playlist_id);
 
     let resp = spotify_get(client, token, &url).await?;
-    let playlist: SpotifyPlaylistResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse Spotify playlist: {}", e))?;
+    let playlist: SpotifyPlaylistResponse = resp.json().await.with_context(|| "Failed to parse Spotify playlist")?;
 
     let name = playlist.name;
     let description = playlist.description.filter(|d| !d.is_empty());
@@ -242,10 +239,7 @@ async fn fetch_playlist_tracks(
     // Paginate
     while let Some(ref next) = next_url {
         let resp = spotify_get(client, token, next).await?;
-        let page: SpotifyPaginatedTracks = resp
-            .json()
-            .await
-            .map_err(|e| format!("Failed to parse Spotify page: {}", e))?;
+        let page: SpotifyPaginatedTracks = resp.json().await.with_context(|| "Failed to parse Spotify page")?;
         tracks.extend(extract_playlist_tracks(page.items));
         next_url = page.next;
     }
@@ -257,14 +251,11 @@ async fn fetch_album_tracks(
     client: &reqwest::Client,
     token: &str,
     album_id: &str,
-) -> Result<(String, Option<String>, Vec<RawSpotifyTrack>), String> {
+) -> anyhow::Result<(String, Option<String>, Vec<RawSpotifyTrack>)> {
     let url = format!("https://api.spotify.com/v1/albums/{}", album_id);
 
     let resp = spotify_get(client, token, &url).await?;
-    let album: SpotifyAlbumResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse Spotify album: {}", e))?;
+    let album: SpotifyAlbumResponse = resp.json().await.with_context(|| "Failed to parse Spotify album")?;
 
     let name = album.name;
     let album_artist = album.artists.first().map(|a| a.name.clone()).unwrap_or_default();
@@ -294,7 +285,7 @@ async fn fetch_album_tracks(
         let page: SpotifyAlbumTracks = resp
             .json()
             .await
-            .map_err(|e| format!("Failed to parse Spotify album page: {}", e))?;
+            .with_context(|| "Failed to parse Spotify album page")?;
         for t in &page.items {
             if let Some(ref id) = t.id {
                 let artist = t
@@ -337,14 +328,14 @@ fn extract_playlist_tracks(items: Vec<SpotifyPlaylistItem>) -> Vec<RawSpotifyTra
         .collect()
 }
 
-async fn spotify_get(client: &reqwest::Client, token: &str, url: &str) -> Result<reqwest::Response, String> {
+async fn spotify_get(client: &reqwest::Client, token: &str, url: &str) -> anyhow::Result<reqwest::Response> {
     let resp = client
         .get(url)
         .bearer_auth(token)
         .timeout(Duration::from_secs(15))
         .send()
         .await
-        .map_err(|e| format!("Spotify API request failed: {}", e))?;
+        .with_context(|| "Spotify API request failed")?;
 
     if resp.status().as_u16() == 429 {
         // Rate limited — get retry-after header
@@ -363,15 +354,15 @@ async fn spotify_get(client: &reqwest::Client, token: &str, url: &str) -> Result
             .timeout(Duration::from_secs(15))
             .send()
             .await
-            .map_err(|e| format!("Spotify API retry failed: {}", e))?;
+            .with_context(|| "Spotify API retry failed")?;
 
         if retry_resp.status().as_u16() == 429 {
-            return Err("Spotify rate limited after retry".to_string());
+            anyhow::bail!("Spotify rate limited after retry");
         }
         if !retry_resp.status().is_success() {
             let status = retry_resp.status();
             let body = retry_resp.text().await.unwrap_or_default();
-            return Err(format!("Spotify API error after retry {}: {}", status, body));
+            anyhow::bail!("Spotify API error after retry {}: {}", status, body);
         }
         return Ok(retry_resp);
     }
@@ -379,7 +370,7 @@ async fn spotify_get(client: &reqwest::Client, token: &str, url: &str) -> Result
     if !resp.status().is_success() {
         let status = resp.status();
         let body = resp.text().await.unwrap_or_default();
-        return Err(format!("Spotify API error {}: {}", status, body));
+        anyhow::bail!("Spotify API error {}: {}", status, body);
     }
 
     Ok(resp)

@@ -1,5 +1,6 @@
 //! Database operations for content subscriptions.
 
+use anyhow::Context;
 use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::Value as JsonValue;
 
@@ -65,7 +66,7 @@ pub fn upsert_subscription(
     display_name: &str,
     watch_mask: u32,
     source_meta: Option<&JsonValue>,
-) -> Result<i64, String> {
+) -> anyhow::Result<i64> {
     let meta_json = source_meta.map(|v| v.to_string());
 
     conn.execute(
@@ -81,7 +82,7 @@ pub fn upsert_subscription(
            updated_at = CURRENT_TIMESTAMP",
         params![user_id, source_type, source_id, display_name, watch_mask, meta_json],
     )
-    .map_err(|e| format!("Failed to upsert subscription: {}", e))?;
+    .with_context(|| "Failed to upsert subscription")?;
 
     let id: i64 = conn
         .query_row(
@@ -89,13 +90,13 @@ pub fn upsert_subscription(
             params![user_id, source_type, source_id],
             |row| row.get(0),
         )
-        .map_err(|e| format!("Failed to get subscription id: {}", e))?;
+        .with_context(|| "Failed to get subscription id")?;
 
     Ok(id)
 }
 
 /// Get a subscription by ID.
-pub fn get_subscription(conn: &Connection, id: i64) -> Result<Option<ContentSubscription>, String> {
+pub fn get_subscription(conn: &Connection, id: i64) -> anyhow::Result<Option<ContentSubscription>> {
     conn.query_row(
         "SELECT id, user_id, source_type, source_id, display_name, watch_mask, is_active,
                 last_seen_state, source_meta, last_checked_at, last_error, consecutive_errors,
@@ -105,11 +106,11 @@ pub fn get_subscription(conn: &Connection, id: i64) -> Result<Option<ContentSubs
         parse_row,
     )
     .optional()
-    .map_err(|e| format!("Failed to get subscription: {}", e))
+    .with_context(|| "Failed to get subscription")
 }
 
 /// Get all active subscriptions for a user.
-pub fn get_user_subscriptions(conn: &Connection, user_id: i64) -> Result<Vec<ContentSubscription>, String> {
+pub fn get_user_subscriptions(conn: &Connection, user_id: i64) -> anyhow::Result<Vec<ContentSubscription>> {
     let mut stmt = conn
         .prepare(
             "SELECT id, user_id, source_type, source_id, display_name, watch_mask, is_active,
@@ -119,58 +120,58 @@ pub fn get_user_subscriptions(conn: &Connection, user_id: i64) -> Result<Vec<Con
              WHERE user_id = ?1 AND is_active = 1
              ORDER BY created_at ASC",
         )
-        .map_err(|e| format!("Failed to prepare query: {}", e))?;
+        .with_context(|| "Failed to prepare query")?;
 
     let rows = stmt
         .query_map(params![user_id], parse_row)
-        .map_err(|e| format!("Failed to query subscriptions: {}", e))?;
+        .with_context(|| "Failed to query subscriptions")?;
 
     let mut subs = Vec::new();
     for row in rows {
-        subs.push(row.map_err(|e| format!("Failed to read row: {}", e))?);
+        subs.push(row.with_context(|| "Failed to read row")?);
     }
     Ok(subs)
 }
 
 /// Count active subscriptions for a user.
-pub fn count_user_subscriptions(conn: &Connection, user_id: i64) -> Result<u32, String> {
+pub fn count_user_subscriptions(conn: &Connection, user_id: i64) -> anyhow::Result<u32> {
     conn.query_row(
         "SELECT COUNT(*) FROM content_subscriptions WHERE user_id = ?1 AND is_active = 1",
         params![user_id],
         |row| row.get::<_, u32>(0),
     )
-    .map_err(|e| format!("Failed to count subscriptions: {}", e))
+    .with_context(|| "Failed to count subscriptions")
 }
 
 /// Deactivate (soft-delete) a subscription.
-pub fn deactivate_subscription(conn: &Connection, id: i64) -> Result<(), String> {
+pub fn deactivate_subscription(conn: &Connection, id: i64) -> anyhow::Result<()> {
     conn.execute(
         "UPDATE content_subscriptions SET is_active = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?1",
         params![id],
     )
-    .map_err(|e| format!("Failed to deactivate subscription: {}", e))?;
+    .with_context(|| "Failed to deactivate subscription")?;
     Ok(())
 }
 
 /// Deactivate all subscriptions for a user (e.g. when bot is blocked).
-pub fn deactivate_all_for_user(conn: &Connection, user_id: i64) -> Result<u32, String> {
+pub fn deactivate_all_for_user(conn: &Connection, user_id: i64) -> anyhow::Result<u32> {
     let count = conn
         .execute(
             "UPDATE content_subscriptions SET is_active = 0, updated_at = CURRENT_TIMESTAMP
              WHERE user_id = ?1 AND is_active = 1",
             params![user_id],
         )
-        .map_err(|e| format!("Failed to deactivate subscriptions: {}", e))?;
+        .with_context(|| "Failed to deactivate subscriptions")?;
     Ok(count as u32)
 }
 
 /// Update watch mask for a subscription.
-pub fn update_watch_mask(conn: &Connection, id: i64, new_mask: u32) -> Result<(), String> {
+pub fn update_watch_mask(conn: &Connection, id: i64, new_mask: u32) -> anyhow::Result<()> {
     conn.execute(
         "UPDATE content_subscriptions SET watch_mask = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
         params![new_mask, id],
     )
-    .map_err(|e| format!("Failed to update watch mask: {}", e))?;
+    .with_context(|| "Failed to update watch mask")?;
     Ok(())
 }
 
@@ -181,7 +182,7 @@ pub fn update_check_success(
     source_id: &str,
     new_state: &JsonValue,
     new_meta: Option<&JsonValue>,
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     let state_json = new_state.to_string();
     let meta_json = new_meta.map(|v| v.to_string());
 
@@ -196,13 +197,13 @@ pub fn update_check_success(
          WHERE source_type = ?3 AND source_id = ?4 AND is_active = 1",
         params![state_json, meta_json, source_type, source_id],
     )
-    .map_err(|e| format!("Failed to update check success: {}", e))?;
+    .with_context(|| "Failed to update check success")?;
     Ok(())
 }
 
 /// Record a check error and increment consecutive_errors.
 /// Returns the new consecutive_errors count.
-pub fn update_check_error(conn: &Connection, source_type: &str, source_id: &str, error: &str) -> Result<u32, String> {
+pub fn update_check_error(conn: &Connection, source_type: &str, source_id: &str, error: &str) -> anyhow::Result<u32> {
     conn.execute(
         "UPDATE content_subscriptions
          SET last_checked_at = CURRENT_TIMESTAMP,
@@ -212,7 +213,7 @@ pub fn update_check_error(conn: &Connection, source_type: &str, source_id: &str,
          WHERE source_type = ?2 AND source_id = ?3 AND is_active = 1",
         params![error, source_type, source_id],
     )
-    .map_err(|e| format!("Failed to update check error: {}", e))?;
+    .with_context(|| "Failed to update check error")?;
 
     // Return the max consecutive_errors for this source
     conn.query_row(
@@ -221,7 +222,7 @@ pub fn update_check_error(conn: &Connection, source_type: &str, source_id: &str,
         params![source_type, source_id],
         |row| row.get::<_, u32>(0),
     )
-    .map_err(|e| format!("Failed to get error count: {}", e))
+    .with_context(|| "Failed to get error count")
 }
 
 /// Auto-disable subscriptions that have too many consecutive errors.
@@ -230,7 +231,7 @@ pub fn auto_disable_errored(
     source_type: &str,
     source_id: &str,
     max_errors: u32,
-) -> Result<u32, String> {
+) -> anyhow::Result<u32> {
     let count = conn
         .execute(
             "UPDATE content_subscriptions
@@ -238,13 +239,13 @@ pub fn auto_disable_errored(
              WHERE source_type = ?1 AND source_id = ?2 AND is_active = 1 AND consecutive_errors >= ?3",
             params![source_type, source_id, max_errors],
         )
-        .map_err(|e| format!("Failed to auto-disable: {}", e))?;
+        .with_context(|| "Failed to auto-disable")?;
     Ok(count as u32)
 }
 
 /// Get active subscriptions grouped by (source_type, source_id) for the scheduler.
 /// Ordered by last_checked_at ASC NULLS FIRST (most stale first).
-pub fn get_active_source_groups(conn: &Connection) -> Result<Vec<SourceGroup>, String> {
+pub fn get_active_source_groups(conn: &Connection) -> anyhow::Result<Vec<SourceGroup>> {
     let mut stmt = conn
         .prepare(
             "SELECT id, user_id, source_type, source_id, display_name, watch_mask, is_active,
@@ -254,15 +255,13 @@ pub fn get_active_source_groups(conn: &Connection) -> Result<Vec<SourceGroup>, S
              WHERE is_active = 1
              ORDER BY last_checked_at ASC NULLS FIRST, source_type, source_id",
         )
-        .map_err(|e| format!("Failed to prepare query: {}", e))?;
+        .with_context(|| "Failed to prepare query")?;
 
-    let rows = stmt
-        .query_map([], parse_row)
-        .map_err(|e| format!("Failed to query: {}", e))?;
+    let rows = stmt.query_map([], parse_row).with_context(|| "Failed to query")?;
 
     let mut all_subs: Vec<ContentSubscription> = Vec::new();
     for row in rows {
-        all_subs.push(row.map_err(|e| format!("Failed to read row: {}", e))?);
+        all_subs.push(row.with_context(|| "Failed to read row")?);
     }
 
     // Group by (source_type, source_id)
@@ -319,7 +318,7 @@ pub fn has_subscription(
     user_id: i64,
     source_type: &str,
     source_id: &str,
-) -> Result<Option<ContentSubscription>, String> {
+) -> anyhow::Result<Option<ContentSubscription>> {
     conn.query_row(
         "SELECT id, user_id, source_type, source_id, display_name, watch_mask, is_active,
                 last_seen_state, source_meta, last_checked_at, last_error, consecutive_errors,
@@ -330,7 +329,7 @@ pub fn has_subscription(
         parse_row,
     )
     .optional()
-    .map_err(|e| format!("Failed to check subscription: {}", e))
+    .with_context(|| "Failed to check subscription")
 }
 
 #[cfg(test)]

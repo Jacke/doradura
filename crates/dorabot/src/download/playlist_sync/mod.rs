@@ -5,6 +5,7 @@ pub mod soundcloud;
 pub mod spotify;
 pub mod yandex_music;
 
+use anyhow::Context;
 use std::sync::Arc;
 
 use resolver::{Platform, PlaylistResolver, ProgressFn, ResolvedPlaylist};
@@ -16,6 +17,7 @@ use crate::storage::db::DbPool;
 
 /// YouTube playlist resolver (same pattern as SoundCloud — yt-dlp flat-playlist).
 mod youtube {
+    use anyhow::Context;
     use async_trait::async_trait;
     use std::time::Duration;
     use tokio::process::Command as TokioCommand;
@@ -39,7 +41,7 @@ mod youtube {
             (lower.contains("youtube.com/playlist") || lower.contains("youtu.be/")) && lower.contains("list=")
         }
 
-        async fn resolve(&self, url: &str, progress: Option<ProgressFn>) -> Result<ResolvedPlaylist, String> {
+        async fn resolve(&self, url: &str, progress: Option<ProgressFn>) -> anyhow::Result<ResolvedPlaylist> {
             let ytdl_bin = &*config::YTDL_BIN;
 
             let mut args: Vec<String> = vec![
@@ -58,15 +60,12 @@ mod youtube {
                 TokioCommand::new(ytdl_bin).args(&args).output(),
             )
             .await
-            .map_err(|_| "YouTube playlist import timed out".to_string())?
-            .map_err(|e| format!("Failed to execute yt-dlp: {}", e))?;
+            .map_err(|_| anyhow::anyhow!("YouTube playlist import timed out"))?
+            .with_context(|| "Failed to execute yt-dlp")?;
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                return Err(format!(
-                    "yt-dlp error: {}",
-                    stderr.lines().last().unwrap_or("unknown error")
-                ));
+                anyhow::bail!("yt-dlp error: {}", stderr.lines().last().unwrap_or("unknown error"));
             }
 
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -109,7 +108,7 @@ mod youtube {
             }
 
             if tracks.is_empty() {
-                return Err("No tracks found in this YouTube playlist".to_string());
+                anyhow::bail!("No tracks found in this YouTube playlist");
             }
 
             Ok(ResolvedPlaylist {
@@ -154,9 +153,9 @@ pub async fn import_playlist(
     url: &str,
     db_pool: Arc<DbPool>,
     progress: Option<ProgressFn>,
-) -> Result<ResolvedPlaylist, String> {
+) -> anyhow::Result<ResolvedPlaylist> {
     let resolver = get_resolver(url, db_pool).ok_or_else(|| {
-        "Unsupported URL. Supported: Spotify, SoundCloud, YouTube, Yandex Music playlists".to_string()
+        anyhow::anyhow!("Unsupported URL. Supported: Spotify, SoundCloud, YouTube, Yandex Music playlists")
     })?;
 
     resolver.resolve(url, progress).await
@@ -168,7 +167,7 @@ pub fn save_resolved_playlist(
     user_id: i64,
     source_url: &str,
     resolved: &ResolvedPlaylist,
-) -> Result<i64, String> {
+) -> anyhow::Result<i64> {
     use crate::storage::db;
 
     let matched = resolved
@@ -183,9 +182,9 @@ pub fn save_resolved_playlist(
         .count() as i32;
 
     conn.execute_batch("BEGIN IMMEDIATE")
-        .map_err(|e| format!("Failed to begin transaction: {}", e))?;
+        .with_context(|| "Failed to begin transaction")?;
 
-    let result = (|| -> Result<i64, String> {
+    let result = (|| -> anyhow::Result<i64> {
         let playlist_id = db::create_synced_playlist(
             conn,
             user_id,
@@ -197,7 +196,7 @@ pub fn save_resolved_playlist(
             matched,
             not_found,
         )
-        .map_err(|e| format!("Failed to save playlist: {}", e))?;
+        .with_context(|| "Failed to save playlist")?;
 
         for (i, track) in resolved.tracks.iter().enumerate() {
             db::add_synced_track(
@@ -212,7 +211,7 @@ pub fn save_resolved_playlist(
                 track.resolved_url.as_deref(),
                 track.status.as_str(),
             )
-            .map_err(|e| format!("Failed to save track: {}", e))?;
+            .with_context(|| "Failed to save track")?;
         }
 
         Ok(playlist_id)
@@ -220,8 +219,7 @@ pub fn save_resolved_playlist(
 
     match result {
         Ok(id) => {
-            conn.execute_batch("COMMIT")
-                .map_err(|e| format!("Failed to commit: {}", e))?;
+            conn.execute_batch("COMMIT").with_context(|| "Failed to commit")?;
             Ok(id)
         }
         Err(e) => {

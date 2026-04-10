@@ -5,6 +5,7 @@
 use crate::core::config;
 use crate::core::process::run_with_timeout;
 use crate::download::metadata::add_cookies_args;
+use anyhow::Context;
 use serde::Deserialize;
 use std::process::Stdio;
 use tokio::process::Command;
@@ -118,7 +119,7 @@ pub fn is_playlist_url(url: &Url) -> bool {
 }
 
 /// Extracts playlist entries from a URL using yt-dlp --flat-playlist
-pub async fn extract_playlist(url: &Url) -> Result<PlaylistInfo, String> {
+pub async fn extract_playlist(url: &Url) -> anyhow::Result<PlaylistInfo> {
     let ytdl_bin = &*config::YTDL_BIN;
 
     let mut args: Vec<&str> = vec![
@@ -140,11 +141,11 @@ pub async fn extract_playlist(url: &Url) -> Result<PlaylistInfo, String> {
     cmd.args(&args).stdout(Stdio::piped()).stderr(Stdio::piped());
     let output = run_with_timeout(&mut cmd, config::download::ytdlp_timeout())
         .await
-        .map_err(|e| format!("Failed to run yt-dlp: {}", e))?;
+        .with_context(|| "Failed to run yt-dlp")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("yt-dlp failed: {}", stderr));
+        anyhow::bail!("yt-dlp failed: {}", stderr);
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -213,7 +214,7 @@ pub async fn extract_playlist(url: &Url) -> Result<PlaylistInfo, String> {
     }
 
     if entries.is_empty() {
-        return Err("No videos found in playlist".to_string());
+        anyhow::bail!("No videos found in playlist");
     }
 
     let total_count = entries.len();
@@ -232,7 +233,7 @@ pub async fn extract_playlist(url: &Url) -> Result<PlaylistInfo, String> {
 ///
 /// Uses `yt-dlp --flat-playlist --playlist-items 1` to get just the first item
 /// (most recent) without downloading anything.
-pub async fn extract_latest_from_channel(url: &Url) -> Result<(String, String), String> {
+pub async fn extract_latest_from_channel(url: &Url) -> anyhow::Result<(String, String)> {
     let ytdl_bin = &*config::YTDL_BIN;
 
     let mut args: Vec<&str> = vec![
@@ -255,11 +256,11 @@ pub async fn extract_latest_from_channel(url: &Url) -> Result<(String, String), 
     cmd.args(&args).stdout(Stdio::piped()).stderr(Stdio::piped());
     let output = run_with_timeout(&mut cmd, config::download::ytdlp_timeout())
         .await
-        .map_err(|e| format!("Failed to run yt-dlp: {}", e))?;
+        .with_context(|| "Failed to run yt-dlp")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("yt-dlp failed: {}", stderr));
+        anyhow::bail!("yt-dlp failed: {}", stderr);
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -283,7 +284,7 @@ pub async fn extract_latest_from_channel(url: &Url) -> Result<(String, String), 
         }
     }
 
-    Err("No tracks found on this channel/profile".to_string())
+    anyhow::bail!("No tracks found on this channel/profile")
 }
 
 /// Extracts only the video ID from a YouTube URL, removing playlist parameters

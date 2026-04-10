@@ -8,6 +8,7 @@ use crate::storage::db::{self};
 use crate::storage::SharedStorage;
 use crate::telegram::admin;
 use crate::telegram::Bot;
+use anyhow::Context;
 use chrono::{Duration, Utc};
 use sqlx::{pool::PoolConnection, Postgres, Row};
 use std::sync::Arc;
@@ -321,10 +322,10 @@ impl StatsReporter {
     }
 
     /// Sends a stats report for the last N hours
-    pub async fn send_report(&self, hours: i64) -> Result<(), String> {
+    pub async fn send_report(&self, hours: i64) -> anyhow::Result<()> {
         let stats = get_period_stats(&self.shared_storage, hours)
             .await
-            .map_err(|e| format!("Stats error: {}", e))?;
+            .with_context(|| "Stats error")?;
 
         // Skip if no activity
         if stats.total_downloads == 0 && stats.failed_downloads == 0 {
@@ -338,7 +339,7 @@ impl StatsReporter {
             .send_message(self.admin_chat_id, &message)
             .parse_mode(ParseMode::MarkdownV2)
             .await
-            .map_err(|e| format!("Failed to send stats: {:?}", e))?;
+            .with_context(|| "Failed to send stats")?;
 
         log::info!(
             "Sent stats report: {} downloads, {} users in last {} hours",

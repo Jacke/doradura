@@ -2,6 +2,7 @@ use crate::core::config;
 use crate::downsub::DownsubGateway;
 use crate::storage::{DbPool, SharedStorage, SubtitleCache};
 use crate::telegram::Bot;
+use anyhow::Context;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardMarkup, MessageId};
@@ -15,7 +16,7 @@ pub async fn fetch_subtitles_for_command(
     user_id: i64,
     url: &str,
     lang: &str,
-) -> Result<(String, String, usize), String> {
+) -> anyhow::Result<(String, String, usize)> {
     // Treat empty string same as "no preference" (None) for the gateway
     let lang_opt = if lang.is_empty() { None } else { Some(lang.to_string()) };
 
@@ -32,7 +33,7 @@ pub async fn fetch_subtitles_for_command(
                 lang_opt.clone(),
             )
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| anyhow::anyhow!(e))?;
         cache.save(url, lang, "srt", &result.raw_subtitles).await;
         result.raw_subtitles
     };
@@ -44,7 +45,7 @@ pub async fn fetch_subtitles_for_command(
         let result = gateway
             .fetch_subtitles(user_id, None, url.to_string(), Some("txt".to_string()), lang_opt)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| anyhow::anyhow!(e))?;
         cache.save(url, lang, "txt", &result.raw_subtitles).await;
         result.raw_subtitles
     };
@@ -68,7 +69,7 @@ pub async fn add_audio_tools_buttons_from_history(
     telegram_file_id: &str,
     title: String,
     duration: u32,
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     use crate::core::config;
     use crate::download::audio_effects::{self, AudioEffectSession};
     use std::path::Path;
@@ -77,7 +78,9 @@ pub async fn add_audio_tools_buttons_from_history(
     let session_file_path_raw = audio_effects::get_original_file_path(&session_id, &config::DOWNLOAD_FOLDER);
     let session_file_path = shellexpand::tilde(&session_file_path_raw).into_owned();
     if let Some(parent) = Path::new(&session_file_path).parent() {
-        tokio::fs::create_dir_all(parent).await.map_err(|e| e.to_string())?;
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?;
     }
 
     crate::telegram::download_file_from_telegram(
@@ -86,7 +89,7 @@ pub async fn add_audio_tools_buttons_from_history(
         Some(std::path::PathBuf::from(&session_file_path)),
     )
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| anyhow::anyhow!(e))?;
 
     let session = AudioEffectSession::new(
         session_id.clone(),
@@ -99,7 +102,7 @@ pub async fn add_audio_tools_buttons_from_history(
     shared_storage
         .create_audio_effect_session(&session)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| anyhow::anyhow!(e))?;
 
     let keyboard = InlineKeyboardMarkup::new(vec![vec![
         crate::telegram::cb("🎛️ Edit Audio", format!("ae:open:{}", session_id)),
@@ -109,7 +112,7 @@ pub async fn add_audio_tools_buttons_from_history(
     bot.edit_message_reply_markup(chat_id, message_id)
         .reply_markup(keyboard)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| anyhow::anyhow!(e))?;
 
     Ok(())
 }
@@ -119,7 +122,7 @@ pub async fn add_video_cut_button_from_history(
     chat_id: ChatId,
     message_id: MessageId,
     download_id: i64,
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
         "✂️ Cut Video",
         format!("downloads:clip:{}", download_id),
@@ -128,7 +131,7 @@ pub async fn add_video_cut_button_from_history(
     bot.edit_message_reply_markup(chat_id, message_id)
         .reply_markup(keyboard)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| anyhow::anyhow!(e))?;
 
     Ok(())
 }
@@ -282,7 +285,7 @@ pub async fn change_video_speed(
         .join(format!("input_{}_{}.mp4", chat_id.0, uuid::Uuid::new_v4()));
     crate::telegram::download_file_from_telegram(bot, file_id, Some(input_path.clone()))
         .await
-        .map_err(|e| format!("Failed to download file from Telegram: {}", e))?;
+        .with_context(|| "Failed to download file from Telegram")?;
 
     let output_path = guard.path().join(format!("output_{}_{}.mp4", chat_id.0, speed));
 
@@ -510,7 +513,7 @@ mod tests {
         let result =
             fetch_subtitles_for_command(&gateway, &cache, 12345, "https://www.youtube.com/watch?v=test456", "").await;
         assert!(result.is_err());
-        let err_str = result.unwrap_err();
+        let err_str = result.unwrap_err().to_string();
         // DownsubError::Unavailable maps to "Downsub is disabled"
         assert!(
             err_str.contains("disabled") || err_str.contains("Unavailable"),

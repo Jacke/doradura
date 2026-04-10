@@ -59,13 +59,16 @@ pub struct ThumbnailArt {
 }
 
 /// Result type sent from the background preview task.
+///
+/// Error is stringified at the boundary so the receiving main-loop task (which
+/// just displays it) doesn't need the full `anyhow::Error` chain.
 pub type PreviewResult = Result<(VideoInfo, Option<ThumbnailArt>), String>;
 
 // ── Fetchers ──────────────────────────────────────────────────────────────────
 
 /// Fetch full video metadata by running `yt-dlp -J`.
 /// Returns an error string if yt-dlp fails or JSON is unparseable.
-pub async fn fetch_video_info(url: &str, ytdlp_bin: &str, cookies_file: Option<String>) -> Result<VideoInfo, String> {
+pub async fn fetch_video_info(url: &str, ytdlp_bin: &str, cookies_file: Option<String>) -> anyhow::Result<VideoInfo> {
     log::info!("fetch_video_info: {} (bin={})", url, ytdlp_bin);
     let mut args = vec!["-J".to_string(), "--no-playlist".to_string()];
 
@@ -83,11 +86,12 @@ pub async fn fetch_video_info(url: &str, ytdlp_bin: &str, cookies_file: Option<S
 
     args.push(url.to_string());
 
+    use anyhow::Context;
     let output = tokio::process::Command::new(ytdlp_bin)
         .args(&args)
         .output()
         .await
-        .map_err(|e| format!("Cannot run yt-dlp: {e}"))?;
+        .context("Cannot run yt-dlp")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -98,12 +102,12 @@ pub async fn fetch_video_info(url: &str, ytdlp_bin: &str, cookies_file: Option<S
             .unwrap_or("yt-dlp failed");
         let err = last.trim_start_matches("ERROR: ").trim().to_string();
         log::warn!("fetch_video_info failed: {}", err);
-        return Err(err);
+        anyhow::bail!("{}", err);
     }
 
-    let json: Value = serde_json::from_slice(&output.stdout).map_err(|e| format!("JSON parse error: {e}"))?;
+    let json: Value = serde_json::from_slice(&output.stdout).context("JSON parse error")?;
 
-    parse_video_info(&json).map_err(|e| e.to_string())
+    parse_video_info(&json).map_err(|e| anyhow::anyhow!(e))
 }
 
 /// Download a thumbnail image and convert it to `THUMB_W × THUMB_H` half-block art.

@@ -1,4 +1,5 @@
 use crate::core::validation::sanitize_filename;
+use anyhow::Context;
 use crate::storage::db::{self, DbPool, DownloadHistoryEntry};
 use crate::telegram::admin::download_file_from_telegram;
 use crate::telegram::Bot;
@@ -705,23 +706,23 @@ struct SelectionPageData {
 }
 
 /// Creates a ZIP file at `zip_path` from the given files (sync, run in spawn_blocking).
-fn create_zip_file(zip_path: &std::path::Path, files: &[(String, PathBuf)]) -> Result<(), String> {
+fn create_zip_file(zip_path: &std::path::Path, files: &[(String, PathBuf)]) -> anyhow::Result<()> {
     use std::io::Write;
     use zip::write::SimpleFileOptions;
     use zip::ZipWriter;
 
-    let file = std::fs::File::create(zip_path).map_err(|e| format!("create zip: {}", e))?;
+    let file = std::fs::File::create(zip_path).with_context(|| "create zip")?;
     let mut zip = ZipWriter::new(file);
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
 
     for (name, path) in files {
         zip.start_file(name, options)
-            .map_err(|e| format!("start file '{}': {}", name, e))?;
-        let data = std::fs::read(path).map_err(|e| format!("read '{}': {}", name, e))?;
-        zip.write_all(&data).map_err(|e| format!("write '{}': {}", name, e))?;
+            .map_err(|e| anyhow::anyhow!("start file '{}': {}", name, e))?;
+        let data = std::fs::read(path).map_err(|e| anyhow::anyhow!("read '{}': {}", name, e))?;
+        zip.write_all(&data).map_err(|e| anyhow::anyhow!("write '{}': {}", name, e))?;
     }
 
-    zip.finish().map_err(|e| format!("finish zip: {}", e))?;
+    zip.finish().with_context(|| "finish zip")?;
     Ok(())
 }
 

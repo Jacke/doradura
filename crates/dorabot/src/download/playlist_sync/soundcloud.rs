@@ -1,5 +1,6 @@
 //! SoundCloud playlist resolver using yt-dlp --flat-playlist.
 
+use anyhow::Context;
 use async_trait::async_trait;
 use std::time::Duration;
 use tokio::process::Command as TokioCommand;
@@ -34,7 +35,7 @@ impl PlaylistResolver for SoundCloudResolver {
                 || lower.contains("/albums/"))
     }
 
-    async fn resolve(&self, url: &str, progress: Option<ProgressFn>) -> Result<ResolvedPlaylist, String> {
+    async fn resolve(&self, url: &str, progress: Option<ProgressFn>) -> anyhow::Result<ResolvedPlaylist> {
         let ytdl_bin = &*config::YTDL_BIN;
 
         let mut args: Vec<String> = vec![
@@ -53,15 +54,12 @@ impl PlaylistResolver for SoundCloudResolver {
             TokioCommand::new(ytdl_bin).args(&args).output(),
         )
         .await
-        .map_err(|_| "SoundCloud import timed out".to_string())?
-        .map_err(|e| format!("Failed to execute yt-dlp: {}", e))?;
+        .map_err(|_| anyhow::anyhow!("SoundCloud import timed out"))?
+        .with_context(|| "Failed to execute yt-dlp")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!(
-                "yt-dlp error: {}",
-                stderr.lines().last().unwrap_or("unknown error")
-            ));
+            anyhow::bail!("yt-dlp error: {}", stderr.lines().last().unwrap_or("unknown error"));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -104,7 +102,7 @@ impl PlaylistResolver for SoundCloudResolver {
         }
 
         if tracks.is_empty() {
-            return Err("No tracks found in this SoundCloud playlist".to_string());
+            anyhow::bail!("No tracks found in this SoundCloud playlist");
         }
 
         // Extract playlist name from URL

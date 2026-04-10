@@ -2,6 +2,7 @@ use crate::core::metrics;
 use crate::core::types::Plan;
 use crate::storage::{DbPool, SharedStorage};
 use crate::telegram::Bot;
+use anyhow::Context;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardMarkup, Seconds};
@@ -579,11 +580,11 @@ pub async fn activate_subscription(
     telegram_id: i64,
     plan: &str,
     days: i32,
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     shared_storage
         .update_user_plan_with_expiry(telegram_id, plan, Some(days))
         .await
-        .map_err(|e| format!("Failed to update plan: {}", e))?;
+        .with_context(|| "Failed to update plan")?;
 
     log::info!(
         "Subscription activated: user_id={}, plan={}, days={}",
@@ -978,7 +979,7 @@ pub async fn cancel_subscription(
     bot: &Bot,
     telegram_id: i64,
     shared_storage: Arc<SharedStorage>,
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
     log::info!("🚫 SUBSCRIPTION CANCELLATION REQUEST");
     log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
@@ -991,11 +992,11 @@ pub async fn cancel_subscription(
         .await
         .map_err(|e| {
             log::error!("❌ Failed to get user: {}", e);
-            format!("Failed to get user: {}", e)
+            anyhow::anyhow!("Failed to get user: {}", e)
         })?
         .ok_or_else(|| {
             log::error!("❌ User not found");
-            "User not found".to_string()
+            anyhow::anyhow!("User not found")
         })?;
 
     log::info!("  • Current plan: {}", user.plan);
@@ -1007,12 +1008,12 @@ pub async fn cancel_subscription(
         log::info!("ℹ️  Subscription is already non-recurring (no auto-renewal)");
         log::info!("ℹ️  User retains access until: {:?}", user.subscription_expires_at);
         log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");
-        return Err("Subscription is already non-recurring".to_string());
+        anyhow::bail!("Subscription is already non-recurring");
     }
 
     let charge_id = user.telegram_charge_id.ok_or_else(|| {
         log::error!("❌ No active subscription found");
-        "No active subscription found".to_string()
+        anyhow::anyhow!("No active subscription found")
     })?;
 
     log::info!("  • Charge ID: {}", charge_id);
@@ -1028,7 +1029,7 @@ pub async fn cancel_subscription(
     .await
     .map_err(|e| {
         log::error!("❌ Failed to cancel subscription via Bot API: {:?}", e);
-        format!("Failed to cancel subscription: {:?}", e)
+        anyhow::anyhow!("Failed to cancel subscription: {:?}", e)
     })?;
 
     log::info!("✅ Subscription canceled via Telegram Bot API");
@@ -1042,7 +1043,7 @@ pub async fn cancel_subscription(
     log::info!("💾 Updating database (removing recurring flag)...");
     shared_storage.cancel_subscription(telegram_id).await.map_err(|e| {
         log::error!("❌ Failed to update subscription status in DB: {}", e);
-        format!("Failed to update subscription status: {}", e)
+        anyhow::anyhow!("Failed to update subscription status: {}", e)
     })?;
 
     log::info!("✅ Subscription cancellation completed successfully");
@@ -1067,17 +1068,17 @@ pub async fn restore_subscription(
     bot: &Bot,
     telegram_id: i64,
     shared_storage: Arc<SharedStorage>,
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     // Get the user's charge_id
     let user = shared_storage
         .get_user(telegram_id)
         .await
-        .map_err(|e| format!("Failed to get user: {}", e))?
-        .ok_or_else(|| "User not found".to_string())?;
+        .with_context(|| "Failed to get user")?
+        .ok_or_else(|| anyhow::anyhow!("User not found"))?;
 
     let charge_id = user
         .telegram_charge_id
-        .ok_or_else(|| "No subscription found".to_string())?;
+        .ok_or_else(|| anyhow::anyhow!("No subscription found"))?;
 
     // Restore subscription via Bot API
     use teloxide::types::TelegramTransactionId;
@@ -1087,7 +1088,7 @@ pub async fn restore_subscription(
         false, // is_canceled = false
     )
     .await
-    .map_err(|e| format!("Failed to restore subscription: {:?}", e))?;
+    .with_context(|| "Failed to restore subscription")?;
 
     log::info!("Subscription restored for user {}", telegram_id);
 

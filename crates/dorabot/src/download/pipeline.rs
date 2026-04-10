@@ -26,6 +26,7 @@ use crate::download::source::{DownloadOutput, DownloadSource, MediaMetadata, Sou
 use crate::storage::db::{self as db, DbPool};
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
+use anyhow::Context;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::Message;
@@ -33,7 +34,7 @@ use url::Url;
 
 /// Apply speed modification to a downloaded media file using ffmpeg.
 /// Replaces the original file in-place.
-pub(crate) async fn apply_speed_to_file(file_path: &str, speed: f32) -> Result<String, String> {
+pub(crate) async fn apply_speed_to_file(file_path: &str, speed: f32) -> anyhow::Result<String> {
     if (speed - 1.0).abs() < 0.01 {
         return Ok(file_path.to_string());
     }
@@ -78,17 +79,17 @@ pub(crate) async fn apply_speed_to_file(file_path: &str, speed: f32) -> Result<S
     }
     cmd.arg(&tmp_path);
 
-    let output = cmd.output().await.map_err(|e| format!("ffmpeg speed failed: {}", e))?;
+    let output = cmd.output().await.with_context(|| "ffmpeg speed failed")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         log::error!("ffmpeg speed error: {}", stderr);
         let _ = tokio::fs::remove_file(&tmp_path).await;
-        return Err(format!("ffmpeg speed error: {}", stderr));
+        anyhow::bail!("ffmpeg speed error: {}", stderr);
     }
 
     tokio::fs::rename(&tmp_path, file_path)
         .await
-        .map_err(|e| format!("rename failed: {}", e))?;
+        .with_context(|| "rename failed")?;
     log::info!(
         "⏱️ [SPEED_FILTER] {}x applied in {:.1}s",
         speed,

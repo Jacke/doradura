@@ -348,7 +348,12 @@ pub fn delete_audio_cut_session_by_user(conn: &DbConnection, user_id: i64) -> Re
 // ==================== Video Clip Sessions ====================
 
 /// Kind of output produced by a video clip session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// `Display` / `as_str` are derived via strum with `serialize_all = "snake_case"`.
+/// `from_str_lossy` stays manual because it has a "fall back to `Cut` on
+/// unknown input" contract that strum's `EnumString` doesn't express.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::AsRefStr, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum OutputKind {
     Cut,
     VideoNote,
@@ -358,14 +363,10 @@ pub enum OutputKind {
 }
 
 impl OutputKind {
+    /// Alias for `Into::<&'static str>::into` — keeps existing call sites
+    /// unchanged.
     pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Cut => "cut",
-            Self::VideoNote => "video_note",
-            Self::Gif => "gif",
-            Self::IphoneRingtone => "iphone_ringtone",
-            Self::AndroidRingtone => "android_ringtone",
-        }
+        self.into()
     }
 
     pub fn from_str_lossy(s: &str) -> Self {
@@ -379,25 +380,19 @@ impl OutputKind {
     }
 }
 
-impl std::fmt::Display for OutputKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
 /// Source of a video clip (original download or a previous cut).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::AsRefStr, strum::IntoStaticStr)]
+#[strum(serialize_all = "lowercase")]
 pub enum SourceKind {
     Download,
     Cut,
 }
 
 impl SourceKind {
+    /// Alias for `Into::<&'static str>::into` — keeps existing call sites
+    /// unchanged.
     pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Download => "download",
-            Self::Cut => "cut",
-        }
+        self.into()
     }
 
     pub fn from_str_lossy(s: &str) -> Self {
@@ -405,12 +400,6 @@ impl SourceKind {
             "cut" => Self::Cut,
             _ => Self::Download,
         }
-    }
-}
-
-impl std::fmt::Display for SourceKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
     }
 }
 

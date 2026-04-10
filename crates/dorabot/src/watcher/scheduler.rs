@@ -8,6 +8,7 @@ use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::watcher::traits::WatchNotification;
 use crate::watcher::WatcherRegistry;
+use anyhow::Context;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::time::{interval, Duration};
@@ -61,12 +62,12 @@ async fn run_check_cycle(
     shared_storage: &Arc<SharedStorage>,
     registry: &WatcherRegistry,
     tx: &mpsc::Sender<WatchNotification>,
-) -> Result<(), String> {
+) -> anyhow::Result<()> {
     let _ = db_pool;
     let groups = shared_storage
         .get_active_content_source_groups()
         .await
-        .map_err(|e| format!("DB connection error: {}", e))?;
+        .with_context(|| "DB connection error")?;
 
     if groups.is_empty() {
         log::debug!("Watcher: no active subscriptions");
@@ -155,8 +156,7 @@ async fn run_check_cycle(
                             &result.new_state,
                             result.new_meta.as_ref(),
                         )
-                        .await
-                        .map_err(|e| e.to_string())?;
+                        .await?;
                 } else {
                     log::warn!(
                         "Watcher: skipping state persist for {}:{} — not all notifications delivered",
@@ -186,15 +186,13 @@ async fn run_check_cycle(
                 summary.errors += 1;
 
                 let error_count = shared_storage
-                    .update_content_check_error(&group.source_type, &group.source_id, &e)
-                    .await
-                    .map_err(|e| e.to_string())?;
+                    .update_content_check_error(&group.source_type, &group.source_id, &e.to_string())
+                    .await?;
 
                 if error_count >= max_errors {
                     let disabled = shared_storage
                         .auto_disable_errored_content(&group.source_type, &group.source_id, max_errors)
-                        .await
-                        .map_err(|e| e.to_string())?;
+                        .await?;
                     summary.disabled += disabled;
                 }
             }

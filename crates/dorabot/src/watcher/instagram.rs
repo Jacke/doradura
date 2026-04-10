@@ -53,11 +53,11 @@ impl ContentWatcher for InstagramWatcher {
         watch_mask: u32,
         last_state: Option<&JsonValue>,
         source_meta: Option<&JsonValue>,
-    ) -> Result<CheckResult, String> {
+    ) -> anyhow::Result<CheckResult> {
         let user_id = source_meta
             .and_then(|m| m.get("ig_user_id"))
             .and_then(|v| v.as_str())
-            .ok_or_else(|| "Missing ig_user_id in source_meta".to_string())?;
+            .ok_or_else(|| anyhow::anyhow!("Missing ig_user_id in source_meta"))?;
 
         let is_first_check = last_state.is_none();
         let mut updates = Vec::new();
@@ -104,7 +104,7 @@ impl ContentWatcher for InstagramWatcher {
                 }
                 Err(e) => {
                     log::warn!("InstagramWatcher: failed to fetch profile @{}: {}", source_id, e);
-                    return Err(format!("Posts check failed: {}", e));
+                    anyhow::bail!("Posts check failed: {}", e);
                 }
             }
         }
@@ -163,15 +163,15 @@ impl ContentWatcher for InstagramWatcher {
         })
     }
 
-    async fn resolve_source(&self, source_id: &str) -> Result<(String, Option<JsonValue>), String> {
+    async fn resolve_source(&self, source_id: &str) -> anyhow::Result<(String, Option<JsonValue>)> {
         let profile = self
             .source
             .fetch_profile(source_id)
             .await
-            .map_err(|e| format!("Failed to resolve Instagram profile @{}: {}", source_id, e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to resolve Instagram profile @{}: {}", source_id, e))?;
 
         if profile.is_private {
-            return Err(format!("@{} is a private account", source_id));
+            anyhow::bail!("@{} is a private account", source_id);
         }
 
         let display_name = format!("@{}", profile.username);

@@ -1,6 +1,7 @@
 //! Music search engine using yt-dlp for YouTube and SoundCloud.
 
 use crate::core::config;
+use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -130,7 +131,7 @@ pub async fn search(
     query: &str,
     limit: u8,
     db_pool: Option<&Arc<DbPool>>,
-) -> Result<Vec<SearchResult>, String> {
+) -> anyhow::Result<Vec<SearchResult>> {
     let query = query.trim();
     if query.is_empty() {
         return Ok(vec![]);
@@ -177,16 +178,13 @@ pub async fn search(
         TokioCommand::new(ytdl_bin).args(&args).output(),
     )
     .await
-    .map_err(|_| "Search timed out".to_string())?
-    .map_err(|e| format!("Failed to execute yt-dlp: {}", e))?;
+    .map_err(|_| anyhow::anyhow!("Search timed out"))?
+    .with_context(|| "Failed to execute yt-dlp")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         log::warn!("yt-dlp search failed: {}", stderr);
-        return Err(format!(
-            "Search failed: {}",
-            stderr.lines().next().unwrap_or("unknown error")
-        ));
+        anyhow::bail!("Search failed: {}", stderr.lines().next().unwrap_or("unknown error"));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);

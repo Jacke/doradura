@@ -16,7 +16,7 @@ use std::time::Duration;
 /// Async callback for sending disk-space alerts (e.g., Telegram admin notification).
 /// Arguments: `(available_gb, threshold_gb)`.
 pub type DiskAlertFn =
-    Arc<dyn Fn(f64, f64) -> Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>> + Send + Sync>;
+    Arc<dyn Fn(f64, f64) -> Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>> + Send + Sync>;
 
 /// Minimum required disk space for downloads (500 MB)
 pub const MIN_DISK_SPACE_BYTES: u64 = 500 * 1024 * 1024;

@@ -3,6 +3,7 @@
 //! All functionality is gated behind the `VLIPSY_API_KEY` environment variable.
 //! If the key is not set, `is_available()` returns false and all features are disabled.
 
+use anyhow::Context;
 use reqwest::Client;
 use serde::Deserialize;
 use std::sync::LazyLock;
@@ -108,7 +109,7 @@ impl VlipsyClient {
     }
 
     /// Search for clips by query.
-    pub async fn search(&self, query: &str, limit: u32, offset: u32) -> Result<SearchResponse, String> {
+    pub async fn search(&self, query: &str, limit: u32, offset: u32) -> anyhow::Result<SearchResponse> {
         let url = format!("{}/search", BASE_URL);
         let resp = self
             .client
@@ -121,19 +122,19 @@ impl VlipsyClient {
             ])
             .send()
             .await
-            .map_err(|e| format!("Vlipsy search request failed: {}", e))?;
+            .with_context(|| "Vlipsy search request failed")?;
 
         if !resp.status().is_success() {
-            return Err(format!("Vlipsy API error: HTTP {}", resp.status()));
+            anyhow::bail!("Vlipsy API error: HTTP {}", resp.status());
         }
 
         resp.json::<SearchResponse>()
             .await
-            .map_err(|e| format!("Vlipsy search parse error: {}", e))
+            .with_context(|| "Vlipsy search parse error")
     }
 
     /// Get a single clip by ID.
-    pub async fn get_vlip(&self, id: &str) -> Result<SingleVlipResponse, String> {
+    pub async fn get_vlip(&self, id: &str) -> anyhow::Result<SingleVlipResponse> {
         let url = format!("{}/vlips/{}", BASE_URL, id);
         let resp = self
             .client
@@ -141,19 +142,19 @@ impl VlipsyClient {
             .header("X-Api-Key", &self.api_key)
             .send()
             .await
-            .map_err(|e| format!("Vlipsy get_vlip request failed: {}", e))?;
+            .with_context(|| "Vlipsy get_vlip request failed")?;
 
         if !resp.status().is_success() {
-            return Err(format!("Vlipsy API error: HTTP {}", resp.status()));
+            anyhow::bail!("Vlipsy API error: HTTP {}", resp.status());
         }
 
         resp.json::<SingleVlipResponse>()
             .await
-            .map_err(|e| format!("Vlipsy get_vlip parse error: {}", e))
+            .with_context(|| "Vlipsy get_vlip parse error")
     }
 
     /// Get trending clips.
-    pub async fn trending(&self, limit: u32, offset: u32) -> Result<SearchResponse, String> {
+    pub async fn trending(&self, limit: u32, offset: u32) -> anyhow::Result<SearchResponse> {
         let url = format!("{}/trending", BASE_URL);
         let resp = self
             .client
@@ -162,15 +163,15 @@ impl VlipsyClient {
             .query(&[("limit", &limit.to_string()), ("offset", &offset.to_string())])
             .send()
             .await
-            .map_err(|e| format!("Vlipsy trending request failed: {}", e))?;
+            .with_context(|| "Vlipsy trending request failed")?;
 
         if !resp.status().is_success() {
-            return Err(format!("Vlipsy API error: HTTP {}", resp.status()));
+            anyhow::bail!("Vlipsy API error: HTTP {}", resp.status());
         }
 
         resp.json::<SearchResponse>()
             .await
-            .map_err(|e| format!("Vlipsy trending parse error: {}", e))
+            .with_context(|| "Vlipsy trending parse error")
     }
 }
 

@@ -318,9 +318,9 @@ pub async fn handle_audio_effects_callback(
     shared_storage: Arc<SharedStorage>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let callback_id = q.id.clone();
-    let data = q.data.clone().ok_or("No callback data")?;
+    let data = q.data.clone().ok_or_else(|| anyhow::anyhow!("No callback data"))?;
 
-    let message = q.message.ok_or("No message in callback")?;
+    let message = q.message.ok_or_else(|| anyhow::anyhow!("No message in callback"))?;
     let chat_id = message.chat().id;
     let message_id = message.id();
 
@@ -349,12 +349,12 @@ pub async fn handle_audio_effects_callback(
 
     match action {
         "open" => {
-            let session_id = parts.get(2).ok_or("Missing session_id")?;
+            let session_id = parts.get(2).ok_or_else(|| anyhow::anyhow!("Missing session_id"))?;
 
             let session = shared_storage
                 .get_audio_effect_session(session_id)
                 .await?
-                .ok_or("Session not found")?;
+                .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
 
             if session.user_id != chat_id.0 {
                 log::warn!(
@@ -385,14 +385,14 @@ pub async fn handle_audio_effects_callback(
         }
 
         "pitch" => {
-            let session_id = parts.get(2).ok_or("Missing session_id")?;
-            let pitch_str = parts.get(3).ok_or("Missing pitch value")?;
+            let session_id = parts.get(2).ok_or_else(|| anyhow::anyhow!("Missing session_id"))?;
+            let pitch_str = parts.get(3).ok_or_else(|| anyhow::anyhow!("Missing pitch value"))?;
             let pitch: i8 = pitch_str.parse().map_err(|_| "Invalid pitch")?;
 
             let mut session = shared_storage
                 .get_audio_effect_session(session_id)
                 .await?
-                .ok_or("Session not found")?;
+                .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
 
             if session.user_id != chat_id.0 {
                 log::warn!(
@@ -428,14 +428,14 @@ pub async fn handle_audio_effects_callback(
         }
 
         "tempo" => {
-            let session_id = parts.get(2).ok_or("Missing session_id")?;
-            let tempo_str = parts.get(3).ok_or("Missing tempo value")?;
+            let session_id = parts.get(2).ok_or_else(|| anyhow::anyhow!("Missing session_id"))?;
+            let tempo_str = parts.get(3).ok_or_else(|| anyhow::anyhow!("Missing tempo value"))?;
             let tempo: f32 = tempo_str.parse().map_err(|_| "Invalid tempo")?;
 
             let mut session = shared_storage
                 .get_audio_effect_session(session_id)
                 .await?
-                .ok_or("Session not found")?;
+                .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
 
             if session.user_id != chat_id.0 {
                 log::warn!(
@@ -471,14 +471,14 @@ pub async fn handle_audio_effects_callback(
         }
 
         "bass" => {
-            let session_id = parts.get(2).ok_or("Missing session_id")?;
-            let bass_str = parts.get(3).ok_or("Missing bass value")?;
+            let session_id = parts.get(2).ok_or_else(|| anyhow::anyhow!("Missing session_id"))?;
+            let bass_str = parts.get(3).ok_or_else(|| anyhow::anyhow!("Missing bass value"))?;
             let bass: i8 = bass_str.parse().map_err(|_| "Invalid bass")?;
 
             let mut session = shared_storage
                 .get_audio_effect_session(session_id)
                 .await?
-                .ok_or("Session not found")?;
+                .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
 
             if session.user_id != chat_id.0 {
                 log::warn!(
@@ -514,12 +514,12 @@ pub async fn handle_audio_effects_callback(
         }
 
         "morph" => {
-            let session_id = parts.get(2).ok_or("Missing session_id")?;
+            let session_id = parts.get(2).ok_or_else(|| anyhow::anyhow!("Missing session_id"))?;
 
             let mut session = shared_storage
                 .get_audio_effect_session(session_id)
                 .await?
-                .ok_or("Session not found")?;
+                .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
 
             if session.user_id != chat_id.0 {
                 log::warn!(
@@ -573,12 +573,12 @@ pub async fn handle_audio_effects_callback(
         }
 
         "apply" => {
-            let session_id = parts.get(2).ok_or("Missing session_id")?;
+            let session_id = parts.get(2).ok_or_else(|| anyhow::anyhow!("Missing session_id"))?;
 
             let session = shared_storage
                 .get_audio_effect_session(session_id)
                 .await?
-                .ok_or("Session not found")?;
+                .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
 
             if session.user_id != chat_id.0 {
                 log::warn!(
@@ -649,12 +649,12 @@ pub async fn handle_audio_effects_callback(
         }
 
         "reset" => {
-            let session_id = parts.get(2).ok_or("Missing session_id")?;
+            let session_id = parts.get(2).ok_or_else(|| anyhow::anyhow!("Missing session_id"))?;
 
             let mut session = shared_storage
                 .get_audio_effect_session(session_id)
                 .await?
-                .ok_or("Session not found")?;
+                .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
 
             if session.user_id != chat_id.0 {
                 log::warn!(
@@ -696,12 +696,12 @@ pub async fn handle_audio_effects_callback(
         }
 
         "again" => {
-            let session_id = parts.get(2).ok_or("Missing session_id")?;
+            let session_id = parts.get(2).ok_or_else(|| anyhow::anyhow!("Missing session_id"))?;
 
             let session = shared_storage
                 .get_audio_effect_session(session_id)
                 .await?
-                .ok_or("Session not found")?;
+                .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
 
             if session.user_id != chat_id.0 {
                 log::warn!(
@@ -760,12 +760,12 @@ pub async fn handle_audio_effects_callback(
         }
 
         "original" => {
-            let session_id = parts.get(2).ok_or("Missing session_id")?;
+            let session_id = parts.get(2).ok_or_else(|| anyhow::anyhow!("Missing session_id"))?;
 
             let session = shared_storage
                 .get_audio_effect_session(session_id)
                 .await?
-                .ok_or("Session not found")?;
+                .ok_or_else(|| anyhow::anyhow!("Session not found"))?;
 
             if session.user_id != chat_id.0 {
                 log::warn!(

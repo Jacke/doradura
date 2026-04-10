@@ -614,27 +614,27 @@ pub async fn diagnose_cookies_file() -> CookiesDiagnostic {
 /// false negatives from datacenter IP blocks.
 ///
 /// Returns `Ok(())` if cookies are valid, or `Err(reason)` with a human-readable failure reason.
-pub async fn validate_cookies() -> Result<(), String> {
+pub async fn validate_cookies() -> anyhow::Result<()> {
     let cookies_path = match get_cookies_path() {
         Some(path) => path,
         None => {
             log::warn!("No cookies file configured (YTDL_COOKIES_FILE not set)");
-            return Err("YTDL_COOKIES_FILE is not set — cookies path is not configured".to_string());
+            anyhow::bail!("YTDL_COOKIES_FILE is not set — cookies path is not configured");
         }
     };
 
     if !cookies_path.exists() {
         log::warn!("Cookies file does not exist: {:?}", cookies_path);
-        return Err(format!("Cookies file not found: {}", cookies_path.display()));
+        anyhow::bail!("Cookies file not found: {}", cookies_path.display());
     }
 
     // Check file is not empty
     match std::fs::metadata(&cookies_path) {
         Ok(meta) if meta.len() == 0 => {
-            return Err("Cookies file is empty (0 bytes)".to_string());
+            anyhow::bail!("Cookies file is empty (0 bytes)");
         }
         Err(e) => {
-            return Err(format!("Failed to read cookies file: {}", e));
+            anyhow::bail!("Failed to read cookies file: {}", e);
         }
         _ => {}
     }
@@ -711,7 +711,7 @@ pub async fn validate_cookies() -> Result<(), String> {
                 // Critical cookie problems: stop immediately (proxy won't help)
                 if reason.is_critical() || matches!(reason, CookieInvalidReason::FileCorrupted) {
                     log::error!("🔴 Cookies validation failed: {}", stderr);
-                    return Err(reason.description());
+                    anyhow::bail!("{}", reason.description());
                 }
 
                 // Check for proxy-related errors that should trigger fallback
@@ -740,7 +740,9 @@ pub async fn validate_cookies() -> Result<(), String> {
 
     // All proxies failed
     log::error!("❌ Cookies validation failed with all {} proxies", total_proxies);
-    Err(last_error.unwrap_or_else(|| "Cookies validation failed".to_string()))
+    Err(anyhow::anyhow!(
+        last_error.unwrap_or_else(|| "Cookies validation failed".to_string())
+    ))
 }
 
 /// Validates YouTube cookies (bool wrapper for backward compatibility)
@@ -1009,7 +1011,7 @@ pub async fn update_cookies_from_base64(cookies_b64: &str) -> Result<PathBuf> {
 ///
 /// Returns `None` if cookies are valid, or `Some(reason)` with a human-readable failure reason.
 pub async fn needs_refresh() -> Option<String> {
-    validate_cookies().await.err()
+    validate_cookies().await.err().map(|e| e.to_string())
 }
 
 pub async fn update_cookies_from_content(content: &str) -> Result<PathBuf> {
@@ -1761,24 +1763,24 @@ pub async fn update_ig_cookies_from_content(content: &str) -> Result<PathBuf> {
 }
 
 /// Validates Instagram cookies by testing with yt-dlp
-pub async fn validate_ig_cookies() -> Result<(), String> {
+pub async fn validate_ig_cookies() -> anyhow::Result<()> {
     let cookies_path = match get_ig_cookies_path() {
         Some(path) => path,
         None => {
-            return Err("INSTAGRAM_COOKIES_FILE is not set".to_string());
+            anyhow::bail!("INSTAGRAM_COOKIES_FILE is not set");
         }
     };
 
     if !cookies_path.exists() {
-        return Err(format!("Cookies file not found: {}", cookies_path.display()));
+        anyhow::bail!("Cookies file not found: {}", cookies_path.display());
     }
 
     match std::fs::metadata(&cookies_path) {
         Ok(meta) if meta.len() == 0 => {
-            return Err("Cookies file is empty (0 bytes)".to_string());
+            anyhow::bail!("Cookies file is empty (0 bytes)");
         }
         Err(e) => {
-            return Err(format!("Failed to read cookies file: {}", e));
+            anyhow::bail!("Failed to read cookies file: {}", e);
         }
         _ => {}
     }
@@ -1848,7 +1850,7 @@ pub async fn validate_ig_cookies() -> Result<(), String> {
                 }
 
                 if stderr.contains("login") || stderr.contains("Login") || stderr.contains("authentication") {
-                    return Err("Instagram requires authentication — cookies are invalid".to_string());
+                    anyhow::bail!("Instagram requires authentication — cookies are invalid");
                 }
 
                 if is_proxy_related_error(&stderr) {
@@ -1865,7 +1867,9 @@ pub async fn validate_ig_cookies() -> Result<(), String> {
         }
     }
 
-    Err(last_error.unwrap_or_else(|| "IG Cookies validation failed".to_string()))
+    Err(anyhow::anyhow!(
+        last_error.unwrap_or_else(|| "IG Cookies validation failed".to_string())
+    ))
 }
 
 /// Load Instagram cookie header string from the cookies file.
