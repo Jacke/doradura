@@ -854,43 +854,12 @@ fn append_section_args<'a>(args: &mut Vec<&'a str>, section_spec: Option<&'a str
     }
 }
 
-/// Build common yt-dlp arguments shared by all tiers (full set with rate limiting).
-/// Experimental features graduated to main workflow — always uses fast path.
-fn build_common_args(download_path: &str) -> Vec<&str> {
-    let mut args = vec![
-        "-o",
-        download_path,
-        "--newline",
-        "--force-overwrites",
-        "--no-playlist",
-        "--age-limit",
-        "99",
-        "--fragment-retries",
-        "10",
-        "--socket-timeout",
-        "30",
-        "--http-chunk-size",
-        "10485760",
-    ];
-
-    // No rate limit, auto re-extract on throttle, maximize throughput
-    // Note: -N (concurrent fragments) is added later by push_concurrent_fragments_arg
-    args.extend_from_slice(&[
-        "--retries",
-        "15",
-        "--retry-sleep",
-        "http:exp=1:30",
-        "--retry-sleep",
-        "fragment:exp=1:30",
-        "--throttled-rate",
-        "100K",
-    ]);
-
-    args
-}
-
 /// Build minimal common arguments (for Tier 2 and Tier 3 fallbacks).
-/// Experimental features graduated to main workflow — always uses fast path.
+///
+/// ⚠️ Order of these args is load-bearing — per CLAUDE.md, arg-order bugs in
+/// yt-dlp have caused production outages before. Do not reorder without a
+/// Railway smoke test. The associated unit test
+/// `build_common_args_has_expected_shape` asserts the exact slice.
 fn build_common_args_minimal(download_path: &str) -> Vec<&str> {
     vec![
         "-o",
@@ -909,7 +878,93 @@ fn build_common_args_minimal(download_path: &str) -> Vec<&str> {
     ]
 }
 
+/// Build common yt-dlp arguments shared by Tier 1 (full set with rate limiting).
+/// Starts from `build_common_args_minimal` and appends the retry/throttle flags
+/// so the two functions cannot drift out of sync on the shared prefix.
+fn build_common_args(download_path: &str) -> Vec<&str> {
+    let mut args = build_common_args_minimal(download_path);
+
+    // No rate limit, auto re-extract on throttle, maximize throughput.
+    // Note: -N (concurrent fragments) is added later by push_concurrent_fragments_arg.
+    args.extend_from_slice(&[
+        "--retries",
+        "15",
+        "--retry-sleep",
+        "http:exp=1:30",
+        "--retry-sleep",
+        "fragment:exp=1:30",
+        "--throttled-rate",
+        "100K",
+    ]);
+
+    args
+}
+
 // Tier 2/3 already use build_common_args_minimal (no rate limiting), which is fine.
+
+#[cfg(test)]
+mod common_args_tests {
+    //! Byte-identical regression tests for the yt-dlp common-argv builders.
+    //!
+    //! Any change to these arg lists is a potential production outage (see
+    //! CLAUDE.md: `-N` between `--postprocessor-args` and its value once
+    //! broke every download). The tests pin the exact slice so a refactor
+    //! that silently drops or reorders an arg fails CI.
+    use super::{build_common_args, build_common_args_minimal};
+
+    const EXPECTED_MINIMAL: &[&str] = &[
+        "-o",
+        "/tmp/t.mp3",
+        "--newline",
+        "--force-overwrites",
+        "--no-playlist",
+        "--age-limit",
+        "99",
+        "--fragment-retries",
+        "10",
+        "--socket-timeout",
+        "30",
+        "--http-chunk-size",
+        "10485760",
+    ];
+
+    const EXPECTED_FULL_TAIL: &[&str] = &[
+        "--retries",
+        "15",
+        "--retry-sleep",
+        "http:exp=1:30",
+        "--retry-sleep",
+        "fragment:exp=1:30",
+        "--throttled-rate",
+        "100K",
+    ];
+
+    #[test]
+    fn minimal_args_have_expected_shape() {
+        let args = build_common_args_minimal("/tmp/t.mp3");
+        assert_eq!(args.as_slice(), EXPECTED_MINIMAL);
+    }
+
+    #[test]
+    fn full_args_are_minimal_plus_retry_tail() {
+        let args = build_common_args("/tmp/t.mp3");
+        let expected: Vec<&str> = EXPECTED_MINIMAL
+            .iter()
+            .chain(EXPECTED_FULL_TAIL.iter())
+            .copied()
+            .collect();
+        assert_eq!(args, expected);
+    }
+
+    #[test]
+    fn output_path_is_the_second_arg() {
+        // Guards against any reordering that would break the `-o <path>`
+        // positional pair — yt-dlp requires them adjacent.
+        let args = build_common_args_minimal("/custom/path.mp4");
+        assert_eq!(args[0], "-o");
+        assert_eq!(args[1], "/custom/path.mp4");
+    }
+}
 
 /// Run yt-dlp with stdout/stderr capture and progress reporting.
 ///

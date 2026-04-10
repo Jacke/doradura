@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`build_common_args` deduplication + regression tests** (v0.36.13) — in `doracore/src/download/source/ytdlp.rs`, `build_common_args` and `build_common_args_minimal` previously duplicated the 14-arg prefix. `build_common_args` now starts by calling `build_common_args_minimal(...)` and appends the retry/throttle tail, so the two cannot drift apart on the shared prefix. Added three regression tests in a new `common_args_tests` submodule that assert the **exact** argv slice (byte-identical to what we shipped), so any future refactor that silently drops or reorders an arg will fail CI. Addresses the `YtDlpArgsBuilder` audit item in the minimal-risk way per CLAUDE.md — the full Tier 1/2/3 builder rollout still needs a Railway smoke test before touching any more `download/*` files
+
+### ⚠️ Still needs Railway smoke test before deploying
+None of these changes alter yt-dlp's actual argv output — the regression tests pin the bytes — but per CLAUDE.md policy, any change in `download/*` files should be smoke-tested against a real YouTube URL on Railway before `git push`. Run:
+
+```bash
+railway ssh --service doradura -- sh -c 'yt-dlp -o /tmp/t1.mp3 --newline --force-overwrites --no-playlist --age-limit 99 --fragment-retries 10 --socket-timeout 30 --http-chunk-size 10485760 --extract-audio --audio-format mp3 --audio-quality 0 --add-metadata --embed-thumbnail --cookies /data/youtube_cookies.txt --extractor-args youtube:player_client=default --js-runtimes deno --no-check-certificate "https://youtu.be/jNQXAC9IVRw" 2>&1 | tail -3; ls -lh /tmp/t1.mp3 && echo PASS || echo FAIL; rm -f /tmp/t1.mp3'
+```
+
 - **Inline HTML extracted to `include_str!`** (v0.36.12) — three large HTML templates (200+ lines total) previously embedded as `format!(r#"..."#)` strings inside `auth.rs::admin_login_handler`, `public.rs::render_privacy_page`, and `public.rs::render_share_page` were moved to sibling `.html` files in `crates/doracore/src/core/web/html/`: `admin_login.html`, `privacy_layout.html`, `share_page.html`. Loaded at compile time via `include_str!` and templated with plain `.replace("{PLACEHOLDER}", value)`. Benefits: CSS brace escaping (`{{ }}` → `{`) is gone, HTML files get proper editor syntax highlighting, no more wrestling with `format!`'s positional args, zero runtime cost (same `&'static str` baked into the binary). Rust files shrink by ~200 lines of noise
 
 - **`BotExt` extension trait for MarkdownV2 send/edit chains** (v0.36.11) — new `crates/dorabot/src/telegram/ext.rs` module with four methods (`send_md`, `send_md_kb`, `edit_md`, `edit_md_kb`) that collapse the repetitive
