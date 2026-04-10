@@ -10,7 +10,7 @@ use axum::response::{Html, IntoResponse, Response};
 use crate::storage::db::DbPool;
 use crate::storage::get_connection;
 
-use super::auth::{generate_csrf_token, verify_admin};
+use super::auth::{generate_csrf_token, RequireAdmin};
 use super::helpers::{fmt_num, html_escape};
 use super::types::WebState;
 
@@ -19,20 +19,23 @@ use super::types::WebState;
 // ---------------------------------------------------------------------------
 
 /// GET /admin — Admin Dashboard.
-pub(super) async fn admin_dashboard_handler(State(state): State<WebState>, header_map: header::HeaderMap) -> Response {
-    // 1. Check admin cookie
-    if let Err(resp) = verify_admin(&header_map, &state) {
-        return resp;
-    }
-
-    // 2. Fetch stats (sync SQLite — offload to blocking thread pool)
+///
+/// `RequireAdmin` enforces the auth check at the extractor layer. `header_map`
+/// is still needed afterwards to extract the admin cookie for CSRF token
+/// generation.
+pub(super) async fn admin_dashboard_handler(
+    _admin: RequireAdmin,
+    State(state): State<WebState>,
+    header_map: header::HeaderMap,
+) -> Response {
+    // Fetch stats (sync SQLite — offload to blocking thread pool)
     let db = state.shared_storage.sqlite_pool();
     let stats = match tokio::task::spawn_blocking(move || fetch_admin_stats(&db)).await {
         Ok(s) => s,
         Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
     };
 
-    // 3. Generate CSRF token from admin cookie
+    // Generate CSRF token from admin cookie
     let admin_token = header_map
         .get(header::COOKIE)
         .and_then(|c| c.to_str().ok())
@@ -43,7 +46,7 @@ pub(super) async fn admin_dashboard_handler(State(state): State<WebState>, heade
         .unwrap_or("");
     let csrf_token = generate_csrf_token(admin_token);
 
-    // 4. Render Dashboard
+    // Render Dashboard
     let html = render_admin_dashboard(&stats, &csrf_token);
     Html(html).into_response()
 }

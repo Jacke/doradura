@@ -1,13 +1,13 @@
 //! User management admin handlers.
 
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use serde_json::json;
 
 use crate::storage::get_connection;
 
-use super::auth::{verify_admin, verify_admin_post};
+use super::auth::{RequireAdmin, RequireAdminPost};
 use super::helpers::{like_param, log_audit};
 use super::types::*;
 
@@ -16,13 +16,10 @@ const DOWNLOADS_PER_PAGE: u32 = 50;
 
 /// GET /admin/api/users — paginated, filterable user list.
 pub(super) async fn admin_api_users(
+    _admin: RequireAdmin,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Query(q): Query<UserQuery>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state) {
-        return resp;
-    }
     let page = q.page.unwrap_or(1).max(1);
     let filter = q.filter.unwrap_or_else(|| "all".to_string());
     let search = q.search.unwrap_or_default();
@@ -133,15 +130,11 @@ pub(super) async fn admin_api_users(
 
 /// POST /admin/api/users/:id/plan — change user plan with optional expiry + notification.
 pub(super) async fn admin_api_user_plan(
+    RequireAdminPost(admin_id): RequireAdminPost,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Path(user_id): Path<i64>,
     Json(body): Json<PlanUpdateReq>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state) {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let valid_plans = ["free", "premium", "vip"];
     if !valid_plans.contains(&body.plan.as_str()) {
         return (StatusCode::BAD_REQUEST, "Invalid plan").into_response();
@@ -261,15 +254,11 @@ pub(super) async fn admin_api_user_plan(
 
 /// POST /admin/api/users/:id/block — block/unblock user.
 pub(super) async fn admin_api_user_block(
+    RequireAdminPost(admin_id): RequireAdminPost,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Path(user_id): Path<i64>,
     Json(body): Json<BlockUpdateReq>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state) {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let db = state.shared_storage.sqlite_pool();
     let blocked = body.blocked;
     let result = tokio::task::spawn_blocking(move || {
@@ -308,13 +297,10 @@ pub(super) async fn admin_api_user_block(
 
 /// GET /admin/api/downloads — paginated download history with full details.
 pub(super) async fn admin_api_downloads(
+    _admin: RequireAdmin,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Query(q): Query<DownloadQuery>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state) {
-        return resp;
-    }
     let page = q.page.unwrap_or(1).max(1);
     let search = q.search.unwrap_or_default();
     let offset = ((page - 1) * DOWNLOADS_PER_PAGE) as i64;
@@ -406,13 +392,10 @@ pub(super) async fn admin_api_downloads(
 
 /// GET /admin/api/users/:id — detailed user profile with stats, downloads, charges, errors.
 pub(super) async fn admin_api_user_details(
+    _admin: RequireAdmin,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Path(user_id): Path<i64>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state) {
-        return resp;
-    }
     let db = state.shared_storage.sqlite_pool();
 
     let result = tokio::task::spawn_blocking(move || -> Result<serde_json::Value, rusqlite::Error> {
@@ -605,15 +588,11 @@ pub(super) async fn admin_api_user_details(
 
 /// POST /admin/api/users/:id/settings — update user settings (language, plan, blocked).
 pub(super) async fn admin_api_user_settings(
+    RequireAdminPost(admin_id): RequireAdminPost,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Path(user_id): Path<i64>,
     Json(body): Json<UserSettingsReq>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state) {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let plan_notifier = state.plan_notifier.clone();
     let db = state.shared_storage.sqlite_pool();
     let result = tokio::task::spawn_blocking(move || {

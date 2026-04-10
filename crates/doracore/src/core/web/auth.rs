@@ -5,8 +5,8 @@ use std::sync::LazyLock;
 
 use axum::{
     body::Body,
-    extract::{Query, State},
-    http::{header, HeaderMap, StatusCode},
+    extract::{FromRequestParts, Query, State},
+    http::{header, request::Parts, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Response},
 };
 use hmac::{Hmac, Mac};
@@ -278,6 +278,41 @@ pub(super) fn verify_admin(header_map: &HeaderMap, state: &WebState) -> Result<i
         }
     }
     Err((StatusCode::UNAUTHORIZED, "Not authenticated").into_response())
+}
+
+// --- Admin auth extractors ---
+//
+// These turn the repeated `if let Err(resp) = verify_admin(&header_map, &state) { return resp; }`
+// prologue at the top of ~20 admin handlers into a single function-parameter extractor.
+// Presence of `RequireAdmin` / `RequireAdminPost` in a handler signature means the
+// auth check is statically guaranteed to run — you cannot forget it without the
+// compiler refusing to build the route.
+
+/// GET-style admin auth: verifies the `admin_token` cookie against the session
+/// store and checks the user is still in the admin allowlist. Returns the
+/// resolved admin user id via `.0` — not every handler needs the id, so the
+/// field is intentionally allowed to be unread.
+#[allow(dead_code)]
+pub struct RequireAdmin(pub i64);
+
+impl FromRequestParts<WebState> for RequireAdmin {
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, state: &WebState) -> Result<Self, Self::Rejection> {
+        verify_admin(&parts.headers, state).map(RequireAdmin)
+    }
+}
+
+/// POST-style admin auth: everything `RequireAdmin` does, plus validates the
+/// `x-csrf-token` header. Use this on any state-mutating endpoint.
+pub struct RequireAdminPost(pub i64);
+
+impl FromRequestParts<WebState> for RequireAdminPost {
+    type Rejection = Response;
+
+    async fn from_request_parts(parts: &mut Parts, state: &WebState) -> Result<Self, Self::Rejection> {
+        verify_admin_post(&parts.headers, state).map(RequireAdminPost)
+    }
 }
 
 // --- Auth route handlers ---

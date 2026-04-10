@@ -30,6 +30,7 @@ tracing-log = { workspace = true }
 chrono = { workspace = true }
 url = { workspace = true }
 regex = { workspace = true }
+lazy-regex = { workspace = true }
 once_cell = { workspace = true }
 uuid = { workspace = true }
 rand = { workspace = true }

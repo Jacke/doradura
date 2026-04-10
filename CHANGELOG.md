@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Refactor: reduce boilerplate across regex / error / ffmpeg / admin auth** (v0.36.2):
+  - **`lazy-regex`** — 5 `Lazy<Regex>` definitions in `core/utils.rs` migrated to `lazy_regex!` macro. Regex patterns are now validated at compile time; a malformed pattern fails the build instead of panicking at first use
+  - **`build_atempo_filter()` helper** in `telegram/commands/circle.rs` — the 5-line `if spd > 2.0 / else if spd < 0.5 / else` ffmpeg atempo chain was inlined verbatim 4 times; collapsed into a single function call (the ringtone branch uses `speed.map(build_atempo_filter).unwrap_or_else(...)`)
+  - **`IgResultExt` trait + `ig_err()` helper** in `download/source/instagram.rs` — ~15 `.map_err(\|e\| AppError::Download(DownloadError::Instagram(format!("...: {}", e))))?` call sites now read `.ig_ctx("...")?`, and `Err(AppError::Download(DownloadError::Instagram("Rate limited".to_string())))` becomes `Err(ig_err("Rate limited"))`. Local to the Instagram module only
+  - **`RequireAdmin` / `RequireAdminPost` axum extractors** in `core/web/auth.rs` — replaces the repeated `if let Err(resp) = verify_admin(&header_map, &state) { return resp; }` prologue at the top of ~20 admin handlers across `dashboard.rs`, `admin_queue.rs`, `admin_users.rs`, `admin_errors.rs`, `admin_misc.rs`. Auth is now enforced at the extractor layer — handlers that need admin access take a `RequireAdmin` / `RequireAdminPost` parameter, and the compiler refuses to build routes that forget it
+  - Net: ~190 LOC deleted across 8 files, zero behavior change, all 560 workspace tests pass
+
 ### Fixed
 - **SoundCloud track with `?in=...sets/...` query parameter misclassified as playlist** (v0.36.1) — `is_playlist_url` used substring matching against the entire URL string, so any SoundCloud track URL navigated to from inside a playlist (SoundCloud appends `?in=user/sets/foo`) triggered the `/sets/` check and was routed through `extract_latest_from_channel`, which returned a raw m3u8 CDN link that failed the source allowlist with "This website is not supported". Now all host/path checks in `is_playlist_url` operate on `url.host_str()` / `url.path()` separately — query parameters can no longer trigger false positives. Same fix also protects YouTube `/playlist`, `/@`, `/c/`, `/user/`, `/channel/` and Spotify `/playlist/`, `/album/` checks. Added two regression tests
 - Updated all workspace dependencies to latest compatible versions (`cargo update`): tokio 1.50→1.51, reqwest stack, wasm-bindgen, uuid, sqlx transient deps, etc.

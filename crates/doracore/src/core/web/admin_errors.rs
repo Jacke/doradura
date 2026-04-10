@@ -1,14 +1,14 @@
 //! Error management admin handlers.
 
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use serde_json::json;
 
 use crate::storage::get_connection;
 use crate::storage::shared::QueueTaskInput;
 
-use super::auth::{verify_admin, verify_admin_post};
+use super::auth::{RequireAdmin, RequireAdminPost};
 use super::helpers::{like_param, log_audit};
 use super::types::*;
 
@@ -16,13 +16,10 @@ const ERRORS_PER_PAGE: u32 = 50;
 
 /// GET /admin/api/errors — paginated, filterable error log.
 pub(super) async fn admin_api_errors(
+    _admin: RequireAdmin,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Query(q): Query<ErrorQuery>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state) {
-        return resp;
-    }
     let page = q.page.unwrap_or(1).max(1);
     let type_filter = q.error_type.unwrap_or_default();
     let resolved_filter = q.resolved.unwrap_or_default();
@@ -123,14 +120,10 @@ pub(super) async fn admin_api_errors(
 
 /// POST /admin/api/errors/:id/resolve — mark error as resolved.
 pub(super) async fn admin_api_error_resolve(
+    RequireAdminPost(admin_id): RequireAdminPost,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Path(error_id): Path<i64>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state) {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let db = state.shared_storage.sqlite_pool();
     let result = tokio::task::spawn_blocking(move || {
         let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
@@ -165,15 +158,10 @@ pub(super) async fn admin_api_error_resolve(
 ///   4. Mark the error_log row as resolved.
 ///   5. Send the user a Telegram message that their download has been re-queued.
 pub(super) async fn admin_api_error_retry(
+    RequireAdminPost(admin_id): RequireAdminPost,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Path(error_id): Path<i64>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state) {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
-
     // Step 1 + 2: load error row + user preferences in the blocking pool.
     let db = state.shared_storage.sqlite_pool();
     let loaded = tokio::task::spawn_blocking(move || -> Result<Option<RetryContext>, rusqlite::Error> {
@@ -288,16 +276,11 @@ pub(super) async fn admin_api_error_retry(
 /// POST /admin/api/errors/:id/notify — send a message to the affected user that
 /// their issue has been addressed (without re-queuing the task).
 pub(super) async fn admin_api_error_notify(
+    RequireAdminPost(admin_id): RequireAdminPost,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Path(error_id): Path<i64>,
     Json(body): Json<NotifyUserReq>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state) {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
-
     // Look up user_id.
     let db = state.shared_storage.sqlite_pool();
     let user_id: Option<i64> = tokio::task::spawn_blocking(move || {
@@ -390,14 +373,10 @@ async fn send_telegram_message(bot_token: &str, chat_id: i64, text: &str) -> Res
 
 /// POST /admin/api/errors/bulk-resolve — resolve all unresolved errors, optionally by type.
 pub(super) async fn admin_api_errors_bulk_resolve(
+    RequireAdminPost(admin_id): RequireAdminPost,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Json(body): Json<BulkResolveReq>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state) {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let db = state.shared_storage.sqlite_pool();
     let error_type = body.error_type.clone();
     let result = tokio::task::spawn_blocking(move || {

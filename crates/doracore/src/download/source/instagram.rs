@@ -57,6 +57,27 @@ const FB_ASBD_ID: &str = "129477";
 /// Maximum requests per hour (conservative, under Instagram's ~200 limit).
 const RATE_LIMIT_PER_HOUR: usize = 180;
 
+/// Wrap any `Display` error into `AppError::Download(DownloadError::Instagram(...))`
+/// with a static context prefix. Exists only to replace the repeated
+/// `.map_err(|e| AppError::Download(DownloadError::Instagram(format!("ctx: {}", e))))`
+/// chains — local to this module, not a general-purpose helper.
+trait IgResultExt<T> {
+    fn ig_ctx(self, context: &'static str) -> Result<T, AppError>;
+}
+
+impl<T, E: std::fmt::Display> IgResultExt<T> for Result<T, E> {
+    fn ig_ctx(self, context: &'static str) -> Result<T, AppError> {
+        self.map_err(|e| AppError::Download(DownloadError::Instagram(format!("{}: {}", context, e))))
+    }
+}
+
+/// Build a plain `AppError::Download(DownloadError::Instagram(...))` from a static
+/// message — for places where there's no inner error to chain.
+#[inline]
+fn ig_err(msg: impl Into<String>) -> AppError {
+    AppError::Download(DownloadError::Instagram(msg.into()))
+}
+
 /// Global sliding-window rate limiter for Instagram GraphQL API calls.
 /// Shared across all `InstagramSource` instances (watcher + dispatcher + downloads).
 static RATE_LIMITER: std::sync::LazyLock<RateLimiter> = std::sync::LazyLock::new(RateLimiter::new);
@@ -226,25 +247,20 @@ impl InstagramSource {
 
         log::info!("InstagramSource: curl GET {} (cookies={})", endpoint, has_cookies);
 
-        let output = cmd
-            .output()
-            .await
-            .map_err(|e| AppError::Download(DownloadError::Instagram(format!("curl GET failed: {}", e))))?;
+        let output = cmd.output().await.ig_ctx("curl GET failed")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AppError::Download(DownloadError::Instagram(format!(
+            return Err(ig_err(format!(
                 "curl GET error (exit {}): {}",
                 output.status.code().unwrap_or(-1),
                 stderr.chars().take(300).collect::<String>()
-            ))));
+            )));
         }
 
         let text = String::from_utf8_lossy(&output.stdout).to_string();
         if text.is_empty() {
-            return Err(AppError::Download(DownloadError::Instagram(
-                "curl GET returned empty response".to_string(),
-            )));
+            return Err(ig_err("curl GET returned empty response"));
         }
 
         Ok(text)
@@ -294,25 +310,20 @@ impl InstagramSource {
 
         log::info!("InstagramSource: curl GraphQL POST (anonymous)");
 
-        let output = cmd
-            .output()
-            .await
-            .map_err(|e| AppError::Download(DownloadError::Instagram(format!("curl GraphQL failed: {}", e))))?;
+        let output = cmd.output().await.ig_ctx("curl GraphQL failed")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AppError::Download(DownloadError::Instagram(format!(
+            return Err(ig_err(format!(
                 "curl GraphQL error (exit {}): {}",
                 output.status.code().unwrap_or(-1),
                 stderr.chars().take(300).collect::<String>()
-            ))));
+            )));
         }
 
         let text = String::from_utf8_lossy(&output.stdout).to_string();
         if text.is_empty() {
-            return Err(AppError::Download(DownloadError::Instagram(
-                "curl GraphQL returned empty response".to_string(),
-            )));
+            return Err(ig_err("curl GraphQL returned empty response"));
         }
 
         Ok(text)
@@ -324,7 +335,7 @@ impl InstagramSource {
     pub async fn fetch_graphql_media(&self, shortcode: &str) -> Result<GraphQLMedia, AppError> {
         if !RATE_LIMITER.acquire() {
             log::warn!("InstagramSource: rate limited, falling back to yt-dlp");
-            return Err(AppError::Download(DownloadError::Instagram("Rate limited".to_string())));
+            return Err(ig_err("Rate limited"));
         }
 
         let doc_id = config::INSTAGRAM_DOC_ID.as_str();
@@ -452,28 +463,24 @@ impl InstagramSource {
         output_path: &str,
         progress_tx: &mpsc::UnboundedSender<SourceProgress>,
     ) -> Result<u64, AppError> {
-        let response =
-            self.client.get(media_url).send().await.map_err(|e| {
-                AppError::Download(DownloadError::Instagram(format!("Failed to download media: {}", e)))
-            })?;
+        let response = self
+            .client
+            .get(media_url)
+            .send()
+            .await
+            .ig_ctx("Failed to download media")?;
 
         if !response.status().is_success() {
-            return Err(AppError::Download(DownloadError::Instagram(format!(
-                "Media download HTTP {}",
-                response.status()
-            ))));
+            return Err(ig_err(format!("Media download HTTP {}", response.status())));
         }
 
         let total_size = response.content_length();
 
         // Ensure parent directory exists (DOWNLOAD_FOLDER may not exist yet)
         if let Some(parent) = std::path::Path::new(output_path).parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
-                AppError::Download(DownloadError::Instagram(format!("Failed to create directory: {}", e)))
-            })?;
+            std::fs::create_dir_all(parent).ig_ctx("Failed to create directory")?;
         }
-        let mut file = std::fs::File::create(output_path)
-            .map_err(|e| AppError::Download(DownloadError::Instagram(format!("Failed to create file: {}", e))))?;
+        let mut file = std::fs::File::create(output_path).ig_ctx("Failed to create file")?;
 
         let mut downloaded: u64 = 0;
         let mut last_progress_percent = 0u8;
@@ -481,11 +488,9 @@ impl InstagramSource {
         use futures_util::StreamExt;
 
         while let Some(chunk_result) = stream.next().await {
-            let chunk = chunk_result
-                .map_err(|e| AppError::Download(DownloadError::Instagram(format!("Error reading chunk: {}", e))))?;
+            let chunk = chunk_result.ig_ctx("Error reading chunk")?;
 
-            file.write_all(&chunk)
-                .map_err(|e| AppError::Download(DownloadError::Instagram(format!("Error writing to file: {}", e))))?;
+            file.write_all(&chunk).ig_ctx("Error writing to file")?;
 
             downloaded += chunk.len() as u64;
 
@@ -511,8 +516,7 @@ impl InstagramSource {
             }
         }
 
-        file.flush()
-            .map_err(|e| AppError::Download(DownloadError::Instagram(format!("Failed to flush file: {}", e))))?;
+        file.flush().ig_ctx("Failed to flush file")?;
 
         Ok(downloaded)
     }
@@ -566,7 +570,7 @@ impl InstagramSource {
     /// Returns profile info and recent posts for the profile browsing UI.
     pub async fn fetch_profile(&self, username: &str) -> Result<InstagramProfile, AppError> {
         if !RATE_LIMITER.acquire() {
-            return Err(AppError::Download(DownloadError::Instagram("Rate limited".to_string())));
+            return Err(ig_err("Rate limited"));
         }
 
         // Send cookies when available — Railway IPs get "require_login" without auth
@@ -702,8 +706,7 @@ impl InstagramSource {
         log::info!("InstagramSource: fetching user feed for user_id={}", user_id);
 
         let text = Self::curl_get(&endpoint, true).await?;
-        let body: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|e| AppError::Download(DownloadError::Instagram(format!("Feed JSON parse error: {}", e))))?;
+        let body: serde_json::Value = serde_json::from_str(&text).ig_ctx("Feed JSON parse error")?;
 
         let items = body.get("items").and_then(|v| v.as_array());
         let posts: Vec<ProfilePost> = items
@@ -749,15 +752,14 @@ impl InstagramSource {
     /// Requires authenticated session cookies.
     pub async fn fetch_highlights(&self, user_id: &str) -> Result<Vec<HighlightReel>, AppError> {
         if !RATE_LIMITER.acquire() {
-            return Err(AppError::Download(DownloadError::Instagram("Rate limited".to_string())));
+            return Err(ig_err("Rate limited"));
         }
 
         let endpoint = format!("https://i.instagram.com/api/v1/highlights/{}/highlights_tray/", user_id);
         log::info!("InstagramSource: fetching highlights tray for user_id={}", user_id);
 
         let text = Self::curl_get(&endpoint, true).await?;
-        let body: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|e| AppError::Download(DownloadError::Instagram(format!("Highlights JSON parse error: {}", e))))?;
+        let body: serde_json::Value = serde_json::from_str(&text).ig_ctx("Highlights JSON parse error")?;
 
         let tray = body.get("tray").and_then(|v| v.as_array()).ok_or_else(|| {
             AppError::Download(DownloadError::Instagram("No highlights tray in response".to_string()))
@@ -816,7 +818,7 @@ impl InstagramSource {
     /// For user stories, use `fetch_stories()` instead.
     pub async fn fetch_reel_media(&self, reel_id: &str) -> Result<Vec<StoryItem>, AppError> {
         if !RATE_LIMITER.acquire() {
-            return Err(AppError::Download(DownloadError::Instagram("Rate limited".to_string())));
+            return Err(ig_err("Rate limited"));
         }
 
         let endpoint = format!(
@@ -826,8 +828,7 @@ impl InstagramSource {
         log::info!("InstagramSource: fetching reel media for reel_id={}", reel_id);
 
         let text = Self::curl_get(&endpoint, true).await?;
-        let body: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|e| AppError::Download(DownloadError::Instagram(format!("Reel media JSON parse error: {}", e))))?;
+        let body: serde_json::Value = serde_json::from_str(&text).ig_ctx("Reel media JSON parse error")?;
 
         // Response: { "reels_media": [ { "items": [...] } ] }
         // or: { "reels": { "<reel_id>": { "items": [...] } } }
@@ -931,15 +932,14 @@ impl InstagramSource {
     /// This is the correct endpoint for user stories — `reels_media` is for highlights.
     pub async fn fetch_stories(&self, user_id: &str) -> Result<Vec<StoryItem>, AppError> {
         if !RATE_LIMITER.acquire() {
-            return Err(AppError::Download(DownloadError::Instagram("Rate limited".to_string())));
+            return Err(ig_err("Rate limited"));
         }
 
         let endpoint = format!("https://i.instagram.com/api/v1/feed/user/{}/story/", user_id);
         log::info!("InstagramSource: fetching stories for user_id={}", user_id);
 
         let text = Self::curl_get(&endpoint, true).await?;
-        let body: serde_json::Value = serde_json::from_str(&text)
-            .map_err(|e| AppError::Download(DownloadError::Instagram(format!("Stories JSON parse error: {}", e))))?;
+        let body: serde_json::Value = serde_json::from_str(&text).ig_ctx("Stories JSON parse error")?;
 
         // Response: { "reel": { "items": [...] }, "status": "ok" }
         // When no active stories: { "reel": null, "status": "ok" }

@@ -1,34 +1,28 @@
-use once_cell::sync::Lazy;
-use regex::Regex;
+use lazy_regex::{lazy_regex, Lazy, Regex};
 
 // =============================================================================
-// Lazy-compiled Regex patterns for performance
+// Lazy-compiled Regex patterns — patterns are validated at compile time by
+// `lazy_regex!`, so a malformed pattern fails the build rather than panicking
+// in production at first use.
 // =============================================================================
 
 /// Regex for extracting retry-after seconds from error messages (format: "retry after N s")
-pub static RETRY_AFTER_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)retry\s+after\s+(\d+)\s*s").expect("Invalid RETRY_AFTER_REGEX"));
+pub static RETRY_AFTER_REGEX: Lazy<Regex> = lazy_regex!(r"(?i)retry\s+after\s+(\d+)\s*s");
 
 /// Alternative regex for retry_after (format: "retry_after: N" or "retry_after N")
-pub static RETRY_AFTER_ALT_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"(?i)retry_after[:\s]+(\d+)").expect("Invalid RETRY_AFTER_ALT_REGEX"));
+pub static RETRY_AFTER_ALT_REGEX: Lazy<Regex> = lazy_regex!(r"(?i)retry_after[:\s]+(\d+)");
 
 /// Regex for parsing Bot API log entries (query start)
-pub static BOT_API_START_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\[(\d+\.\d+)\].*Query (0x[0-9a-f]+): .*method:\s*([a-z_]+).*\[name:([^]]+)\]\[size:(\d+)\]")
-        .expect("Invalid BOT_API_START_REGEX")
-});
+pub static BOT_API_START_REGEX: Lazy<Regex> =
+    lazy_regex!(r"\[(\d+\.\d+)\].*Query (0x[0-9a-f]+): .*method:\s*([a-z_]+).*\[name:([^]]+)\]\[size:(\d+)\]");
 
 /// Regex for parsing Bot API log entries (query start without name/size - for admin)
-pub static BOT_API_START_SIMPLE_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\[(\d+\.\d+)\].*Query (0x[0-9a-f]+): .*method:\s*([a-z_]+).*\[size:(\d+)\]")
-        .expect("Invalid BOT_API_START_SIMPLE_REGEX")
-});
+pub static BOT_API_START_SIMPLE_REGEX: Lazy<Regex> =
+    lazy_regex!(r"\[(\d+\.\d+)\].*Query (0x[0-9a-f]+): .*method:\s*([a-z_]+).*\[size:(\d+)\]");
 
 /// Regex for parsing Bot API log entries (query response)
-pub static BOT_API_RESPONSE_REGEX: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"\[(\d+\.\d+)\].*Query (0x[0-9a-f]+): \[method:([a-z_]+)\]").expect("Invalid BOT_API_RESPONSE_REGEX")
-});
+pub static BOT_API_RESPONSE_REGEX: Lazy<Regex> =
+    lazy_regex!(r"\[(\d+\.\d+)\].*Query (0x[0-9a-f]+): \[method:([a-z_]+)\]");
 
 // =============================================================================
 // Utility functions using the lazy regexes

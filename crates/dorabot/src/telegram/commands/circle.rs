@@ -80,6 +80,22 @@ pub fn parse_command_segment(text: &str, video_duration: Option<i64>) -> Option<
     None
 }
 
+/// Build an ffmpeg `atempo` filter chain for a speed factor.
+///
+/// ffmpeg's `atempo` only accepts values in `[0.5, 2.0]`. For speeds outside that
+/// range we chain two `atempo` filters so the combined multiplier equals `speed`.
+/// Used by the cut/circle/ringtone filter builders — previously this 5-line
+/// conditional was inlined 4 times verbatim.
+fn build_atempo_filter(speed: f32) -> String {
+    if speed > 2.0 {
+        format!("atempo=2.0,atempo={}", speed / 2.0)
+    } else if speed < 0.5 {
+        format!("atempo=0.5,atempo={}", speed / 0.5)
+    } else {
+        format!("atempo={}", speed)
+    }
+}
+
 /// Parse time range from text following a URL.
 /// Accepts "HH:MM:SS-HH:MM:SS" or "MM:SS-MM:SS" after the URL.
 pub fn parse_download_time_range(text: &str, url_text: &str) -> Option<(String, String, Option<f32>)> {
@@ -772,13 +788,7 @@ pub async fn process_video_clip(
 
         if let Some(spd) = speed {
             let setpts_factor = 1.0 / spd;
-            let atempo_filter = if spd > 2.0 {
-                format!("atempo=2.0,atempo={}", spd / 2.0)
-            } else if spd < 0.5 {
-                format!("atempo=0.5,atempo={}", spd / 0.5)
-            } else {
-                format!("atempo={}", spd)
-            };
+            let atempo_filter = build_atempo_filter(spd);
 
             (
                 format!(
@@ -806,13 +816,7 @@ pub async fn process_video_clip(
         // Multi-circle - create regular cut, circle formatting will be done in to_video_notes_split
         if let Some(spd) = speed {
             let setpts_factor = 1.0 / spd;
-            let atempo_filter = if spd > 2.0 {
-                format!("atempo=2.0,atempo={}", spd / 2.0)
-            } else if spd < 0.5 {
-                format!("atempo=0.5,atempo={}", spd / 0.5)
-            } else {
-                format!("atempo={}", spd)
-            };
+            let atempo_filter = build_atempo_filter(spd);
 
             (
                 format!(
@@ -828,17 +832,9 @@ pub async fn process_video_clip(
             (base_filter_av, base_filter_v, "[v]", "[a]", "23")
         }
     } else if is_ringtone {
-        let atempo_filter = if let Some(spd) = speed {
-            if spd > 2.0 {
-                format!("atempo=2.0,atempo={}", spd / 2.0)
-            } else if spd < 0.5 {
-                format!("atempo=0.5,atempo={}", spd / 0.5)
-            } else {
-                format!("atempo={}", spd)
-            }
-        } else {
-            "atempo=1.0".to_string()
-        };
+        let atempo_filter = speed
+            .map(build_atempo_filter)
+            .unwrap_or_else(|| "atempo=1.0".to_string());
         // If !has_video, base_filter_av outputs only [a]. If has_video, [v][a].
         // Ringtone uses input [a] for atempo.
         // We need to match output of base_filter
@@ -852,13 +848,7 @@ pub async fn process_video_clip(
         )
     } else if let Some(spd) = speed {
         let setpts_factor = 1.0 / spd;
-        let atempo_filter = if spd > 2.0 {
-            format!("atempo=2.0,atempo={}", spd / 2.0)
-        } else if spd < 0.5 {
-            format!("atempo=0.5,atempo={}", spd / 0.5)
-        } else {
-            format!("atempo={}", spd)
-        };
+        let atempo_filter = build_atempo_filter(spd);
 
         if has_video {
             (

@@ -1,13 +1,13 @@
 //! Queue management admin handlers.
 
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use serde_json::json;
 
 use crate::storage::get_connection;
 
-use super::auth::{verify_admin, verify_admin_post};
+use super::auth::{RequireAdmin, RequireAdminPost};
 use super::helpers::{like_param, log_audit};
 use super::types::*;
 
@@ -15,13 +15,10 @@ const QUEUE_PER_PAGE: u32 = 50;
 
 /// GET /admin/api/queue — paginated task queue with status filter.
 pub(super) async fn admin_api_queue(
+    _admin: RequireAdmin,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Query(q): Query<QueueQuery>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state) {
-        return resp;
-    }
     let page = q.page.unwrap_or(1).max(1);
     let status_filter = q.status.unwrap_or_default();
     let search = q.search.unwrap_or_default();
@@ -128,14 +125,10 @@ pub(super) async fn admin_api_queue(
 
 /// POST /admin/api/queue/:id/retry — retry a dead/failed task.
 pub(super) async fn admin_api_queue_retry(
+    RequireAdminPost(admin_id): RequireAdminPost,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Path(task_id): Path<String>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state) {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let db = state.shared_storage.sqlite_pool();
     let tid = task_id.clone();
     let tid2 = task_id.clone();
@@ -166,14 +159,10 @@ pub(super) async fn admin_api_queue_retry(
 
 /// POST /admin/api/queue/:id/cancel — cancel a pending/leased task.
 pub(super) async fn admin_api_queue_cancel(
+    RequireAdminPost(admin_id): RequireAdminPost,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Path(task_id): Path<String>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state) {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let db = state.shared_storage.sqlite_pool();
     let tid = task_id.clone();
     let result = tokio::task::spawn_blocking(move || {
@@ -202,14 +191,10 @@ pub(super) async fn admin_api_queue_cancel(
 
 /// POST /admin/api/queue/bulk-cancel — cancel all pending/leased tasks.
 pub(super) async fn admin_api_queue_bulk_cancel(
+    RequireAdminPost(admin_id): RequireAdminPost,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Json(body): Json<BulkCancelReq>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state) {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let db = state.shared_storage.sqlite_pool();
     let status_filter = body.status.unwrap_or_else(|| "pending".to_string());
     let result = tokio::task::spawn_blocking(move || {

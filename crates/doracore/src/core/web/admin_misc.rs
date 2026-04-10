@@ -2,13 +2,13 @@
 //! revenue, analytics, audit log, content subscriptions, and tab-badge counts.
 
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use serde_json::json;
 
 use crate::storage::get_connection;
 
-use super::auth::{verify_admin, verify_admin_post};
+use super::auth::{RequireAdmin, RequireAdminPost};
 use super::helpers::{like_param, log_audit};
 use super::types::*;
 
@@ -20,13 +20,10 @@ const FEEDBACK_PER_PAGE: u32 = 50;
 
 /// GET /admin/api/feedback — paginated feedback messages.
 pub(super) async fn admin_api_feedback(
+    _admin: RequireAdmin,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Query(q): Query<FeedbackQuery>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state) {
-        return resp;
-    }
     let page = q.page.unwrap_or(1).max(1);
     let status_filter = q.status.unwrap_or_default();
     let search = q.search.unwrap_or_default();
@@ -118,15 +115,11 @@ pub(super) async fn admin_api_feedback(
 
 /// POST /admin/api/feedback/:id/status — update feedback status.
 pub(super) async fn admin_api_feedback_status(
+    RequireAdminPost(admin_id): RequireAdminPost,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Path(feedback_id): Path<i64>,
     Json(body): Json<FeedbackStatusReq>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state) {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let valid = ["new", "reviewed", "replied"];
     if !valid.contains(&body.status.as_str()) {
         return (StatusCode::BAD_REQUEST, "Invalid status").into_response();
@@ -172,13 +165,10 @@ const ALERTS_PER_PAGE: u32 = 50;
 
 /// GET /admin/api/alerts — paginated alert history.
 pub(super) async fn admin_api_alerts(
+    _admin: RequireAdmin,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Query(q): Query<AlertQuery>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state) {
-        return resp;
-    }
     let page = q.page.unwrap_or(1).max(1);
     let severity_filter = q.severity.unwrap_or_default();
     let search = q.search.unwrap_or_default();
@@ -272,14 +262,10 @@ pub(super) async fn admin_api_alerts(
 
 /// POST /admin/api/alerts/:id/acknowledge — acknowledge an alert.
 pub(super) async fn admin_api_alert_acknowledge(
+    RequireAdminPost(admin_id): RequireAdminPost,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Path(alert_id): Path<i64>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state) {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let db = state.shared_storage.sqlite_pool();
     let result = tokio::task::spawn_blocking(move || {
         let conn = get_connection(&db).map_err(|_| rusqlite::Error::InvalidQuery)?;
@@ -309,10 +295,7 @@ pub(super) async fn admin_api_alert_acknowledge(
 // ---------------------------------------------------------------------------
 
 /// GET /admin/api/health — system health overview.
-pub(super) async fn admin_api_health(State(state): State<WebState>, header_map: HeaderMap) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state) {
-        return resp;
-    }
+pub(super) async fn admin_api_health(_admin: RequireAdmin, State(state): State<WebState>) -> Response {
     let db = state.shared_storage.sqlite_pool();
 
     let result = tokio::task::spawn_blocking(move || -> serde_json::Value {
@@ -465,14 +448,10 @@ pub(super) async fn admin_api_health(State(state): State<WebState>, header_map: 
 
 /// POST /admin/api/broadcast — send message to one user or broadcast to all.
 pub(super) async fn admin_api_broadcast(
+    RequireAdminPost(admin_id): RequireAdminPost,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Json(body): Json<BroadcastReq>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state) {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     if body.message.trim().is_empty() {
         return (StatusCode::BAD_REQUEST, "Empty message").into_response();
     }
@@ -599,13 +578,10 @@ const REVENUE_PER_PAGE: u32 = 50;
 
 /// GET /admin/api/revenue — paginated charges with aggregate stats.
 pub(super) async fn admin_api_revenue(
+    _admin: RequireAdmin,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Query(q): Query<RevenueQuery>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state) {
-        return resp;
-    }
     let page = q.page.unwrap_or(1).max(1);
     let plan_filter = q.plan.unwrap_or_default();
     let offset = ((page - 1) * REVENUE_PER_PAGE) as i64;
@@ -714,13 +690,10 @@ pub(super) async fn admin_api_revenue(
 
 /// GET /admin/api/analytics — DAU/MAU trends, download trends.
 pub(super) async fn admin_api_analytics(
+    _admin: RequireAdmin,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Query(q): Query<AnalyticsQuery>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state) {
-        return resp;
-    }
     let days = q.days.unwrap_or(30).min(90) as i64;
     let db = state.shared_storage.sqlite_pool();
 
@@ -862,13 +835,10 @@ const AUDIT_PER_PAGE: u32 = 50;
 
 /// GET /admin/api/audit — paginated admin audit log.
 pub(super) async fn admin_api_audit(
+    _admin: RequireAdmin,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Query(q): Query<AuditQuery>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state) {
-        return resp;
-    }
     let page = q.page.unwrap_or(1).max(1);
     let action_filter = q.action.unwrap_or_default();
     let offset = ((page - 1) * AUDIT_PER_PAGE) as i64;
@@ -981,13 +951,10 @@ const SUBS_PER_PAGE: u32 = 50;
 
 /// GET /admin/api/subscriptions — paginated content subscriptions (all users).
 pub(super) async fn admin_api_subscriptions(
+    _admin: RequireAdmin,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Query(q): Query<SubsQuery>,
 ) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state) {
-        return resp;
-    }
     let page = q.page.unwrap_or(1).max(1);
     let status_filter = q.status.unwrap_or_default();
     let search = q.search.unwrap_or_default();
@@ -1131,15 +1098,11 @@ pub(super) async fn admin_api_subscriptions(
 
 /// POST /admin/api/subscriptions/:id/toggle — activate/deactivate a subscription.
 pub(super) async fn admin_api_sub_toggle(
+    RequireAdminPost(admin_id): RequireAdminPost,
     State(state): State<WebState>,
-    header_map: HeaderMap,
     Path(sub_id): Path<i64>,
     Json(body): Json<SubToggleReq>,
 ) -> Response {
-    let admin_id = match verify_admin_post(&header_map, &state) {
-        Ok(id) => id,
-        Err(resp) => return resp,
-    };
     let db = state.shared_storage.sqlite_pool();
     let active = body.is_active;
     let result = tokio::task::spawn_blocking(move || {
@@ -1172,10 +1135,7 @@ pub(super) async fn admin_api_sub_toggle(
 // ---------------------------------------------------------------------------
 
 /// GET /admin/api/counts — quick counts for tab badges.
-pub(super) async fn admin_api_counts(State(state): State<WebState>, header_map: HeaderMap) -> Response {
-    if let Err(resp) = verify_admin(&header_map, &state) {
-        return resp;
-    }
+pub(super) async fn admin_api_counts(_admin: RequireAdmin, State(state): State<WebState>) -> Response {
     let db = state.shared_storage.sqlite_pool();
     let result = tokio::task::spawn_blocking(move || -> serde_json::Value {
         let conn = match get_connection(&db) {
