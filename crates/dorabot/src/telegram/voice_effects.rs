@@ -178,11 +178,9 @@ pub async fn handle_voice_effect_callback(
 
     // Run ffmpeg with a timeout to prevent hung processes
     const FFMPEG_VOICE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(600);
-    let ffmpeg_result = tokio::time::timeout(
-        FFMPEG_VOICE_TIMEOUT,
-        tokio::process::Command::new("ffmpeg").args(&ffmpeg_args).output(),
-    )
-    .await;
+    let mut ffmpeg_cmd = tokio::process::Command::new("ffmpeg");
+    ffmpeg_cmd.args(&ffmpeg_args);
+    let ffmpeg_result = doracore::core::process::run_with_timeout_raw(&mut ffmpeg_cmd, FFMPEG_VOICE_TIMEOUT).await;
 
     match ffmpeg_result {
         Ok(Ok(output)) if output.status.success() => {}

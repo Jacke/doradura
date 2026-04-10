@@ -5,6 +5,7 @@
 //! - Other document formats supported by LibreOffice
 
 use super::{ConversionError, ConversionResult};
+use crate::core::process::run_with_timeout_raw;
 use std::path::Path;
 use tokio::process::Command;
 
@@ -83,18 +84,17 @@ pub async fn to_pdf<P: AsRef<Path>>(input_path: P) -> ConversionResult<std::path
 
     tokio::fs::create_dir_all(&output_dir).await?;
 
-    // Run LibreOffice headless conversion
-    let output = tokio::time::timeout(
-        std::time::Duration::from_secs(120),
-        Command::new("libreoffice")
-            .args(["--headless", "--convert-to", "pdf", "--outdir"])
-            .arg(&output_dir)
-            .arg(input)
-            .output(),
-    )
-    .await
-    .map_err(|_| ConversionError::LibreOfficeError("LibreOffice timed out after 120s".to_string()))?
-    .map_err(|e| ConversionError::LibreOfficeError(format!("Failed to run LibreOffice: {}", e)))?;
+    // Run LibreOffice headless conversion. `run_with_timeout_raw` sets
+    // `kill_on_drop` so a timed-out LibreOffice instance gets reaped instead
+    // of leaking in the background.
+    let mut cmd = Command::new("libreoffice");
+    cmd.args(["--headless", "--convert-to", "pdf", "--outdir"])
+        .arg(&output_dir)
+        .arg(input);
+    let output = run_with_timeout_raw(&mut cmd, std::time::Duration::from_secs(120))
+        .await
+        .map_err(|_| ConversionError::LibreOfficeError("LibreOffice timed out after 120s".to_string()))?
+        .map_err(|e| ConversionError::LibreOfficeError(format!("Failed to run LibreOffice: {}", e)))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

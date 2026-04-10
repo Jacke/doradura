@@ -924,7 +924,7 @@ async fn change_video_speed(
         .arg("-y")
         .arg(&output_path);
 
-    let output = match tokio::time::timeout(FFMPEG_SPEED_TIMEOUT, cmd.output()).await {
+    let output = match doracore::core::process::run_with_timeout_raw(&mut cmd, FFMPEG_SPEED_TIMEOUT).await {
         Ok(Ok(out)) => out,
         Ok(Err(e)) => {
             return Err(format!("ffmpeg IO error: {}", e).into());

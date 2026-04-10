@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Subprocess zombie leak on timeout** (v0.36.3) — every inline `tokio::time::timeout(dur, cmd.output())` call site across the codebase was missing `cmd.kill_on_drop(true)`. When the timeout fired, the tokio future was dropped but the subprocess kept running until it finished naturally — ffmpeg/LibreOffice can easily hold CPU, RAM, file handles, and worker slots for many minutes past the nominal timeout. Added a new `core::process::run_with_timeout_raw(cmd, dur) -> Result<io::Result<Output>, Elapsed>` helper that always sets `kill_on_drop` and exposes the raw nested result so callers can keep their custom user-facing error handling. Migrated 6 call sites: `conversion/document.rs` (LibreOffice), `telegram/commands/circle.rs` ×3 (ffmpeg video/retry/audio), `telegram/cuts.rs` (ffmpeg speed change), `telegram/voice_effects.rs` (ffmpeg voice effect). Download-path yt-dlp sites intentionally deferred — per CLAUDE.md they require a Railway smoke test before touching
+
 ### Changed
 - **Refactor: reduce boilerplate across regex / error / ffmpeg / admin auth** (v0.36.2):
   - **`lazy-regex`** — 5 `Lazy<Regex>` definitions in `core/utils.rs` migrated to `lazy_regex!` macro. Regex patterns are now validated at compile time; a malformed pattern fails the build instead of panicking at first use

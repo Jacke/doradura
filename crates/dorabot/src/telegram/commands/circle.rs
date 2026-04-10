@@ -991,7 +991,8 @@ pub async fn process_video_clip(
     }
 
     let ffmpeg_timeout = std::time::Duration::from_secs(10 * 60); // 10 minutes
-    let output = match tokio::time::timeout(ffmpeg_timeout, cmd.arg("-y").arg(&output_path).output()).await {
+    cmd.arg("-y").arg(&output_path);
+    let output = match doracore::core::process::run_with_timeout_raw(&mut cmd, ffmpeg_timeout).await {
         Ok(result) => result.map_err(AppError::from)?,
         Err(_) => {
             log::error!("❌ ffmpeg timed out after {} seconds", ffmpeg_timeout.as_secs());
@@ -1015,29 +1016,24 @@ pub async fn process_video_clip(
         if seek_offset > 0 {
             retry_cmd.arg("-ss").arg(format!("{}", seek_offset));
         }
-        let retry_output = match tokio::time::timeout(
-            ffmpeg_timeout,
-            retry_cmd
-                .arg("-i")
-                .arg(&actual_input_path)
-                .arg("-filter_complex")
-                .arg(&filter_v)
-                .arg("-map")
-                .arg(map_v_label)
-                .arg("-c:v")
-                .arg("libx264")
-                .arg("-preset")
-                .arg("ultrafast")
-                .arg("-crf")
-                .arg(crf)
-                .arg("-movflags")
-                .arg("+faststart")
-                .arg("-y")
-                .arg(&output_path)
-                .output(),
-        )
-        .await
-        {
+        retry_cmd
+            .arg("-i")
+            .arg(&actual_input_path)
+            .arg("-filter_complex")
+            .arg(&filter_v)
+            .arg("-map")
+            .arg(map_v_label)
+            .arg("-c:v")
+            .arg("libx264")
+            .arg("-preset")
+            .arg("ultrafast")
+            .arg("-crf")
+            .arg(crf)
+            .arg("-movflags")
+            .arg("+faststart")
+            .arg("-y")
+            .arg(&output_path);
+        let retry_output = match doracore::core::process::run_with_timeout_raw(&mut retry_cmd, ffmpeg_timeout).await {
             Ok(result) => result.map_err(AppError::from)?,
             Err(_) => {
                 log::error!("❌ ffmpeg retry timed out after {} seconds", ffmpeg_timeout.as_secs());
@@ -1503,23 +1499,18 @@ pub async fn process_audio_cut(
         audio_cmd.arg("-ss").arg(format!("{}", audio_seek_offset));
     }
     let audio_timeout = std::time::Duration::from_secs(5 * 60); // 5 minutes for audio
-    let output = match tokio::time::timeout(
-        audio_timeout,
-        audio_cmd
-            .arg("-i")
-            .arg(&input_path)
-            .arg("-filter_complex")
-            .arg(&filter)
-            .arg("-map")
-            .arg("[a]")
-            .arg("-q:a")
-            .arg("0")
-            .arg("-y")
-            .arg(&output_path)
-            .output(),
-    )
-    .await
-    {
+    audio_cmd
+        .arg("-i")
+        .arg(&input_path)
+        .arg("-filter_complex")
+        .arg(&filter)
+        .arg("-map")
+        .arg("[a]")
+        .arg("-q:a")
+        .arg("0")
+        .arg("-y")
+        .arg(&output_path);
+    let output = match doracore::core::process::run_with_timeout_raw(&mut audio_cmd, audio_timeout).await {
         Ok(result) => result.map_err(AppError::from)?,
         Err(_) => {
             log::error!("❌ Audio ffmpeg timed out after {} seconds", audio_timeout.as_secs());
