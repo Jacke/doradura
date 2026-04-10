@@ -151,7 +151,7 @@ pub(super) async fn admin_api_feedback_status(
         Ok(Ok(0)) => (StatusCode::NOT_FOUND, "Feedback not found").into_response(),
         Ok(Ok(_)) => {
             log::info!("Admin {} updated feedback {} to {}", admin_id, feedback_id, status2);
-            Json(json!({"ok": true, "status": body.status})).into_response()
+            Json(FeedbackStatusOk::new(body.status)).into_response()
         }
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
     }
@@ -284,7 +284,7 @@ pub(super) async fn admin_api_alert_acknowledge(
         Ok(Ok(0)) => (StatusCode::NOT_FOUND, "Alert not found").into_response(),
         Ok(Ok(_)) => {
             log::info!("Admin {} acknowledged alert {}", admin_id, alert_id);
-            Json(json!({"ok": true})).into_response()
+            Json(OkResponse::ok()).into_response()
         }
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
     }
@@ -484,12 +484,12 @@ pub(super) async fn admin_api_broadcast(
                         log_audit(&conn, admin_id, "send_message", "user", &target_id.to_string(), None);
                     }
                 });
-                Json(json!({"ok": true, "sent": 1, "blocked": 0, "failed": 0})).into_response()
+                Json(BroadcastSingleOk::sent()).into_response()
             }
             Ok(r) => {
                 let text = r.text().await.unwrap_or_default();
                 if text.contains("Forbidden") || text.contains("blocked") {
-                    Json(json!({"ok": true, "sent": 0, "blocked": 1, "failed": 0})).into_response()
+                    Json(BroadcastSingleOk::blocked()).into_response()
                 } else {
                     log::warn!("Telegram send error to {}: {}", target_id, text);
                     (StatusCode::BAD_REQUEST, "Telegram error").into_response()
@@ -566,7 +566,7 @@ pub(super) async fn admin_api_broadcast(
             log::info!("Broadcast done: sent={}, blocked={}, failed={}", sent, blocked, failed);
         });
 
-        Json(json!({"ok": true, "total": total, "status": "broadcasting"})).into_response()
+        Json(BroadcastStartOk::broadcasting(total as i64)).into_response()
     }
 }
 
@@ -1124,7 +1124,7 @@ pub(super) async fn admin_api_sub_toggle(
         Ok(Ok(0)) => (StatusCode::NOT_FOUND, "Subscription not found").into_response(),
         Ok(Ok(_)) => {
             log::info!("Admin {} toggled sub {} to active={}", admin_id, sub_id, active);
-            Json(json!({"ok": true, "is_active": active})).into_response()
+            Json(ToggleOk::new(active)).into_response()
         }
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
     }

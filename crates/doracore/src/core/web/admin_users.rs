@@ -242,7 +242,7 @@ pub(super) async fn admin_api_user_plan(
                     });
                 }
             }
-            Json(json!({"ok": true, "plan": new_plan, "expires_at": expires_at})).into_response()
+            Json(PlanChangeOk::new(new_plan, expires_at)).into_response()
         }
         Ok(Err(e)) => {
             log::error!("Failed to update plan: {}", e);
@@ -285,7 +285,7 @@ pub(super) async fn admin_api_user_block(
                 if body.blocked { "blocked" } else { "unblocked" },
                 user_id
             );
-            Json(json!({"ok": true, "blocked": body.blocked})).into_response()
+            Json(BlockOk::new(body.blocked)).into_response()
         }
         Ok(Err(e)) => {
             log::error!("Failed to update block status: {}", e);
@@ -702,7 +702,7 @@ pub(super) async fn admin_api_user_settings(
                     });
                 }
             }
-            Json(json!({"ok": true, "updated": updated})).into_response()
+            Json(SettingsUpdatedOk::new(updated)).into_response()
         }
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
     }

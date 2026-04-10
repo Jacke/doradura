@@ -8,6 +8,9 @@ use serde_json::json;
 use crate::storage::get_connection;
 use crate::storage::shared::QueueTaskInput;
 
+// `json!` is still used by `send_telegram_message` below for the outgoing
+// Telegram Bot API payload; only the response-side `json!` usages were
+// replaced with typed structs.
 use super::auth::{RequireAdmin, RequireAdminPost};
 use super::helpers::{like_param, log_audit};
 use super::types::*;
@@ -142,7 +145,7 @@ pub(super) async fn admin_api_error_resolve(
         Ok(Ok(0)) => (StatusCode::NOT_FOUND, "Error not found").into_response(),
         Ok(Ok(_)) => {
             log::info!("Admin {} resolved error {}", admin_id, error_id);
-            Json(json!({"ok": true})).into_response()
+            Json(OkResponse::ok()).into_response()
         }
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
     }
@@ -270,7 +273,7 @@ pub(super) async fn admin_api_error_retry(
         ctx.user_id,
         ctx.url
     );
-    Json(json!({"ok": true, "task_id": task_id, "user_id": ctx.user_id})).into_response()
+    Json(RetryOk::new(task_id, ctx.user_id)).into_response()
 }
 
 /// POST /admin/api/errors/:id/notify — send a message to the affected user that
@@ -330,7 +333,7 @@ pub(super) async fn admin_api_error_notify(
     })
     .await;
 
-    Json(json!({"ok": true, "user_id": user_id})).into_response()
+    Json(NotifyOk::new(user_id)).into_response()
 }
 
 /// Context loaded from the error_log row for retry.
@@ -398,7 +401,7 @@ pub(super) async fn admin_api_errors_bulk_resolve(
     match result {
         Ok(Ok(n)) => {
             log::info!("Admin {} bulk-resolved {} errors", admin_id, n);
-            Json(json!({"ok": true, "resolved": n})).into_response()
+            Json(BulkCountOk::new("resolved", n as i64)).into_response()
         }
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
     }

@@ -324,3 +324,197 @@ pub(super) struct NotifyUserReq {
 }
 
 // AdminStats is defined locally in dashboard.rs where it is used.
+
+// ============================================================================
+// Typed mutation-response envelopes
+//
+// Replaces the scattered `Json(json!({"ok": true, ...}))` stringly-typed
+// responses with compile-time-checked structs. Keeps the JSON shape
+// byte-identical to what the admin SPA already expects.
+// ============================================================================
+
+/// Bare `{"ok": true}` success envelope.
+#[derive(Serialize)]
+pub(super) struct OkResponse {
+    pub ok: bool,
+}
+
+impl OkResponse {
+    pub fn ok() -> Self {
+        Self { ok: true }
+    }
+}
+
+/// `{"error": "..."}` error envelope used by `public.rs` rejections.
+#[derive(Serialize)]
+pub(super) struct ErrorResponse {
+    pub error: &'static str,
+}
+
+/// Successful retry from the errors view: returns the new `task_id` and the
+/// `user_id` the task was re-queued for.
+#[derive(Serialize)]
+pub(super) struct RetryOk {
+    pub ok: bool,
+    pub task_id: String,
+    pub user_id: i64,
+}
+
+impl RetryOk {
+    pub fn new(task_id: String, user_id: i64) -> Self {
+        Self {
+            ok: true,
+            task_id,
+            user_id,
+        }
+    }
+}
+
+/// Successful notify-user response from the errors view.
+#[derive(Serialize)]
+pub(super) struct NotifyOk {
+    pub ok: bool,
+    pub user_id: i64,
+}
+
+impl NotifyOk {
+    pub fn new(user_id: i64) -> Self {
+        Self { ok: true, user_id }
+    }
+}
+
+/// Bulk-action response with a count.
+#[derive(Serialize)]
+pub(super) struct BulkCountOk {
+    pub ok: bool,
+    /// Key name is configurable via the sibling helper constructors so we can
+    /// keep the wire shape identical to the old `json!` sites
+    /// (`resolved`, `cancelled`, `total`, ...).
+    #[serde(flatten)]
+    pub count: std::collections::HashMap<&'static str, i64>,
+}
+
+impl BulkCountOk {
+    pub fn new(key: &'static str, value: i64) -> Self {
+        let mut m = std::collections::HashMap::with_capacity(1);
+        m.insert(key, value);
+        Self { ok: true, count: m }
+    }
+}
+
+/// Plan-change response: includes resolved plan and optional expiry.
+#[derive(Serialize)]
+pub(super) struct PlanChangeOk {
+    pub ok: bool,
+    pub plan: String,
+    pub expires_at: Option<String>,
+}
+
+impl PlanChangeOk {
+    pub fn new(plan: String, expires_at: Option<String>) -> Self {
+        Self {
+            ok: true,
+            plan,
+            expires_at,
+        }
+    }
+}
+
+/// Block/unblock response: just echoes the new state.
+#[derive(Serialize)]
+pub(super) struct BlockOk {
+    pub ok: bool,
+    pub blocked: bool,
+}
+
+impl BlockOk {
+    pub fn new(blocked: bool) -> Self {
+        Self { ok: true, blocked }
+    }
+}
+
+/// Settings-update response: the list of fields that were actually updated
+/// (so the SPA can show "Language updated, plan updated").
+#[derive(Serialize)]
+pub(super) struct SettingsUpdatedOk {
+    pub ok: bool,
+    pub updated: Vec<&'static str>,
+}
+
+impl SettingsUpdatedOk {
+    pub fn new(updated: Vec<&'static str>) -> Self {
+        Self { ok: true, updated }
+    }
+}
+
+/// Feedback-status update response.
+#[derive(Serialize)]
+pub(super) struct FeedbackStatusOk {
+    pub ok: bool,
+    pub status: String,
+}
+
+impl FeedbackStatusOk {
+    pub fn new(status: String) -> Self {
+        Self { ok: true, status }
+    }
+}
+
+/// Single broadcast-send response.
+#[derive(Serialize)]
+pub(super) struct BroadcastSingleOk {
+    pub ok: bool,
+    pub sent: u32,
+    pub blocked: u32,
+    pub failed: u32,
+}
+
+impl BroadcastSingleOk {
+    pub fn sent() -> Self {
+        Self {
+            ok: true,
+            sent: 1,
+            blocked: 0,
+            failed: 0,
+        }
+    }
+    pub fn blocked() -> Self {
+        Self {
+            ok: true,
+            sent: 0,
+            blocked: 1,
+            failed: 0,
+        }
+    }
+}
+
+/// Start-broadcast response (async bulk).
+#[derive(Serialize)]
+pub(super) struct BroadcastStartOk {
+    pub ok: bool,
+    pub total: i64,
+    pub status: &'static str,
+}
+
+impl BroadcastStartOk {
+    pub fn broadcasting(total: i64) -> Self {
+        Self {
+            ok: true,
+            total,
+            status: "broadcasting",
+        }
+    }
+}
+
+/// Subscription toggle response.
+#[derive(Serialize)]
+pub(super) struct ToggleOk {
+    pub ok: bool,
+    pub is_active: bool,
+}
+
+impl ToggleOk {
+    pub fn new(is_active: bool) -> Self {
+        Self { ok: true, is_active }
+    }
+}

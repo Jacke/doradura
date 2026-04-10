@@ -3,7 +3,6 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
-use serde_json::json;
 
 use crate::storage::get_connection;
 
@@ -151,7 +150,7 @@ pub(super) async fn admin_api_queue_retry(
         Ok(Ok(0)) => (StatusCode::NOT_FOUND, "Task not found or not retryable").into_response(),
         Ok(Ok(_)) => {
             log::info!("Admin {} retried task {}", admin_id, tid2);
-            Json(json!({"ok": true})).into_response()
+            Json(OkResponse::ok()).into_response()
         }
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
     }
@@ -183,7 +182,7 @@ pub(super) async fn admin_api_queue_cancel(
         Ok(Ok(0)) => (StatusCode::NOT_FOUND, "Task not found or not cancellable").into_response(),
         Ok(Ok(_)) => {
             log::info!("Admin {} cancelled task {}", admin_id, task_id);
-            Json(json!({"ok": true})).into_response()
+            Json(OkResponse::ok()).into_response()
         }
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
     }
@@ -223,7 +222,7 @@ pub(super) async fn admin_api_queue_bulk_cancel(
     match result {
         Ok(Ok(n)) => {
             log::info!("Admin {} bulk-cancelled {} tasks", admin_id, n);
-            Json(json!({"ok": true, "cancelled": n})).into_response()
+            Json(BulkCountOk::new("cancelled", n as i64)).into_response()
         }
         _ => (StatusCode::INTERNAL_SERVER_ERROR, "DB error").into_response(),
     }

@@ -14,7 +14,7 @@ use crate::storage::SharePageRecord;
 
 use super::auth::{check_rate_limit, extract_ip};
 use super::helpers::{constant_time_eq, html_escape, is_safe_url};
-use super::types::{WebState, SHARE_MAX_PER_MIN, SHARE_RATE_LIMIT, SHARE_WINDOW_SECS};
+use super::types::{ErrorResponse, WebState, SHARE_MAX_PER_MIN, SHARE_RATE_LIMIT, SHARE_WINDOW_SECS};
 
 // ---------------------------------------------------------------------------
 // Handlers
@@ -98,13 +98,15 @@ pub(super) async fn share_api_handler(
     if !check_rate_limit(&SHARE_RATE_LIMIT, &ip, SHARE_MAX_PER_MIN, SHARE_WINDOW_SECS).await {
         return (
             StatusCode::TOO_MANY_REQUESTS,
-            Json(json!({"error": "Too many requests"})),
+            Json(ErrorResponse {
+                error: "Too many requests",
+            }),
         )
             .into_response();
     }
 
     let Some(row) = state.shared_storage.get_share_page_record(&id).await.ok().flatten() else {
-        return (StatusCode::NOT_FOUND, Json(json!({"error": "Not found"}))).into_response();
+        return (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "Not found" })).into_response();
     };
 
     let streaming_links = row
