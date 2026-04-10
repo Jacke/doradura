@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`pretty_assertions` added as a dev-dependency** (v0.36.7) — nicer colorized diffs on `assert_eq!` failures in tests. Opt-in per test module via `use pretty_assertions::assert_eq;`, no runtime cost, no production impact
+
 - **`strum` derive rollout** (v0.36.6) — added `strum = "0.26"` (derive feature) and replaced hand-written `impl Display` / `impl FromStr` / `as_str()` match blocks on six enums with derive macros:
   - `Plan` (doracore/core/types.rs) — full rollout: `strum::Display` + `strum::EnumString` + `strum::AsRefStr` + `strum::IntoStaticStr` with `serialize_all = "lowercase"`. `as_str()` kept as a one-line alias for `Into::into` so existing call sites don't change. Removed manual `FromStr`, `Display`, and the duplicated match in `as_str`
   - `DownloadFormat` (dorabot/download/queue.rs) — same full rollout as `Plan`

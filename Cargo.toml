@@ -73,3 +73,7 @@ zip = "2"
 # TUI
 ratatui = "0.30"
 crossterm = "0.28"
+
+# Dev-only — nicer diffs in test failures. Import in tests as
+# `use pretty_assertions::assert_eq;` to replace the std macro.
+pretty_assertions = "1"

@@ -1,6 +1,6 @@
 [package]
 name = "doradura"
-version = "0.36.6"
+version = "0.36.7"
 edition = "2021"
 authors = ["Stan <iamjacke@gmail.com>"]
 description = "High-performance Telegram bot for downloading and converting media from multiple sources"
@@ -75,6 +75,7 @@ grammers-mtsender = "0.5"
 
 [dev-dependencies]
 tempfile = "3.8"
+pretty_assertions = { workspace = true }
 teloxide_tests = { git = "https://github.com/LasterAlex/teloxide_tests", branch = "master" }
 serial_test = "3.0"
 criterion = { version = "0.5", features = ["async_tokio"] }
