@@ -32,6 +32,7 @@ url = { workspace = true }
 regex = { workspace = true }
 lazy-regex = { workspace = true }
 once_cell = { workspace = true }
+strum = { workspace = true }
 uuid = { workspace = true }
 rand = { workspace = true }
 base64 = { workspace = true }

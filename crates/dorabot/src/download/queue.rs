@@ -13,7 +13,13 @@ use teloxide::types::ChatId;
 use tokio::sync::Mutex;
 
 /// The format of a download task.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Display` / `FromStr` / `AsRef<str>` are all derived by `strum`. The
+/// serialized form is the lowercase variant name — these strings are used
+/// as file extensions, column values, and API payloads, so don't change
+/// the `serialize_all` casing.
+#[derive(Debug, Clone, PartialEq, Eq, strum::Display, strum::EnumString, strum::AsRefStr, strum::IntoStaticStr)]
+#[strum(serialize_all = "lowercase")]
 pub enum DownloadFormat {
     /// Audio file in MP3 format.
     Mp3,
@@ -26,14 +32,10 @@ pub enum DownloadFormat {
 }
 
 impl DownloadFormat {
-    /// Returns the canonical lowercase extension string for this format.
+    /// Alias for `Into::<&'static str>::into` so existing `format.as_str()`
+    /// call sites keep working unchanged.
     pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Mp3 => "mp3",
-            Self::Mp4 => "mp4",
-            Self::Srt => "srt",
-            Self::Txt => "txt",
-        }
+        self.into()
     }
 
     /// Returns `true` when the format produces a video file.
@@ -44,26 +46,6 @@ impl DownloadFormat {
     /// Returns `true` when the format produces an audio file.
     pub fn is_audio(&self) -> bool {
         matches!(self, Self::Mp3)
-    }
-}
-
-impl std::fmt::Display for DownloadFormat {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl std::str::FromStr for DownloadFormat {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "mp3" => Ok(Self::Mp3),
-            "mp4" => Ok(Self::Mp4),
-            "srt" => Ok(Self::Srt),
-            "txt" => Ok(Self::Txt),
-            other => Err(format!("unknown download format: {other}")),
-        }
     }
 }
 

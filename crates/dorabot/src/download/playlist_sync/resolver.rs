@@ -1,15 +1,25 @@
 //! PlaylistResolver trait and shared types for external playlist import.
 
 use async_trait::async_trait;
-use std::fmt;
 use std::sync::Arc;
 
 /// Supported external platforms.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Two distinct string representations:
+/// - **`Display`** produces the human-readable label (`"Spotify"`,
+///   `"Yandex Music"`, ...) for UI.
+/// - **`db_name()`** / **`from_db_name()`** produce the stable
+///   snake_case DB column value (`"spotify"`, `"yandex_music"`, ...) —
+///   derived via strum with its own `serialize_all` rule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
 pub enum Platform {
+    #[strum(serialize = "Spotify")]
     Spotify,
+    #[strum(serialize = "SoundCloud")]
     SoundCloud,
+    #[strum(serialize = "Yandex Music")]
     YandexMusic,
+    #[strum(serialize = "YouTube")]
     YouTube,
 }
 
@@ -23,6 +33,8 @@ impl Platform {
         }
     }
 
+    /// Pretty human-readable label. Alias for `Display` for ergonomic
+    /// call sites that prefer a method over `format!`.
     pub fn label(&self) -> &'static str {
         match self {
             Platform::Spotify => "Spotify",
@@ -32,6 +44,9 @@ impl Platform {
         }
     }
 
+    /// snake_case identifier used in `synced_playlists.source_platform`.
+    /// Kept as a manual function — strum can't express both the spaced
+    /// `Display` form and the snake_case storage form on the same enum.
     pub fn db_name(&self) -> &'static str {
         match self {
             Platform::Spotify => "spotify",
@@ -52,14 +67,9 @@ impl Platform {
     }
 }
 
-impl fmt::Display for Platform {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.label())
-    }
-}
-
 /// Track import status.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, strum::AsRefStr, strum::IntoStaticStr)]
+#[strum(serialize_all = "snake_case")]
 pub enum TrackStatus {
     Matched,
     NotFound,
@@ -67,12 +77,9 @@ pub enum TrackStatus {
 }
 
 impl TrackStatus {
+    /// Alias for `Into::<&'static str>::into` to preserve existing call sites.
     pub fn as_str(&self) -> &'static str {
-        match self {
-            TrackStatus::Matched => "matched",
-            TrackStatus::NotFound => "not_found",
-            TrackStatus::Pending => "pending",
-        }
+        self.into()
     }
 }
 

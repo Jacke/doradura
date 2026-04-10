@@ -1,8 +1,25 @@
-use std::fmt;
 use std::str::FromStr;
 
-/// User subscription plan
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+/// User subscription plan.
+///
+/// `Display` / `FromStr` / `AsRef<str>` are all derived by `strum` — the
+/// serialized form is the lowercase variant name (`"free"` / `"premium"` /
+/// `"vip"`), which is what's stored in the database and used in config
+/// files. Do not rely on any other casing.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Default,
+    strum::Display,
+    strum::EnumString,
+    strum::AsRefStr,
+    strum::IntoStaticStr,
+)]
+#[strum(serialize_all = "lowercase")]
 pub enum Plan {
     #[default]
     Free,
@@ -11,12 +28,10 @@ pub enum Plan {
 }
 
 impl Plan {
+    /// Alias for `AsRef::<str>::as_ref` so existing call sites like
+    /// `plan.as_str()` keep working unchanged.
     pub fn as_str(&self) -> &'static str {
-        match self {
-            Plan::Free => "free",
-            Plan::Premium => "premium",
-            Plan::Vip => "vip",
-        }
+        self.into()
     }
 
     pub fn is_paid(&self) -> bool {
@@ -31,6 +46,8 @@ impl Plan {
         }
     }
 
+    /// Pretty-printed name for UI (VIP stays all-caps, others are title-case).
+    /// Distinct from `Display`, which produces the lowercase wire format.
     pub fn display_name(&self) -> &'static str {
         match self {
             Plan::Free => "Free",
@@ -40,30 +57,12 @@ impl Plan {
     }
 }
 
-impl fmt::Display for Plan {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-impl FromStr for Plan {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s {
-            "free" => Ok(Plan::Free),
-            "premium" => Ok(Plan::Premium),
-            "vip" => Ok(Plan::Vip),
-            _ => Err(format!("Unknown plan: {}", s)),
-        }
-    }
-}
-
-// rusqlite FromSql: read plan from DB text column
+// rusqlite FromSql: read plan from DB text column via strum's FromStr
 impl rusqlite::types::FromSql for Plan {
     fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
         let s = value.as_str()?;
-        Plan::from_str(s).map_err(|e| rusqlite::types::FromSqlError::Other(Box::new(std::io::Error::other(e))))
+        Plan::from_str(s)
+            .map_err(|e| rusqlite::types::FromSqlError::Other(Box::new(std::io::Error::other(e.to_string()))))
     }
 }
 
@@ -78,8 +77,9 @@ impl rusqlite::types::ToSql for Plan {
 
 // ── Plan change events (cross-crate notification channel) ────────────
 
-/// Why a plan changed.
-#[derive(Debug, Clone)]
+/// Why a plan changed. Serialized as a lowercase string for log/audit use.
+#[derive(Debug, Clone, strum::Display)]
+#[strum(serialize_all = "lowercase")]
 pub enum PlanChangeReason {
     /// Admin changed the plan (via /setplan or web dashboard).
     Admin,
@@ -89,17 +89,6 @@ pub enum PlanChangeReason {
     Renewal,
     /// User or admin cancelled auto-renewal.
     Cancel,
-}
-
-impl fmt::Display for PlanChangeReason {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Admin => f.write_str("admin"),
-            Self::Payment => f.write_str("payment"),
-            Self::Renewal => f.write_str("renewal"),
-            Self::Cancel => f.write_str("cancel"),
-        }
-    }
 }
 
 /// A plan change that should be communicated to the user.

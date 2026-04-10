@@ -32,7 +32,12 @@ impl Default for AudioEffectSettings {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Keep `FromStr` manual — this enum has a "fall back to `None` on unknown
+/// input" contract (`type Err = Infallible`) that strum's `EnumString`
+/// doesn't express. `Display` / `as_str` are still derived via strum to
+/// eliminate the match-block boilerplate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::AsRefStr, strum::IntoStaticStr)]
+#[strum(serialize_all = "lowercase")]
 pub enum MorphProfile {
     None,
     Soft,
@@ -60,14 +65,10 @@ impl MorphProfile {
         s.parse().unwrap_or(MorphProfile::None)
     }
 
+    /// Alias for `Into::<&'static str>::into` so existing `.as_str()` callers
+    /// keep working unchanged.
     pub fn as_str(&self) -> &'static str {
-        match self {
-            MorphProfile::None => "none",
-            MorphProfile::Soft => "soft",
-            MorphProfile::Aggressive => "aggressive",
-            MorphProfile::Lofi => "lofi",
-            MorphProfile::Wide => "wide",
-        }
+        self.into()
     }
 }
 

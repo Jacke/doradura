@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`strum` derive rollout** (v0.36.6) — added `strum = "0.26"` (derive feature) and replaced hand-written `impl Display` / `impl FromStr` / `as_str()` match blocks on six enums with derive macros:
+  - `Plan` (doracore/core/types.rs) — full rollout: `strum::Display` + `strum::EnumString` + `strum::AsRefStr` + `strum::IntoStaticStr` with `serialize_all = "lowercase"`. `as_str()` kept as a one-line alias for `Into::into` so existing call sites don't change. Removed manual `FromStr`, `Display`, and the duplicated match in `as_str`
+  - `DownloadFormat` (dorabot/download/queue.rs) — same full rollout as `Plan`
+  - `PlanChangeReason` (doracore/core/types.rs) — `strum::Display` only
+  - `MorphProfile` (doracore/download/audio_effects.rs) — `strum::Display` + `AsRefStr` + `IntoStaticStr`. `FromStr` kept manual because the enum has a "fall back to `None` on unknown input" contract (`Err = Infallible`) that strum's `EnumString` doesn't express
+  - `SmokeTestStatus` (dorabot/smoke_tests/results.rs) — `strum::Display` with `serialize_all = "UPPERCASE"`
+  - `Platform` (dorabot/download/playlist_sync/resolver.rs) — `strum::Display` with per-variant `serialize` attributes (the human labels have spaces, e.g. `"Yandex Music"`). `db_name()` kept manual as it's a separate snake_case representation
+  - `TrackStatus` (same file) — `strum::AsRefStr` + `IntoStaticStr`
+  - `ProxyProtocol` (doracore/download/proxy.rs) — `strum::Display` with `serialize_all = "lowercase"`
+  - Net: ~100 LOC deleted, all 560 tests pass (Plan's 8 existing unit tests validate the behavioral equivalence of the derived impls)
+
 - **`fluent_args!` macro + centralized `format_bytes`** (v0.36.5):
   - New `doracore::fluent_args!` macro replaces the repeated `let mut args = FluentArgs::new(); args.set("k1", v1); args.set("k2", v2);` ceremony at 58 call sites across 15 files. Usage: `let args = doracore::fluent_args!("count" => n, "name" => username);` (trailing commas allowed, inside doracore itself use `crate::fluent_args!`)
   - New `doracore::core::format_bytes(u64)` / `format_bytes_i64(i64)` helpers replace 7 duplicated `format_file_size` / `format_size` / `format_bytes` / `fmt_size` functions scattered across `core/stats.rs`, `core/stats_reporter.rs`, `telegram/preview/display.rs`, `telegram/downloads/mod.rs`, `telegram/videos.rs`, `telegram/cuts.rs`, `telegram/menu/archive.rs`, and `doratui/src/video_info.rs`. Each file now just re-exports the canonical helper under its local name. Added TB handling (old helpers topped out at GB and would have shown "1024.00 GB" for 1.5 TB files)

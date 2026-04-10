@@ -1,27 +1,17 @@
 //! Smoke test result types and reporting structures.
 
 use chrono::{DateTime, Utc};
-use std::fmt;
 use std::time::Duration;
 
-/// Status of a smoke test
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Status of a smoke test. Displays as uppercase (`PASSED` / `FAILED` /
+/// `TIMEOUT` / `SKIPPED`) in human-readable reports.
+#[derive(Debug, Clone, PartialEq, Eq, strum::Display)]
+#[strum(serialize_all = "UPPERCASE")]
 pub enum SmokeTestStatus {
     Passed,
     Failed,
     Timeout,
     Skipped,
-}
-
-impl fmt::Display for SmokeTestStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            SmokeTestStatus::Passed => write!(f, "PASSED"),
-            SmokeTestStatus::Failed => write!(f, "FAILED"),
-            SmokeTestStatus::Timeout => write!(f, "TIMEOUT"),
-            SmokeTestStatus::Skipped => write!(f, "SKIPPED"),
-        }
-    }
 }
 
 /// Result of a single smoke test

@@ -15,8 +15,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// Supported proxy protocols
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// Supported proxy protocols. Serialized as lowercase URL scheme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, strum::Display)]
+#[strum(serialize_all = "lowercase")]
 pub enum ProxyProtocol {
     /// HTTP proxy
     Http,
@@ -24,16 +25,6 @@ pub enum ProxyProtocol {
     Https,
     /// SOCKS5 proxy
     Socks5,
-}
-
-impl fmt::Display for ProxyProtocol {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ProxyProtocol::Http => write!(f, "http"),
-            ProxyProtocol::Https => write!(f, "https"),
-            ProxyProtocol::Socks5 => write!(f, "socks5"),
-        }
-    }
 }
 
 impl ProxyProtocol {
