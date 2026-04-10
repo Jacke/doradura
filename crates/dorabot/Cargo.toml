@@ -1,6 +1,6 @@
 [package]
 name = "doradura"
-version = "0.36.8"
+version = "0.36.9"
 edition = "2021"
 authors = ["Stan <iamjacke@gmail.com>"]
 description = "High-performance Telegram bot for downloading and converting media from multiple sources"
@@ -32,7 +32,6 @@ tracing = { workspace = true }
 chrono = { workspace = true }
 url = { workspace = true }
 regex = { workspace = true }
-once_cell = { workspace = true }
 strum = { workspace = true }
 uuid = { workspace = true }
 rand = { workspace = true }

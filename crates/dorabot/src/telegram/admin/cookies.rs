@@ -6,7 +6,7 @@ use crate::download::ytdlp;
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
 use anyhow::Result;
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use teloxide::prelude::*;
@@ -16,7 +16,7 @@ use teloxide::types::{InlineKeyboardMarkup, MessageId, ParseMode};
 const COOKIE_NOTIFICATION_COOLDOWN: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// Timestamp of the last cookie refresh notification sent to admin
-static LAST_COOKIE_NOTIFICATION: Lazy<Mutex<Option<Instant>>> = Lazy::new(|| Mutex::new(None));
+static LAST_COOKIE_NOTIFICATION: LazyLock<Mutex<Option<Instant>>> = LazyLock::new(|| Mutex::new(None));
 
 /// Handles the /diagnose_cookies command (admin only)
 ///

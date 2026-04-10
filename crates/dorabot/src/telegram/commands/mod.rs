@@ -18,9 +18,9 @@ use crate::storage::db::{self, DbPool, OutputKind, SourceKind};
 use crate::storage::SharedStorage;
 use crate::telegram::preview::{get_preview_metadata, get_preview_metadata_with_time_range, send_preview};
 use crate::telegram::Bot;
-use once_cell::sync::Lazy;
 use regex::Regex;
 use std::sync::Arc;
+use std::sync::LazyLock;
 use teloxide::prelude::*;
 use teloxide::types::ParseMode;
 use url::Url;
@@ -29,7 +29,8 @@ const PREVIEW_CONTEXT_TTL_SECS: i64 = 3600;
 
 /// Cached regex for matching URLs
 /// Compiled once at startup and reused for all requests
-static URL_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"https?://[^\s]+").expect("Failed to compile URL regex"));
+static URL_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"https?://[^\s]+").expect("Failed to compile URL regex"));
 
 /// Handle rate limiting for a user message
 ///

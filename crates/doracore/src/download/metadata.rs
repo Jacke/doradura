@@ -7,9 +7,9 @@ use crate::core::metrics;
 use crate::download::error::DownloadError;
 use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message, should_notify_admin, YtDlpErrorType};
 use crate::storage::cache;
-use once_cell::sync::Lazy;
 use std::fs;
 use std::path::Path;
+use std::sync::LazyLock;
 use tokio::process::Command as TokioCommand;
 use tokio::time::timeout;
 use url::Url;
@@ -32,7 +32,7 @@ fn first_line_of_stdout(stdout: &[u8]) -> String {
 // =============================================================================
 
 /// Cached resolved cookies file path (computed once at first use)
-static CACHED_COOKIES_PATH: Lazy<Option<String>> = Lazy::new(|| {
+static CACHED_COOKIES_PATH: LazyLock<Option<String>> = LazyLock::new(|| {
     if let Some(ref cookies_file) = *config::YTDL_COOKIES_FILE {
         if cookies_file.is_empty() {
             return None;
@@ -66,7 +66,7 @@ fn get_cached_cookies_path() -> Option<&'static str> {
 }
 
 /// Cached resolved Instagram cookies file path (computed once at first use)
-static CACHED_INSTAGRAM_COOKIES_PATH: Lazy<Option<String>> = Lazy::new(|| {
+static CACHED_INSTAGRAM_COOKIES_PATH: LazyLock<Option<String>> = LazyLock::new(|| {
     if let Some(ref cookies_file) = *config::INSTAGRAM_COOKIES_FILE {
         if cookies_file.is_empty() {
             return None;
@@ -99,7 +99,7 @@ fn get_cached_instagram_cookies_path() -> Option<&'static str> {
 }
 
 /// Cached WARP proxy URL (from config, computed once)
-static CACHED_WARP_PROXY: Lazy<Option<String>> = Lazy::new(|| {
+static CACHED_WARP_PROXY: LazyLock<Option<String>> = LazyLock::new(|| {
     config::proxy::WARP_PROXY
         .as_ref()
         .filter(|s| !s.trim().is_empty())

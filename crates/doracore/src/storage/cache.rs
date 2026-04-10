@@ -263,7 +263,7 @@ pub struct CacheStats {
 }
 
 /// Global cache instance (singleton)
-static METADATA_CACHE: once_cell::sync::Lazy<MetadataCache> = once_cell::sync::Lazy::new(|| {
+static METADATA_CACHE: std::sync::LazyLock<MetadataCache> = std::sync::LazyLock::new(|| {
     MetadataCache::new(Duration::from_secs(24 * 60 * 60)) // 24 hours
 });
 

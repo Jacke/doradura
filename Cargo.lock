@@ -1667,7 +1667,6 @@ dependencies = [
  "http 0.2.12",
  "lazy-regex",
  "log",
- "once_cell",
  "pretty_assertions",
  "pretty_env_logger",
  "prometheus",
@@ -1705,7 +1704,7 @@ dependencies = [
 
 [[package]]
 name = "doradura"
-version = "0.36.8"
+version = "0.36.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1729,7 +1728,6 @@ dependencies = [
  "http 0.2.12",
  "log",
  "mime",
- "once_cell",
  "parking_lot",
  "pretty_assertions",
  "pretty_env_logger",
@@ -1780,7 +1778,6 @@ dependencies = [
  "doracore",
  "image",
  "log",
- "once_cell",
  "r2d2",
  "r2d2_sqlite",
  "ratatui",

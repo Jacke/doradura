@@ -9,8 +9,8 @@ use tokio::sync::Semaphore;
 const MAX_CONCURRENT_PROCESSING: usize = 3;
 
 /// Semaphore to limit concurrent FFmpeg processing
-static PROCESSING_SEMAPHORE: once_cell::sync::Lazy<Semaphore> =
-    once_cell::sync::Lazy::new(|| Semaphore::new(MAX_CONCURRENT_PROCESSING));
+static PROCESSING_SEMAPHORE: std::sync::LazyLock<Semaphore> =
+    std::sync::LazyLock::new(|| Semaphore::new(MAX_CONCURRENT_PROCESSING));
 
 /// Audio effect settings for pitch and tempo modifications
 #[derive(Debug, Clone)]

@@ -14,8 +14,8 @@ use crate::storage::db::DbPool;
 use super::resolver::{ImportTrack, Platform, PlaylistResolver, ProgressFn, ResolvedPlaylist, TrackStatus};
 
 /// Cached Spotify access token.
-static TOKEN_CACHE: once_cell::sync::Lazy<RwLock<Option<(String, Instant)>>> =
-    once_cell::sync::Lazy::new(|| RwLock::new(None));
+static TOKEN_CACHE: std::sync::LazyLock<RwLock<Option<(String, Instant)>>> =
+    std::sync::LazyLock::new(|| RwLock::new(None));
 
 pub struct SpotifyResolver {
     db_pool: Arc<DbPool>,

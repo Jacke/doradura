@@ -8,6 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`once_cell::sync::Lazy` → `std::sync::LazyLock` migration** (v0.36.9) — the codebase had 37 `once_cell::sync::Lazy` sites across 14 files mixed with 13 existing `std::sync::LazyLock` sites (inconsistent). `LazyLock` has been stable in stdlib since Rust 1.80, so the `once_cell` crate is no longer needed for this. Migrated all 37 sites and **removed `once_cell` as a direct dependency** from all three crates (`doracore`, `dorabot`, `doratui`) and from the workspace root. It may still appear transitively via `fluent-templates` / `regex` etc., but it's no longer in our own Cargo.tomls. Net: one fewer dep to compile, one fewer API to remember, one consistent pattern across the whole workspace
+
 - **`Result<T, String>` → `anyhow::Result<T>` rollout** (v0.36.8) — migrated **40+ function signatures** across 20+ files from the lazy `Result<T, String>` escape hatch to proper `anyhow::Result<T>`. Callers now get:
   - Error source chains preserved (`.source()` walks the underlying error)
   - `.with_context(|| "...")` for contextual layering instead of manual `format!` wrapping

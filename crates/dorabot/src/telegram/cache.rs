@@ -119,8 +119,8 @@ impl PreviewCache {
 
 /// Global preview cache instance (singleton)
 /// TTL = 1 hour (sufficient for a user session)
-pub static PREVIEW_CACHE: once_cell::sync::Lazy<PreviewCache> =
-    once_cell::sync::Lazy::new(|| PreviewCache::new(Duration::from_secs(3600)));
+pub static PREVIEW_CACHE: std::sync::LazyLock<PreviewCache> =
+    std::sync::LazyLock::new(|| PreviewCache::new(Duration::from_secs(3600)));
 
 /// Maximum number of entries in the link message cache
 const MAX_LINK_CACHE_SIZE: usize = 2_000;
@@ -211,8 +211,8 @@ impl LinkMessageCache {
     }
 }
 
-pub static LINK_MESSAGE_CACHE: once_cell::sync::Lazy<LinkMessageCache> =
-    once_cell::sync::Lazy::new(|| LinkMessageCache::new(Duration::from_secs(3600)));
+pub static LINK_MESSAGE_CACHE: std::sync::LazyLock<LinkMessageCache> =
+    std::sync::LazyLock::new(|| LinkMessageCache::new(Duration::from_secs(3600)));
 
 pub async fn store_link_message_id(url: &str, message_id: i32) {
     LINK_MESSAGE_CACHE.set(url, message_id).await;
@@ -306,8 +306,8 @@ impl TimeRangeCache {
     }
 }
 
-pub static TIME_RANGE_CACHE: once_cell::sync::Lazy<TimeRangeCache> =
-    once_cell::sync::Lazy::new(|| TimeRangeCache::new(Duration::from_secs(3600)));
+pub static TIME_RANGE_CACHE: std::sync::LazyLock<TimeRangeCache> =
+    std::sync::LazyLock::new(|| TimeRangeCache::new(Duration::from_secs(3600)));
 
 pub async fn store_time_range(url: &str, range: (String, String)) {
     TIME_RANGE_CACHE.set(url, range).await;
@@ -368,8 +368,7 @@ impl BurnSubLangCache {
     }
 }
 
-pub static BURN_SUB_LANG_CACHE: once_cell::sync::Lazy<BurnSubLangCache> =
-    once_cell::sync::Lazy::new(BurnSubLangCache::new);
+pub static BURN_SUB_LANG_CACHE: std::sync::LazyLock<BurnSubLangCache> = std::sync::LazyLock::new(BurnSubLangCache::new);
 
 /// Store the burn subtitle language for a URL (or clear it with `None`).
 pub async fn store_burn_sub_lang(url: &str, lang: Option<String>) {

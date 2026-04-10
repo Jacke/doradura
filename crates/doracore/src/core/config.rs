@@ -1,5 +1,5 @@
-use once_cell::sync::Lazy;
 use std::env;
+use std::sync::LazyLock;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -32,7 +32,7 @@ impl DatabaseDriver {
 /// Configuration constants for the bot
 /// Cached yt-dlp binary path
 /// Read once at startup from YTDL_BIN environment variable or defaults to "yt-dlp"
-pub static YTDL_BIN: Lazy<String> = Lazy::new(|| env::var("YTDL_BIN").unwrap_or_else(|_| "yt-dlp".to_string()));
+pub static YTDL_BIN: LazyLock<String> = LazyLock::new(|| env::var("YTDL_BIN").unwrap_or_else(|_| "yt-dlp".to_string()));
 
 /// Browser to extract cookies from for YouTube authentication
 /// Read from YTDL_COOKIES_BROWSER environment variable
@@ -43,25 +43,25 @@ pub static YTDL_BIN: Lazy<String> = Lazy::new(|| env::var("YTDL_BIN").unwrap_or_
 /// It's recommended to use YTDL_COOKIES_FILE instead (see MACOS_COOKIES_FIX.md)
 ///
 /// Default: empty (use YTDL_COOKIES_FILE for macOS)
-pub static YTDL_COOKIES_BROWSER: Lazy<String> =
-    Lazy::new(|| env::var("YTDL_COOKIES_BROWSER").unwrap_or_else(|_| String::new()));
+pub static YTDL_COOKIES_BROWSER: LazyLock<String> =
+    LazyLock::new(|| env::var("YTDL_COOKIES_BROWSER").unwrap_or_else(|_| String::new()));
 
 /// Path to cookies file for YouTube authentication
 /// Read from YTDL_COOKIES_FILE environment variable
 /// If set, this takes priority over YTDL_COOKIES_BROWSER
 /// Example: youtube_cookies.txt
-pub static YTDL_COOKIES_FILE: Lazy<Option<String>> = Lazy::new(|| env::var("YTDL_COOKIES_FILE").ok());
+pub static YTDL_COOKIES_FILE: LazyLock<Option<String>> = LazyLock::new(|| env::var("YTDL_COOKIES_FILE").ok());
 
 /// Path to cookies file for Instagram authentication
 /// Read from INSTAGRAM_COOKIES_FILE environment variable
 /// Example: instagram_cookies.txt
-pub static INSTAGRAM_COOKIES_FILE: Lazy<Option<String>> = Lazy::new(|| env::var("INSTAGRAM_COOKIES_FILE").ok());
+pub static INSTAGRAM_COOKIES_FILE: LazyLock<Option<String>> = LazyLock::new(|| env::var("INSTAGRAM_COOKIES_FILE").ok());
 
 /// Download folder path
 /// Read from DOWNLOAD_FOLDER environment variable
 /// Defaults to ~/downloads/dora-files on macOS, ~/downloads on other platforms
 /// Supports tilde (~) expansion for home directory
-pub static DOWNLOAD_FOLDER: Lazy<String> = Lazy::new(|| {
+pub static DOWNLOAD_FOLDER: LazyLock<String> = LazyLock::new(|| {
     env::var("DOWNLOAD_FOLDER").unwrap_or_else(|_| {
         #[cfg(target_os = "macos")]
         {
@@ -78,37 +78,37 @@ pub static DOWNLOAD_FOLDER: Lazy<String> = Lazy::new(|| {
 /// Read from TEMP_FILES_DIR environment variable
 /// Defaults to /tmp on production, supports tilde (~) expansion
 /// Set to /telegram-bot-api on Railway for persistent storage
-pub static TEMP_FILES_DIR: Lazy<String> =
-    Lazy::new(|| env::var("TEMP_FILES_DIR").unwrap_or_else(|_| "/tmp".to_string()));
+pub static TEMP_FILES_DIR: LazyLock<String> =
+    LazyLock::new(|| env::var("TEMP_FILES_DIR").unwrap_or_else(|_| "/tmp".to_string()));
 
 /// Database file path
 /// Read from DATABASE_PATH environment variable
 /// Default: database.sqlite
-pub static DATABASE_PATH: Lazy<String> =
-    Lazy::new(|| env::var("DATABASE_PATH").unwrap_or_else(|_| "database.sqlite".to_string()));
+pub static DATABASE_PATH: LazyLock<String> =
+    LazyLock::new(|| env::var("DATABASE_PATH").unwrap_or_else(|_| "database.sqlite".to_string()));
 
 /// Database driver
 /// Read from DATABASE_DRIVER environment variable
 /// Default: sqlite
-pub static DATABASE_DRIVER: Lazy<DatabaseDriver> = Lazy::new(DatabaseDriver::from_env);
+pub static DATABASE_DRIVER: LazyLock<DatabaseDriver> = LazyLock::new(DatabaseDriver::from_env);
 
 /// PostgreSQL connection string for shared multi-instance state
 /// Read from DATABASE_URL environment variable
-pub static DATABASE_URL: Lazy<Option<String>> = Lazy::new(|| env::var("DATABASE_URL").ok());
+pub static DATABASE_URL: LazyLock<Option<String>> = LazyLock::new(|| env::var("DATABASE_URL").ok());
 
 /// Redis connection string for distributed cooldowns and cache coordination
 /// Read from REDIS_URL environment variable
-pub static REDIS_URL: Lazy<Option<String>> = Lazy::new(|| env::var("REDIS_URL").ok());
+pub static REDIS_URL: LazyLock<Option<String>> = LazyLock::new(|| env::var("REDIS_URL").ok());
 
 /// Log file path
 /// Read from LOG_FILE_PATH environment variable
 /// Default: app.log
-pub static LOG_FILE_PATH: Lazy<String> =
-    Lazy::new(|| env::var("LOG_FILE_PATH").unwrap_or_else(|_| "app.log".to_string()));
+pub static LOG_FILE_PATH: LazyLock<String> =
+    LazyLock::new(|| env::var("LOG_FILE_PATH").unwrap_or_else(|_| "app.log".to_string()));
 
 /// Bot token
 /// Read from BOT_TOKEN or TELOXIDE_TOKEN environment variable
-pub static BOT_TOKEN: Lazy<String> = Lazy::new(|| {
+pub static BOT_TOKEN: LazyLock<String> = LazyLock::new(|| {
     env::var("BOT_TOKEN")
         .or_else(|_| env::var("TELOXIDE_TOKEN"))
         .unwrap_or_else(|_| String::new())
@@ -116,22 +116,22 @@ pub static BOT_TOKEN: Lazy<String> = Lazy::new(|| {
 
 /// Webhook URL for Telegram updates
 /// Read from WEBHOOK_URL environment variable
-pub static WEBHOOK_URL: Lazy<Option<String>> = Lazy::new(|| env::var("WEBHOOK_URL").ok());
+pub static WEBHOOK_URL: LazyLock<Option<String>> = LazyLock::new(|| env::var("WEBHOOK_URL").ok());
 
 /// Secret token expected in Telegram webhook requests.
 /// Must match the token passed when calling setWebhook.
-pub static WEBHOOK_SECRET_TOKEN: Lazy<Option<String>> = Lazy::new(|| env::var("WEBHOOK_SECRET_TOKEN").ok());
+pub static WEBHOOK_SECRET_TOKEN: LazyLock<Option<String>> = LazyLock::new(|| env::var("WEBHOOK_SECRET_TOKEN").ok());
 
 /// Fixed webhook path exposed by the application.
-pub static WEBHOOK_PATH: Lazy<String> =
-    Lazy::new(|| env::var("WEBHOOK_PATH").unwrap_or_else(|_| "/telegram/webhook".to_string()));
+pub static WEBHOOK_PATH: LazyLock<String> =
+    LazyLock::new(|| env::var("WEBHOOK_PATH").unwrap_or_else(|_| "/telegram/webhook".to_string()));
 
 /// Local listen address for the webhook HTTP server.
-pub static WEBHOOK_LISTEN_ADDR: Lazy<String> =
-    Lazy::new(|| env::var("WEBHOOK_LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string()));
+pub static WEBHOOK_LISTEN_ADDR: LazyLock<String> =
+    LazyLock::new(|| env::var("WEBHOOK_LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string()));
 
 /// Optional Telegram webhook max_connections setting (1-100).
-pub static WEBHOOK_MAX_CONNECTIONS: Lazy<Option<u8>> = Lazy::new(|| {
+pub static WEBHOOK_MAX_CONNECTIONS: LazyLock<Option<u8>> = LazyLock::new(|| {
     env::var("WEBHOOK_MAX_CONNECTIONS")
         .ok()
         .and_then(|value| value.parse::<u8>().ok())
@@ -142,7 +142,7 @@ pub static WEBHOOK_MAX_CONNECTIONS: Lazy<Option<u8>> = Lazy::new(|| {
 /// When set, Genius is used as primary lyrics source for verse/chorus structure.
 /// When absent, LRCLIB is used directly (still good coverage, less structure).
 /// Get a free token at: https://genius.com/api-clients
-pub static GENIUS_CLIENT_TOKEN: Lazy<Option<String>> = Lazy::new(|| env::var("GENIUS_CLIENT_TOKEN").ok());
+pub static GENIUS_CLIENT_TOKEN: LazyLock<Option<String>> = LazyLock::new(|| env::var("GENIUS_CLIENT_TOKEN").ok());
 
 /// Rate limiting configuration
 pub mod rate_limit {
@@ -160,8 +160,8 @@ pub mod rate_limit {
 /// Queue processing configuration
 pub mod queue {
     use super::Duration;
-    use once_cell::sync::Lazy;
     use std::env;
+    use std::sync::LazyLock;
 
     /// Maximum number of concurrent downloads
     /// Reduced to 2 to avoid YouTube 403 rate limiting
@@ -179,7 +179,7 @@ pub mod queue {
 
     /// Runtime-configurable max concurrent downloads
     /// Reads from QUEUE_MAX_CONCURRENT environment variable at startup
-    pub static MAX_CONCURRENT: Lazy<usize> = Lazy::new(|| {
+    pub static MAX_CONCURRENT: LazyLock<usize> = LazyLock::new(|| {
         env::var("QUEUE_MAX_CONCURRENT")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -189,7 +189,7 @@ pub mod queue {
 
     /// Runtime-configurable inter-download delay
     /// Reads from QUEUE_INTER_DOWNLOAD_DELAY_MS environment variable at startup
-    pub static INTER_DOWNLOAD_DELAY: Lazy<u64> = Lazy::new(|| {
+    pub static INTER_DOWNLOAD_DELAY: LazyLock<u64> = LazyLock::new(|| {
         env::var("QUEUE_INTER_DOWNLOAD_DELAY_MS")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -198,7 +198,7 @@ pub mod queue {
 
     /// Runtime-configurable queue check interval
     /// Reads from QUEUE_CHECK_INTERVAL_MS environment variable at startup
-    pub static CHECK_INTERVAL: Lazy<u64> = Lazy::new(|| {
+    pub static CHECK_INTERVAL: LazyLock<u64> = LazyLock::new(|| {
         env::var("QUEUE_CHECK_INTERVAL_MS")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -318,11 +318,11 @@ pub mod network {
 /// Instagram GraphQL doc_id for media queries.
 /// Rotates every 2-4 weeks — configurable via env var (no redeploy needed).
 /// Default: current known working value.
-pub static INSTAGRAM_DOC_ID: Lazy<String> =
-    Lazy::new(|| env::var("INSTAGRAM_DOC_ID").unwrap_or_else(|_| "10015901848480474".to_string()));
+pub static INSTAGRAM_DOC_ID: LazyLock<String> =
+    LazyLock::new(|| env::var("INSTAGRAM_DOC_ID").unwrap_or_else(|_| "10015901848480474".to_string()));
 
 /// Downsub gRPC configuration
-pub static DOWNSUB_GRPC_ENDPOINT: Lazy<Option<String>> = Lazy::new(|| {
+pub static DOWNSUB_GRPC_ENDPOINT: LazyLock<Option<String>> = LazyLock::new(|| {
     env::var("DOWNSUB_GRPC_ENDPOINT").ok().and_then(|value| {
         let trimmed = value.trim();
         if trimmed.is_empty() {
@@ -352,8 +352,8 @@ pub mod progress {
 
 /// Admin configuration
 pub mod admin {
-    use once_cell::sync::Lazy;
     use std::env;
+    use std::sync::LazyLock;
 
     fn parse_admin_ids(raw: &str) -> Vec<i64> {
         raw.split([',', ' ', '\n', '\t'])
@@ -363,7 +363,7 @@ pub mod admin {
 
     /// Admin user IDs (comma-separated)
     /// Read from ADMIN_IDS environment variable
-    pub static ADMIN_IDS: Lazy<Vec<i64>> = Lazy::new(|| {
+    pub static ADMIN_IDS: LazyLock<Vec<i64>> = LazyLock::new(|| {
         env::var("ADMIN_IDS")
             .ok()
             .map(|raw| parse_admin_ids(&raw))
@@ -373,13 +373,13 @@ pub mod admin {
     /// Admin username for notifications
     /// Read from ADMIN_USERNAME environment variable
     /// Defaults to empty string if not set (no admin access)
-    pub static ADMIN_USERNAME: Lazy<String> =
-        Lazy::new(|| env::var("ADMIN_USERNAME").unwrap_or_else(|_| String::new()));
+    pub static ADMIN_USERNAME: LazyLock<String> =
+        LazyLock::new(|| env::var("ADMIN_USERNAME").unwrap_or_else(|_| String::new()));
 
     /// Admin user ID for direct messages (feedback, notifications)
     /// Read from ADMIN_USER_ID or fallback to first ADMIN_IDS entry
     /// Defaults to 0 if not set (no admin notifications)
-    pub static ADMIN_USER_ID: Lazy<i64> = Lazy::new(|| {
+    pub static ADMIN_USER_ID: LazyLock<i64> = LazyLock::new(|| {
         env::var("ADMIN_USER_ID")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -393,13 +393,13 @@ pub mod admin {
 
 /// Subscription pricing configuration
 pub mod subscription {
-    use once_cell::sync::Lazy;
     use std::env;
+    use std::sync::LazyLock;
 
     /// Price for Premium subscription in Telegram Stars (charged every 30 days)
     /// Read from PREMIUM_PRICE_STARS environment variable
     /// Default: 3 Stars
-    pub static PREMIUM_PRICE_STARS: Lazy<u32> = Lazy::new(|| {
+    pub static PREMIUM_PRICE_STARS: LazyLock<u32> = LazyLock::new(|| {
         env::var("PREMIUM_PRICE_STARS")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -409,7 +409,7 @@ pub mod subscription {
     /// Price for VIP subscription in Telegram Stars (charged every 30 days)
     /// Read from VIP_PRICE_STARS environment variable
     /// Default: 5 Stars
-    pub static VIP_PRICE_STARS: Lazy<u32> = Lazy::new(|| {
+    pub static VIP_PRICE_STARS: LazyLock<u32> = LazyLock::new(|| {
         env::var("VIP_PRICE_STARS")
             .ok()
             .and_then(|s| s.parse().ok())
@@ -422,13 +422,13 @@ pub mod subscription {
 
 /// Metrics and monitoring configuration
 pub mod metrics {
-    use once_cell::sync::Lazy;
     use std::env;
+    use std::sync::LazyLock;
 
     /// Enable metrics collection and HTTP server
     /// Read from METRICS_ENABLED environment variable
     /// Default: true
-    pub static ENABLED: Lazy<bool> = Lazy::new(|| {
+    pub static ENABLED: LazyLock<bool> = LazyLock::new(|| {
         env::var("METRICS_ENABLED")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -438,7 +438,7 @@ pub mod metrics {
     /// Port for metrics HTTP server
     /// Read from METRICS_PORT environment variable
     /// Default: 9090
-    pub static PORT: Lazy<u16> = Lazy::new(|| {
+    pub static PORT: LazyLock<u16> = LazyLock::new(|| {
         env::var("METRICS_PORT")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -447,19 +447,19 @@ pub mod metrics {
 
     /// Prometheus URL (for documentation/reference)
     /// Read from PROMETHEUS_URL environment variable
-    pub static PROMETHEUS_URL: Lazy<String> =
-        Lazy::new(|| env::var("PROMETHEUS_URL").unwrap_or_else(|_| "http://prometheus:9090".to_string()));
+    pub static PROMETHEUS_URL: LazyLock<String> =
+        LazyLock::new(|| env::var("PROMETHEUS_URL").unwrap_or_else(|_| "http://prometheus:9090".to_string()));
 }
 
 /// Alert configuration
 pub mod alerts {
-    use once_cell::sync::Lazy;
     use std::env;
+    use std::sync::LazyLock;
 
     /// Enable alerting system
     /// Read from ALERTS_ENABLED environment variable
     /// Default: true
-    pub static ENABLED: Lazy<bool> = Lazy::new(|| {
+    pub static ENABLED: LazyLock<bool> = LazyLock::new(|| {
         env::var("ALERTS_ENABLED")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -469,7 +469,7 @@ pub mod alerts {
     /// Error rate threshold percentage for triggering alerts
     /// Read from ALERT_ERROR_RATE_THRESHOLD environment variable
     /// Default: 5.0%
-    pub static ERROR_RATE_THRESHOLD: Lazy<f64> = Lazy::new(|| {
+    pub static ERROR_RATE_THRESHOLD: LazyLock<f64> = LazyLock::new(|| {
         env::var("ALERT_ERROR_RATE_THRESHOLD")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -479,7 +479,7 @@ pub mod alerts {
     /// Queue depth threshold for triggering alerts
     /// Read from ALERT_QUEUE_DEPTH_THRESHOLD environment variable
     /// Default: 200 tasks (queue max is 1000, alert at ~20% capacity)
-    pub static QUEUE_DEPTH_THRESHOLD: Lazy<usize> = Lazy::new(|| {
+    pub static QUEUE_DEPTH_THRESHOLD: LazyLock<usize> = LazyLock::new(|| {
         env::var("ALERT_QUEUE_DEPTH_THRESHOLD")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -489,7 +489,7 @@ pub mod alerts {
     /// Retry rate threshold percentage for triggering alerts
     /// Read from ALERT_RETRY_RATE_THRESHOLD environment variable
     /// Default: 30.0%
-    pub static RETRY_RATE_THRESHOLD: Lazy<f64> = Lazy::new(|| {
+    pub static RETRY_RATE_THRESHOLD: LazyLock<f64> = LazyLock::new(|| {
         env::var("ALERT_RETRY_RATE_THRESHOLD")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -499,13 +499,13 @@ pub mod alerts {
 
 /// Analytics cache configuration
 pub mod analytics {
-    use once_cell::sync::Lazy;
     use std::env;
+    use std::sync::LazyLock;
 
     /// Update interval for analytics cache in seconds
     /// Read from ANALYTICS_CACHE_UPDATE_INTERVAL environment variable
     /// Default: 300 seconds (5 minutes)
-    pub static CACHE_UPDATE_INTERVAL_SECS: Lazy<u64> = Lazy::new(|| {
+    pub static CACHE_UPDATE_INTERVAL_SECS: LazyLock<u64> = LazyLock::new(|| {
         env::var("ANALYTICS_CACHE_UPDATE_INTERVAL")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -515,13 +515,13 @@ pub mod analytics {
 
 /// Proxy configuration for yt-dlp downloads
 pub mod proxy {
-    use once_cell::sync::Lazy;
     use std::env;
+    use std::sync::LazyLock;
 
     /// Primary WARP proxy URL (Cloudflare WARP for free YouTube access)
     /// Read from WARP_PROXY environment variable
     /// Example: socks5://your-vps-ip:1080
-    pub static WARP_PROXY: Lazy<Option<String>> = Lazy::new(|| {
+    pub static WARP_PROXY: LazyLock<Option<String>> = LazyLock::new(|| {
         env::var("WARP_PROXY")
             .ok()
             .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
@@ -530,7 +530,7 @@ pub mod proxy {
     /// Path to file containing proxy list (one proxy per line)
     /// Read from PROXY_FILE environment variable
     /// Useful for managing large proxy lists
-    pub static PROXY_FILE: Lazy<Option<String>> = Lazy::new(|| {
+    pub static PROXY_FILE: LazyLock<Option<String>> = LazyLock::new(|| {
         env::var("PROXY_FILE")
             .ok()
             .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
@@ -539,7 +539,7 @@ pub mod proxy {
     /// Proxy selection strategy: "round_robin", "random", "weighted", "fixed"
     /// Read from PROXY_STRATEGY environment variable
     /// Default: "round_robin"
-    pub static PROXY_STRATEGY: Lazy<String> = Lazy::new(|| {
+    pub static PROXY_STRATEGY: LazyLock<String> = LazyLock::new(|| {
         env::var("PROXY_STRATEGY")
             .unwrap_or_else(|_| "round_robin".to_string())
             .to_lowercase()
@@ -548,7 +548,7 @@ pub mod proxy {
     /// Enable proxy rotation (use different proxy for each download)
     /// Read from PROXY_ROTATION_ENABLED environment variable
     /// Default: true
-    pub static ROTATION_ENABLED: Lazy<bool> = Lazy::new(|| {
+    pub static ROTATION_ENABLED: LazyLock<bool> = LazyLock::new(|| {
         env::var("PROXY_ROTATION_ENABLED")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -559,7 +559,7 @@ pub mod proxy {
     /// Proxies with lower success rate are skipped
     /// Read from PROXY_MIN_HEALTH environment variable
     /// Default: 0.5 (50% success rate)
-    pub static MIN_HEALTH: Lazy<f64> = Lazy::new(|| {
+    pub static MIN_HEALTH: LazyLock<f64> = LazyLock::new(|| {
         let value: f64 = env::var("PROXY_MIN_HEALTH")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -570,7 +570,7 @@ pub mod proxy {
     /// URL to fetch proxy list from (useful for dynamic proxy updates)
     /// Read from PROXY_URL environment variable
     /// Default: empty (disabled)
-    pub static PROXY_UPDATE_URL: Lazy<Option<String>> = Lazy::new(|| {
+    pub static PROXY_UPDATE_URL: LazyLock<Option<String>> = LazyLock::new(|| {
         env::var("PROXY_UPDATE_URL")
             .ok()
             .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
@@ -579,7 +579,7 @@ pub mod proxy {
     /// Interval to fetch proxy list from URL (in seconds)
     /// Read from PROXY_UPDATE_INTERVAL environment variable
     /// Default: 3600 (1 hour)
-    pub static PROXY_UPDATE_INTERVAL_SECS: Lazy<u64> = Lazy::new(|| {
+    pub static PROXY_UPDATE_INTERVAL_SECS: LazyLock<u64> = LazyLock::new(|| {
         env::var("PROXY_UPDATE_INTERVAL")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -600,7 +600,7 @@ pub mod proxy {
 
 /// Validation configuration
 pub mod validation {
-    use once_cell::sync::Lazy;
+    use std::sync::LazyLock;
 
     /// Maximum URL length (RFC 7230 recommends 8000, but we use 2048 for safety)
     pub const MAX_URL_LENGTH: usize = 2048;
@@ -610,7 +610,7 @@ pub mod validation {
     pub const MAX_FILE_SIZE_BYTES: u64 = 50 * 1024 * 1024; // 50 MB
 
     /// Cached maximum audio file size (computed once at first access)
-    static MAX_AUDIO_SIZE_CACHED: Lazy<u64> = Lazy::new(|| {
+    static MAX_AUDIO_SIZE_CACHED: LazyLock<u64> = LazyLock::new(|| {
         if let Ok(bot_api_url) = std::env::var("BOT_API_URL") {
             if !bot_api_url.contains("api.telegram.org") {
                 log::info!(
@@ -624,7 +624,7 @@ pub mod validation {
     });
 
     /// Cached maximum video file size (computed once at first access)
-    static MAX_VIDEO_SIZE_CACHED: Lazy<u64> = Lazy::new(|| {
+    static MAX_VIDEO_SIZE_CACHED: LazyLock<u64> = LazyLock::new(|| {
         if let Ok(bot_api_url) = std::env::var("BOT_API_URL") {
             if !bot_api_url.contains("api.telegram.org") {
                 log::info!(
@@ -700,13 +700,13 @@ pub mod bot_api {
 
 /// Share page configuration
 pub mod share {
-    use once_cell::sync::Lazy;
     use std::env;
+    use std::sync::LazyLock;
 
     /// Base URL for public share pages (e.g. "https://doradura.up.railway.app")
     /// Read from WEB_BASE_URL environment variable.
     /// If not set, share page creation is skipped silently.
-    pub static BASE_URL: Lazy<Option<String>> = Lazy::new(|| {
+    pub static BASE_URL: LazyLock<Option<String>> = LazyLock::new(|| {
         env::var("WEB_BASE_URL")
             .ok()
             .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
@@ -714,7 +714,7 @@ pub mod share {
 
     /// Port for the public web server.
     /// Read from WEB_PORT environment variable, falls back to Railway's PORT, then 3000.
-    pub static PORT: Lazy<u16> = Lazy::new(|| {
+    pub static PORT: LazyLock<u16> = LazyLock::new(|| {
         env::var("WEB_PORT")
             .or_else(|_| env::var("PORT"))
             .ok()
@@ -733,13 +733,13 @@ pub mod share {
 
 /// Content watcher / subscription monitoring configuration
 pub mod watcher {
-    use once_cell::sync::Lazy;
     use std::env;
+    use std::sync::LazyLock;
 
     /// Check interval in seconds (how often the scheduler runs)
     /// Read from WATCHER_CHECK_INTERVAL_SECS environment variable
     /// Default: 900 (15 minutes)
-    pub static CHECK_INTERVAL_SECS: Lazy<u64> = Lazy::new(|| {
+    pub static CHECK_INTERVAL_SECS: LazyLock<u64> = LazyLock::new(|| {
         env::var("WATCHER_CHECK_INTERVAL_SECS")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -749,7 +749,7 @@ pub mod watcher {
     /// Max API requests per check cycle (budget)
     /// Read from WATCHER_MAX_REQUESTS_PER_CYCLE environment variable
     /// Default: 60
-    pub static MAX_REQUESTS_PER_CYCLE: Lazy<u32> = Lazy::new(|| {
+    pub static MAX_REQUESTS_PER_CYCLE: LazyLock<u32> = LazyLock::new(|| {
         env::var("WATCHER_MAX_REQUESTS_PER_CYCLE")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -759,7 +759,7 @@ pub mod watcher {
     /// Max consecutive errors before auto-disabling a subscription
     /// Read from WATCHER_MAX_CONSECUTIVE_ERRORS environment variable
     /// Default: 10
-    pub static MAX_CONSECUTIVE_ERRORS: Lazy<u32> = Lazy::new(|| {
+    pub static MAX_CONSECUTIVE_ERRORS: LazyLock<u32> = LazyLock::new(|| {
         env::var("WATCHER_MAX_CONSECUTIVE_ERRORS")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -769,7 +769,7 @@ pub mod watcher {
     /// Max subscriptions for free users
     /// Read from WATCHER_MAX_SUBS_FREE environment variable
     /// Default: 3
-    pub static MAX_SUBS_FREE: Lazy<u32> = Lazy::new(|| {
+    pub static MAX_SUBS_FREE: LazyLock<u32> = LazyLock::new(|| {
         env::var("WATCHER_MAX_SUBS_FREE")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -779,7 +779,7 @@ pub mod watcher {
     /// Max subscriptions for premium users
     /// Read from WATCHER_MAX_SUBS_PREMIUM environment variable
     /// Default: 15
-    pub static MAX_SUBS_PREMIUM: Lazy<u32> = Lazy::new(|| {
+    pub static MAX_SUBS_PREMIUM: LazyLock<u32> = LazyLock::new(|| {
         env::var("WATCHER_MAX_SUBS_PREMIUM")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -789,7 +789,7 @@ pub mod watcher {
     /// Max subscriptions for VIP users
     /// Read from WATCHER_MAX_SUBS_VIP environment variable
     /// Default: 50
-    pub static MAX_SUBS_VIP: Lazy<u32> = Lazy::new(|| {
+    pub static MAX_SUBS_VIP: LazyLock<u32> = LazyLock::new(|| {
         env::var("WATCHER_MAX_SUBS_VIP")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -799,16 +799,16 @@ pub mod watcher {
 
 /// Spotify API configuration
 pub mod spotify {
-    use once_cell::sync::Lazy;
     use std::env;
+    use std::sync::LazyLock;
 
-    pub static CLIENT_ID: Lazy<Option<String>> = Lazy::new(|| {
+    pub static CLIENT_ID: LazyLock<Option<String>> = LazyLock::new(|| {
         env::var("SPOTIFY_CLIENT_ID")
             .ok()
             .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
     });
 
-    pub static CLIENT_SECRET: Lazy<Option<String>> = Lazy::new(|| {
+    pub static CLIENT_SECRET: LazyLock<Option<String>> = LazyLock::new(|| {
         env::var("SPOTIFY_CLIENT_SECRET")
             .ok()
             .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
@@ -817,16 +817,16 @@ pub mod spotify {
 
 /// Yandex Music configuration
 pub mod yandex_music {
-    use once_cell::sync::Lazy;
     use std::env;
+    use std::sync::LazyLock;
 
-    pub static COOKIES_FILE: Lazy<Option<String>> = Lazy::new(|| {
+    pub static COOKIES_FILE: LazyLock<Option<String>> = LazyLock::new(|| {
         env::var("YM_COOKIES_FILE")
             .ok()
             .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })
     });
 
-    pub static PROXY: Lazy<Option<String>> = Lazy::new(|| {
+    pub static PROXY: LazyLock<Option<String>> = LazyLock::new(|| {
         env::var("YM_PROXY")
             .ok()
             .and_then(|s| if s.trim().is_empty() { None } else { Some(s) })

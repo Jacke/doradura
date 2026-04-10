@@ -8,15 +8,15 @@
 
 use anyhow::Result;
 use base64::{engine::general_purpose, Engine as _};
-use once_cell::sync::Lazy;
 use std::path::PathBuf;
+use std::sync::LazyLock;
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use tokio::time::timeout;
 
 /// Mutex to prevent concurrent cookie file writes (race condition protection)
-static COOKIES_WRITE_MUTEX: Lazy<Mutex<()>> = Lazy::new(|| Mutex::new(()));
+static COOKIES_WRITE_MUTEX: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 use crate::download::metadata::{get_proxy_chain, is_proxy_related_error};
 
@@ -1437,8 +1437,8 @@ impl CookieManagerClient {
 }
 
 /// Global singleton for cookie manager client
-static COOKIE_MANAGER_CLIENT: once_cell::sync::Lazy<CookieManagerClient> =
-    once_cell::sync::Lazy::new(CookieManagerClient::new);
+static COOKIE_MANAGER_CLIENT: std::sync::LazyLock<CookieManagerClient> =
+    std::sync::LazyLock::new(CookieManagerClient::new);
 
 /// Get the global cookie manager client
 pub fn cookie_manager() -> &'static CookieManagerClient {

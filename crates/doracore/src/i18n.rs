@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use fluent_templates::{fluent_bundle::FluentValue, static_loader, Loader};
-use once_cell::sync::Lazy;
+use std::sync::LazyLock;
 use unic_langid::LanguageIdentifier;
 
 /// Re-export `FluentArgs` publicly so downstream crates (and the
@@ -29,8 +29,8 @@ pub static SUPPORTED_LANGS: &[(&str, &str)] = &[
 ];
 
 /// Default language identifier used as a fallback.
-static DEFAULT_LANG: Lazy<LanguageIdentifier> =
-    Lazy::new(|| "ru".parse().expect("'ru' is a valid language identifier"));
+static DEFAULT_LANG: LazyLock<LanguageIdentifier> =
+    LazyLock::new(|| "ru".parse().expect("'ru' is a valid language identifier"));
 
 /// Normalizes a language code into a LanguageIdentifier (falls back to default).
 pub fn lang_from_code(code: &str) -> LanguageIdentifier {

@@ -29,7 +29,6 @@ anyhow = { workspace = true }
 log = { workspace = true }
 chrono = { workspace = true }
 url = { workspace = true }
-once_cell = { workspace = true }
 uuid = { workspace = true }
 rusqlite = { workspace = true }
 r2d2 = { workspace = true }

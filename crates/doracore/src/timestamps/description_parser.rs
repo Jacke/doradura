@@ -10,19 +10,19 @@
 //! - `(1:30) Main part`
 
 use super::{TimestampSource, VideoTimestamp};
-use once_cell::sync::Lazy;
 use regex::Regex;
+use std::sync::LazyLock;
 
 /// Regex for parsing timestamp lines in descriptions
 /// Matches: "0:00 Text", "1:23 Text", "12:34:56 Text"
 /// Also: "[0:00] Text", "(1:23) Text"
-static TIMESTAMP_LINE_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^[\[\(\s]*(\d{1,2}):(\d{2})(?::(\d{2}))?[\]\)\s]*[-–—:]?\s*(.+)$").unwrap());
+static TIMESTAMP_LINE_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^[\[\(\s]*(\d{1,2}):(\d{2})(?::(\d{2}))?[\]\)\s]*[-–—:]?\s*(.+)$").unwrap());
 
 /// Alternative regex for timestamps at end of line
 /// Matches: "Intro - 0:00", "Chapter 1 (1:23)"
-static TIMESTAMP_END_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"^(.+?)[\s\-–—]+[\[\(]?(\d{1,2}):(\d{2})(?::(\d{2}))?[\]\)]?\s*$").unwrap());
+static TIMESTAMP_END_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^(.+?)[\s\-–—]+[\[\(]?(\d{1,2}):(\d{2})(?::(\d{2}))?[\]\)]?\s*$").unwrap());
 
 /// Parse timestamps from video description text
 ///

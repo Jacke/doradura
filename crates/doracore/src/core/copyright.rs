@@ -3,9 +3,9 @@
 //! Adds a Dora the Explorer themed signature to media captions.
 //! "We did it! ¡Lo hicimos!" - Dora
 
-use once_cell::sync::Lazy;
 use rand::Rng;
 use std::env;
+use std::sync::LazyLock;
 use std::sync::OnceLock;
 
 use super::utils::escape_markdown_v2;
@@ -42,7 +42,7 @@ fn get_bot_tag() -> String {
 /// Enable copyright/branding in captions
 /// Read from COPYRIGHT_ENABLED environment variable
 /// Default: true
-pub static COPYRIGHT_ENABLED: Lazy<bool> = Lazy::new(|| {
+pub static COPYRIGHT_ENABLED: LazyLock<bool> = LazyLock::new(|| {
     env::var("COPYRIGHT_ENABLED")
         .ok()
         .and_then(|v| v.parse().ok())
