@@ -1,54 +1,47 @@
-use std::fmt;
-
 /// Structured error type for download operations.
 ///
 /// Replaces the previous `AppError::Download(String)` with categorized variants
 /// for better error handling, metrics, and debugging.
-#[derive(Debug)]
+///
+/// `Display` and `Error` are derived via `thiserror` — every variant prints its
+/// inner message verbatim (`{0}`), which matches the original hand-rolled
+/// `write!(f, "{}", msg)` output bytewise.
+#[derive(Debug, thiserror::Error)]
 pub enum DownloadError {
     /// yt-dlp specific failures (binary not found, bad exit code, etc.)
+    #[error("{0}")]
     YtDlp(String),
     /// FFmpeg processing failures (encoding, splitting, subtitle burn)
+    #[error("{0}")]
     Ffmpeg(String),
     /// Expected file not found after processing
+    #[error("{0}")]
     FileNotFound(String),
     /// Download or processing timed out
+    #[error("{0}")]
     Timeout(String),
     /// Proxy configuration or connection error
+    #[error("{0}")]
     Proxy(String),
     /// Insufficient disk space
+    #[error("{0}")]
     DiskSpace(String),
     /// Failed to send file via Telegram API
+    #[error("{0}")]
     SendFailed(String),
     /// Process execution failure (spawn, exit code)
+    #[error("{0}")]
     Process(String),
     /// Instagram API specific failures (GraphQL errors, doc_id expiry, private accounts)
+    #[error("{0}")]
     Instagram(String),
     /// Vlipsy API failures (search, clip fetch, download)
+    #[error("{0}")]
     Vlipsy(String),
     /// Catch-all for uncategorized errors
+    #[error("{0}")]
     Other(String),
 }
-
-impl fmt::Display for DownloadError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            DownloadError::YtDlp(msg) => write!(f, "{}", msg),
-            DownloadError::Ffmpeg(msg) => write!(f, "{}", msg),
-            DownloadError::FileNotFound(msg) => write!(f, "{}", msg),
-            DownloadError::Timeout(msg) => write!(f, "{}", msg),
-            DownloadError::Proxy(msg) => write!(f, "{}", msg),
-            DownloadError::DiskSpace(msg) => write!(f, "{}", msg),
-            DownloadError::SendFailed(msg) => write!(f, "{}", msg),
-            DownloadError::Process(msg) => write!(f, "{}", msg),
-            DownloadError::Instagram(msg) => write!(f, "{}", msg),
-            DownloadError::Vlipsy(msg) => write!(f, "{}", msg),
-            DownloadError::Other(msg) => write!(f, "{}", msg),
-        }
-    }
-}
-
-impl std::error::Error for DownloadError {}
 
 impl DownloadError {
     /// Returns subcategory for metrics

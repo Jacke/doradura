@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Cookie validation report showed red ❌ for legacy cookies on modern YouTube exports** (v0.36.14) — when a user uploaded a fresh cookie export from modern Chrome (which ships `__Secure-3PSID` / `__Secure-3PAPISID` / `LOGIN_INFO` instead of the legacy `SID`/`HSID`/`SSID`/`APISID`/`SAPISID` set), the `/update_cookies` command produced a confusing report:
+  - `*Required auth cookies:*` section listed all 5 legacy names as ❌ missing
+  - `*Additional cookies:*` section showed the modern cookies as ✅ present
+  - Overall verdict: ✅ *Cookies look valid*
+  - yt-dlp download test: ✓ passed
+
+  The validator's "valid" verdict was already correct (it accepted `__Secure-*PSID` as a modern-auth substitute), but the report template still hard-coded the legacy names under "Required" and appended them to `auth_cookies_missing` blindly. Users saw a wall of red on cookies that actually worked fine.
+
+  **Fix** in `doracore/src/download/cookies.rs`:
+  - Split the old `REQUIRED_AUTH_COOKIES` const into `LEGACY_AUTH_COOKIES` (SID/HSID/SSID/APISID/SAPISID) and `MODERN_AUTH_COOKIES` (__Secure-3PSID/1PSID/3PAPISID/1PAPISID/LOGIN_INFO)
+  - `diagnose_cookies_content` now detects which scheme the user's cookies are using (`has_any_modern` vs `has_all_legacy`) and only reports misses from the relevant scheme. A user on the modern scheme never sees legacy names reported as missing.
+  - Report header renamed from `*Required auth cookies:*` to `*Authentication cookies:*` since "required" was misleading — both schemes are acceptable.
+  - Empty-section guards added: the header is skipped entirely if there are no auth details and no missing cookies (instead of printing a lone "Authentication cookies:" with nothing under it).
+  - Three regression tests pinned in `cookies::tests`:
+    - `diagnose_modern_youtube_cookies_are_valid_and_not_missing_legacy`
+    - `diagnose_legacy_youtube_cookies_are_valid`
+    - `diagnose_no_auth_cookies_is_invalid`
+
 ### Changed
 - **`build_common_args` deduplication + regression tests** (v0.36.13) — in `doracore/src/download/source/ytdlp.rs`, `build_common_args` and `build_common_args_minimal` previously duplicated the 14-arg prefix. `build_common_args` now starts by calling `build_common_args_minimal(...)` and appends the retry/throttle tail, so the two cannot drift apart on the shared prefix. Added three regression tests in a new `common_args_tests` submodule that assert the **exact** argv slice (byte-identical to what we shipped), so any future refactor that silently drops or reorders an arg will fail CI. Addresses the `YtDlpArgsBuilder` audit item in the minimal-risk way per CLAUDE.md — the full Tier 1/2/3 builder rollout still needs a Railway smoke test before touching any more `download/*` files
 

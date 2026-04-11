@@ -159,8 +159,13 @@ pub struct CookieValidationResult {
     pub raw_error: Option<String>,
 }
 
-/// Required YouTube authentication cookies for full functionality
-const REQUIRED_AUTH_COOKIES: &[&str] = &[
+/// Legacy YouTube authentication cookies (2019-era).
+///
+/// Modern Chrome (and every cookie-export tool based on it) stopped writing
+/// these years ago — YouTube now ships the `__Secure-*` equivalents. Kept in
+/// the checker as a **fallback path**: if a user happens to have a legacy
+/// export, we still accept it. But their absence is NOT an error.
+const LEGACY_AUTH_COOKIES: &[&str] = &[
     "SID",     // Session ID
     "HSID",    // HTTP Session ID
     "SSID",    // Secure Session ID
@@ -168,16 +173,22 @@ const REQUIRED_AUTH_COOKIES: &[&str] = &[
     "SAPISID", // Secure API Session ID
 ];
 
-/// Secondary cookies that help with YouTube access
-const SECONDARY_COOKIES: &[&str] = &[
-    "__Secure-1PSID",
+/// Modern YouTube authentication cookies (2024+).
+///
+/// These are what `__Secure-*PSID` / `__Secure-*PAPISID` / `LOGIN_INFO` look
+/// like in a fresh Chrome cookie export. Having `__Secure-3PSID` (or
+/// `__Secure-1PSID`) is the modern equivalent of the full legacy set.
+const MODERN_AUTH_COOKIES: &[&str] = &[
     "__Secure-3PSID",
-    "__Secure-1PAPISID",
+    "__Secure-1PSID",
     "__Secure-3PAPISID",
+    "__Secure-1PAPISID",
     "LOGIN_INFO",
-    "PREF",
-    "VISITOR_INFO1_LIVE",
 ];
+
+/// Secondary cookies that help with YouTube access but aren't sufficient
+/// for authentication on their own.
+const SECONDARY_COOKIES: &[&str] = &["PREF", "VISITOR_INFO1_LIVE"];
 
 /// Parsed cookie from Netscape format
 #[derive(Debug, Clone)]
@@ -330,23 +341,32 @@ impl CookiesDiagnostic {
             self.total_cookies, self.youtube_cookies
         ));
 
-        // Auth cookies status with details
-        report.push_str("*Required auth cookies:*\n");
+        // Auth cookies status. YouTube accepts either the modern `__Secure-*`
+        // set or the legacy `SID/HSID/SSID/APISID/SAPISID` set — we print
+        // whichever the user actually has, and only show missing entries
+        // when they belong to the scheme the user is using.
+        let has_any_auth_detail = self.cookie_details.iter().any(|d| d.is_critical);
+        if has_any_auth_detail || !self.auth_cookies_missing.is_empty() {
+            report.push_str("*Authentication cookies:*\n");
 
-        for detail in self.cookie_details.iter().filter(|d| d.is_critical) {
-            let status = if detail.is_expired { "⚠️" } else { "✅" };
-            report.push_str(&format!(
-                "  {} {} | {} | `{}`\n",
-                status, detail.name, detail.expiration, detail.masked_value
-            ));
+            for detail in self.cookie_details.iter().filter(|d| d.is_critical) {
+                let status = if detail.is_expired { "⚠️" } else { "✅" };
+                report.push_str(&format!(
+                    "  {} {} | {} | `{}`\n",
+                    status, detail.name, detail.expiration, detail.masked_value
+                ));
+            }
+
+            // Only shown for truly missing cookies in the scheme the user
+            // is using — a modern export won't trigger legacy ❌ lines.
+            for name in &self.auth_cookies_missing {
+                report.push_str(&format!("  ❌ {} — missing\n", name));
+            }
         }
 
-        for name in &self.auth_cookies_missing {
-            report.push_str(&format!("  ❌ {} — missing\n", name));
-        }
-
-        // Secondary cookies with details
-        if !self.secondary_cookies_found.is_empty() {
+        // Secondary / helper cookies (PREF, VISITOR_INFO1_LIVE, etc.)
+        let has_any_secondary_detail = self.cookie_details.iter().any(|d| !d.is_critical);
+        if has_any_secondary_detail {
             report.push_str("\n*Additional cookies:*\n");
             for detail in self.cookie_details.iter().filter(|d| !d.is_critical) {
                 let status = if detail.is_expired { "⚠️" } else { "✅" };
@@ -445,10 +465,15 @@ pub fn diagnose_cookies_content(content: &str) -> CookiesDiagnostic {
             if domain.contains("youtube.com") || domain.contains("google.com") {
                 diagnostic.youtube_cookies += 1;
 
-                let is_auth = REQUIRED_AUTH_COOKIES.contains(&name.as_str());
+                // An auth cookie is EITHER the legacy set OR the modern set —
+                // whichever the user's cookie-export tool happened to write.
+                // YouTube 2024+ has completely stopped shipping the legacy
+                // names, so the modern set is the common case.
+                let is_legacy_auth = LEGACY_AUTH_COOKIES.contains(&name.as_str());
+                let is_modern_auth = MODERN_AUTH_COOKIES.contains(&name.as_str());
+                let is_auth = is_legacy_auth || is_modern_auth;
                 let is_secondary = SECONDARY_COOKIES.contains(&name.as_str());
 
-                // Check if required auth cookie
                 if is_auth {
                     diagnostic.auth_cookies_found.push(name.clone());
                     if cookie.is_expired() {
@@ -456,7 +481,6 @@ pub fn diagnose_cookies_content(content: &str) -> CookiesDiagnostic {
                     }
                 }
 
-                // Check secondary cookies
                 if is_secondary {
                     diagnostic.secondary_cookies_found.push(name.clone());
                 }
@@ -498,10 +522,44 @@ pub fn diagnose_cookies_content(content: &str) -> CookiesDiagnostic {
         }
     }
 
-    // Find missing required cookies
-    for &required in REQUIRED_AUTH_COOKIES {
-        if !diagnostic.auth_cookies_found.iter().any(|n| n == required) {
-            diagnostic.auth_cookies_missing.push(required.to_string());
+    // Determine which auth scheme the user's cookies are using:
+    // - modern: has any of __Secure-3PSID / __Secure-1PSID / __Secure-*PAPISID / LOGIN_INFO
+    // - legacy: has the full old-style set (SID/HSID/SSID/APISID/SAPISID)
+    //
+    // Only report a cookie as "missing" if it's missing from the scheme the
+    // user is ACTUALLY using. Marking legacy cookies as ❌ on a modern export
+    // produced a confusing "all red + validation passed" report.
+    let has_any_modern = diagnostic
+        .auth_cookies_found
+        .iter()
+        .any(|n| MODERN_AUTH_COOKIES.contains(&n.as_str()));
+    let has_all_legacy = LEGACY_AUTH_COOKIES
+        .iter()
+        .all(|&n| diagnostic.auth_cookies_found.iter().any(|f| f == n));
+
+    if has_any_modern {
+        // User has modern cookies — only report modern ones as "required".
+        // Missing entries in the legacy set are expected and not a problem.
+        for &required in MODERN_AUTH_COOKIES {
+            if !diagnostic.auth_cookies_found.iter().any(|n| n == required) {
+                // __Secure-3PSID is the primary one — the others are nice-to-have.
+                // Only mark __Secure-3PSID as missing when it's actually absent.
+                if required == "__Secure-3PSID"
+                    && !diagnostic
+                        .auth_cookies_found
+                        .iter()
+                        .any(|n| n == "__Secure-3PSID" || n == "__Secure-1PSID")
+                {
+                    diagnostic.auth_cookies_missing.push(required.to_string());
+                }
+            }
+        }
+    } else {
+        // No modern cookies — fall back to legacy checking.
+        for &required in LEGACY_AUTH_COOKIES {
+            if !diagnostic.auth_cookies_found.iter().any(|n| n == required) {
+                diagnostic.auth_cookies_missing.push(required.to_string());
+            }
         }
     }
 
@@ -510,14 +568,10 @@ pub fn diagnose_cookies_content(content: &str) -> CookiesDiagnostic {
         diagnostic.issues.push("No YouTube cookies found".to_string());
     }
 
-    // Check for __Secure- cookies which are critical for authenticated access
-    let has_secure_psid = diagnostic.secondary_cookies_found.iter().any(|n| n.contains("PSID"));
-
-    // Only warn about missing legacy cookies if __Secure-*PSID is also absent.
-    // YouTube 2025+ exports __Secure-3PSID instead of SID/HSID/SSID/APISID/SAPISID.
-    if !diagnostic.auth_cookies_missing.is_empty() && !has_secure_psid {
+    // Only warn about missing cookies when BOTH schemes are incomplete.
+    if !diagnostic.auth_cookies_missing.is_empty() && !has_any_modern {
         diagnostic.issues.push(format!(
-            "Missing required cookies: {}",
+            "Missing auth cookies: {}",
             diagnostic.auth_cookies_missing.join(", ")
         ));
     }
@@ -528,19 +582,16 @@ pub fn diagnose_cookies_content(content: &str) -> CookiesDiagnostic {
             diagnostic.auth_cookies_expired.join(", ")
         ));
     }
-    if !has_secure_psid {
+
+    if !has_any_modern && !has_all_legacy {
         diagnostic
             .issues
-            .push("Missing __Secure-*PSID cookies (required for authentication)".to_string());
+            .push("Missing authentication cookies (need either __Secure-*PSID or legacy SID set)".to_string());
     }
 
-    // Determine overall validity
-    // YouTube 2025+ uses __Secure-3PSID as primary auth cookie.
-    // Old-style cookies (SID, HSID, SSID, APISID, SAPISID) are no longer
-    // exported by most cookie tools. Having __Secure-3PSID is sufficient.
-    let has_modern_auth = has_secure_psid;
-    let has_legacy_auth = diagnostic.auth_cookies_missing.is_empty();
-    diagnostic.is_valid = (has_modern_auth || has_legacy_auth)
+    // Valid if EITHER auth scheme is present, no expired cookies, and we actually
+    // saw some YouTube cookies.
+    diagnostic.is_valid = (has_any_modern || has_all_legacy)
         && diagnostic.auth_cookies_expired.is_empty()
         && diagnostic.youtube_cookies > 0;
 
@@ -558,7 +609,7 @@ pub async fn diagnose_cookies_file() -> CookiesDiagnostic {
                 total_cookies: 0,
                 youtube_cookies: 0,
                 auth_cookies_found: Vec::new(),
-                auth_cookies_missing: REQUIRED_AUTH_COOKIES.iter().map(|s| s.to_string()).collect(),
+                auth_cookies_missing: Vec::new(),
                 auth_cookies_expired: Vec::new(),
                 secondary_cookies_found: Vec::new(),
                 issues: vec!["YTDL_COOKIES_FILE is not configured".to_string()],
@@ -577,7 +628,7 @@ pub async fn diagnose_cookies_file() -> CookiesDiagnostic {
             total_cookies: 0,
             youtube_cookies: 0,
             auth_cookies_found: Vec::new(),
-            auth_cookies_missing: REQUIRED_AUTH_COOKIES.iter().map(|s| s.to_string()).collect(),
+            auth_cookies_missing: Vec::new(),
             auth_cookies_expired: Vec::new(),
             secondary_cookies_found: Vec::new(),
             issues: vec![format!("File not found: {}", cookies_path.display())],
@@ -596,7 +647,7 @@ pub async fn diagnose_cookies_file() -> CookiesDiagnostic {
             total_cookies: 0,
             youtube_cookies: 0,
             auth_cookies_found: Vec::new(),
-            auth_cookies_missing: REQUIRED_AUTH_COOKIES.iter().map(|s| s.to_string()).collect(),
+            auth_cookies_missing: Vec::new(),
             auth_cookies_expired: Vec::new(),
             secondary_cookies_found: Vec::new(),
             issues: vec![format!("Error reading file: {}", e)],
@@ -1905,10 +1956,87 @@ pub fn load_ig_csrf_token() -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    use super::diagnose_cookies_content;
+
     #[test]
     fn test_get_cookies_path() {
         // This test will depend on env vars, just ensure it doesn't crash
         let _path = super::get_cookies_path();
+    }
+
+    /// Regression test: modern YouTube exports contain `__Secure-3PSID` /
+    /// `__Secure-3PAPISID` / `LOGIN_INFO` but NONE of the legacy
+    /// `SID/HSID/SSID/APISID/SAPISID`. The diagnostic used to mark all 5
+    /// legacy cookies as ❌ missing, print them red in the report, AND
+    /// separately conclude "cookies look valid". This test pins the fixed
+    /// behaviour.
+    #[test]
+    fn diagnose_modern_youtube_cookies_are_valid_and_not_missing_legacy() {
+        // 3 modern auth cookies + 2 secondary, all with far-future expiry.
+        let content = "# Netscape HTTP Cookie File\n\
+            .youtube.com\tTRUE\t/\tTRUE\t9999999999\t__Secure-3PSID\tmodern_psid\n\
+            .youtube.com\tTRUE\t/\tTRUE\t9999999999\t__Secure-3PAPISID\tmodern_papisid\n\
+            .youtube.com\tTRUE\t/\tTRUE\t9999999999\tLOGIN_INFO\tmodern_login\n\
+            .youtube.com\tTRUE\t/\tTRUE\t9999999999\tPREF\tsome_pref\n\
+            .youtube.com\tTRUE\t/\tTRUE\t9999999999\tVISITOR_INFO1_LIVE\tsome_visitor\n";
+
+        let diag = diagnose_cookies_content(content);
+
+        // All 3 modern auth cookies should be recognised
+        assert!(diag.auth_cookies_found.iter().any(|n| n == "__Secure-3PSID"));
+        assert!(diag.auth_cookies_found.iter().any(|n| n == "__Secure-3PAPISID"));
+        assert!(diag.auth_cookies_found.iter().any(|n| n == "LOGIN_INFO"));
+
+        // No legacy cookies should be reported as missing — user is on the
+        // modern scheme, legacy names are irrelevant.
+        assert!(
+            diag.auth_cookies_missing.is_empty(),
+            "expected empty missing list, got: {:?}",
+            diag.auth_cookies_missing
+        );
+
+        // The overall report should be valid
+        assert!(diag.is_valid, "modern-only cookies should be valid");
+
+        // Formatted report must NOT contain the legacy ❌ lines
+        let report = diag.format_report();
+        assert!(
+            !report.contains("❌ SID"),
+            "report should not show legacy SID as missing"
+        );
+        assert!(
+            !report.contains("❌ HSID"),
+            "report should not show legacy HSID as missing"
+        );
+        assert!(
+            !report.contains("❌ SAPISID"),
+            "report should not show legacy SAPISID as missing"
+        );
+    }
+
+    /// Complement: a pure legacy export (SID + HSID + ...) must still work.
+    #[test]
+    fn diagnose_legacy_youtube_cookies_are_valid() {
+        let content = "# Netscape HTTP Cookie File\n\
+            .youtube.com\tTRUE\t/\tTRUE\t9999999999\tSID\tlegacy_sid\n\
+            .youtube.com\tTRUE\t/\tTRUE\t9999999999\tHSID\tlegacy_hsid\n\
+            .youtube.com\tTRUE\t/\tTRUE\t9999999999\tSSID\tlegacy_ssid\n\
+            .youtube.com\tTRUE\t/\tTRUE\t9999999999\tAPISID\tlegacy_apisid\n\
+            .youtube.com\tTRUE\t/\tTRUE\t9999999999\tSAPISID\tlegacy_sapisid\n";
+
+        let diag = diagnose_cookies_content(content);
+        assert!(diag.is_valid, "legacy-only cookies should still be valid");
+        assert!(diag.auth_cookies_missing.is_empty());
+    }
+
+    /// A truly broken export (no auth cookies at all) must be reported invalid.
+    #[test]
+    fn diagnose_no_auth_cookies_is_invalid() {
+        let content = "# Netscape HTTP Cookie File\n\
+            .youtube.com\tTRUE\t/\tTRUE\t9999999999\tPREF\tjust_pref\n";
+
+        let diag = diagnose_cookies_content(content);
+        assert!(!diag.is_valid, "cookies with no auth should be invalid");
     }
 
     #[tokio::test]
