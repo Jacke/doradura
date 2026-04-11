@@ -52,7 +52,6 @@ hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
 tower = "0.4"
-tower-http = { version = "0.5", features = ["fs", "cors"] }
 axum = { workspace = true }
 
 [build-dependencies]

@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Prune unused workspace dependencies + minor version bumps** (v0.36.17) — ran `cargo udeps` and `cargo tree -d` to collect real data on dead / duplicated dependencies, then:
+  - **Removed phantom deps that the code no longer references:**
+    - `tonic` + `prost` from `dorabot` (only used by `doracore::downsub`, not by dorabot directly)
+    - `tower-http` from `doracore` + `dorabot` (zero references in src/)
+    - `shell-escape` from `dorabot` (zero references)
+    - `tokio-retry` from `dorabot` (zero references — replaced by internal `core::retry` long ago)
+  - **Version bumps that resolved our own duplicate-crate versions:**
+    - `thiserror 1.0` → `2.x` — eliminates the workspace-triggered duplicate (transitive v1 still comes in via fluent-templates 0.8 / prometheus 0.14; evaluated upgrading fluent-templates to 0.13 but the API break on `lookup`/`lookup_with_args` is non-trivial and not worth the churn for one transitive dep)
+    - `strum 0.26` → `0.27` — eliminates our part of the duplicate (doratui deps pull 0.27 via ratatui)
+  - Net: 5 direct deps removed, 2 versions aligned, zero behavior change. All 1125 tests pass. Compile times should improve modestly (`tonic` + `prost` alone used to pull in `axum 0.6`, `base64 0.21`, and `axum-core 0.3` as duplicates of our workspace versions)
+
 - **`DownloadTask` uses `bon::Builder` instead of 3 positional constructors** (v0.36.16) — added `bon = "3"` as a workspace dep. The previous `DownloadTask::new(url, chat_id, message_id, is_video, format, video_quality, audio_bitrate)` / `::with_priority(...)` / `::from_plan(...)` positional constructors (7 / 9 / 8 args each) have been replaced with `#[derive(bon::Builder)]` on the struct. Defaults for `id` (auto UUID), `created_timestamp` (`Utc::now()`), `priority` (`Low`), and `with_lyrics` (`false`) are encoded via `#[builder(default = ...)]`. Migrated **30 call sites across 7 files** (`main.rs`, `download/queue.rs` (16 sites in tests), `core/history.rs`, `telegram/menu/{helpers, callback_router, search}.rs`, `telegram/commands/mod.rs`). Usage:
 
   ```rust
