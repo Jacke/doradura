@@ -1,6 +1,6 @@
 [package]
 name = "doradura"
-version = "0.36.15"
+version = "0.36.16"
 edition = "2021"
 authors = ["Stan <iamjacke@gmail.com>"]
 description = "High-performance Telegram bot for downloading and converting media from multiple sources"
@@ -33,6 +33,7 @@ chrono = { workspace = true }
 url = { workspace = true }
 regex = { workspace = true }
 strum = { workspace = true }
+bon = { workspace = true }
 uuid = { workspace = true }
 rand = { workspace = true }
 base64 = { workspace = true }

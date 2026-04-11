@@ -341,15 +341,15 @@ pub async fn handle_search_callback(
                 let dl_format = format
                     .parse::<crate::download::queue::DownloadFormat>()
                     .unwrap_or(crate::download::queue::DownloadFormat::Mp3);
-                let task = crate::download::queue::DownloadTask::new(
-                    result.url.clone(),
-                    chat_id,
-                    None,
-                    is_video,
-                    dl_format,
-                    None,
-                    None,
-                );
+                let task = crate::download::queue::DownloadTask::builder()
+                    .url(result.url.clone())
+                    .chat_id(chat_id)
+                    .maybe_message_id(None)
+                    .is_video(is_video)
+                    .format(dl_format)
+                    .maybe_video_quality(None)
+                    .maybe_audio_bitrate(None)
+                    .build();
                 download_queue.add_task(task, Some(db_pool.clone())).await;
             }
         }

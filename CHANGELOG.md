@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **`DownloadTask` uses `bon::Builder` instead of 3 positional constructors** (v0.36.16) — added `bon = "3"` as a workspace dep. The previous `DownloadTask::new(url, chat_id, message_id, is_video, format, video_quality, audio_bitrate)` / `::with_priority(...)` / `::from_plan(...)` positional constructors (7 / 9 / 8 args each) have been replaced with `#[derive(bon::Builder)]` on the struct. Defaults for `id` (auto UUID), `created_timestamp` (`Utc::now()`), `priority` (`Low`), and `with_lyrics` (`false`) are encoded via `#[builder(default = ...)]`. Migrated **30 call sites across 7 files** (`main.rs`, `download/queue.rs` (16 sites in tests), `core/history.rs`, `telegram/menu/{helpers, callback_router, search}.rs`, `telegram/commands/mod.rs`). Usage:
+
+  ```rust
+  let task = DownloadTask::builder()
+      .url(url)
+      .chat_id(chat_id)
+      .is_video(false)
+      .format(DownloadFormat::Mp3)
+      .audio_bitrate("320k".to_string())
+      .priority(TaskPriority::from_plan(plan))
+      .build();
+  ```
+
+  Field names at the call site make each argument self-documenting — the old `DownloadTask::new(url, chat_id, None, false, DownloadFormat::Mp3, None, Some("320k".to_string()))` required counting positions to know which `None` was `message_id` vs `video_quality`. All 1125 tests pass
+
 - **yt-dlp Tier 1/2/3 closures deduplicated via helper functions** (v0.36.15) — the six download closures in `doracore/src/download/source/ytdlp.rs` (Tier 1/2/3 × audio/video) each inlined a verbatim copy of the same 4-item "runtime/cert/concurrent-fragments" tail (`--js-runtimes deno --no-check-certificate -N N`), and the audio/video format prefixes were copy-pasted across their respective tiers. Extracted three helper functions:
   - `push_js_runtimes_tail(args, cf_str)` — the 3-item common tail + optional `-N N` pair
   - `push_audio_format_args(args, with_thumbnail)` — 6 or 7 audio args depending on tier

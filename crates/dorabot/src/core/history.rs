@@ -371,16 +371,16 @@ pub async fn handle_history_callback(
                             let dl_format = format
                                 .parse::<crate::download::queue::DownloadFormat>()
                                 .unwrap_or(crate::download::queue::DownloadFormat::Mp3);
-                            let task = crate::download::queue::DownloadTask::from_plan(
-                                url.as_str().to_string(),
-                                chat_id,
-                                None, // Callback doesn't have original user message
-                                is_video,
-                                dl_format,
-                                video_quality,
-                                audio_bitrate,
-                                plan.as_str(),
-                            );
+                            // Callback doesn't have the original user message_id.
+                            let task = crate::download::queue::DownloadTask::builder()
+                                .url(url.as_str().to_string())
+                                .chat_id(chat_id)
+                                .is_video(is_video)
+                                .format(dl_format)
+                                .maybe_video_quality(video_quality)
+                                .maybe_audio_bitrate(audio_bitrate)
+                                .priority(crate::download::queue::TaskPriority::from_plan(plan.as_str()))
+                                .build();
                             download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
 
                             // Delete the history message

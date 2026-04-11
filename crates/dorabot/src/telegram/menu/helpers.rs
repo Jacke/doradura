@@ -124,16 +124,16 @@ pub(crate) async fn start_download_from_preview(
                     .unwrap_or_else(|_| "best".to_string()),
             )
         };
-        let mut task_mp4 = DownloadTask::from_plan(
-            url.as_str().to_string(),
-            chat_id,
-            original_message_id,
-            true,
-            DownloadFormat::Mp4,
-            video_quality,
-            None,
-            plan.as_str(),
-        );
+        let mut task_mp4 = DownloadTask::builder()
+            .url(url.as_str().to_string())
+            .chat_id(chat_id)
+            .maybe_message_id(original_message_id)
+            .is_video(true)
+            .format(DownloadFormat::Mp4)
+            .maybe_video_quality(video_quality)
+            .maybe_audio_bitrate(None)
+            .priority(crate::download::queue::TaskPriority::from_plan(plan.as_str()))
+            .build();
         task_mp4.time_range = time_range.clone();
         download_queue.add_task(task_mp4, Some(Arc::clone(&db_pool))).await;
 
@@ -143,16 +143,16 @@ pub(crate) async fn start_download_from_preview(
                 .await
                 .unwrap_or_else(|_| "320k".to_string()),
         );
-        let mut task_mp3 = DownloadTask::from_plan(
-            url.as_str().to_string(),
-            chat_id,
-            original_message_id,
-            false,
-            DownloadFormat::Mp3,
-            None,
-            audio_bitrate,
-            plan.as_str(),
-        );
+        let mut task_mp3 = DownloadTask::builder()
+            .url(url.as_str().to_string())
+            .chat_id(chat_id)
+            .maybe_message_id(original_message_id)
+            .is_video(false)
+            .format(DownloadFormat::Mp3)
+            .maybe_video_quality(None)
+            .maybe_audio_bitrate(audio_bitrate)
+            .priority(crate::download::queue::TaskPriority::from_plan(plan.as_str()))
+            .build();
         task_mp3.time_range = time_range.clone();
         download_queue.add_task(task_mp3, Some(Arc::clone(&db_pool))).await;
     } else {
@@ -183,16 +183,16 @@ pub(crate) async fn start_download_from_preview(
 
         let is_video = format == "mp4";
         let dl_format = format.parse::<DownloadFormat>().unwrap_or(DownloadFormat::Mp3);
-        let mut task = DownloadTask::from_plan(
-            url.as_str().to_string(),
-            chat_id,
-            original_message_id,
-            is_video,
-            dl_format,
-            video_quality,
-            audio_bitrate,
-            plan.as_str(),
-        );
+        let mut task = DownloadTask::builder()
+            .url(url.as_str().to_string())
+            .chat_id(chat_id)
+            .maybe_message_id(original_message_id)
+            .is_video(is_video)
+            .format(dl_format)
+            .maybe_video_quality(video_quality)
+            .maybe_audio_bitrate(audio_bitrate)
+            .priority(crate::download::queue::TaskPriority::from_plan(plan.as_str()))
+            .build();
         task.time_range = time_range.clone();
         download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
     }

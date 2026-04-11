@@ -748,16 +748,16 @@ pub async fn handle_message(
                                 let dl_format = format
                                     .parse::<crate::download::queue::DownloadFormat>()
                                     .unwrap_or(crate::download::queue::DownloadFormat::Mp3);
-                                let task = crate::download::queue::DownloadTask::from_plan(
-                                    url.as_str().to_string(),
-                                    chat_id,
-                                    Some(msg.id.0),
-                                    is_video,
-                                    dl_format,
-                                    task_video_quality.clone(),
-                                    task_audio_bitrate.clone(),
-                                    &plan_for_task,
-                                );
+                                let task = crate::download::queue::DownloadTask::builder()
+                                    .url(url.as_str().to_string())
+                                    .chat_id(chat_id)
+                                    .maybe_message_id(Some(msg.id.0))
+                                    .is_video(is_video)
+                                    .format(dl_format)
+                                    .maybe_video_quality(task_video_quality.clone())
+                                    .maybe_audio_bitrate(task_audio_bitrate.clone())
+                                    .priority(crate::download::queue::TaskPriority::from_plan(&plan_for_task))
+                                    .build();
                                 download_queue.add_task(task, Some(Arc::clone(&db_pool_clone))).await;
                             }
                             Err(e) => {
@@ -778,16 +778,16 @@ pub async fn handle_message(
                                 let dl_format2 = format
                                     .parse::<crate::download::queue::DownloadFormat>()
                                     .unwrap_or(crate::download::queue::DownloadFormat::Mp3);
-                                let task = crate::download::queue::DownloadTask::from_plan(
-                                    url.as_str().to_string(),
-                                    chat_id,
-                                    Some(msg.id.0),
-                                    is_video,
-                                    dl_format2,
-                                    task_video_quality.clone(),
-                                    task_audio_bitrate.clone(),
-                                    &plan_for_task,
-                                );
+                                let task = crate::download::queue::DownloadTask::builder()
+                                    .url(url.as_str().to_string())
+                                    .chat_id(chat_id)
+                                    .maybe_message_id(Some(msg.id.0))
+                                    .is_video(is_video)
+                                    .format(dl_format2)
+                                    .maybe_video_quality(task_video_quality.clone())
+                                    .maybe_audio_bitrate(task_audio_bitrate.clone())
+                                    .priority(crate::download::queue::TaskPriority::from_plan(&plan_for_task))
+                                    .build();
                                 download_queue.add_task(task, Some(Arc::clone(&db_pool_clone))).await;
                             }
                         }

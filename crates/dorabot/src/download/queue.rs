@@ -75,9 +75,28 @@ impl TaskPriority {
 ///
 /// Contains all the necessary information for downloading a media file:
 /// source URL, user identifier, download format, and creation timestamp.
-#[derive(Debug, Clone)]
+///
+/// Constructed via the derived builder — the old positional constructors
+/// (`new` / `with_priority` / `from_plan`) were replaced after field count
+/// grew past 5 and callers started passing `None, false, None, None` chains
+/// that were impossible to read at the call site.
+///
+/// ```ignore
+/// use doradura::download::queue::{DownloadFormat, DownloadTask, TaskPriority};
+/// use teloxide::types::ChatId;
+///
+/// let task = DownloadTask::builder()
+///     .url("https://youtube.com/watch?v=abc".to_string())
+///     .chat_id(ChatId(123))
+///     .is_video(false)
+///     .format(DownloadFormat::Mp3)
+///     .audio_bitrate("320k".to_string())
+///     .build();
+/// ```
+#[derive(Debug, Clone, bon::Builder)]
 pub struct DownloadTask {
-    /// Unique task identifier (UUID)
+    /// Unique task identifier (UUID). Auto-generated if not supplied.
+    #[builder(default = uuid::Uuid::new_v4().to_string())]
     pub id: String,
     /// Source URL for the download
     pub url: String,
@@ -93,9 +112,11 @@ pub struct DownloadTask {
     pub video_quality: Option<String>,
     /// Audio bitrate: "128k", "192k", "256k", "320k" (audio only)
     pub audio_bitrate: Option<String>,
-    /// Task creation timestamp
+    /// Task creation timestamp. Defaults to `Utc::now()` if omitted.
+    #[builder(default = Utc::now())]
     pub created_timestamp: DateTime<Utc>,
-    /// Task priority (for the priority queue)
+    /// Task priority (for the priority queue). Defaults to `Low` if omitted.
+    #[builder(default = TaskPriority::Low)]
     pub priority: TaskPriority,
     /// Time range for partial download (start, end), e.g. ("00:01:00", "00:02:30")
     pub time_range: Option<(String, String)>,
@@ -105,119 +126,8 @@ pub struct DownloadTask {
     /// Bit N = item N selected. None = download all items.
     pub carousel_mask: Option<u32>,
     /// Whether to fetch and send lyrics highlights alongside the audio.
+    #[builder(default = false)]
     pub with_lyrics: bool,
-}
-
-impl DownloadTask {
-    /// Creates a new download task with a unique ID.
-    ///
-    /// # Arguments
-    ///
-    /// * `url` - URL to download
-    /// * `chat_id` - User's Telegram chat ID
-    /// * `message_id` - User's message ID (optional, for reactions)
-    /// * `is_video` - Flag indicating whether this is a video (true) or audio (false)
-    /// * `format` - Download format.
-    /// * `video_quality` - Video quality (optional, video only)
-    /// * `audio_bitrate` - Audio bitrate (optional, audio only)
-    ///
-    /// # Returns
-    ///
-    /// Returns a new `DownloadTask` instance with an auto-generated UUID and the current timestamp.
-    ///
-    /// # Example
-    ///
-    /// ```no_run
-    /// use teloxide::types::ChatId;
-    /// use doradura::download::queue::{DownloadFormat, DownloadTask};
-    ///
-    /// let task = DownloadTask::new(
-    ///     "https://youtube.com/watch?v=...".to_string(),
-    ///     ChatId(123456789),
-    ///     Some(12345),
-    ///     false,
-    ///     DownloadFormat::Mp3,
-    ///     None,
-    ///     Some("320k".to_string())
-    /// );
-    /// ```
-    pub fn new(
-        url: String,
-        chat_id: ChatId,
-        message_id: Option<i32>,
-        is_video: bool,
-        format: DownloadFormat,
-        video_quality: Option<String>,
-        audio_bitrate: Option<String>,
-    ) -> Self {
-        Self::with_priority(
-            url,
-            chat_id,
-            message_id,
-            is_video,
-            format,
-            video_quality,
-            audio_bitrate,
-            TaskPriority::Low,
-            None,
-        )
-    }
-
-    /// Creates a new task with the specified priority.
-    pub fn with_priority(
-        url: String,
-        chat_id: ChatId,
-        message_id: Option<i32>,
-        is_video: bool,
-        format: DownloadFormat,
-        video_quality: Option<String>,
-        audio_bitrate: Option<String>,
-        priority: TaskPriority,
-        time_range: Option<(String, String)>,
-    ) -> Self {
-        let id = uuid::Uuid::new_v4().to_string();
-        Self {
-            id,
-            url,
-            chat_id,
-            message_id,
-            is_video,
-            format,
-            video_quality,
-            audio_bitrate,
-            created_timestamp: Utc::now(),
-            priority,
-            time_range,
-            queue_message_id: None,
-            carousel_mask: None,
-            with_lyrics: false,
-        }
-    }
-
-    /// Creates a new task based on the user's plan.
-    pub fn from_plan(
-        url: String,
-        chat_id: ChatId,
-        message_id: Option<i32>,
-        is_video: bool,
-        format: DownloadFormat,
-        video_quality: Option<String>,
-        audio_bitrate: Option<String>,
-        plan: &str,
-    ) -> Self {
-        let priority = TaskPriority::from_plan(plan);
-        Self::with_priority(
-            url,
-            chat_id,
-            message_id,
-            is_video,
-            format,
-            video_quality,
-            audio_bitrate,
-            priority,
-            None,
-        )
-    }
 }
 
 /// Thread-safe queue for download tasks.
@@ -312,15 +222,14 @@ impl DownloadQueue {
     ///
     /// # async fn example() {
     /// let queue = DownloadQueue::new();
-    /// let task = DownloadTask::new(
-    ///     "https://youtube.com/watch?v=...".to_string(),
-    ///     ChatId(123456789),
-    ///     Some(12345),
-    ///     false,
-    ///     DownloadFormat::Mp3,
-    ///     None,
-    ///     Some("320k".to_string())
-    /// );
+    /// let task = DownloadTask::builder()
+    ///     .url("https://youtube.com/watch?v=...".to_string())
+    ///     .chat_id(ChatId(123456789))
+    ///     .message_id(12345)
+    ///     .is_video(false)
+    ///     .format(DownloadFormat::Mp3)
+    ///     .audio_bitrate("320k".to_string())
+    ///     .build();
     /// queue.add_task(task, None).await;
     /// # }
     /// ```
@@ -850,15 +759,15 @@ mod tests {
 
     #[test]
     fn test_download_task_new() {
-        let task = DownloadTask::new(
-            "http://example.com".to_string(),
-            ChatId(123),
-            Some(456),
-            false,
-            DownloadFormat::Mp3,
-            None,
-            Some("320k".to_string()),
-        );
+        let task = DownloadTask::builder()
+            .url("http://example.com".to_string())
+            .chat_id(ChatId(123))
+            .maybe_message_id(Some(456))
+            .is_video(false)
+            .format(DownloadFormat::Mp3)
+            .maybe_video_quality(None)
+            .maybe_audio_bitrate(Some("320k".to_string()))
+            .build();
         assert!(!task.id.is_empty());
         assert_eq!(task.url, "http://example.com");
         assert_eq!(task.chat_id, ChatId(123));
@@ -872,17 +781,17 @@ mod tests {
 
     #[test]
     fn test_download_task_with_priority() {
-        let task = DownloadTask::with_priority(
-            "http://example.com".to_string(),
-            ChatId(123),
-            None,
-            true,
-            DownloadFormat::Mp4,
-            Some("1080p".to_string()),
-            None,
-            TaskPriority::High,
-            None,
-        );
+        let task = DownloadTask::builder()
+            .url("http://example.com".to_string())
+            .chat_id(ChatId(123))
+            .maybe_message_id(None)
+            .is_video(true)
+            .format(DownloadFormat::Mp4)
+            .maybe_video_quality(Some("1080p".to_string()))
+            .maybe_audio_bitrate(None)
+            .priority(TaskPriority::High)
+            .maybe_time_range(None)
+            .build();
         assert_eq!(task.priority, TaskPriority::High);
         assert!(task.is_video);
         assert_eq!(task.video_quality, Some("1080p".to_string()));
@@ -890,40 +799,40 @@ mod tests {
 
     #[test]
     fn test_download_task_from_plan() {
-        let vip_task = DownloadTask::from_plan(
-            "http://example.com".to_string(),
-            ChatId(123),
-            None,
-            false,
-            DownloadFormat::Mp3,
-            None,
-            None,
-            "vip",
-        );
+        let vip_task = DownloadTask::builder()
+            .url("http://example.com".to_string())
+            .chat_id(ChatId(123))
+            .maybe_message_id(None)
+            .is_video(false)
+            .format(DownloadFormat::Mp3)
+            .maybe_video_quality(None)
+            .maybe_audio_bitrate(None)
+            .priority(TaskPriority::from_plan("vip"))
+            .build();
         assert_eq!(vip_task.priority, TaskPriority::High);
 
-        let premium_task = DownloadTask::from_plan(
-            "http://example.com".to_string(),
-            ChatId(123),
-            None,
-            false,
-            DownloadFormat::Mp3,
-            None,
-            None,
-            "premium",
-        );
+        let premium_task = DownloadTask::builder()
+            .url("http://example.com".to_string())
+            .chat_id(ChatId(123))
+            .maybe_message_id(None)
+            .is_video(false)
+            .format(DownloadFormat::Mp3)
+            .maybe_video_quality(None)
+            .maybe_audio_bitrate(None)
+            .priority(TaskPriority::from_plan("premium"))
+            .build();
         assert_eq!(premium_task.priority, TaskPriority::Medium);
 
-        let free_task = DownloadTask::from_plan(
-            "http://example.com".to_string(),
-            ChatId(123),
-            None,
-            false,
-            DownloadFormat::Mp3,
-            None,
-            None,
-            "free",
-        );
+        let free_task = DownloadTask::builder()
+            .url("http://example.com".to_string())
+            .chat_id(ChatId(123))
+            .maybe_message_id(None)
+            .is_video(false)
+            .format(DownloadFormat::Mp3)
+            .maybe_video_quality(None)
+            .maybe_audio_bitrate(None)
+            .priority(TaskPriority::from_plan("free"))
+            .build();
         assert_eq!(free_task.priority, TaskPriority::Low);
     }
 
@@ -939,15 +848,15 @@ mod tests {
     #[tokio::test]
     async fn test_add_and_get_task() {
         let queue = DownloadQueue::new();
-        let task = DownloadTask::new(
-            "http://example.com".to_string(),
-            ChatId(123),
-            Some(12345),
-            false,
-            DownloadFormat::Mp3,
-            None,
-            Some("320k".to_string()),
-        );
+        let task = DownloadTask::builder()
+            .url("http://example.com".to_string())
+            .chat_id(ChatId(123))
+            .maybe_message_id(Some(12345))
+            .is_video(false)
+            .format(DownloadFormat::Mp3)
+            .maybe_video_quality(None)
+            .maybe_audio_bitrate(Some("320k".to_string()))
+            .build();
 
         queue.add_task(task.clone(), None).await;
         assert_eq!(queue.size().await, 1);
@@ -971,29 +880,29 @@ mod tests {
         let queue = DownloadQueue::new();
 
         // Add low priority task first
-        let low_task = DownloadTask::from_plan(
-            "http://low.com".to_string(),
-            ChatId(1),
-            None,
-            false,
-            DownloadFormat::Mp3,
-            None,
-            None,
-            "free",
-        );
+        let low_task = DownloadTask::builder()
+            .url("http://low.com".to_string())
+            .chat_id(ChatId(1))
+            .maybe_message_id(None)
+            .is_video(false)
+            .format(DownloadFormat::Mp3)
+            .maybe_video_quality(None)
+            .maybe_audio_bitrate(None)
+            .priority(TaskPriority::from_plan("free"))
+            .build();
         queue.add_task(low_task, None).await;
 
         // Add high priority task second
-        let high_task = DownloadTask::from_plan(
-            "http://high.com".to_string(),
-            ChatId(2),
-            None,
-            false,
-            DownloadFormat::Mp3,
-            None,
-            None,
-            "vip",
-        );
+        let high_task = DownloadTask::builder()
+            .url("http://high.com".to_string())
+            .chat_id(ChatId(2))
+            .maybe_message_id(None)
+            .is_video(false)
+            .format(DownloadFormat::Mp3)
+            .maybe_video_quality(None)
+            .maybe_audio_bitrate(None)
+            .priority(TaskPriority::from_plan("vip"))
+            .build();
         queue.add_task(high_task, None).await;
 
         // High priority should come out first
@@ -1010,33 +919,33 @@ mod tests {
     async fn test_filter_tasks_by_chat_id() {
         let queue = DownloadQueue::new();
 
-        let task1 = DownloadTask::new(
-            "http://example1.com".to_string(),
-            ChatId(100),
-            None,
-            false,
-            DownloadFormat::Mp3,
-            None,
-            None,
-        );
-        let task2 = DownloadTask::new(
-            "http://example2.com".to_string(),
-            ChatId(200),
-            None,
-            false,
-            DownloadFormat::Mp3,
-            None,
-            None,
-        );
-        let task3 = DownloadTask::new(
-            "http://example3.com".to_string(),
-            ChatId(100),
-            None,
-            false,
-            DownloadFormat::Mp3,
-            None,
-            None,
-        );
+        let task1 = DownloadTask::builder()
+            .url("http://example1.com".to_string())
+            .chat_id(ChatId(100))
+            .maybe_message_id(None)
+            .is_video(false)
+            .format(DownloadFormat::Mp3)
+            .maybe_video_quality(None)
+            .maybe_audio_bitrate(None)
+            .build();
+        let task2 = DownloadTask::builder()
+            .url("http://example2.com".to_string())
+            .chat_id(ChatId(200))
+            .maybe_message_id(None)
+            .is_video(false)
+            .format(DownloadFormat::Mp3)
+            .maybe_video_quality(None)
+            .maybe_audio_bitrate(None)
+            .build();
+        let task3 = DownloadTask::builder()
+            .url("http://example3.com".to_string())
+            .chat_id(ChatId(100))
+            .maybe_message_id(None)
+            .is_video(false)
+            .format(DownloadFormat::Mp3)
+            .maybe_video_quality(None)
+            .maybe_audio_bitrate(None)
+            .build();
 
         queue.add_task(task1, None).await;
         queue.add_task(task2, None).await;
@@ -1056,24 +965,24 @@ mod tests {
     async fn test_get_queue_position() {
         let queue = DownloadQueue::new();
 
-        let task1 = DownloadTask::new(
-            "http://example1.com".to_string(),
-            ChatId(100),
-            None,
-            false,
-            DownloadFormat::Mp3,
-            None,
-            None,
-        );
-        let task2 = DownloadTask::new(
-            "http://example2.com".to_string(),
-            ChatId(200),
-            None,
-            false,
-            DownloadFormat::Mp3,
-            None,
-            None,
-        );
+        let task1 = DownloadTask::builder()
+            .url("http://example1.com".to_string())
+            .chat_id(ChatId(100))
+            .maybe_message_id(None)
+            .is_video(false)
+            .format(DownloadFormat::Mp3)
+            .maybe_video_quality(None)
+            .maybe_audio_bitrate(None)
+            .build();
+        let task2 = DownloadTask::builder()
+            .url("http://example2.com".to_string())
+            .chat_id(ChatId(200))
+            .maybe_message_id(None)
+            .is_video(false)
+            .format(DownloadFormat::Mp3)
+            .maybe_video_quality(None)
+            .maybe_audio_bitrate(None)
+            .build();
 
         queue.add_task(task1, None).await;
         queue.add_task(task2, None).await;
@@ -1104,15 +1013,15 @@ mod tests {
             carousel_mask: None,
             with_lyrics: false,
         };
-        let new_task = DownloadTask::new(
-            "http://example.com/new".to_string(),
-            ChatId(456),
-            Some(22222),
-            true,
-            DownloadFormat::Mp4,
-            Some("1080p".to_string()),
-            None,
-        );
+        let new_task = DownloadTask::builder()
+            .url("http://example.com/new".to_string())
+            .chat_id(ChatId(456))
+            .maybe_message_id(Some(22222))
+            .is_video(true)
+            .format(DownloadFormat::Mp4)
+            .maybe_video_quality(Some("1080p".to_string()))
+            .maybe_audio_bitrate(None)
+            .build();
 
         queue.add_task(old_task, None).await;
         queue.add_task(new_task, None).await;
@@ -1126,15 +1035,15 @@ mod tests {
     async fn test_remove_old_tasks_all_new() {
         let queue = DownloadQueue::new();
 
-        let task = DownloadTask::new(
-            "http://example.com".to_string(),
-            ChatId(123),
-            None,
-            false,
-            DownloadFormat::Mp3,
-            None,
-            None,
-        );
+        let task = DownloadTask::builder()
+            .url("http://example.com".to_string())
+            .chat_id(ChatId(123))
+            .maybe_message_id(None)
+            .is_video(false)
+            .format(DownloadFormat::Mp3)
+            .maybe_video_quality(None)
+            .maybe_audio_bitrate(None)
+            .build();
         queue.add_task(task, None).await;
 
         let removed = queue.remove_old_tasks(Duration::days(1)).await;

@@ -107,15 +107,15 @@ mod tests {
     #[tokio::test]
     async fn test_adding_and_retrieving_task() {
         let queue = DownloadQueue::new();
-        let task = DownloadTask::new(
-            "http://example.com/video.mp4".to_string(),
-            teloxide::types::ChatId(123456789),
-            None,
-            true,
-            DownloadFormat::Mp4,
-            Some("1080p".to_string()),
-            None,
-        );
+        let task = DownloadTask::builder()
+            .url("http://example.com/video.mp4".to_string())
+            .chat_id(teloxide::types::ChatId(123456789))
+            .maybe_message_id(None)
+            .is_video(true)
+            .format(DownloadFormat::Mp4)
+            .maybe_video_quality(Some("1080p".to_string()))
+            .maybe_audio_bitrate(None)
+            .build();
 
         queue.add_task(task.clone(), None).await;
         assert_eq!(queue.queue.lock().await.len(), 1);
@@ -132,15 +132,15 @@ mod tests {
     #[tokio::test]
     async fn test_queue_empty_after_retrieval() {
         let queue = DownloadQueue::new();
-        let task = DownloadTask::new(
-            "http://example.com/audio.mp3".to_string(),
-            teloxide::types::ChatId(987654321),
-            None,
-            false,
-            DownloadFormat::Mp3,
-            None,
-            Some("320k".to_string()),
-        );
+        let task = DownloadTask::builder()
+            .url("http://example.com/audio.mp3".to_string())
+            .chat_id(teloxide::types::ChatId(987654321))
+            .maybe_message_id(None)
+            .is_video(false)
+            .format(DownloadFormat::Mp3)
+            .maybe_video_quality(None)
+            .maybe_audio_bitrate(Some("320k".to_string()))
+            .build();
 
         queue.add_task(task, None).await;
         assert_eq!(queue.queue.lock().await.len(), 1);
@@ -155,24 +155,24 @@ mod tests {
     #[tokio::test]
     async fn test_multiple_tasks_handling() {
         let queue = DownloadQueue::new();
-        let task1 = DownloadTask::new(
-            "http://example.com/second.mp4".to_string(),
-            teloxide::types::ChatId(111111111),
-            None,
-            true,
-            DownloadFormat::Mp4,
-            Some("720p".to_string()),
-            None,
-        );
-        let task2 = DownloadTask::new(
-            "http://example.com/second.mp4".to_string(),
-            teloxide::types::ChatId(111111111),
-            None,
-            false,
-            DownloadFormat::Mp3,
-            None,
-            Some("256k".to_string()),
-        );
+        let task1 = DownloadTask::builder()
+            .url("http://example.com/second.mp4".to_string())
+            .chat_id(teloxide::types::ChatId(111111111))
+            .maybe_message_id(None)
+            .is_video(true)
+            .format(DownloadFormat::Mp4)
+            .maybe_video_quality(Some("720p".to_string()))
+            .maybe_audio_bitrate(None)
+            .build();
+        let task2 = DownloadTask::builder()
+            .url("http://example.com/second.mp4".to_string())
+            .chat_id(teloxide::types::ChatId(111111111))
+            .maybe_message_id(None)
+            .is_video(false)
+            .format(DownloadFormat::Mp3)
+            .maybe_video_quality(None)
+            .maybe_audio_bitrate(Some("256k".to_string()))
+            .build();
         queue.add_task(task2, None).await;
         queue.add_task(task1, None).await;
 
