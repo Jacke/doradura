@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **yt-dlp Tier 1/2/3 closures deduplicated via helper functions** (v0.36.15) — the six download closures in `doracore/src/download/source/ytdlp.rs` (Tier 1/2/3 × audio/video) each inlined a verbatim copy of the same 4-item "runtime/cert/concurrent-fragments" tail (`--js-runtimes deno --no-check-certificate -N N`), and the audio/video format prefixes were copy-pasted across their respective tiers. Extracted three helper functions:
+  - `push_js_runtimes_tail(args, cf_str)` — the 3-item common tail + optional `-N N` pair
+  - `push_audio_format_args(args, with_thumbnail)` — 6 or 7 audio args depending on tier
+  - `push_video_format_args(args, with_merger_postprocessor)` — 3 or 5 video args depending on tier
+
+  All six closures now call these helpers. Argv output is **byte-identical** — pinned by 6 new unit tests in `common_args_tests` that assert the exact slices. Net: ~40 lines of duplication deleted, and any future refactor that accidentally drops or reorders a flag now fails CI. **Per CLAUDE.md, any deploy of this commit still requires a Railway smoke test** against a real YouTube URL; the tests prove the Rust side hasn't drifted but don't replace an end-to-end yt-dlp run
+
 ### Fixed
 - **Cookie validation report showed red ❌ for legacy cookies on modern YouTube exports** (v0.36.14) — when a user uploaded a fresh cookie export from modern Chrome (which ships `__Secure-3PSID` / `__Secure-3PAPISID` / `LOGIN_INFO` instead of the legacy `SID`/`HSID`/`SSID`/`APISID`/`SAPISID` set), the `/update_cookies` command produced a confusing report:
   - `*Required auth cookies:*` section listed all 5 legacy names as ❌ missing

@@ -50,6 +50,49 @@ fn push_concurrent_fragments_arg<'a>(args: &mut Vec<&'a str>, cf_str: &'a str) {
     }
 }
 
+/// Push the common "runtime / cert / concurrent-fragments" tail that every
+/// tier (audio + video, Tier 1/2/3) shares verbatim.
+///
+/// ⚠️ Order is load-bearing — see CLAUDE.md. The
+/// [`push_js_runtimes_tail_has_expected_shape`] test in the
+/// `common_args_tests` submodule pins the exact slice.
+fn push_js_runtimes_tail<'a>(args: &mut Vec<&'a str>, cf_str: &'a str) {
+    args.push("--js-runtimes");
+    args.push("deno");
+    args.push("--no-check-certificate");
+    push_concurrent_fragments_arg(args, cf_str);
+}
+
+/// Push the audio-specific prefix args. `with_thumbnail` controls whether
+/// `--embed-thumbnail` is included (true for Tier 1/2, false for Tier 3
+/// which also sets `--fixup never` separately).
+///
+/// All pushed strings are `'static`, so this composes with any caller that
+/// holds a `Vec<&str>` for a shorter lifetime.
+fn push_audio_format_args(args: &mut Vec<&str>, with_thumbnail: bool) {
+    args.push("--extract-audio");
+    args.push("--audio-format");
+    args.push("mp3");
+    args.push("--audio-quality");
+    args.push("0");
+    args.push("--add-metadata");
+    if with_thumbnail {
+        args.push("--embed-thumbnail");
+    }
+}
+
+/// Push the video-specific prefix args (Tier 1 / Tier 2 shape — Tier 3
+/// drops the `--postprocessor-args Merger:...` pair).
+fn push_video_format_args(args: &mut Vec<&str>, with_merger_postprocessor: bool) {
+    args.push("--format");
+    args.push("--merge-output-format");
+    args.push("mp4");
+    if with_merger_postprocessor {
+        args.push("--postprocessor-args");
+        args.push("Merger:-movflags +faststart");
+    }
+}
+
 /// Allowlist of domains that yt-dlp is permitted to handle.
 /// Only these domains are accepted — arbitrary URLs are rejected for security.
 const YTDLP_DOMAINS: &[&str] = &[
@@ -196,15 +239,7 @@ impl YtDlpSource {
                 &progress_tx,
                 "audio",
                 move |args, proxy_option| {
-                    args.extend_from_slice(&[
-                        "--extract-audio",
-                        "--audio-format",
-                        "mp3",
-                        "--audio-quality",
-                        "0",
-                        "--add-metadata",
-                        "--embed-thumbnail",
-                    ]);
+                    push_audio_format_args(args, true);
                     if is_youtube {
                         add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
                         args.push("--extractor-args");
@@ -214,25 +249,14 @@ impl YtDlpSource {
                         args.push("--extractor-args");
                         args.push("youtube:player_client=default;formats=missing_pot");
                     }
-                    args.push("--js-runtimes");
-                    args.push("deno");
-                    args.push("--no-check-certificate");
-                    push_concurrent_fragments_arg(args, cf_str);
+                    push_js_runtimes_tail(args, cf_str);
                     args.push("--postprocessor-args");
                 },
                 {
                     let url_for_tier2 = url_str.clone();
                     move |args: &mut Vec<&str>, proxy_option: Option<&crate::download::metadata::ProxyConfig>| {
                         // Tier 2 (cookies): audio-specific args
-                        args.extend_from_slice(&[
-                            "--extract-audio",
-                            "--audio-format",
-                            "mp3",
-                            "--audio-quality",
-                            "0",
-                            "--add-metadata",
-                            "--embed-thumbnail",
-                        ]);
+                        push_audio_format_args(args, true);
                         if is_instagram_url(&url_for_tier2) {
                             add_instagram_cookies_args_with_proxy(args, proxy_option);
                         } else {
@@ -240,32 +264,19 @@ impl YtDlpSource {
                             args.push("--extractor-args");
                             args.push(default_youtube_extractor_args());
                         }
-                        args.push("--js-runtimes");
-                        args.push("deno");
-                        args.push("--no-check-certificate");
-                        push_concurrent_fragments_arg(args, cf_str);
+                        push_js_runtimes_tail(args, cf_str);
                         args.push("--postprocessor-args");
                     }
                 },
                 move |args, proxy_option| {
                     // Tier 3 (fixup never): audio-specific args
-                    args.extend_from_slice(&[
-                        "--fixup",
-                        "never",
-                        "--extract-audio",
-                        "--audio-format",
-                        "mp3",
-                        "--audio-quality",
-                        "0",
-                        "--add-metadata",
-                    ]);
+                    args.push("--fixup");
+                    args.push("never");
+                    push_audio_format_args(args, false);
                     add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
                     args.push("--extractor-args");
                     args.push(default_youtube_extractor_args());
-                    args.push("--js-runtimes");
-                    args.push("deno");
-                    args.push("--no-check-certificate");
-                    push_concurrent_fragments_arg(args, cf_str);
+                    push_js_runtimes_tail(args, cf_str);
                 },
                 &postprocessor_args,
                 time_range.as_ref(),
@@ -333,11 +344,7 @@ impl YtDlpSource {
                 &progress_tx,
                 "video",
                 move |args, proxy_option| {
-                    args.push("--format");
-                    args.push("--merge-output-format");
-                    args.push("mp4");
-                    args.push("--postprocessor-args");
-                    args.push("Merger:-movflags +faststart");
+                    push_video_format_args(args, true);
                     if is_youtube {
                         add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
                         args.push("--extractor-args");
@@ -347,20 +354,13 @@ impl YtDlpSource {
                         args.push("--extractor-args");
                         args.push("youtube:player_client=default;formats=missing_pot");
                     }
-                    args.push("--js-runtimes");
-                    args.push("deno");
-                    args.push("--no-check-certificate");
-                    push_concurrent_fragments_arg(args, cf_str);
+                    push_js_runtimes_tail(args, cf_str);
                 },
                 {
                     let url_for_tier2 = url_str.clone();
                     move |args: &mut Vec<&str>, proxy_option: Option<&crate::download::metadata::ProxyConfig>| {
                         // Tier 2 (cookies + PO token)
-                        args.push("--format");
-                        args.push("--merge-output-format");
-                        args.push("mp4");
-                        args.push("--postprocessor-args");
-                        args.push("Merger:-movflags +faststart");
+                        push_video_format_args(args, true);
                         if is_instagram_url(&url_for_tier2) {
                             add_instagram_cookies_args_with_proxy(args, proxy_option);
                         } else {
@@ -368,26 +368,18 @@ impl YtDlpSource {
                             args.push("--extractor-args");
                             args.push(default_youtube_extractor_args());
                         }
-                        args.push("--js-runtimes");
-                        args.push("deno");
-                        args.push("--no-check-certificate");
-                        push_concurrent_fragments_arg(args, cf_str);
+                        push_js_runtimes_tail(args, cf_str);
                     }
                 },
                 move |args, proxy_option| {
                     // Tier 3 (fixup never): same client logic as tier 2
                     args.push("--fixup");
                     args.push("never");
-                    args.push("--format");
-                    args.push("--merge-output-format");
-                    args.push("mp4");
+                    push_video_format_args(args, false);
                     add_cookies_args_with_proxy(args, proxy_option, default_pot_token());
                     args.push("--extractor-args");
                     args.push(default_youtube_extractor_args());
-                    args.push("--js-runtimes");
-                    args.push("deno");
-                    args.push("--no-check-certificate");
-                    push_concurrent_fragments_arg(args, cf_str);
+                    push_js_runtimes_tail(args, cf_str);
                 },
                 &format_arg,
                 time_range.as_ref(),
@@ -963,6 +955,87 @@ mod common_args_tests {
         let args = build_common_args_minimal("/custom/path.mp4");
         assert_eq!(args[0], "-o");
         assert_eq!(args[1], "/custom/path.mp4");
+    }
+
+    // ==== Byte-identical tests for the Tier 1/2/3 helper functions ====
+
+    use super::{push_audio_format_args, push_js_runtimes_tail, push_video_format_args};
+
+    #[test]
+    fn js_runtimes_tail_with_cf_enabled() {
+        let mut args: Vec<&str> = Vec::new();
+        push_js_runtimes_tail(&mut args, "4");
+        assert_eq!(args, vec!["--js-runtimes", "deno", "--no-check-certificate", "-N", "4"]);
+    }
+
+    #[test]
+    fn js_runtimes_tail_without_cf() {
+        let mut args: Vec<&str> = Vec::new();
+        push_js_runtimes_tail(&mut args, "");
+        // Empty cf_str → no -N pair
+        assert_eq!(args, vec!["--js-runtimes", "deno", "--no-check-certificate"]);
+    }
+
+    #[test]
+    fn audio_format_args_with_thumbnail_match_tier1_2() {
+        // Pins the exact Tier 1/2 audio prefix: 7 args in this exact order.
+        let mut args: Vec<&str> = Vec::new();
+        push_audio_format_args(&mut args, true);
+        assert_eq!(
+            args,
+            vec![
+                "--extract-audio",
+                "--audio-format",
+                "mp3",
+                "--audio-quality",
+                "0",
+                "--add-metadata",
+                "--embed-thumbnail",
+            ]
+        );
+    }
+
+    #[test]
+    fn audio_format_args_without_thumbnail_match_tier3() {
+        // Tier 3 drops --embed-thumbnail because it's followed by --fixup never.
+        let mut args: Vec<&str> = Vec::new();
+        push_audio_format_args(&mut args, false);
+        assert_eq!(
+            args,
+            vec![
+                "--extract-audio",
+                "--audio-format",
+                "mp3",
+                "--audio-quality",
+                "0",
+                "--add-metadata",
+            ]
+        );
+    }
+
+    #[test]
+    fn video_format_args_with_merger_match_tier1_2() {
+        // Tier 1/2 video: --format followed by the Merger postprocessor pair.
+        let mut args: Vec<&str> = Vec::new();
+        push_video_format_args(&mut args, true);
+        assert_eq!(
+            args,
+            vec![
+                "--format",
+                "--merge-output-format",
+                "mp4",
+                "--postprocessor-args",
+                "Merger:-movflags +faststart",
+            ]
+        );
+    }
+
+    #[test]
+    fn video_format_args_without_merger_match_tier3() {
+        // Tier 3 video: no Merger postprocessor.
+        let mut args: Vec<&str> = Vec::new();
+        push_video_format_args(&mut args, false);
+        assert_eq!(args, vec!["--format", "--merge-output-format", "mp4"]);
     }
 }
 
