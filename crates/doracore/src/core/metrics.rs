@@ -486,6 +486,23 @@ pub static FILE_ID_CACHE_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
     .expect("Failed to register FILE_ID_CACHE_TOTAL metric")
 });
 
+/// Loop-to-audio feature outcomes.
+///
+/// Counts every invocation of the "🔁 Loop to audio" flow, broken down by
+/// outcome. Use to monitor success rate and flag gating regressions.
+///
+/// Labels:
+///   - `outcome`: `success` | `audio_too_long` | `audio_too_short`
+///     | `video_too_short` | `ffmpeg_failed` | `download_failed` | `send_failed`
+pub static LOOP_TO_AUDIO_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    register_int_counter_vec!(
+        "doradura_loop_to_audio_total",
+        "Loop-to-audio feature outcomes",
+        &["outcome"]
+    )
+    .expect("Failed to register LOOP_TO_AUDIO_TOTAL metric")
+});
+
 /// Process resident memory in bytes (RSS)
 pub static PROCESS_RESIDENT_MEMORY_BYTES: LazyLock<Gauge> = LazyLock::new(|| {
     register_gauge!(

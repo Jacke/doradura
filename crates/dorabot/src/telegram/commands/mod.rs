@@ -1,5 +1,6 @@
 pub mod circle;
 pub mod info;
+pub mod loop_to_audio;
 pub mod subtitles;
 
 pub use circle::*;
@@ -183,9 +184,12 @@ pub async fn handle_message(
         }
     }
 
-    // Custom audio for circle sessions: if user sends audio/voice while a VideoNote session is active
+    // Custom audio for VideoNote / Loop sessions: if user sends audio/voice
+    // while a session is active, capture it. For VideoNote the capture is a
+    // prelude to a time-range message (existing behavior). For Loop the audio
+    // is the terminal input — processing kicks off immediately.
     if let Ok(Some(mut session)) = shared_storage.get_active_video_clip_session(msg.chat.id.0).await {
-        if session.output_kind == OutputKind::VideoNote {
+        if matches!(session.output_kind, OutputKind::VideoNote | OutputKind::Loop) {
             let audio_file_id = msg
                 .audio()
                 .map(|a| a.file.id.0.clone())
@@ -203,12 +207,47 @@ pub async fn handle_message(
                 });
 
             if let Some(file_id) = audio_file_id {
-                session.custom_audio_file_id = Some(file_id);
-                let _ = shared_storage.upsert_video_clip_session(&session).await;
-                bot.send_message(msg.chat.id, "🎵 Custom audio saved! Now send the time range.")
-                    .await
-                    .ok();
-                return Ok(None);
+                match session.output_kind {
+                    OutputKind::VideoNote => {
+                        session.custom_audio_file_id = Some(file_id);
+                        let _ = shared_storage.upsert_video_clip_session(&session).await;
+                        bot.send_message(msg.chat.id, "🎵 Custom audio saved! Now send the time range.")
+                            .await
+                            .ok();
+                        return Ok(None);
+                    }
+                    OutputKind::Loop => {
+                        // Audio is the terminal input for Loop — delete the session
+                        // row before spawning so a second upload cannot race us.
+                        session.custom_audio_file_id = Some(file_id.clone());
+                        let _ = shared_storage.delete_video_clip_session_by_user(msg.chat.id.0).await;
+
+                        let bot_c = bot.clone();
+                        let shared_storage_c = shared_storage.clone();
+                        let db_pool_c = db_pool.clone();
+                        let chat_id = msg.chat.id;
+                        tokio::spawn(async move {
+                            if let Err(e) = crate::telegram::commands::loop_to_audio::process_loop_to_audio(
+                                bot_c,
+                                chat_id,
+                                session,
+                                file_id,
+                                db_pool_c,
+                                shared_storage_c,
+                            )
+                            .await
+                            {
+                                log::warn!("process_loop_to_audio failed: {}", e);
+                            }
+                        });
+
+                        bot.send_message(msg.chat.id, i18n::t(&lang, "loop.processing"))
+                            .await
+                            .ok();
+                        return Ok(None);
+                    }
+                    _ => {}
+                }
             }
         }
     }
@@ -355,7 +394,19 @@ pub async fn handle_message(
                 let trimmed = text.trim();
                 if is_cancel_text(trimmed) {
                     let _ = shared_storage.delete_video_clip_session_by_user(msg.chat.id.0).await;
-                    bot.send_message(msg.chat.id, i18n::t(&lang, "commands.video_clip_cancelled"))
+                    let cancel_key = if session.output_kind == OutputKind::Loop {
+                        "loop.cancelled"
+                    } else {
+                        "commands.video_clip_cancelled"
+                    };
+                    bot.send_message(msg.chat.id, i18n::t(&lang, cancel_key)).await.ok();
+                    return Ok(None);
+                }
+
+                // Loop sessions accept ONLY audio uploads (handled earlier in the
+                // intercept above) or cancel. Text is not valid input — re-prompt.
+                if session.output_kind == OutputKind::Loop {
+                    bot.send_message(msg.chat.id, i18n::t(&lang, "loop.send_audio_first"))
                         .await
                         .ok();
                     return Ok(None);

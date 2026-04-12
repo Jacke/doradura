@@ -360,6 +360,10 @@ pub enum OutputKind {
     Gif,
     IphoneRingtone,
     AndroidRingtone,
+    /// Loop the source video under an uploaded audio track, producing an
+    /// MP4 whose duration matches the audio's (ffmpeg `-stream_loop -1` +
+    /// `-shortest`). Used by the "🔁 Loop to audio" flow.
+    Loop,
 }
 
 impl OutputKind {
@@ -375,6 +379,7 @@ impl OutputKind {
             "gif" => Self::Gif,
             "iphone_ringtone" => Self::IphoneRingtone,
             "android_ringtone" => Self::AndroidRingtone,
+            "loop" => Self::Loop,
             _ => Self::Cut,
         }
     }

@@ -135,6 +135,16 @@ commands =
     .downsub_subtitles_sent = 📄 Untertitel fertig · Format: {$format} · Zeilen: {$count}
     .downsub_error = ❌ Downsub-Fehler:\\n{$error}
 
+loop =
+    .prompt = 🔁 *Loop\\-Modus*\n\nSchick mir eine MP3 oder Audiodatei — ich loope dein Video auf ihre Länge\.\n\n*Max 10 Minuten*\. Oder schreib `cancel`\.
+    .processing = ⏳ Erstelle deinen Loop…
+    .cancelled = ❌ Loop abgebrochen
+    .send_audio_first = Schick mir eine Audiodatei, um fortzufahren, oder `cancel` zum Abbrechen\.
+    .audio_too_long = ❌ Audio zu lang \(max 10 Minuten\)
+    .audio_too_short = ❌ Audio zu kurz \(min 1 Sekunde\)
+    .video_too_short = ❌ Quellvideo zu kurz zum Loopen \(min 1 Sekunde\)
+    .failed = ❌ Loop\\-Verarbeitung fehlgeschlagen\. Bitte versuch es erneut\.
+
 feedback =
     .prompt = 💬 *Hinterlasse dein Feedback*\n\nSchreibe deinen Vorschlag, deine Frage oder deinen Wunsch, und wir werden uns bei dir melden\!\n\nDeine Nachricht wird an den Administrator gesendet\.
     .sent = ✅ *Danke für dein Feedback\!*\n\nDeine Nachricht wurde an den Administrator gesendet\. Wir werden sie auf jeden Fall prüfen und dich bei Bedarf kontaktieren\.

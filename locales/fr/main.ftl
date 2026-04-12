@@ -135,6 +135,16 @@ commands =
     .downsub_subtitles_sent = 📄 Sous-titres prêts · format : {$format} · lignes : {$count}
     .downsub_error = ❌ Erreur Downsub :\\n{$error}
 
+loop =
+    .prompt = 🔁 *Mode boucle*\n\nEnvoie\\-moi un MP3 ou un fichier audio — je boucle ta vidéo pour qu'elle fasse la même durée\.\n\n*Maximum 10 minutes*\. Ou tape `cancel`\.
+    .processing = ⏳ Création de la boucle…
+    .cancelled = ❌ Boucle annulée
+    .send_audio_first = Envoie\\-moi un fichier audio pour continuer, ou `cancel` pour annuler\.
+    .audio_too_long = ❌ Audio trop long \(max 10 minutes\)
+    .audio_too_short = ❌ Audio trop court \(min 1 seconde\)
+    .video_too_short = ❌ Vidéo source trop courte pour boucler \(min 1 seconde\)
+    .failed = ❌ Échec du traitement de la boucle\. Réessaie\.
+
 feedback =
     .prompt = 💬 *Laisse ton avis*\n\nÉcris ta suggestion, ta question ou ton souhait, et nous te contacterons\!\n\nTon message sera envoyé à l'administrateur\.
     .sent = ✅ *Merci pour ton avis\!*\n\nTon message a été envoyé à l'administrateur\. Nous l'examinerons certainement et te contacterons si nécessaire\.
