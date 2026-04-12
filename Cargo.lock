@@ -1728,7 +1728,7 @@ dependencies = [
 
 [[package]]
 name = "doradura"
-version = "0.36.17"
+version = "0.37.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1751,6 +1751,7 @@ dependencies = [
  "hex",
  "hmac",
  "http 0.2.12",
+ "lazy-regex",
  "log",
  "mime",
  "parking_lot",

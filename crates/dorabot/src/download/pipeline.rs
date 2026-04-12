@@ -586,6 +586,9 @@ pub async fn execute(
                 let input = teloxide::types::InputFile::file_id(teloxide::types::FileId(cached_fid));
                 match bot.send_audio(chat_id, input).await {
                     Ok(sent_message) => {
+                        doracore::core::metrics::FILE_ID_CACHE_TOTAL
+                            .with_label_values(&["vault", "hit"])
+                            .inc();
                         let file_size = sent_message.audio().map(|a| a.file.size).unwrap_or(0) as u64;
                         let duration = sent_message.audio().map(|a| a.duration.seconds()).unwrap_or(0);
                         return Ok(PipelineResult {
@@ -606,6 +609,9 @@ pub async fn execute(
                         });
                     }
                     Err(e) => {
+                        doracore::core::metrics::FILE_ID_CACHE_TOTAL
+                            .with_label_values(&["vault", "send_failed"])
+                            .inc();
                         log::warn!("Pipeline: vault cache send failed, falling through: {}", e);
                     }
                 }
@@ -650,6 +656,9 @@ pub async fn execute(
             };
             match send_result {
                 Ok(sent_message) => {
+                    doracore::core::metrics::FILE_ID_CACHE_TOTAL
+                        .with_label_values(&["download_history", "hit"])
+                        .inc();
                     let (file_size, duration) = match format {
                         PipelineFormat::Audio { .. } => (
                             sent_message.audio().map(|a| a.file.size).unwrap_or(0) as u64,
@@ -678,12 +687,19 @@ pub async fn execute(
                     });
                 }
                 Err(e) => {
+                    doracore::core::metrics::FILE_ID_CACHE_TOTAL
+                        .with_label_values(&["download_history", "send_failed"])
+                        .inc();
                     log::warn!(
                         "Pipeline: file_id cache send failed (file_id may be expired), falling through: {}",
                         e
                     );
                 }
             }
+        } else {
+            doracore::core::metrics::FILE_ID_CACHE_TOTAL
+                .with_label_values(&["download_history", "miss"])
+                .inc();
         }
     }
 
@@ -1075,13 +1091,16 @@ pub fn schedule_cleanup_with_extras(download_path: String, extra_paths: Vec<Stri
 ///
 /// Separated into categories to allow callers to handle them differently
 /// (e.g., pre-check errors don't need admin alerts).
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum PipelineError {
     /// Failed during metadata fetching
+    #[error("Metadata error: {0}")]
     Metadata(AppError),
     /// Failed pre-checks (disk space, livestream, size)
+    #[error("Pre-check failed: {0}")]
     PreCheck(String),
     /// Operational failure during download or send
+    #[error("Download error: {0}")]
     Operational(AppError),
 }
 
@@ -1106,16 +1125,6 @@ impl PipelineError {
                     || s.contains("Only images are available")
             }
             _ => false,
-        }
-    }
-}
-
-impl std::fmt::Display for PipelineError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            PipelineError::Metadata(e) => write!(f, "Metadata error: {}", e),
-            PipelineError::PreCheck(msg) => write!(f, "Pre-check failed: {}", msg),
-            PipelineError::Operational(e) => write!(f, "Download error: {}", e),
         }
     }
 }

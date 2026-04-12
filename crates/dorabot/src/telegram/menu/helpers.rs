@@ -56,7 +56,6 @@ pub(crate) async fn start_download_from_preview(
     download_queue: Arc<DownloadQueue>,
     rate_limiter: Arc<RateLimiter>,
 ) -> ResponseResult<()> {
-    let action_start = std::time::Instant::now();
     let url_str = match cache::get_url(&db_pool, Some(shared_storage.as_ref()), url_id).await {
         Some(url_str) => url_str,
         None => {
@@ -113,6 +112,46 @@ pub(crate) async fn start_download_from_preview(
         }
     }
 
+    enqueue_download_tasks(
+        bot,
+        &url,
+        chat_id,
+        format,
+        selected_quality,
+        original_message_id,
+        time_range,
+        plan.as_str(),
+        db_pool,
+        shared_storage,
+        download_queue,
+    )
+    .await;
+    Ok(())
+}
+
+/// Build `DownloadTask`(s) from format + settings and enqueue them.
+///
+/// Shared by the preview flow (via `start_download_from_preview`) and the
+/// one-tap direct flow (via `commands::mod`). Caller is responsible for all
+/// UI cleanup — this function only touches the queue and sends the optional
+/// queue-position message.
+///
+/// For `format == "mp4+mp3"` two tasks are enqueued (MP4 then MP3 fallback).
+pub(crate) async fn enqueue_download_tasks(
+    bot: &Bot,
+    url: &Url,
+    chat_id: ChatId,
+    format: &str,
+    selected_quality: Option<String>,
+    original_message_id: Option<i32>,
+    time_range: Option<(String, String)>,
+    plan: &str,
+    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+    download_queue: Arc<DownloadQueue>,
+) {
+    let action_start = std::time::Instant::now();
+
     if format == "mp4+mp3" {
         let video_quality = if let Some(quality) = selected_quality {
             Some(quality)
@@ -132,7 +171,7 @@ pub(crate) async fn start_download_from_preview(
             .format(DownloadFormat::Mp4)
             .maybe_video_quality(video_quality)
             .maybe_audio_bitrate(None)
-            .priority(crate::download::queue::TaskPriority::from_plan(plan.as_str()))
+            .priority(crate::download::queue::TaskPriority::from_plan(plan))
             .build();
         task_mp4.time_range = time_range.clone();
         download_queue.add_task(task_mp4, Some(Arc::clone(&db_pool))).await;
@@ -151,7 +190,7 @@ pub(crate) async fn start_download_from_preview(
             .format(DownloadFormat::Mp3)
             .maybe_video_quality(None)
             .maybe_audio_bitrate(audio_bitrate)
-            .priority(crate::download::queue::TaskPriority::from_plan(plan.as_str()))
+            .priority(crate::download::queue::TaskPriority::from_plan(plan))
             .build();
         task_mp3.time_range = time_range.clone();
         download_queue.add_task(task_mp3, Some(Arc::clone(&db_pool))).await;
@@ -191,7 +230,7 @@ pub(crate) async fn start_download_from_preview(
             .format(dl_format)
             .maybe_video_quality(video_quality)
             .maybe_audio_bitrate(audio_bitrate)
-            .priority(crate::download::queue::TaskPriority::from_plan(plan.as_str()))
+            .priority(crate::download::queue::TaskPriority::from_plan(plan))
             .build();
         task.time_range = time_range.clone();
         download_queue.add_task(task, Some(Arc::clone(&db_pool))).await;
@@ -199,7 +238,7 @@ pub(crate) async fn start_download_from_preview(
 
     // Send queue position notification and store message ID for later deletion
     if let Some(msg_id) =
-        send_queue_position_message(bot, chat_id, plan.as_str(), &download_queue, &db_pool, &shared_storage).await
+        send_queue_position_message(bot, chat_id, plan, &download_queue, &db_pool, &shared_storage).await
     {
         download_queue.set_queue_message_id(chat_id, msg_id.0).await;
     }
@@ -210,7 +249,6 @@ pub(crate) async fn start_download_from_preview(
         chat_id.0,
         format
     );
-    Ok(())
 }
 
 /// Sends a queue position notification to the user after a task is added.

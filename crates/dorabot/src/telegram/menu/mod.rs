@@ -3,7 +3,7 @@ mod audio_effects;
 mod callback_admin;
 mod callback_router;
 mod callback_settings;
-mod helpers;
+pub(crate) mod helpers;
 pub(crate) mod lyrics;
 mod main_menu;
 pub mod player;

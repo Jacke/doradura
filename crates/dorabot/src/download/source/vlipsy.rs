@@ -8,24 +8,24 @@ use crate::core::error::AppError;
 use crate::download::error::DownloadError;
 use crate::download::source::{DownloadOutput, DownloadRequest, DownloadSource, MediaMetadata, SourceProgress};
 use async_trait::async_trait;
-use regex::Regex;
+use lazy_regex::{lazy_regex, Lazy, Regex};
 use reqwest::Client;
-use std::sync::LazyLock;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use url::Url;
 
 // HIGH-13: Compile fixed-pattern regexes once at startup rather than on every
-// call to extract_duration. The patterns in extract_meta are NOT hoisted here
-// because they incorporate the `property` argument via format! and therefore
-// differ per call.
+// call to extract_duration.
 
 /// Matches JSON-LD duration values like `"duration":5.39`.
-static DUR_JSON_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#""duration"\s*:\s*([0-9]+(?:\.[0-9]+)?)"#).expect("valid regex"));
+static DUR_JSON_RE: Lazy<Regex> = lazy_regex!(r#""duration"\s*:\s*([0-9]+(?:\.[0-9]+)?)"#);
 
 /// Matches description duration hints like `(6s)` or `(12s)`.
-static DUR_DESC_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\((\d+)s\)").expect("valid regex"));
+static DUR_DESC_RE: Lazy<Regex> = lazy_regex!(r"\((\d+)s\)");
+
+/// Matches `<meta name="..." content="...">` and `<meta property="..." content="...">`.
+/// Captures (attribute value, content value). Used by `extract_meta` with a linear filter.
+static META_RE: Lazy<Regex> = lazy_regex!(r#"<meta\s+(?:name|property)="([^"]+)"[^>]*\scontent="([^"]*)"#);
 
 /// Download source for Vlipsy video clips (works without API key).
 pub struct VlipsySource {
@@ -71,26 +71,14 @@ pub struct ScrapedClipInfo {
 }
 
 /// Extract a meta tag content by property or name attribute.
+///
+/// Uses a single precompiled regex that captures both the attribute value and
+/// content, then linearly scans matches for the requested property.
 fn extract_meta(html: &str, property: &str) -> Option<String> {
-    // Match name="og:video" content="..." (Vlipsy uses `name` for og:video)
-    let pat1 = format!(
-        r#"<meta\s+name="{prop}"[^>]*\scontent="([^"]*)"#,
-        prop = regex::escape(property)
-    );
-    if let Some(caps) = Regex::new(&pat1).ok().and_then(|re| re.captures(html)) {
-        return Some(html_decode(&caps[1]));
-    }
-
-    // Match property="og:title" content="..." (Vlipsy uses `property` for og:title)
-    let pat2 = format!(
-        r#"<meta\s+property="{prop}"[^>]*\scontent="([^"]*)"#,
-        prop = regex::escape(property)
-    );
-    if let Some(caps) = Regex::new(&pat2).ok().and_then(|re| re.captures(html)) {
-        return Some(html_decode(&caps[1]));
-    }
-
-    None
+    META_RE
+        .captures_iter(html)
+        .find(|c| &c[1] == property)
+        .map(|c| html_decode(&c[2]))
 }
 
 /// Decode basic HTML entities.

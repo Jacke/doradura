@@ -8,7 +8,6 @@ pub use subtitles::*;
 
 use crate::core::alerts::AlertManager;
 use crate::core::config;
-use crate::core::error::AppError;
 use crate::core::metrics;
 use crate::core::rate_limiter::RateLimiter;
 use crate::core::utils::pluralize_seconds;
@@ -16,21 +15,18 @@ use crate::download::queue::DownloadQueue;
 use crate::i18n;
 use crate::storage::db::{self, DbPool, OutputKind, SourceKind};
 use crate::storage::SharedStorage;
-use crate::telegram::preview::{get_preview_metadata, get_preview_metadata_with_time_range, send_preview};
+use crate::telegram::preview::get_preview_metadata;
 use crate::telegram::Bot;
-use regex::Regex;
+use lazy_regex::{lazy_regex, Lazy, Regex};
 use std::sync::Arc;
-use std::sync::LazyLock;
 use teloxide::prelude::*;
 use teloxide::types::ParseMode;
 use url::Url;
 
 const PREVIEW_CONTEXT_TTL_SECS: i64 = 3600;
 
-/// Cached regex for matching URLs
-/// Compiled once at startup and reused for all requests
-static URL_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"https?://[^\s]+").expect("Failed to compile URL regex"));
+/// Cached regex for matching URLs. Compiled once at startup and reused.
+static URL_REGEX: Lazy<Regex> = lazy_regex!(r"https?://[^\s]+");
 
 /// Handle rate limiting for a user message
 ///
@@ -111,12 +107,16 @@ pub async fn handle_rate_limit(
 pub async fn handle_message(
     bot: Bot,
     msg: Message,
-    _download_queue: Arc<DownloadQueue>,
+    download_queue: Arc<DownloadQueue>,
     rate_limiter: Arc<RateLimiter>,
     db_pool: Arc<DbPool>,
     shared_storage: Arc<SharedStorage>,
     alert_manager: Option<Arc<AlertManager>>,
 ) -> ResponseResult<Option<db::User>> {
+    // Reserved for future use (preview/one-tap path no longer sends alerts at
+    // this layer — the downloader has its own alert path).
+    let _ = &alert_manager;
+
     let lang = i18n::user_lang_from_pool_with_fallback(
         &db_pool,
         msg.chat.id.0,
@@ -665,7 +665,7 @@ pub async fn handle_message(
                 let status_message = bot.send_message(msg.chat.id, &confirmation_msg).await?;
 
                 // Process each URL - get metadata and add to queue
-                let download_queue = _download_queue.clone();
+                let download_queue_clone = download_queue.clone();
                 let bot_clone = bot.clone();
                 let db_pool_clone = db_pool.clone();
                 let shared_storage_clone = shared_storage.clone();
@@ -758,7 +758,9 @@ pub async fn handle_message(
                                     .maybe_audio_bitrate(task_audio_bitrate.clone())
                                     .priority(crate::download::queue::TaskPriority::from_plan(&plan_for_task))
                                     .build();
-                                download_queue.add_task(task, Some(Arc::clone(&db_pool_clone))).await;
+                                download_queue_clone
+                                    .add_task(task, Some(Arc::clone(&db_pool_clone)))
+                                    .await;
                             }
                             Err(e) => {
                                 log::warn!(
@@ -788,7 +790,9 @@ pub async fn handle_message(
                                     .maybe_audio_bitrate(task_audio_bitrate.clone())
                                     .priority(crate::download::queue::TaskPriority::from_plan(&plan_for_task))
                                     .build();
-                                download_queue.add_task(task, Some(Arc::clone(&db_pool_clone))).await;
+                                download_queue_clone
+                                    .add_task(task, Some(Arc::clone(&db_pool_clone)))
+                                    .await;
                             }
                         }
 
@@ -965,136 +969,25 @@ pub async fn handle_message(
                     return Ok(user_info);
                 }
 
-                // Send "processing" message
-                let processing_msg = bot
-                    .send_message(msg.chat.id, i18n::t(&lang, "commands.processing"))
-                    .await?;
-
-                // Show preview instead of immediately downloading
-                // Get video quality for the preview
-                let video_quality = if format == "mp4" {
-                    shared_storage
-                        .get_user_video_quality(msg.chat.id.0)
-                        .await
-                        .ok()
-                        .or_else(|| Some("best".to_string()))
-                } else {
-                    None
-                };
-
-                // Experimental features graduated to main workflow
-                let metadata_result = if time_range.is_some() {
-                    get_preview_metadata_with_time_range(&url, Some(&format), video_quality.as_deref()).await
-                } else {
-                    get_preview_metadata(&url, Some(&format), video_quality.as_deref()).await
-                };
-
-                match metadata_result {
-                    Ok(metadata) => {
-                        // Check file size during preview ONLY for audio
-                        // Skip the check for MP4 so the user can pick a lower quality in the preview
-                        if format != "mp4" {
-                            if let Some(filesize) = metadata.filesize {
-                                let max_size = config::validation::max_audio_size_bytes();
-
-                                if filesize > max_size * 1000 {
-                                    let size_mb = filesize as f64 / (1024.0 * 1024.0);
-                                    //let max_mb = max_size as f64 / (1024.0 * 1024.0);
-                                    let max_mb = max_size as f64 / (1024.0 * 2.0 * 1024.0);
-                                    log::warn!(
-                                        "Audio file too large at preview stage: {:.2} MB (max: {:.2} MB)",
-                                        size_mb,
-                                        max_mb
-                                    );
-
-                                    let args = doracore::fluent_args!("size" => format!("{:.1}", size_mb), "max" => format!("{:.1}", max_mb));
-                                    let error_message = i18n::t_args(&lang, "commands.audio_too_large", &args);
-
-                                    // Delete processing message
-                                    let _ = bot.delete_message(msg.chat.id, processing_msg.id).await;
-
-                                    bot.send_message(msg.chat.id, error_message).await?;
-                                    return Ok(user_info);
-                                }
-                            }
-                        }
-
-                        // Send preview with inline buttons
-                        let default_quality = if format == "mp4" {
-                            video_quality.as_deref()
-                        } else {
-                            None
-                        };
-                        match send_preview(
-                            &bot,
-                            msg.chat.id,
-                            &url,
-                            &metadata,
-                            &format,
-                            default_quality,
-                            Some(processing_msg.id),
-                            Arc::clone(&db_pool),
-                            Arc::clone(&shared_storage),
-                            time_range.as_ref(),
-                        )
-                        .await
-                        {
-                            Ok(_) => {
-                                log::info!("Preview sent successfully for chat {}", msg.chat.id);
-                            }
-                            Err(e) => {
-                                log::error!("Failed to send preview: {:?}", e);
-                                // Fallback: send error message
-                                bot.send_message(msg.chat.id, i18n::t(&lang, "commands.preview_failed"))
-                                    .await?;
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        log::error!("Failed to get preview metadata: {:?}", e);
-
-                        // Check whether this is a duration-related error (not a real error, just a limit)
-                        let is_duration_error = if let AppError::Download(ref err_msg) = e {
-                            let msg_str = err_msg.message();
-                            msg_str.contains("too long") || msg_str.contains("zu lang") || msg_str.contains("trop long")
-                        } else {
-                            false
-                        };
-
-                        // Send alert to admin for real errors (not duration limits)
-                        if !is_duration_error {
-                            if let Some(ref alert_mgr) = alert_manager {
-                                let user_id = msg.chat.id.0;
-                                let error_str = format!("{:?}", e);
-                                // Get live status of download dependencies
-                                let context = crate::core::alerts::DownloadContext::with_live_status().await;
-                                if let Err(alert_err) = alert_mgr
-                                    .alert_download_failure(user_id, url.as_str(), &error_str, 3, Some(&context))
-                                    .await
-                                {
-                                    log::error!("Failed to send alert: {}", alert_err);
-                                }
-                            }
-                        }
-
-                        // Delete processing message
-                        let _ = bot.delete_message(msg.chat.id, processing_msg.id).await;
-
-                        // Build user-facing error message
-                        let error_message = if let AppError::Download(ref err_msg) = e {
-                            // If it's already translated error (from preview), use it
-                            if is_duration_error {
-                                err_msg.to_string()
-                            } else {
-                                i18n::t(&lang, "commands.preview_info_failed")
-                            }
-                        } else {
-                            i18n::t(&lang, "commands.preview_info_failed")
-                        };
-
-                        bot.send_message(msg.chat.id, error_message).await?;
-                    }
-                }
+                // One-tap download: skip preview UI and enqueue directly with user
+                // defaults. Users who want the preview flow can use `/preview <url>`.
+                // NOTE: Size check is no longer done upfront — the downloader handles
+                // oversized files at ingest, trading ~3s upfront latency for instant
+                // feedback (PRD: removes 4 clicks for 80% of users).
+                crate::telegram::menu::helpers::enqueue_download_tasks(
+                    &bot,
+                    &url,
+                    msg.chat.id,
+                    &format,
+                    None,
+                    Some(msg.id.0),
+                    time_range.clone(),
+                    plan,
+                    Arc::clone(&db_pool),
+                    Arc::clone(&shared_storage),
+                    Arc::clone(&download_queue),
+                )
+                .await;
 
                 // Return user info for reuse in logging
                 return Ok(user_info);

@@ -7,13 +7,11 @@
 //! - `&t=1h2m30s` (hours, minutes, seconds)
 //! - `#t=90` (fragment)
 
-use regex::Regex;
-use std::sync::LazyLock;
+use lazy_regex::{lazy_regex, Lazy, Regex};
 use url::Url;
 
 /// Regex for parsing time values like "1h2m30s", "1m30s", "30s", "30"
-static TIME_FORMAT_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^(?:(\d+)h)?(?:(\d+)m)?(\d+)s?$").expect("valid regex"));
+static TIME_FORMAT_REGEX: Lazy<Regex> = lazy_regex!(r"^(?:(\d+)h)?(?:(\d+)m)?(\d+)s?$");
 
 /// Extract timestamp from URL parameters
 ///

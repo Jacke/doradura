@@ -564,47 +564,86 @@ pub async fn has_both_video_and_audio(path: &str) -> Result<bool, AppError> {
 ///
 /// Used to supply the parameters Telegram requires when sending videos.
 /// Uses `tokio::process::Command` with a 30-second timeout per probe.
+///
+/// **Rotation handling:** ffprobe's raw `stream=width,height` returns the
+/// *coded* dimensions, ignoring display rotation. Portrait videos from
+/// phones (iPhone, modern Android) are typically stored as `1920x1080 +
+/// rotate=90`, and sending those raw dimensions to Telegram makes the client
+/// render the video as landscape and stretch it to fit. We fix this by
+/// asking ffprobe for rotation metadata in the same JSON call (both legacy
+/// `tags.rotate` and modern `side_data_list[].rotation`) and swapping
+/// width/height for 90°/270° rotations.
 pub async fn probe_video_metadata(path: &str) -> Option<(u32, Option<u32>, Option<u32>)> {
     use crate::core::process::{run_with_timeout, FFPROBE_TIMEOUT};
 
     let duration = probe_duration_seconds(path).await?;
 
-    let mut width_cmd = TokioCommand::new("ffprobe");
-    width_cmd.args([
+    // Single ffprobe call: width + height + rotation in one JSON roundtrip.
+    let mut cmd = TokioCommand::new("ffprobe");
+    cmd.args([
         "-v",
         "error",
         "-select_streams",
         "v:0",
         "-show_entries",
-        "stream=width",
+        "stream=width,height:stream_tags=rotate:stream_side_data=rotation",
         "-of",
-        "default=noprint_wrappers=1:nokey=1",
+        "json",
         path,
     ]);
-    let width_output = run_with_timeout(&mut width_cmd, FFPROBE_TIMEOUT).await.ok()?;
-
-    let width = String::from_utf8_lossy(&width_output.stdout).trim().parse::<u32>().ok();
-
-    let mut height_cmd = TokioCommand::new("ffprobe");
-    height_cmd.args([
-        "-v",
-        "error",
-        "-select_streams",
-        "v:0",
-        "-show_entries",
-        "stream=height",
-        "-of",
-        "default=noprint_wrappers=1:nokey=1",
-        path,
-    ]);
-    let height_output = run_with_timeout(&mut height_cmd, FFPROBE_TIMEOUT).await.ok()?;
-
-    let height = String::from_utf8_lossy(&height_output.stdout)
-        .trim()
-        .parse::<u32>()
-        .ok();
+    let output = run_with_timeout(&mut cmd, FFPROBE_TIMEOUT).await.ok()?;
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).ok()?;
+    let (width, height) = dimensions_from_ffprobe_json(&json);
 
     Some((duration, width, height))
+}
+
+/// Extract display-oriented `(width, height)` from an ffprobe JSON payload,
+/// swapping dimensions for 90°/270° rotated streams.
+///
+/// Pure function — factored out of `probe_video_metadata` so the rotation
+/// logic is unit-testable without needing a real ffprobe subprocess.
+///
+/// Rotation sources checked (two conventions, both still seen in the wild):
+///   1. `stream.tags.rotate` — legacy ffmpeg, string like `"90"` / `"-90"` / `"180"`
+///   2. `stream.side_data_list[].rotation` — modern ffmpeg (≥4.3), signed int
+pub(crate) fn dimensions_from_ffprobe_json(json: &serde_json::Value) -> (Option<u32>, Option<u32>) {
+    let Some(stream) = json.get("streams").and_then(|s| s.as_array()).and_then(|a| a.first()) else {
+        return (None, None);
+    };
+
+    let raw_w = stream
+        .get("width")
+        .and_then(serde_json::Value::as_u64)
+        .map(|v| v as u32);
+    let raw_h = stream
+        .get("height")
+        .and_then(serde_json::Value::as_u64)
+        .map(|v| v as u32);
+
+    let rotation_deg: i32 = stream
+        .get("tags")
+        .and_then(|t| t.get("rotate"))
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse().ok())
+        .or_else(|| {
+            stream
+                .get("side_data_list")?
+                .as_array()?
+                .iter()
+                .find_map(|sd| sd.get("rotation").and_then(|r| r.as_i64()).map(|r| r as i32))
+        })
+        .unwrap_or(0);
+
+    // Normalize to 0/90/180/270. Negative rotations (e.g. -90 for iPhone) are
+    // equivalent to +270 for swap purposes.
+    let normalized = rotation_deg.rem_euclid(360);
+
+    if matches!(normalized, 90 | 270) {
+        (raw_h, raw_w) // Portrait content stored with rotation applied — swap.
+    } else {
+        (raw_w, raw_h)
+    }
 }
 
 /// Builds a yt-dlp format string optimised for Telegram compatibility.
@@ -1127,7 +1166,10 @@ pub async fn is_livestream(url: &Url) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::first_line_of_stdout;
+    use super::{dimensions_from_ffprobe_json, first_line_of_stdout};
+    use serde_json::json;
+
+    // ── first_line_of_stdout ──────────────────────────────────────────────
 
     #[test]
     fn single_line() {
@@ -1152,5 +1194,122 @@ mod tests {
     #[test]
     fn whitespace_trimmed() {
         assert_eq!(first_line_of_stdout(b"  padded  \nmore"), "padded");
+    }
+
+    // ── dimensions_from_ffprobe_json ──────────────────────────────────────
+
+    #[test]
+    fn landscape_no_rotation_not_swapped() {
+        // Standard 1920x1080 landscape video, no rotation metadata at all.
+        let j = json!({
+            "streams": [{ "width": 1920, "height": 1080 }]
+        });
+        assert_eq!(dimensions_from_ffprobe_json(&j), (Some(1920), Some(1080)));
+    }
+
+    #[test]
+    fn native_portrait_no_rotation_not_swapped() {
+        // Video authored in portrait (e.g. TikTok re-encoded) — raw dimensions
+        // are already portrait, no rotation metadata. Should stay as-is.
+        let j = json!({
+            "streams": [{ "width": 1080, "height": 1920, "tags": {} }]
+        });
+        assert_eq!(dimensions_from_ffprobe_json(&j), (Some(1080), Some(1920)));
+    }
+
+    #[test]
+    fn legacy_rotate_tag_90_swaps() {
+        // Old ffmpeg convention: raw 1920x1080 + `tags.rotate = "90"` → display
+        // as 1080x1920 portrait. This is the bug that made iPhone videos appear
+        // stretched to landscape in Telegram.
+        let j = json!({
+            "streams": [{
+                "width": 1920,
+                "height": 1080,
+                "tags": { "rotate": "90" }
+            }]
+        });
+        assert_eq!(dimensions_from_ffprobe_json(&j), (Some(1080), Some(1920)));
+    }
+
+    #[test]
+    fn legacy_rotate_tag_minus_90_swaps() {
+        // iPhones write `rotate=-90` instead of `270`; normalization must swap.
+        let j = json!({
+            "streams": [{
+                "width": 1920,
+                "height": 1080,
+                "tags": { "rotate": "-90" }
+            }]
+        });
+        assert_eq!(dimensions_from_ffprobe_json(&j), (Some(1080), Some(1920)));
+    }
+
+    #[test]
+    fn legacy_rotate_tag_180_does_not_swap() {
+        // Upside-down landscape — still landscape dimensions after rotation.
+        let j = json!({
+            "streams": [{
+                "width": 1920,
+                "height": 1080,
+                "tags": { "rotate": "180" }
+            }]
+        });
+        assert_eq!(dimensions_from_ffprobe_json(&j), (Some(1920), Some(1080)));
+    }
+
+    #[test]
+    fn modern_display_matrix_rotation_swaps() {
+        // Modern ffmpeg (≥4.3) records rotation in `side_data_list` under a
+        // "Display Matrix" side-data entry, not in `tags.rotate`. iPhone 14+
+        // and Android 12+ both use this convention.
+        let j = json!({
+            "streams": [{
+                "width": 1920,
+                "height": 1080,
+                "side_data_list": [
+                    {
+                        "side_data_type": "Display Matrix",
+                        "displaymatrix": "...",
+                        "rotation": -90
+                    }
+                ]
+            }]
+        });
+        assert_eq!(dimensions_from_ffprobe_json(&j), (Some(1080), Some(1920)));
+    }
+
+    #[test]
+    fn legacy_tag_takes_precedence_over_side_data() {
+        // If both are present (transcoded files sometimes carry both), the
+        // legacy tag is checked first — either would yield the correct swap.
+        let j = json!({
+            "streams": [{
+                "width": 1920,
+                "height": 1080,
+                "tags": { "rotate": "90" },
+                "side_data_list": [{ "rotation": -90 }]
+            }]
+        });
+        assert_eq!(dimensions_from_ffprobe_json(&j), (Some(1080), Some(1920)));
+    }
+
+    #[test]
+    fn missing_streams_returns_none() {
+        let j = json!({ "streams": [] });
+        assert_eq!(dimensions_from_ffprobe_json(&j), (None, None));
+    }
+
+    #[test]
+    fn garbage_rotation_string_falls_back_to_zero() {
+        // Unparseable rotate tag → treated as no rotation → no swap.
+        let j = json!({
+            "streams": [{
+                "width": 1920,
+                "height": 1080,
+                "tags": { "rotate": "garbage" }
+            }]
+        });
+        assert_eq!(dimensions_from_ffprobe_json(&j), (Some(1920), Some(1080)));
     }
 }

@@ -7,7 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Vertical videos no longer stretched to landscape in Telegram** (v0.37.0) — `probe_video_metadata` in `doracore/src/download/metadata.rs` previously asked ffprobe only for `stream=width,height`, which returns *coded* dimensions ignoring display rotation. Portrait videos from phones are typically stored as raw `1920x1080 + rotation=-90` in the container; we were sending Telegram `width=1920, height=1080`, the client trusts those params over the file's display matrix, and rendered everything as 16:9 landscape (stretching the portrait content horizontally). Now ffprobe is called with `stream=width,height:stream_tags=rotate:stream_side_data=rotation -of json`, and the new pure helper `dimensions_from_ffprobe_json` reads rotation from both conventions (legacy `tags.rotate` string / modern `side_data_list[].rotation` int), normalizes via `rem_euclid(360)`, and swaps width↔height for 90°/270° rotated streams. 9 new unit tests cover landscape, native portrait, legacy tag (`90`, `-90`, `180`), modern display matrix, both-present precedence, missing streams, and garbage input. Also halved ffprobe subprocess count: one JSON call instead of two `default=noprint_wrappers` calls. No changes to yt-dlp args — only to the metadata probe that runs *after* download, before `send_video`
+
+### Added
+- **One-tap download** (v0.37.0) — **Tier S PRD feature.** Pasting a URL now enqueues the download immediately with your default format/quality preferences from `/settings`; the bot skips the preview card + size check (~3s upfront yt-dlp call) and the "Download" button click. Removes 4 clicks for the 80% of users who use their default settings. Quality selection still works via `/settings` → audio bitrate / video quality menus. The preview flow's `start_download_from_preview` now delegates to a new shared `enqueue_download_tasks` helper in `telegram/menu/helpers.rs`, reused by the direct path in `commands/mod.rs`. For users who occasionally want per-download quality choice, a future `/preview <url>` opt-in command or a settings toggle can be added non-intrusively
+- **File_id cache observability** (v0.37.0) — **Tier S PRD feature** (Aggressive file_id cache, the underlying canonicalization and cross-user dedup is already shipped in v0.34.1 via commit 406660cc). Added `doradura_file_id_cache_total{source,outcome}` Prometheus counter so we can actually measure the "80%+ requests → 0 seconds" PRD target in production instead of guessing. Wired into every cache lookup in `download/pipeline.rs`:
+  - `source=vault, outcome=hit` — audio vault layer served the file_id
+  - `source=vault, outcome=send_failed` — vault's file_id expired on the Bot API server (falls through to download_history)
+  - `source=download_history, outcome=hit` — cross-user download history served the file_id
+  - `source=download_history, outcome=miss` — no cached file_id, falling through to fresh download
+  - `source=download_history, outcome=send_failed` — cached file_id expired on the Bot API server
+  Hit rate over a window = `sum(hit) / sum(hit+miss)`. Can now be graphed in Grafana alongside `doradura_downloads_total` to compare cache-served vs fresh-downloaded traffic
+- **Oversized-file check moves to the downloader layer** — previously the audio size check ran during preview metadata fetch. Now the downloader handles it at ingest. Trade-off: 0s latency before download starts (vs ~3s), but "too large" errors surface slightly later if encountered. The downloader already had this check — the preview-layer one was redundant
+
 ### Changed
+- **Boilerplate cleanup** (v0.37.0, part of one-tap release) —
+  - `PipelineError` replaced its hand-written `impl std::fmt::Display` with `#[derive(thiserror::Error)]` + `#[error("...")]` attributes — 9 LOC deleted, standardized with the other error types in the workspace
+  - 9 `LazyLock<Regex>` sites across `commands/mod.rs`, `lyrics/mod.rs`, `vlipsy.rs`, `timestamps/{description_parser,url_parser}.rs`, and `fast_metadata.rs` migrated to `lazy_regex::lazy_regex!` macro — patterns are now validated at compile time instead of `.expect("valid regex")` at first use, and the `LazyLock`/`Regex` imports and `.expect(...)` boilerplate are gone
+  - `vlipsy::extract_meta` rewrote its two runtime `Regex::new(&format!(...))` calls (per scrape!) as a single precompiled `META_RE` regex + linear filter on the capture group. Also removed the "patterns are NOT hoisted" comment that explained the old hack
+  - Added `lazy-regex` to the `dorabot` crate (already a workspace dep used by `doracore`)
+  - Honest note: also considered migrating `SearchSource::{from_code,code,label}` and `Filter::{from_code,code}` to `strum::EnumString + IntoStaticStr` derives but the current `match` blocks are clearer than strum + custom-`serialize` attributes for enums with 5 distinct string mappings; skipped
 - **Prune unused workspace dependencies + minor version bumps** (v0.36.17) — ran `cargo udeps` and `cargo tree -d` to collect real data on dead / duplicated dependencies, then:
   - **Removed phantom deps that the code no longer references:**
     - `tonic` + `prost` from `dorabot` (only used by `doracore::downsub`, not by dorabot directly)

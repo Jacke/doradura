@@ -6,17 +6,14 @@
 //!
 //! Used in experimental mode for preview metadata.
 
-use regex::Regex;
+use lazy_regex::{lazy_regex, Lazy, Regex};
 use serde::Deserialize;
-use std::sync::LazyLock;
 use std::time::Duration;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
 
-static YT_INITIAL_PLAYER_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?s)var ytInitialPlayerResponse\s*=\s*(\{.+?\});\s*(?:var|</script>)")
-        .expect("ytInitialPlayerResponse regex")
-});
+static YT_INITIAL_PLAYER_RE: Lazy<Regex> =
+    lazy_regex!(r"(?s)var ytInitialPlayerResponse\s*=\s*(\{.+?\});\s*(?:var|</script>)");
 
 /// Video format info extracted from YouTube HTML.
 #[derive(Debug, Clone)]

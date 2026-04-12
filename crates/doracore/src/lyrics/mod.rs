@@ -8,20 +8,16 @@
 
 pub mod highlights;
 
-use regex::Regex;
+use lazy_regex::{lazy_regex, Lazy, Regex};
 use serde::{Deserialize, Serialize};
-use std::sync::LazyLock;
 
 /// Matches common song section headers like [Verse 1], [Chorus], [Bridge], etc.
 /// (?m) enables multiline mode so ^ and $ match per line (needed for is_match on whole text).
-static SECTION_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r"(?im)^\[((?:verse|chorus|bridge|pre[\-\s]?chorus|post[\-\s]?chorus|hook|intro|outro|interlude|refrain|instrumental|breakdown|coda|skit|drop|spoken|transition|banger|trap|rap)\s*\d*)\]$",
-    )
-    .expect("lyrics section regex is valid")
-});
+static SECTION_RE: Lazy<Regex> = lazy_regex!(
+    r"(?im)^\[((?:verse|chorus|bridge|pre[\-\s]?chorus|post[\-\s]?chorus|hook|intro|outro|interlude|refrain|instrumental|breakdown|coda|skit|drop|spoken|transition|banger|trap|rap)\s*\d*)\]$"
+);
 
-static HTML_TAG_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^>]+>").expect("html tag regex"));
+static HTML_TAG_RE: Lazy<Regex> = lazy_regex!(r"<[^>]+>");
 
 /// A single song entry in the artist's list.
 #[derive(Debug, Clone, Serialize, Deserialize)]

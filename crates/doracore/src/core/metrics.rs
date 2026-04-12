@@ -469,6 +469,23 @@ pub static CACHE_HIT_RATIO: LazyLock<GaugeVec> = LazyLock::new(|| {
         .expect("Failed to register CACHE_HIT_RATIO metric")
 });
 
+/// Cross-user file_id cache outcomes.
+///
+/// Counts every pipeline execution's lookup result. Hit rate over a time
+/// window is `sum(hit) / sum(hit+miss)` — the PRD target is 80%+.
+///
+/// Labels:
+///   - `source`: `download_history` (cross-user cache) | `vault` (audio dedup layer)
+///   - `outcome`: `hit` | `miss` | `send_failed` (hit but file_id expired on Bot API server)
+pub static FILE_ID_CACHE_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
+    register_int_counter_vec!(
+        "doradura_file_id_cache_total",
+        "Cross-user file_id cache lookup outcomes",
+        &["source", "outcome"]
+    )
+    .expect("Failed to register FILE_ID_CACHE_TOTAL metric")
+});
+
 /// Process resident memory in bytes (RSS)
 pub static PROCESS_RESIDENT_MEMORY_BYTES: LazyLock<Gauge> = LazyLock::new(|| {
     register_gauge!(
