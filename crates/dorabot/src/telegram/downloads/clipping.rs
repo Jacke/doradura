@@ -1,5 +1,7 @@
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, ParseMode};
+use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
+
+use crate::telegram::BotExt;
 
 use crate::storage::db::{self, OutputKind, SourceKind};
 use crate::telegram::commands::{process_video_clip, CutSegment};
@@ -37,17 +39,12 @@ async fn start_session_from_download(
     };
 
     if download.format != "mp4" {
-        ctx.bot
-            .send_message(ctx.chat_id, mp4_required_msg)
-            .parse_mode(ParseMode::MarkdownV2)
-            .await
-            .ok();
+        ctx.bot.send_md(ctx.chat_id, mp4_required_msg).await.ok();
         return Ok(());
     }
     if download.file_id.is_none() {
         ctx.bot
-            .send_message(ctx.chat_id, "❌ Could not find file\\_id for this file\\.")
-            .parse_mode(ParseMode::MarkdownV2)
+            .send_md(ctx.chat_id, "❌ Could not find file\\_id for this file\\.")
             .await
             .ok();
         return Ok(());
@@ -113,11 +110,7 @@ async fn start_session_from_download(
 
     let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
     let message = format!("{}{}", prompt_text, ts_text);
-    ctx.bot
-        .send_message(ctx.chat_id, message)
-        .parse_mode(ParseMode::MarkdownV2)
-        .reply_markup(keyboard)
-        .await?;
+    ctx.bot.send_md_kb(ctx.chat_id, message, keyboard).await?;
 
     ctx.bot.delete_message(ctx.chat_id, ctx.message_id).await.ok();
     Ok(())
@@ -145,8 +138,7 @@ async fn start_session_from_cut(
 
     if cut.file_id.is_none() {
         ctx.bot
-            .send_message(ctx.chat_id, "❌ Could not find file\\_id for this file\\.")
-            .parse_mode(ParseMode::MarkdownV2)
+            .send_md(ctx.chat_id, "❌ Could not find file\\_id for this file\\.")
             .await
             .ok();
         return Ok(());
@@ -175,11 +167,7 @@ async fn start_session_from_cut(
         "❌ Cancel".to_string(),
         "downloads:clip_cancel".to_string(),
     )]]);
-    ctx.bot
-        .send_message(ctx.chat_id, prompt_text)
-        .parse_mode(ParseMode::MarkdownV2)
-        .reply_markup(keyboard)
-        .await?;
+    ctx.bot.send_md_kb(ctx.chat_id, prompt_text, keyboard).await?;
 
     ctx.bot.delete_message(ctx.chat_id, ctx.message_id).await.ok();
     Ok(())
@@ -392,9 +380,7 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                 let base_message = crate::i18n::t(&lang, "video_circle.select_part");
                 let message = format!("{}{}", base_message, ts_text);
                 ctx.bot
-                    .edit_message_text(ctx.chat_id, ctx.message_id, message)
-                    .parse_mode(ParseMode::MarkdownV2)
-                    .reply_markup(keyboard)
+                    .edit_md_kb(ctx.chat_id, ctx.message_id, message, keyboard)
                     .await
                     .ok();
             }

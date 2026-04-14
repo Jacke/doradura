@@ -7,7 +7,7 @@ use crate::telegram::BotExt;
 use crate::timestamps::format_timestamp;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{CallbackQueryId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode};
+use teloxide::types::{CallbackQueryId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId};
 
 const ITEMS_PER_PAGE: usize = 5;
 
@@ -182,10 +182,7 @@ pub async fn show_cuts_page(
         "cuts:close".to_string(),
     )]);
 
-    bot.send_message(chat_id, text)
-        .parse_mode(ParseMode::MarkdownV2)
-        .reply_markup(InlineKeyboardMarkup::new(rows))
-        .await
+    bot.send_md_kb(chat_id, text, InlineKeyboardMarkup::new(rows)).await
 }
 
 pub async fn handle_cuts_callback(
@@ -243,12 +240,11 @@ pub async fn handle_cuts_callback(
                     "cuts:cancel".to_string(),
                 )]);
 
-                bot.send_message(
+                bot.send_md_kb(
                     chat_id,
                     format!("What to do with *{}*?", crate::telegram::escape_markdown(&cut.title)),
+                    InlineKeyboardMarkup::new(options),
                 )
-                .parse_mode(ParseMode::MarkdownV2)
-                .reply_markup(InlineKeyboardMarkup::new(options))
                 .await?;
 
                 if !cut.original_url.trim().is_empty() {
@@ -372,12 +368,11 @@ pub async fn handle_cuts_callback(
                     vec![crate::telegram::cb("❌ Cancel".to_string(), "cuts:cancel".to_string())],
                 ];
 
-                bot.send_message(
+                bot.send_md_kb(
                     chat_id,
                     format!("⚙️ Select speed for *{}*", crate::telegram::escape_markdown(&cut.title)),
+                    InlineKeyboardMarkup::new(rows),
                 )
-                .parse_mode(ParseMode::MarkdownV2)
-                .reply_markup(InlineKeyboardMarkup::new(rows))
                 .await?;
 
                 if !cut.original_url.trim().is_empty() {
@@ -408,7 +403,7 @@ pub async fn handle_cuts_callback(
 
                 bot.delete_message(chat_id, message_id).await.ok();
                 let processing = bot
-                    .send_message(
+                    .send_md(
                         chat_id,
                         format!(
                             "⚙️ Processing video at {}x speed\\.\\.\\.
@@ -416,7 +411,6 @@ This may take a few minutes\\.",
                             speed_str.replace('.', "\\.")
                         ),
                     )
-                    .parse_mode(ParseMode::MarkdownV2)
                     .await?;
 
                 match change_video_speed(bot, chat_id, &file_id, speed, &cut.title).await {

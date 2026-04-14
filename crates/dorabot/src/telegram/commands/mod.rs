@@ -9,6 +9,7 @@ pub use subtitles::*;
 
 use crate::core::alerts::AlertManager;
 use crate::core::config;
+use crate::core::error::AppError;
 use crate::core::metrics;
 use crate::core::rate_limiter::RateLimiter;
 use crate::core::utils::pluralize_seconds;
@@ -16,12 +17,12 @@ use crate::download::queue::DownloadQueue;
 use crate::i18n;
 use crate::storage::db::{self, DbPool, OutputKind, SourceKind};
 use crate::storage::SharedStorage;
-use crate::telegram::preview::get_preview_metadata;
+use crate::telegram::preview::{get_preview_metadata, get_preview_metadata_with_time_range, send_preview};
 use crate::telegram::Bot;
+use crate::telegram::BotExt;
 use lazy_regex::{lazy_regex, Lazy, Regex};
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::ParseMode;
 use url::Url;
 
 const PREVIEW_CONTEXT_TTL_SECS: i64 = 3600;
@@ -114,10 +115,6 @@ pub async fn handle_message(
     shared_storage: Arc<SharedStorage>,
     alert_manager: Option<Arc<AlertManager>>,
 ) -> ResponseResult<Option<db::User>> {
-    // Reserved for future use (preview/one-tap path no longer sends alerts at
-    // this layer — the downloader has its own alert path).
-    let _ = &alert_manager;
-
     let lang = i18n::user_lang_from_pool_with_fallback(
         &db_pool,
         msg.chat.id.0,
@@ -457,13 +454,12 @@ pub async fn handle_message(
                     } else {
                         ""
                     };
-                    bot.send_message(
+                    bot.send_md(
                         msg.chat.id,
                         format!(
                             "❌ Couldn't parse intervals\\.\n\nSend in format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nMultiple separated by commas\\.\nExample: `00:10-00:25, 01:00-01:10`\n\nOr commands: `full`, `first30`, `last30`, `middle30`\\.\n\n💡 You can add speed: `first30 2x`, `full 1\\.5x`\\.\n\nOr type `cancel`\\.{extra_note}",
                         ),
                     )
-                    .parse_mode(ParseMode::MarkdownV2)
                     .await
                     .ok();
                     return Ok(None);
@@ -1020,25 +1016,125 @@ pub async fn handle_message(
                     return Ok(user_info);
                 }
 
-                // One-tap download: skip preview UI and enqueue directly with user
-                // defaults. Users who want the preview flow can use `/preview <url>`.
-                // NOTE: Size check is no longer done upfront — the downloader handles
-                // oversized files at ingest, trading ~3s upfront latency for instant
-                // feedback (PRD: removes 4 clicks for 80% of users).
-                crate::telegram::menu::helpers::enqueue_download_tasks(
-                    &bot,
-                    &url,
-                    msg.chat.id,
-                    &format,
-                    None,
-                    Some(msg.id.0),
-                    time_range.clone(),
-                    plan,
-                    Arc::clone(&db_pool),
-                    Arc::clone(&shared_storage),
-                    Arc::clone(&download_queue),
-                )
-                .await;
+                // Send "processing" message
+                let processing_msg = bot
+                    .send_message(msg.chat.id, i18n::t(&lang, "commands.processing"))
+                    .await?;
+
+                // Show preview instead of immediately downloading
+                // Get video quality for the preview
+                let video_quality = if format == "mp4" {
+                    shared_storage
+                        .get_user_video_quality(msg.chat.id.0)
+                        .await
+                        .ok()
+                        .or_else(|| Some("best".to_string()))
+                } else {
+                    None
+                };
+
+                let metadata_result = if time_range.is_some() {
+                    get_preview_metadata_with_time_range(&url, Some(&format), video_quality.as_deref()).await
+                } else {
+                    get_preview_metadata(&url, Some(&format), video_quality.as_deref()).await
+                };
+
+                match metadata_result {
+                    Ok(metadata) => {
+                        // Check file size during preview ONLY for audio
+                        if format != "mp4" {
+                            if let Some(filesize) = metadata.filesize {
+                                let max_size = config::validation::max_audio_size_bytes();
+
+                                if filesize > max_size * 1000 {
+                                    let size_mb = filesize as f64 / (1024.0 * 1024.0);
+                                    let max_mb = max_size as f64 / (1024.0 * 2.0 * 1024.0);
+                                    log::warn!(
+                                        "Audio file too large at preview stage: {:.2} MB (max: {:.2} MB)",
+                                        size_mb,
+                                        max_mb
+                                    );
+
+                                    let args = doracore::fluent_args!("size" => format!("{:.1}", size_mb), "max" => format!("{:.1}", max_mb));
+                                    let error_message = i18n::t_args(&lang, "commands.audio_too_large", &args);
+
+                                    let _ = bot.delete_message(msg.chat.id, processing_msg.id).await;
+
+                                    bot.send_message(msg.chat.id, error_message).await?;
+                                    return Ok(user_info);
+                                }
+                            }
+                        }
+
+                        // Send preview with inline buttons
+                        let default_quality = if format == "mp4" {
+                            video_quality.as_deref()
+                        } else {
+                            None
+                        };
+                        match send_preview(
+                            &bot,
+                            msg.chat.id,
+                            &url,
+                            &metadata,
+                            &format,
+                            default_quality,
+                            Some(processing_msg.id),
+                            Arc::clone(&db_pool),
+                            Arc::clone(&shared_storage),
+                            time_range.as_ref(),
+                        )
+                        .await
+                        {
+                            Ok(_) => {
+                                log::info!("Preview sent successfully for chat {}", msg.chat.id);
+                            }
+                            Err(e) => {
+                                log::error!("Failed to send preview: {:?}", e);
+                                bot.send_message(msg.chat.id, i18n::t(&lang, "commands.preview_failed"))
+                                    .await?;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to get preview metadata: {:?}", e);
+
+                        let is_duration_error = if let AppError::Download(ref err_msg) = e {
+                            let msg_str = err_msg.message();
+                            msg_str.contains("too long") || msg_str.contains("zu lang") || msg_str.contains("trop long")
+                        } else {
+                            false
+                        };
+
+                        if !is_duration_error {
+                            if let Some(ref alert_mgr) = alert_manager {
+                                let user_id = msg.chat.id.0;
+                                let error_str = format!("{:?}", e);
+                                let context = crate::core::alerts::DownloadContext::with_live_status().await;
+                                if let Err(alert_err) = alert_mgr
+                                    .alert_download_failure(user_id, url.as_str(), &error_str, 3, Some(&context))
+                                    .await
+                                {
+                                    log::error!("Failed to send alert: {}", alert_err);
+                                }
+                            }
+                        }
+
+                        let _ = bot.delete_message(msg.chat.id, processing_msg.id).await;
+
+                        let error_message = if let AppError::Download(ref err_msg) = e {
+                            if is_duration_error {
+                                err_msg.to_string()
+                            } else {
+                                i18n::t(&lang, "commands.preview_info_failed")
+                            }
+                        } else {
+                            i18n::t(&lang, "commands.preview_info_failed")
+                        };
+
+                        bot.send_message(msg.chat.id, error_message).await?;
+                    }
+                }
 
                 // Return user info for reuse in logging
                 return Ok(user_info);
@@ -1114,9 +1210,7 @@ pub async fn handle_message(
                 return Ok(None);
             }
             metrics::record_message_type("text");
-            bot.send_message(msg.chat.id, i18n::t(&lang, "commands.no_links"))
-                .parse_mode(ParseMode::MarkdownV2)
-                .await?;
+            bot.send_md(msg.chat.id, i18n::t(&lang, "commands.no_links")).await?;
         } else if text.eq_ignore_ascii_case("/exit") {
             // /exit command — stop player if active
             if shared_storage
@@ -1130,14 +1224,10 @@ pub async fn handle_message(
                 return Ok(None);
             }
             // No active player — treat as unknown command
-            bot.send_message(msg.chat.id, i18n::t(&lang, "commands.no_links"))
-                .parse_mode(ParseMode::MarkdownV2)
-                .await?;
+            bot.send_md(msg.chat.id, i18n::t(&lang, "commands.no_links")).await?;
         } else {
             metrics::record_message_type("text");
-            bot.send_message(msg.chat.id, i18n::t(&lang, "commands.no_links"))
-                .parse_mode(ParseMode::MarkdownV2)
-                .await?;
+            bot.send_md(msg.chat.id, i18n::t(&lang, "commands.no_links")).await?;
         }
     }
     Ok(None)

@@ -12,7 +12,6 @@ pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::
     use crate::core::subscription::PlanLimits;
     use crate::storage::uploads::NewUpload;
     use teloxide::dispatching::UpdateFilterExt;
-    use teloxide::types::ParseMode;
 
     let deps_filter = deps.clone();
 
@@ -215,14 +214,13 @@ pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::
                 // Check for duplicates
                 if let Some(ref unique_id) = file_unique_id {
                     if let Ok(Some(existing)) = deps.shared_storage.find_duplicate_upload(chat_id.0, unique_id).await {
-                        bot.send_message(
+                        bot.send_md(
                             chat_id,
                             format!(
                                 "ℹ️ This file has already been uploaded: *{}*\n\nUse /videos to find it.",
                                 crate::core::escape_markdown(&existing.title)
                             ),
                         )
-                        .parse_mode(ParseMode::MarkdownV2)
                         .await?;
                         return Ok(());
                     }

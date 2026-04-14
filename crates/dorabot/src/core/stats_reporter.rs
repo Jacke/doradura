@@ -8,12 +8,12 @@ use crate::storage::db::{self};
 use crate::storage::SharedStorage;
 use crate::telegram::admin;
 use crate::telegram::Bot;
+use crate::telegram::BotExt;
 use anyhow::Context;
 use chrono::{Duration, Utc};
 use sqlx::{pool::PoolConnection, Postgres, Row};
 use std::sync::Arc;
-use teloxide::prelude::*;
-use teloxide::types::{ChatId, ParseMode};
+use teloxide::types::ChatId;
 
 /// Statistics for a time period
 #[derive(Debug, Clone, Default)]
@@ -336,8 +336,7 @@ impl StatsReporter {
         let message = format_stats_message(&stats, hours);
 
         self.bot
-            .send_message(self.admin_chat_id, &message)
-            .parse_mode(ParseMode::MarkdownV2)
+            .send_md(self.admin_chat_id, &message)
             .await
             .with_context(|| "Failed to send stats")?;
 

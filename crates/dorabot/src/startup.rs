@@ -279,7 +279,7 @@ async fn connect_to_bot_api(bot: &crate::telegram::Bot) -> Result<teloxide::type
 /// Background task: listen for plan change events and notify users via Telegram.
 fn spawn_plan_change_dispatcher(bot: crate::telegram::Bot, mut rx: crate::core::PlanChangeReceiver) {
     use crate::core::{escape_markdown, PlanChangeReason};
-    use teloxide::types::ParseMode;
+    use crate::telegram::BotExt;
 
     tokio::spawn(async move {
         log::info!("Plan change notification dispatcher started");
@@ -316,7 +316,7 @@ fn spawn_plan_change_dispatcher(bot: crate::telegram::Bot, mut rx: crate::core::
             );
 
             let chat_id = teloxide::types::ChatId(event.user_id);
-            if let Err(e) = bot.send_message(chat_id, &text).parse_mode(ParseMode::MarkdownV2).await {
+            if let Err(e) = bot.send_md(chat_id, &text).await {
                 log::warn!("Failed to notify user {} about plan change: {}", event.user_id, e);
             } else {
                 log::info!(

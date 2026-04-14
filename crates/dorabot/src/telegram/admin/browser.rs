@@ -3,7 +3,7 @@ use crate::telegram::Bot;
 use crate::telegram::BotExt;
 use anyhow::Result;
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, MessageId, ParseMode};
+use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, MessageId};
 
 /// Default cookie manager API URL
 const COOKIE_MANAGER_URL: &str = "http://127.0.0.1:9876";
@@ -80,7 +80,7 @@ pub async fn handle_browser_login_command(bot: &Bot, chat_id: ChatId, user_id: i
             ]);
             let keyboard = InlineKeyboardMarkup::new(rows);
 
-            bot.edit_message_text(
+            bot.edit_md_kb(
                 chat_id,
                 msg.id,
                 format!(
@@ -90,9 +90,8 @@ pub async fn handle_browser_login_command(bot: &Bot, chat_id: ChatId, user_id: i
                      After logging in, press *Done* to export cookies\\.",
                     escaped_url
                 ),
+                keyboard,
             )
-            .parse_mode(ParseMode::MarkdownV2)
-            .reply_markup(keyboard)
             .await?;
         }
         Err(e) => {
@@ -229,7 +228,7 @@ pub async fn handle_browser_status_command(bot: &Bot, chat_id: ChatId, user_id: 
                 String::new()
             };
 
-            bot.send_message(
+            bot.send_md_kb(
                 chat_id,
                 format!(
                     "{} *Cookie Manager Status*\n\n\
@@ -253,9 +252,8 @@ pub async fn handle_browser_status_command(bot: &Bot, chat_id: ChatId, user_id: 
                     session_detail,
                     if needs_relogin { "yes" } else { "no" },
                 ),
+                keyboard,
             )
-            .parse_mode(ParseMode::MarkdownV2)
-            .reply_markup(keyboard)
             .await?;
         }
         Err(e) => {
@@ -366,7 +364,7 @@ pub async fn handle_browser_callback(
                         ],
                     ]);
 
-                    bot.edit_message_text(
+                    bot.edit_md_kb(
                         chat_id,
                         message_id,
                         format!(
@@ -376,9 +374,8 @@ pub async fn handle_browser_callback(
                              After logging in, press *Done* to export cookies\\.",
                             escaped_url
                         ),
+                        keyboard,
                     )
-                    .parse_mode(ParseMode::MarkdownV2)
-                    .reply_markup(keyboard)
                     .await?;
                 }
                 Err(e) => {

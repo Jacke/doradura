@@ -1,6 +1,8 @@
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardMarkup, InputFile, MessageId, ParseMode};
+use teloxide::types::{InlineKeyboardMarkup, InputFile, MessageId};
+
+use crate::telegram::BotExt;
 
 use crate::core::escape_markdown;
 
@@ -23,8 +25,7 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
             {
                 let loading_msg = ctx
                     .bot
-                    .edit_message_text(ctx.chat_id, ctx.message_id, "⏳ Fetching subtitles (SRT \\+ TXT)…")
-                    .parse_mode(ParseMode::MarkdownV2)
+                    .edit_md(ctx.chat_id, ctx.message_id, "⏳ Fetching subtitles (SRT \\+ TXT)…")
                     .await
                     .ok();
 
@@ -107,12 +108,11 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                 ];
                 let keyboard = InlineKeyboardMarkup::new(lang_options);
                 ctx.bot
-                    .send_message(
+                    .send_md_kb(
                         ctx.chat_id,
                         format!("🔤 Choose subtitle language for *{}*", escape_markdown(&download.title)),
+                        keyboard,
                     )
-                    .parse_mode(ParseMode::MarkdownV2)
-                    .reply_markup(keyboard)
                     .await?;
                 ctx.bot.delete_message(ctx.chat_id, ctx.message_id).await.ok();
             }
@@ -367,9 +367,11 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                 let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
                 let title = escape_markdown(&download.title);
                 ctx.bot
-                    .send_message(ctx.chat_id, format!("🎙 Select voice message duration for *{}*:", title))
-                    .parse_mode(ParseMode::MarkdownV2)
-                    .reply_markup(keyboard)
+                    .send_md_kb(
+                        ctx.chat_id,
+                        format!("🎙 Select voice message duration for *{}*:", title),
+                        keyboard,
+                    )
                     .await?;
                 ctx.bot.delete_message(ctx.chat_id, ctx.message_id).await.ok();
             }
@@ -469,8 +471,7 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                         let display = format!("{} - {}", artist, title);
                         let escaped = escape_markdown(&display);
                         ctx.bot
-                            .send_message(ctx.chat_id, format!("❌ Lyrics not found for *{}*", escaped))
-                            .parse_mode(ParseMode::MarkdownV2)
+                            .send_md(ctx.chat_id, format!("❌ Lyrics not found for *{}*", escaped))
                             .await?;
                     }
                     Some(lyr) => {

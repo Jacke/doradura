@@ -6,9 +6,10 @@ use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::telegram::preview::get_preview_metadata;
 use crate::telegram::Bot;
+use crate::telegram::BotExt;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{InputFile, ParseMode};
+use teloxide::types::InputFile;
 use url::Url;
 
 /// Handle /info command to show available formats for a URL
@@ -233,11 +234,7 @@ pub async fn handle_info_command(
                 }
 
                 log::info!("📤 Sending formatted response with MarkdownV2...");
-                match bot
-                    .send_message(msg.chat.id, response)
-                    .parse_mode(ParseMode::MarkdownV2)
-                    .await
-                {
+                match bot.send_md(msg.chat.id, response).await {
                     Ok(_) => {
                         log::info!("✅ Response sent successfully!");
                         log::info!("════════════════════════════════════════════════════════");

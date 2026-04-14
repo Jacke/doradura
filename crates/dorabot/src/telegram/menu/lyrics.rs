@@ -11,7 +11,7 @@ use crate::telegram::BotExt;
 use std::collections::HashMap;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardMarkup, ParseMode};
+use teloxide::types::InlineKeyboardMarkup;
 use teloxide::RequestError;
 use uuid::Uuid;
 
@@ -77,8 +77,7 @@ async fn handle_fetch_lyrics(
     match lyrics::fetch_lyrics(&artist, &song_title, None).await {
         None => {
             let display = format!("{} – {}", artist, song_title);
-            bot.send_message(chat_id, format!("❌ Lyrics not found for *{}*", escape_md(&display)))
-                .parse_mode(ParseMode::MarkdownV2)
+            bot.send_md(chat_id, format!("❌ Lyrics not found for *{}*", escape_md(&display)))
                 .await?;
         }
         Some(lyr) => {

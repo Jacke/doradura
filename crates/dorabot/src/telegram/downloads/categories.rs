@@ -1,5 +1,7 @@
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, ParseMode};
+use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup};
+
+use crate::telegram::BotExt;
 
 use super::is_youtube_url;
 use super::CallbackCtx;
@@ -162,16 +164,15 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                 .create_new_category_session(ctx.chat_id.0, download_id)
                 .await;
             ctx.bot
-                .edit_message_text(
+                .edit_md_kb(
                     ctx.chat_id,
                     ctx.message_id,
                     "📝 *New Category*\n\nSend a name for the new category:",
+                    InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
+                        "« Cancel".to_string(),
+                        format!("downloads:setcat:{}", download_id),
+                    )]]),
                 )
-                .parse_mode(ParseMode::MarkdownV2)
-                .reply_markup(InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
-                    "« Cancel".to_string(),
-                    format!("downloads:setcat:{}", download_id),
-                )]]))
                 .await?;
         }
         _ => {}

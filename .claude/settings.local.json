@@ -352,7 +352,19 @@
       "Bash(xargs -I {} sh -c 'grep -l \"#\\\\[test\\\\]\" {} && echo \"     \\(unit tests\\)\"')",
       "mcp__railway-mcp-server__list-variables",
       "Bash(mcp__claude_ai_test__shell_execute)",
-      "Bash(cargo --list)"
+      "Bash(cargo --list)",
+      "Bash(cargo bench:*)",
+      "Bash(jobs -l)",
+      "Bash(cp crates/dorabot/Cargo.toml /tmp/dorabot_cargo_full.toml)",
+      "Bash(cp crates/doracore/src/core/metrics.rs /tmp/metrics_full.rs)",
+      "Bash(cp crates/dorabot/src/telegram/commands/mod.rs /tmp/commands_mod_full.rs)",
+      "Bash(cp crates/doracore/src/storage/db/sessions.rs /tmp/sessions_full.rs)",
+      "Bash(cp CHANGELOG.md /tmp/changelog_full.md)",
+      "Bash(cp /tmp/dorabot_cargo_full.toml crates/dorabot/Cargo.toml)",
+      "Bash(cp /tmp/metrics_full.rs crates/doracore/src/core/metrics.rs)",
+      "Bash(cp /tmp/commands_mod_full.rs crates/dorabot/src/telegram/commands/mod.rs)",
+      "Bash(cp /tmp/sessions_full.rs crates/doracore/src/storage/db/sessions.rs)",
+      "Bash(cp /tmp/changelog_full.md CHANGELOG.md)"
     ],
     "deny": [],
     "ask": []

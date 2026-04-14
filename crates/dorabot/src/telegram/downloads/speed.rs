@@ -1,5 +1,7 @@
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardMarkup, ParseMode};
+use teloxide::types::InlineKeyboardMarkup;
+
+use crate::telegram::BotExt;
 
 use crate::core::escape_markdown;
 
@@ -43,12 +45,11 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                 ];
                 let keyboard = InlineKeyboardMarkup::new(speed_options);
                 ctx.bot
-                    .send_message(
+                    .send_md_kb(
                         ctx.chat_id,
                         format!("⚙️ Choose speed for *{}*", escape_markdown(&download.title)),
+                        keyboard,
                     )
-                    .parse_mode(ParseMode::MarkdownV2)
-                    .reply_markup(keyboard)
                     .await?;
 
                 ctx.bot.delete_message(ctx.chat_id, ctx.message_id).await.ok();
@@ -89,12 +90,11 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                 ];
                 let keyboard = InlineKeyboardMarkup::new(speed_options);
                 ctx.bot
-                    .send_message(
+                    .send_md_kb(
                         ctx.chat_id,
                         format!("⚙️ Choose speed for clip *{}*", escape_markdown(&cut.title)),
+                        keyboard,
                     )
-                    .parse_mode(ParseMode::MarkdownV2)
-                    .reply_markup(keyboard)
                     .await?;
 
                 ctx.bot.delete_message(ctx.chat_id, ctx.message_id).await.ok();
@@ -117,14 +117,13 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                     ctx.bot.delete_message(ctx.chat_id, ctx.message_id).await.ok();
                     let processing_msg = ctx
                         .bot
-                        .send_message(
+                        .send_md(
                             ctx.chat_id,
                             format!(
                                 "⚙️ Processing video at speed {}x\\.\\.\\.  \nThis may take a few minutes\\.",
                                 speed_str.replace(".", "\\.")
                             ),
                         )
-                        .parse_mode(ParseMode::MarkdownV2)
                         .await?;
                     match change_video_speed(&ctx.bot, ctx.chat_id, &file_id, speed, &download.title).await {
                         Ok((sent_message, file_size)) => {
@@ -205,14 +204,13 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                     ctx.bot.delete_message(ctx.chat_id, ctx.message_id).await.ok();
                     let processing_msg = ctx
                         .bot
-                        .send_message(
+                        .send_md(
                             ctx.chat_id,
                             format!(
                                 "⚙️ Processing clip at speed {}x\\.\\.\\.  \nThis may take a few minutes\\.",
                                 speed_str.replace(".", "\\.")
                             ),
                         )
-                        .parse_mode(ParseMode::MarkdownV2)
                         .await?;
                     match change_video_speed(&ctx.bot, ctx.chat_id, &file_id, speed, &cut.title).await {
                         Ok((sent_message, file_size)) => {

@@ -14,13 +14,13 @@ use crate::core::{config, metrics};
 use crate::storage::SharedStorage;
 use crate::telegram::admin;
 use crate::telegram::Bot;
+use crate::telegram::BotExt;
 use chrono::{DateTime, Duration, Utc};
 use sqlx::{pool::PoolConnection, Postgres};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
-use teloxide::prelude::*;
-use teloxide::types::{ChatId, ParseMode};
+use teloxide::types::ChatId;
 use tokio::sync::Mutex;
 
 /// Maximum number of download records to keep in memory for error rate calculation
@@ -355,12 +355,7 @@ impl AlertManager {
 
         // Send Telegram message
         let message = alert.format_telegram_message();
-        if let Err(e) = self
-            .bot
-            .send_message(self.admin_chat_id, &message)
-            .parse_mode(ParseMode::MarkdownV2)
-            .await
-        {
+        if let Err(e) = self.bot.send_md(self.admin_chat_id, &message).await {
             log::error!("Failed to send alert to admin: {:?}", e);
             anyhow::bail!("Failed to send alert: {:?}", e);
         }
@@ -421,12 +416,7 @@ impl AlertManager {
                 admin::escape_markdown(&alert.title)
             );
 
-            if let Err(e) = self
-                .bot
-                .send_message(self.admin_chat_id, &message)
-                .parse_mode(ParseMode::MarkdownV2)
-                .await
-            {
+            if let Err(e) = self.bot.send_md(self.admin_chat_id, &message).await {
                 log::error!("Failed to send resolution notification: {:?}", e);
                 anyhow::bail!("Failed to send resolution: {:?}", e);
             }

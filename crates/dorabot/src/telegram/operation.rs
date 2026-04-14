@@ -38,10 +38,11 @@ use crate::core::extract_retry_after;
 use crate::core::utils::escape_markdown_v2;
 use crate::telegram::reactions::{emoji, try_set_reaction};
 use crate::telegram::Bot;
+use crate::telegram::BotExt;
 use std::marker::PhantomData;
 use std::time::{Duration, Instant};
 use teloxide::prelude::*;
-use teloxide::types::{MessageId, ParseMode};
+use teloxide::types::MessageId;
 use thiserror::Error;
 use tokio::task::JoinHandle;
 
@@ -463,12 +464,7 @@ impl Operation<NotStarted> {
         let formatter = MarkdownV2Formatter;
         let text = formatter.format(&status);
 
-        let msg = self
-            .inner
-            .bot
-            .send_message(self.inner.chat_id, text)
-            .parse_mode(ParseMode::MarkdownV2)
-            .await?;
+        let msg = self.inner.bot.send_md(self.inner.chat_id, text).await?;
 
         self.inner.progress_message_id = Some(msg.id);
         self.inner.current_status = Some(status);
@@ -603,10 +599,7 @@ impl Operation<InProgress> {
             let handle = tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_secs(clear_after_secs)).await;
                 if let Some(msg_id) = progress_msg_id {
-                    let _ = bot
-                        .edit_message_text(chat_id, msg_id, final_msg)
-                        .parse_mode(ParseMode::MarkdownV2)
-                        .await;
+                    let _ = bot.edit_md(chat_id, msg_id, final_msg).await;
                 }
             });
             self.inner.clear_task = Some(handle);
@@ -705,13 +698,7 @@ impl Operation<InProgress> {
         let text = formatter.format(status);
 
         if let Some(msg_id) = self.inner.progress_message_id {
-            match self
-                .inner
-                .bot
-                .edit_message_text(self.inner.chat_id, msg_id, text.clone())
-                .parse_mode(ParseMode::MarkdownV2)
-                .await
-            {
+            match self.inner.bot.edit_md(self.inner.chat_id, msg_id, text.clone()).await {
                 Ok(_) => Ok(()),
                 Err(e) => {
                     let error_str = e.to_string();
@@ -721,13 +708,7 @@ impl Operation<InProgress> {
                     if let Some(retry_secs) = extract_retry_after(&error_str) {
                         log::warn!("Rate limited, waiting {}s before retry", retry_secs);
                         tokio::time::sleep(Duration::from_secs(retry_secs + 1)).await;
-                        match self
-                            .inner
-                            .bot
-                            .edit_message_text(self.inner.chat_id, msg_id, text)
-                            .parse_mode(ParseMode::MarkdownV2)
-                            .await
-                        {
+                        match self.inner.bot.edit_md(self.inner.chat_id, msg_id, text).await {
                             Ok(_) => return Ok(()),
                             Err(e2) => {
                                 if e2.to_string().contains("message is not modified") {
@@ -742,12 +723,7 @@ impl Operation<InProgress> {
                 }
             }
         } else {
-            let msg = self
-                .inner
-                .bot
-                .send_message(self.inner.chat_id, text)
-                .parse_mode(ParseMode::MarkdownV2)
-                .await?;
+            let msg = self.inner.bot.send_md(self.inner.chat_id, text).await?;
             self.inner.progress_message_id = Some(msg.id);
             Ok(())
         }

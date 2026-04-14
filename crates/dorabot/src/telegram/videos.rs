@@ -13,7 +13,7 @@ use crate::telegram::BotExt;
 use crate::telegram::{download_file_from_telegram, Bot};
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{CallbackQueryId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, MessageId, ParseMode};
+use teloxide::types::{CallbackQueryId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, MessageId};
 
 const ITEMS_PER_PAGE: usize = 5;
 
@@ -467,11 +467,7 @@ pub async fn handle_videos_callback(
                 let keyboard = build_upload_action_keyboard(&upload);
 
                 // Try edit first (for "Back" navigation from submenu)
-                let edit_result = bot
-                    .edit_message_text(chat_id, message_id, &text)
-                    .parse_mode(ParseMode::MarkdownV2)
-                    .reply_markup(keyboard.clone())
-                    .await;
+                let edit_result = bot.edit_md_kb(chat_id, message_id, &text, keyboard.clone()).await;
 
                 if edit_result.is_err() {
                     // Fall back to send + delete (for /videos list click)
@@ -588,13 +584,12 @@ pub async fn handle_videos_callback(
                 .await
                 .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
             {
-                bot.edit_message_text(
+                bot.edit_md_kb(
                     chat_id,
                     message_id,
                     format!("🗑️ Delete *{}*?", escape_markdown(&upload.title)),
+                    keyboard,
                 )
-                .parse_mode(ParseMode::MarkdownV2)
-                .reply_markup(keyboard)
                 .await?;
             }
         }
@@ -749,13 +744,12 @@ pub async fn handle_videos_callback(
                 )],
             ]);
 
-            bot.edit_message_text(
+            bot.edit_md_kb(
                 chat_id,
                 message_id,
                 format!("⚡ *Choose circle speed* \\({}s\\):", escape_markdown(duration)),
+                keyboard,
             )
-            .parse_mode(ParseMode::MarkdownV2)
-            .reply_markup(keyboard)
             .await?;
         }
         "cancel" | "close" => {
@@ -837,10 +831,7 @@ async fn handle_convert_callback(
                     )
                 };
 
-                let status_msg = bot
-                    .send_message(chat_id, status_text)
-                    .parse_mode(ParseMode::MarkdownV2)
-                    .await?;
+                let status_msg = bot.send_md(chat_id, status_text).await?;
 
                 // Download file from Telegram
                 let temp_input = match download_file_from_telegram(bot, &upload.file_id, None).await {
@@ -969,11 +960,10 @@ async fn handle_convert_callback(
                 bot.delete_message(chat_id, message_id).await.ok();
 
                 let status_msg = bot
-                    .send_message(
+                    .send_md(
                         chat_id,
                         format!("⏳ Extracting audio from *{}*\\.\\.\\.", escape_markdown(&upload.title)),
                     )
-                    .parse_mode(ParseMode::MarkdownV2)
                     .await?;
 
                 // Download file from Telegram
@@ -1047,14 +1037,13 @@ async fn handle_convert_callback(
                 bot.delete_message(chat_id, message_id).await.ok();
 
                 let status_msg = bot
-                    .send_message(
+                    .send_md(
                         chat_id,
                         format!(
                             "⏳ Creating GIF from *{}*\\.\\.\\.\n\n_This may take some time_",
                             escape_markdown(&upload.title)
                         ),
                     )
-                    .parse_mode(ParseMode::MarkdownV2)
                     .await?;
 
                 // Download file from Telegram
@@ -1115,14 +1104,13 @@ async fn handle_convert_callback(
                 bot.delete_message(chat_id, message_id).await.ok();
 
                 let status_msg = bot
-                    .send_message(
+                    .send_md(
                         chat_id,
                         format!(
                             "⏳ Compressing *{}*\\.\\.\\.\n\n_This may take a few minutes_",
                             escape_markdown(&upload.title)
                         ),
                     )
-                    .parse_mode(ParseMode::MarkdownV2)
                     .await?;
 
                 // Download file from Telegram

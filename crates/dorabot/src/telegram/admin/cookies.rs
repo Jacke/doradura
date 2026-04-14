@@ -11,7 +11,7 @@ use std::sync::LazyLock;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use teloxide::prelude::*;
-use teloxide::types::{InlineKeyboardMarkup, MessageId, ParseMode};
+use teloxide::types::{InlineKeyboardMarkup, MessageId};
 
 /// Cooldown period for cookie refresh notifications (6 hours)
 const COOKIE_NOTIFICATION_COOLDOWN: Duration = Duration::from_secs(6 * 60 * 60);
@@ -227,11 +227,7 @@ pub async fn notify_admin_cookies_refresh(bot: &Bot, admin_id: i64, reason: &str
         cookie_detail
     );
 
-    match bot
-        .send_message(ChatId(admin_id), message)
-        .parse_mode(ParseMode::MarkdownV2)
-        .await
-    {
+    match bot.send_md(ChatId(admin_id), message).await {
         Ok(_) => {
             log::info!("✅ Sent cookies refresh notification to admin {}", admin_id);
             Ok(())
@@ -412,11 +408,10 @@ pub async fn handle_cookies_file_upload(
                     let _ = bot.delete_message(chat_id, processing_msg.id).await;
                     shared_storage.delete_cookies_upload_session_by_user(user_id).await?;
 
-                    bot.send_message(
+                    bot.send_md(
                         chat_id,
                         format!("❌ *File read error:*\n\n{}", escape_markdown(&e.to_string())),
                     )
-                    .parse_mode(ParseMode::MarkdownV2)
                     .await?;
                 }
             }
@@ -426,11 +421,10 @@ pub async fn handle_cookies_file_upload(
             let _ = bot.delete_message(chat_id, processing_msg.id).await;
             shared_storage.delete_cookies_upload_session_by_user(user_id).await?;
 
-            bot.send_message(
+            bot.send_md(
                 chat_id,
                 format!("❌ *File download error:*\n\n{}", escape_markdown(&e.to_string())),
             )
-            .parse_mode(ParseMode::MarkdownV2)
             .await?;
         }
     }
@@ -473,7 +467,7 @@ pub async fn handle_update_ig_cookies_command(
 
     log::info!("✅ Created IG cookies upload session for admin {}", user_id);
 
-    bot.send_message(
+    bot.send_md(
         chat_id,
         "📤 *Send your Instagram cookies file*\n\n\
         Send a txt file with cookies in Netscape HTTP Cookie File format\\.\n\n\
@@ -485,7 +479,6 @@ pub async fn handle_update_ig_cookies_command(
         *Key cookies:* `sessionid`, `csrftoken`, `ds_user_id`\n\n\
         ⏱ Session expires in 10 minutes\\.",
     )
-    .parse_mode(ParseMode::MarkdownV2)
     .await?;
 
     Ok(())
@@ -612,11 +605,10 @@ pub async fn handle_ig_cookies_file_upload(
                 let _ = bot.delete_message(chat_id, processing_msg.id).await;
                 shared_storage.delete_ig_cookies_upload_session_by_user(user_id).await?;
 
-                bot.send_message(
+                bot.send_md(
                     chat_id,
                     format!("❌ *File read error:*\n\n{}", escape_markdown(&e.to_string())),
                 )
-                .parse_mode(ParseMode::MarkdownV2)
                 .await?;
             }
         },
@@ -625,11 +617,10 @@ pub async fn handle_ig_cookies_file_upload(
             let _ = bot.delete_message(chat_id, processing_msg.id).await;
             shared_storage.delete_ig_cookies_upload_session_by_user(user_id).await?;
 
-            bot.send_message(
+            bot.send_md(
                 chat_id,
                 format!("❌ *File download error:*\n\n{}", escape_markdown(&e.to_string())),
             )
-            .parse_mode(ParseMode::MarkdownV2)
             .await?;
         }
     }

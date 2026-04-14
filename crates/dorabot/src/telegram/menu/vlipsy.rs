@@ -15,9 +15,7 @@ use crate::telegram::BotExt;
 use crate::vlipsy::VlipsyClient;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::{
-    CallbackQueryId, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, MessageId, ParseMode,
-};
+use teloxide::types::{CallbackQueryId, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, InputFile, MessageId};
 use unic_langid::LanguageIdentifier;
 
 const RESULTS_PER_PAGE: u32 = 5;
@@ -57,17 +55,13 @@ pub async fn send_search_prompt(
     shared_storage: &Arc<SharedStorage>,
 ) -> Result<(), teloxide::RequestError> {
     if !crate::vlipsy::is_available() {
-        bot.send_message(chat_id, i18n::t(lang, "vlipsy.unavailable"))
-            .parse_mode(ParseMode::MarkdownV2)
-            .await?;
+        bot.send_md(chat_id, i18n::t(lang, "vlipsy.unavailable")).await?;
         return Ok(());
     }
 
     set_waiting_for_vlipsy_search(shared_storage, chat_id.0, true).await;
 
-    bot.send_message(chat_id, i18n::t(lang, "vlipsy.search_prompt"))
-        .parse_mode(ParseMode::MarkdownV2)
-        .await?;
+    bot.send_md(chat_id, i18n::t(lang, "vlipsy.search_prompt")).await?;
 
     Ok(())
 }
@@ -91,18 +85,12 @@ pub async fn handle_search_text(
     }
 
     // Send "searching..." status
-    let status_msg = bot
-        .send_message(chat_id, i18n::t(lang, "vlipsy.searching"))
-        .parse_mode(ParseMode::MarkdownV2)
-        .await;
+    let status_msg = bot.send_md(chat_id, i18n::t(lang, "vlipsy.searching")).await;
 
     let client = match VlipsyClient::new() {
         Some(c) => c,
         None => {
-            let _ = bot
-                .send_message(chat_id, i18n::t(lang, "vlipsy.unavailable"))
-                .parse_mode(ParseMode::MarkdownV2)
-                .await;
+            let _ = bot.send_md(chat_id, i18n::t(lang, "vlipsy.unavailable")).await;
             return;
         }
     };
@@ -117,10 +105,7 @@ pub async fn handle_search_text(
     match result {
         Ok(response) => {
             if response.results.is_empty() {
-                let _ = bot
-                    .send_message(chat_id, i18n::t(lang, "vlipsy.no_results"))
-                    .parse_mode(ParseMode::MarkdownV2)
-                    .await;
+                let _ = bot.send_md(chat_id, i18n::t(lang, "vlipsy.no_results")).await;
             } else {
                 let total_pages = response
                     .total
@@ -131,10 +116,7 @@ pub async fn handle_search_text(
         }
         Err(e) => {
             log::error!("Vlipsy search error: {}", e);
-            let _ = bot
-                .send_message(chat_id, i18n::t(lang, "vlipsy.no_results"))
-                .parse_mode(ParseMode::MarkdownV2)
-                .await;
+            let _ = bot.send_md(chat_id, i18n::t(lang, "vlipsy.no_results")).await;
         }
     }
 }
@@ -281,10 +263,7 @@ pub async fn handle_vlipsy_callback(
                 }
                 Err(e) => {
                     log::error!("Vlipsy pagination error: {}", e);
-                    let _ = bot
-                        .send_message(chat_id, i18n::t(&lang, "vlipsy.no_results"))
-                        .parse_mode(ParseMode::MarkdownV2)
-                        .await;
+                    let _ = bot.send_md(chat_id, i18n::t(&lang, "vlipsy.no_results")).await;
                 }
             }
         }
@@ -300,19 +279,13 @@ async fn send_clip(bot: &Bot, chat_id: ChatId, clip_id: &str, lang: &LanguageIde
     let client = match VlipsyClient::new() {
         Some(c) => c,
         None => {
-            let _ = bot
-                .send_message(chat_id, i18n::t(lang, "vlipsy.unavailable"))
-                .parse_mode(ParseMode::MarkdownV2)
-                .await;
+            let _ = bot.send_md(chat_id, i18n::t(lang, "vlipsy.unavailable")).await;
             return;
         }
     };
 
     // Send "sending..." status
-    let status_msg = bot
-        .send_message(chat_id, i18n::t(lang, "vlipsy.sending"))
-        .parse_mode(ParseMode::MarkdownV2)
-        .await;
+    let status_msg = bot.send_md(chat_id, i18n::t(lang, "vlipsy.sending")).await;
 
     match client.get_vlip(clip_id).await {
         Ok(resp) => {

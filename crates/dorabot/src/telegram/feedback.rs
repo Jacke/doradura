@@ -8,7 +8,6 @@ use crate::telegram::Bot;
 use crate::telegram::BotExt;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::ParseMode;
 
 use crate::core::config::admin::ADMIN_USER_ID;
 use crate::i18n;
@@ -126,11 +125,7 @@ pub async fn notify_admin_feedback(
     let notification = i18n::t_args(&lang, "feedback.admin_notification", &args);
 
     // Send notification to admin
-    match bot
-        .send_message(ChatId(admin_id), notification)
-        .parse_mode(ParseMode::MarkdownV2)
-        .await
-    {
+    match bot.send_md(ChatId(admin_id), notification).await {
         Ok(_) => {
             log::info!("✅ Feedback notification sent successfully to admin {}", admin_id);
             log::info!("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━");

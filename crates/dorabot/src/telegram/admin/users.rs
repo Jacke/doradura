@@ -7,7 +7,6 @@ use crate::telegram::BotExt;
 use anyhow::Result;
 use std::sync::Arc;
 use teloxide::prelude::*;
-use teloxide::types::ParseMode;
 
 /// Handle /users command - show list of all users
 pub async fn handle_users_command(
@@ -123,7 +122,7 @@ pub async fn handle_users_command(
         text.len()
     );
 
-    match bot.send_message(chat_id, &text).parse_mode(ParseMode::MarkdownV2).await {
+    match bot.send_md(chat_id, &text).await {
         Ok(_) => {
             log::debug!("Successfully sent users list");
         }
@@ -162,7 +161,7 @@ pub async fn handle_setplan_command(
     // Parse command: /setplan <user_id> <plan> [days]
     let parts: Vec<&str> = message_text.split_whitespace().collect();
     if parts.len() < 3 {
-        bot.send_message(
+        bot.send_md(
             chat_id,
             "❌ *Invalid command format*\n\n\
             *Usage:*\n\
@@ -176,7 +175,6 @@ pub async fn handle_setplan_command(
             `/setplan 123456789 premium 30` \\- premium for 30 days\n\
             `/setplan 123456789 free` \\- reset to free plan",
         )
-        .parse_mode(ParseMode::MarkdownV2)
         .await?;
         return Ok(());
     }
@@ -252,7 +250,7 @@ pub async fn handle_setplan_command(
 
     // Send notification to the user whose plan was changed
     let user_chat_id = ChatId(user_id);
-    bot.send_message(
+    bot.send_md(
         user_chat_id,
         format!(
             "💳 *Subscription Plan Change*\n\n\
@@ -262,7 +260,6 @@ pub async fn handle_setplan_command(
             plan_emoji, plan_name, expiry_info_escaped
         ),
     )
-    .parse_mode(ParseMode::MarkdownV2)
     .await?;
 
     Ok(())
@@ -397,9 +394,7 @@ pub async fn handle_charges_command(
 
                 // Split into multiple messages if too long
                 if text.len() > 3500 {
-                    bot.send_message(chat_id, text.clone())
-                        .parse_mode(ParseMode::MarkdownV2)
-                        .await?;
+                    bot.send_md(chat_id, text.clone()).await?;
                     text.clear();
                     text.push_str("💳 *Payments \\(continued\\)*\n\n");
                 }
@@ -607,11 +602,10 @@ pub async fn handle_sent_files_command(
         }
         Err(e) => {
             log::error!("❌ Failed to retrieve sent files: {}", e);
-            bot.send_message(
+            bot.send_md(
                 chat_id,
                 format!("❌ Error fetching file list:\n\n{}", escape_markdown(&e.to_string())),
             )
-            .parse_mode(ParseMode::MarkdownV2)
             .await?;
         }
     }
