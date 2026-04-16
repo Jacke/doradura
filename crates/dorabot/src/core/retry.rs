@@ -7,6 +7,7 @@
 //! - Different strategies for different error types
 
 use crate::core::metrics;
+use backon::{BackoffBuilder, ExponentialBuilder};
 use std::future::Future;
 use std::time::Duration;
 use thiserror::Error;
@@ -102,19 +103,27 @@ impl RetryConfig {
     }
 
     /// Calculates delay for a given attempt number.
+    ///
+    /// Backed by `backon::ExponentialBuilder` for the underlying math.
     pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
-        let base_delay = self.initial_delay.as_secs_f64() * self.backoff_multiplier.powi(attempt as i32);
-        let capped_delay = base_delay.min(self.max_delay.as_secs_f64());
+        let mut iter = self.to_backoff();
+        for _ in 0..attempt {
+            iter.next();
+        }
+        iter.next().unwrap_or(self.max_delay)
+    }
 
-        let final_delay = if self.add_jitter {
-            // Add up to 25% jitter
-            let jitter = rand::random::<f64>() * 0.25 * capped_delay;
-            capped_delay + jitter
-        } else {
-            capped_delay
-        };
-
-        Duration::from_secs_f64(final_delay)
+    /// Builds a `backon` exponential backoff iterator matching this config.
+    fn to_backoff(&self) -> <ExponentialBuilder as BackoffBuilder>::Backoff {
+        let mut builder = ExponentialBuilder::default()
+            .with_min_delay(self.initial_delay)
+            .with_max_delay(self.max_delay)
+            .with_factor(self.backoff_multiplier as f32)
+            .without_max_times();
+        if self.add_jitter {
+            builder = builder.with_jitter();
+        }
+        builder.build()
     }
 }
 
@@ -288,6 +297,7 @@ where
 {
     let start = std::time::Instant::now();
     let mut attempts = 0;
+    let mut backoff_iter = config.to_backoff();
 
     loop {
         attempts += 1;
@@ -301,15 +311,15 @@ where
                 };
             }
             Err(e) if attempts <= config.max_retries && e.is_retryable() => {
-                // Record retry metric
                 metrics::TASK_RETRIES_TOTAL
                     .with_label_values(&[&attempts.to_string()])
                     .inc();
 
-                // Calculate delay (respect retry_after hint if provided)
+                // Prefer server-provided retry_after hint over computed backoff.
                 let delay = e
                     .retry_after()
-                    .unwrap_or_else(|| config.delay_for_attempt(attempts - 1));
+                    .or_else(|| backoff_iter.next())
+                    .unwrap_or(config.max_delay);
 
                 log::warn!(
                     "Attempt {}/{} failed (retrying in {:?}): {:?}",

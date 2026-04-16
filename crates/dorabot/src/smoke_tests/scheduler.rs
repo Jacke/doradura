@@ -7,10 +7,10 @@ use super::results::SmokeTestReport;
 use super::runner::{run_all_smoke_tests, SmokeTestConfig};
 use crate::telegram::notifications::notify_admin_text;
 use crate::telegram::Bot;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::interval;
+use tokio_util::sync::CancellationToken;
 
 /// Default interval between health checks (1 hour)
 pub const DEFAULT_HEALTH_CHECK_INTERVAL_SECS: u64 = 3600;
@@ -20,7 +20,7 @@ pub struct HealthCheckScheduler {
     bot: Arc<Bot>,
     config: SmokeTestConfig,
     interval_secs: u64,
-    running: Arc<AtomicBool>,
+    cancel: CancellationToken,
 }
 
 impl HealthCheckScheduler {
@@ -35,7 +35,7 @@ impl HealthCheckScheduler {
             bot,
             config: SmokeTestConfig::for_production(),
             interval_secs,
-            running: Arc::new(AtomicBool::new(false)),
+            cancel: CancellationToken::new(),
         }
     }
 
@@ -45,7 +45,7 @@ impl HealthCheckScheduler {
             bot,
             config,
             interval_secs,
-            running: Arc::new(AtomicBool::new(false)),
+            cancel: CancellationToken::new(),
         }
     }
 
@@ -164,7 +164,6 @@ impl HealthCheckScheduler {
             return;
         }
 
-        self.running.store(true, Ordering::SeqCst);
         log::info!("Starting health check scheduler with {}s interval", self.interval_secs);
 
         let mut timer = interval(Duration::from_secs(self.interval_secs));
@@ -172,14 +171,13 @@ impl HealthCheckScheduler {
         // Skip first tick (don't run immediately on startup)
         timer.tick().await;
 
-        while self.running.load(Ordering::SeqCst) {
-            timer.tick().await;
-
-            if !self.running.load(Ordering::SeqCst) {
-                break;
+        loop {
+            tokio::select! {
+                _ = self.cancel.cancelled() => break,
+                _ = timer.tick() => {
+                    self.run_health_check().await;
+                }
             }
-
-            self.run_health_check().await;
         }
 
         log::info!("Health check scheduler stopped");
@@ -187,7 +185,7 @@ impl HealthCheckScheduler {
 
     /// Stops the scheduler.
     pub fn stop(&self) {
-        self.running.store(false, Ordering::SeqCst);
+        self.cancel.cancel();
     }
 }
 

@@ -9,6 +9,7 @@ use crate::i18n;
 use crate::storage::db::{self, DbPool, OutputKind, SourceKind};
 use crate::storage::SharedStorage;
 use crate::telegram::Bot;
+use itertools::Itertools;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::ParseMode;
@@ -112,7 +113,7 @@ pub fn parse_download_time_range(text: &str, url_text: &str) -> Option<(String, 
         return None;
     }
     // Check remaining text for speed modifier (e.g., "2x", "1.5x", "speed2")
-    let remaining: String = parts.collect::<Vec<_>>().join(" ");
+    let remaining: String = parts.join(" ");
     let speed = if remaining.is_empty() {
         None
     } else {

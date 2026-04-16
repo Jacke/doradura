@@ -2,9 +2,10 @@ use crate::core::config;
 use crate::core::error::AppError;
 use crate::download::error::DownloadError;
 use std::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::LazyLock;
 use tokio::process::Command as TokioCommand;
 use tokio::time::{timeout, Duration};
+use tokio_util::sync::CancellationToken;
 
 /// Auto-update interval for yt-dlp (1 hour)
 const AUTO_UPDATE_INTERVAL_HOURS: u64 = 1;
@@ -12,8 +13,8 @@ const AUTO_UPDATE_INTERVAL_HOURS: u64 = 1;
 /// URL for downloading yt-dlp nightly builds
 const NIGHTLY_URL: &str = "https://github.com/yt-dlp/yt-dlp-nightly-builds/releases/latest/download/yt-dlp";
 
-/// Flag to stop the background auto-update task
-static STOP_AUTO_UPDATE: AtomicBool = AtomicBool::new(false);
+/// Cancellation token for the background auto-update task
+static AUTO_UPDATE_CANCEL: LazyLock<CancellationToken> = LazyLock::new(CancellationToken::new);
 
 /// Returns the current yt-dlp version.
 pub fn get_current_version() -> String {
@@ -127,7 +128,7 @@ pub async fn check_and_update_ytdlp() -> Result<(), AppError> {
 ///
 /// Updates yt-dlp every N hours to prevent 403 errors from YouTube.
 pub fn start_auto_update_task() {
-    STOP_AUTO_UPDATE.store(false, Ordering::SeqCst);
+    let cancel = AUTO_UPDATE_CANCEL.clone();
 
     tokio::spawn(async move {
         let interval = Duration::from_secs(AUTO_UPDATE_INTERVAL_HOURS * 60 * 60);
@@ -138,13 +139,12 @@ pub fn start_auto_update_task() {
         );
 
         loop {
-            // Wait for the interval
-            tokio::time::sleep(interval).await;
-
-            // Check the stop flag
-            if STOP_AUTO_UPDATE.load(Ordering::SeqCst) {
-                log::info!("yt-dlp auto-update task stopped");
-                break;
+            tokio::select! {
+                _ = cancel.cancelled() => {
+                    log::info!("yt-dlp auto-update task stopped");
+                    break;
+                }
+                _ = tokio::time::sleep(interval) => {}
             }
 
             log::info!("🔄 Running scheduled yt-dlp update...");
@@ -167,7 +167,7 @@ pub fn start_auto_update_task() {
 
 /// Stops the background auto-update task.
 pub fn stop_auto_update_task() {
-    STOP_AUTO_UPDATE.store(true, Ordering::SeqCst);
+    AUTO_UPDATE_CANCEL.cancel();
     log::info!("yt-dlp auto-update task stop requested");
 }
 

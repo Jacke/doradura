@@ -9,9 +9,9 @@ use crate::core::metrics;
 use crate::download::error::DownloadError;
 use std::path::Path;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 /// Async callback for sending disk-space alerts (e.g., Telegram admin notification).
 /// Arguments: `(available_gb, threshold_gb)`.
@@ -30,8 +30,8 @@ pub const CRITICAL_DISK_SPACE_BYTES: u64 = 500 * 1024 * 1024;
 /// Disk space check interval (5 minutes)
 pub const DISK_CHECK_INTERVAL_SECS: u64 = 300;
 
-/// Flag to stop background disk monitoring
-static STOP_DISK_MONITOR: AtomicBool = AtomicBool::new(false);
+/// Cancellation token for background disk monitoring
+static DISK_MONITOR_CANCEL: LazyLock<CancellationToken> = LazyLock::new(CancellationToken::new);
 
 /// Result of disk space check
 #[derive(Debug, Clone)]
@@ -233,7 +233,7 @@ pub async fn check_and_log_disk_space(on_alert: Option<&DiskAlertFn>) {
 /// If `on_alert` is provided, it is called with `(available_gb, threshold_gb)` on low-disk events.
 /// Returns a `JoinHandle` that can be awaited or checked for panics.
 pub fn start_disk_monitor_task(on_alert: Option<DiskAlertFn>) -> tokio::task::JoinHandle<()> {
-    STOP_DISK_MONITOR.store(false, Ordering::SeqCst);
+    let cancel = DISK_MONITOR_CANCEL.clone();
 
     tokio::spawn(async move {
         let interval = Duration::from_secs(DISK_CHECK_INTERVAL_SECS);
@@ -247,21 +247,22 @@ pub fn start_disk_monitor_task(on_alert: Option<DiskAlertFn>) -> tokio::task::Jo
         check_and_log_disk_space(on_alert.as_ref()).await;
 
         loop {
-            tokio::time::sleep(interval).await;
-
-            if STOP_DISK_MONITOR.load(Ordering::SeqCst) {
-                log::info!("Disk space monitor stopped");
-                break;
+            tokio::select! {
+                _ = cancel.cancelled() => {
+                    log::info!("Disk space monitor stopped");
+                    break;
+                }
+                _ = tokio::time::sleep(interval) => {
+                    check_and_log_disk_space(on_alert.as_ref()).await;
+                }
             }
-
-            check_and_log_disk_space(on_alert.as_ref()).await;
         }
     })
 }
 
 /// Stop background disk space monitoring
 pub fn stop_disk_monitor_task() {
-    STOP_DISK_MONITOR.store(true, Ordering::SeqCst);
+    DISK_MONITOR_CANCEL.cancel();
     log::info!("Disk space monitor stop requested");
 }
 

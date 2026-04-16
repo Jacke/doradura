@@ -44,6 +44,10 @@ secrecy = "0.10"
 moka = { version = "0.12", features = ["future"] }
 dashmap = "6"
 fs-err = { version = "3", features = ["tokio"] }
+itertools = "0.13"
+tokio-util = { version = "0.7", features = ["rt"] }
+backon = "1.5"
+figment = { version = "0.10", features = ["env", "toml", "yaml"] }
 uuid = "1.1"
 rand = "0.8"
 base64 = "0.22.1"

@@ -36,6 +36,9 @@ secrecy = { workspace = true }
 moka = { workspace = true }
 dashmap = { workspace = true }
 fs-err = { workspace = true }
+itertools = { workspace = true }
+tokio-util = { workspace = true }
+figment = { workspace = true }
 strum = { workspace = true }
 uuid = { workspace = true }
 rand = { workspace = true }
