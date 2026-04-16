@@ -639,7 +639,7 @@ pub async fn diagnose_cookies_file() -> CookiesDiagnostic {
         };
     }
 
-    match tokio::fs::read_to_string(&cookies_path).await {
+    match fs_err::tokio::read_to_string(&cookies_path).await {
         Ok(content) => diagnose_cookies_content(&content),
         Err(e) => CookiesDiagnostic {
             file_exists: true,
@@ -680,7 +680,7 @@ pub async fn validate_cookies() -> anyhow::Result<()> {
     }
 
     // Check file is not empty
-    match std::fs::metadata(&cookies_path) {
+    match fs_err::metadata(&cookies_path) {
         Ok(meta) if meta.len() == 0 => {
             anyhow::bail!("Cookies file is empty (0 bytes)");
         }
@@ -824,7 +824,7 @@ pub async fn validate_cookies_detailed() -> CookieValidationResult {
         };
     }
 
-    if let Ok(meta) = std::fs::metadata(&cookies_path) {
+    if let Ok(meta) = fs_err::metadata(&cookies_path) {
         if meta.len() == 0 {
             return CookieValidationResult {
                 is_valid: false,
@@ -945,7 +945,7 @@ pub fn log_cookie_file_diagnostics(context: &str) {
     };
 
     // File metadata
-    let metadata = match std::fs::metadata(&cookies_path) {
+    let metadata = match fs_err::metadata(&cookies_path) {
         Ok(m) => m,
         Err(e) => {
             log::warn!(
@@ -973,7 +973,7 @@ pub fn log_cookie_file_diagnostics(context: &str) {
     };
 
     // Read and parse content for diagnostics
-    match std::fs::read_to_string(&cookies_path) {
+    match fs_err::read_to_string(&cookies_path) {
         Ok(content) => {
             let diag = diagnose_cookies_content(&content);
             log::warn!(
@@ -1043,13 +1043,13 @@ pub async fn update_cookies_from_base64(cookies_b64: &str) -> Result<PathBuf> {
     // This prevents file corruption if process is killed mid-write
     let temp_path = format!("{}.tmp.{}", cookies_path.display(), std::process::id());
 
-    tokio::fs::write(&temp_path, &cookies_content)
+    fs_err::tokio::write(&temp_path, &cookies_content)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to write temp cookies file: {}", e))?;
 
-    tokio::fs::rename(&temp_path, &cookies_path).await.map_err(|e| {
+    fs_err::tokio::rename(&temp_path, &cookies_path).await.map_err(|e| {
         // Clean up temp file on rename failure
-        let _ = std::fs::remove_file(&temp_path);
+        let _ = fs_err::remove_file(&temp_path);
         anyhow::anyhow!("Failed to rename cookies file: {}", e)
     })?;
 
@@ -1082,13 +1082,13 @@ pub async fn update_cookies_from_content(content: &str) -> Result<PathBuf> {
     // This prevents file corruption if process is killed mid-write
     let temp_path = format!("{}.tmp.{}", cookies_path.display(), std::process::id());
 
-    tokio::fs::write(&temp_path, content)
+    fs_err::tokio::write(&temp_path, content)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to write temp cookies file: {}", e))?;
 
-    tokio::fs::rename(&temp_path, &cookies_path).await.map_err(|e| {
+    fs_err::tokio::rename(&temp_path, &cookies_path).await.map_err(|e| {
         // Clean up temp file on rename failure
-        let _ = std::fs::remove_file(&temp_path);
+        let _ = fs_err::remove_file(&temp_path);
         anyhow::anyhow!("Failed to rename cookies file: {}", e)
     })?;
 
@@ -1799,12 +1799,12 @@ pub async fn update_ig_cookies_from_content(content: &str) -> Result<PathBuf> {
 
     let temp_path = format!("{}.tmp.{}", cookies_path.display(), std::process::id());
 
-    tokio::fs::write(&temp_path, content)
+    fs_err::tokio::write(&temp_path, content)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to write temp IG cookies file: {}", e))?;
 
-    tokio::fs::rename(&temp_path, &cookies_path).await.map_err(|e| {
-        let _ = std::fs::remove_file(&temp_path);
+    fs_err::tokio::rename(&temp_path, &cookies_path).await.map_err(|e| {
+        let _ = fs_err::remove_file(&temp_path);
         anyhow::anyhow!("Failed to rename IG cookies file: {}", e)
     })?;
 
@@ -1826,7 +1826,7 @@ pub async fn validate_ig_cookies() -> anyhow::Result<()> {
         anyhow::bail!("Cookies file not found: {}", cookies_path.display());
     }
 
-    match std::fs::metadata(&cookies_path) {
+    match fs_err::metadata(&cookies_path) {
         Ok(meta) if meta.len() == 0 => {
             anyhow::bail!("Cookies file is empty (0 bytes)");
         }
@@ -1928,7 +1928,7 @@ pub async fn validate_ig_cookies() -> anyhow::Result<()> {
 /// Returns `Some("sessionid=xxx; csrftoken=yyy; ...")` if cookies are available.
 pub fn load_instagram_cookie_header() -> Option<String> {
     let cookies_path = get_ig_cookies_path()?;
-    let content = std::fs::read_to_string(&cookies_path).ok()?;
+    let content = fs_err::read_to_string(&cookies_path).ok()?;
     parse_cookies_for_domain(&content, "instagram.com")
 }
 
@@ -1950,7 +1950,7 @@ pub fn extract_cookie_value_for_domain(content: &str, domain: &str, name: &str) 
 /// Get Instagram csrftoken from cookies file.
 pub fn load_ig_csrf_token() -> Option<String> {
     let cookies_path = get_ig_cookies_path()?;
-    let content = std::fs::read_to_string(&cookies_path).ok()?;
+    let content = fs_err::read_to_string(&cookies_path).ok()?;
     extract_cookie_value_for_domain(&content, "instagram.com", "csrftoken")
 }
 

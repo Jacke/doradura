@@ -130,7 +130,7 @@ mod tests {
         let db_path = std::env::temp_dir().join(format!("doradura_test_{}_{}.db", std::process::id(), counter));
 
         // Remove existing file if any
-        let _ = std::fs::remove_file(&db_path);
+        let _ = fs_err::remove_file(&db_path);
 
         let db_path_str = db_path.to_string_lossy().to_string();
 

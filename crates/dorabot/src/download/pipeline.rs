@@ -83,11 +83,11 @@ pub(crate) async fn apply_speed_to_file(file_path: &str, speed: f32) -> anyhow::
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         log::error!("ffmpeg speed error: {}", stderr);
-        let _ = tokio::fs::remove_file(&tmp_path).await;
+        let _ = fs_err::tokio::remove_file(&tmp_path).await;
         anyhow::bail!("ffmpeg speed error: {}", stderr);
     }
 
-    tokio::fs::rename(&tmp_path, file_path)
+    fs_err::tokio::rename(&tmp_path, file_path)
         .await
         .with_context(|| "rename failed")?;
     log::info!(
@@ -737,7 +737,7 @@ pub async fn execute(
         if let Some(speed) = speed {
             match apply_speed_to_file(&download_output.file_path, speed).await {
                 Ok(_) => {
-                    if let Ok(meta) = tokio::fs::metadata(&download_output.file_path).await {
+                    if let Ok(meta) = fs_err::tokio::metadata(&download_output.file_path).await {
                         download_output.file_size = meta.len();
                     }
                     if let Some(dur) = download_output.duration_secs {
@@ -1071,14 +1071,14 @@ pub fn schedule_cleanup(download_path: String) {
 pub fn schedule_cleanup_with_extras(download_path: String, extra_paths: Vec<String>) {
     tokio::spawn(async move {
         tokio::time::sleep(config::download::cleanup_delay()).await;
-        if let Err(e) = tokio::fs::remove_file(&download_path).await {
+        if let Err(e) = fs_err::tokio::remove_file(&download_path).await {
             if e.kind() != std::io::ErrorKind::NotFound {
                 log::warn!("Failed to delete file: {}", e);
             }
         }
         cleanup_partial_download(&download_path);
         for path in &extra_paths {
-            if let Err(e) = tokio::fs::remove_file(path).await {
+            if let Err(e) = fs_err::tokio::remove_file(path).await {
                 if e.kind() != std::io::ErrorKind::NotFound {
                     log::warn!("Failed to delete extra file: {}", e);
                 }

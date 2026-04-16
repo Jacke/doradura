@@ -878,9 +878,9 @@ async fn handle_convert_callback(
                                         .await?;
                                         // Clean up remaining files
                                         for path in &output_paths {
-                                            tokio::fs::remove_file(path).await.ok();
+                                            fs_err::tokio::remove_file(path).await.ok();
                                         }
-                                        tokio::fs::remove_file(&temp_input).await.ok();
+                                        fs_err::tokio::remove_file(&temp_input).await.ok();
                                         return Ok(());
                                     }
                                 }
@@ -891,7 +891,7 @@ async fn handle_convert_callback(
 
                             // Clean up all output files
                             for path in &output_paths {
-                                tokio::fs::remove_file(path).await.ok();
+                                fs_err::tokio::remove_file(path).await.ok();
                             }
                         }
                         Err(e) => {
@@ -932,7 +932,7 @@ async fn handle_convert_callback(
                                 }
                             }
 
-                            tokio::fs::remove_file(&output_path).await.ok();
+                            fs_err::tokio::remove_file(&output_path).await.ok();
                         }
                         Err(e) => {
                             bot.edit_message_text(chat_id, status_msg.id, format!("❌ Error creating circle: {}", e))
@@ -942,7 +942,7 @@ async fn handle_convert_callback(
                 }
 
                 // Clean up input file
-                tokio::fs::remove_file(&temp_input).await.ok();
+                fs_err::tokio::remove_file(&temp_input).await.ok();
             }
         }
         "audio" => {
@@ -1010,7 +1010,7 @@ async fn handle_convert_callback(
                         }
 
                         // Clean up
-                        tokio::fs::remove_file(&output_path).await.ok();
+                        fs_err::tokio::remove_file(&output_path).await.ok();
                     }
                     Err(e) => {
                         bot.edit_message_text(chat_id, status_msg.id, format!("❌ Error extracting audio: {}", e))
@@ -1019,7 +1019,7 @@ async fn handle_convert_callback(
                 }
 
                 // Clean up input file
-                tokio::fs::remove_file(&temp_input).await.ok();
+                fs_err::tokio::remove_file(&temp_input).await.ok();
             }
         }
         "gif" => {
@@ -1077,7 +1077,7 @@ async fn handle_convert_callback(
                         }
 
                         // Clean up
-                        tokio::fs::remove_file(&output_path).await.ok();
+                        fs_err::tokio::remove_file(&output_path).await.ok();
                     }
                     Err(e) => {
                         bot.edit_message_text(chat_id, status_msg.id, format!("❌ Error creating GIF: {}", e))
@@ -1086,7 +1086,7 @@ async fn handle_convert_callback(
                 }
 
                 // Clean up input file
-                tokio::fs::remove_file(&temp_input).await.ok();
+                fs_err::tokio::remove_file(&temp_input).await.ok();
             }
         }
         "compress" => {
@@ -1124,14 +1124,17 @@ async fn handle_convert_callback(
                 };
 
                 // Get original file size for comparison
-                let original_size = tokio::fs::metadata(&temp_input).await.map(|m| m.len()).unwrap_or(0);
+                let original_size = fs_err::tokio::metadata(&temp_input).await.map(|m| m.len()).unwrap_or(0);
 
                 // Compress video
                 let options = CompressionOptions::default();
 
                 match compress(&temp_input, options).await {
                     Ok(output_path) => {
-                        let compressed_size = tokio::fs::metadata(&output_path).await.map(|m| m.len()).unwrap_or(0);
+                        let compressed_size = fs_err::tokio::metadata(&output_path)
+                            .await
+                            .map(|m| m.len())
+                            .unwrap_or(0);
 
                         let size_reduction = if original_size > 0 {
                             ((original_size - compressed_size) as f64 / original_size as f64) * 100.0
@@ -1171,7 +1174,7 @@ async fn handle_convert_callback(
                         }
 
                         // Clean up
-                        tokio::fs::remove_file(&output_path).await.ok();
+                        fs_err::tokio::remove_file(&output_path).await.ok();
                     }
                     Err(e) => {
                         bot.edit_message_text(chat_id, status_msg.id, format!("❌ Error compressing video: {}", e))
@@ -1180,7 +1183,7 @@ async fn handle_convert_callback(
                 }
 
                 // Clean up input file
-                tokio::fs::remove_file(&temp_input).await.ok();
+                fs_err::tokio::remove_file(&temp_input).await.ok();
             }
         }
         _ => {

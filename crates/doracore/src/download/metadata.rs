@@ -7,7 +7,7 @@ use crate::core::metrics;
 use crate::download::error::DownloadError;
 use crate::download::ytdlp_errors::{analyze_ytdlp_error, get_error_message, should_notify_admin, YtDlpErrorType};
 use crate::storage::cache;
-use std::fs;
+use fs_err as fs;
 use std::path::Path;
 use std::sync::LazyLock;
 use tokio::process::Command as TokioCommand;
@@ -213,7 +213,7 @@ pub fn is_proxy_related_error(error_msg: &str) -> bool {
 ///
 /// Returns `true` if the file exists and has valid Netscape format, `false` otherwise.
 pub fn validate_cookies_file_format(cookies_file: &str) -> bool {
-    if let Ok(contents) = std::fs::read_to_string(cookies_file) {
+    if let Ok(contents) = fs_err::read_to_string(cookies_file) {
         let has_header = contents.lines().any(|line| {
             line.trim().starts_with("# Netscape HTTP Cookie File") || line.trim().starts_with("# HTTP Cookie File")
         });

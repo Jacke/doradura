@@ -942,7 +942,7 @@ pub fn record_message_type(message_type: &str) {
 
 /// Update process resident memory from /proc/self/statm (Linux only — Railway runs Linux)
 pub fn update_process_memory() {
-    if let Ok(statm) = std::fs::read_to_string("/proc/self/statm") {
+    if let Ok(statm) = fs_err::read_to_string("/proc/self/statm") {
         // Fields: size resident shared text lib data dt (in pages)
         if let Some(rss_pages) = statm.split_whitespace().nth(1) {
             if let Ok(pages) = rss_pages.parse::<u64>() {

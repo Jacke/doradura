@@ -1,6 +1,6 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use std::fs;
+use fs_err as fs;
 use std::path::{Path, PathBuf};
 
 /// Maximum number of stored backups

@@ -967,7 +967,7 @@ fn history_path() -> std::path::PathBuf {
 /// Load history from disk; returns empty vec on error.
 pub fn history_load() -> Vec<HistoryEntry> {
     let path = history_path();
-    if let Ok(content) = std::fs::read_to_string(&path) {
+    if let Ok(content) = fs_err::read_to_string(&path) {
         if let Ok(entries) = serde_json::from_str::<Vec<HistoryEntry>>(&content) {
             return entries;
         }
@@ -979,9 +979,9 @@ pub fn history_load() -> Vec<HistoryEntry> {
 pub fn history_save(entries: &[HistoryEntry]) {
     let path = history_path();
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        let _ = fs_err::create_dir_all(parent);
     }
     if let Ok(json) = serde_json::to_string_pretty(entries) {
-        let _ = std::fs::write(path, json);
+        let _ = fs_err::write(path, json);
     }
 }

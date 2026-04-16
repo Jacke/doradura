@@ -384,7 +384,7 @@ pub(super) async fn admin_api_health(_admin: RequireAdmin, State(state): State<W
 
         // Cookies check (single read)
         let cookies_path = std::env::var("COOKIES_FILE").unwrap_or_else(|_| "/data/cookies.txt".to_string());
-        let cookies_content = std::fs::read_to_string(&cookies_path).unwrap_or_default();
+        let cookies_content = fs_err::read_to_string(&cookies_path).unwrap_or_default();
         let cookies_exist = !cookies_content.is_empty();
         let cookies_count = cookies_content
             .lines()

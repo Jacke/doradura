@@ -3,9 +3,9 @@
 //! Cache files are stored as `{cache_dir}/{sha256(url+lang)}.{format}`.
 //! No TTL — subtitle content is considered stable once fetched.
 
+use fs_err::tokio as fs;
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
-use tokio::fs;
 
 pub struct SubtitleCache {
     cache_dir: PathBuf,

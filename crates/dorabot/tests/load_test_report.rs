@@ -3,8 +3,8 @@
 //! Generates markdown reports with test results, bottleneck identification,
 //! and recommendations for configuration tuning.
 
+use fs_err as fs;
 use std::fmt::Write as FmtWrite;
-use std::fs;
 use std::io::Write;
 use std::path::Path;
 

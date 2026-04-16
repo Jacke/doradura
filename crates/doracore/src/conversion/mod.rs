@@ -103,7 +103,7 @@ pub async fn get_video_duration<P: AsRef<Path>>(path: P) -> ConversionResult<f64
 
 /// Get file size in bytes
 pub async fn get_file_size<P: AsRef<Path>>(path: P) -> ConversionResult<u64> {
-    let metadata = tokio::fs::metadata(path).await?;
+    let metadata = fs_err::tokio::metadata(path).await?;
     Ok(metadata.len())
 }
 
@@ -163,12 +163,12 @@ mod tests {
     #[tokio::test]
     async fn test_get_file_size() {
         let path = "/tmp/test_filesize_check.txt";
-        tokio::fs::write(path, "hello world").await.unwrap();
+        fs_err::tokio::write(path, "hello world").await.unwrap();
 
         let size = get_file_size(path).await.unwrap();
         assert_eq!(size, 11); // "hello world" = 11 bytes
 
-        let _ = tokio::fs::remove_file(path).await;
+        let _ = fs_err::tokio::remove_file(path).await;
     }
 
     #[tokio::test]

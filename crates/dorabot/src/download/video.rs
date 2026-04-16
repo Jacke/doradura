@@ -23,7 +23,7 @@ use crate::storage::SharedStorage;
 use crate::telegram::cache::PREVIEW_CACHE;
 use crate::telegram::ext::BotExt;
 use crate::telegram::Bot;
-use std::fs;
+use fs_err as fs;
 use std::sync::Arc;
 use teloxide::prelude::*;
 use tokio::process::Command as TokioCommand;
@@ -719,7 +719,7 @@ async fn replace_audio_track(video_path: &str, url: &Url, lang: &str) -> String 
         let parent = std::path::Path::new(&audio_path)
             .parent()
             .unwrap_or(std::path::Path::new("."));
-        let found = match tokio::fs::read_dir(parent).await {
+        let found = match fs_err::tokio::read_dir(parent).await {
             Ok(mut entries) => {
                 let mut result = None;
                 while let Ok(Some(e)) = entries.next_entry().await {
@@ -779,27 +779,27 @@ async fn replace_audio_track(video_path: &str, url: &Url, lang: &str) -> String 
         Ok(output) if output.status.success() => {
             log::info!("🔊 Audio replaced successfully");
             // Replace original with merged
-            if tokio::fs::rename(&merged_path, video_path).await.is_err() {
-                if let Err(e) = tokio::fs::copy(&merged_path, video_path).await {
+            if fs_err::tokio::rename(&merged_path, video_path).await.is_err() {
+                if let Err(e) = fs_err::tokio::copy(&merged_path, video_path).await {
                     log::error!("🔊 Failed to copy merged file: {}", e);
                 }
-                if let Err(e) = tokio::fs::remove_file(&merged_path).await {
+                if let Err(e) = fs_err::tokio::remove_file(&merged_path).await {
                     log::warn!("🔊 Failed to clean up merged file: {}", e);
                 }
             }
-            let _ = tokio::fs::remove_file(&actual_audio).await;
+            let _ = fs_err::tokio::remove_file(&actual_audio).await;
             video_path.to_string()
         }
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
             log::error!("🔊 ffmpeg failed: {}", &stderr[..stderr.len().min(300)]);
-            let _ = tokio::fs::remove_file(&merged_path).await;
-            let _ = tokio::fs::remove_file(&actual_audio).await;
+            let _ = fs_err::tokio::remove_file(&merged_path).await;
+            let _ = fs_err::tokio::remove_file(&actual_audio).await;
             video_path.to_string()
         }
         Err(e) => {
             log::error!("🔊 ffmpeg exec error: {}", e);
-            let _ = tokio::fs::remove_file(&actual_audio).await;
+            let _ = fs_err::tokio::remove_file(&actual_audio).await;
             video_path.to_string()
         }
     }
@@ -890,7 +890,7 @@ async fn maybe_burn_subtitles(
     match subtitle_output {
         Ok(output) if output.status.success() => {
             // Find actual subtitle file (yt-dlp may add language suffix)
-            let subtitle_file = match tokio::fs::read_dir(&download_folder).await {
+            let subtitle_file = match fs_err::tokio::read_dir(&download_folder).await {
                 Ok(mut entries) => {
                     let mut result = None;
                     while let Ok(Some(entry)) = entries.next_entry().await {
@@ -914,13 +914,13 @@ async fn maybe_burn_subtitles(
                 match burn_subtitles_into_video(file_path, &sub_file, &output_with_subs, &subtitle_style).await {
                     Ok(_) => {
                         log::info!("Successfully burned subtitles into video");
-                        let _ = tokio::fs::remove_file(file_path).await;
-                        let _ = tokio::fs::remove_file(&sub_file).await;
+                        let _ = fs_err::tokio::remove_file(file_path).await;
+                        let _ = fs_err::tokio::remove_file(&sub_file).await;
                         return output_with_subs;
                     }
                     Err(e) => {
                         log::error!("Failed to burn subtitles: {}. Using original.", e);
-                        let _ = tokio::fs::remove_file(&sub_file).await;
+                        let _ = fs_err::tokio::remove_file(&sub_file).await;
                     }
                 }
             } else {

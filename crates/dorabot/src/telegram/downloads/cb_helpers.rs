@@ -18,7 +18,7 @@ pub(super) async fn send_as_voice_segment(
 ) -> ResponseResult<teloxide::types::Message> {
     // Use /tmp directly -- /data gets cleaned by init-data script (removes subdirs with binlogs)
     let tmp_dir = std::path::PathBuf::from(format!("/tmp/voice_{}", uuid::Uuid::new_v4()));
-    tokio::fs::create_dir_all(&tmp_dir).await.map_err(to_req_err)?;
+    fs_err::tokio::create_dir_all(&tmp_dir).await.map_err(to_req_err)?;
 
     let input_path = tmp_dir.join("input.mp3");
     let output_path = tmp_dir.join("output.ogg");
@@ -86,7 +86,10 @@ pub(super) async fn send_as_voice_segment(
 
     // Always set duration -- required for waveform. Fall back to segment length.
     let dur = result.unwrap_or(duration_secs.max(1) as u32);
-    let file_size = tokio::fs::metadata(&output_path).await.map(|m| m.len()).unwrap_or(0);
+    let file_size = fs_err::tokio::metadata(&output_path)
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0);
     log::info!(
         "Voice: sending OGG file {:?} (duration={}s, size={}B / {}KB)",
         output_path,
@@ -102,7 +105,7 @@ pub(super) async fn send_as_voice_segment(
         if file_size > MAX_VOICE_SIZE {
             return Err(to_req_err(format!("Voice file too large: {} bytes", file_size)));
         }
-        let file_bytes = tokio::fs::read(&output_path).await.map_err(to_req_err)?;
+        let file_bytes = fs_err::tokio::read(&output_path).await.map_err(to_req_err)?;
         let voice_part = reqwest::multipart::Part::bytes(file_bytes)
             .file_name("voice.ogg")
             .mime_str("audio/ogg")
@@ -140,7 +143,7 @@ pub(super) async fn send_as_voice_segment(
     .await;
 
     // Always cleanup temp files, even on error
-    let _ = tokio::fs::remove_dir_all(tmp_dir).await;
+    let _ = fs_err::tokio::remove_dir_all(tmp_dir).await;
     send_result
 }
 

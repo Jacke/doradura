@@ -818,7 +818,7 @@ pub(crate) async fn process_audio_effects(
         crate::download::audio_effects::get_modified_file_path(&session_id, new_version, &config::DOWNLOAD_FOLDER);
     let output_path = shellexpand::tilde(&output_path_raw).into_owned();
     if let Some(parent) = Path::new(&output_path).parent() {
-        tokio::fs::create_dir_all(parent).await?;
+        fs_err::tokio::create_dir_all(parent).await?;
     }
 
     // Apply effects
@@ -882,7 +882,7 @@ pub(crate) async fn process_audio_effects(
 
             // Delete old version file if exists
             if session.version > 0 && session.current_file_path != session.original_file_path {
-                let _ = tokio::fs::remove_file(&session.current_file_path).await;
+                let _ = fs_err::tokio::remove_file(&session.current_file_path).await;
             }
 
             // Delete editor message

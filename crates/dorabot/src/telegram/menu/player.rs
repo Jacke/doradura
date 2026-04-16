@@ -731,7 +731,7 @@ async fn download_player_track(
     }
 
     // Cleanup downloaded file
-    let _ = tokio::fs::remove_file(&phase_result.output.file_path).await;
+    let _ = fs_err::tokio::remove_file(&phase_result.output.file_path).await;
 
     match send_result {
         Ok((sent_msg, _file_size)) => {

@@ -143,7 +143,7 @@ async fn generate_and_send_cover(
                         bytes.to_vec()
                     };
 
-                    tokio::fs::write(&photo_path, &final_bytes).await?;
+                    fs_err::tokio::write(&photo_path, &final_bytes).await?;
                     bot.delete_message(chat_id, status.id).await.ok();
                     bot.send_photo(chat_id, InputFile::file(&photo_path))
                         .caption(cover_caption("🖼", title, url))
@@ -301,7 +301,7 @@ async fn download_video_fragment(
         return Err(anyhow::anyhow!("yt-dlp produced no output file"));
     }
 
-    let size = tokio::fs::metadata(&output_path).await?.len();
+    let size = fs_err::tokio::metadata(&output_path).await?.len();
     log::info!("[cover] Fragment downloaded: {} bytes", size);
 
     Ok(output_path)
@@ -411,7 +411,7 @@ mod tests {
         assert!(result.is_ok(), "download_video_fragment failed: {:?}", result.err());
         let path = result.unwrap();
         assert!(path.exists());
-        let meta = tokio::fs::metadata(&path).await.unwrap();
+        let meta = fs_err::tokio::metadata(&path).await.unwrap();
         assert!(meta.len() > 1000, "fragment file too small: {} bytes", meta.len());
     }
 

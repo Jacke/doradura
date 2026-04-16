@@ -226,7 +226,7 @@ mod tests {
             if self.fail_download {
                 return Err(AppError::Download("mock failure".into()));
             }
-            std::fs::write(&request.output_path, b"mock audio data")
+            fs_err::write(&request.output_path, b"mock audio data")
                 .map_err(|e| AppError::Download(crate::download::error::DownloadError::Other(e.to_string())))?;
             Ok(DownloadOutput {
                 file_path: request.output_path.clone(),
@@ -332,7 +332,7 @@ mod tests {
         assert_eq!(percents, vec![25, 50, 75, 100]);
 
         // Clean up
-        let _ = std::fs::remove_file(&tmp);
+        let _ = fs_err::remove_file(&tmp);
     }
 
     #[test]

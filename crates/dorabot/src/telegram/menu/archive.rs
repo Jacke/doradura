@@ -490,7 +490,7 @@ async fn handle_build(
         .edit_message_text(chat_id, message_id, "📦 Sending archive...")
         .await;
 
-    let zip_file_size = tokio::fs::metadata(&zip_path).await.map(|m| m.len()).unwrap_or(0);
+    let zip_file_size = fs_err::tokio::metadata(&zip_path).await.map(|m| m.len()).unwrap_or(0);
     let caption = format!(
         "📦 Archive: {} files ({})",
         downloaded_files.len(),
@@ -718,7 +718,7 @@ fn create_zip_file(zip_path: &std::path::Path, files: &[(String, PathBuf)]) -> a
     for (name, path) in files {
         zip.start_file(name, options)
             .map_err(|e| anyhow::anyhow!("start file '{}': {}", name, e))?;
-        let data = std::fs::read(path).map_err(|e| anyhow::anyhow!("read '{}': {}", name, e))?;
+        let data = fs_err::read(path).map_err(|e| anyhow::anyhow!("read '{}': {}", name, e))?;
         zip.write_all(&data).map_err(|e| anyhow::anyhow!("write '{}': {}", name, e))?;
     }
 

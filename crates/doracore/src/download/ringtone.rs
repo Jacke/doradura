@@ -153,7 +153,7 @@ pub fn sanitize_filename(title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
+    use fs_err as fs;
 
     // ==================== constant / pure-logic tests ====================
 

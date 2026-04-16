@@ -82,7 +82,7 @@ impl RecordingClient {
     pub fn save_to_default_dir(&self) -> anyhow::Result<()> {
         let snapshot = self.snapshot.lock().unwrap();
         let dir = TelegramSnapshot::snapshots_dir();
-        std::fs::create_dir_all(&dir)?;
+        fs_err::create_dir_all(&dir)?;
 
         let path = dir.join(format!("{}.json", snapshot.name));
         drop(snapshot); // Release lock before calling save

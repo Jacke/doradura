@@ -279,7 +279,7 @@ pub async fn handle_cookies_file_upload(
             log::info!("✅ Cookies file downloaded to: {:?}", file_path);
 
             // Read file content
-            match tokio::fs::read_to_string(&file_path).await {
+            match fs_err::tokio::read_to_string(&file_path).await {
                 Ok(content) => {
                     log::info!("✅ Cookies file read successfully, {} bytes", content.len());
 
@@ -297,7 +297,7 @@ pub async fn handle_cookies_file_upload(
                             log::info!("✅ Cookies file successfully written to: {:?}", path);
 
                             // Delete temp file
-                            let _ = tokio::fs::remove_file(&file_path).await;
+                            let _ = fs_err::tokio::remove_file(&file_path).await;
 
                             // Delete session
                             if let Err(e) = shared_storage.delete_cookies_upload_session_by_user(user_id).await {
@@ -385,7 +385,7 @@ pub async fn handle_cookies_file_upload(
                         }
                         Err(e) => {
                             log::error!("❌ Failed to update cookies file: {}", e);
-                            let _ = tokio::fs::remove_file(&file_path).await;
+                            let _ = fs_err::tokio::remove_file(&file_path).await;
                             bot.try_delete(chat_id, processing_msg.id).await;
                             shared_storage.delete_cookies_upload_session_by_user(user_id).await?;
 
@@ -404,7 +404,7 @@ pub async fn handle_cookies_file_upload(
                 }
                 Err(e) => {
                     log::error!("❌ Failed to read cookies file: {}", e);
-                    let _ = tokio::fs::remove_file(&file_path).await;
+                    let _ = fs_err::tokio::remove_file(&file_path).await;
                     bot.try_delete(chat_id, processing_msg.id).await;
                     shared_storage.delete_cookies_upload_session_by_user(user_id).await?;
 
@@ -514,7 +514,7 @@ pub async fn handle_ig_cookies_file_upload(
     let file_path = std::path::PathBuf::from(format!("/tmp/ig_cookies_upload_{}.txt", user_id));
 
     match download_file_from_telegram(bot, &document.file.id.0, Some(file_path.clone())).await {
-        Ok(_) => match tokio::fs::read_to_string(&file_path).await {
+        Ok(_) => match fs_err::tokio::read_to_string(&file_path).await {
             Ok(content) => {
                 let diagnostic = cookies::diagnose_ig_cookies_content(&content);
                 log::info!(
@@ -526,7 +526,7 @@ pub async fn handle_ig_cookies_file_upload(
 
                 match cookies::update_ig_cookies_from_content(&content).await {
                     Ok(path) => {
-                        let _ = tokio::fs::remove_file(&file_path).await;
+                        let _ = fs_err::tokio::remove_file(&file_path).await;
                         shared_storage.delete_ig_cookies_upload_session_by_user(user_id).await?;
                         bot.try_delete(chat_id, processing_msg.id).await;
 
@@ -583,7 +583,7 @@ pub async fn handle_ig_cookies_file_upload(
                     }
                     Err(e) => {
                         log::error!("❌ Failed to update IG cookies file: {}", e);
-                        let _ = tokio::fs::remove_file(&file_path).await;
+                        let _ = fs_err::tokio::remove_file(&file_path).await;
                         bot.try_delete(chat_id, processing_msg.id).await;
                         shared_storage.delete_ig_cookies_upload_session_by_user(user_id).await?;
 
@@ -601,7 +601,7 @@ pub async fn handle_ig_cookies_file_upload(
             }
             Err(e) => {
                 log::error!("❌ Failed to read IG cookies file: {}", e);
-                let _ = tokio::fs::remove_file(&file_path).await;
+                let _ = fs_err::tokio::remove_file(&file_path).await;
                 bot.try_delete(chat_id, processing_msg.id).await;
                 shared_storage.delete_ig_cookies_upload_session_by_user(user_id).await?;
 

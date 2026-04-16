@@ -707,7 +707,7 @@ async fn play_all(
                             }
                         }
                     }
-                    let _ = tokio::fs::remove_file(&phase_result.output.file_path).await;
+                    let _ = fs_err::tokio::remove_file(&phase_result.output.file_path).await;
                 }
                 Ok(Err(e)) => log::error!("Download failed for {}: {:?}", track.title, e),
                 Err(_) => log::error!("Download timed out for {}", track.title),
@@ -1024,7 +1024,7 @@ async fn download_single_track(
                     let _ = bot.send_message(chat_id, format!("Failed to send: {}", e)).await;
                 }
             }
-            let _ = tokio::fs::remove_file(&phase_result.output.file_path).await;
+            let _ = fs_err::tokio::remove_file(&phase_result.output.file_path).await;
         }
         Ok(Err(e)) => {
             let _ = bot.send_message(chat_id, format!("Download failed: {:?}", e)).await;

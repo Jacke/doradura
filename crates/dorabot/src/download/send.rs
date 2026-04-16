@@ -369,7 +369,7 @@ where
     let send_start = std::time::Instant::now();
 
     // Validate file size before sending
-    let file_size = tokio::fs::metadata(&download_path)
+    let file_size = fs_err::tokio::metadata(&download_path)
         .await
         .map_err(|e| {
             AppError::Download(DownloadError::FileNotFound(format!(
@@ -953,7 +953,7 @@ pub async fn send_video_with_retry(
     let height = video_metadata.and_then(|(_, _, h)| h);
 
     // Check file size
-    let file_size = tokio::fs::metadata(download_path)
+    let file_size = fs_err::tokio::metadata(download_path)
         .await
         .map_err(|e| {
             AppError::Download(DownloadError::FileNotFound(format!(
@@ -1125,7 +1125,7 @@ pub async fn send_video_with_retry(
                 .unwrap_or_else(|_| temp_path.clone())
         };
 
-        if tokio::fs::write(&abs_path, &final_bytes).await.is_ok() {
+        if fs_err::tokio::write(&abs_path, &final_bytes).await.is_ok() {
             log::info!(
                 "[THUMBNAIL] Saved thumbnail to temporary file: {:?} ({} bytes)",
                 abs_path,
@@ -1220,7 +1220,7 @@ pub async fn send_video_with_retry(
                             "[THUMBNAIL] Adding thumbnail from file: {} (exists: {}, size: {} bytes)",
                             abs_path_str,
                             thumb_path.exists(),
-                            tokio::fs::metadata(&thumb_path).await.map(|m| m.len()).unwrap_or(0)
+                            fs_err::tokio::metadata(&thumb_path).await.map(|m| m.len()).unwrap_or(0)
                         );
                         video_msg = video_msg.thumbnail(InputFile::file(abs_path_str));
                         log::info!("[THUMBNAIL] Thumbnail successfully added to video message");
@@ -1262,11 +1262,11 @@ pub async fn send_video_with_retry(
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
         if result.is_ok() {
-            let _ = tokio::fs::remove_file(&thumb_path).await;
+            let _ = fs_err::tokio::remove_file(&thumb_path).await;
             log::info!("[THUMBNAIL] Cleaned up temporary thumbnail file: {:?}", thumb_path);
         } else {
             // On error also delete, as retry will create new file
-            let _ = tokio::fs::remove_file(&thumb_path).await;
+            let _ = fs_err::tokio::remove_file(&thumb_path).await;
             log::info!(
                 "[THUMBNAIL] Cleaned up temporary thumbnail file after error: {:?}",
                 thumb_path

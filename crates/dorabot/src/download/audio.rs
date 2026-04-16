@@ -269,7 +269,7 @@ async fn add_audio_effects_button(
     let session_file_path = shellexpand::tilde(&session_file_path_raw).into_owned();
 
     // Copy file before it gets deleted
-    match tokio::fs::copy(&result.download_path, &session_file_path).await {
+    match fs_err::tokio::copy(&result.download_path, &session_file_path).await {
         Ok(bytes) => {
             log::info!("Audio effects: copied {} bytes to {}", bytes, session_file_path);
             let session = AudioEffectSession::new(

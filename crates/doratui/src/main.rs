@@ -68,7 +68,7 @@ async fn main() -> anyhow::Result<()> {
     if verbose {
         let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
         let log_dir = std::path::PathBuf::from(&home).join(".config").join("dora");
-        let _ = std::fs::create_dir_all(&log_dir);
+        let _ = fs_err::create_dir_all(&log_dir);
         let log_path = log_dir.join("dora.log");
         if let Ok(file) = std::fs::File::create(&log_path) {
             let _ = WriteLogger::init(LevelFilter::Debug, LogConfig::default(), file);

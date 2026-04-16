@@ -259,7 +259,7 @@ pub(super) async fn handle(ctx: &CallbackCtx, action: &str, parts: &[&str]) -> R
                                     .video()
                                     .map(|v| v.file.id.0.clone())
                                     .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
-                                let file_size = tokio::fs::metadata(&actual_path)
+                                let file_size = fs_err::tokio::metadata(&actual_path)
                                     .await
                                     .map(|m| m.len() as i64)
                                     .unwrap_or(0);

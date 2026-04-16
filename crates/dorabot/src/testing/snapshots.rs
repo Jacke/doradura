@@ -66,13 +66,13 @@ impl TelegramSnapshot {
     /// Save snapshot to file
     pub fn save(&self, path: impl AsRef<Path>) -> anyhow::Result<()> {
         let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, json)?;
+        fs_err::write(path, json)?;
         Ok(())
     }
 
     /// Load snapshot from file
     pub fn load(path: impl AsRef<Path>) -> anyhow::Result<Self> {
-        let json = std::fs::read_to_string(path)?;
+        let json = fs_err::read_to_string(path)?;
         let snapshot = serde_json::from_str(&json)?;
         Ok(snapshot)
     }
@@ -262,7 +262,7 @@ mod tests {
         assert_eq!(loaded.metadata.get("test"), Some(&"value".to_string()));
 
         // Cleanup
-        let _ = std::fs::remove_file(&temp_file);
+        let _ = fs_err::remove_file(&temp_file);
     }
 
     #[test]

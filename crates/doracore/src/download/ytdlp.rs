@@ -90,7 +90,7 @@ async fn download_nightly_ytdlp() -> Result<(String, String), AppError> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        if let Err(e) = std::fs::set_permissions(ytdl_bin, std::fs::Permissions::from_mode(0o755)) {
+        if let Err(e) = fs_err::set_permissions(ytdl_bin, std::fs::Permissions::from_mode(0o755)) {
             log::warn!("Failed to set yt-dlp permissions: {}", e);
         }
     }

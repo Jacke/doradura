@@ -172,7 +172,7 @@ impl RecordingClient {
     pub fn save_to_default_dir(&self) -> anyhow::Result<()> {
         let snapshot = self.snapshot.lock().unwrap();
         let dir = TelegramSnapshot::snapshots_dir();
-        std::fs::create_dir_all(&dir)?;
+        fs_err::create_dir_all(&dir)?;
 
         let path = dir.join(format!("{}.json", snapshot.name));
         drop(snapshot); // Release lock before calling save
@@ -319,7 +319,7 @@ mod tests {
 
         // File should not be created (or be empty) since no interactions
         // Based on the implementation, it skips saving if empty
-        let _ = std::fs::remove_file(&temp_file);
+        let _ = fs_err::remove_file(&temp_file);
     }
 
     #[test]

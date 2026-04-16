@@ -1050,7 +1050,7 @@ pub async fn process_video_clip(
         }
     }
 
-    let file_size = tokio::fs::metadata(&output_path)
+    let file_size = fs_err::tokio::metadata(&output_path)
         .await
         .map(|m| m.len() as i64)
         .unwrap_or(0);
@@ -1184,7 +1184,7 @@ pub async fn process_video_clip(
         return Ok(());
     }
 
-    let output_size = tokio::fs::metadata(&output_path)
+    let output_size = fs_err::tokio::metadata(&output_path)
         .await
         .ok()
         .map(|m| m.len())
@@ -1518,7 +1518,10 @@ pub async fn process_audio_cut(
         return Ok(());
     }
 
-    let file_size = tokio::fs::metadata(&output_path).await.map(|m| m.len()).unwrap_or(0);
+    let file_size = fs_err::tokio::metadata(&output_path)
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0);
     if file_size > config::validation::max_audio_size_bytes() {
         bot.delete_message(chat_id, status.id).await.ok();
         bot.send_message(chat_id, i18n::t(&lang, "commands.audio_too_large_for_telegram"))

@@ -2,7 +2,7 @@
 //!
 //! Validates downloaded audio and video files using ffprobe.
 
-use std::fs;
+use fs_err as fs;
 use std::io::Read as _;
 use std::path::Path;
 use std::process::Command;

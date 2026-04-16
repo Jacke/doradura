@@ -343,7 +343,7 @@ impl DownloadSource for HttpSource {
         let pinned_client = build_pinned_client(&ssrf_check)?;
 
         // Check if we can resume (file already partially downloaded)
-        let existing_size = tokio::fs::metadata(&request.output_path)
+        let existing_size = fs_err::tokio::metadata(&request.output_path)
             .await
             .map(|m| m.len())
             .unwrap_or(0);
@@ -504,7 +504,7 @@ impl DownloadSource for HttpSource {
             .await
             .map_err(|e| AppError::Download(DownloadError::Other(format!("Failed to flush file: {}", e))))?;
 
-        let file_size = tokio::fs::metadata(&request.output_path)
+        let file_size = fs_err::tokio::metadata(&request.output_path)
             .await
             .map(|m| m.len())
             .unwrap_or(downloaded);

@@ -78,7 +78,7 @@ pub async fn add_audio_tools_buttons_from_history(
     let session_file_path_raw = audio_effects::get_original_file_path(&session_id, &config::DOWNLOAD_FOLDER);
     let session_file_path = shellexpand::tilde(&session_file_path_raw).into_owned();
     if let Some(parent) = Path::new(&session_file_path).parent() {
-        tokio::fs::create_dir_all(parent)
+        fs_err::tokio::create_dir_all(parent)
             .await
             .map_err(|e| anyhow::anyhow!(e))?;
     }

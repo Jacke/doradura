@@ -794,7 +794,7 @@ async fn get_instagram_preview_metadata(url: &Url) -> Result<PreviewMetadata, Ap
 /// Cache yt-dlp info JSON to /tmp for --load-info-json reuse in download phase.
 fn cache_info_json_for_download(url: &Url, json_str: &str) {
     if let Some(cache_path) = crate::core::share::youtube_info_cache_path(url.as_str()) {
-        match std::fs::write(&cache_path, json_str) {
+        match fs_err::write(&cache_path, json_str) {
             Ok(()) => log::debug!("Cached info JSON to {}", cache_path),
             Err(e) => log::debug!("Failed to cache info JSON: {}", e),
         }

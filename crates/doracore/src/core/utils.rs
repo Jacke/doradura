@@ -101,11 +101,11 @@ pub fn format_bytes_i64(bytes: i64) -> String {
 /// Fire-and-forget file removal. Ignores errors (file already gone,
 /// permission denied, etc.) — the common cleanup pattern.
 ///
-/// Replaces the ad-hoc `let _ = tokio::fs::remove_file(path).await;`
+/// Replaces the ad-hoc `let _ = fs_err::tokio::remove_file(path).await;`
 /// that appears in 15+ sites across conversion / download / pipeline
 /// code where a failed cleanup should not short-circuit the caller.
 pub async fn try_remove_file(path: impl AsRef<std::path::Path>) {
-    let _ = tokio::fs::remove_file(path).await;
+    let _ = fs_err::tokio::remove_file(path).await;
 }
 
 /// Check if an error is a timeout or network error that should be retried.
@@ -628,7 +628,7 @@ impl Drop for TempFileGuard {
     fn drop(&mut self) {
         if let Some(ref path) = self.path {
             if path.exists() {
-                if let Err(e) = std::fs::remove_file(path) {
+                if let Err(e) = fs_err::remove_file(path) {
                     log::debug!("TempFileGuard: failed to remove {}: {}", path.display(), e);
                 } else {
                     log::debug!("TempFileGuard: cleaned up {}", path.display());
@@ -667,7 +667,7 @@ impl Drop for DownloadGuard {
             // Use the existing cleanup function from downloader
             crate::download::downloader::cleanup_partial_download(base_path);
             // Also remove the main file if it exists
-            let _ = std::fs::remove_file(base_path);
+            let _ = fs_err::remove_file(base_path);
         }
     }
 }
@@ -689,7 +689,7 @@ impl TempDirGuard {
         let dir = std::path::PathBuf::from(crate::core::config::TEMP_FILES_DIR.as_str())
             .join(category)
             .join(uuid::Uuid::new_v4().to_string());
-        tokio::fs::create_dir_all(&dir).await?;
+        fs_err::tokio::create_dir_all(&dir).await?;
         log::debug!("TempDirGuard: created {}", dir.display());
         Ok(Self {
             path: Some(dir),
@@ -699,7 +699,7 @@ impl TempDirGuard {
 
     /// Guard an existing directory path (e.g. archive session dirs with custom names).
     pub async fn from_path(dir: std::path::PathBuf) -> std::io::Result<Self> {
-        tokio::fs::create_dir_all(&dir).await?;
+        fs_err::tokio::create_dir_all(&dir).await?;
         Ok(Self {
             path: Some(dir),
             extra_files: Vec::new(),
@@ -728,7 +728,7 @@ impl Drop for TempDirGuard {
     fn drop(&mut self) {
         // Clean up tracked external files first
         for path in &self.extra_files {
-            if let Err(e) = std::fs::remove_file(path) {
+            if let Err(e) = fs_err::remove_file(path) {
                 if e.kind() != std::io::ErrorKind::NotFound {
                     log::debug!("TempDirGuard: failed to remove extra file {}: {}", path.display(), e);
                 }
@@ -736,7 +736,7 @@ impl Drop for TempDirGuard {
         }
         // Remove the entire directory
         if let Some(ref dir) = self.path {
-            match std::fs::remove_dir_all(dir) {
+            match fs_err::remove_dir_all(dir) {
                 Ok(()) => log::debug!("TempDirGuard: cleaned up {}", dir.display()),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                 Err(e) => log::warn!("TempDirGuard: failed to remove {}: {}", dir.display(), e),

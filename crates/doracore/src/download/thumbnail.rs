@@ -92,7 +92,7 @@ pub async fn convert_webp_to_jpeg(webp_bytes: &[u8]) -> Result<Vec<u8>, AppError
     ));
 
     // Save WebP to temporary file
-    tokio::fs::write(&temp_webp, webp_bytes)
+    fs_err::tokio::write(&temp_webp, webp_bytes)
         .await
         .map_err(|e| AppError::Download(DownloadError::Other(format!("Failed to write WebP temp file: {}", e))))?;
 
@@ -108,18 +108,18 @@ pub async fn convert_webp_to_jpeg(webp_bytes: &[u8]) -> Result<Vec<u8>, AppError
     ]);
     let output = run_with_timeout(&mut cmd, FFMPEG_TIMEOUT).await;
 
-    let _ = tokio::fs::remove_file(&temp_webp).await;
+    let _ = fs_err::tokio::remove_file(&temp_webp).await;
 
     match output {
         Ok(result) => {
             if result.status.success() {
-                match tokio::fs::read(&temp_jpeg).await {
+                match fs_err::tokio::read(&temp_jpeg).await {
                     Ok(jpeg_bytes) => {
-                        let _ = tokio::fs::remove_file(&temp_jpeg).await;
+                        let _ = fs_err::tokio::remove_file(&temp_jpeg).await;
                         Ok(jpeg_bytes)
                     }
                     Err(e) => {
-                        let _ = tokio::fs::remove_file(&temp_jpeg).await;
+                        let _ = fs_err::tokio::remove_file(&temp_jpeg).await;
                         Err(AppError::Download(DownloadError::Ffmpeg(format!(
                             "Failed to read converted JPEG: {}",
                             e
@@ -128,7 +128,7 @@ pub async fn convert_webp_to_jpeg(webp_bytes: &[u8]) -> Result<Vec<u8>, AppError
                 }
             } else {
                 let stderr = String::from_utf8_lossy(&result.stderr);
-                let _ = tokio::fs::remove_file(&temp_jpeg).await;
+                let _ = fs_err::tokio::remove_file(&temp_jpeg).await;
                 Err(AppError::Download(DownloadError::Ffmpeg(format!(
                     "ffmpeg conversion failed: {}",
                     stderr
@@ -136,7 +136,7 @@ pub async fn convert_webp_to_jpeg(webp_bytes: &[u8]) -> Result<Vec<u8>, AppError
             }
         }
         Err(e) => {
-            let _ = tokio::fs::remove_file(&temp_jpeg).await;
+            let _ = fs_err::tokio::remove_file(&temp_jpeg).await;
             Err(e)
         }
     }
@@ -173,7 +173,7 @@ pub async fn compress_thumbnail_jpeg(jpeg_bytes: &[u8]) -> Option<Vec<u8>> {
             .as_millis()
     ));
 
-    if tokio::fs::write(&temp_input, jpeg_bytes).await.is_err() {
+    if fs_err::tokio::write(&temp_input, jpeg_bytes).await.is_err() {
         return None;
     }
 
@@ -191,29 +191,29 @@ pub async fn compress_thumbnail_jpeg(jpeg_bytes: &[u8]) -> Option<Vec<u8>> {
     ]);
     let output = run_with_timeout(&mut cmd, FFMPEG_TIMEOUT).await;
 
-    let _ = tokio::fs::remove_file(&temp_input).await;
+    let _ = fs_err::tokio::remove_file(&temp_input).await;
 
     match output {
         Ok(result) => {
             if result.status.success() {
-                if let Ok(compressed) = tokio::fs::read(&temp_output).await {
-                    let _ = tokio::fs::remove_file(&temp_output).await;
+                if let Ok(compressed) = fs_err::tokio::read(&temp_output).await {
+                    let _ = fs_err::tokio::remove_file(&temp_output).await;
                     if compressed.len() <= 200 * 1024 {
                         Some(compressed)
                     } else {
                         None
                     }
                 } else {
-                    let _ = tokio::fs::remove_file(&temp_output).await;
+                    let _ = fs_err::tokio::remove_file(&temp_output).await;
                     None
                 }
             } else {
-                let _ = tokio::fs::remove_file(&temp_output).await;
+                let _ = fs_err::tokio::remove_file(&temp_output).await;
                 None
             }
         }
         Err(_) => {
-            let _ = tokio::fs::remove_file(&temp_output).await;
+            let _ = fs_err::tokio::remove_file(&temp_output).await;
             None
         }
     }
@@ -268,7 +268,7 @@ pub async fn generate_thumbnail_from_video(video_path: &str) -> Option<Vec<u8>> 
         Ok(result) => {
             if result.status.success() {
                 // Read the generated thumbnail
-                match tokio::fs::read(&temp_thumbnail_path).await {
+                match fs_err::tokio::read(&temp_thumbnail_path).await {
                     Ok(bytes) => {
                         log::info!(
                             "[THUMBNAIL] Successfully generated thumbnail from video: {} bytes ({} KB)",
@@ -277,7 +277,7 @@ pub async fn generate_thumbnail_from_video(video_path: &str) -> Option<Vec<u8>> 
                         );
 
                         // Remove temporary file
-                        let _ = tokio::fs::remove_file(&temp_thumbnail_path).await;
+                        let _ = fs_err::tokio::remove_file(&temp_thumbnail_path).await;
 
                         // Check size (Telegram requires <= 200 KB)
                         if bytes.len() > 200 * 1024 {
@@ -291,14 +291,14 @@ pub async fn generate_thumbnail_from_video(video_path: &str) -> Option<Vec<u8>> 
                     }
                     Err(e) => {
                         log::warn!("[THUMBNAIL] Failed to read generated thumbnail: {}", e);
-                        let _ = tokio::fs::remove_file(&temp_thumbnail_path).await;
+                        let _ = fs_err::tokio::remove_file(&temp_thumbnail_path).await;
                         None
                     }
                 }
             } else {
                 let stderr = String::from_utf8_lossy(&result.stderr);
                 log::warn!("[THUMBNAIL] ffmpeg failed to generate thumbnail: {}", stderr);
-                let _ = tokio::fs::remove_file(&temp_thumbnail_path).await;
+                let _ = fs_err::tokio::remove_file(&temp_thumbnail_path).await;
                 None
             }
         }

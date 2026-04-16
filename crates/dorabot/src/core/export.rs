@@ -170,7 +170,7 @@ pub async fn handle_export(
         format
     );
 
-    if let Err(e) = tokio::fs::write(&temp_file, content).await {
+    if let Err(e) = fs_err::tokio::write(&temp_file, content).await {
         log::error!("Failed to write export file: {}", e);
         bot.send_message(chat_id, "Error creating export file\\.")
             .parse_mode(teloxide::types::ParseMode::MarkdownV2)

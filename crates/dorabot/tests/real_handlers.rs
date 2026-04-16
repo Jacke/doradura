@@ -29,10 +29,10 @@ struct RealHandlerTest {
 
 impl Drop for RealHandlerTest {
     fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.db_path);
-        let _ = std::fs::remove_file(format!("{}-journal", &self.db_path));
-        let _ = std::fs::remove_file(format!("{}-wal", &self.db_path));
-        let _ = std::fs::remove_file(format!("{}-shm", &self.db_path));
+        let _ = fs_err::remove_file(&self.db_path);
+        let _ = fs_err::remove_file(format!("{}-journal", &self.db_path));
+        let _ = fs_err::remove_file(format!("{}-wal", &self.db_path));
+        let _ = fs_err::remove_file(format!("{}-shm", &self.db_path));
     }
 }
 

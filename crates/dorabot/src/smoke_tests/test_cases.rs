@@ -494,7 +494,7 @@ pub async fn test_ringtone_conversion(temp_dir: &str) -> SmokeTestResult {
     if !cover_ok {
         // Cover generation failed — skip album-art regression, use plain silence
         log::warn!("[smoke_test] Could not generate cover art, testing without album art");
-        if let Err(e) = tokio::fs::copy(&silence_path, &input_path).await {
+        if let Err(e) = fs_err::tokio::copy(&silence_path, &input_path).await {
             for p in &all_files {
                 doracore::core::utils::try_remove_file(p).await;
             }

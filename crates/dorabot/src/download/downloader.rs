@@ -16,7 +16,7 @@ use crate::download::progress::{DownloadStatus, ProgressBarStyle, ProgressMessag
 use crate::download::send::send_error_with_sticker;
 use crate::download::ytdlp_errors::sanitize_user_error_message;
 use crate::storage::db::{self as db};
-use std::fs;
+use fs_err as fs;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -529,7 +529,7 @@ pub async fn split_video_into_parts(path: &str, target_part_size_bytes: u64) -> 
 /// 2. Trims end times so entry N-1 ends when entry N starts (no overlap)
 /// 3. Re-numbers entries sequentially
 pub async fn clean_srt_overlaps(path: &str) {
-    let content = match tokio::fs::read_to_string(path).await {
+    let content = match fs_err::tokio::read_to_string(path).await {
         Ok(c) => c,
         Err(e) => {
             log::warn!("Could not read SRT for cleanup: {e}");
@@ -599,7 +599,7 @@ pub async fn clean_srt_overlaps(path: &str) {
         out.push_str(&format!("{}\n{} --> {}\n{}\n", i + 1, start, end, text));
     }
 
-    if let Err(e) = tokio::fs::write(path, &out).await {
+    if let Err(e) = fs_err::tokio::write(path, &out).await {
         log::warn!("Could not write cleaned SRT: {e}");
     } else {
         log::info!("🧹 Cleaned SRT overlaps: {path}");
@@ -900,7 +900,7 @@ mod download_tests {
         drop(file);
 
         let result = validate_cookies_file_format(temp_file.to_str().unwrap());
-        let _ = std::fs::remove_file(&temp_file);
+        let _ = fs_err::remove_file(&temp_file);
         assert!(result);
     }
 
@@ -916,7 +916,7 @@ mod download_tests {
         drop(file);
 
         let result = validate_cookies_file_format(temp_file.to_str().unwrap());
-        let _ = std::fs::remove_file(&temp_file);
+        let _ = fs_err::remove_file(&temp_file);
         assert!(!result);
     }
 
@@ -932,7 +932,7 @@ mod download_tests {
         drop(file);
 
         let result = validate_cookies_file_format(temp_file.to_str().unwrap());
-        let _ = std::fs::remove_file(&temp_file);
+        let _ = fs_err::remove_file(&temp_file);
         assert!(!result);
     }
 
@@ -954,7 +954,7 @@ mod download_tests {
         drop(file);
 
         let result = validate_cookies_file_format(temp_file.to_str().unwrap());
-        let _ = std::fs::remove_file(&temp_file);
+        let _ = fs_err::remove_file(&temp_file);
         assert!(result);
     }
 
@@ -1029,7 +1029,7 @@ mod download_tests {
         drop(file);
 
         let result = read_log_tail(&temp_file, 1024).unwrap();
-        let _ = std::fs::remove_file(&temp_file);
+        let _ = fs_err::remove_file(&temp_file);
 
         assert!(result.contains("Line 1"));
         assert!(result.contains("Line 2"));
@@ -1049,7 +1049,7 @@ mod download_tests {
         drop(file);
 
         let result = read_log_tail(&temp_file, 50).unwrap();
-        let _ = std::fs::remove_file(&temp_file);
+        let _ = fs_err::remove_file(&temp_file);
 
         // Should only contain the tail
         assert!(result.len() <= 60); // Allow some margin for line boundaries

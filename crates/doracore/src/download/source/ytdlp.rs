@@ -290,7 +290,7 @@ impl YtDlpSource {
         let actual_path =
             find_actual_downloaded_file(&request.output_path).unwrap_or_else(|_| request.output_path.clone());
 
-        let file_size = std::fs::metadata(&actual_path).map(|m| m.len()).unwrap_or(0);
+        let file_size = fs_err::metadata(&actual_path).map(|m| m.len()).unwrap_or(0);
 
         Ok(DownloadOutput {
             file_path: actual_path,
@@ -392,7 +392,7 @@ impl YtDlpSource {
 
         let actual_path = find_actual_downloaded_file(&request.output_path)?;
 
-        let file_size = std::fs::metadata(&actual_path).map(|m| m.len()).unwrap_or(0);
+        let file_size = fs_err::metadata(&actual_path).map(|m| m.len()).unwrap_or(0);
 
         let duration = probe_duration_seconds(&actual_path).await;
 
@@ -470,7 +470,7 @@ where
     let result = run_ytdlp_with_progress(ytdl_bin, &args, progress_tx);
 
     if let Some(path) = info_json_path {
-        let _ = std::fs::remove_file(&path);
+        let _ = fs_err::remove_file(&path);
     }
 
     result
@@ -500,7 +500,7 @@ where
     // Experimental features graduated to main workflow
     crate::download::cookies::log_cookie_file_diagnostics(&format!("{}_TIER2_BEFORE", media_type.to_uppercase()));
 
-    let _ = std::fs::remove_file(download_path);
+    let _ = fs_err::remove_file(download_path);
     cleanup_partial_download(download_path);
 
     let mut cookies_args: Vec<&str> = build_common_args_minimal(download_path);
@@ -583,7 +583,7 @@ where
     // Experimental features graduated to main workflow
     log::warn!("🔧 Postprocessing error, retrying with --fixup never...");
 
-    let _ = std::fs::remove_file(download_path);
+    let _ = fs_err::remove_file(download_path);
     cleanup_partial_download(download_path);
 
     let mut fixup_args: Vec<&str> = build_common_args_minimal(download_path);
@@ -671,7 +671,7 @@ where
         );
 
         if attempt > 0 {
-            let _ = std::fs::remove_file(download_path);
+            let _ = fs_err::remove_file(download_path);
             cleanup_partial_download(download_path);
         }
 

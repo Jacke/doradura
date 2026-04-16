@@ -478,7 +478,7 @@ impl InstagramSource {
 
         // Ensure parent directory exists (DOWNLOAD_FOLDER may not exist yet)
         if let Some(parent) = std::path::Path::new(output_path).parent() {
-            std::fs::create_dir_all(parent).ig_ctx("Failed to create directory")?;
+            fs_err::create_dir_all(parent).ig_ctx("Failed to create directory")?;
         }
         let mut file = std::fs::File::create(output_path).ig_ctx("Failed to create file")?;
 

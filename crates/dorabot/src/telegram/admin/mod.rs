@@ -224,7 +224,7 @@ mod tests {
         drop(file);
 
         let result = super::system::read_log_tail(&temp_file, 1024).unwrap();
-        let _ = std::fs::remove_file(&temp_file);
+        let _ = fs_err::remove_file(&temp_file);
 
         assert!(result.contains("Line 1"));
         assert!(result.contains("Line 2"));

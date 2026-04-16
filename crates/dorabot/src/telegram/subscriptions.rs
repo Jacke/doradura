@@ -626,19 +626,19 @@ async fn download_media_to_temp(client: &reqwest::Client, url: &str, is_video: b
             Ok(c) => c,
             Err(e) => {
                 log::warn!("Media download read failed: {}", e);
-                tokio::fs::remove_file(&temp_path).await.ok();
+                fs_err::tokio::remove_file(&temp_path).await.ok();
                 return None;
             }
         };
         total += chunk.len() as u64;
         if total > MAX_SIZE {
             log::warn!("Media too large (>{} bytes), skipping: {}", MAX_SIZE, url);
-            tokio::fs::remove_file(&temp_path).await.ok();
+            fs_err::tokio::remove_file(&temp_path).await.ok();
             return None;
         }
         if let Err(e) = tokio::io::AsyncWriteExt::write_all(&mut file, &chunk).await {
             log::warn!("Failed to write temp media chunk: {}", e);
-            tokio::fs::remove_file(&temp_path).await.ok();
+            fs_err::tokio::remove_file(&temp_path).await.ok();
             return None;
         }
     }
@@ -739,7 +739,7 @@ async fn send_story_notification(
 
     // Clean up temp files
     for (path, _) in &downloaded {
-        let _ = tokio::fs::remove_file(path).await;
+        let _ = fs_err::tokio::remove_file(path).await;
     }
 
     if result.is_err() {
@@ -857,7 +857,7 @@ async fn send_post_notification(
 
     // Clean up temp files
     for (path, _) in &downloaded {
-        let _ = tokio::fs::remove_file(path).await;
+        let _ = fs_err::tokio::remove_file(path).await;
     }
 
     if result.is_err() {

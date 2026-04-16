@@ -461,7 +461,7 @@ pub async fn handle_download_tg_command(
     match download_file_from_telegram(bot, file_id, None).await {
         Ok(path) => {
             // Get file metadata
-            let metadata = tokio::fs::metadata(&path).await?;
+            let metadata = fs_err::tokio::metadata(&path).await?;
             let size_mb = metadata.len() as f64 / (1024.0 * 1024.0);
             let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
 

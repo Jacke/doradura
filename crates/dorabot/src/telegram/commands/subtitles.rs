@@ -55,7 +55,7 @@ pub async fn download_circle_subtitles(
             let srt_stem = format!("subs_{}_{}", chat_id, source_id);
             let srt_file = {
                 let mut found = None;
-                if let Ok(mut dir) = tokio::fs::read_dir(&srt_dir).await {
+                if let Ok(mut dir) = fs_err::tokio::read_dir(&srt_dir).await {
                     while let Ok(Some(entry)) = dir.next_entry().await {
                         let name = entry.file_name();
                         let name_str = name.to_string_lossy().into_owned();
@@ -117,14 +117,14 @@ pub async fn burn_circle_subtitles(
             {
                 Ok(()) => {
                     log::info!("Burned subtitles into video source");
-                    tokio::fs::remove_file(input_path).await.ok();
-                    tokio::fs::remove_file(&sub_path).await.ok();
+                    fs_err::tokio::remove_file(input_path).await.ok();
+                    fs_err::tokio::remove_file(&sub_path).await.ok();
                     BurnSubsResult::Burned(output_with_subs)
                 }
                 Err(e) => {
                     log::warn!("Failed to burn subs: {}. Continuing without.", e);
-                    tokio::fs::remove_file(&sub_path).await.ok();
-                    tokio::fs::remove_file(&output_with_subs).await.ok();
+                    fs_err::tokio::remove_file(&sub_path).await.ok();
+                    fs_err::tokio::remove_file(&output_with_subs).await.ok();
                     BurnSubsResult::Failed(format!("ffmpeg error: {e}"))
                 }
             }

@@ -246,7 +246,7 @@ pub async fn send_ringtone_instructions(
     let mut local_images: Vec<std::path::PathBuf> = Vec::new();
 
     if asset_dir.is_dir() {
-        if let Ok(mut entries) = tokio::fs::read_dir(asset_dir).await {
+        if let Ok(mut entries) = fs_err::tokio::read_dir(asset_dir).await {
             let mut paths = Vec::new();
             while let Ok(Some(entry)) = entries.next_entry().await {
                 let p = entry.path();

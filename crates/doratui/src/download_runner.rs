@@ -94,7 +94,7 @@ async fn run_download(
     // 2. Prepare output directory (from settings, or ~/Downloads fallback)
     let out_dir = PathBuf::from(settings.output_dir());
     if !out_dir.exists() {
-        let _ = tokio::fs::create_dir_all(&out_dir).await;
+        let _ = fs_err::tokio::create_dir_all(&out_dir).await;
     }
     let template = format!("{}/%(title)s.%(ext)s", out_dir.to_string_lossy());
 
@@ -259,7 +259,7 @@ async fn run_download(
             }
         }
 
-        let size_mb = std::fs::metadata(&path_str)
+        let size_mb = fs_err::metadata(&path_str)
             .map(|m| m.len() as f64 / 1_048_576.0)
             .unwrap_or(0.0);
         log::info!("[slot {}] done: {} ({:.1} MB)", slot_id, path_str, size_mb);
@@ -493,19 +493,19 @@ async fn burn_subtitles(
         .context("Cannot run ffmpeg")?;
 
     // Always cleanup temp SRT
-    let _ = tokio::fs::remove_file(&srt_path).await;
+    let _ = fs_err::tokio::remove_file(&srt_path).await;
 
     if !ffmpeg_output.status.success() {
         let stderr = String::from_utf8_lossy(&ffmpeg_output.stderr);
         log::warn!("[slot {}] ffmpeg burn failed: {}", slot_id, stderr);
-        let _ = tokio::fs::remove_file(&burned_path).await;
+        let _ = fs_err::tokio::remove_file(&burned_path).await;
         anyhow::bail!("ffmpeg subtitle burn failed");
     }
 
     // 4. Replace original with burned version — SAFE order:
     //    rename burned → original (atomic on same FS), only then no original to lose.
     let final_path = video.to_string_lossy().to_string();
-    if let Err(e) = tokio::fs::rename(&burned_path, &final_path).await {
+    if let Err(e) = fs_err::tokio::rename(&burned_path, &final_path).await {
         // rename failed — keep both files, user still has the burned version
         log::warn!("[slot {}] rename failed, keeping _subs file: {}", slot_id, e);
         return Ok(burned_path.to_string_lossy().to_string());
@@ -517,12 +517,12 @@ async fn burn_subtitles(
 
 /// Remove any orphaned .srt files matching the stem (best-effort cleanup).
 fn cleanup_srt_files(dir: &std::path::Path, stem: &str) {
-    if let Ok(entries) = std::fs::read_dir(dir) {
+    if let Ok(entries) = fs_err::read_dir(dir) {
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
             if name.starts_with(stem) && name.ends_with(".srt") {
-                let _ = std::fs::remove_file(entry.path());
+                let _ = fs_err::remove_file(entry.path());
             }
         }
     }
@@ -540,7 +540,7 @@ fn find_srt_file(dir: &std::path::Path, stem: &str, lang: &str) -> anyhow::Resul
 
     // Collect all SRT files matching the stem
     let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(dir) {
+    if let Ok(entries) = fs_err::read_dir(dir) {
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name_str = name.to_string_lossy();
@@ -606,7 +606,7 @@ mod tests {
     fn find_srt_exact_match() {
         let dir = tempfile::tempdir().unwrap();
         let srt = dir.path().join("video.en.srt");
-        std::fs::write(&srt, "1\n00:00:00,000 --> 00:00:01,000\nHello").unwrap();
+        fs_err::write(&srt, "1\n00:00:00,000 --> 00:00:01,000\nHello").unwrap();
 
         let result = find_srt_file(dir.path(), "video", "en");
         assert_eq!(result.unwrap(), srt);
@@ -617,7 +617,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // yt-dlp sometimes uses different lang suffix (e.g. en-US instead of en)
         let srt = dir.path().join("video.en-US.srt");
-        std::fs::write(&srt, "1\n00:00:00,000 --> 00:00:01,000\nHello").unwrap();
+        fs_err::write(&srt, "1\n00:00:00,000 --> 00:00:01,000\nHello").unwrap();
 
         let result = find_srt_file(dir.path(), "video", "en");
         assert_eq!(result.unwrap(), srt);
@@ -636,7 +636,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // SRT for a different video
         let srt = dir.path().join("other_video.en.srt");
-        std::fs::write(&srt, "subtitle content").unwrap();
+        fs_err::write(&srt, "subtitle content").unwrap();
 
         let result = find_srt_file(dir.path(), "video", "en");
         assert!(result.is_err());
@@ -648,8 +648,8 @@ mod tests {
         // Two SRT files: one for "en", one for "fr"
         let en_srt = dir.path().join("video.en-orig.srt");
         let fr_srt = dir.path().join("video.fr.srt");
-        std::fs::write(&en_srt, "english").unwrap();
-        std::fs::write(&fr_srt, "french").unwrap();
+        fs_err::write(&en_srt, "english").unwrap();
+        fs_err::write(&fr_srt, "french").unwrap();
 
         // Requesting "en" should pick en-orig, not fr
         let result = find_srt_file(dir.path(), "video", "en").unwrap();
@@ -664,7 +664,7 @@ mod tests {
     fn find_srt_with_spaces_in_name() {
         let dir = tempfile::tempdir().unwrap();
         let srt = dir.path().join("my video title.ru.srt");
-        std::fs::write(&srt, "subtitles").unwrap();
+        fs_err::write(&srt, "subtitles").unwrap();
 
         let result = find_srt_file(dir.path(), "my video title", "ru");
         assert_eq!(result.unwrap(), srt);
@@ -678,9 +678,9 @@ mod tests {
         let srt1 = dir.path().join("video.en.srt");
         let srt2 = dir.path().join("video.ru.srt");
         let keep = dir.path().join("other.en.srt");
-        std::fs::write(&srt1, "a").unwrap();
-        std::fs::write(&srt2, "b").unwrap();
-        std::fs::write(&keep, "c").unwrap();
+        fs_err::write(&srt1, "a").unwrap();
+        fs_err::write(&srt2, "b").unwrap();
+        fs_err::write(&keep, "c").unwrap();
 
         cleanup_srt_files(dir.path(), "video");
 

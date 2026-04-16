@@ -70,7 +70,7 @@ impl MtProtoClient {
             // Ensure parent directory exists
             if let Some(parent) = session_path.parent() {
                 if !parent.as_os_str().is_empty() && !parent.exists() {
-                    tokio::fs::create_dir_all(parent)
+                    fs_err::tokio::create_dir_all(parent)
                         .await
                         .map_err(|e| MtProtoError::Session(format!("Failed to create session directory: {}", e)))?;
                 }

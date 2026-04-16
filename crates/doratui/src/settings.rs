@@ -83,7 +83,7 @@ impl Default for DoraSettings {
 impl DoraSettings {
     /// Load from `~/.config/dora/settings.json`; returns `Default` on any error.
     pub fn load() -> Self {
-        if let Ok(content) = std::fs::read_to_string(config_path()) {
+        if let Ok(content) = fs_err::read_to_string(config_path()) {
             if let Ok(s) = serde_json::from_str(&content) {
                 return s;
             }
@@ -95,10 +95,10 @@ impl DoraSettings {
     pub fn save(&self) -> anyhow::Result<()> {
         let path = config_path();
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+            fs_err::create_dir_all(parent)?;
         }
         let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(path, content)?;
+        fs_err::write(path, content)?;
         Ok(())
     }
 

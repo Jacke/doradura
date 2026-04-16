@@ -82,7 +82,7 @@ pub async fn to_pdf<P: AsRef<Path>>(input_path: P) -> ConversionResult<std::path
     let rand: u32 = rand::random();
     let output_dir = std::path::PathBuf::from(format!("/tmp/libreoffice_{}_{:x}", timestamp, rand));
 
-    tokio::fs::create_dir_all(&output_dir).await?;
+    fs_err::tokio::create_dir_all(&output_dir).await?;
 
     // Run LibreOffice headless conversion. `run_with_timeout_raw` sets
     // `kill_on_drop` so a timed-out LibreOffice instance gets reaped instead
@@ -100,7 +100,7 @@ pub async fn to_pdf<P: AsRef<Path>>(input_path: P) -> ConversionResult<std::path
         let stderr = String::from_utf8_lossy(&output.stderr);
         log::error!("LibreOffice conversion error: {}", stderr);
         // Clean up temp directory
-        let _ = tokio::fs::remove_dir_all(&output_dir).await;
+        let _ = fs_err::tokio::remove_dir_all(&output_dir).await;
         return Err(ConversionError::LibreOfficeError(stderr.to_string()));
     }
 
@@ -110,16 +110,16 @@ pub async fn to_pdf<P: AsRef<Path>>(input_path: P) -> ConversionResult<std::path
 
     if !pdf_path.exists() {
         // Clean up temp directory
-        let _ = tokio::fs::remove_dir_all(&output_dir).await;
+        let _ = fs_err::tokio::remove_dir_all(&output_dir).await;
         return Err(ConversionError::OutputFailed("PDF file was not created".to_string()));
     }
 
     // Move to standard temp location
     let final_path = std::path::PathBuf::from(format!("/tmp/converted_{}_{:x}.pdf", timestamp, rand));
-    tokio::fs::rename(&pdf_path, &final_path).await?;
+    fs_err::tokio::rename(&pdf_path, &final_path).await?;
 
     // Clean up temp directory
-    let _ = tokio::fs::remove_dir_all(&output_dir).await;
+    let _ = fs_err::tokio::remove_dir_all(&output_dir).await;
 
     Ok(final_path)
 }
@@ -367,7 +367,7 @@ mod tests {
     async fn test_pandoc_to_pdf_unsupported_format() {
         // Create a temp file with an unsupported extension
         let path = "/tmp/test_pandoc_unsupported.docx";
-        tokio::fs::write(path, "test content").await.unwrap();
+        fs_err::tokio::write(path, "test content").await.unwrap();
 
         let result = pandoc_to_pdf(path).await;
         assert!(result.is_err());
@@ -378,13 +378,13 @@ mod tests {
             other => panic!("Expected UnsupportedFormat, got: {:?}", other),
         }
 
-        let _ = tokio::fs::remove_file(path).await;
+        let _ = fs_err::tokio::remove_file(path).await;
     }
 
     #[tokio::test]
     async fn test_to_pdf_unsupported_extension() {
         let path = "/tmp/test_libre_unsupported.xyz";
-        tokio::fs::write(path, "test content").await.unwrap();
+        fs_err::tokio::write(path, "test content").await.unwrap();
 
         let result = to_pdf(path).await;
         assert!(result.is_err());
@@ -395,6 +395,6 @@ mod tests {
             other => panic!("Expected UnsupportedFormat, got: {:?}", other),
         }
 
-        let _ = tokio::fs::remove_file(path).await;
+        let _ = fs_err::tokio::remove_file(path).await;
     }
 }

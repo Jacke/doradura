@@ -211,7 +211,7 @@ impl DownloadSource for VlipsySource {
 
         // Ensure parent directory exists (DOWNLOAD_FOLDER may not exist yet)
         if let Some(parent) = std::path::Path::new(&request.output_path).parent() {
-            tokio::fs::create_dir_all(parent)
+            fs_err::tokio::create_dir_all(parent)
                 .await
                 .map_err(|e| AppError::Download(DownloadError::Vlipsy(format!("Failed to create directory: {}", e))))?;
         }
@@ -263,7 +263,7 @@ impl DownloadSource for VlipsySource {
             .await
             .map_err(|e| AppError::Download(DownloadError::Vlipsy(format!("Failed to flush file: {}", e))))?;
 
-        let file_size = tokio::fs::metadata(&request.output_path)
+        let file_size = fs_err::tokio::metadata(&request.output_path)
             .await
             .map(|m| m.len())
             .unwrap_or(downloaded);

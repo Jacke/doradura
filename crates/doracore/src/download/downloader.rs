@@ -3,7 +3,7 @@
 
 use crate::core::utils::sanitize_filename;
 use crate::download::source::SourceProgress;
-use std::fs;
+use fs_err as fs;
 use std::path::Path;
 
 /// Cleans up all partial/temporary files created by yt-dlp for a download path.

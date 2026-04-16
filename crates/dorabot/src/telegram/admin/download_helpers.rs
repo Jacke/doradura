@@ -49,7 +49,7 @@ pub async fn download_file_from_telegram(
     } else {
         // Create downloads directory if it doesn't exist
         let downloads_dir = PathBuf::from("./downloads");
-        tokio::fs::create_dir_all(&downloads_dir).await?;
+        fs_err::tokio::create_dir_all(&downloads_dir).await?;
 
         // Generate filename from file_id or use original filename from Telegram path
         // Telegram path format: "documents/file_123.pdf" or "photos/file_456.jpg"
@@ -112,7 +112,7 @@ pub async fn download_file_from_telegram(
                         max_attempts,
                         source_path
                     );
-                    if let Ok(metadata) = tokio::fs::metadata(&source_path).await {
+                    if let Ok(metadata) = fs_err::tokio::metadata(&source_path).await {
                         let size = metadata.len();
                         log::info!("📏 File size: {} bytes", size);
                         if size > 0 {
@@ -137,7 +137,7 @@ pub async fn download_file_from_telegram(
                                 // Ensure parent directory exists
                                 if let Some(parent) = dest_path.parent() {
                                     log::info!("📁 Creating parent directory: {:?}", parent);
-                                    if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                                    if let Err(e) = fs_err::tokio::create_dir_all(parent).await {
                                         log::error!("❌ Failed to create parent directory {:?}: {}", parent, e);
                                         return Err(anyhow::anyhow!("Failed to create directory: {}", e));
                                     }
@@ -145,7 +145,7 @@ pub async fn download_file_from_telegram(
                                 }
 
                                 // Check source file permissions
-                                match tokio::fs::metadata(&source_path).await {
+                                match fs_err::tokio::metadata(&source_path).await {
                                     Ok(meta) => {
                                         log::info!(
                                             "📋 Source file permissions: readonly={}, len={}",
@@ -161,13 +161,13 @@ pub async fn download_file_from_telegram(
                                 // Remove destination if it exists (might be from failed previous attempt)
                                 if dest_path.exists() {
                                     log::warn!("⚠️ Destination file already exists, removing: {:?}", dest_path);
-                                    if let Err(e) = tokio::fs::remove_file(&dest_path).await {
+                                    if let Err(e) = fs_err::tokio::remove_file(&dest_path).await {
                                         log::error!("❌ Failed to remove existing destination: {}", e);
                                     }
                                 }
 
                                 log::info!("📥 Copying {} -> {}", source_path.display(), dest_path.display());
-                                if let Err(e) = tokio::fs::copy(&source_path, &dest_path).await {
+                                if let Err(e) = fs_err::tokio::copy(&source_path, &dest_path).await {
                                     log::error!(
                                         "❌ Copy failed: {} (source={:?}, dest={:?})",
                                         e,
@@ -191,7 +191,7 @@ pub async fn download_file_from_telegram(
                         log::warn!("⚠️ File not found yet at {:?}", source_path);
                         // Try to check if parent directory exists and is accessible
                         if let Some(parent) = source_path.parent() {
-                            match tokio::fs::metadata(parent).await {
+                            match fs_err::tokio::metadata(parent).await {
                                 Ok(_) => log::info!("✅ Parent directory exists: {:?}", parent),
                                 Err(e) => log::error!("❌ Cannot access parent directory {:?}: {}", parent, e),
                             }
@@ -235,11 +235,11 @@ pub async fn download_file_from_telegram(
 
                 log::info!("📂 Trying direct path: {:?}", source_path);
 
-                if let Ok(metadata) = tokio::fs::metadata(&source_path).await {
+                if let Ok(metadata) = fs_err::tokio::metadata(&source_path).await {
                     let size = metadata.len();
                     log::info!("✅ Found file at direct path! Size: {} bytes", size);
                     if size > 0 {
-                        tokio::fs::copy(&source_path, &dest_path).await?;
+                        fs_err::tokio::copy(&source_path, &dest_path).await?;
                         log::info!("✅ File copied successfully to: {:?}", dest_path);
                         return Ok(dest_path);
                     }
@@ -312,7 +312,7 @@ pub async fn download_file_from_telegram(
 
         if !fallback_status.is_success() && fallback_status != reqwest::StatusCode::PARTIAL_CONTENT {
             let body = resp.text().await.unwrap_or_default();
-            tokio::fs::remove_file(&tmp_path).await.ok();
+            fs_err::tokio::remove_file(&tmp_path).await.ok();
             return Err(anyhow::anyhow!(
                 "Telegram file download failed on both local Bot API and api.telegram.org (path={}, local_status={}, fallback_status={}): {}",
                 file.path,
@@ -325,7 +325,7 @@ pub async fn download_file_from_telegram(
         log::info!("✅ File downloaded successfully from api.telegram.org (fallback)");
     } else if !status.is_success() && status != reqwest::StatusCode::PARTIAL_CONTENT {
         let body = resp.text().await.unwrap_or_default();
-        tokio::fs::remove_file(&tmp_path).await.ok();
+        fs_err::tokio::remove_file(&tmp_path).await.ok();
         return Err(anyhow::anyhow!(
             "Telegram file download failed (base={}, path={}, status={}): {}",
             base_url_str,
@@ -340,7 +340,7 @@ pub async fn download_file_from_telegram(
         dst.write_all(&chunk).await?;
     }
     dst.flush().await.ok();
-    tokio::fs::rename(&tmp_path, &dest_path).await?;
+    fs_err::tokio::rename(&tmp_path, &dest_path).await?;
 
     log::info!("✅ File downloaded successfully to: {:?}", dest_path);
     log::info!(
@@ -470,7 +470,7 @@ async fn download_via_mtproto(message_id: i32, destination_path: Option<PathBuf>
 
     // Ensure parent directory exists
     if let Some(parent) = output_path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
+        fs_err::tokio::create_dir_all(parent).await?;
     }
 
     log::info!("📥 Downloading via MTProto: {} bytes to {:?}", media.size, output_path);

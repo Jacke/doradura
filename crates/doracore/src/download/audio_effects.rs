@@ -368,7 +368,7 @@ pub async fn apply_audio_effects(
     }
 
     // Check output file size (Telegram limit: 50MB)
-    let file_size = tokio::fs::metadata(output_path)
+    let file_size = fs_err::tokio::metadata(output_path)
         .await
         .map_err(|e| {
             AppError::AudioEffect(AudioEffectError::FFmpegError(format!(
@@ -418,7 +418,7 @@ pub async fn cleanup_expired_sessions(shared_storage: Arc<SharedStorage>) -> Res
     // Delete files for expired sessions
     for session in expired_sessions {
         // Delete original file
-        if let Err(e) = tokio::fs::remove_file(&session.original_file_path).await {
+        if let Err(e) = fs_err::tokio::remove_file(&session.original_file_path).await {
             if e.kind() != std::io::ErrorKind::NotFound {
                 log::warn!("Failed to delete original file {}: {}", session.original_file_path, e);
             }
@@ -426,7 +426,7 @@ pub async fn cleanup_expired_sessions(shared_storage: Arc<SharedStorage>) -> Res
 
         // Delete current file if different
         if session.current_file_path != session.original_file_path {
-            if let Err(e) = tokio::fs::remove_file(&session.current_file_path).await {
+            if let Err(e) = fs_err::tokio::remove_file(&session.current_file_path).await {
                 if e.kind() != std::io::ErrorKind::NotFound {
                     log::warn!("Failed to delete current file {}: {}", session.current_file_path, e);
                 }
