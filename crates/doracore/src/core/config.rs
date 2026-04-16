@@ -1,3 +1,4 @@
+use secrecy::{ExposeSecret, SecretString};
 use std::env;
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -107,12 +108,20 @@ pub static LOG_FILE_PATH: LazyLock<String> =
     LazyLock::new(|| env::var("LOG_FILE_PATH").unwrap_or_else(|_| "app.log".to_string()));
 
 /// Bot token
-/// Read from BOT_TOKEN or TELOXIDE_TOKEN environment variable
-pub static BOT_TOKEN: LazyLock<String> = LazyLock::new(|| {
-    env::var("BOT_TOKEN")
+/// Read from BOT_TOKEN or TELOXIDE_TOKEN environment variable.
+/// Wrapped in `SecretString` so that `Debug` prints show `[REDACTED]`
+/// instead of the raw token and memory is zeroed on drop.
+pub static BOT_TOKEN: LazyLock<SecretString> = LazyLock::new(|| {
+    let raw = env::var("BOT_TOKEN")
         .or_else(|_| env::var("TELOXIDE_TOKEN"))
-        .unwrap_or_else(|_| String::new())
+        .unwrap_or_default();
+    SecretString::from(raw)
 });
+
+/// Convenience: is the bot token empty / unset?
+pub fn bot_token_is_empty() -> bool {
+    BOT_TOKEN.expose_secret().is_empty()
+}
 
 /// Webhook URL for Telegram updates
 /// Read from WEBHOOK_URL environment variable
@@ -120,7 +129,9 @@ pub static WEBHOOK_URL: LazyLock<Option<String>> = LazyLock::new(|| env::var("WE
 
 /// Secret token expected in Telegram webhook requests.
 /// Must match the token passed when calling setWebhook.
-pub static WEBHOOK_SECRET_TOKEN: LazyLock<Option<String>> = LazyLock::new(|| env::var("WEBHOOK_SECRET_TOKEN").ok());
+/// Wrapped in `SecretString` — see `BOT_TOKEN` rationale.
+pub static WEBHOOK_SECRET_TOKEN: LazyLock<Option<SecretString>> =
+    LazyLock::new(|| env::var("WEBHOOK_SECRET_TOKEN").ok().map(SecretString::from));
 
 /// Fixed webhook path exposed by the application.
 pub static WEBHOOK_PATH: LazyLock<String> =
@@ -895,7 +906,7 @@ pub fn validate() -> ConfigValidation {
     // --- Critical checks (errors) ---
 
     // BOT_TOKEN is required
-    if BOT_TOKEN.is_empty() {
+    if bot_token_is_empty() {
         errors.push("BOT_TOKEN is not set. The bot cannot start without a valid token.".to_string());
     }
 

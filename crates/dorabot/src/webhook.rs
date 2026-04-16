@@ -7,6 +7,7 @@ use axum::extract::State;
 use axum::http::{Request, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
+use secrecy::ExposeSecret;
 use teloxide::dispatching::{Dispatcher, UpdateHandler};
 use teloxide::prelude::*;
 use teloxide::requests::{HasPayload, Request as TelegramRequest};
@@ -40,9 +41,13 @@ pub async fn run_webhook_mode(
         .clone()
         .ok_or_else(|| anyhow!("WEBHOOK_URL must be set when running in webhook mode"))?;
     let listen_addr = parse_listen_addr()?;
-    let secret_token = config::WEBHOOK_SECRET_TOKEN
+    let secret_token_secret = config::WEBHOOK_SECRET_TOKEN
         .clone()
         .ok_or_else(|| anyhow!("WEBHOOK_SECRET_TOKEN must be set when running in webhook mode"))?;
+    // Extract plaintext once for use by teloxide `Options::secret_token()`
+    // and the dedup middleware. Kept as a local `String` (not `SecretString`)
+    // because teloxide's API takes `String` directly.
+    let secret_token = secret_token_secret.expose_secret().to_string();
     let public_url = url::Url::parse(&public_url).context("parse WEBHOOK_URL")?;
     let path = config::WEBHOOK_PATH.clone();
 
@@ -155,7 +160,7 @@ pub async fn set_webhook(bot: &Bot, drop_pending_updates: bool) -> Result<()> {
         .clone()
         .ok_or_else(|| anyhow!("WEBHOOK_SECRET_TOKEN must be set"))?;
     let mut request = bot.set_webhook(url::Url::parse(&public_url).context("parse WEBHOOK_URL")?);
-    request.payload_mut().secret_token = Some(secret_token);
+    request.payload_mut().secret_token = Some(secret_token.expose_secret().to_string());
     request.payload_mut().drop_pending_updates = Some(drop_pending_updates);
     request.payload_mut().max_connections = *config::WEBHOOK_MAX_CONNECTIONS;
     request.send().await.context("set Telegram webhook")?;

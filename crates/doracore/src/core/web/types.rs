@@ -33,7 +33,9 @@ pub(super) const SHARE_WINDOW_SECS: u64 = 60;
 #[derive(Clone)]
 pub(super) struct WebState {
     pub shared_storage: Arc<SharedStorage>,
-    pub bot_token: String,
+    /// Bot token held as `SecretString` so accidental `Debug` / log
+    /// exposure prints `[REDACTED]` and memory is zeroed on drop.
+    pub bot_token: secrecy::SecretString,
     pub plan_notifier: Option<PlanChangeNotifier>,
 }
 

@@ -10,6 +10,7 @@ use axum::{
     response::{Html, IntoResponse, Response},
 };
 use hmac::{Hmac, Mac};
+use secrecy::ExposeSecret;
 use sha2::{Digest, Sha256};
 
 use crate::core::config;
@@ -356,7 +357,7 @@ pub(super) async fn admin_auth_handler(
     }
 
     // 1. Verify Telegram hash
-    if !verify_telegram_hash(&auth, &state.bot_token) {
+    if !verify_telegram_hash(&auth, state.bot_token.expose_secret()) {
         return (StatusCode::UNAUTHORIZED, "Invalid hash").into_response();
     }
 

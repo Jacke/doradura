@@ -7,6 +7,7 @@
 //! - `update-ytdlp` — yt-dlp management
 
 use anyhow::Result;
+use secrecy::ExposeSecret;
 use std::sync::Arc;
 
 use crate::core::config;
@@ -20,7 +21,7 @@ pub async fn run_metadata_refresh(limit: Option<usize>, dry_run: bool, verbose: 
         create_pool(&config::DATABASE_PATH).map_err(|e| anyhow::anyhow!("Failed to create database pool: {}", e))?,
     );
 
-    let bot_token = config::BOT_TOKEN.to_string();
+    let bot_token = config::BOT_TOKEN.expose_secret().to_string();
     if bot_token.is_empty() {
         return Err(anyhow::anyhow!("BOT_TOKEN environment variable not set"));
     }

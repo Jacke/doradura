@@ -4,6 +4,7 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
+use secrecy::ExposeSecret;
 use serde_json::json;
 
 use crate::storage::get_connection;
@@ -459,7 +460,9 @@ pub(super) async fn admin_api_broadcast(
         return (StatusCode::BAD_REQUEST, "Message too long (max 4096)").into_response();
     }
 
-    let bot_token = state.bot_token.clone();
+    // Extract the raw token once for use in Telegram API URLs below.
+    // `SecretString` can't Display itself; we expose it explicitly.
+    let bot_token = state.bot_token.expose_secret().to_string();
 
     if body.target != "all" {
         // Send to specific user

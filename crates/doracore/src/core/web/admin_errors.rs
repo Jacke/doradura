@@ -3,6 +3,7 @@
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
+use secrecy::ExposeSecret;
 use serde_json::json;
 
 use crate::storage::get_connection;
@@ -262,7 +263,7 @@ pub(super) async fn admin_api_error_retry(
         "✅ Good news! The admin has retried your failed download:\n\n{}\n\nYour file will arrive shortly.",
         ctx.url
     );
-    if let Err(e) = send_telegram_message(&state.bot_token, ctx.user_id, &user_text).await {
+    if let Err(e) = send_telegram_message(state.bot_token.expose_secret(), ctx.user_id, &user_text).await {
         log::warn!("Failed to notify user {} of retry: {}", ctx.user_id, e);
     }
 
@@ -310,7 +311,7 @@ pub(super) async fn admin_api_error_notify(
         body.message.clone()
     };
 
-    if let Err(e) = send_telegram_message(&state.bot_token, user_id, &text).await {
+    if let Err(e) = send_telegram_message(state.bot_token.expose_secret(), user_id, &text).await {
         log::error!("Failed to notify user {} about error {}: {}", user_id, error_id, e);
         return (StatusCode::BAD_GATEWAY, "failed to send message").into_response();
     }
