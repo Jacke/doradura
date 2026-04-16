@@ -16,8 +16,9 @@ use crate::telegram::admin;
 use crate::telegram::Bot;
 use crate::telegram::BotExt;
 use chrono::{DateTime, Duration, Utc};
+use dashmap::DashMap;
 use sqlx::{pool::PoolConnection, Postgres};
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
 use teloxide::types::ChatId;
@@ -299,9 +300,9 @@ pub struct AlertManager {
     /// Shared storage for persisting alert history
     shared_storage: Arc<SharedStorage>,
     /// Last alert time for each alert type (for throttling)
-    last_alert_time: Arc<Mutex<HashMap<AlertType, DateTime<Utc>>>>,
+    last_alert_time: Arc<DashMap<AlertType, DateTime<Utc>>>,
     /// Currently active alerts (for resolution detection)
-    active_alerts: Arc<Mutex<HashMap<AlertType, Alert>>>,
+    active_alerts: Arc<DashMap<AlertType, Alert>>,
     /// Recent download attempts for time-windowed error rate calculation
     recent_downloads: Arc<Mutex<VecDeque<DownloadRecord>>>,
     /// Last known counter values for delta calculation
@@ -315,8 +316,8 @@ impl AlertManager {
             bot,
             admin_chat_id,
             shared_storage,
-            last_alert_time: Arc::new(Mutex::new(HashMap::new())),
-            active_alerts: Arc::new(Mutex::new(HashMap::new())),
+            last_alert_time: Arc::new(DashMap::new()),
+            active_alerts: Arc::new(DashMap::new()),
             recent_downloads: Arc::new(Mutex::new(VecDeque::new())),
             last_counter_values: Arc::new(Mutex::new((0.0, 0.0))),
         }
@@ -324,11 +325,9 @@ impl AlertManager {
 
     /// Checks if an alert should be sent based on throttling rules
     async fn should_send_alert(&self, alert_type: &AlertType) -> bool {
-        let last_times = self.last_alert_time.lock().await;
-
-        if let Some(last_time) = last_times.get(alert_type) {
+        if let Some(entry) = self.last_alert_time.get(alert_type) {
             let throttle_window = Duration::seconds(alert_type.throttle_window());
-            let time_since_last = Utc::now() - *last_time;
+            let time_since_last = Utc::now() - *entry.value();
 
             if time_since_last < throttle_window {
                 log::debug!(
@@ -370,16 +369,11 @@ impl AlertManager {
         }
 
         // Update last alert time
-        {
-            let mut last_times = self.last_alert_time.lock().await;
-            last_times.insert(alert.alert_type.clone(), alert.triggered_at);
-        }
+        self.last_alert_time
+            .insert(alert.alert_type.clone(), alert.triggered_at);
 
         // Mark as active
-        {
-            let mut active = self.active_alerts.lock().await;
-            active.insert(alert.alert_type.clone(), alert.clone());
-        }
+        self.active_alerts.insert(alert.alert_type.clone(), alert.clone());
 
         // Save to database
         let severity_str = match alert.severity {
@@ -406,9 +400,7 @@ impl AlertManager {
 
     /// Checks if an alert condition is resolved and sends resolution notification
     pub async fn check_resolution(&self, alert_type: &AlertType) -> anyhow::Result<()> {
-        let mut active = self.active_alerts.lock().await;
-
-        if let Some(alert) = active.remove(alert_type) {
+        if let Some((_, alert)) = self.active_alerts.remove(alert_type) {
             log::info!("Alert {:?} resolved", alert_type);
 
             let message = format!(

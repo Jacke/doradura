@@ -1,19 +1,18 @@
 use anyhow::{anyhow, Context, Result};
+use dashmap::DashMap;
 use doracore::core::config::{self, DatabaseDriver};
 use indoc::indoc;
 use redis::AsyncCommands;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use teloxide::types::ChatId;
-use tokio::sync::Mutex;
 use tokio::time::{Duration, Instant};
 
 const REDIS_KEY_PREFIX: &str = "doradura:rate_limit";
 
 #[derive(Clone)]
 enum RateLimiterBackend {
-    Memory(Arc<Mutex<HashMap<ChatId, Instant>>>),
+    Memory(Arc<DashMap<ChatId, Instant>>),
     Redis(redis::Client),
 }
 
@@ -46,7 +45,7 @@ impl RateLimiter {
     /// - VIP: 5 seconds between requests
     pub fn new() -> Self {
         Self {
-            backend: RateLimiterBackend::Memory(Arc::new(Mutex::new(HashMap::new()))),
+            backend: RateLimiterBackend::Memory(Arc::new(DashMap::new())),
             free_duration: Duration::from_secs(30),
             premium_duration: Duration::from_secs(10),
             vip_duration: Duration::from_secs(5),
@@ -81,7 +80,7 @@ impl RateLimiter {
     /// * `vip_duration` - Delay between requests for the VIP plan
     pub fn with_durations(free_duration: Duration, premium_duration: Duration, vip_duration: Duration) -> Self {
         Self {
-            backend: RateLimiterBackend::Memory(Arc::new(Mutex::new(HashMap::new()))),
+            backend: RateLimiterBackend::Memory(Arc::new(DashMap::new())),
             free_duration,
             premium_duration,
             vip_duration,
@@ -128,15 +127,21 @@ impl RateLimiter {
         let duration = self.get_duration_for_plan(plan);
         match &self.backend {
             RateLimiterBackend::Memory(limits) => {
-                let mut limits = limits.lock().await;
                 let now = Instant::now();
-                if let Some(&instant) = limits.get(&chat_id) {
-                    if now < instant {
-                        return Ok(Some(instant - now));
+                match limits.entry(chat_id) {
+                    dashmap::mapref::entry::Entry::Occupied(mut occupied) => {
+                        let instant = *occupied.get();
+                        if now < instant {
+                            return Ok(Some(instant - now));
+                        }
+                        occupied.insert(now + duration);
+                        Ok(None)
+                    }
+                    dashmap::mapref::entry::Entry::Vacant(vacant) => {
+                        vacant.insert(now + duration);
+                        Ok(None)
                     }
                 }
-                limits.insert(chat_id, now + duration);
-                Ok(None)
             }
             RateLimiterBackend::Redis(client) => {
                 let script = redis::Script::new(indoc! {r#"
@@ -185,8 +190,8 @@ impl RateLimiter {
     pub async fn get_remaining_time(&self, chat_id: ChatId) -> Result<Option<Duration>> {
         match &self.backend {
             RateLimiterBackend::Memory(limits) => {
-                let limits = limits.lock().await;
-                if let Some(&instant) = limits.get(&chat_id) {
+                if let Some(entry) = limits.get(&chat_id) {
+                    let instant = *entry.value();
                     let now = Instant::now();
                     if now < instant {
                         return Ok(Some(instant - now));
@@ -213,7 +218,6 @@ impl RateLimiter {
         let duration = self.get_duration_for_plan(plan);
         match &self.backend {
             RateLimiterBackend::Memory(limits) => {
-                let mut limits = limits.lock().await;
                 limits.insert(chat_id, Instant::now() + duration);
                 Ok(())
             }
@@ -241,7 +245,6 @@ impl RateLimiter {
     pub async fn remove_rate_limit(&self, chat_id: ChatId) -> Result<()> {
         match &self.backend {
             RateLimiterBackend::Memory(limits) => {
-                let mut limits = limits.lock().await;
                 limits.remove(&chat_id);
                 Ok(())
             }
@@ -265,7 +268,6 @@ impl RateLimiter {
     pub async fn cleanup_expired(&self) -> usize {
         match &self.backend {
             RateLimiterBackend::Memory(limits) => {
-                let mut limits = limits.lock().await;
                 let now = Instant::now();
                 let initial_len = limits.len();
                 limits.retain(|_, instant| now < *instant);
@@ -289,7 +291,7 @@ impl RateLimiter {
     /// this count is only used for local diagnostics in tests.
     pub async fn len(&self) -> usize {
         match &self.backend {
-            RateLimiterBackend::Memory(limits) => limits.lock().await.len(),
+            RateLimiterBackend::Memory(limits) => limits.len(),
             RateLimiterBackend::Redis(_) => 0,
         }
     }
