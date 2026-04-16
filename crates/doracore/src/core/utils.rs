@@ -98,6 +98,55 @@ pub fn format_bytes_i64(bytes: i64) -> String {
     format_bytes(bytes.max(0) as u64)
 }
 
+/// Format a duration in seconds as a media-style timestamp.
+///
+/// - `< 1h` → `{m}:{ss}` (e.g. `"3:45"`)
+/// - `≥ 1h` → `{h}:{mm}:{ss}` (e.g. `"1:23:45"`)
+///
+/// Single source of truth for media duration display — replaces the
+/// hand-rolled `format_duration` / `format_duration_short` helpers that
+/// used to live in `downloads/mod.rs`, `videos.rs`, `cuts.rs`,
+/// `download/search.rs`, and `telegram/types.rs`.
+pub fn format_media_duration(seconds: u64) -> String {
+    let hours = seconds / 3600;
+    let minutes = (seconds % 3600) / 60;
+    let secs = seconds % 60;
+    if hours > 0 {
+        format!("{}:{:02}:{:02}", hours, minutes, secs)
+    } else {
+        format!("{}:{:02}", minutes, secs)
+    }
+}
+
+/// Signed variant — negative values clamp to zero.
+pub fn format_media_duration_i64(seconds: i64) -> String {
+    format_media_duration(seconds.max(0) as u64)
+}
+
+/// Format a duration in seconds as a verbose uptime string.
+///
+/// - `< 1m` → `{s}s`
+/// - `< 1h` → `{m}m {s}s`
+/// - `< 1d` → `{h}h {m}m {s}s`
+/// - `≥ 1d` → `{d}d {h}h {m}m {s}s`
+///
+/// Used for admin/analytics dashboards, not media timestamps.
+pub fn format_uptime(seconds: u64) -> String {
+    let days = seconds / 86400;
+    let hours = (seconds % 86400) / 3600;
+    let minutes = (seconds % 3600) / 60;
+    let secs = seconds % 60;
+    if days > 0 {
+        format!("{}d {}h {}m {}s", days, hours, minutes, secs)
+    } else if hours > 0 {
+        format!("{}h {}m {}s", hours, minutes, secs)
+    } else if minutes > 0 {
+        format!("{}m {}s", minutes, secs)
+    } else {
+        format!("{}s", secs)
+    }
+}
+
 /// Fire-and-forget file removal. Ignores errors (file already gone,
 /// permission denied, etc.) — the common cleanup pattern.
 ///

@@ -14,18 +14,9 @@ const ITEMS_PER_PAGE: usize = 5;
 /// Re-export of the shared byte formatter under the local name so call
 /// sites in this file don't need to change.
 use doracore::core::format_bytes_i64 as format_file_size;
-
-fn format_duration(seconds: i64) -> String {
-    let hours = seconds / 3600;
-    let minutes = (seconds % 3600) / 60;
-    let secs = seconds % 60;
-
-    if hours > 0 {
-        format!("{}:{:02}:{:02}", hours, minutes, secs)
-    } else {
-        format!("{}:{:02}", minutes, secs)
-    }
-}
+/// Re-export of the shared duration formatter under the local name so
+/// call sites in this file don't need to change.
+use doracore::core::format_media_duration_i64 as format_duration;
 
 /// Build duration selection buttons for circle creation from cuts
 /// Returns rows of buttons with time ranges (first/last/middle/full)
@@ -64,12 +55,8 @@ fn build_duration_buttons_for_cut(
     vec![first_row, last_row, special_row]
 }
 
-/// Format duration as short string (0:15, 0:30, 1:00)
-fn format_duration_short(seconds: i64) -> String {
-    let mins = seconds / 60;
-    let secs = seconds % 60;
-    format!("{}:{:02}", mins, secs)
-}
+/// Format duration as short string (0:15, 0:30, 1:00) — thin re-export.
+use doracore::core::format_media_duration_i64 as format_duration_short;
 
 pub async fn show_cuts_page(
     bot: &Bot,

@@ -30,14 +30,11 @@ pub struct PreviewMetadata {
 }
 
 impl PreviewMetadata {
-    /// Formats duration into human-readable format (MM:SS)
+    /// Formats duration into human-readable format (MM:SS or H:MM:SS).
     pub fn format_duration(&self) -> String {
-        if let Some(duration) = self.duration {
-            let minutes = duration / 60;
-            let seconds = duration % 60;
-            format!("{}:{:02}", minutes, seconds)
-        } else {
-            "Unknown".to_string()
+        match self.duration {
+            Some(duration) => doracore::core::format_media_duration(duration as u64),
+            None => "Unknown".to_string(),
         }
     }
 
@@ -148,7 +145,7 @@ mod tests {
             title: "Test".to_string(),
             artist: "".to_string(),
             thumbnail_url: None,
-            duration: Some(3661), // 61:01
+            duration: Some(3661), // 1:01:01
             filesize: None,
             description: None,
             video_formats: None,
@@ -157,7 +154,7 @@ mod tests {
             carousel_count: 0,
             audio_tracks: None,
         };
-        assert_eq!(meta.format_duration(), "61:01");
+        assert_eq!(meta.format_duration(), "1:01:01");
     }
 
     #[test]

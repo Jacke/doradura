@@ -262,10 +262,10 @@ pub fn source_name_from_url(url: &str) -> &'static str {
     }
 }
 
-/// Format duration as mm:ss.
+/// Format duration as m:ss / h:mm:ss, or `"?:??"` when absent.
 pub fn format_duration(secs: Option<u32>) -> String {
     match secs {
-        Some(s) => format!("{}:{:02}", s / 60, s % 60),
+        Some(s) => doracore::core::format_media_duration(s as u64),
         None => "?:??".to_string(),
     }
 }

@@ -20,19 +20,9 @@ const ITEMS_PER_PAGE: usize = 5;
 /// Re-export of the shared byte formatter under the local name so call
 /// sites in this file don't need to change.
 use doracore::core::format_bytes_i64 as format_file_size;
-
-/// Format duration for display
-fn format_duration(seconds: i64) -> String {
-    let hours = seconds / 3600;
-    let minutes = (seconds % 3600) / 60;
-    let secs = seconds % 60;
-
-    if hours > 0 {
-        format!("{}:{:02}:{:02}", hours, minutes, secs)
-    } else {
-        format!("{}:{:02}", minutes, secs)
-    }
-}
+/// Re-export of the shared duration formatter under the local name so
+/// call sites (and tests) in this file don't need to change.
+use doracore::core::format_media_duration_i64 as format_duration;
 
 /// Get media type icon
 fn get_media_icon(media_type: &str) -> &'static str {
