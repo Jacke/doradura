@@ -1,31 +1,13 @@
-use std::collections::HashMap;
+use moka::future::Cache;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use tokio::time::{Duration, Instant};
+use std::time::Duration;
 use url::Url;
 
-/// Maximum number of entries in the metadata cache
-/// Prevents unbounded memory growth from URL variations
-const MAX_CACHE_SIZE: usize = 10_000;
-
-/// Number of entries to evict when cache is full (10% of max)
-const EVICTION_BATCH_SIZE: usize = 1_000;
-
-/// Structure for storing metadata in the cache
-#[derive(Debug, Clone)]
-struct CachedMetadata {
-    title: String,
-    artist: String,
-    cached_at: Instant,
-}
-
 /// Metadata cache with TTL
-/// Uses RwLock for concurrent reads (most operations are reads)
-/// Uses AtomicU64 for hit/miss counters (lock-free)
+/// Uses moka for lock-free concurrent access with built-in LRU eviction.
+/// Atomic counters track hit/miss for the CACHE_HIT_RATIO Prometheus metric.
 pub struct MetadataCache {
-    cache: Arc<RwLock<HashMap<String, CachedMetadata>>>,
-    ttl: Duration,
+    cache: Cache<String, (String, String)>,
     hit_count: AtomicU64,
     miss_count: AtomicU64,
 }
@@ -34,154 +16,57 @@ impl MetadataCache {
     /// Creates a new cache with the specified TTL
     pub fn new(ttl: Duration) -> Self {
         Self {
-            cache: Arc::new(RwLock::new(HashMap::new())),
-            ttl,
+            cache: Cache::builder().max_capacity(10_000).time_to_live(ttl).build(),
             hit_count: AtomicU64::new(0),
             miss_count: AtomicU64::new(0),
         }
     }
 
-    /// Gets metadata from the cache or returns None if absent or expired
-    /// Uses read lock for better concurrency - multiple readers allowed
-    pub async fn get(&self, url: &Url) -> Option<(String, String)> {
-        let url_str = url.as_str();
-
-        // First try with read lock (allows concurrent readers)
-        {
-            let cache = self.cache.read().await;
-            if let Some(cached) = cache.get(url_str) {
-                if Instant::now().duration_since(cached.cached_at) < self.ttl {
-                    self.hit_count.fetch_add(1, Ordering::Relaxed);
-                    let total = self.hit_count.load(Ordering::Relaxed) + self.miss_count.load(Ordering::Relaxed);
-                    if total > 0 {
-                        let ratio = self.hit_count.load(Ordering::Relaxed) as f64 / total as f64;
-                        crate::core::metrics::CACHE_HIT_RATIO
-                            .with_label_values(&["metadata"])
-                            .set(ratio);
-                    }
-                    return Some((cached.title.clone(), cached.artist.clone()));
-                }
-                // Entry expired - need write lock to remove it
-            } else {
-                // Entry not found
-                self.miss_count.fetch_add(1, Ordering::Relaxed);
-                let total = self.hit_count.load(Ordering::Relaxed) + self.miss_count.load(Ordering::Relaxed);
-                if total > 0 {
-                    let ratio = self.hit_count.load(Ordering::Relaxed) as f64 / total as f64;
-                    crate::core::metrics::CACHE_HIT_RATIO
-                        .with_label_values(&["metadata"])
-                        .set(ratio);
-                }
-                return None;
-            }
-        }
-
-        // Entry expired - upgrade to write lock and remove
-        let mut cache = self.cache.write().await;
-        // Double-check after acquiring write lock
-        if let Some(cached) = cache.get(url_str) {
-            if Instant::now().duration_since(cached.cached_at) < self.ttl {
-                // Another thread may have updated it
-                self.hit_count.fetch_add(1, Ordering::Relaxed);
-                let total = self.hit_count.load(Ordering::Relaxed) + self.miss_count.load(Ordering::Relaxed);
-                if total > 0 {
-                    let ratio = self.hit_count.load(Ordering::Relaxed) as f64 / total as f64;
-                    crate::core::metrics::CACHE_HIT_RATIO
-                        .with_label_values(&["metadata"])
-                        .set(ratio);
-                }
-                return Some((cached.title.clone(), cached.artist.clone()));
-            }
-            cache.remove(url_str);
-        }
-
-        self.miss_count.fetch_add(1, Ordering::Relaxed);
-        let total = self.hit_count.load(Ordering::Relaxed) + self.miss_count.load(Ordering::Relaxed);
+    fn update_hit_ratio(&self) {
+        let hits = self.hit_count.load(Ordering::Relaxed);
+        let misses = self.miss_count.load(Ordering::Relaxed);
+        let total = hits + misses;
         if total > 0 {
-            let ratio = self.hit_count.load(Ordering::Relaxed) as f64 / total as f64;
+            let ratio = hits as f64 / total as f64;
             crate::core::metrics::CACHE_HIT_RATIO
                 .with_label_values(&["metadata"])
                 .set(ratio);
         }
-        None
     }
 
-    /// Evicts entries using random sampling to avoid O(n log n) full sort.
-    /// Samples SAMPLE_SIZE entries and removes the oldest EVICTION_BATCH_SIZE from sample.
-    /// Called with cache lock already held.
-    fn evict_oldest_if_needed(cache: &mut HashMap<String, CachedMetadata>) {
-        if cache.len() <= MAX_CACHE_SIZE {
-            return;
+    /// Gets metadata from the cache or returns None if absent or expired.
+    pub async fn get(&self, url: &Url) -> Option<(String, String)> {
+        match self.cache.get(url.as_str()).await {
+            Some(value) => {
+                self.hit_count.fetch_add(1, Ordering::Relaxed);
+                self.update_hit_ratio();
+                Some(value)
+            }
+            None => {
+                self.miss_count.fetch_add(1, Ordering::Relaxed);
+                self.update_hit_ratio();
+                None
+            }
         }
-
-        use rand::seq::IteratorRandom;
-        let mut rng = rand::thread_rng();
-
-        // Sample random entries instead of sorting entire cache
-        const SAMPLE_SIZE: usize = 500;
-        let sample: Vec<_> = cache
-            .iter()
-            .choose_multiple(&mut rng, SAMPLE_SIZE.min(cache.len()))
-            .into_iter()
-            .map(|(k, v)| (k.clone(), v.cached_at))
-            .collect();
-
-        // Sort only the sample and remove oldest from it
-        let mut sorted_sample = sample;
-        sorted_sample.sort_by_key(|(_, time)| *time);
-
-        let to_remove: Vec<_> = sorted_sample
-            .iter()
-            .take(EVICTION_BATCH_SIZE)
-            .map(|(k, _)| k.clone())
-            .collect();
-
-        for key in &to_remove {
-            cache.remove(key);
-        }
-
-        log::info!(
-            "🗑️ Cache LRU eviction (sampled): removed {} entries, cache size now {}",
-            to_remove.len(),
-            cache.len()
-        );
     }
 
-    /// Stores metadata in the cache
+    /// Stores metadata in the cache, rejecting invalid values.
     pub async fn set(&self, url: &Url, title: String, artist: String) {
-        // Do not cache "Unknown Track", empty values or "NA" artist
         if title.trim().is_empty() || title.trim() == "Unknown Track" {
             log::warn!("Not caching invalid metadata: title='{}'", title);
             return;
         }
-
-        // If artist is "NA" or empty - do not cache to avoid saving bad data
         if artist.trim() == "NA" || artist.trim().is_empty() {
             log::debug!("Not caching metadata with NA/empty artist for URL: {}", url);
             return;
         }
-
-        let url_str = url.as_str();
-        let mut cache = self.cache.write().await;
-
-        // Evict oldest entries if cache is full
-        Self::evict_oldest_if_needed(&mut cache);
-
-        cache.insert(
-            url_str.to_string(),
-            CachedMetadata {
-                title,
-                artist,
-                cached_at: Instant::now(),
-            },
-        );
+        self.cache.insert(url.as_str().to_string(), (title, artist)).await;
     }
 
-    /// Stores extended metadata in the cache
+    /// Stores extended metadata in the cache.
     ///
-    /// The extra parameters (`thumbnail_url`, `duration`, `filesize`) are accepted
-    /// for API compatibility but not persisted in the in-memory cache — only
-    /// `title` and `artist` are cached.
+    /// Extra parameters (`thumbnail_url`, `duration`, `filesize`) are accepted
+    /// for API compatibility but not persisted — only `title` and `artist` are cached.
     pub async fn set_extended(
         &self,
         url: &Url,
@@ -191,41 +76,27 @@ impl MetadataCache {
         _duration: Option<u32>,
         _filesize: Option<u64>,
     ) {
-        // Do not cache "Unknown Track" or empty values
         if title.trim().is_empty() || title.trim() == "Unknown Track" {
             log::warn!("Not caching invalid extended metadata: title='{}'", title);
             return;
         }
-
-        let url_str = url.as_str();
-        let mut cache = self.cache.write().await;
-
-        // Evict oldest entries if cache is full
-        Self::evict_oldest_if_needed(&mut cache);
-
-        cache.insert(
-            url_str.to_string(),
-            CachedMetadata {
-                title,
-                artist,
-                cached_at: Instant::now(),
-            },
-        );
+        self.cache.insert(url.as_str().to_string(), (title, artist)).await;
     }
 
-    /// Clears expired entries from the cache
+    /// Triggers moka's internal eviction pass. moka evicts TTL-expired entries
+    /// lazily on access, so explicit cleanup is rarely needed.
     pub async fn cleanup(&self) -> usize {
-        let mut cache = self.cache.write().await;
-        let before = cache.len();
-        cache.retain(|_, cached| Instant::now().duration_since(cached.cached_at) < self.ttl);
-        let removed = before - cache.len();
+        let before = self.cache.entry_count();
+        self.cache.run_pending_tasks().await;
+        let after = self.cache.entry_count();
+        let removed = before.saturating_sub(after) as usize;
         log::debug!("Cleaned up {} expired cache entries", removed);
         removed
     }
 
-    /// Gets cache statistics (uses read lock for cache, atomic for counters)
+    /// Gets cache statistics.
     pub async fn stats(&self) -> CacheStats {
-        let cache = self.cache.read().await;
+        self.cache.run_pending_tasks().await;
         let hits = self.hit_count.load(Ordering::Relaxed);
         let misses = self.miss_count.load(Ordering::Relaxed);
         let total = hits + misses;
@@ -234,19 +105,18 @@ impl MetadataCache {
         } else {
             0.0
         };
-
         CacheStats {
-            size: cache.len(),
+            size: self.cache.entry_count() as usize,
             hits,
             misses,
             hit_rate,
         }
     }
 
-    /// Clears the entire cache
+    /// Clears the entire cache and resets counters.
     pub async fn clear(&self) {
-        let mut cache = self.cache.write().await;
-        cache.clear();
+        self.cache.invalidate_all();
+        self.cache.run_pending_tasks().await;
         self.hit_count.store(0, Ordering::Relaxed);
         self.miss_count.store(0, Ordering::Relaxed);
         log::info!("Cache cleared");

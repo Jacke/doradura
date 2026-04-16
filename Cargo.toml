@@ -41,6 +41,9 @@ strum = { version = "0.27", features = ["derive"] }
 bon = "3"
 indoc = "2"
 secrecy = "0.10"
+moka = { version = "0.12", features = ["future"] }
+dashmap = "6"
+fs-err = { version = "3", features = ["tokio"] }
 uuid = "1.1"
 rand = "0.8"
 base64 = "0.22.1"
