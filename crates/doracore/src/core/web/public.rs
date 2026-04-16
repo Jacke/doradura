@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Json, Response};
+use indoc::formatdoc;
 use serde_json::json;
 
 use crate::i18n;
@@ -172,160 +173,14 @@ fn render_privacy_page(lang: &str) -> String {
     };
 
     let content = match lang {
-        "ru" => {
-            r#"
-            <h1>Политика конфиденциальности</h1>
-            <p class="lead">Мы уважаем вашу конфиденциальность и стремимся защищать ваши персональные данные.</p>
-
-            <section>
-                <h2>1. Общие положения</h2>
-                <p>Настоящая политика объясняет, как сервис Doradura обрабатывает данные пользователей. Мы минимизируем сбор данных и храним только то, что необходимо для работы сервиса.</p>
-            </section>
-
-            <section>
-                <h2>2. Какие данные мы собираем</h2>
-                <ul>
-                    <li><strong>Telegram ID и юзернейм:</strong> Для идентификации вашего аккаунта и предоставления доступа к функциям бота.</li>
-                    <li><strong>История загрузок:</strong> Метаданные (название, ссылка, дата) для статистики и повторного доступа к файлам.</li>
-                    <li><strong>Настройки:</strong> Выбранный язык, предпочтительное качество видео и аудио.</li>
-                </ul>
-            </section>
-
-            <section>
-                <h2>3. Как мы используем данные</h2>
-                <p>Ваши данные используются исключительно для:</p>
-                <ul>
-                    <li>Обеспечения работы функций загрузки и конвертации.</li>
-                    <li>Улучшения качества сервиса на основе анонимной статистики.</li>
-                    <li>Предоставления персональных настроек и доступа к подпискам.</li>
-                </ul>
-            </section>
-
-            <section>
-                <h2>4. Безопасность и хранение</h2>
-                <p>Мы используем современные методы шифрования для защиты базы данных. Ваши файлы не хранятся на наших серверах долго — они удаляются автоматически через 10 минут после отправки.</p>
-            </section>
-
-            <section>
-                <h2>5. Права пользователей</h2>
-                <p>Вы имеете право запросить удаление всех ваших данных из нашей системы через команду /settings или обратившись к администратору.</p>
-            </section>
-        "#
-        }
-        "fr" => {
-            r#"
-            <h1>Politique de confidentialité</h1>
-            <p class="lead">Nous respectons votre vie privée et nous nous engageons à protéger vos données personnelles.</p>
-
-            <section>
-                <h2>1. Dispositions générales</h2>
-                <p>Cette politique explique comment Doradura traite les données des utilisateurs. Nous minimisons la collecte de données et ne conservons que ce qui est nécessaire au fonctionnement du service.</p>
-            </section>
-
-            <section>
-                <h2>2. Données collectées</h2>
-                <ul>
-                    <li><strong>ID Telegram et nom d'utilisateur :</strong> Pour identifier votre compte et fournir l'accès aux fonctions du bot.</li>
-                    <li><strong>Historique des téléchargements :</strong> Métadonnées (titre, lien, date) pour les statistiques et l'accès répété aux fichiers.</li>
-                    <li><strong>Paramètres :</strong> Langue choisie, qualité vidéo et audio préférée.</li>
-                </ul>
-            </section>
-
-            <section>
-                <h2>3. Utilisation des données</h2>
-                <p>Vos données sont utilisées exclusivement pour :</p>
-                <ul>
-                    <li>Assurer le fonctionnement des fonctions de téléchargement et de conversion.</li>
-                    <li>Améliorer la qualité du service sur la base de statistiques anonymes.</li>
-                    <li>Fournir des paramètres personnels et l'accès aux abonnements.</li>
-                </ul>
-            </section>
-
-            <section>
-                <h2>4. Sécurité et stockage</h2>
-                <p>Nous utilisons des méthodes de cryptage modernes pour protéger la base de données. Vos fichiers ne sont pas stockés longtemps sur nos serveurs — ils sont supprimés automatiquement 10 minutes après l'envoi.</p>
-            </section>
-        "#
-        }
-        "de" => {
-            r#"
-            <h1>Datenschutzerklärung</h1>
-            <p class="lead">Wir respektieren Ihre Privatsphäre und setzen uns für den Schutz Ihrer personenbezogenen Daten ein.</p>
-
-            <section>
-                <h2>1. Allgemeine Bestimmungen</h2>
-                <p>Diese Richtlinie erklärt, wie Doradura Benutzerdaten verarbeitet. Wir minimieren die Datenerhebung und speichern nur das, was für den Betrieb des Dienstes notwendig ist.</p>
-            </section>
-
-            <section>
-                <h2>2. Welche Daten wir sammeln</h2>
-                <ul>
-                    <li><strong>Telegram ID und Benutzername:</strong> Um Ihr Konto zu identifizieren und Zugriff auf die Bot-Funktionen zu gewähren.</li>
-                    <li><strong>Download-Verlauf:</strong> Metadaten (Titel, Link, Datum) für Statistiken und wiederholten Zugriff auf Dateien.</li>
-                    <li><strong>Einstellungen:</strong> Gewählte Sprache, bevorzugte Video- und Audioqualität.</li>
-                </ul>
-            </section>
-
-            <section>
-                <h2>3. Verwendung der Daten</h2>
-                <p>Ihre Daten werden ausschließlich verwendet für:</p>
-                <ul>
-                    <li>Bereitstellung von Download- und Konvertierungsfunktionen.</li>
-                    <li>Verbesserung der Servicequalität auf Basis anonymer Statistiken.</li>
-                    <li>Bereitstellung persönlicher Einstellungen und Zugriff auf Abonnements.</li>
-                </ul>
-            </section>
-
-            <section>
-                <h2>4. Sicherheit und Speicherung</h2>
-                <p>Wir verwenden moderne Verschlüsselungsmethoden, um die Datenbank zu schützen. Ihre Dateien werden nicht lange auf unseren Servern gespeichert — sie werden 10 Minuten nach dem Senden automatisch gelöscht.</p>
-            </section>
-        "#
-        }
-        _ => {
-            r#"
-            <h1>Privacy Policy</h1>
-            <p class="lead">We respect your privacy and are committed to protecting your personal data.</p>
-
-            <section>
-                <h2>1. General Provisions</h2>
-                <p>This policy explains how Doradura processes user data. We minimize data collection and only store what is necessary for the service to function.</p>
-            </section>
-
-            <section>
-                <h2>2. Data We Collect</h2>
-                <ul>
-                    <li><strong>Telegram ID and Username:</strong> To identify your account and provide access to the bot's features.</li>
-                    <li><strong>Download History:</strong> Metadata (title, link, date) for statistics and repeat access to files.</li>
-                    <li><strong>Settings:</strong> Chosen language, preferred video and audio quality.</li>
-                </ul>
-            </section>
-
-            <section>
-                <h2>3. How We Use Data</h2>
-                <p>Your data is used exclusively to:</p>
-                <ul>
-                    <li>Ensure the operation of download and conversion functions.</li>
-                    <li>Improve service quality based on anonymous statistics.</li>
-                    <li>Provide personal settings and access to subscriptions.</li>
-                </ul>
-            </section>
-
-            <section>
-                <h2>4. Security and Storage</h2>
-                <p>We use modern encryption methods to protect the database. Your files are not stored on our servers for long — they are deleted automatically 10 minutes after sending.</p>
-            </section>
-
-            <section>
-                <h2>5. User Rights</h2>
-                <p>You have the right to request the deletion of all your data from our system via the /settings command or by contacting the administrator.</p>
-            </section>
-        "#
-        }
+        "ru" => include_str!("html/privacy_content_ru.html"),
+        "fr" => include_str!("html/privacy_content_fr.html"),
+        "de" => include_str!("html/privacy_content_de.html"),
+        _ => include_str!("html/privacy_content_en.html"),
     };
 
-    let lang_switcher = format!(
-        r#"<div class="lang-switcher">
+    let lang_switcher = formatdoc! {r#"
+        <div class="lang-switcher">
             <a href="/privacy?lang=en" class="{en_active}">EN</a>
             <a href="/privacy?lang=ru" class="{ru_active}">RU</a>
             <a href="/privacy?lang=fr" class="{fr_active}">FR</a>
@@ -335,7 +190,7 @@ fn render_privacy_page(lang: &str) -> String {
         ru_active = if lang == "ru" { "active" } else { "" },
         fr_active = if lang == "fr" { "active" } else { "" },
         de_active = if lang == "de" { "active" } else { "" },
-    );
+    };
 
     const LAYOUT: &str = include_str!("html/privacy_layout.html");
     LAYOUT

@@ -6,6 +6,7 @@ use axum::extract::State;
 use axum::http::header;
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse, Response};
+use indoc::formatdoc;
 
 use crate::storage::db::DbPool;
 use crate::storage::get_connection;
@@ -176,8 +177,7 @@ fn fetch_admin_stats(db: &Arc<DbPool>) -> AdminStats {
 
 fn render_admin_dashboard(stats: &AdminStats, csrf_token: &str) -> String {
     // --- Overview cards ---
-    let cards_html = format!(
-        r#"
+    let cards_html = formatdoc! {r#"
         <div class="stat-card">
             <div class="stat-icon">👤</div>
             <div class="stat-body">
@@ -227,7 +227,7 @@ fn render_admin_dashboard(stats: &AdminStats, csrf_token: &str) -> String {
         new_users = fmt_num(stats.new_users_today),
         errors_today = fmt_num(stats.errors_today),
         err_class = if stats.errors_today > 0 { "err-val" } else { "" },
-    );
+    };
 
     // --- Downloads per day bar chart ---
     let max_day_count = stats
@@ -243,8 +243,8 @@ fn render_admin_dashboard(stats: &AdminStats, csrf_token: &str) -> String {
     for (date, count) in &stats.downloads_per_day {
         let pct = (*count as f64 / max_day_count as f64 * 100.0) as u64;
         let short_date = date.get(5..).unwrap_or(date); // MM-DD
-        chart_html.push_str(&format!(
-            r#"<div class="bar-col">
+        chart_html.push_str(&formatdoc! {r#"
+            <div class="bar-col">
                 <div class="bar-tooltip">{count} downloads</div>
                 <div class="bar" style="height:{pct}%"></div>
                 <div class="bar-label">{date}</div>
@@ -252,7 +252,7 @@ fn render_admin_dashboard(stats: &AdminStats, csrf_token: &str) -> String {
             count = count,
             pct = pct,
             date = short_date,
-        ));
+        });
     }
     if chart_html.is_empty() {
         chart_html = r#"<div class="empty-state">No download data yet.</div>"#.to_owned();
@@ -270,8 +270,8 @@ fn render_admin_dashboard(stats: &AdminStats, csrf_token: &str) -> String {
             "flac" | "wav" => "fmt-lossless",
             _ => "fmt-other",
         };
-        fmt_html.push_str(&format!(
-            r#"<div class="fmt-row">
+        fmt_html.push_str(&formatdoc! {r#"
+            <div class="fmt-row">
                 <span class="fmt-name">{fmt}</span>
                 <div class="fmt-bar-track">
                     <div class="fmt-bar {bar_class}" style="width:{pct}%"></div>
@@ -282,7 +282,7 @@ fn render_admin_dashboard(stats: &AdminStats, csrf_token: &str) -> String {
             bar_class = bar_class,
             pct = pct,
             count = fmt_num(*count),
-        ));
+        });
     }
     if fmt_html.is_empty() {
         fmt_html = r#"<div class="empty-state">No data yet.</div>"#.to_owned();

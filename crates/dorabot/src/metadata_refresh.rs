@@ -1,6 +1,7 @@
 use crate::core::process::{run_with_timeout, FFPROBE_TIMEOUT};
 use crate::storage::db::{get_connection, DbPool, DownloadHistoryEntry};
 use anyhow::{Context, Result};
+use indoc::indoc;
 use std::sync::Arc;
 use tokio::process::Command;
 
@@ -15,7 +16,7 @@ pub async fn refresh_missing_metadata(
     let conn = get_connection(&db_pool).context("Failed to get database connection")?;
 
     // Query for entries with file_id but missing metadata
-    let query = r#"
+    let query = indoc! {r#"
         SELECT id, url, title, format, downloaded_at, file_id, author, file_size,
                duration, video_quality, audio_bitrate, bot_api_url, bot_api_is_local, source_id, part_index
         FROM download_history
@@ -25,7 +26,7 @@ pub async fn refresh_missing_metadata(
              OR (format = 'mp4' AND video_quality IS NULL)
              OR (format = 'mp3' AND audio_bitrate IS NULL))
         ORDER BY downloaded_at DESC
-    "#;
+    "#};
 
     let mut stmt = conn.prepare(query)?;
     let entries_iter = stmt.query_map([], |row| {

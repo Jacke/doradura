@@ -39,6 +39,8 @@ regex = "1.10.5"
 lazy-regex = "3"
 strum = { version = "0.27", features = ["derive"] }
 bon = "3"
+indoc = "2"
+secrecy = "0.10"
 uuid = "1.1"
 rand = "0.8"
 base64 = "0.22.1"

@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use doracore::core::config::{self, DatabaseDriver};
+use indoc::indoc;
 use redis::AsyncCommands;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -138,16 +139,14 @@ impl RateLimiter {
                 Ok(None)
             }
             RateLimiterBackend::Redis(client) => {
-                let script = redis::Script::new(
-                    r#"
+                let script = redis::Script::new(indoc! {r#"
                     local current = redis.call('GET', KEYS[1])
                     if current then
                         return tonumber(current)
                     end
                     redis.call('SET', KEYS[1], ARGV[2], 'PX', ARGV[1], 'NX')
                     return 0
-                    "#,
-                );
+                "#});
                 let ttl_ms = duration.as_millis().min(i64::MAX as u128) as i64;
                 let expires_at_ms = Self::now_millis() + ttl_ms;
                 let mut conn = client
