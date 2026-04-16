@@ -339,6 +339,174 @@ fn parse_audio_command_segment(text: &str, audio_duration: Option<i64>) -> Optio
 }
 
 /// Process video clip/circle creation
+/// Resolved source file for a clip operation.
+struct ClipSource {
+    file_id: String,
+    original_url: String,
+    base_title: String,
+    video_quality: Option<String>,
+    fallback_message_id: Option<i32>,
+    fallback_chat_id: Option<i64>,
+}
+
+/// Resolve the source (Download or Cut) into a `ClipSource`. Sends a user-facing
+/// error message and returns `Ok(None)` when resolution fails so the caller can
+/// early-return without touching `?`. `Ok(Some(_))` means good to proceed.
+async fn resolve_clip_source(
+    bot: &Bot,
+    shared_storage: &SharedStorage,
+    chat_id: ChatId,
+    session: &db::VideoClipSession,
+    is_ringtone: bool,
+    lang: &unic_langid::LanguageIdentifier,
+) -> Result<Option<ClipSource>, AppError> {
+    let (file_id, original_url, base_title, video_quality) = match session.source_kind {
+        SourceKind::Download => {
+            let download = match shared_storage
+                .get_download_history_entry(chat_id.0, session.source_id)
+                .await?
+            {
+                Some(d) => d,
+                None => {
+                    bot.send_message(chat_id, i18n::t(lang, "commands.cut_file_not_found"))
+                        .await
+                        .ok();
+                    return Ok(None);
+                }
+            };
+            if download.format != "mp4" && !is_ringtone {
+                bot.send_message(chat_id, i18n::t(lang, "commands.cut_only_mp4"))
+                    .await
+                    .ok();
+                return Ok(None);
+            }
+            let fid = match download.file_id.clone() {
+                Some(fid) => fid,
+                None => {
+                    bot.send_message(chat_id, i18n::t(lang, "commands.cut_missing_file_id"))
+                        .await
+                        .ok();
+                    return Ok(None);
+                }
+            };
+            (fid, download.url, download.title, download.video_quality)
+        }
+        SourceKind::Cut => {
+            let cut = match shared_storage.get_cut_entry(chat_id.0, session.source_id).await? {
+                Some(c) => c,
+                None => {
+                    bot.send_message(chat_id, i18n::t(lang, "commands.cut_not_found"))
+                        .await
+                        .ok();
+                    return Ok(None);
+                }
+            };
+            let fid = match cut.file_id.clone() {
+                Some(fid) => fid,
+                None => {
+                    bot.send_message(chat_id, i18n::t(lang, "commands.cut_missing_file_id"))
+                        .await
+                        .ok();
+                    return Ok(None);
+                }
+            };
+            (
+                fid,
+                if !cut.original_url.is_empty() {
+                    cut.original_url
+                } else {
+                    session.original_url.clone()
+                },
+                cut.title,
+                cut.video_quality,
+            )
+        }
+    };
+
+    let message_info = match session.source_kind {
+        SourceKind::Download => shared_storage
+            .get_download_message_info(session.source_id)
+            .await
+            .ok()
+            .flatten(),
+        SourceKind::Cut => shared_storage
+            .get_cut_message_info(session.source_id)
+            .await
+            .ok()
+            .flatten(),
+    };
+    let (fallback_message_id, fallback_chat_id) = message_info.unzip();
+
+    Ok(Some(ClipSource {
+        file_id,
+        original_url,
+        base_title,
+        video_quality,
+        fallback_message_id,
+        fallback_chat_id,
+    }))
+}
+
+/// Convert the cut MP4 to GIF and send as animation. Sends user-facing error
+/// messages on failure; caller should return immediately after this regardless
+/// of outcome.
+#[allow(clippy::too_many_arguments)]
+async fn send_clip_as_gif(
+    bot: &Bot,
+    chat_id: ChatId,
+    status_id: teloxide::types::MessageId,
+    guard: &mut crate::core::utils::TempDirGuard,
+    output_path: &std::path::Path,
+    base_title: &str,
+    segments_text: &str,
+    url_suffix: &str,
+    actual_total_len: i64,
+    lang: &unic_langid::LanguageIdentifier,
+) {
+    let gif_title = format!("{} [gif {}]{}", base_title, segments_text, url_suffix);
+    bot.edit_message_text(chat_id, status_id, "🖼️ Converting to GIF...")
+        .await
+        .ok();
+    match to_gif(
+        output_path,
+        GifOptions {
+            duration: Some(actual_total_len.max(1) as u64),
+            start_time: None,
+            width: Some(480),
+            fps: Some(12),
+        },
+    )
+    .await
+    {
+        Ok(gif_path) => {
+            guard.track_file(gif_path.clone());
+            bot.delete_message(chat_id, status_id).await.ok();
+            match bot
+                .send_animation(chat_id, teloxide::types::InputFile::file(&gif_path))
+                .caption(&gif_title)
+                .await
+            {
+                Ok(_) => {}
+                Err(e) => {
+                    log::error!("❌ Failed to send GIF: {}", e);
+                    let args = doracore::fluent_args!("error" => e.to_string());
+                    bot.send_message(chat_id, i18n::t_args(lang, "commands.gif_send_failed", &args))
+                        .await
+                        .ok();
+                }
+            }
+        }
+        Err(e) => {
+            log::error!("❌ GIF conversion failed: {}", e);
+            bot.delete_message(chat_id, status_id).await.ok();
+            let args = doracore::fluent_args!("error" => e.to_string());
+            bot.send_message(chat_id, i18n::t_args(lang, "commands.gif_conversion_failed", &args))
+                .await
+                .ok();
+        }
+    }
+}
+
 pub async fn process_video_clip(
     bot: Bot,
     db_pool: Arc<DbPool>,
@@ -478,83 +646,17 @@ pub async fn process_video_clip(
             .ok();
     }
 
-    let (file_id, original_url, base_title, video_quality) = match session.source_kind {
-        SourceKind::Download => {
-            let download = match shared_storage
-                .get_download_history_entry(chat_id.0, session.source_id)
-                .await?
-            {
-                Some(d) => d,
-                None => {
-                    bot.send_message(chat_id, i18n::t(&lang, "commands.cut_file_not_found"))
-                        .await
-                        .ok();
-                    return Ok(());
-                }
-            };
-            if download.format != "mp4" && !is_ringtone {
-                bot.send_message(chat_id, i18n::t(&lang, "commands.cut_only_mp4"))
-                    .await
-                    .ok();
-                return Ok(());
-            }
-            let fid = match download.file_id.clone() {
-                Some(fid) => fid,
-                None => {
-                    bot.send_message(chat_id, i18n::t(&lang, "commands.cut_missing_file_id"))
-                        .await
-                        .ok();
-                    return Ok(());
-                }
-            };
-            (fid, download.url, download.title, download.video_quality)
-        }
-        SourceKind::Cut => {
-            let cut = match shared_storage.get_cut_entry(chat_id.0, session.source_id).await? {
-                Some(c) => c,
-                None => {
-                    bot.send_message(chat_id, i18n::t(&lang, "commands.cut_not_found"))
-                        .await
-                        .ok();
-                    return Ok(());
-                }
-            };
-            let fid = match cut.file_id.clone() {
-                Some(fid) => fid,
-                None => {
-                    bot.send_message(chat_id, i18n::t(&lang, "commands.cut_missing_file_id"))
-                        .await
-                        .ok();
-                    return Ok(());
-                }
-            };
-            (
-                fid,
-                if !cut.original_url.is_empty() {
-                    cut.original_url
-                } else {
-                    session.original_url.clone()
-                },
-                cut.title,
-                cut.video_quality,
-            )
-        }
+    let ClipSource {
+        file_id,
+        original_url,
+        base_title,
+        video_quality,
+        fallback_message_id,
+        fallback_chat_id,
+    } = match resolve_clip_source(&bot, &shared_storage, chat_id, &session, is_ringtone, &lang).await? {
+        Some(src) => src,
+        None => return Ok(()),
     };
-
-    // Get message_id for MTProto fallback (if available)
-    let message_info = match session.source_kind {
-        SourceKind::Download => shared_storage
-            .get_download_message_info(session.source_id)
-            .await
-            .ok()
-            .flatten(),
-        SourceKind::Cut => shared_storage
-            .get_cut_message_info(session.source_id)
-            .await
-            .ok()
-            .flatten(),
-    };
-    let (fallback_message_id, fallback_chat_id) = message_info.unzip();
 
     log::info!(
         "🔍 Source file info: file_id={}, message_id={:?}, chat_id={:?}",
@@ -1114,50 +1216,20 @@ pub async fn process_video_clip(
         format!("\n{}", timestamped_url)
     };
 
-    // === GIF PATH: convert the cut MP4 to GIF and send as animation ===
     if is_gif {
-        let gif_title = format!("{} [gif {}]{}", base_title, segments_text, url_suffix);
-        bot.edit_message_text(chat_id, status.id, "🖼️ Converting to GIF...")
-            .await
-            .ok();
-        match to_gif(
+        send_clip_as_gif(
+            &bot,
+            chat_id,
+            status.id,
+            &mut guard,
             &output_path,
-            GifOptions {
-                duration: Some(actual_total_len.max(1) as u64),
-                start_time: None,
-                width: Some(480),
-                fps: Some(12),
-            },
+            &base_title,
+            &segments_text,
+            &url_suffix,
+            actual_total_len,
+            &lang,
         )
-        .await
-        {
-            Ok(gif_path) => {
-                guard.track_file(gif_path.clone());
-                bot.delete_message(chat_id, status.id).await.ok();
-                match bot
-                    .send_animation(chat_id, teloxide::types::InputFile::file(&gif_path))
-                    .caption(&gif_title)
-                    .await
-                {
-                    Ok(_) => {}
-                    Err(e) => {
-                        log::error!("❌ Failed to send GIF: {}", e);
-                        let args = doracore::fluent_args!("error" => e.to_string());
-                        bot.send_message(chat_id, i18n::t_args(&lang, "commands.gif_send_failed", &args))
-                            .await
-                            .ok();
-                    }
-                }
-            }
-            Err(e) => {
-                log::error!("❌ GIF conversion failed: {}", e);
-                bot.delete_message(chat_id, status.id).await.ok();
-                let args = doracore::fluent_args!("error" => e.to_string());
-                bot.send_message(chat_id, i18n::t_args(&lang, "commands.gif_conversion_failed", &args))
-                    .await
-                    .ok();
-            }
-        }
+        .await;
         return Ok(());
     }
 
