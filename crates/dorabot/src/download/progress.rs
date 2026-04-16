@@ -2,7 +2,7 @@
 pub use doracore::download::progress::{create_progress_bar, source_display_name, DownloadStatus, ProgressBarStyle};
 
 use crate::core::extract_retry_after;
-use crate::telegram::Bot;
+use crate::telegram::{Bot, BotExt};
 use teloxide::prelude::*;
 use teloxide::types::MessageId;
 use unic_langid::LanguageIdentifier;
@@ -145,7 +145,7 @@ impl ProgressMessage {
     ) -> ResponseResult<()> {
         if let Some(msg_id) = self.message_id.take() {
             tokio::time::sleep(tokio::time::Duration::from_secs(delay_secs)).await;
-            let _ = bot.delete_message(self.chat_id, msg_id).await;
+            bot.try_delete(self.chat_id, msg_id).await;
             log::info!(
                 "Deleted progress message for chat {} after {} seconds",
                 self.chat_id,

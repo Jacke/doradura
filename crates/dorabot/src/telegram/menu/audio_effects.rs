@@ -1,7 +1,7 @@
 use crate::core::escape_markdown;
 use crate::storage::db::{self};
 use crate::storage::SharedStorage;
-use crate::telegram::Bot;
+use crate::telegram::{Bot, BotExt};
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{InlineKeyboardMarkup, MessageId};
@@ -113,7 +113,7 @@ pub(crate) async fn handle_audio_cut_callback(
                     .await
                     .map_err(|e| RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
                 bot.answer_callback_query(callback_id).await?;
-                let _ = bot.delete_message(chat_id, message_id).await;
+                bot.try_delete(chat_id, message_id).await;
             }
             _ => {
                 bot.answer_callback_query(callback_id).await?;

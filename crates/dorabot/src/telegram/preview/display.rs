@@ -732,13 +732,7 @@ fn append_video_formats_text(text: &mut String, formats: &[VideoFormatInfo], lan
     text.push_str("\n📹 *Available formats:*\n");
     for format_info in formats {
         let size_str = if let Some(size) = format_info.size_bytes {
-            if size > 1024 * 1024 {
-                format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
-            } else if size > 1024 {
-                format!("{:.1} KB", size as f64 / 1024.0)
-            } else {
-                format!("{} B", size)
-            }
+            doracore::core::utils::format_bytes(size)
         } else {
             crate::i18n::t(lang, "common.unknown")
         };

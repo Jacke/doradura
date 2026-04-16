@@ -18,7 +18,7 @@ use crate::download::{download_and_send_audio, download_and_send_subtitles, down
 use crate::storage::db::{self as db};
 use crate::storage::SharedStorage;
 use crate::telegram::notifications::notify_admin_task_failed;
-use crate::telegram::Bot;
+use crate::telegram::{Bot, BotExt};
 
 /// Main queue processing loop.
 ///
@@ -364,7 +364,7 @@ async fn process_single_task(
             let chat_id_del = task.chat_id;
             tokio::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-                let _ = bot_del.delete_message(chat_id_del, MessageId(id)).await;
+                bot_del.try_delete(chat_id_del, MessageId(id)).await;
             });
         }
     }
@@ -475,7 +475,7 @@ async fn process_single_task(
     {
         use teloxide::types::MessageId;
         if let Some(id) = queue_for_cleanup.take_notification_message(task_chat_id).await {
-            let _ = bot.delete_message(task_chat_id, MessageId(id)).await;
+            bot.try_delete(task_chat_id, MessageId(id)).await;
         }
     }
 

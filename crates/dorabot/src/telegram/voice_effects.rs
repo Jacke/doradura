@@ -14,7 +14,7 @@ use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::telegram::cb;
 use crate::telegram::download_file_from_telegram;
-use crate::telegram::Bot;
+use crate::telegram::{Bot, BotExt};
 
 /// Handle an incoming voice message: cache the file_id and show the effects keyboard.
 pub async fn handle_voice_message(
@@ -237,7 +237,7 @@ pub async fn handle_voice_effect_callback(
     }
 
     // Delete the processing message
-    let _ = bot.delete_message(chat_id, message_id).await;
+    bot.try_delete(chat_id, message_id).await;
 
     // guard drops here, cleaning up the temp dir
     Ok(())

@@ -4,7 +4,7 @@
 
 use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
-use crate::telegram::Bot;
+use crate::telegram::{Bot, BotExt};
 use anyhow::Context;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -312,7 +312,7 @@ async fn verify_and_save_vault(
             )
         })?;
 
-    let _ = bot.delete_message(channel_chat_id, test_msg.id).await;
+    bot.try_delete(channel_chat_id, test_msg.id).await;
 
     // Save vault
     let _ = db_pool;

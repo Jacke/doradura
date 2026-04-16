@@ -469,7 +469,7 @@ impl DownloadSource for HttpSource {
             // Check max file size
             if let Some(max_size) = request.max_file_size {
                 if downloaded > max_size {
-                    let _ = tokio::fs::remove_file(&request.output_path).await;
+                    crate::core::utils::try_remove_file(&request.output_path).await;
                     return Err(AppError::Validation(format!(
                         "File exceeds maximum size: {} bytes > {} bytes",
                         downloaded, max_size

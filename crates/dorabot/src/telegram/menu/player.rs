@@ -19,7 +19,7 @@ use crate::download::source::bot_global;
 use crate::storage::db::{DbPool, PlaylistItem};
 use crate::storage::SharedStorage;
 use crate::telegram::notifications::notify_admin_text;
-use crate::telegram::Bot;
+use crate::telegram::{Bot, BotExt};
 use rand::seq::SliceRandom;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -139,7 +139,7 @@ pub async fn stop_player(bot: &Bot, chat_id: ChatId, db_pool: &Arc<DbPool>, shar
 
         if let Ok(msg_ids) = shared_storage.get_player_messages(chat_id.0).await {
             for msg_id in msg_ids {
-                let _ = bot.delete_message(chat_id, MessageId(msg_id)).await;
+                bot.try_delete(chat_id, MessageId(msg_id)).await;
             }
         }
 
@@ -697,7 +697,7 @@ async fn download_player_track(
             // Track + delete progress message on error too
             if let Some(msg_id) = progress_msg.message_id {
                 track_message(shared_storage, chat_id.0, msg_id.0).await;
-                let _ = bot.delete_message(chat_id, msg_id).await;
+                bot.try_delete(chat_id, msg_id).await;
             }
             return Err(format!("Download failed: {:?}", e).into());
         }
@@ -727,7 +727,7 @@ async fn download_player_track(
 
     // Delete progress message before handling result
     if let Some(msg_id) = progress_msg.message_id {
-        let _ = bot.delete_message(chat_id, msg_id).await;
+        bot.try_delete(chat_id, msg_id).await;
     }
 
     // Cleanup downloaded file
@@ -826,7 +826,7 @@ pub async fn handle_player_callback(
                         let _ = bot.send_message(chat_id, "Playlist is empty.").await;
                         return Ok(());
                     }
-                    let _ = bot.delete_message(chat_id, message_id).await;
+                    bot.try_delete(chat_id, message_id).await;
                     enter_player_mode(bot, chat_id, pl_id, &pl.name, &items, &db_pool, &shared_storage).await;
                 }
                 _ => return Ok(()),
@@ -895,7 +895,7 @@ pub async fn handle_player_callback(
         }
         "pw:shuf" => {
             if let Ok(new_shuffle) = shared_storage.toggle_player_shuffle(chat_id.0).await {
-                let _ = bot.delete_message(chat_id, message_id).await;
+                bot.try_delete(chat_id, message_id).await;
                 let new_msg =
                     send_player_menu(bot, chat_id, &pl_name, &items, new_shuffle, session.repeat_mode, None).await;
                 if let Some(msg_id) = new_msg {
@@ -905,7 +905,7 @@ pub async fn handle_player_callback(
         }
         "pw:repeat" => {
             if let Ok(new_repeat) = shared_storage.cycle_player_repeat(chat_id.0).await {
-                let _ = bot.delete_message(chat_id, message_id).await;
+                bot.try_delete(chat_id, message_id).await;
                 let new_msg =
                     send_player_menu(bot, chat_id, &pl_name, &items, session.is_shuffle, new_repeat, None).await;
                 if let Some(msg_id) = new_msg {

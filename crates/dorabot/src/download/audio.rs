@@ -13,6 +13,7 @@ use crate::download::pipeline::{self, PipelineFormat, PipelineResult};
 use crate::download::progress::{ProgressBarStyle, ProgressMessage};
 use crate::download::source::bot_global;
 use crate::storage::SharedStorage;
+use crate::telegram::ext::BotExt;
 use crate::telegram::Bot;
 use std::sync::Arc;
 use teloxide::prelude::*;
@@ -224,7 +225,7 @@ pub async fn download_and_send_audio(
 
                 // Delete hanging ⏳ progress message so it doesn't stay on screen forever
                 if let Some(msg_id) = progress_msg.message_id {
-                    let _ = bot_clone.delete_message(chat_id, msg_id).await;
+                    bot_clone.try_delete(chat_id, msg_id).await;
                 }
 
                 let pipeline_error = pipeline::PipelineError::Operational(e);

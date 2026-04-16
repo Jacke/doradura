@@ -21,7 +21,7 @@ use crate::core::types::Plan;
 use crate::download::search::format_duration;
 use crate::storage::db::{self, DbPool};
 use crate::storage::SharedStorage;
-use crate::telegram::Bot;
+use crate::telegram::{Bot, BotExt};
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{CallbackQueryId, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId};
@@ -530,7 +530,7 @@ pub async fn handle_playlist_callback(
     // pl:list:{page}
     if let Some(page_str) = data.strip_prefix("pl:list:") {
         let page = page_str.parse::<usize>().unwrap_or(0);
-        let _ = bot.delete_message(chat_id, message_id).await;
+        bot.try_delete(chat_id, message_id).await;
         let _ = show_playlists_list(bot, chat_id, page, &db_pool, &shared_storage).await;
         return Ok(());
     }
@@ -545,7 +545,7 @@ pub async fn handle_playlist_callback(
                     Ok(Some(pl)) if pl.user_id == chat_id.0 || pl.is_public => {}
                     _ => return Ok(()),
                 }
-                let _ = bot.delete_message(chat_id, message_id).await;
+                bot.try_delete(chat_id, message_id).await;
                 let _ = show_playlist_view(bot, chat_id, pl_id, page, &db_pool, &shared_storage).await;
             }
         }
@@ -605,7 +605,7 @@ pub async fn handle_playlist_callback(
             }
             match shared_storage.delete_playlist(pl_id).await {
                 Ok(_) => {
-                    let _ = bot.delete_message(chat_id, message_id).await;
+                    bot.try_delete(chat_id, message_id).await;
                     let _ = bot.send_message(chat_id, "🗑 Playlist deleted.").await;
                     let _ = show_playlists_list(bot, chat_id, 0, &db_pool, &shared_storage).await;
                 }
@@ -631,7 +631,7 @@ pub async fn handle_playlist_callback(
                     let _ = bot.send_message(chat_id, "Failed to update playlist visibility.").await;
                     return Ok(());
                 }
-                let _ = bot.delete_message(chat_id, message_id).await;
+                bot.try_delete(chat_id, message_id).await;
                 let _ = show_playlist_view(bot, chat_id, pl_id, 0, &db_pool, &shared_storage).await;
             }
         }
@@ -674,7 +674,7 @@ pub async fn handle_playlist_callback(
             if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
                 return Ok(());
             }
-            let _ = bot.delete_message(chat_id, message_id).await;
+            bot.try_delete(chat_id, message_id).await;
             let _ = show_add_menu(bot, chat_id, pl_id).await;
         }
         return Ok(());
@@ -688,7 +688,7 @@ pub async fn handle_playlist_callback(
                 if verify_ownership(&shared_storage, pl_id, chat_id.0).await.is_none() {
                     return Ok(());
                 }
-                let _ = bot.delete_message(chat_id, message_id).await;
+                bot.try_delete(chat_id, message_id).await;
                 match parts[1] {
                     "y" | "s" => {
                         // Prompt for search — will be handled by search module
@@ -736,7 +736,7 @@ pub async fn handle_playlist_callback(
                     let _ = bot.send_message(chat_id, "Failed to remove track.").await;
                     return Ok(());
                 }
-                let _ = bot.delete_message(chat_id, message_id).await;
+                bot.try_delete(chat_id, message_id).await;
                 let _ = show_playlist_view(bot, chat_id, pl_id, 0, &db_pool, &shared_storage).await;
             }
         }
@@ -761,7 +761,7 @@ pub async fn handle_playlist_callback(
                         log::error!("Failed to reorder playlist item {}: {}", item_id, e);
                     }
                 }
-                let _ = bot.delete_message(chat_id, message_id).await;
+                bot.try_delete(chat_id, message_id).await;
                 let _ = show_playlist_view(bot, chat_id, pl_id, 0, &db_pool, &shared_storage).await;
             }
         }

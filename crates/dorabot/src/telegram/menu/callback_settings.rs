@@ -5,7 +5,7 @@ use crate::storage::cache;
 use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::telegram::setup_chat_bot_commands;
-use crate::telegram::Bot;
+use crate::telegram::{Bot, BotExt};
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::CallbackQueryId;
@@ -125,7 +125,7 @@ pub async fn handle_settings_callback(
             }
             "subscription" => {
                 // Delete the old message and show subscription info
-                let _ = bot.delete_message(chat_id, message_id).await;
+                bot.try_delete(chat_id, message_id).await;
                 let _ = show_subscription_info(bot, chat_id, Arc::clone(&db_pool), Arc::clone(&shared_storage)).await;
             }
             _ => {}
@@ -161,7 +161,7 @@ pub async fn handle_settings_callback(
                 .await?;
             }
             "stats" => {
-                let _ = bot.delete_message(chat_id, message_id).await;
+                bot.try_delete(chat_id, message_id).await;
                 let _ = crate::core::stats::show_user_stats(
                     bot,
                     chat_id,
@@ -171,7 +171,7 @@ pub async fn handle_settings_callback(
                 .await;
             }
             "history" => {
-                let _ = bot.delete_message(chat_id, message_id).await;
+                bot.try_delete(chat_id, message_id).await;
                 let _ =
                     crate::core::history::show_history(bot, chat_id, Arc::clone(&db_pool), Arc::clone(&shared_storage))
                         .await;
@@ -180,7 +180,7 @@ pub async fn handle_settings_callback(
                 show_services_menu(bot, chat_id, message_id, lang, &extension_registry).await?;
             }
             "subscription" => {
-                let _ = bot.delete_message(chat_id, message_id).await;
+                bot.try_delete(chat_id, message_id).await;
                 let _ = crate::core::subscription::show_subscription_info(
                     bot,
                     chat_id,
@@ -193,7 +193,7 @@ pub async fn handle_settings_callback(
                 show_help_menu(bot, chat_id, message_id).await?;
             }
             "feedback" => {
-                let _ = bot.delete_message(chat_id, message_id).await;
+                bot.try_delete(chat_id, message_id).await;
                 let _ = crate::telegram::feedback::send_feedback_prompt(bot, chat_id, lang, &shared_storage).await;
             }
             _ => {}
@@ -275,7 +275,7 @@ pub async fn handle_settings_callback(
                             .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                             .await;
 
-                        let _ = bot.delete_message(chat_id, message_id).await;
+                        bot.try_delete(chat_id, message_id).await;
                         let _ = show_subscription_info(bot, chat_id, Arc::clone(&db_pool), Arc::clone(&shared_storage))
                             .await;
                     }
@@ -352,7 +352,7 @@ pub async fn handle_settings_callback(
                     .text(i18n::t(&new_lang, "menu.language_saved"))
                     .await;
 
-                let _ = bot.delete_message(chat_id, message_id).await;
+                bot.try_delete(chat_id, message_id).await;
                 let _ = show_enhanced_main_menu(bot, chat_id, Arc::clone(&db_pool), Arc::clone(&shared_storage)).await;
 
                 // Send random voice message in background

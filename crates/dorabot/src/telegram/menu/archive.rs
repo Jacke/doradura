@@ -2,7 +2,7 @@ use crate::core::validation::sanitize_filename;
 use anyhow::Context;
 use crate::storage::db::{self, DbPool, DownloadHistoryEntry};
 use crate::telegram::admin::download_file_from_telegram;
-use crate::telegram::Bot;
+use crate::telegram::{Bot, BotExt};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -527,7 +527,7 @@ async fn handle_build(
 
     // Cleanup
 
-    let _ = bot.delete_message(chat_id, message_id).await;
+    bot.try_delete(chat_id, message_id).await;
 
     Ok(())
 }

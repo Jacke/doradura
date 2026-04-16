@@ -21,6 +21,7 @@ use crate::download::send::{send_error_with_sticker, send_video_with_retry};
 use crate::download::source::bot_global;
 use crate::storage::SharedStorage;
 use crate::telegram::cache::PREVIEW_CACHE;
+use crate::telegram::ext::BotExt;
 use crate::telegram::Bot;
 use std::fs;
 use std::sync::Arc;
@@ -522,7 +523,7 @@ pub async fn download_and_send_video(
 
                 // Delete hanging ⏳ progress message so it doesn't stay on screen forever
                 if let Some(msg_id) = progress_msg.message_id {
-                    let _ = bot_clone.delete_message(chat_id, msg_id).await;
+                    bot_clone.try_delete(chat_id, msg_id).await;
                 }
 
                 let pipeline_error = pipeline::PipelineError::Operational(e);

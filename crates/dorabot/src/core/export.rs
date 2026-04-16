@@ -182,11 +182,11 @@ pub async fn handle_export(
     match bot.send_document(chat_id, InputFile::file(&temp_file)).await {
         Ok(_) => {
             // Delete the temporary file
-            let _ = tokio::fs::remove_file(&temp_file).await;
+            doracore::core::utils::try_remove_file(&temp_file).await;
         }
         Err(e) => {
             log::error!("Failed to send export file: {:?}", e);
-            let _ = tokio::fs::remove_file(&temp_file).await;
+            doracore::core::utils::try_remove_file(&temp_file).await;
             bot.send_message(chat_id, "Error sending file\\.")
                 .parse_mode(teloxide::types::ParseMode::MarkdownV2)
                 .await?;

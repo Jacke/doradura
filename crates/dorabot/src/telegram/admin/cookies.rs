@@ -36,7 +36,7 @@ pub async fn handle_diagnose_cookies_command(bot: &Bot, chat_id: ChatId, user_id
     let report = diagnostic.format_report();
 
     // Delete processing message
-    let _ = bot.delete_message(chat_id, processing_msg.id).await;
+    bot.try_delete(chat_id, processing_msg.id).await;
 
     // Send report
     let message = format!("🍪 *YouTube Cookies Diagnostics*\n\n{}", escape_markdown(&report));
@@ -305,7 +305,7 @@ pub async fn handle_cookies_file_upload(
                             }
 
                             // Delete processing message
-                            let _ = bot.delete_message(chat_id, processing_msg.id).await;
+                            bot.try_delete(chat_id, processing_msg.id).await;
 
                             // Build detailed diagnostic report
                             let diagnostic_report = diagnostic.format_report();
@@ -315,7 +315,7 @@ pub async fn handle_cookies_file_upload(
                                 let test_msg = bot.send_message(chat_id, "⏳ Testing cookies with YouTube...").await?;
 
                                 let validation_result = cookies::validate_cookies().await;
-                                let _ = bot.delete_message(chat_id, test_msg.id).await;
+                                bot.try_delete(chat_id, test_msg.id).await;
 
                                 match validation_result {
                                     Ok(()) => {
@@ -386,7 +386,7 @@ pub async fn handle_cookies_file_upload(
                         Err(e) => {
                             log::error!("❌ Failed to update cookies file: {}", e);
                             let _ = tokio::fs::remove_file(&file_path).await;
-                            let _ = bot.delete_message(chat_id, processing_msg.id).await;
+                            bot.try_delete(chat_id, processing_msg.id).await;
                             shared_storage.delete_cookies_upload_session_by_user(user_id).await?;
 
                             let error_message = format!(
@@ -405,7 +405,7 @@ pub async fn handle_cookies_file_upload(
                 Err(e) => {
                     log::error!("❌ Failed to read cookies file: {}", e);
                     let _ = tokio::fs::remove_file(&file_path).await;
-                    let _ = bot.delete_message(chat_id, processing_msg.id).await;
+                    bot.try_delete(chat_id, processing_msg.id).await;
                     shared_storage.delete_cookies_upload_session_by_user(user_id).await?;
 
                     bot.send_md(
@@ -418,7 +418,7 @@ pub async fn handle_cookies_file_upload(
         }
         Err(e) => {
             log::error!("❌ Failed to download cookies file: {}", e);
-            let _ = bot.delete_message(chat_id, processing_msg.id).await;
+            bot.try_delete(chat_id, processing_msg.id).await;
             shared_storage.delete_cookies_upload_session_by_user(user_id).await?;
 
             bot.send_md(
@@ -528,7 +528,7 @@ pub async fn handle_ig_cookies_file_upload(
                     Ok(path) => {
                         let _ = tokio::fs::remove_file(&file_path).await;
                         shared_storage.delete_ig_cookies_upload_session_by_user(user_id).await?;
-                        let _ = bot.delete_message(chat_id, processing_msg.id).await;
+                        bot.try_delete(chat_id, processing_msg.id).await;
 
                         let diagnostic_report = diagnostic.format_report();
 
@@ -536,7 +536,7 @@ pub async fn handle_ig_cookies_file_upload(
                             let test_msg = bot.send_message(chat_id, "⏳ Testing Instagram cookies...").await?;
 
                             let validation_result = cookies::validate_ig_cookies().await;
-                            let _ = bot.delete_message(chat_id, test_msg.id).await;
+                            bot.try_delete(chat_id, test_msg.id).await;
 
                             match validation_result {
                                 Ok(()) => {
@@ -584,7 +584,7 @@ pub async fn handle_ig_cookies_file_upload(
                     Err(e) => {
                         log::error!("❌ Failed to update IG cookies file: {}", e);
                         let _ = tokio::fs::remove_file(&file_path).await;
-                        let _ = bot.delete_message(chat_id, processing_msg.id).await;
+                        bot.try_delete(chat_id, processing_msg.id).await;
                         shared_storage.delete_ig_cookies_upload_session_by_user(user_id).await?;
 
                         let error_message = format!(
@@ -602,7 +602,7 @@ pub async fn handle_ig_cookies_file_upload(
             Err(e) => {
                 log::error!("❌ Failed to read IG cookies file: {}", e);
                 let _ = tokio::fs::remove_file(&file_path).await;
-                let _ = bot.delete_message(chat_id, processing_msg.id).await;
+                bot.try_delete(chat_id, processing_msg.id).await;
                 shared_storage.delete_ig_cookies_upload_session_by_user(user_id).await?;
 
                 bot.send_md(
@@ -614,7 +614,7 @@ pub async fn handle_ig_cookies_file_upload(
         },
         Err(e) => {
             log::error!("❌ Failed to download IG cookies file: {}", e);
-            let _ = bot.delete_message(chat_id, processing_msg.id).await;
+            bot.try_delete(chat_id, processing_msg.id).await;
             shared_storage.delete_ig_cookies_upload_session_by_user(user_id).await?;
 
             bot.send_md(

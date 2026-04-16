@@ -2,7 +2,7 @@
 
 use crate::download::search::{append_proxy_args, source_name_from_url, YtdlpFlatEntry};
 use crate::storage::SharedStorage;
-use crate::telegram::Bot;
+use crate::telegram::{Bot, BotExt};
 use std::sync::Arc;
 use std::time::Duration;
 use teloxide::prelude::*;
@@ -126,7 +126,7 @@ pub async fn handle_import_url(
 
     // Delete status message
     if let Ok(msg) = &status_msg {
-        let _ = bot.delete_message(chat_id, msg.id).await;
+        bot.try_delete(chat_id, msg.id).await;
     }
 
     let mut text = format!("📥 Imported {} tracks!", added);

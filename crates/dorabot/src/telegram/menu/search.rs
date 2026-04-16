@@ -9,7 +9,7 @@
 use crate::download::search::{format_duration, search, SearchResult, SearchSource};
 use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
-use crate::telegram::Bot;
+use crate::telegram::{Bot, BotExt};
 use std::sync::Arc;
 use teloxide::prelude::*;
 use teloxide::types::{CallbackQueryId, ChatId, InlineKeyboardButton, InlineKeyboardMarkup, MessageId};
@@ -141,7 +141,7 @@ pub async fn handle_standalone_search(
     match search(source, text, RESULTS_PER_PAGE as u8, Some(&db_pool)).await {
         Ok(results) => {
             if let Ok(msg) = &status_msg {
-                let _ = bot.delete_message(chat_id, msg.id).await;
+                bot.try_delete(chat_id, msg.id).await;
             }
             if results.is_empty() {
                 if let Ok(msg) = bot
@@ -170,7 +170,7 @@ pub async fn handle_standalone_search(
         }
         Err(e) => {
             if let Ok(msg) = &status_msg {
-                let _ = bot.delete_message(chat_id, msg.id).await;
+                bot.try_delete(chat_id, msg.id).await;
             }
             log::error!("Search error: {}", e);
             let _ = bot
@@ -306,7 +306,7 @@ pub async fn handle_search_callback(
     if let Some(idx_str) = data.strip_prefix("sr:dl:") {
         if let Ok(idx) = idx_str.parse::<usize>() {
             if let Some(result) = session.results.get(idx) {
-                let _ = bot.delete_message(chat_id, message_id).await;
+                bot.try_delete(chat_id, message_id).await;
 
                 // If in playlist context, also add track to the playlist
                 match &session.context {
@@ -391,7 +391,7 @@ pub async fn handle_search_callback(
         let parts: Vec<&str> = rest.splitn(2, ':').collect();
         if parts.len() == 2 {
             if let Ok(page) = parts[1].parse::<usize>() {
-                let _ = bot.delete_message(chat_id, message_id).await;
+                bot.try_delete(chat_id, message_id).await;
                 if let Ok(Some(msg_id)) = show_search_results(
                     bot,
                     chat_id,
@@ -415,14 +415,14 @@ pub async fn handle_search_callback(
     // sr:src:{src} — switch source
     if let Some(src_code) = data.strip_prefix("sr:src:") {
         if let Some(new_source) = SearchSource::from_code(src_code) {
-            let _ = bot.delete_message(chat_id, message_id).await;
+            bot.try_delete(chat_id, message_id).await;
 
             let status_msg = bot.send_message(chat_id, "Searching...").await;
 
             match search(new_source, &session.query, RESULTS_PER_PAGE as u8, Some(&db_pool)).await {
                 Ok(results) => {
                     if let Ok(msg) = &status_msg {
-                        let _ = bot.delete_message(chat_id, msg.id).await;
+                        bot.try_delete(chat_id, msg.id).await;
                     }
                     if results.is_empty() {
                         let _ = bot.send_message(chat_id, "No results found.").await;
@@ -446,7 +446,7 @@ pub async fn handle_search_callback(
                 }
                 Err(e) => {
                     if let Ok(msg) = &status_msg {
-                        let _ = bot.delete_message(chat_id, msg.id).await;
+                        bot.try_delete(chat_id, msg.id).await;
                     }
                     let _ = bot.send_message(chat_id, format!("Search failed: {}", e)).await;
                 }

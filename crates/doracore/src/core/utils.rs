@@ -98,6 +98,16 @@ pub fn format_bytes_i64(bytes: i64) -> String {
     format_bytes(bytes.max(0) as u64)
 }
 
+/// Fire-and-forget file removal. Ignores errors (file already gone,
+/// permission denied, etc.) — the common cleanup pattern.
+///
+/// Replaces the ad-hoc `let _ = tokio::fs::remove_file(path).await;`
+/// that appears in 15+ sites across conversion / download / pipeline
+/// code where a failed cleanup should not short-circuit the caller.
+pub async fn try_remove_file(path: impl AsRef<std::path::Path>) {
+    let _ = tokio::fs::remove_file(path).await;
+}
+
 /// Check if an error is a timeout or network error that should be retried.
 pub fn is_timeout_or_network_error(error_str: &str) -> bool {
     let lower = error_str.to_lowercase();

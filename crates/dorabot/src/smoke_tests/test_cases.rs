@@ -273,7 +273,7 @@ pub async fn test_audio_download(
                     let validation = validate_audio_file(Path::new(&output_path));
 
                     // Cleanup
-                    let _ = tokio::fs::remove_file(&output_path).await;
+                    doracore::core::utils::try_remove_file(&output_path).await;
 
                     if validation.is_valid {
                         let mut result = SmokeTestResult::passed(test_name, start.elapsed());
@@ -307,14 +307,14 @@ pub async fn test_audio_download(
             }
             Err(_) => {
                 // Timeout - don't try more proxies
-                let _ = tokio::fs::remove_file(&output_path).await;
+                doracore::core::utils::try_remove_file(&output_path).await;
                 return SmokeTestResult::timeout(test_name, test_timeout);
             }
         }
     }
 
     // All proxies failed
-    let _ = tokio::fs::remove_file(&output_path).await;
+    doracore::core::utils::try_remove_file(&output_path).await;
     SmokeTestResult::failed(test_name, start.elapsed(), "All proxies failed for audio download")
 }
 
@@ -373,7 +373,7 @@ pub async fn test_video_download(
                     let validation = validate_video_file(Path::new(&output_path));
 
                     // Cleanup
-                    let _ = tokio::fs::remove_file(&output_path).await;
+                    doracore::core::utils::try_remove_file(&output_path).await;
 
                     if validation.is_valid {
                         let mut result = SmokeTestResult::passed(test_name, start.elapsed());
@@ -406,14 +406,14 @@ pub async fn test_video_download(
                 continue;
             }
             Err(_) => {
-                let _ = tokio::fs::remove_file(&output_path).await;
+                doracore::core::utils::try_remove_file(&output_path).await;
                 return SmokeTestResult::timeout(test_name, test_timeout);
             }
         }
     }
 
     // All proxies failed
-    let _ = tokio::fs::remove_file(&output_path).await;
+    doracore::core::utils::try_remove_file(&output_path).await;
     SmokeTestResult::failed(test_name, start.elapsed(), "All proxies failed for video download")
 }
 
@@ -469,7 +469,7 @@ pub async fn test_ringtone_conversion(temp_dir: &str) -> SmokeTestResult {
 
     if !silence_ok {
         for p in &all_files {
-            let _ = tokio::fs::remove_file(p).await;
+            doracore::core::utils::try_remove_file(p).await;
         }
         return SmokeTestResult::failed(test_name, start.elapsed(), "ffmpeg failed to generate silence MP3");
     }
@@ -496,7 +496,7 @@ pub async fn test_ringtone_conversion(temp_dir: &str) -> SmokeTestResult {
         log::warn!("[smoke_test] Could not generate cover art, testing without album art");
         if let Err(e) = tokio::fs::copy(&silence_path, &input_path).await {
             for p in &all_files {
-                let _ = tokio::fs::remove_file(p).await;
+                doracore::core::utils::try_remove_file(p).await;
             }
             return SmokeTestResult::failed(test_name, start.elapsed(), &format!("copy failed: {}", e));
         }
@@ -528,7 +528,7 @@ pub async fn test_ringtone_conversion(temp_dir: &str) -> SmokeTestResult {
 
         if !embed_ok {
             for p in &all_files {
-                let _ = tokio::fs::remove_file(p).await;
+                doracore::core::utils::try_remove_file(p).await;
             }
             return SmokeTestResult::failed(test_name, start.elapsed(), "ffmpeg failed to embed album art");
         }
@@ -539,7 +539,7 @@ pub async fn test_ringtone_conversion(temp_dir: &str) -> SmokeTestResult {
         Ok(()) => {}
         Err(e) => {
             for p in &all_files {
-                let _ = tokio::fs::remove_file(p).await;
+                doracore::core::utils::try_remove_file(p).await;
             }
             return SmokeTestResult::failed(
                 test_name,
@@ -552,7 +552,7 @@ pub async fn test_ringtone_conversion(temp_dir: &str) -> SmokeTestResult {
     // Validate the output .m4r
     let validation = validate_ringtone_file(std::path::Path::new(&output_path));
     for p in &all_files {
-        let _ = tokio::fs::remove_file(p).await;
+        doracore::core::utils::try_remove_file(p).await;
     }
 
     if !validation.is_valid {

@@ -43,16 +43,9 @@ impl PreviewMetadata {
 
     /// Formats file size into human-readable format (MB or KB)
     pub fn format_filesize(&self) -> String {
-        if let Some(size) = self.filesize {
-            if size > 1024 * 1024 {
-                format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
-            } else if size > 1024 {
-                format!("{:.1} KB", size as f64 / 1024.0)
-            } else {
-                format!("{} B", size)
-            }
-        } else {
-            "Unknown".to_string()
+        match self.filesize {
+            Some(size) => doracore::core::utils::format_bytes(size),
+            None => "Unknown".to_string(),
         }
     }
 

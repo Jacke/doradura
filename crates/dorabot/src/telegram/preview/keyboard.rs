@@ -160,15 +160,7 @@ pub fn create_video_format_keyboard(
         if let Some(format_info) = default_format_info {
             let size_str = format_info
                 .size_bytes
-                .map(|s| {
-                    if s > 1024 * 1024 {
-                        format!("{:.1} MB", s as f64 / (1024.0 * 1024.0))
-                    } else if s > 1024 {
-                        format!("{:.1} KB", s as f64 / 1024.0)
-                    } else {
-                        format!("{} B", s)
-                    }
-                })
+                .map(doracore::core::utils::format_bytes)
                 .unwrap_or_else(|| "?".to_string());
 
             buttons.push(vec![crate::telegram::cb(

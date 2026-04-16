@@ -70,7 +70,7 @@ pub async fn send_vlipsy_preview(
     let keyboard = build_vlipsy_keyboard(url_id, 1);
 
     // Delete "processing..." message
-    let _ = bot.delete_message(chat_id, processing_msg_id).await;
+    bot.try_delete(chat_id, processing_msg_id).await;
 
     // Try to send with thumbnail
     if let Some(thumb_url) = &info.thumbnail_url {
@@ -191,7 +191,7 @@ async fn handle_download(
     let url = Url::parse(&url_str)?;
 
     // Delete preview message
-    let _ = bot.delete_message(chat_id, message_id).await;
+    bot.try_delete(chat_id, message_id).await;
 
     // Send status
     let status_msg = bot.send_message(chat_id, "⏳ Processing...").await?;
@@ -204,7 +204,7 @@ async fn handle_download(
         let result = download_process_send(&bot_clone, chat_id, &url, &action, repeat).await;
 
         // Delete status message
-        let _ = bot_clone.delete_message(chat_id, status_msg_id).await;
+        bot_clone.try_delete(chat_id, status_msg_id).await;
 
         if let Err(e) = result {
             log::error!("Vlipsy download failed: {:?}", e);

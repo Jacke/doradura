@@ -183,8 +183,7 @@ pub async fn handle_info_command(
                             let quality = escape_markdown(&format.quality);
 
                             if let Some(size) = format.size_bytes {
-                                let size_mb = size as f64 / (1024.0 * 1024.0);
-                                let size_str = escape_markdown(&format!("{:.1} MB", size_mb));
+                                let size_str = escape_markdown(&doracore::core::utils::format_bytes(size));
                                 response.push_str(&format!("  • {} \\- {}", quality, size_str));
 
                                 if let Some(ref resolution) = format.resolution {
@@ -209,8 +208,7 @@ pub async fn handle_info_command(
                 // Audio format section
                 response.push_str("🎧 *Audio format \\(MP3\\):*\n");
                 if let Some(size) = metadata.filesize {
-                    let size_mb = size as f64 / (1024.0 * 1024.0);
-                    let size_str = escape_markdown(&format!("{:.1} MB", size_mb));
+                    let size_str = escape_markdown(&doracore::core::utils::format_bytes(size));
                     response.push_str(&format!("  • 320 kbps \\- {}\n", size_str));
                 } else {
                     response.push_str("  • 320 kbps \\- size unknown\n");

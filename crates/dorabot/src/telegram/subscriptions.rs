@@ -7,7 +7,7 @@ use crate::download::source::instagram::InstagramSource;
 use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::telegram::cb;
-use crate::telegram::Bot;
+use crate::telegram::{Bot, BotExt};
 use crate::watcher::traits::WatchNotification;
 use crate::watcher::WatcherRegistry;
 use futures_util::StreamExt as _;
@@ -266,7 +266,7 @@ pub async fn handle_subscription_callback(
             }
         }
         "cancel" => {
-            let _ = bot.delete_message(chat_id, message_id).await;
+            bot.try_delete(chat_id, message_id).await;
         }
         "ptog" => {
             // cw:ptog:<username>:<bit>:<current_mask>
@@ -305,7 +305,7 @@ pub async fn handle_subscription_callback(
             }
         }
         "list" => {
-            let _ = bot.delete_message(chat_id, message_id).await;
+            bot.try_delete(chat_id, message_id).await;
             handle_subscriptions_command(bot, chat_id, &db_pool, &shared_storage).await;
         }
         _ => {}

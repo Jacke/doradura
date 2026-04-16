@@ -20,7 +20,7 @@ use crate::download::source::bot_global;
 use crate::storage::db::DbPool;
 use crate::storage::SharedStorage;
 use crate::telegram::notifications::notify_admin_text;
-use crate::telegram::Bot;
+use crate::telegram::{Bot, BotExt};
 use std::sync::Arc;
 use std::time::Instant;
 use teloxide::prelude::*;
@@ -659,7 +659,7 @@ async fn play_all(
 
             // Cleanup progress message
             if let Some(pmid) = progress_msg.message_id {
-                let _ = bot_clone.delete_message(chat_id, pmid).await;
+                bot_clone.try_delete(chat_id, pmid).await;
             }
 
             match result {
@@ -973,7 +973,7 @@ async fn download_single_track(
 
     // Cleanup progress message
     if let Some(pmid) = progress_msg.message_id {
-        let _ = bot.delete_message(chat_id, pmid).await;
+        bot.try_delete(chat_id, pmid).await;
     }
 
     match result {

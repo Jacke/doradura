@@ -61,6 +61,12 @@ pub trait BotExt {
         text: impl Into<String>,
         keyboard: InlineKeyboardMarkup,
     ) -> Result<Message, RequestError>;
+
+    /// Fire-and-forget delete. Ignores errors (message already gone,
+    /// permission revoked, TTL expired, etc.) — the common cleanup
+    /// pattern. Collapses 59 `let _ = self.delete_message(...).await;`
+    /// sites into a single call.
+    async fn try_delete(&self, chat_id: ChatId, message_id: MessageId);
 }
 
 impl BotExt for Bot {
@@ -102,6 +108,10 @@ impl BotExt for Bot {
             .parse_mode(ParseMode::MarkdownV2)
             .reply_markup(keyboard)
             .await
+    }
+
+    async fn try_delete(&self, chat_id: ChatId, message_id: MessageId) {
+        let _ = self.delete_message(chat_id, message_id).await;
     }
 }
 

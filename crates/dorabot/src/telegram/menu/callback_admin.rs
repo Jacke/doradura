@@ -60,7 +60,7 @@ pub async fn handle_admin_callback(
                 bot.edit_md_kb(chat_id, message_id, details_text, keyboard).await?;
             }
             "analytics:close" => {
-                let _ = bot.delete_message(chat_id, message_id).await;
+                bot.try_delete(chat_id, message_id).await;
             }
             _ => {}
         }

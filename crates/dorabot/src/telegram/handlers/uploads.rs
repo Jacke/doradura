@@ -302,13 +302,7 @@ pub(super) fn media_upload_handler(deps: HandlerDeps) -> teloxide::dispatching::
 
                         // Format file info for display
                         let size_str = file_size
-                            .map(|s| {
-                                if s < 1024 * 1024 {
-                                    format!("{:.1} KB", s as f64 / 1024.0)
-                                } else {
-                                    format!("{:.1} MB", s as f64 / 1024.0 / 1024.0)
-                                }
-                            })
+                            .map(|s| doracore::core::utils::format_bytes(s as u64))
                             .unwrap_or_else(|| "—".to_string());
 
                         let duration_str = duration.map(|d| {

@@ -372,7 +372,7 @@ pub async fn to_gif<P: AsRef<Path>>(input_path: P, options: GifOptions) -> Conve
     let output2 = cmd2.output().await?;
 
     // Clean up palette file
-    let _ = tokio::fs::remove_file(&palette_path).await;
+    crate::core::utils::try_remove_file(&palette_path).await;
 
     if !output2.status.success() {
         let stderr = String::from_utf8_lossy(&output2.stderr);

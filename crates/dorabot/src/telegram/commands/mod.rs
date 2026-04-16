@@ -1058,7 +1058,7 @@ pub async fn handle_message(
                                     let args = doracore::fluent_args!("size" => format!("{:.1}", size_mb), "max" => format!("{:.1}", max_mb));
                                     let error_message = i18n::t_args(&lang, "commands.audio_too_large", &args);
 
-                                    let _ = bot.delete_message(msg.chat.id, processing_msg.id).await;
+                                    bot.try_delete(msg.chat.id, processing_msg.id).await;
 
                                     bot.send_message(msg.chat.id, error_message).await?;
                                     return Ok(user_info);
@@ -1120,7 +1120,7 @@ pub async fn handle_message(
                             }
                         }
 
-                        let _ = bot.delete_message(msg.chat.id, processing_msg.id).await;
+                        bot.try_delete(msg.chat.id, processing_msg.id).await;
 
                         let error_message = if let AppError::Download(ref err_msg) = e {
                             if is_duration_error {

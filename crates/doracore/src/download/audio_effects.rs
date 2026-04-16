@@ -381,7 +381,7 @@ pub async fn apply_audio_effects(
     let max_size = 50 * 1024 * 1024; // 50 MB
     if file_size > max_size {
         // Clean up oversized file
-        let _ = tokio::fs::remove_file(output_path).await;
+        crate::core::utils::try_remove_file(output_path).await;
         crate::core::metrics::AUDIO_EFFECTS_DURATION_SECONDS.observe(effects_start.elapsed().as_secs_f64());
         return Err(AppError::AudioEffect(AudioEffectError::FileTooLarge(
             file_size as f64 / (1024.0 * 1024.0),

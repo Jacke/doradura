@@ -478,7 +478,7 @@ pub async fn handle_download_tg_command(
             );
 
             // Delete processing message
-            let _ = bot.delete_message(chat_id, processing_msg.id).await;
+            bot.try_delete(chat_id, processing_msg.id).await;
 
             // Send success message
             bot.send_md(chat_id, success_message).await?;
@@ -489,7 +489,7 @@ pub async fn handle_download_tg_command(
             log::error!("❌ Failed to download file_id {}: {}", file_id, e);
 
             // Delete processing message
-            let _ = bot.delete_message(chat_id, processing_msg.id).await;
+            bot.try_delete(chat_id, processing_msg.id).await;
 
             // Send error message
             let error_message = format!(

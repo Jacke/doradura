@@ -99,7 +99,7 @@ pub async fn handle_search_text(
 
     // Delete status message
     if let Ok(msg) = &status_msg {
-        let _ = bot.delete_message(chat_id, msg.id).await;
+        bot.try_delete(chat_id, msg.id).await;
     }
 
     match result {
@@ -246,7 +246,7 @@ pub async fn handle_vlipsy_callback(
             let offset = page * RESULTS_PER_PAGE;
 
             // Delete old results message
-            let _ = bot.delete_message(chat_id, message_id).await;
+            bot.try_delete(chat_id, message_id).await;
 
             let client = match VlipsyClient::new() {
                 Some(c) => c,
@@ -323,7 +323,7 @@ async fn send_clip(bot: &Bot, chat_id: ChatId, clip_id: &str, lang: &LanguageIde
 
     // Delete status message
     if let Ok(msg) = &status_msg {
-        let _ = bot.delete_message(chat_id, msg.id).await;
+        bot.try_delete(chat_id, msg.id).await;
     }
 }
 

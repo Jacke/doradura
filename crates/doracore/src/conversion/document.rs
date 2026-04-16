@@ -176,7 +176,7 @@ pub async fn pandoc_to_pdf<P: AsRef<Path>>(input_path: P) -> ConversionResult<st
         let stderr = String::from_utf8_lossy(&output.stderr);
         log::error!("Pandoc conversion error: {}", stderr);
         // Clean up on failure
-        let _ = tokio::fs::remove_file(&output_path).await;
+        crate::core::utils::try_remove_file(&output_path).await;
         return Err(ConversionError::FfmpegError(format!("Pandoc error: {}", stderr)));
     }
 
