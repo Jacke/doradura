@@ -14,266 +14,292 @@ use prometheus::{
     Histogram, HistogramVec, IntCounterVec, IntGauge,
 };
 
+/// Declare a Prometheus metric static with uniform panic-on-registration-failure handling.
+/// Registration failure here means a duplicate metric name or invalid label — both programmer
+/// errors caught at `init_metrics()` boot, not in a user-facing task.
+macro_rules! metric {
+    ($(#[$attr:meta])* pub $name:ident: Counter = $id:literal, $help:literal) => {
+        $(#[$attr])*
+        pub static $name: LazyLock<Counter> = LazyLock::new(|| {
+            register_counter!($id, $help)
+                .unwrap_or_else(|e| panic!("register {}: {}", stringify!($name), e))
+        });
+    };
+    ($(#[$attr:meta])* pub $name:ident: Gauge = $id:literal, $help:literal) => {
+        $(#[$attr])*
+        pub static $name: LazyLock<Gauge> = LazyLock::new(|| {
+            register_gauge!($id, $help)
+                .unwrap_or_else(|e| panic!("register {}: {}", stringify!($name), e))
+        });
+    };
+    ($(#[$attr:meta])* pub $name:ident: IntGauge = $id:literal, $help:literal) => {
+        $(#[$attr])*
+        pub static $name: LazyLock<IntGauge> = LazyLock::new(|| {
+            register_int_gauge!($id, $help)
+                .unwrap_or_else(|e| panic!("register {}: {}", stringify!($name), e))
+        });
+    };
+    ($(#[$attr:meta])* pub $name:ident: CounterVec = $id:literal, $help:literal, labels = [$($lbl:literal),+ $(,)?]) => {
+        $(#[$attr])*
+        pub static $name: LazyLock<CounterVec> = LazyLock::new(|| {
+            register_counter_vec!($id, $help, &[$($lbl),+])
+                .unwrap_or_else(|e| panic!("register {}: {}", stringify!($name), e))
+        });
+    };
+    ($(#[$attr:meta])* pub $name:ident: GaugeVec = $id:literal, $help:literal, labels = [$($lbl:literal),+ $(,)?]) => {
+        $(#[$attr])*
+        pub static $name: LazyLock<GaugeVec> = LazyLock::new(|| {
+            register_gauge_vec!($id, $help, &[$($lbl),+])
+                .unwrap_or_else(|e| panic!("register {}: {}", stringify!($name), e))
+        });
+    };
+    ($(#[$attr:meta])* pub $name:ident: IntCounterVec = $id:literal, $help:literal, labels = [$($lbl:literal),+ $(,)?]) => {
+        $(#[$attr])*
+        pub static $name: LazyLock<IntCounterVec> = LazyLock::new(|| {
+            register_int_counter_vec!($id, $help, &[$($lbl),+])
+                .unwrap_or_else(|e| panic!("register {}: {}", stringify!($name), e))
+        });
+    };
+    ($(#[$attr:meta])* pub $name:ident: Histogram = $id:literal, $help:literal, buckets = $buckets:expr) => {
+        $(#[$attr])*
+        pub static $name: LazyLock<Histogram> = LazyLock::new(|| {
+            register_histogram!($id, $help, $buckets)
+                .unwrap_or_else(|e| panic!("register {}: {}", stringify!($name), e))
+        });
+    };
+    ($(#[$attr:meta])* pub $name:ident: HistogramVec = $id:literal, $help:literal, labels = [$($lbl:literal),+ $(,)?], buckets = $buckets:expr) => {
+        $(#[$attr])*
+        pub static $name: LazyLock<HistogramVec> = LazyLock::new(|| {
+            register_histogram_vec!($id, $help, &[$($lbl),+], $buckets)
+                .unwrap_or_else(|e| panic!("register {}: {}", stringify!($name), e))
+        });
+    };
+}
+
 // ======================
 // PERFORMANCE METRICS
 // ======================
 
-/// Download duration in seconds by format and quality
-/// Labels: format (mp3/mp4/srt/txt), quality (320k/1080p/etc)
-pub static DOWNLOAD_DURATION_SECONDS: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register_histogram_vec!(
+metric!(
+    /// Download duration in seconds by format and quality
+    /// Labels: format (mp3/mp4/srt/txt), quality (320k/1080p/etc)
+    pub DOWNLOAD_DURATION_SECONDS: HistogramVec =
         "doradura_download_duration_seconds",
         "Time spent downloading files by format and quality",
-        &["format", "quality"],
-        vec![1.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0]
-    )
-    .expect("Failed to register DOWNLOAD_DURATION_SECONDS metric")
-});
+        labels = ["format", "quality"],
+        buckets = vec![1.0, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0, 600.0]
+);
 
-/// Queue processing time per iteration
-pub static QUEUE_PROCESSING_DURATION_SECONDS: LazyLock<Histogram> = LazyLock::new(|| {
-    register_histogram!(
+metric!(
+    /// Queue processing time per iteration
+    pub QUEUE_PROCESSING_DURATION_SECONDS: Histogram =
         "doradura_queue_processing_duration_seconds",
         "Time spent processing queue per iteration",
-        vec![0.1, 0.5, 1.0, 5.0, 10.0, 30.0]
-    )
-    .expect("Failed to register QUEUE_PROCESSING_DURATION_SECONDS metric")
-});
+        buckets = vec![0.1, 0.5, 1.0, 5.0, 10.0, 30.0]
+);
 
-/// Queue wait time from task creation to processing
-/// Labels: priority (low/medium/high)
-pub static QUEUE_WAIT_TIME_SECONDS: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register_histogram_vec!(
+metric!(
+    /// Queue wait time from task creation to processing
+    /// Labels: priority (low/medium/high)
+    pub QUEUE_WAIT_TIME_SECONDS: HistogramVec =
         "doradura_queue_wait_time_seconds",
         "Time tasks spend waiting in queue before processing",
-        &["priority"],
-        vec![5.0, 30.0, 60.0, 300.0, 600.0, 1800.0, 3600.0]
-    )
-    .expect("Failed to register QUEUE_WAIT_TIME_SECONDS metric")
-});
+        labels = ["priority"],
+        buckets = vec![5.0, 30.0, 60.0, 300.0, 600.0, 1800.0, 3600.0]
+);
 
-/// Successful downloads count
-/// Labels: format, quality
-pub static DOWNLOAD_SUCCESS_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
+metric!(
+    /// Successful downloads count
+    /// Labels: format, quality
+    pub DOWNLOAD_SUCCESS_TOTAL: CounterVec =
         "doradura_download_success_total",
         "Total number of successful downloads",
-        &["format", "quality"]
-    )
-    .expect("Failed to register DOWNLOAD_SUCCESS_TOTAL metric")
-});
+        labels = ["format", "quality"]
+);
 
-/// Failed downloads count
-/// Labels: format, error_type
-pub static DOWNLOAD_FAILURE_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
+metric!(
+    /// Failed downloads count
+    /// Labels: format, error_type
+    pub DOWNLOAD_FAILURE_TOTAL: CounterVec =
         "doradura_download_failure_total",
         "Total number of failed downloads",
-        &["format", "error_type"]
-    )
-    .expect("Failed to register DOWNLOAD_FAILURE_TOTAL metric")
-});
+        labels = ["format", "error_type"]
+);
 
-/// yt-dlp command execution duration
-/// Labels: operation (metadata/download/etc)
-pub static YTDLP_EXECUTION_DURATION_SECONDS: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register_histogram_vec!(
+metric!(
+    /// yt-dlp command execution duration
+    /// Labels: operation (metadata/download/etc)
+    pub YTDLP_EXECUTION_DURATION_SECONDS: HistogramVec =
         "doradura_ytdlp_execution_duration_seconds",
         "Time spent executing yt-dlp commands",
-        &["operation"],
-        vec![1.0, 5.0, 10.0, 30.0, 60.0, 120.0, 240.0]
-    )
-    .expect("Failed to register YTDLP_EXECUTION_DURATION_SECONDS metric")
-});
+        labels = ["operation"],
+        buckets = vec![1.0, 5.0, 10.0, 30.0, 60.0, 120.0, 240.0]
+);
 
 // ======================
 // BUSINESS METRICS
 // ======================
 
-/// Active subscriptions count by plan
-/// Labels: plan (free/premium/vip)
-pub static ACTIVE_SUBSCRIPTIONS: LazyLock<GaugeVec> = LazyLock::new(|| {
-    register_gauge_vec!(
+metric!(
+    /// Active subscriptions count by plan
+    /// Labels: plan (free/premium/vip)
+    pub ACTIVE_SUBSCRIPTIONS: GaugeVec =
         "doradura_active_subscriptions",
         "Number of active subscriptions by plan",
-        &["plan"]
-    )
-    .expect("Failed to register ACTIVE_SUBSCRIPTIONS metric")
-});
+        labels = ["plan"]
+);
 
-/// Total revenue in Telegram Stars
-pub static REVENUE_TOTAL_STARS: LazyLock<Counter> = LazyLock::new(|| {
-    register_counter!("doradura_revenue_total_stars", "Total revenue in Telegram Stars")
-        .expect("Failed to register REVENUE_TOTAL_STARS metric")
-});
+metric!(
+    /// Total revenue in Telegram Stars
+    pub REVENUE_TOTAL_STARS: Counter =
+        "doradura_revenue_total_stars",
+        "Total revenue in Telegram Stars"
+);
 
-/// Revenue by subscription plan
-/// Labels: plan
-pub static REVENUE_BY_PLAN: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
+metric!(
+    /// Revenue by subscription plan
+    /// Labels: plan
+    pub REVENUE_BY_PLAN: CounterVec =
         "doradura_revenue_by_plan",
         "Revenue by subscription plan in Stars",
-        &["plan"]
-    )
-    .expect("Failed to register REVENUE_BY_PLAN metric")
-});
+        labels = ["plan"]
+);
 
-/// New subscriptions count
-/// Labels: plan, is_recurring (true/false)
-pub static NEW_SUBSCRIPTIONS_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
+metric!(
+    /// New subscriptions count
+    /// Labels: plan, is_recurring (true/false)
+    pub NEW_SUBSCRIPTIONS_TOTAL: CounterVec =
         "doradura_new_subscriptions_total",
         "Total number of new subscriptions",
-        &["plan", "is_recurring"]
-    )
-    .expect("Failed to register NEW_SUBSCRIPTIONS_TOTAL metric")
-});
+        labels = ["plan", "is_recurring"]
+);
 
-/// Subscription cancellations
-/// Labels: plan
-pub static SUBSCRIPTION_CANCELLATIONS_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
+metric!(
+    /// Subscription cancellations
+    /// Labels: plan
+    pub SUBSCRIPTION_CANCELLATIONS_TOTAL: CounterVec =
         "doradura_subscription_cancellations_total",
         "Total number of subscription cancellations",
-        &["plan"]
-    )
-    .expect("Failed to register SUBSCRIPTION_CANCELLATIONS_TOTAL metric")
-});
+        labels = ["plan"]
+);
 
-/// Payment checkout started
-/// Labels: plan
-pub static PAYMENT_CHECKOUT_STARTED: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
+metric!(
+    /// Payment checkout started
+    /// Labels: plan
+    pub PAYMENT_CHECKOUT_STARTED: CounterVec =
         "doradura_payment_checkout_started",
         "Number of times payment checkout was initiated",
-        &["plan"]
-    )
-    .expect("Failed to register PAYMENT_CHECKOUT_STARTED metric")
-});
+        labels = ["plan"]
+);
 
-/// Successful payments
-/// Labels: plan, is_recurring
-pub static PAYMENT_SUCCESS_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
+metric!(
+    /// Successful payments
+    /// Labels: plan, is_recurring
+    pub PAYMENT_SUCCESS_TOTAL: CounterVec =
         "doradura_payment_success_total",
         "Total number of successful payments",
-        &["plan", "is_recurring"]
-    )
-    .expect("Failed to register PAYMENT_SUCCESS_TOTAL metric")
-});
+        labels = ["plan", "is_recurring"]
+);
 
-/// Failed payments
-/// Labels: plan, reason
-pub static PAYMENT_FAILURE_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
+metric!(
+    /// Failed payments
+    /// Labels: plan, reason
+    pub PAYMENT_FAILURE_TOTAL: CounterVec =
         "doradura_payment_failure_total",
         "Total number of failed payments",
-        &["plan", "reason"]
-    )
-    .expect("Failed to register PAYMENT_FAILURE_TOTAL metric")
-});
+        labels = ["plan", "reason"]
+);
 
 // ======================
 // SYSTEM HEALTH METRICS
 // ======================
 
-/// Errors count by type and operation
-/// Labels: error_type (download/telegram/database/http), operation
-pub static ERRORS_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
+metric!(
+    /// Errors count by type and operation
+    /// Labels: error_type (download/telegram/database/http), operation
+    pub ERRORS_TOTAL: CounterVec =
         "doradura_errors_total",
         "Total number of errors by type and operation",
-        &["error_type", "operation"]
-    )
-    .expect("Failed to register ERRORS_TOTAL metric")
-});
+        labels = ["error_type", "operation"]
+);
 
-/// Current queue depth by priority
-/// Labels: priority (low/medium/high)
-pub static QUEUE_DEPTH: LazyLock<GaugeVec> = LazyLock::new(|| {
-    register_gauge_vec!(
+metric!(
+    /// Current queue depth by priority
+    /// Labels: priority (low/medium/high)
+    pub QUEUE_DEPTH: GaugeVec =
         "doradura_queue_depth",
         "Current number of tasks in queue by priority",
-        &["priority"]
-    )
-    .expect("Failed to register QUEUE_DEPTH metric")
-});
+        labels = ["priority"]
+);
 
-/// Total queue depth across all priorities
-pub static QUEUE_DEPTH_TOTAL: LazyLock<Gauge> = LazyLock::new(|| {
-    register_gauge!("doradura_queue_depth_total", "Total number of tasks in queue")
-        .expect("Failed to register QUEUE_DEPTH_TOTAL metric")
-});
+metric!(
+    /// Total queue depth across all priorities
+    pub QUEUE_DEPTH_TOTAL: Gauge =
+        "doradura_queue_depth_total",
+        "Total number of tasks in queue"
+);
 
-/// Task retry count
-/// Labels: retry_count (1/2/3/4/5)
-pub static TASK_RETRIES_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
+metric!(
+    /// Task retry count
+    /// Labels: retry_count (1/2/3/4/5)
+    pub TASK_RETRIES_TOTAL: CounterVec =
         "doradura_task_retries_total",
         "Total number of task retries",
-        &["retry_count"]
-    )
-    .expect("Failed to register TASK_RETRIES_TOTAL metric")
-});
+        labels = ["retry_count"]
+);
 
-/// yt-dlp health status (1 = healthy, 0 = unhealthy)
-pub static YTDLP_HEALTH_STATUS: LazyLock<Gauge> = LazyLock::new(|| {
-    register_gauge!(
+metric!(
+    /// yt-dlp health status (1 = healthy, 0 = unhealthy)
+    pub YTDLP_HEALTH_STATUS: Gauge =
         "doradura_ytdlp_health_status",
         "yt-dlp health status (1 = healthy, 0 = unhealthy)"
-    )
-    .expect("Failed to register YTDLP_HEALTH_STATUS metric")
-});
+);
 
-/// Rate limit hits count
-/// Labels: plan
-pub static RATE_LIMIT_HITS_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
+metric!(
+    /// Rate limit hits count
+    /// Labels: plan
+    pub RATE_LIMIT_HITS_TOTAL: CounterVec =
         "doradura_rate_limit_hits_total",
         "Total number of rate limit hits",
-        &["plan"]
-    )
-    .expect("Failed to register RATE_LIMIT_HITS_TOTAL metric")
-});
+        labels = ["plan"]
+);
 
-/// Active database connections
-pub static DB_CONNECTIONS_ACTIVE: LazyLock<Gauge> = LazyLock::new(|| {
-    register_gauge!(
+metric!(
+    /// Active database connections
+    pub DB_CONNECTIONS_ACTIVE: Gauge =
         "doradura_db_connections_active",
         "Number of active database connections"
-    )
-    .expect("Failed to register DB_CONNECTIONS_ACTIVE metric")
-});
+);
 
-/// Idle database connections
-pub static DB_CONNECTIONS_IDLE: LazyLock<Gauge> = LazyLock::new(|| {
-    register_gauge!("doradura_db_connections_idle", "Number of idle database connections")
-        .expect("Failed to register DB_CONNECTIONS_IDLE metric")
-});
+metric!(
+    /// Idle database connections
+    pub DB_CONNECTIONS_IDLE: Gauge =
+        "doradura_db_connections_idle",
+        "Number of idle database connections"
+);
 
-/// Bot uptime in seconds
-pub static BOT_UPTIME_SECONDS: LazyLock<Counter> = LazyLock::new(|| {
-    register_counter!("doradura_bot_uptime_seconds", "Bot uptime in seconds")
-        .expect("Failed to register BOT_UPTIME_SECONDS metric")
-});
+metric!(
+    /// Bot uptime in seconds
+    pub BOT_UPTIME_SECONDS: Counter =
+        "doradura_bot_uptime_seconds",
+        "Bot uptime in seconds"
+);
 
-/// Dispatcher reconnection count
-pub static DISPATCHER_RECONNECTIONS_TOTAL: LazyLock<Counter> = LazyLock::new(|| {
-    register_counter!(
+metric!(
+    /// Dispatcher reconnection count
+    pub DISPATCHER_RECONNECTIONS_TOTAL: Counter =
         "doradura_dispatcher_reconnections_total",
         "Total number of dispatcher reconnections"
-    )
-    .expect("Failed to register DISPATCHER_RECONNECTIONS_TOTAL metric")
-});
+);
 
-/// File size distribution
-/// Labels: format
-pub static FILE_SIZE_BYTES: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register_histogram_vec!(
+metric!(
+    /// File size distribution
+    /// Labels: format
+    pub FILE_SIZE_BYTES: HistogramVec =
         "doradura_file_size_bytes",
         "Size of files processed by format",
-        &["format"],
-        vec![
+        labels = ["format"],
+        buckets = vec![
             1_000_000.0,
             5_000_000.0,
             10_000_000.0,
@@ -282,351 +308,305 @@ pub static FILE_SIZE_BYTES: LazyLock<HistogramVec> = LazyLock::new(|| {
             100_000_000.0,
             500_000_000.0
         ]
-    )
-    .expect("Failed to register FILE_SIZE_BYTES metric")
-});
+);
 
-/// Cookies status (1 = valid, 0 = needs refresh)
-pub static COOKIES_STATUS: LazyLock<Gauge> = LazyLock::new(|| {
-    register_gauge!(
+metric!(
+    /// Cookies status (1 = valid, 0 = needs refresh)
+    pub COOKIES_STATUS: Gauge =
         "doradura_cookies_status",
         "Cookies status (1 = valid, 0 = needs refresh)"
-    )
-    .expect("Failed to register COOKIES_STATUS metric")
-});
+);
 
-/// Platform distribution for downloads
-/// Labels: platform (youtube/soundcloud/vimeo/etc)
-pub static PLATFORM_DOWNLOADS_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
+metric!(
+    /// Platform distribution for downloads
+    /// Labels: platform (youtube/soundcloud/vimeo/etc)
+    pub PLATFORM_DOWNLOADS_TOTAL: CounterVec =
         "doradura_platform_downloads_total",
         "Downloads by source platform",
-        &["platform"]
-    )
-    .expect("Failed to register PLATFORM_DOWNLOADS_TOTAL metric")
-});
+        labels = ["platform"]
+);
 
-/// User feedback count
-/// Labels: sentiment (positive/neutral/negative)
-pub static USER_FEEDBACK_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
+metric!(
+    /// User feedback count
+    /// Labels: sentiment (positive/neutral/negative)
+    pub USER_FEEDBACK_TOTAL: CounterVec =
         "doradura_user_feedback_total",
         "User feedback submissions by sentiment",
-        &["sentiment"]
-    )
-    .expect("Failed to register USER_FEEDBACK_TOTAL metric")
-});
+        labels = ["sentiment"]
+);
 
-/// Alert count by type and severity
-/// Labels: alert_type, severity
-pub static ALERTS_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
+metric!(
+    /// Alert count by type and severity
+    /// Labels: alert_type, severity
+    pub ALERTS_TOTAL: CounterVec =
         "doradura_alerts_total",
         "Alerts triggered by type and severity",
-        &["alert_type", "severity"]
-    )
-    .expect("Failed to register ALERTS_TOTAL metric")
-});
+        labels = ["alert_type", "severity"]
+);
 
 // ======================
 // USER ENGAGEMENT METRICS
 // ======================
 
-/// Daily active users count
-pub static DAILY_ACTIVE_USERS: LazyLock<Gauge> = LazyLock::new(|| {
-    register_gauge!("doradura_daily_active_users", "Number of daily active users (last 24h)")
-        .expect("Failed to register DAILY_ACTIVE_USERS metric")
-});
+metric!(
+    /// Daily active users count
+    pub DAILY_ACTIVE_USERS: Gauge =
+        "doradura_daily_active_users",
+        "Number of daily active users (last 24h)"
+);
 
-/// Monthly active users count
-pub static MONTHLY_ACTIVE_USERS: LazyLock<Gauge> = LazyLock::new(|| {
-    register_gauge!(
+metric!(
+    /// Monthly active users count
+    pub MONTHLY_ACTIVE_USERS: Gauge =
         "doradura_monthly_active_users",
         "Number of monthly active users (last 30d)"
-    )
-    .expect("Failed to register MONTHLY_ACTIVE_USERS metric")
-});
+);
 
-/// Command usage count
-/// Labels: command (start/settings/info/history/etc)
-pub static COMMAND_USAGE_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
+metric!(
+    /// Command usage count
+    /// Labels: command (start/settings/info/history/etc)
+    pub COMMAND_USAGE_TOTAL: CounterVec =
         "doradura_command_usage_total",
         "Total number of command executions",
-        &["command"]
-    )
-    .expect("Failed to register COMMAND_USAGE_TOTAL metric")
-});
+        labels = ["command"]
+);
 
-/// Format request count
-/// Labels: format, plan
-pub static FORMAT_REQUESTS_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
+metric!(
+    /// Format request count
+    /// Labels: format, plan
+    pub FORMAT_REQUESTS_TOTAL: CounterVec =
         "doradura_format_requests_total",
         "Total number of format requests by plan",
-        &["format", "plan"]
-    )
-    .expect("Failed to register FORMAT_REQUESTS_TOTAL metric")
-});
+        labels = ["format", "plan"]
+);
 
-/// User language distribution
-/// Labels: language (en/ru/de/fr/etc)
-pub static USER_LANGUAGE_DISTRIBUTION: LazyLock<GaugeVec> = LazyLock::new(|| {
-    register_gauge_vec!(
+metric!(
+    /// User language distribution
+    /// Labels: language (en/ru/de/fr/etc)
+    pub USER_LANGUAGE_DISTRIBUTION: GaugeVec =
         "doradura_user_language_distribution",
         "Distribution of users by language",
-        &["language"]
-    )
-    .expect("Failed to register USER_LANGUAGE_DISTRIBUTION metric")
-});
+        labels = ["language"]
+);
 
-/// Message types processed
-/// Labels: message_type (text/url/command/etc)
-pub static MESSAGE_TYPES_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
+metric!(
+    /// Message types processed
+    /// Labels: message_type (text/url/command/etc)
+    pub MESSAGE_TYPES_TOTAL: CounterVec =
         "doradura_message_types_total",
         "Total number of messages by type",
-        &["message_type"]
-    )
-    .expect("Failed to register MESSAGE_TYPES_TOTAL metric")
-});
+        labels = ["message_type"]
+);
 
-/// Total registered users
-pub static TOTAL_USERS: LazyLock<Gauge> = LazyLock::new(|| {
-    register_gauge!("doradura_total_users", "Total number of registered users")
-        .expect("Failed to register TOTAL_USERS metric")
-});
+metric!(
+    /// Total registered users
+    pub TOTAL_USERS: Gauge =
+        "doradura_total_users",
+        "Total number of registered users"
+);
 
-/// Users by plan
-/// Labels: plan
-pub static USERS_BY_PLAN: LazyLock<GaugeVec> = LazyLock::new(|| {
-    register_gauge_vec!(
+metric!(
+    /// Users by plan
+    /// Labels: plan
+    pub USERS_BY_PLAN: GaugeVec =
         "doradura_users_by_plan",
         "Number of users by subscription plan",
-        &["plan"]
-    )
-    .expect("Failed to register USERS_BY_PLAN metric")
-});
+        labels = ["plan"]
+);
 
 // ======================
 // PIPELINE & EXTERNAL API METRICS
 // ======================
 
-/// Build information gauge (always 1, labels carry version info)
-/// Labels: version, commit
-pub static BUILD_INFO: LazyLock<GaugeVec> = LazyLock::new(|| {
-    register_gauge_vec!("doradura_build_info", "Build information (always 1)", &["version"])
-        .expect("Failed to register BUILD_INFO metric")
-});
+metric!(
+    /// Build information gauge (always 1, labels carry version info)
+    /// Labels: version
+    pub BUILD_INFO: GaugeVec =
+        "doradura_build_info",
+        "Build information (always 1)",
+        labels = ["version"]
+);
 
-/// Proxy request outcomes
-/// Labels: proxy_type (warp/tailscale/direct), result (success/failure/timeout)
-pub static PROXY_REQUESTS_TOTAL: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
+metric!(
+    /// Proxy request outcomes
+    /// Labels: proxy_type (warp/tailscale/direct), result (success/failure/timeout)
+    pub PROXY_REQUESTS_TOTAL: CounterVec =
         "doradura_proxy_requests_total",
         "Proxy request outcomes",
-        &["proxy_type", "result"]
-    )
-    .expect("Failed to register PROXY_REQUESTS_TOTAL metric")
-});
+        labels = ["proxy_type", "result"]
+);
 
-/// Metadata fetch duration via yt-dlp
-pub static METADATA_FETCH_DURATION_SECONDS: LazyLock<Histogram> = LazyLock::new(|| {
-    register_histogram!(
+metric!(
+    /// Metadata fetch duration via yt-dlp
+    pub METADATA_FETCH_DURATION_SECONDS: Histogram =
         "doradura_metadata_fetch_duration_seconds",
         "Duration of yt-dlp metadata extraction",
-        vec![0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0]
-    )
-    .expect("Failed to register METADATA_FETCH_DURATION_SECONDS metric")
-});
+        buckets = vec![0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 30.0]
+);
 
-/// Audio effects processing duration
-pub static AUDIO_EFFECTS_DURATION_SECONDS: LazyLock<Histogram> = LazyLock::new(|| {
-    register_histogram!(
+metric!(
+    /// Audio effects processing duration
+    pub AUDIO_EFFECTS_DURATION_SECONDS: Histogram =
         "doradura_audio_effects_duration_seconds",
         "Duration of audio effects processing (ffmpeg)",
-        vec![1.0, 5.0, 10.0, 30.0, 60.0, 120.0]
-    )
-    .expect("Failed to register AUDIO_EFFECTS_DURATION_SECONDS metric")
-});
+        buckets = vec![1.0, 5.0, 10.0, 30.0, 60.0, 120.0]
+);
 
-/// Video encoding duration (subtitle burning, splitting)
-/// Labels: operation (burn_subtitles/split)
-pub static VIDEO_ENCODING_DURATION_SECONDS: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register_histogram_vec!(
+metric!(
+    /// Video encoding duration (subtitle burning, splitting)
+    /// Labels: operation (burn_subtitles/split)
+    pub VIDEO_ENCODING_DURATION_SECONDS: HistogramVec =
         "doradura_video_encoding_duration_seconds",
         "Duration of video encoding operations",
-        &["operation"],
-        vec![1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0]
-    )
-    .expect("Failed to register VIDEO_ENCODING_DURATION_SECONDS metric")
-});
+        labels = ["operation"],
+        buckets = vec![1.0, 5.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0]
+);
 
-/// Metadata cache hit ratio
-/// Labels: cache_type (metadata/preview)
-pub static CACHE_HIT_RATIO: LazyLock<GaugeVec> = LazyLock::new(|| {
-    register_gauge_vec!("doradura_cache_hit_ratio", "Cache hit ratio (0.0-1.0)", &["cache_type"])
-        .expect("Failed to register CACHE_HIT_RATIO metric")
-});
+metric!(
+    /// Metadata cache hit ratio
+    /// Labels: cache_type (metadata/preview)
+    pub CACHE_HIT_RATIO: GaugeVec =
+        "doradura_cache_hit_ratio",
+        "Cache hit ratio (0.0-1.0)",
+        labels = ["cache_type"]
+);
 
-/// Cross-user file_id cache outcomes.
-///
-/// Counts every pipeline execution's lookup result. Hit rate over a time
-/// window is `sum(hit) / sum(hit+miss)` — the PRD target is 80%+.
-///
-/// Labels:
-///   - `source`: `download_history` (cross-user cache) | `vault` (audio dedup layer)
-///   - `outcome`: `hit` | `miss` | `send_failed` (hit but file_id expired on Bot API server)
-pub static FILE_ID_CACHE_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    register_int_counter_vec!(
+metric!(
+    /// Cross-user file_id cache outcomes.
+    ///
+    /// Counts every pipeline execution's lookup result. Hit rate over a time
+    /// window is `sum(hit) / sum(hit+miss)` — the PRD target is 80%+.
+    ///
+    /// Labels:
+    ///   - `source`: `download_history` (cross-user cache) | `vault` (audio dedup layer)
+    ///   - `outcome`: `hit` | `miss` | `send_failed` (hit but file_id expired on Bot API server)
+    pub FILE_ID_CACHE_TOTAL: IntCounterVec =
         "doradura_file_id_cache_total",
         "Cross-user file_id cache lookup outcomes",
-        &["source", "outcome"]
-    )
-    .expect("Failed to register FILE_ID_CACHE_TOTAL metric")
-});
+        labels = ["source", "outcome"]
+);
 
-/// Loop-to-audio feature outcomes.
-///
-/// Counts every invocation of the "🔁 Loop to audio" flow, broken down by
-/// outcome. Use to monitor success rate and flag gating regressions.
-///
-/// Labels:
-///   - `outcome`: `success` | `audio_too_long` | `audio_too_short`
-///     | `video_too_short` | `ffmpeg_failed` | `download_failed` | `send_failed`
-pub static LOOP_TO_AUDIO_TOTAL: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    register_int_counter_vec!(
+metric!(
+    /// Loop-to-audio feature outcomes.
+    ///
+    /// Counts every invocation of the "🔁 Loop to audio" flow, broken down by
+    /// outcome. Use to monitor success rate and flag gating regressions.
+    ///
+    /// Labels:
+    ///   - `outcome`: `success` | `audio_too_long` | `audio_too_short`
+    ///     | `video_too_short` | `ffmpeg_failed` | `download_failed` | `send_failed`
+    pub LOOP_TO_AUDIO_TOTAL: IntCounterVec =
         "doradura_loop_to_audio_total",
         "Loop-to-audio feature outcomes",
-        &["outcome"]
-    )
-    .expect("Failed to register LOOP_TO_AUDIO_TOTAL metric")
-});
+        labels = ["outcome"]
+);
 
-/// Process resident memory in bytes (RSS)
-pub static PROCESS_RESIDENT_MEMORY_BYTES: LazyLock<Gauge> = LazyLock::new(|| {
-    register_gauge!(
+metric!(
+    /// Process resident memory in bytes (RSS)
+    pub PROCESS_RESIDENT_MEMORY_BYTES: Gauge =
         "doradura_process_resident_memory_bytes",
         "Process resident set size (RSS) in bytes"
-    )
-    .expect("Failed to register PROCESS_RESIDENT_MEMORY_BYTES metric")
-});
+);
 
-/// Semaphore full events (concurrent download limit reached)
-pub static SEMAPHORE_FULL_TOTAL: LazyLock<Counter> = LazyLock::new(|| {
-    register_counter!(
+metric!(
+    /// Semaphore full events (concurrent download limit reached)
+    pub SEMAPHORE_FULL_TOTAL: Counter =
         "doradura_semaphore_full_total",
         "Number of times download semaphore was at capacity"
-    )
-    .expect("Failed to register SEMAPHORE_FULL_TOTAL metric")
-});
+);
 
 // ======================
 // DISK METRICS
 // ======================
 
-/// Available disk space in bytes
-pub static DISK_AVAILABLE_BYTES: LazyLock<Gauge> = LazyLock::new(|| {
-    register_gauge!("doradura_disk_available_bytes", "Available disk space in bytes")
-        .expect("Failed to register DISK_AVAILABLE_BYTES metric")
-});
+metric!(
+    /// Available disk space in bytes
+    pub DISK_AVAILABLE_BYTES: Gauge =
+        "doradura_disk_available_bytes",
+        "Available disk space in bytes"
+);
 
-/// Disk used percentage (0-100)
-pub static DISK_USED_PERCENT: LazyLock<Gauge> = LazyLock::new(|| {
-    register_gauge!("doradura_disk_used_percent", "Disk used percentage (0-100)")
-        .expect("Failed to register DISK_USED_PERCENT metric")
-});
+metric!(
+    /// Disk used percentage (0-100)
+    pub DISK_USED_PERCENT: Gauge =
+        "doradura_disk_used_percent",
+        "Disk used percentage (0-100)"
+);
 
 // ======================
 // NEW HIGH-VALUE METRICS
 // ======================
 
-/// yt-dlp fallback tier attempts
-/// Labels: tier (tier1_no_cookies/tier2_cookies/tier3_fixup_never), result (success/failure)
-pub static YTDLP_TIER_ATTEMPTS: LazyLock<IntCounterVec> = LazyLock::new(|| {
-    register_int_counter_vec!(
+metric!(
+    /// yt-dlp fallback tier attempts
+    /// Labels: tier (tier1_no_cookies/tier2_cookies/tier3_fixup_never), result (success/failure)
+    pub YTDLP_TIER_ATTEMPTS: IntCounterVec =
         "doradura_ytdlp_tier_attempts_total",
         "yt-dlp fallback tier attempts",
-        &["tier", "result"]
-    )
-    .expect("Failed to register YTDLP_TIER_ATTEMPTS metric")
-});
+        labels = ["tier", "result"]
+);
 
-/// Number of downloads currently in progress
-pub static CONCURRENT_DOWNLOADS: LazyLock<IntGauge> = LazyLock::new(|| {
-    register_int_gauge!(
+metric!(
+    /// Number of downloads currently in progress
+    pub CONCURRENT_DOWNLOADS: IntGauge =
         "doradura_concurrent_downloads",
         "Number of downloads currently in progress"
-    )
-    .expect("Failed to register CONCURRENT_DOWNLOADS metric")
-});
+);
 
-/// Instagram rate limiter window size
-pub static INSTAGRAM_RATE_LIMITER_QUEUE: LazyLock<IntGauge> = LazyLock::new(|| {
-    register_int_gauge!(
+metric!(
+    /// Instagram rate limiter window size
+    pub INSTAGRAM_RATE_LIMITER_QUEUE: IntGauge =
         "doradura_instagram_rate_limiter_queue_size",
         "Current Instagram rate limiter window size"
-    )
-    .expect("Failed to register INSTAGRAM_RATE_LIMITER_QUEUE metric")
-});
+);
 
-/// Telegram file send duration
-/// Labels: file_type (audio/video)
-pub static TELEGRAM_SEND_DURATION_SECONDS: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register_histogram_vec!(
+metric!(
+    /// Telegram file send duration
+    /// Labels: file_type (audio/video)
+    pub TELEGRAM_SEND_DURATION_SECONDS: HistogramVec =
         "doradura_telegram_send_duration_seconds",
         "Telegram file send duration",
-        &["file_type"],
-        vec![1.0, 5.0, 10.0, 30.0, 60.0, 120.0]
-    )
-    .expect("Failed to register TELEGRAM_SEND_DURATION_SECONDS metric")
-});
+        labels = ["file_type"],
+        buckets = vec![1.0, 5.0, 10.0, 30.0, 60.0, 120.0]
+);
 
 // ======================
 // HEALTH CHECK / SMOKE TEST METRICS
 // ======================
 
-/// Health check status (1 = healthy, 0 = unhealthy)
-pub static HEALTH_CHECK_STATUS: LazyLock<Gauge> = LazyLock::new(|| {
-    register_gauge!(
+metric!(
+    /// Health check status (1 = healthy, 0 = unhealthy)
+    pub HEALTH_CHECK_STATUS: Gauge =
         "doradura_health_check_status",
         "Health check status (1 = healthy, 0 = unhealthy)"
-    )
-    .expect("Failed to register HEALTH_CHECK_STATUS metric")
-});
+);
 
-/// Last health check run timestamp (Unix seconds)
-pub static HEALTH_CHECK_LAST_RUN: LazyLock<Gauge> = LazyLock::new(|| {
-    register_gauge!(
+metric!(
+    /// Last health check run timestamp (Unix seconds)
+    pub HEALTH_CHECK_LAST_RUN: Gauge =
         "doradura_health_check_last_run_timestamp",
         "Timestamp of last health check run (Unix seconds)"
-    )
-    .expect("Failed to register HEALTH_CHECK_LAST_RUN metric")
-});
+);
 
-/// Smoke test results count by test name and status
-/// Labels: test_name (ffmpeg_toolchain/cookies_validation/metadata_extraction/audio_download/video_download)
-///         status (passed/failed/timeout/skipped)
-pub static SMOKE_TEST_RESULTS: LazyLock<CounterVec> = LazyLock::new(|| {
-    register_counter_vec!(
+metric!(
+    /// Smoke test results count by test name and status
+    /// Labels: test_name (ffmpeg_toolchain/cookies_validation/metadata_extraction/audio_download/video_download)
+    ///         status (passed/failed/timeout/skipped)
+    pub SMOKE_TEST_RESULTS: CounterVec =
         "doradura_smoke_test_results_total",
         "Total number of smoke test results by test and status",
-        &["test_name", "status"]
-    )
-    .expect("Failed to register SMOKE_TEST_RESULTS metric")
-});
+        labels = ["test_name", "status"]
+);
 
-/// Smoke test duration in seconds by test name
-/// Labels: test_name
-pub static SMOKE_TEST_DURATION: LazyLock<HistogramVec> = LazyLock::new(|| {
-    register_histogram_vec!(
+metric!(
+    /// Smoke test duration in seconds by test name
+    /// Labels: test_name
+    pub SMOKE_TEST_DURATION: HistogramVec =
         "doradura_smoke_test_duration_seconds",
         "Duration of smoke tests in seconds",
-        &["test_name"],
-        vec![1.0, 5.0, 10.0, 30.0, 60.0, 120.0, 180.0]
-    )
-    .expect("Failed to register SMOKE_TEST_DURATION metric")
-});
+        labels = ["test_name"],
+        buckets = vec![1.0, 5.0, 10.0, 30.0, 60.0, 120.0, 180.0]
+);
 
 /// Initialize metrics (call this at startup to register all metrics)
 pub fn init_metrics() {
