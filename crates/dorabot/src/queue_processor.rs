@@ -43,7 +43,7 @@ pub async fn process_queue(
     );
     let semaphore = Arc::new(tokio::sync::Semaphore::new(max_concurrent));
     let mut interval = interval(config::queue::check_interval());
-    let last_download_start = Arc::new(tokio::sync::Mutex::new(std::time::Instant::now()));
+    let last_download_start = Arc::new(std::sync::Mutex::new(std::time::Instant::now()));
     let worker_id = format!("{}-{}", std::process::id(), uuid::Uuid::new_v4());
 
     // Periodic cleanup of stale notification_msgs (every 30 min)
@@ -180,7 +180,7 @@ async fn process_single_task(
     semaphore: Arc<tokio::sync::Semaphore>,
     shared_storage: Arc<SharedStorage>,
     rate_limiter: Arc<rate_limiter::RateLimiter>,
-    last_download_start: Arc<tokio::sync::Mutex<std::time::Instant>>,
+    last_download_start: Arc<std::sync::Mutex<std::time::Instant>>,
     alert_manager: Option<Arc<alerts::AlertManager>>,
     queue_for_cleanup: Arc<DownloadQueue>,
     worker_id: String,
@@ -229,9 +229,10 @@ async fn process_single_task(
     );
 
     // Enforce global delay between download starts.
-    // Read timestamp and drop lock BEFORE sleeping to avoid blocking other tasks.
+    // Read timestamp and drop lock BEFORE sleeping; std::sync::Mutex is fine
+    // here because the critical section copies 16 bytes and never `.await`s.
     let wait_time = {
-        let last_start = last_download_start.lock().await;
+        let last_start = last_download_start.lock().expect("last_download_start poisoned");
         let elapsed = last_start.elapsed();
         let inter_delay = config::queue::inter_download_delay();
         if elapsed < inter_delay {
@@ -249,7 +250,7 @@ async fn process_single_task(
         tokio::time::sleep(wait).await;
     }
     {
-        let mut last_start = last_download_start.lock().await;
+        let mut last_start = last_download_start.lock().expect("last_download_start poisoned");
         *last_start = std::time::Instant::now();
     }
 

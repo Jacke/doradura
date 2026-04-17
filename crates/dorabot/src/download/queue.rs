@@ -138,6 +138,8 @@ pub struct DownloadTask {
 pub struct DownloadQueue {
     /// Internal task queue protected by a mutex.
     /// Tasks are stored in priority order: High -> Medium -> Low.
+    /// NOTE: the `active_tasks` / `queue` lock order is a load-bearing invariant;
+    /// external callers must not grab `.queue.lock()` directly (use the queue's own methods).
     pub queue: Mutex<VecDeque<DownloadTask>>,
     /// Set of active tasks (queued + being processed).
     /// Stores (URL, chat_id, format) tuples to prevent duplicates.

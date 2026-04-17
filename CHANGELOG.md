@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Refactor: async Mutex → std Mutex for queue timestamp** (v0.38.2) — `crates/dorabot/src/queue_processor.rs`: `Arc<tokio::sync::Mutex<Instant>>` → `Arc<std::sync::Mutex<Instant>>`. The critical section copies 16 bytes and never `.await`s, so the async mutex was paying its overhead for nothing. Also documented the `active_tasks` / `queue` lock-order invariant on `DownloadQueue.queue` with a comment (visibility left as `pub` to preserve access from the main.rs bin-crate integration tests).
 - **Refactor: extracted 2 helpers from `process_video_clip`** (v0.38.1) — `crates/dorabot/src/telegram/commands/circle.rs`. `resolve_clip_source` now owns the Download/Cut source lookup + fallback message_info fetch (~80 LOC extracted, returns `Option<ClipSource>` to preserve the user-facing error paths). `send_clip_as_gif` now owns the GIF dispatch branch (~45 LOC extracted). `process_video_clip` body drops from 1071 → 976 LOC. Behavior-preserving — all 50 circle unit tests still green.
 
 ### Added
