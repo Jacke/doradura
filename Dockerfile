@@ -164,8 +164,9 @@ RUN printf '%s\n' \
     'foreground { echo "================================================" }' \
     'foreground { echo "Initializing Telegram Bot API + Doradura Bot" }' \
     'foreground { echo "================================================" }' \
-    'foreground { echo "Validating environment variables..." }' \
-    'foreground { /bin/sh -c "cd /app && varlock load 2>&1 || echo [varlock] validation warning (non-fatal)" }' \
+    'foreground { echo "Validating environment variables against .env.schema..." }' \
+    'if { /bin/sh -c "cd /app && varlock load >/dev/null 2>&1 || { echo \"[varlock] ❌ schema validation FAILED — container will not start\"; cd /app && varlock load 2>&1 | tail -30 >&2; exit 1; }" }' \
+    'foreground { echo "[varlock] ✅ schema validated" }' \
     'foreground { mkdir -p /data /tmp }' \
     'foreground { chmod 1777 /tmp }' \
     'foreground { echo "Cleaning up old temp files..." }' \
