@@ -1,5 +1,6 @@
 {
   "enabledPlugins": {
-    "agents-language-specialists@buildwithclaude": true
+    "agents-language-specialists@buildwithclaude": true,
+    "rust-skills@rust-skills": true
   }
 }

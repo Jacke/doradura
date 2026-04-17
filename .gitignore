@@ -58,3 +58,6 @@ __pycache__/
 tmp/
 # Private business document (competitive strategy, pricing, GTV plans)
 docs/PRD.md
+
+# Claude Code per-user overrides (shared project config lives in .claude/settings.json)
+.claude/settings.local.json

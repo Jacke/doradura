@@ -17,6 +17,7 @@ use url::Url;
 
 use super::audio_effects::{handle_audio_cut_callback, handle_audio_effects_callback};
 use super::callback_admin;
+use super::callback_kind::CallbackKind;
 use super::callback_settings;
 use super::helpers::{send_queue_position_message, start_download_from_preview};
 use super::lyrics::handle_lyrics_callback;
@@ -46,8 +47,11 @@ pub async fn handle_menu_callback(
         let message_id = q.message.as_ref().map(|m| m.id());
 
         if let (Some(chat_id), Some(message_id)) = (chat_id, message_id) {
+            let kind = CallbackKind::parse(&data);
+
             // Blocked user check (skip for admins and admin callbacks)
-            if !data.starts_with("au:") && !data.starts_with("admin:") {
+            let is_admin_callback = kind.is_some_and(|k| matches!(k, CallbackKind::Au | CallbackKind::Admin));
+            if !is_admin_callback {
                 let caller_id = i64::try_from(q.from.id.0).unwrap_or(0);
                 if !admin::is_admin(caller_id) {
                     match shared_storage.get_user(caller_id).await {
@@ -118,10 +122,7 @@ pub async fn handle_menu_callback(
             }
 
             // --- Delegated: admin-related callbacks (analytics:, metrics:, au:, admin:) ---
-            if (data.starts_with("analytics:")
-                || data.starts_with("metrics:")
-                || data.starts_with("au:")
-                || data.starts_with("admin:"))
+            if kind.is_some_and(CallbackKind::is_admin_group)
                 && callback_admin::handle_admin_callback(
                     &bot,
                     &callback_id,
@@ -138,23 +139,7 @@ pub async fn handle_menu_callback(
             }
 
             // --- Delegated: settings-related callbacks ---
-            if (data.starts_with("mode:")
-                || data.starts_with("main:")
-                || data.starts_with("ext:")
-                || data.starts_with("subscribe:")
-                || data.starts_with("subscription:")
-                || data.starts_with("language:select_new:")
-                || data.starts_with("language:set:")
-                || data.starts_with("quality:")
-                || data == "send_type:toggle"
-                || data == "video:toggle_burn_subs"
-                || data.starts_with("bitrate:")
-                || data == "audio_send_type:toggle"
-                || data.starts_with("subtitle:")
-                || data.starts_with("pbar_style:")
-                || data.starts_with("video_send_type:toggle:")
-                || data.starts_with("settings:")
-                || data.starts_with("back:"))
+            if kind.is_some_and(CallbackKind::is_settings_group)
                 && callback_settings::handle_settings_callback(
                     &bot,
                     &callback_id,
