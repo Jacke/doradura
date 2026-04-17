@@ -59,3 +59,17 @@ jobs:
 
       - name: Run smoke tests
         run: cargo test --test smoke_test -- --nocapture
+
+  env-schema:
+    name: Env schema drift check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check code ↔ schema drift
+        # Fails if code reads an env var not declared in .env.schema.
+        # Prevents "bot panics at runtime because new env var missing".
+        # Pure grep, no external deps — keeps CI job cheap.
+        run: ./scripts/check-env-drift.sh
