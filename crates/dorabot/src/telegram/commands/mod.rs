@@ -210,6 +210,172 @@ async fn try_intercept_video_clip_audio(
     }
 }
 
+/// If the sender is an admin who has opened the admin-users search prompt,
+/// forward the (non-command) text to the admin search handler. Returns
+/// `true` when handled, `false` when the message should fall through.
+async fn try_intercept_admin_search(
+    bot: &Bot,
+    msg: &Message,
+    shared_storage: &Arc<SharedStorage>,
+    text: &str,
+) -> ResponseResult<bool> {
+    if text.trim().starts_with('/') {
+        return Ok(false);
+    }
+    if !crate::telegram::admin::is_admin(msg.chat.id.0) {
+        return Ok(false);
+    }
+    if !crate::telegram::menu::admin_users::is_admin_searching(shared_storage, msg.chat.id.0).await {
+        return Ok(false);
+    }
+    if let Err(e) =
+        crate::telegram::menu::admin_users::handle_admin_search(bot, msg.chat.id, shared_storage, text.trim()).await
+    {
+        log::error!("Admin search error: {}", e);
+    }
+    Ok(true)
+}
+
+/// If the user has an active "new category" session (opened from the
+/// `downloads:newcat` callback) and sends non-command text, treat the text
+/// as the new category name: validate, create, assign to the pending
+/// download, and clear the session. Returns `true` when handled.
+async fn try_intercept_new_category_session(
+    bot: &Bot,
+    msg: &Message,
+    shared_storage: &Arc<SharedStorage>,
+    text: &str,
+) -> ResponseResult<bool> {
+    if text.trim().starts_with('/') {
+        return Ok(false);
+    }
+    let Ok(Some(download_id)) = shared_storage.get_active_new_category_session(msg.chat.id.0).await else {
+        return Ok(false);
+    };
+    let name = text.trim();
+    if name.is_empty() || name.len() > 64 {
+        bot.send_message(msg.chat.id, "❌ Category name must be 1–64 characters")
+            .await
+            .ok();
+    } else {
+        // Truncate to 32 chars for callback data safety
+        let name: String = name.chars().take(32).collect();
+        if let Err(e) = shared_storage.create_user_category(msg.chat.id.0, &name).await {
+            log::error!("Failed to create user category '{}': {}", name, e);
+            bot.send_message(msg.chat.id, "❌ Failed to create category. Please try again.")
+                .await
+                .ok();
+        } else if let Err(e) = shared_storage
+            .set_download_category(msg.chat.id.0, download_id, Some(&name))
+            .await
+        {
+            log::error!(
+                "Failed to assign category '{}' to download {}: {}",
+                name,
+                download_id,
+                e
+            );
+            bot.send_message(
+                msg.chat.id,
+                "❌ Category created but failed to assign. Please try again.",
+            )
+            .await
+            .ok();
+        } else {
+            let _ = shared_storage.delete_new_category_session(msg.chat.id.0).await;
+            bot.send_message(msg.chat.id, format!("✅ Category «{}» created and assigned", name))
+                .await
+                .ok();
+        }
+    }
+    Ok(true)
+}
+
+/// If the user has an active audio-cut session (opened from the "Cut Audio"
+/// button) and sends non-command text, interpret the text as a time-range
+/// spec (or cancel): validate, spawn `process_audio_cut`, and clear the
+/// session. Returns `true` when handled.
+async fn try_intercept_audio_cut_session(
+    bot: &Bot,
+    msg: &Message,
+    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
+    lang: &unic_langid::LanguageIdentifier,
+    text: &str,
+) -> ResponseResult<bool> {
+    if text.trim().starts_with('/') {
+        return Ok(false);
+    }
+    let Ok(Some(session)) = shared_storage.get_active_audio_cut_session(msg.chat.id.0).await else {
+        return Ok(false);
+    };
+    let trimmed = text.trim();
+    if is_cancel_text(trimmed) {
+        let _ = shared_storage.delete_audio_cut_session_by_user(msg.chat.id.0).await;
+        bot.send_message(msg.chat.id, i18n::t(lang, "commands.audio_cut_cancelled"))
+            .await
+            .ok();
+        return Ok(true);
+    }
+
+    let audio_session = match shared_storage.get_audio_effect_session(&session.audio_session_id).await {
+        Ok(Some(audio_session)) => audio_session,
+        Ok(None) => {
+            let _ = shared_storage.delete_audio_cut_session_by_user(msg.chat.id.0).await;
+            bot.send_message(msg.chat.id, i18n::t(lang, "commands.audio_session_expired"))
+                .await
+                .ok();
+            return Ok(true);
+        }
+        Err(e) => {
+            log::warn!("Failed to load audio session for cut: {}", e);
+            return Ok(true);
+        }
+    };
+    if audio_session.is_expired() {
+        let _ = shared_storage.delete_audio_cut_session_by_user(msg.chat.id.0).await;
+        bot.send_message(msg.chat.id, i18n::t(lang, "commands.audio_session_expired"))
+            .await
+            .ok();
+        return Ok(true);
+    }
+
+    let audio_duration = Some(audio_session.duration as i64);
+    if let Some((segments, segments_text)) = parse_audio_segments_spec(trimmed, audio_duration) {
+        let _ = shared_storage.delete_audio_cut_session_by_user(msg.chat.id.0).await;
+
+        let bot_clone = bot.clone();
+        let db_pool_clone = Arc::clone(db_pool);
+        let shared_storage_clone = Arc::clone(shared_storage);
+        let chat_id = msg.chat.id;
+        tokio::spawn(async move {
+            if let Err(e) = process_audio_cut(
+                bot_clone,
+                db_pool_clone,
+                shared_storage_clone,
+                chat_id,
+                audio_session,
+                segments,
+                segments_text,
+            )
+            .await
+            {
+                log::warn!("Failed to process audio cut: {}", e);
+            }
+        });
+    } else {
+        crate::telegram::send_message_markdown_v2(
+            bot,
+            msg.chat.id,
+            i18n::t(lang, "commands.audio_cut_invalid_intervals"),
+            None,
+        )
+        .await
+        .ok();
+    }
+    Ok(true)
+}
+
 /// Handle incoming message and process download requests
 ///
 /// Parses URLs from messages, validates them, checks rate limits, and adds tasks to the download queue.
@@ -288,133 +454,18 @@ pub async fn handle_message(
         }
 
         // Admin search intercept
-        if !text.trim().starts_with('/')
-            && crate::telegram::admin::is_admin(msg.chat.id.0)
-            && crate::telegram::menu::admin_users::is_admin_searching(&shared_storage, msg.chat.id.0).await
-        {
-            if let Err(e) =
-                crate::telegram::menu::admin_users::handle_admin_search(&bot, msg.chat.id, &shared_storage, text.trim())
-                    .await
-            {
-                log::error!("Admin search error: {}", e);
-            }
+        if try_intercept_admin_search(&bot, &msg, &shared_storage, text).await? {
             return Ok(None);
         }
 
         // New-category sessions (from downloads:newcat callback)
-        if !text.trim().starts_with('/') {
-            if let Ok(Some(download_id)) = shared_storage.get_active_new_category_session(msg.chat.id.0).await {
-                let name = text.trim();
-                if name.is_empty() || name.len() > 64 {
-                    bot.send_message(msg.chat.id, "❌ Category name must be 1–64 characters")
-                        .await
-                        .ok();
-                } else {
-                    // Truncate to 32 chars for callback data safety
-                    let name: String = name.chars().take(32).collect();
-                    if let Err(e) = shared_storage.create_user_category(msg.chat.id.0, &name).await {
-                        log::error!("Failed to create user category '{}': {}", name, e);
-                        bot.send_message(msg.chat.id, "❌ Failed to create category. Please try again.")
-                            .await
-                            .ok();
-                    } else if let Err(e) = shared_storage
-                        .set_download_category(msg.chat.id.0, download_id, Some(&name))
-                        .await
-                    {
-                        log::error!(
-                            "Failed to assign category '{}' to download {}: {}",
-                            name,
-                            download_id,
-                            e
-                        );
-                        bot.send_message(
-                            msg.chat.id,
-                            "❌ Category created but failed to assign. Please try again.",
-                        )
-                        .await
-                        .ok();
-                    } else {
-                        let _ = shared_storage.delete_new_category_session(msg.chat.id.0).await;
-                        bot.send_message(msg.chat.id, format!("✅ Category «{}» created and assigned", name))
-                            .await
-                            .ok();
-                    }
-                }
-                return Ok(None);
-            }
+        if try_intercept_new_category_session(&bot, &msg, &shared_storage, text).await? {
+            return Ok(None);
         }
 
         // Audio cut sessions (from "Cut Audio" button)
-        if !text.trim().starts_with('/') {
-            if let Ok(Some(session)) = shared_storage.get_active_audio_cut_session(msg.chat.id.0).await {
-                let trimmed = text.trim();
-                if is_cancel_text(trimmed) {
-                    let _ = shared_storage.delete_audio_cut_session_by_user(msg.chat.id.0).await;
-                    bot.send_message(msg.chat.id, i18n::t(&lang, "commands.audio_cut_cancelled"))
-                        .await
-                        .ok();
-                    return Ok(None);
-                }
-
-                let audio_session = match shared_storage.get_audio_effect_session(&session.audio_session_id).await {
-                    Ok(Some(audio_session)) => audio_session,
-                    Ok(None) => {
-                        let _ = shared_storage.delete_audio_cut_session_by_user(msg.chat.id.0).await;
-                        bot.send_message(msg.chat.id, i18n::t(&lang, "commands.audio_session_expired"))
-                            .await
-                            .ok();
-                        return Ok(None);
-                    }
-                    Err(e) => {
-                        log::warn!("Failed to load audio session for cut: {}", e);
-                        return Ok(None);
-                    }
-                };
-                if audio_session.is_expired() {
-                    let _ = shared_storage.delete_audio_cut_session_by_user(msg.chat.id.0).await;
-                    bot.send_message(msg.chat.id, i18n::t(&lang, "commands.audio_session_expired"))
-                        .await
-                        .ok();
-                    return Ok(None);
-                }
-
-                let audio_duration = Some(audio_session.duration as i64);
-                if let Some((segments, segments_text)) = parse_audio_segments_spec(trimmed, audio_duration) {
-                    let _ = shared_storage.delete_audio_cut_session_by_user(msg.chat.id.0).await;
-
-                    let bot_clone = bot.clone();
-                    let db_pool_clone = db_pool.clone();
-                    let shared_storage_clone = shared_storage.clone();
-                    let chat_id = msg.chat.id;
-                    tokio::spawn(async move {
-                        if let Err(e) = process_audio_cut(
-                            bot_clone,
-                            db_pool_clone,
-                            shared_storage_clone,
-                            chat_id,
-                            audio_session,
-                            segments,
-                            segments_text,
-                        )
-                        .await
-                        {
-                            log::warn!("Failed to process audio cut: {}", e);
-                        }
-                    });
-
-                    return Ok(None);
-                } else {
-                    crate::telegram::send_message_markdown_v2(
-                        &bot,
-                        msg.chat.id,
-                        i18n::t(&lang, "commands.audio_cut_invalid_intervals"),
-                        None,
-                    )
-                    .await
-                    .ok();
-                    return Ok(None);
-                }
-            }
+        if try_intercept_audio_cut_session(&bot, &msg, &db_pool, &shared_storage, &lang, text).await? {
+            return Ok(None);
         }
 
         // Video clip sessions (from /downloads or /cuts -> ✂️ Clip)
