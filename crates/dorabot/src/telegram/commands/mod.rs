@@ -82,6 +82,134 @@ pub async fn handle_rate_limit(
     }
 }
 
+/// If the user has an active cookies/IG-cookies upload session AND a document
+/// is attached, dispatch the upload and swallow the message. Returns `true`
+/// when handled (caller should return early), `false` otherwise.
+async fn try_intercept_document_upload(
+    bot: &Bot,
+    msg: &Message,
+    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
+) -> ResponseResult<bool> {
+    let Some(document) = msg.document() else {
+        return Ok(false);
+    };
+    metrics::record_message_type("document");
+    let Some(user) = msg.from.as_ref() else {
+        return Ok(false);
+    };
+    let user_id = user.id.0 as i64;
+    if let Ok(Some(_session)) = shared_storage.get_active_cookies_upload_session(user_id).await {
+        if let Err(e) = crate::telegram::handle_cookies_file_upload(
+            db_pool.clone(),
+            shared_storage.clone(),
+            bot,
+            msg.chat.id,
+            user_id,
+            document,
+        )
+        .await
+        {
+            log::error!("Failed to handle cookies file upload: {}", e);
+        }
+        return Ok(true);
+    }
+    if let Ok(Some(_session)) = shared_storage.get_active_ig_cookies_upload_session(user_id).await {
+        if let Err(e) = crate::telegram::handle_ig_cookies_file_upload(
+            db_pool.clone(),
+            shared_storage.clone(),
+            bot,
+            msg.chat.id,
+            user_id,
+            document,
+        )
+        .await
+        {
+            log::error!("Failed to handle IG cookies file upload: {}", e);
+        }
+        return Ok(true);
+    }
+    Ok(false)
+}
+
+/// If an active `VideoClipSession` is in audio-intake mode (VideoNote or Loop)
+/// and the incoming message carries audio, route it to the session. For
+/// VideoNote the audio is stored and the user is prompted for a time range;
+/// for Loop the audio triggers immediate processing in a spawned task.
+/// Returns `true` when handled, `false` when the message should fall through.
+async fn try_intercept_video_clip_audio(
+    bot: &Bot,
+    msg: &Message,
+    shared_storage: &Arc<SharedStorage>,
+    db_pool: &Arc<DbPool>,
+    lang: &unic_langid::LanguageIdentifier,
+) -> ResponseResult<bool> {
+    let Ok(Some(mut session)) = shared_storage.get_active_video_clip_session(msg.chat.id.0).await else {
+        return Ok(false);
+    };
+    if !matches!(session.output_kind, OutputKind::VideoNote | OutputKind::Loop) {
+        return Ok(false);
+    }
+    let audio_file_id = msg
+        .audio()
+        .map(|a| a.file.id.0.clone())
+        .or_else(|| msg.voice().map(|v| v.file.id.0.clone()))
+        .or_else(|| {
+            msg.document().and_then(|d| {
+                d.mime_type.as_ref().and_then(|m| {
+                    if m.type_() == mime::AUDIO {
+                        Some(d.file.id.0.clone())
+                    } else {
+                        None
+                    }
+                })
+            })
+        });
+
+    let Some(file_id) = audio_file_id else {
+        return Ok(false);
+    };
+    match session.output_kind {
+        OutputKind::VideoNote => {
+            session.custom_audio_file_id = Some(file_id);
+            let _ = shared_storage.upsert_video_clip_session(&session).await;
+            bot.send_message(msg.chat.id, "🎵 Custom audio saved! Now send the time range.")
+                .await
+                .ok();
+            Ok(true)
+        }
+        OutputKind::Loop => {
+            session.custom_audio_file_id = Some(file_id.clone());
+            let _ = shared_storage.delete_video_clip_session_by_user(msg.chat.id.0).await;
+
+            let bot_c = bot.clone();
+            let shared_storage_c = Arc::clone(shared_storage);
+            let db_pool_c = Arc::clone(db_pool);
+            let chat_id = msg.chat.id;
+            tokio::spawn(async move {
+                if let Err(e) = crate::telegram::commands::loop_to_audio::process_loop_to_audio(
+                    bot_c,
+                    chat_id,
+                    session,
+                    file_id,
+                    db_pool_c,
+                    shared_storage_c,
+                )
+                .await
+                {
+                    log::warn!("process_loop_to_audio failed: {}", e);
+                }
+            });
+
+            bot.send_message(msg.chat.id, i18n::t(lang, "loop.processing"))
+                .await
+                .ok();
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
 /// Handle incoming message and process download requests
 ///
 /// Parses URLs from messages, validates them, checks rate limits, and adds tasks to the download queue.
@@ -121,42 +249,9 @@ pub async fn handle_message(
         msg.from.as_ref().and_then(|user| user.language_code.as_deref()),
     );
 
-    // Handle document upload (for cookies file)
-    if let Some(document) = msg.document() {
-        metrics::record_message_type("document");
-        if let Some(user) = msg.from.as_ref() {
-            let user_id = user.id.0 as i64;
-            if let Ok(Some(_session)) = shared_storage.get_active_cookies_upload_session(user_id).await {
-                if let Err(e) = crate::telegram::handle_cookies_file_upload(
-                    db_pool.clone(),
-                    shared_storage.clone(),
-                    &bot,
-                    msg.chat.id,
-                    user_id,
-                    document,
-                )
-                .await
-                {
-                    log::error!("Failed to handle cookies file upload: {}", e);
-                }
-                return Ok(None);
-            }
-            if let Ok(Some(_session)) = shared_storage.get_active_ig_cookies_upload_session(user_id).await {
-                if let Err(e) = crate::telegram::handle_ig_cookies_file_upload(
-                    db_pool.clone(),
-                    shared_storage.clone(),
-                    &bot,
-                    msg.chat.id,
-                    user_id,
-                    document,
-                )
-                .await
-                {
-                    log::error!("Failed to handle IG cookies file upload: {}", e);
-                }
-                return Ok(None);
-            }
-        }
+    // Document upload (cookies / IG cookies): intercept if active session.
+    if try_intercept_document_upload(&bot, &msg, &db_pool, &shared_storage).await? {
+        return Ok(None);
     }
 
     // Check if user is blocked (skip for admins)
@@ -181,72 +276,9 @@ pub async fn handle_message(
         }
     }
 
-    // Custom audio for VideoNote / Loop sessions: if user sends audio/voice
-    // while a session is active, capture it. For VideoNote the capture is a
-    // prelude to a time-range message (existing behavior). For Loop the audio
-    // is the terminal input — processing kicks off immediately.
-    if let Ok(Some(mut session)) = shared_storage.get_active_video_clip_session(msg.chat.id.0).await {
-        if matches!(session.output_kind, OutputKind::VideoNote | OutputKind::Loop) {
-            let audio_file_id = msg
-                .audio()
-                .map(|a| a.file.id.0.clone())
-                .or_else(|| msg.voice().map(|v| v.file.id.0.clone()))
-                .or_else(|| {
-                    msg.document().and_then(|d| {
-                        d.mime_type.as_ref().and_then(|m| {
-                            if m.type_() == mime::AUDIO {
-                                Some(d.file.id.0.clone())
-                            } else {
-                                None
-                            }
-                        })
-                    })
-                });
-
-            if let Some(file_id) = audio_file_id {
-                match session.output_kind {
-                    OutputKind::VideoNote => {
-                        session.custom_audio_file_id = Some(file_id);
-                        let _ = shared_storage.upsert_video_clip_session(&session).await;
-                        bot.send_message(msg.chat.id, "🎵 Custom audio saved! Now send the time range.")
-                            .await
-                            .ok();
-                        return Ok(None);
-                    }
-                    OutputKind::Loop => {
-                        // Audio is the terminal input for Loop — delete the session
-                        // row before spawning so a second upload cannot race us.
-                        session.custom_audio_file_id = Some(file_id.clone());
-                        let _ = shared_storage.delete_video_clip_session_by_user(msg.chat.id.0).await;
-
-                        let bot_c = bot.clone();
-                        let shared_storage_c = shared_storage.clone();
-                        let db_pool_c = db_pool.clone();
-                        let chat_id = msg.chat.id;
-                        tokio::spawn(async move {
-                            if let Err(e) = crate::telegram::commands::loop_to_audio::process_loop_to_audio(
-                                bot_c,
-                                chat_id,
-                                session,
-                                file_id,
-                                db_pool_c,
-                                shared_storage_c,
-                            )
-                            .await
-                            {
-                                log::warn!("process_loop_to_audio failed: {}", e);
-                            }
-                        });
-
-                        bot.send_message(msg.chat.id, i18n::t(&lang, "loop.processing"))
-                            .await
-                            .ok();
-                        return Ok(None);
-                    }
-                    _ => {}
-                }
-            }
-        }
+    // VideoClipSession audio-intake (VideoNote: capture custom audio; Loop: kick off processing).
+    if try_intercept_video_clip_audio(&bot, &msg, &shared_storage, &db_pool, &lang).await? {
+        return Ok(None);
     }
 
     if let Some(text) = msg.text() {
