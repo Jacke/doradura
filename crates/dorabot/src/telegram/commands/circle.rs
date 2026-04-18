@@ -507,6 +507,100 @@ async fn send_clip_as_gif(
     }
 }
 
+/// Max output length (secs) for a clip based on its kind. Ringtones, GIFs and
+/// video notes each have their own ceiling; regular cuts cap at 10 minutes.
+fn compute_clip_max_len_secs(
+    is_video_note: bool,
+    video_note_needs_split: bool,
+    is_iphone_ringtone: bool,
+    is_android_ringtone: bool,
+    is_gif: bool,
+) -> i64 {
+    if is_video_note && !video_note_needs_split {
+        VIDEO_NOTE_MAX_DURATION as i64
+    } else if is_video_note && video_note_needs_split {
+        (VIDEO_NOTE_MAX_DURATION * VIDEO_NOTE_MAX_PARTS as u64) as i64
+    } else if is_iphone_ringtone {
+        crate::download::ringtone::MAX_IPHONE_DURATION_SECS as i64
+    } else if is_android_ringtone {
+        crate::download::ringtone::MAX_ANDROID_DURATION_SECS as i64
+    } else if is_gif {
+        GIF_MAX_DURATION_SECS
+    } else {
+        60 * 10
+    }
+}
+
+/// Localized "processing your clip…" status line for the initial bot reply.
+/// Keyed by output kind × speed-present.
+fn pick_clip_status_message(
+    lang: &unic_langid::LanguageIdentifier,
+    is_video_note: bool,
+    is_ringtone: bool,
+    is_gif: bool,
+    speed: Option<f32>,
+    segments_text: &str,
+) -> String {
+    if let Some(spd) = speed {
+        let args = doracore::fluent_args!("segments" => segments_text, "speed" => spd as f64);
+        if is_video_note {
+            i18n::t_args(lang, "commands.cut_status_video_note_speed", &args)
+        } else if is_ringtone {
+            i18n::t_args(lang, "commands.cut_status_ringtone_speed", &args)
+        } else if is_gif {
+            i18n::t_args(lang, "commands.cut_status_gif_speed", &args)
+        } else {
+            i18n::t_args(lang, "commands.cut_status_clip_speed", &args)
+        }
+    } else {
+        let args = doracore::fluent_args!("segments" => segments_text);
+        if is_video_note {
+            i18n::t_args(lang, "commands.cut_status_video_note", &args)
+        } else if is_ringtone {
+            i18n::t_args(lang, "commands.cut_status_ringtone", &args)
+        } else if is_gif {
+            i18n::t_args(lang, "commands.cut_status_gif", &args)
+        } else {
+            i18n::t_args(lang, "commands.cut_status_clip", &args)
+        }
+    }
+}
+
+/// Build `(input_path, output_path)` for a clip job inside the temp dir.
+/// Extension + filename pattern are determined by the output kind.
+fn build_clip_output_paths(
+    tmp: &std::path::Path,
+    chat_id: ChatId,
+    source_id: i64,
+    base_title: &str,
+    is_video_note: bool,
+    is_iphone_ringtone: bool,
+    is_ringtone: bool,
+    is_gif: bool,
+) -> (std::path::PathBuf, std::path::PathBuf) {
+    let input_path = tmp.join(format!("input_{}_{}.mp4", chat_id.0, source_id));
+    let output_path = if is_ringtone {
+        let safe_title = crate::download::ringtone::sanitize_filename(base_title);
+        let ext = if is_iphone_ringtone { "m4r" } else { "mp3" };
+        tmp.join(format!("{}_ringtone.{}", safe_title, ext))
+    } else {
+        tmp.join(format!(
+            "{}_{}_{}{}",
+            if is_video_note {
+                "circle"
+            } else if is_gif {
+                "gif_tmp"
+            } else {
+                "cut"
+            },
+            chat_id.0,
+            uuid::Uuid::new_v4(),
+            ".mp4"
+        ))
+    };
+    (input_path, output_path)
+}
+
 pub async fn process_video_clip(
     bot: Bot,
     db_pool: Arc<DbPool>,
@@ -552,19 +646,13 @@ pub async fn process_video_clip(
         return Ok(());
     }
 
-    let max_len_secs = if is_video_note && !video_note_needs_split {
-        VIDEO_NOTE_MAX_DURATION as i64
-    } else if is_video_note && video_note_needs_split {
-        (VIDEO_NOTE_MAX_DURATION * VIDEO_NOTE_MAX_PARTS as u64) as i64 // Allow full duration for split
-    } else if is_iphone_ringtone {
-        crate::download::ringtone::MAX_IPHONE_DURATION_SECS as i64
-    } else if is_android_ringtone {
-        crate::download::ringtone::MAX_ANDROID_DURATION_SECS as i64
-    } else if is_gif {
-        GIF_MAX_DURATION_SECS
-    } else {
-        60 * 10
-    };
+    let max_len_secs = compute_clip_max_len_secs(
+        is_video_note,
+        video_note_needs_split,
+        is_iphone_ringtone,
+        is_android_ringtone,
+        is_gif,
+    );
 
     // For ringtones only, truncate segments to fit within limit and notify user
     // Video notes with split don't need truncation
@@ -665,29 +753,7 @@ pub async fn process_video_clip(
         fallback_chat_id
     );
 
-    let status_msg = if let Some(spd) = speed {
-        let args = doracore::fluent_args!("segments" => segments_text.as_str(), "speed" => spd as f64);
-        if is_video_note {
-            i18n::t_args(&lang, "commands.cut_status_video_note_speed", &args)
-        } else if is_ringtone {
-            i18n::t_args(&lang, "commands.cut_status_ringtone_speed", &args)
-        } else if is_gif {
-            i18n::t_args(&lang, "commands.cut_status_gif_speed", &args)
-        } else {
-            i18n::t_args(&lang, "commands.cut_status_clip_speed", &args)
-        }
-    } else {
-        let args = doracore::fluent_args!("segments" => segments_text.as_str());
-        if is_video_note {
-            i18n::t_args(&lang, "commands.cut_status_video_note", &args)
-        } else if is_ringtone {
-            i18n::t_args(&lang, "commands.cut_status_ringtone", &args)
-        } else if is_gif {
-            i18n::t_args(&lang, "commands.cut_status_gif", &args)
-        } else {
-            i18n::t_args(&lang, "commands.cut_status_clip", &args)
-        }
-    };
+    let status_msg = pick_clip_status_message(&lang, is_video_note, is_ringtone, is_gif, speed, &segments_text);
 
     let status = bot.send_message(chat_id, status_msg).await?;
 
@@ -696,28 +762,16 @@ pub async fn process_video_clip(
         .map_err(AppError::Io)?;
     log::info!("📂 Temp directory ready: {:?}", guard.path());
 
-    let input_path = guard
-        .path()
-        .join(format!("input_{}_{}.mp4", chat_id.0, session.source_id));
-    let output_path = if is_ringtone {
-        let safe_title = crate::download::ringtone::sanitize_filename(&base_title);
-        let ext = if is_iphone_ringtone { "m4r" } else { "mp3" };
-        guard.path().join(format!("{}_ringtone.{}", safe_title, ext))
-    } else {
-        guard.path().join(format!(
-            "{}_{}_{}{}",
-            if is_video_note {
-                "circle"
-            } else if is_gif {
-                "gif_tmp"
-            } else {
-                "cut"
-            },
-            chat_id.0,
-            uuid::Uuid::new_v4(),
-            ".mp4"
-        ))
-    };
+    let (input_path, output_path) = build_clip_output_paths(
+        guard.path(),
+        chat_id,
+        session.source_id,
+        &base_title,
+        is_video_note,
+        is_iphone_ringtone,
+        is_ringtone,
+        is_gif,
+    );
 
     log::info!(
         "🔽 Starting download for video note: file_id={}, output_path={:?}",
