@@ -2,6 +2,7 @@ pub mod admin_users;
 mod audio_effects;
 mod callback_admin;
 mod callback_kind;
+mod callback_preview;
 mod callback_router;
 mod callback_settings;
 pub(crate) mod helpers;
