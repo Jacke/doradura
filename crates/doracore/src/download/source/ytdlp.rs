@@ -717,13 +717,26 @@ where
                     &stderr_text
                 );
 
+                // Geo-block: cookies/PO-token can't unlock a country restriction,
+                // but a different proxy might (e.g. preview succeeded via [Direct]
+                // after [Custom Proxy] hit a geo-block). Skip Tier 2/3 immediately
+                // and try the next proxy.
+                let is_geo_block = matches!(error_type, YtDlpErrorType::VideoUnavailable) && {
+                    let s = stderr_text.to_lowercase();
+                    s.contains("not available in your country")
+                        || s.contains("not made this video available")
+                        || s.contains("blocked in your country")
+                };
+
                 // Network-only errors: skip Tier 2/3, try next proxy
                 let is_network_only = matches!(error_type, YtDlpErrorType::NetworkError)
+                    || is_geo_block
                     || (is_proxy_related_error(&stderr_text) && !matches!(error_type, YtDlpErrorType::BotDetection));
 
                 if is_network_only && attempt + 1 < total_proxies {
                     log::warn!(
-                        "🔄 Network/proxy error, trying next proxy (attempt {}/{})",
+                        "🔄 {} error, trying next proxy (attempt {}/{})",
+                        if is_geo_block { "Geo-block" } else { "Network/proxy" },
                         attempt + 2,
                         total_proxies
                     );
