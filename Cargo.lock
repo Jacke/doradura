@@ -1781,7 +1781,7 @@ dependencies = [
 
 [[package]]
 name = "doradura"
-version = "0.38.20"
+version = "0.38.21"
 dependencies = [
  "anyhow",
  "async-trait",

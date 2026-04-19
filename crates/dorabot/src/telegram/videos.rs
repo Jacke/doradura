@@ -375,6 +375,425 @@ fn build_upload_info_text(upload: &UploadEntry) -> String {
 }
 
 /// Handle videos callback queries
+/// Paginated list view: `videos:page:{n}:{filter}:{search}`.
+async fn handle_videos_page(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    parts: &[&str],
+    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
+    if parts.len() < 5 {
+        return Ok(());
+    }
+    let page = parts[2].parse::<usize>().unwrap_or(0);
+    let filter = if parts[3] == "all" {
+        None
+    } else {
+        Some(parts[3].to_string())
+    };
+    let search = if parts[4].is_empty() {
+        None
+    } else {
+        Some(parts[4].to_string())
+    };
+
+    bot.delete_message(chat_id, message_id).await?;
+    show_videos_page(bot, chat_id, db_pool, shared_storage, page, filter, search).await?;
+    Ok(())
+}
+
+/// Change filter without changing page number: `videos:filter:{filter}:{search}`.
+async fn handle_videos_filter(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    parts: &[&str],
+    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
+    if parts.len() < 4 {
+        return Ok(());
+    }
+    let filter = if parts[2] == "all" {
+        None
+    } else {
+        Some(parts[2].to_string())
+    };
+    let search = if parts[3].is_empty() {
+        None
+    } else {
+        Some(parts[3].to_string())
+    };
+
+    bot.delete_message(chat_id, message_id).await?;
+    show_videos_page(bot, chat_id, db_pool, shared_storage, 0, filter, search).await?;
+    Ok(())
+}
+
+/// Open a single upload's info card: `videos:open:{upload_id}`.
+async fn handle_videos_open(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    parts: &[&str],
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
+    if parts.len() < 3 {
+        return Ok(());
+    }
+    let upload_id = parts[2].parse::<i64>().unwrap_or(0);
+
+    if let Some(upload) = shared_storage
+        .get_upload_by_id(chat_id.0, upload_id)
+        .await
+        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+    {
+        let text = build_upload_info_text(&upload);
+        let keyboard = build_upload_action_keyboard(&upload);
+
+        // Try edit first (for "Back" navigation from submenu)
+        let edit_result = bot.edit_md_kb(chat_id, message_id, &text, keyboard.clone()).await;
+
+        if edit_result.is_err() {
+            // Fall back to send + delete (for /videos list click)
+            bot.send_md_kb(chat_id, text, keyboard).await?;
+            bot.delete_message(chat_id, message_id).await.ok();
+        }
+    }
+    Ok(())
+}
+
+/// Send or Convert submenu: `videos:submenu:{send|convert}:{upload_id}`.
+async fn handle_videos_submenu(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    parts: &[&str],
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
+    if parts.len() < 4 {
+        return Ok(());
+    }
+    let submenu_type = parts[2];
+    let upload_id = parts[3].parse::<i64>().unwrap_or(0);
+
+    if let Some(upload) = shared_storage
+        .get_upload_by_id(chat_id.0, upload_id)
+        .await
+        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+    {
+        let (text, keyboard) = match submenu_type {
+            "send" => {
+                let text = format!("📤 *Send* _{}_*:*", escape_markdown(&upload.title));
+                (text, build_send_submenu_keyboard(&upload))
+            }
+            "convert" => {
+                let text = format!("🔄 *Convert* _{}_*:*", escape_markdown(&upload.title));
+                (text, build_convert_submenu_keyboard(&upload))
+            }
+            _ => return Ok(()),
+        };
+
+        bot.edit_md_kb(chat_id, message_id, text, keyboard).await?;
+    } else {
+        bot.edit_message_text(chat_id, message_id, "❌ File not found").await?;
+    }
+    Ok(())
+}
+
+/// Send the upload as a specific media type: `videos:send:{video|photo|audio|document}:{upload_id}`.
+async fn handle_videos_send(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    parts: &[&str],
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
+    if parts.len() < 4 {
+        return Ok(());
+    }
+    let send_type = parts[2];
+    let upload_id = parts[3].parse::<i64>().unwrap_or(0);
+
+    if let Some(upload) = shared_storage
+        .get_upload_by_id(chat_id.0, upload_id)
+        .await
+        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+    {
+        let file_id = teloxide::types::FileId(upload.file_id.clone());
+        let caption = upload.title.clone();
+
+        let status_msg = bot.send_message(chat_id, "⏳ Sending file...").await?;
+
+        let send_result = match send_type {
+            "video" => {
+                bot.send_video(chat_id, InputFile::file_id(file_id))
+                    .caption(caption)
+                    .await
+            }
+            "photo" => {
+                bot.send_photo(chat_id, InputFile::file_id(file_id))
+                    .caption(caption)
+                    .await
+            }
+            "audio" => {
+                bot.send_audio(chat_id, InputFile::file_id(file_id))
+                    .caption(caption)
+                    .await
+            }
+            "document" => {
+                bot.send_document(chat_id, InputFile::file_id(file_id))
+                    .caption(caption)
+                    .await
+            }
+            _ => {
+                bot.delete_message(chat_id, status_msg.id).await.ok();
+                return Ok(());
+            }
+        };
+
+        bot.delete_message(chat_id, status_msg.id).await.ok();
+
+        match send_result {
+            Ok(_) => {
+                bot.delete_message(chat_id, message_id).await.ok();
+            }
+            Err(e) => {
+                bot.send_message(chat_id, format!("❌ Failed to send file: {}", e))
+                    .await
+                    .ok();
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Show the delete-confirmation keyboard: `videos:delete:{upload_id}`.
+async fn handle_videos_delete(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    parts: &[&str],
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
+    if parts.len() < 3 {
+        return Ok(());
+    }
+    let upload_id = parts[2].parse::<i64>().unwrap_or(0);
+
+    // Confirm deletion
+    let keyboard = InlineKeyboardMarkup::new(vec![vec![
+        crate::telegram::cb(
+            "✅ Yes, delete".to_string(),
+            format!("videos:confirm_delete:{}", upload_id),
+        ),
+        crate::telegram::cb("❌ Cancel".to_string(), "videos:cancel".to_string()),
+    ]]);
+
+    if let Some(upload) = shared_storage
+        .get_upload_by_id(chat_id.0, upload_id)
+        .await
+        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+    {
+        bot.edit_md_kb(
+            chat_id,
+            message_id,
+            format!("🗑️ Delete *{}*?", escape_markdown(&upload.title)),
+            keyboard,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+/// Execute the delete after user confirmation: `videos:confirm_delete:{upload_id}`.
+async fn handle_videos_confirm_delete(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    parts: &[&str],
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
+    if parts.len() < 3 {
+        return Ok(());
+    }
+    let upload_id = parts[2].parse::<i64>().unwrap_or(0);
+
+    match shared_storage
+        .delete_upload(chat_id.0, upload_id)
+        .await
+        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+    {
+        false => {
+            bot.send_message(chat_id, "❌ File not found").await?;
+        }
+        true => {
+            bot.delete_message(chat_id, message_id).await.ok();
+            bot.send_message(chat_id, "✅ File deleted").await?;
+        }
+    }
+    Ok(())
+}
+
+/// Convert submenu dispatcher: `videos:convert:{circle|audio|gif|compress}:{upload_id}`.
+async fn handle_videos_convert(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    parts: &[&str],
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
+    if parts.len() < 4 {
+        return Ok(());
+    }
+    let convert_type = parts[2];
+    let upload_id = parts[3].parse::<i64>().unwrap_or(0);
+
+    let Some(upload) = shared_storage
+        .get_upload_by_id(chat_id.0, upload_id)
+        .await
+        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+    else {
+        return Ok(());
+    };
+
+    match convert_type {
+        "circle" => {
+            // Show duration selection for video note
+            let video_duration = upload.duration.unwrap_or(60) as u64;
+            let durations = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60];
+            let mut rows: Vec<Vec<InlineKeyboardButton>> = vec![];
+            let mut current_row: Vec<InlineKeyboardButton> = vec![];
+
+            for dur in durations {
+                let button = crate::telegram::cb(
+                    format!("{}s", dur),
+                    format!("videos:circle_speed:{}:{}", upload_id, dur),
+                );
+                current_row.push(button);
+
+                if current_row.len() == 4 {
+                    rows.push(current_row);
+                    current_row = vec![];
+                }
+            }
+
+            if !current_row.is_empty() {
+                rows.push(current_row);
+            }
+
+            // Add "Full video" option for videos longer than 60s (splits into multiple circles)
+            if video_duration > VIDEO_NOTE_MAX_DURATION {
+                if let Some(split_info) = calculate_video_note_split(video_duration) {
+                    let full_video_label = format!("📼 Full video ({} circles)", split_info.num_parts);
+                    rows.push(vec![crate::telegram::cb(
+                        full_video_label,
+                        format!("videos:circle_speed:{}:{}", upload_id, video_duration),
+                    )]);
+                } else if is_too_long_for_split(video_duration) {
+                    // Video too long - show warning button (disabled)
+                    rows.push(vec![crate::telegram::cb(
+                        "⚠️ Video is too long (max 6 min)".to_string(),
+                        "videos:noop".to_string(),
+                    )]);
+                }
+            }
+
+            rows.push(vec![crate::telegram::cb(
+                "❌ Cancel".to_string(),
+                "videos:cancel".to_string(),
+            )]);
+
+            let keyboard = InlineKeyboardMarkup::new(rows);
+
+            // Build status message based on video duration
+            let status_text = if video_duration > VIDEO_NOTE_MAX_DURATION {
+                if is_too_long_for_split(video_duration) {
+                    format!(
+                        "⭕️ *Choose circle duration* for *{}*:\n\n⚠️ Video is longer than 6 minutes — only circles up to 60s can be created\\.\n\nOr send an interval in the format `mm:ss\\-mm:ss`\\.",
+                        escape_markdown(&upload.title)
+                    )
+                } else {
+                    let split_info = calculate_video_note_split(video_duration);
+                    let num_circles = split_info.map(|s| s.num_parts).unwrap_or(1);
+                    format!(
+                        "⭕️ *Choose circle duration* for *{}*:\n\n💡 Video is longer than 60s — can create {} circles\\.\n\nOr send an interval in the format `mm:ss\\-mm:ss`\\.",
+                        escape_markdown(&upload.title),
+                        num_circles
+                    )
+                }
+            } else {
+                format!(
+                    "⭕️ *Choose circle duration* for *{}*:\n\nOr send an interval in the format `mm:ss\\-mm:ss`\\.",
+                    escape_markdown(&upload.title)
+                )
+            };
+
+            bot.edit_md_kb(chat_id, message_id, status_text, keyboard).await?;
+        }
+        "audio" | "gif" | "compress" => {
+            // Route to working conversion handler
+            let upload_id = parts.get(3).unwrap_or(&"0");
+            let convert_data = format!("convert:{}:{}", convert_type, upload_id);
+            handle_convert_callback(bot, chat_id, message_id, &convert_data, shared_storage).await?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Speed picker shown after a circle duration is chosen:
+/// `videos:circle_speed:{upload_id}:{duration}`.
+async fn handle_videos_circle_speed(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    parts: &[&str],
+) -> ResponseResult<()> {
+    if parts.len() < 4 {
+        return Ok(());
+    }
+    let upload_id = parts[2];
+    let duration = parts[3];
+
+    let speeds = [
+        ("x1", "1"),
+        ("x1.2", "1.2"),
+        ("x1.5", "1.5"),
+        ("x1.8", "1.8"),
+        ("x2", "2"),
+    ];
+
+    let speed_row: Vec<InlineKeyboardButton> = speeds
+        .iter()
+        .map(|(label, val)| {
+            crate::telegram::cb(
+                label.to_string(),
+                format!("convert:circle:{}:{}:{}", upload_id, duration, val),
+            )
+        })
+        .collect();
+
+    let keyboard = InlineKeyboardMarkup::new(vec![
+        speed_row,
+        vec![crate::telegram::cb(
+            "⬅️ Back".to_string(),
+            format!("videos:convert:circle:{}", upload_id),
+        )],
+    ]);
+
+    bot.edit_md_kb(
+        chat_id,
+        message_id,
+        format!("⚡ *Choose circle speed* \\({}s\\):", escape_markdown(duration)),
+        keyboard,
+    )
+    .await?;
+    Ok(())
+}
+
 pub async fn handle_videos_callback(
     bot: &Bot,
     callback_id: CallbackQueryId,
@@ -397,351 +816,36 @@ pub async fn handle_videos_callback(
 
     match action {
         "page" => {
-            if parts.len() < 5 {
-                return Ok(());
-            }
-            let page = parts[2].parse::<usize>().unwrap_or(0);
-            let filter = if parts[3] == "all" {
-                None
-            } else {
-                Some(parts[3].to_string())
-            };
-            let search = if parts[4].is_empty() {
-                None
-            } else {
-                Some(parts[4].to_string())
-            };
-
-            bot.delete_message(chat_id, message_id).await?;
-            show_videos_page(
+            handle_videos_page(
                 bot,
                 chat_id,
+                message_id,
+                &parts,
                 db_pool.clone(),
                 shared_storage.clone(),
-                page,
-                filter,
-                search,
             )
-            .await?;
+            .await?
         }
         "filter" => {
-            if parts.len() < 4 {
-                return Ok(());
-            }
-            let filter = if parts[2] == "all" {
-                None
-            } else {
-                Some(parts[2].to_string())
-            };
-            let search = if parts[3].is_empty() {
-                None
-            } else {
-                Some(parts[3].to_string())
-            };
-
-            bot.delete_message(chat_id, message_id).await?;
-            show_videos_page(bot, chat_id, db_pool.clone(), shared_storage.clone(), 0, filter, search).await?;
-        }
-        "open" => {
-            if parts.len() < 3 {
-                return Ok(());
-            }
-            let upload_id = parts[2].parse::<i64>().unwrap_or(0);
-
-            if let Some(upload) = shared_storage
-                .get_upload_by_id(chat_id.0, upload_id)
-                .await
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
-            {
-                let text = build_upload_info_text(&upload);
-                let keyboard = build_upload_action_keyboard(&upload);
-
-                // Try edit first (for "Back" navigation from submenu)
-                let edit_result = bot.edit_md_kb(chat_id, message_id, &text, keyboard.clone()).await;
-
-                if edit_result.is_err() {
-                    // Fall back to send + delete (for /videos list click)
-                    bot.send_md_kb(chat_id, text, keyboard).await?;
-                    bot.delete_message(chat_id, message_id).await.ok();
-                }
-            }
-        }
-        "submenu" => {
-            // videos:submenu:{type}:{upload_id}
-            if parts.len() < 4 {
-                return Ok(());
-            }
-            let submenu_type = parts[2];
-            let upload_id = parts[3].parse::<i64>().unwrap_or(0);
-
-            if let Some(upload) = shared_storage
-                .get_upload_by_id(chat_id.0, upload_id)
-                .await
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
-            {
-                let (text, keyboard) = match submenu_type {
-                    "send" => {
-                        let text = format!("📤 *Send* _{}_*:*", escape_markdown(&upload.title));
-                        (text, build_send_submenu_keyboard(&upload))
-                    }
-                    "convert" => {
-                        let text = format!("🔄 *Convert* _{}_*:*", escape_markdown(&upload.title));
-                        (text, build_convert_submenu_keyboard(&upload))
-                    }
-                    _ => return Ok(()),
-                };
-
-                bot.edit_md_kb(chat_id, message_id, text, keyboard).await?;
-            } else {
-                bot.edit_message_text(chat_id, message_id, "❌ File not found").await?;
-            }
-        }
-        "send" => {
-            if parts.len() < 4 {
-                return Ok(());
-            }
-            let send_type = parts[2];
-            let upload_id = parts[3].parse::<i64>().unwrap_or(0);
-
-            if let Some(upload) = shared_storage
-                .get_upload_by_id(chat_id.0, upload_id)
-                .await
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
-            {
-                let file_id = teloxide::types::FileId(upload.file_id.clone());
-                let caption = upload.title.clone();
-
-                let status_msg = bot.send_message(chat_id, "⏳ Sending file...").await?;
-
-                let send_result = match send_type {
-                    "video" => {
-                        bot.send_video(chat_id, InputFile::file_id(file_id))
-                            .caption(caption)
-                            .await
-                    }
-                    "photo" => {
-                        bot.send_photo(chat_id, InputFile::file_id(file_id))
-                            .caption(caption)
-                            .await
-                    }
-                    "audio" => {
-                        bot.send_audio(chat_id, InputFile::file_id(file_id))
-                            .caption(caption)
-                            .await
-                    }
-                    "document" => {
-                        bot.send_document(chat_id, InputFile::file_id(file_id))
-                            .caption(caption)
-                            .await
-                    }
-                    _ => {
-                        bot.delete_message(chat_id, status_msg.id).await.ok();
-                        return Ok(());
-                    }
-                };
-
-                bot.delete_message(chat_id, status_msg.id).await.ok();
-
-                match send_result {
-                    Ok(_) => {
-                        bot.delete_message(chat_id, message_id).await.ok();
-                    }
-                    Err(e) => {
-                        bot.send_message(chat_id, format!("❌ Failed to send file: {}", e))
-                            .await
-                            .ok();
-                    }
-                }
-            }
-        }
-        "delete" => {
-            if parts.len() < 3 {
-                return Ok(());
-            }
-            let upload_id = parts[2].parse::<i64>().unwrap_or(0);
-
-            // Confirm deletion
-            let keyboard = InlineKeyboardMarkup::new(vec![vec![
-                crate::telegram::cb(
-                    "✅ Yes, delete".to_string(),
-                    format!("videos:confirm_delete:{}", upload_id),
-                ),
-                crate::telegram::cb("❌ Cancel".to_string(), "videos:cancel".to_string()),
-            ]]);
-
-            if let Some(upload) = shared_storage
-                .get_upload_by_id(chat_id.0, upload_id)
-                .await
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
-            {
-                bot.edit_md_kb(
-                    chat_id,
-                    message_id,
-                    format!("🗑️ Delete *{}*?", escape_markdown(&upload.title)),
-                    keyboard,
-                )
-                .await?;
-            }
-        }
-        "confirm_delete" => {
-            if parts.len() < 3 {
-                return Ok(());
-            }
-            let upload_id = parts[2].parse::<i64>().unwrap_or(0);
-
-            match shared_storage
-                .delete_upload(chat_id.0, upload_id)
-                .await
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
-            {
-                false => {
-                    bot.send_message(chat_id, "❌ File not found").await?;
-                }
-                true => {
-                    bot.delete_message(chat_id, message_id).await.ok();
-                    bot.send_message(chat_id, "✅ File deleted").await?;
-                }
-            }
-        }
-        "convert" => {
-            if parts.len() < 4 {
-                return Ok(());
-            }
-            let convert_type = parts[2];
-            let upload_id = parts[3].parse::<i64>().unwrap_or(0);
-
-            if let Some(upload) = shared_storage
-                .get_upload_by_id(chat_id.0, upload_id)
-                .await
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
-            {
-                match convert_type {
-                    "circle" => {
-                        // Show duration selection for video note
-                        let video_duration = upload.duration.unwrap_or(60) as u64;
-                        let durations = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60];
-                        let mut rows: Vec<Vec<InlineKeyboardButton>> = vec![];
-                        let mut current_row: Vec<InlineKeyboardButton> = vec![];
-
-                        for dur in durations {
-                            let button = crate::telegram::cb(
-                                format!("{}s", dur),
-                                format!("videos:circle_speed:{}:{}", upload_id, dur),
-                            );
-                            current_row.push(button);
-
-                            if current_row.len() == 4 {
-                                rows.push(current_row);
-                                current_row = vec![];
-                            }
-                        }
-
-                        if !current_row.is_empty() {
-                            rows.push(current_row);
-                        }
-
-                        // Add "Full video" option for videos longer than 60s (splits into multiple circles)
-                        if video_duration > VIDEO_NOTE_MAX_DURATION {
-                            if let Some(split_info) = calculate_video_note_split(video_duration) {
-                                let full_video_label = format!("📼 Full video ({} circles)", split_info.num_parts);
-                                rows.push(vec![crate::telegram::cb(
-                                    full_video_label,
-                                    format!("videos:circle_speed:{}:{}", upload_id, video_duration),
-                                )]);
-                            } else if is_too_long_for_split(video_duration) {
-                                // Video too long - show warning button (disabled)
-                                rows.push(vec![crate::telegram::cb(
-                                    "⚠️ Video is too long (max 6 min)".to_string(),
-                                    "videos:noop".to_string(),
-                                )]);
-                            }
-                        }
-
-                        rows.push(vec![crate::telegram::cb(
-                            "❌ Cancel".to_string(),
-                            "videos:cancel".to_string(),
-                        )]);
-
-                        let keyboard = InlineKeyboardMarkup::new(rows);
-
-                        // Build status message based on video duration
-                        let status_text = if video_duration > VIDEO_NOTE_MAX_DURATION {
-                            if is_too_long_for_split(video_duration) {
-                                format!(
-                                    "⭕️ *Choose circle duration* for *{}*:\n\n⚠️ Video is longer than 6 minutes — only circles up to 60s can be created\\.\n\nOr send an interval in the format `mm:ss\\-mm:ss`\\.",
-                                    escape_markdown(&upload.title)
-                                )
-                            } else {
-                                let split_info = calculate_video_note_split(video_duration);
-                                let num_circles = split_info.map(|s| s.num_parts).unwrap_or(1);
-                                format!(
-                                    "⭕️ *Choose circle duration* for *{}*:\n\n💡 Video is longer than 60s — can create {} circles\\.\n\nOr send an interval in the format `mm:ss\\-mm:ss`\\.",
-                                    escape_markdown(&upload.title),
-                                    num_circles
-                                )
-                            }
-                        } else {
-                            format!(
-                                "⭕️ *Choose circle duration* for *{}*:\n\nOr send an interval in the format `mm:ss\\-mm:ss`\\.",
-                                escape_markdown(&upload.title)
-                            )
-                        };
-
-                        bot.edit_md_kb(chat_id, message_id, status_text, keyboard).await?;
-                    }
-                    "audio" | "gif" | "compress" => {
-                        // Route to working conversion handler
-                        let upload_id = parts.get(3).unwrap_or(&"0");
-                        let convert_data = format!("convert:{}:{}", convert_type, upload_id);
-                        handle_convert_callback(bot, chat_id, message_id, &convert_data, shared_storage.clone())
-                            .await?;
-                    }
-                    _ => {}
-                }
-            }
-        }
-        "circle_speed" => {
-            // videos:circle_speed:{upload_id}:{duration}
-            if parts.len() < 4 {
-                return Ok(());
-            }
-            let upload_id = parts[2];
-            let duration = parts[3];
-
-            let speeds = [
-                ("x1", "1"),
-                ("x1.2", "1.2"),
-                ("x1.5", "1.5"),
-                ("x1.8", "1.8"),
-                ("x2", "2"),
-            ];
-
-            let speed_row: Vec<InlineKeyboardButton> = speeds
-                .iter()
-                .map(|(label, val)| {
-                    crate::telegram::cb(
-                        label.to_string(),
-                        format!("convert:circle:{}:{}:{}", upload_id, duration, val),
-                    )
-                })
-                .collect();
-
-            let keyboard = InlineKeyboardMarkup::new(vec![
-                speed_row,
-                vec![crate::telegram::cb(
-                    "⬅️ Back".to_string(),
-                    format!("videos:convert:circle:{}", upload_id),
-                )],
-            ]);
-
-            bot.edit_md_kb(
+            handle_videos_filter(
+                bot,
                 chat_id,
                 message_id,
-                format!("⚡ *Choose circle speed* \\({}s\\):", escape_markdown(duration)),
-                keyboard,
+                &parts,
+                db_pool.clone(),
+                shared_storage.clone(),
             )
-            .await?;
+            .await?
         }
+        "open" => handle_videos_open(bot, chat_id, message_id, &parts, shared_storage.clone()).await?,
+        "submenu" => handle_videos_submenu(bot, chat_id, message_id, &parts, shared_storage.clone()).await?,
+        "send" => handle_videos_send(bot, chat_id, message_id, &parts, shared_storage.clone()).await?,
+        "delete" => handle_videos_delete(bot, chat_id, message_id, &parts, shared_storage.clone()).await?,
+        "confirm_delete" => {
+            handle_videos_confirm_delete(bot, chat_id, message_id, &parts, shared_storage.clone()).await?
+        }
+        "convert" => handle_videos_convert(bot, chat_id, message_id, &parts, shared_storage.clone()).await?,
+        "circle_speed" => handle_videos_circle_speed(bot, chat_id, message_id, &parts).await?,
         "cancel" | "close" => {
             bot.delete_message(chat_id, message_id).await.ok();
         }
