@@ -190,385 +190,13 @@ pub async fn handle_cuts_callback(
     }
 
     match parts[1] {
-        "page" => {
-            if parts.len() < 3 {
-                return Ok(());
-            }
-            let page = parts[2].parse::<usize>().unwrap_or(0);
-            bot.delete_message(chat_id, message_id).await.ok();
-            show_cuts_page(bot, chat_id, db_pool, shared_storage.clone(), page).await?;
-        }
-        "open" => {
-            if parts.len() < 3 {
-                return Ok(());
-            }
-            let cut_id = parts[2].parse::<i64>().unwrap_or(0);
-            if let Some(cut) = shared_storage
-                .get_cut_entry(chat_id.0, cut_id)
-                .await
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
-            {
-                let mut options = Vec::new();
-                options.push(vec![
-                    crate::telegram::cb("🎬 As video".to_string(), format!("cuts:send:video:{}", cut_id)),
-                    crate::telegram::cb("📎 As document".to_string(), format!("cuts:send:document:{}", cut_id)),
-                ]);
-                options.push(vec![
-                    crate::telegram::cb("✂️ Clip".to_string(), format!("cuts:clip:{}", cut_id)),
-                    crate::telegram::cb("⭕️ Circle".to_string(), format!("cuts:circle:{}", cut_id)),
-                    crate::telegram::cb("🔔 Ringtone".to_string(), format!("ringtone:select:cut:{}", cut_id)),
-                ]);
-                options.push(vec![crate::telegram::cb(
-                    "⚙️ Speed".to_string(),
-                    format!("cuts:speed:{}", cut_id),
-                )]);
-                options.push(vec![crate::telegram::cb(
-                    "❌ Cancel".to_string(),
-                    "cuts:cancel".to_string(),
-                )]);
-
-                bot.send_md_kb(
-                    chat_id,
-                    format!("What to do with *{}*?", crate::telegram::escape_markdown(&cut.title)),
-                    InlineKeyboardMarkup::new(options),
-                )
-                .await?;
-
-                if !cut.original_url.trim().is_empty() {
-                    bot.send_message(chat_id, cut.original_url.clone()).await.ok();
-                }
-                bot.delete_message(chat_id, message_id).await.ok();
-            }
-        }
-        "send" => {
-            if parts.len() < 4 {
-                return Ok(());
-            }
-            let send_type = parts[2];
-            let cut_id = parts[3].parse::<i64>().unwrap_or(0);
-
-            if let Some(cut) = shared_storage
-                .get_cut_entry(chat_id.0, cut_id)
-                .await
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
-            {
-                let Some(telegram_file_id) = cut.file_id.clone() else {
-                    bot.send_message(chat_id, "❌ This clip has no file_id for sending.")
-                        .await
-                        .ok();
-                    return Ok(());
-                };
-
-                let status_text = match send_type {
-                    "video" => "⏳ Preparing to send as video…",
-                    "document" => "⏳ Preparing to send as document…",
-                    _ => "⏳ Preparing to send…",
-                };
-                let status_msg = bot.send_message(chat_id, status_text).await?;
-
-                let caption = cut.title.clone();
-                let send_result = match send_type {
-                    "video" => {
-                        bot.send_video(
-                            chat_id,
-                            teloxide::types::InputFile::file_id(teloxide::types::FileId(telegram_file_id.clone())),
-                        )
-                        .caption(caption)
-                        .await
-                    }
-                    "document" => send_document_forced(bot, chat_id, &telegram_file_id, "doradura.mp4", caption).await,
-                    _ => {
-                        bot.delete_message(chat_id, status_msg.id).await.ok();
-                        bot.send_message(chat_id, "❌ Unknown send mode.").await.ok();
-                        return Ok(());
-                    }
-                };
-
-                match send_result {
-                    Ok(_) => {
-                        bot.delete_message(chat_id, status_msg.id).await.ok();
-                        bot.delete_message(chat_id, message_id).await.ok();
-                    }
-                    Err(e) => {
-                        if send_type == "document" && is_file_too_big_error(&e) {
-                            log::warn!("Cut document send failed due to size (cut_id={}): {}", cut_id, e);
-
-                            let video_fallback = bot
-                                .send_video(
-                                    chat_id,
-                                    teloxide::types::InputFile::file_id(teloxide::types::FileId(
-                                        telegram_file_id.clone(),
-                                    )),
-                                )
-                                .caption(cut.title.clone())
-                                .await;
-
-                            bot.delete_message(chat_id, status_msg.id).await.ok();
-                            bot.delete_message(chat_id, message_id).await.ok();
-
-                            match video_fallback {
-                                Ok(_) => {
-                                    bot.send_message(
-                                        chat_id,
-                                        "⚠️ Couldn't send as document: Telegram rejected the file due to size.\nSent as video instead.\n\nIf you need it as a document — make a ✂️ shorter clip and send that as a document.",
-                                    )
-                                    .await
-                                    .ok();
-                                }
-                                Err(e2) => {
-                                    bot.send_message(chat_id, format!("❌ Failed to send file even as video: {e2}"))
-                                        .await
-                                        .ok();
-                                }
-                            }
-                            return Ok(());
-                        }
-                        bot.delete_message(chat_id, status_msg.id).await.ok();
-                        bot.send_message(chat_id, format!("❌ Failed to send file: {e}"))
-                            .await
-                            .ok();
-                    }
-                }
-            }
-        }
-        "speed" => {
-            if parts.len() < 3 {
-                return Ok(());
-            }
-            let cut_id = parts[2].parse::<i64>().unwrap_or(0);
-            if let Some(cut) = shared_storage
-                .get_cut_entry(chat_id.0, cut_id)
-                .await
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
-            {
-                let rows = vec![
-                    vec![
-                        crate::telegram::cb("0.5x".to_string(), format!("cuts:apply_speed:0.5:{}", cut_id)),
-                        crate::telegram::cb("0.75x".to_string(), format!("cuts:apply_speed:0.75:{}", cut_id)),
-                        crate::telegram::cb("1.0x".to_string(), format!("cuts:apply_speed:1.0:{}", cut_id)),
-                    ],
-                    vec![
-                        crate::telegram::cb("1.25x".to_string(), format!("cuts:apply_speed:1.25:{}", cut_id)),
-                        crate::telegram::cb("1.5x".to_string(), format!("cuts:apply_speed:1.5:{}", cut_id)),
-                        crate::telegram::cb("2.0x".to_string(), format!("cuts:apply_speed:2.0:{}", cut_id)),
-                    ],
-                    vec![crate::telegram::cb("❌ Cancel".to_string(), "cuts:cancel".to_string())],
-                ];
-
-                bot.send_md_kb(
-                    chat_id,
-                    format!("⚙️ Select speed for *{}*", crate::telegram::escape_markdown(&cut.title)),
-                    InlineKeyboardMarkup::new(rows),
-                )
-                .await?;
-
-                if !cut.original_url.trim().is_empty() {
-                    bot.send_message(chat_id, cut.original_url).await.ok();
-                }
-                bot.delete_message(chat_id, message_id).await.ok();
-            }
-        }
-        "apply_speed" => {
-            if parts.len() < 4 {
-                return Ok(());
-            }
-            let speed_str = parts[2];
-            let cut_id = parts[3].parse::<i64>().unwrap_or(0);
-            let speed: f32 = speed_str.parse().unwrap_or(1.0);
-
-            if let Some(cut) = shared_storage
-                .get_cut_entry(chat_id.0, cut_id)
-                .await
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
-            {
-                let Some(file_id) = cut.file_id.clone() else {
-                    bot.send_message(chat_id, "❌ This clip has no file_id for processing.")
-                        .await
-                        .ok();
-                    return Ok(());
-                };
-
-                bot.delete_message(chat_id, message_id).await.ok();
-                let processing = bot
-                    .send_md(
-                        chat_id,
-                        format!(
-                            "⚙️ Processing video at {}x speed\\.\\.\\.
-This may take a few minutes\\.",
-                            speed_str.replace('.', "\\.")
-                        ),
-                    )
-                    .await?;
-
-                match change_video_speed(bot, chat_id, &file_id, speed, &cut.title).await {
-                    Ok((sent_message, file_size)) => {
-                        bot.delete_message(chat_id, processing.id).await.ok();
-                        if !cut.original_url.trim().is_empty() {
-                            bot.send_message(chat_id, cut.original_url.clone()).await.ok();
-                        }
-
-                        let new_title = format!("{} [speed {}x]", cut.title, speed_str);
-                        let new_duration = cut.duration.map(|d| ((d as f32) / speed).round().max(1.0) as i64);
-                        let new_file_id = sent_message
-                            .video()
-                            .map(|v| v.file.id.0.clone())
-                            .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
-
-                        if let Some(fid) = new_file_id {
-                            if let Err(e) = shared_storage
-                                .create_cut(
-                                    chat_id.0,
-                                    &cut.original_url,
-                                    "cut",
-                                    cut_id,
-                                    "clip",
-                                    &cut.segments_json,
-                                    &cut.segments_text,
-                                    &new_title,
-                                    Some(&fid),
-                                    Some(file_size),
-                                    new_duration,
-                                    cut.video_quality.as_deref(),
-                                )
-                                .await
-                            {
-                                log::error!("Failed to persist cut record for user {}: {}", chat_id.0, e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        bot.delete_message(chat_id, processing.id).await.ok();
-                        bot.send_message(
-                            chat_id,
-                            "❌ Failed to process video. The administrator has been notified.",
-                        )
-                        .await
-                        .ok();
-                        // Notify admin about the error with full details
-                        crate::telegram::notifications::notify_admin_video_error(
-                            bot,
-                            chat_id.0,
-                            username.as_deref(),
-                            &e.to_string(),
-                            &format!("cut_speed: {}x on '{}'", speed_str, cut.title),
-                        )
-                        .await;
-                    }
-                }
-            }
-        }
-        "clip" => {
-            if parts.len() < 3 {
-                return Ok(());
-            }
-            let cut_id = parts[2].parse::<i64>().unwrap_or(0);
-            if let Some(cut) = shared_storage
-                .get_cut_entry(chat_id.0, cut_id)
-                .await
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
-            {
-                if cut.file_id.is_none() {
-                    bot.send_message(chat_id, "❌ This clip has no file_id for clipping.")
-                        .await
-                        .ok();
-                    return Ok(());
-                }
-                let session = db::VideoClipSession {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    user_id: chat_id.0,
-                    source_download_id: 0,
-                    source_kind: SourceKind::Cut,
-                    source_id: cut_id,
-                    original_url: cut.original_url.clone(),
-                    output_kind: OutputKind::Cut,
-                    created_at: chrono::Utc::now(),
-                    expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
-                    subtitle_lang: None,
-                    custom_audio_file_id: None,
-                };
-                shared_storage
-                    .clone()
-                    .upsert_video_clip_session(&session)
-                    .await
-                    .map_err(|e| {
-                        teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                    })?;
-
-                let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
-                    "❌ Cancel".to_string(),
-                    "cuts:clip_cancel".to_string(),
-                )]]);
-
-                bot.send_md_kb(
-                    chat_id,
-                    "✂️ Send intervals for the clip in format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nMultiple intervals separated by commas\\.\n\nExample: `00:10-00:25, 01:00-01:10`",
-                    keyboard,
-                )
-                .await?;
-
-                if !cut.original_url.trim().is_empty() {
-                    bot.send_message(chat_id, cut.original_url).await.ok();
-                }
-                bot.delete_message(chat_id, message_id).await.ok();
-            }
-        }
-        "circle" => {
-            if parts.len() < 3 {
-                return Ok(());
-            }
-            let cut_id = parts[2].parse::<i64>().unwrap_or(0);
-            if let Some(cut) = shared_storage
-                .get_cut_entry(chat_id.0, cut_id)
-                .await
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
-            {
-                if cut.file_id.is_none() {
-                    bot.send_message(chat_id, "❌ This clip has no file_id for video note.")
-                        .await
-                        .ok();
-                    return Ok(());
-                }
-                let session = db::VideoClipSession {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    user_id: chat_id.0,
-                    source_download_id: 0,
-                    source_kind: SourceKind::Cut,
-                    source_id: cut_id,
-                    original_url: cut.original_url.clone(),
-                    output_kind: OutputKind::VideoNote,
-                    created_at: chrono::Utc::now(),
-                    expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
-                    subtitle_lang: None,
-                    custom_audio_file_id: None,
-                };
-                shared_storage
-                    .clone()
-                    .upsert_video_clip_session(&session)
-                    .await
-                    .map_err(|e| {
-                        teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string())))
-                    })?;
-
-                // Get user language for localization
-                let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
-
-                // Build keyboard: duration buttons + cancel button
-                let mut keyboard_rows = build_duration_buttons_for_cut(cut_id, &lang);
-                keyboard_rows.push(vec![crate::telegram::cb(
-                    crate::i18n::t(&lang, "common.cancel"),
-                    "cuts:clip_cancel".to_string(),
-                )]);
-                let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
-
-                let message = crate::i18n::t(&lang, "video_circle.select_part");
-                bot.send_md_kb(chat_id, message, keyboard).await?;
-
-                if !cut.original_url.trim().is_empty() {
-                    bot.send_message(chat_id, cut.original_url).await.ok();
-                }
-                bot.delete_message(chat_id, message_id).await.ok();
-            }
-        }
+        "page" => handle_cuts_page(bot, chat_id, message_id, &parts, db_pool, shared_storage).await?,
+        "open" => handle_cuts_open(bot, chat_id, message_id, &parts, shared_storage).await?,
+        "send" => handle_cuts_send(bot, chat_id, message_id, &parts, shared_storage).await?,
+        "speed" => handle_cuts_speed(bot, chat_id, message_id, &parts, shared_storage).await?,
+        "apply_speed" => handle_cuts_apply_speed(bot, chat_id, message_id, &parts, shared_storage, username).await?,
+        "clip" => handle_cuts_clip(bot, chat_id, message_id, &parts, shared_storage).await?,
+        "circle" => handle_cuts_circle(bot, chat_id, message_id, &parts, shared_storage).await?,
         "clip_cancel" => {
             shared_storage
                 .clone()
@@ -579,114 +207,552 @@ This may take a few minutes\\.",
         }
         // Handle duration button clicks: cuts:dur:{position}:{cut_id}:{seconds}
         // position: first, last, middle, full
-        "dur" => {
-            if parts.len() < 4 {
-                return Ok(());
-            }
-            let position = parts[2]; // first, last, middle, full
-            let cut_id = parts[3].parse::<i64>().unwrap_or(0);
-            let duration_seconds = if parts.len() >= 5 {
-                parts[4].parse::<i64>().unwrap_or(30)
-            } else {
-                60 // default for "full"
-            };
-
-            if let Some(cut) = shared_storage
-                .get_cut_entry(chat_id.0, cut_id)
-                .await
-                .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
-            {
-                if cut.file_id.is_none() {
-                    bot.send_message(chat_id, "❌ This clip has no file_id for video note.")
-                        .await
-                        .ok();
-                    return Ok(());
-                }
-
-                // Delete the prompt message
-                bot.delete_message(chat_id, message_id).await.ok();
-
-                let cut_duration = cut.duration.unwrap_or(duration_seconds);
-
-                // Calculate segment based on position
-                let (start_secs, end_secs) = match position {
-                    "first" => {
-                        let end = std::cmp::min(duration_seconds, cut_duration).min(60);
-                        (0, end)
-                    }
-                    "last" => {
-                        let duration = std::cmp::min(duration_seconds, cut_duration).min(60);
-                        let start = (cut_duration - duration).max(0);
-                        (start, cut_duration.min(start + 60))
-                    }
-                    "middle" => {
-                        let duration = std::cmp::min(duration_seconds, cut_duration).min(60);
-                        let start = ((cut_duration - duration) / 2).max(0);
-                        (start, (start + duration).min(cut_duration))
-                    }
-                    "full" => {
-                        let end = cut_duration.min(60);
-                        (0, end)
-                    }
-                    _ => (0, std::cmp::min(duration_seconds, 60)),
-                };
-
-                // Create session
-                let session = db::VideoClipSession {
-                    id: uuid::Uuid::new_v4().to_string(),
-                    user_id: chat_id.0,
-                    source_download_id: 0,
-                    source_kind: SourceKind::Cut,
-                    source_id: cut_id,
-                    original_url: cut.original_url.clone(),
-                    output_kind: OutputKind::VideoNote,
-                    created_at: chrono::Utc::now(),
-                    expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
-                    subtitle_lang: None,
-                    custom_audio_file_id: None,
-                };
-
-                // Delete any existing session first
-                shared_storage
-                    .clone()
-                    .delete_video_clip_session_by_user(chat_id.0)
-                    .await
-                    .ok();
-
-                // Create segment
-                let segment = CutSegment { start_secs, end_secs };
-                let segments_text = format!("{}-{}", format_timestamp(start_secs), format_timestamp(end_secs));
-
-                // Process the clip
-                let bot_clone = bot.clone();
-                let db_pool_clone = db_pool.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = process_video_clip(
-                        bot_clone,
-                        db_pool_clone,
-                        shared_storage.clone(),
-                        chat_id,
-                        session,
-                        vec![segment],
-                        segments_text,
-                        None, // no speed modifier
-                    )
-                    .await
-                    {
-                        log::error!("Failed to process duration circle from cut: {}", e);
-                    }
-                });
-            }
-        }
-        "cancel" => {
-            bot.delete_message(chat_id, message_id).await.ok();
-        }
-        "close" => {
+        "dur" => handle_cuts_dur(bot, chat_id, message_id, &parts, db_pool, shared_storage).await?,
+        "cancel" | "close" => {
             bot.delete_message(chat_id, message_id).await.ok();
         }
         _ => {}
     }
 
+    Ok(())
+}
+
+async fn handle_cuts_page(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    parts: &[&str],
+    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
+    if parts.len() < 3 {
+        return Ok(());
+    }
+    let page = parts[2].parse::<usize>().unwrap_or(0);
+    bot.delete_message(chat_id, message_id).await.ok();
+    show_cuts_page(bot, chat_id, db_pool, shared_storage, page).await?;
+    Ok(())
+}
+
+async fn handle_cuts_open(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    parts: &[&str],
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
+    if parts.len() < 3 {
+        return Ok(());
+    }
+    let cut_id = parts[2].parse::<i64>().unwrap_or(0);
+    if let Some(cut) = shared_storage
+        .get_cut_entry(chat_id.0, cut_id)
+        .await
+        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+    {
+        let mut options = Vec::new();
+        options.push(vec![
+            crate::telegram::cb("🎬 As video".to_string(), format!("cuts:send:video:{}", cut_id)),
+            crate::telegram::cb("📎 As document".to_string(), format!("cuts:send:document:{}", cut_id)),
+        ]);
+        options.push(vec![
+            crate::telegram::cb("✂️ Clip".to_string(), format!("cuts:clip:{}", cut_id)),
+            crate::telegram::cb("⭕️ Circle".to_string(), format!("cuts:circle:{}", cut_id)),
+            crate::telegram::cb("🔔 Ringtone".to_string(), format!("ringtone:select:cut:{}", cut_id)),
+        ]);
+        options.push(vec![crate::telegram::cb(
+            "⚙️ Speed".to_string(),
+            format!("cuts:speed:{}", cut_id),
+        )]);
+        options.push(vec![crate::telegram::cb(
+            "❌ Cancel".to_string(),
+            "cuts:cancel".to_string(),
+        )]);
+
+        bot.send_md_kb(
+            chat_id,
+            format!("What to do with *{}*?", crate::telegram::escape_markdown(&cut.title)),
+            InlineKeyboardMarkup::new(options),
+        )
+        .await?;
+
+        if !cut.original_url.trim().is_empty() {
+            bot.send_message(chat_id, cut.original_url.clone()).await.ok();
+        }
+        bot.delete_message(chat_id, message_id).await.ok();
+    }
+    Ok(())
+}
+
+async fn handle_cuts_send(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    parts: &[&str],
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
+    if parts.len() < 4 {
+        return Ok(());
+    }
+    let send_type = parts[2];
+    let cut_id = parts[3].parse::<i64>().unwrap_or(0);
+
+    if let Some(cut) = shared_storage
+        .get_cut_entry(chat_id.0, cut_id)
+        .await
+        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+    {
+        let Some(telegram_file_id) = cut.file_id.clone() else {
+            bot.send_message(chat_id, "❌ This clip has no file_id for sending.")
+                .await
+                .ok();
+            return Ok(());
+        };
+
+        let status_text = match send_type {
+            "video" => "⏳ Preparing to send as video…",
+            "document" => "⏳ Preparing to send as document…",
+            _ => "⏳ Preparing to send…",
+        };
+        let status_msg = bot.send_message(chat_id, status_text).await?;
+
+        let caption = cut.title.clone();
+        let send_result = match send_type {
+            "video" => {
+                bot.send_video(
+                    chat_id,
+                    teloxide::types::InputFile::file_id(teloxide::types::FileId(telegram_file_id.clone())),
+                )
+                .caption(caption)
+                .await
+            }
+            "document" => send_document_forced(bot, chat_id, &telegram_file_id, "doradura.mp4", caption).await,
+            _ => {
+                bot.delete_message(chat_id, status_msg.id).await.ok();
+                bot.send_message(chat_id, "❌ Unknown send mode.").await.ok();
+                return Ok(());
+            }
+        };
+
+        match send_result {
+            Ok(_) => {
+                bot.delete_message(chat_id, status_msg.id).await.ok();
+                bot.delete_message(chat_id, message_id).await.ok();
+            }
+            Err(e) => {
+                if send_type == "document" && is_file_too_big_error(&e) {
+                    log::warn!("Cut document send failed due to size (cut_id={}): {}", cut_id, e);
+
+                    let video_fallback = bot
+                        .send_video(
+                            chat_id,
+                            teloxide::types::InputFile::file_id(teloxide::types::FileId(telegram_file_id.clone())),
+                        )
+                        .caption(cut.title.clone())
+                        .await;
+
+                    bot.delete_message(chat_id, status_msg.id).await.ok();
+                    bot.delete_message(chat_id, message_id).await.ok();
+
+                    match video_fallback {
+                        Ok(_) => {
+                            bot.send_message(
+                                chat_id,
+                                "⚠️ Couldn't send as document: Telegram rejected the file due to size.\nSent as video instead.\n\nIf you need it as a document — make a ✂️ shorter clip and send that as a document.",
+                            )
+                            .await
+                            .ok();
+                        }
+                        Err(e2) => {
+                            bot.send_message(chat_id, format!("❌ Failed to send file even as video: {e2}"))
+                                .await
+                                .ok();
+                        }
+                    }
+                    return Ok(());
+                }
+                bot.delete_message(chat_id, status_msg.id).await.ok();
+                bot.send_message(chat_id, format!("❌ Failed to send file: {e}"))
+                    .await
+                    .ok();
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn handle_cuts_speed(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    parts: &[&str],
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
+    if parts.len() < 3 {
+        return Ok(());
+    }
+    let cut_id = parts[2].parse::<i64>().unwrap_or(0);
+    if let Some(cut) = shared_storage
+        .get_cut_entry(chat_id.0, cut_id)
+        .await
+        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+    {
+        let rows = vec![
+            vec![
+                crate::telegram::cb("0.5x".to_string(), format!("cuts:apply_speed:0.5:{}", cut_id)),
+                crate::telegram::cb("0.75x".to_string(), format!("cuts:apply_speed:0.75:{}", cut_id)),
+                crate::telegram::cb("1.0x".to_string(), format!("cuts:apply_speed:1.0:{}", cut_id)),
+            ],
+            vec![
+                crate::telegram::cb("1.25x".to_string(), format!("cuts:apply_speed:1.25:{}", cut_id)),
+                crate::telegram::cb("1.5x".to_string(), format!("cuts:apply_speed:1.5:{}", cut_id)),
+                crate::telegram::cb("2.0x".to_string(), format!("cuts:apply_speed:2.0:{}", cut_id)),
+            ],
+            vec![crate::telegram::cb("❌ Cancel".to_string(), "cuts:cancel".to_string())],
+        ];
+
+        bot.send_md_kb(
+            chat_id,
+            format!("⚙️ Select speed for *{}*", crate::telegram::escape_markdown(&cut.title)),
+            InlineKeyboardMarkup::new(rows),
+        )
+        .await?;
+
+        if !cut.original_url.trim().is_empty() {
+            bot.send_message(chat_id, cut.original_url).await.ok();
+        }
+        bot.delete_message(chat_id, message_id).await.ok();
+    }
+    Ok(())
+}
+
+async fn handle_cuts_apply_speed(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    parts: &[&str],
+    shared_storage: Arc<SharedStorage>,
+    username: Option<String>,
+) -> ResponseResult<()> {
+    if parts.len() < 4 {
+        return Ok(());
+    }
+    let speed_str = parts[2];
+    let cut_id = parts[3].parse::<i64>().unwrap_or(0);
+    let speed: f32 = speed_str.parse().unwrap_or(1.0);
+
+    if let Some(cut) = shared_storage
+        .get_cut_entry(chat_id.0, cut_id)
+        .await
+        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+    {
+        let Some(file_id) = cut.file_id.clone() else {
+            bot.send_message(chat_id, "❌ This clip has no file_id for processing.")
+                .await
+                .ok();
+            return Ok(());
+        };
+
+        bot.delete_message(chat_id, message_id).await.ok();
+        let processing = bot
+            .send_md(
+                chat_id,
+                format!(
+                    "⚙️ Processing video at {}x speed\\.\\.\\.
+This may take a few minutes\\.",
+                    speed_str.replace('.', "\\.")
+                ),
+            )
+            .await?;
+
+        match change_video_speed(bot, chat_id, &file_id, speed, &cut.title).await {
+            Ok((sent_message, file_size)) => {
+                bot.delete_message(chat_id, processing.id).await.ok();
+                if !cut.original_url.trim().is_empty() {
+                    bot.send_message(chat_id, cut.original_url.clone()).await.ok();
+                }
+
+                let new_title = format!("{} [speed {}x]", cut.title, speed_str);
+                let new_duration = cut.duration.map(|d| ((d as f32) / speed).round().max(1.0) as i64);
+                let new_file_id = sent_message
+                    .video()
+                    .map(|v| v.file.id.0.clone())
+                    .or_else(|| sent_message.document().map(|d| d.file.id.0.clone()));
+
+                if let Some(fid) = new_file_id {
+                    if let Err(e) = shared_storage
+                        .create_cut(
+                            chat_id.0,
+                            &cut.original_url,
+                            "cut",
+                            cut_id,
+                            "clip",
+                            &cut.segments_json,
+                            &cut.segments_text,
+                            &new_title,
+                            Some(&fid),
+                            Some(file_size),
+                            new_duration,
+                            cut.video_quality.as_deref(),
+                        )
+                        .await
+                    {
+                        log::error!("Failed to persist cut record for user {}: {}", chat_id.0, e);
+                    }
+                }
+            }
+            Err(e) => {
+                bot.delete_message(chat_id, processing.id).await.ok();
+                bot.send_message(
+                    chat_id,
+                    "❌ Failed to process video. The administrator has been notified.",
+                )
+                .await
+                .ok();
+                // Notify admin about the error with full details
+                crate::telegram::notifications::notify_admin_video_error(
+                    bot,
+                    chat_id.0,
+                    username.as_deref(),
+                    &e.to_string(),
+                    &format!("cut_speed: {}x on '{}'", speed_str, cut.title),
+                )
+                .await;
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn handle_cuts_clip(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    parts: &[&str],
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
+    if parts.len() < 3 {
+        return Ok(());
+    }
+    let cut_id = parts[2].parse::<i64>().unwrap_or(0);
+    if let Some(cut) = shared_storage
+        .get_cut_entry(chat_id.0, cut_id)
+        .await
+        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+    {
+        if cut.file_id.is_none() {
+            bot.send_message(chat_id, "❌ This clip has no file_id for clipping.")
+                .await
+                .ok();
+            return Ok(());
+        }
+        let session = db::VideoClipSession {
+            id: uuid::Uuid::new_v4().to_string(),
+            user_id: chat_id.0,
+            source_download_id: 0,
+            source_kind: SourceKind::Cut,
+            source_id: cut_id,
+            original_url: cut.original_url.clone(),
+            output_kind: OutputKind::Cut,
+            created_at: chrono::Utc::now(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+            subtitle_lang: None,
+            custom_audio_file_id: None,
+        };
+        shared_storage
+            .clone()
+            .upsert_video_clip_session(&session)
+            .await
+            .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+
+        let keyboard = InlineKeyboardMarkup::new(vec![vec![crate::telegram::cb(
+            "❌ Cancel".to_string(),
+            "cuts:clip_cancel".to_string(),
+        )]]);
+
+        bot.send_md_kb(
+            chat_id,
+            "✂️ Send intervals for the clip in format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nMultiple intervals separated by commas\\.\n\nExample: `00:10-00:25, 01:00-01:10`",
+            keyboard,
+        )
+        .await?;
+
+        if !cut.original_url.trim().is_empty() {
+            bot.send_message(chat_id, cut.original_url).await.ok();
+        }
+        bot.delete_message(chat_id, message_id).await.ok();
+    }
+    Ok(())
+}
+
+async fn handle_cuts_circle(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    parts: &[&str],
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
+    if parts.len() < 3 {
+        return Ok(());
+    }
+    let cut_id = parts[2].parse::<i64>().unwrap_or(0);
+    if let Some(cut) = shared_storage
+        .get_cut_entry(chat_id.0, cut_id)
+        .await
+        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+    {
+        if cut.file_id.is_none() {
+            bot.send_message(chat_id, "❌ This clip has no file_id for video note.")
+                .await
+                .ok();
+            return Ok(());
+        }
+        let session = db::VideoClipSession {
+            id: uuid::Uuid::new_v4().to_string(),
+            user_id: chat_id.0,
+            source_download_id: 0,
+            source_kind: SourceKind::Cut,
+            source_id: cut_id,
+            original_url: cut.original_url.clone(),
+            output_kind: OutputKind::VideoNote,
+            created_at: chrono::Utc::now(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+            subtitle_lang: None,
+            custom_audio_file_id: None,
+        };
+        shared_storage
+            .clone()
+            .upsert_video_clip_session(&session)
+            .await
+            .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?;
+
+        // Get user language for localization
+        let lang = crate::i18n::user_lang_from_storage(&shared_storage, chat_id.0).await;
+
+        // Build keyboard: duration buttons + cancel button
+        let mut keyboard_rows = build_duration_buttons_for_cut(cut_id, &lang);
+        keyboard_rows.push(vec![crate::telegram::cb(
+            crate::i18n::t(&lang, "common.cancel"),
+            "cuts:clip_cancel".to_string(),
+        )]);
+        let keyboard = InlineKeyboardMarkup::new(keyboard_rows);
+
+        let message = crate::i18n::t(&lang, "video_circle.select_part");
+        bot.send_md_kb(chat_id, message, keyboard).await?;
+
+        if !cut.original_url.trim().is_empty() {
+            bot.send_message(chat_id, cut.original_url).await.ok();
+        }
+        bot.delete_message(chat_id, message_id).await.ok();
+    }
+    Ok(())
+}
+
+async fn handle_cuts_dur(
+    bot: &Bot,
+    chat_id: ChatId,
+    message_id: MessageId,
+    parts: &[&str],
+    db_pool: Arc<DbPool>,
+    shared_storage: Arc<SharedStorage>,
+) -> ResponseResult<()> {
+    if parts.len() < 4 {
+        return Ok(());
+    }
+    let position = parts[2]; // first, last, middle, full
+    let cut_id = parts[3].parse::<i64>().unwrap_or(0);
+    let duration_seconds = if parts.len() >= 5 {
+        parts[4].parse::<i64>().unwrap_or(30)
+    } else {
+        60 // default for "full"
+    };
+
+    if let Some(cut) = shared_storage
+        .get_cut_entry(chat_id.0, cut_id)
+        .await
+        .map_err(|e| teloxide::RequestError::from(std::sync::Arc::new(std::io::Error::other(e.to_string()))))?
+    {
+        if cut.file_id.is_none() {
+            bot.send_message(chat_id, "❌ This clip has no file_id for video note.")
+                .await
+                .ok();
+            return Ok(());
+        }
+
+        // Delete the prompt message
+        bot.delete_message(chat_id, message_id).await.ok();
+
+        let cut_duration = cut.duration.unwrap_or(duration_seconds);
+
+        // Calculate segment based on position
+        let (start_secs, end_secs) = match position {
+            "first" => {
+                let end = std::cmp::min(duration_seconds, cut_duration).min(60);
+                (0, end)
+            }
+            "last" => {
+                let duration = std::cmp::min(duration_seconds, cut_duration).min(60);
+                let start = (cut_duration - duration).max(0);
+                (start, cut_duration.min(start + 60))
+            }
+            "middle" => {
+                let duration = std::cmp::min(duration_seconds, cut_duration).min(60);
+                let start = ((cut_duration - duration) / 2).max(0);
+                (start, (start + duration).min(cut_duration))
+            }
+            "full" => {
+                let end = cut_duration.min(60);
+                (0, end)
+            }
+            _ => (0, std::cmp::min(duration_seconds, 60)),
+        };
+
+        // Create session
+        let session = db::VideoClipSession {
+            id: uuid::Uuid::new_v4().to_string(),
+            user_id: chat_id.0,
+            source_download_id: 0,
+            source_kind: SourceKind::Cut,
+            source_id: cut_id,
+            original_url: cut.original_url.clone(),
+            output_kind: OutputKind::VideoNote,
+            created_at: chrono::Utc::now(),
+            expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
+            subtitle_lang: None,
+            custom_audio_file_id: None,
+        };
+
+        // Delete any existing session first
+        shared_storage
+            .clone()
+            .delete_video_clip_session_by_user(chat_id.0)
+            .await
+            .ok();
+
+        // Create segment
+        let segment = CutSegment { start_secs, end_secs };
+        let segments_text = format!("{}-{}", format_timestamp(start_secs), format_timestamp(end_secs));
+
+        // Process the clip
+        let bot_clone = bot.clone();
+        let db_pool_clone = db_pool.clone();
+        tokio::spawn(async move {
+            if let Err(e) = process_video_clip(
+                bot_clone,
+                db_pool_clone,
+                shared_storage.clone(),
+                chat_id,
+                session,
+                vec![segment],
+                segments_text,
+                None, // no speed modifier
+            )
+            .await
+            {
+                log::error!("Failed to process duration circle from cut: {}", e);
+            }
+        });
+    }
     Ok(())
 }
 
