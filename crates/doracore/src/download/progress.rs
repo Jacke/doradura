@@ -583,7 +583,7 @@ pub fn create_progress_bar(progress: u8, style: ProgressBarStyle) -> String {
             if filled == 10 {
                 format!("{}🏁", "━".repeat(9))
             } else {
-                format!("{}🏃{}", "━".repeat(filled), "░".repeat(empty.saturating_sub(1).max(0)))
+                format!("{}🏃{}", "━".repeat(filled), "░".repeat(empty.saturating_sub(1)))
             }
         }
         ProgressBarStyle::Rpg => {
