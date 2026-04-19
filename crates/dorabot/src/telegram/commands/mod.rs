@@ -376,6 +376,237 @@ async fn try_intercept_audio_cut_session(
     Ok(true)
 }
 
+/// If the user has an active `VideoClipSession` and sends non-command text,
+/// treat the text as a cancel / time-range / speed spec for the clip. For
+/// Loop-kind sessions only cancel is valid (audio comes through a separate
+/// path); for other kinds, successful parsing spawns `process_video_clip`.
+/// Returns `true` when handled (caller should return early), `false`
+/// otherwise.
+#[allow(clippy::too_many_arguments)]
+async fn try_intercept_video_clip_text(
+    bot: &Bot,
+    msg: &Message,
+    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
+    lang: &unic_langid::LanguageIdentifier,
+    text: &str,
+) -> ResponseResult<bool> {
+    if text.trim().starts_with('/') {
+        return Ok(false);
+    }
+    let Ok(Some(session)) = shared_storage.get_active_video_clip_session(msg.chat.id.0).await else {
+        return Ok(false);
+    };
+    let trimmed = text.trim();
+    if is_cancel_text(trimmed) {
+        let _ = shared_storage.delete_video_clip_session_by_user(msg.chat.id.0).await;
+        let cancel_key = if session.output_kind == OutputKind::Loop {
+            "loop.cancelled"
+        } else {
+            "commands.video_clip_cancelled"
+        };
+        bot.send_message(msg.chat.id, i18n::t(lang, cancel_key)).await.ok();
+        return Ok(true);
+    }
+
+    // Loop sessions accept ONLY audio uploads (handled earlier in the
+    // intercept above) or cancel. Text is not valid input — re-prompt.
+    if session.output_kind == OutputKind::Loop {
+        bot.send_message(msg.chat.id, i18n::t(lang, "loop.send_audio_first"))
+            .await
+            .ok();
+        return Ok(true);
+    }
+
+    let video_duration = match session.source_kind {
+        SourceKind::Download => shared_storage
+            .get_download_history_entry(msg.chat.id.0, session.source_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|d| d.duration),
+        SourceKind::Cut => shared_storage
+            .get_cut_entry(msg.chat.id.0, session.source_id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|c| c.duration),
+    };
+
+    if let Some((segments, segments_text, speed)) = parse_segments_spec(trimmed, video_duration) {
+        let _ = shared_storage.delete_video_clip_session_by_user(msg.chat.id.0).await;
+
+        let bot_clone = bot.clone();
+        let db_pool_clone = db_pool.clone();
+        let shared_storage_clone = shared_storage.clone();
+        let chat_id = msg.chat.id;
+        tokio::spawn(async move {
+            if let Err(e) = process_video_clip(
+                bot_clone,
+                db_pool_clone,
+                shared_storage_clone,
+                chat_id,
+                session,
+                segments,
+                segments_text,
+                speed,
+            )
+            .await
+            {
+                log::warn!("Failed to process video clip: {}", e);
+            }
+        });
+
+        Ok(true)
+    } else {
+        let extra_note = if session.output_kind == OutputKind::VideoNote {
+            "\n\n💡 If duration exceeds 60 seconds \\(Telegram limit for video notes\\), video will be automatically trimmed\\."
+        } else {
+            ""
+        };
+        bot.send_md(
+            msg.chat.id,
+            format!(
+                "❌ Couldn't parse intervals\\.\n\nSend in format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nMultiple separated by commas\\.\nExample: `00:10-00:25, 01:00-01:10`\n\nOr commands: `full`, `first30`, `last30`, `middle30`\\.\n\n💡 You can add speed: `first30 2x`, `full 1\\.5x`\\.\n\nOr type `cancel`\\.{extra_note}",
+            ),
+        )
+        .await
+        .ok();
+        Ok(true)
+    }
+}
+
+/// If the user is in feedback-capture mode, forward the text to the admin
+/// notification pipeline, confirm to the user, and return them to the main
+/// menu. Returns `true` when handled.
+async fn try_intercept_feedback(
+    bot: &Bot,
+    msg: &Message,
+    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
+    lang: &unic_langid::LanguageIdentifier,
+    text: &str,
+) -> ResponseResult<bool> {
+    if !crate::telegram::feedback::is_waiting_for_feedback(shared_storage, msg.chat.id.0).await {
+        return Ok(false);
+    }
+    // Get user info for admin notification
+    let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
+    let first_name = msg.from.as_ref().map(|u| u.first_name.as_str()).unwrap_or("Unknown");
+
+    // Send feedback to admin
+    let _ = crate::telegram::feedback::notify_admin_feedback(
+        bot,
+        msg.chat.id.0,
+        username,
+        first_name,
+        text,
+        shared_storage,
+    )
+    .await;
+
+    // Send confirmation to user and return to main menu
+    let _ = crate::telegram::feedback::send_feedback_confirmation(bot, msg.chat.id, lang, shared_storage).await;
+    let _ = crate::telegram::show_enhanced_main_menu(bot, msg.chat.id, db_pool.clone(), shared_storage.clone()).await;
+
+    Ok(true)
+}
+
+/// If the user has an active playlist-import-URL session, treat the text as
+/// the import URL (or cancel): clear the session and spawn the import task.
+/// Returns `true` when handled.
+async fn try_intercept_playlist_import_url(
+    bot: &Bot,
+    msg: &Message,
+    shared_storage: &Arc<SharedStorage>,
+    text: &str,
+) -> ResponseResult<bool> {
+    let Some(pl_id) = crate::telegram::menu::playlist::get_import_playlist_id(shared_storage, msg.chat.id.0).await
+    else {
+        return Ok(false);
+    };
+    let text_lower = text.trim().to_lowercase();
+    if text_lower == "cancel" {
+        crate::telegram::menu::playlist::clear_import_url_session(shared_storage, msg.chat.id.0).await;
+        let _ = bot.send_message(msg.chat.id, "Cancelled.").await;
+        return Ok(true);
+    }
+    crate::telegram::menu::playlist::clear_import_url_session(shared_storage, msg.chat.id.0).await;
+    // Handle import in background
+    let bot_clone = bot.clone();
+    let shared_storage_clone = shared_storage.clone();
+    let url_text = text.trim().to_string();
+    let chat_id = msg.chat.id;
+    tokio::spawn(async move {
+        crate::download::playlist_import::handle_import_url(
+            &bot_clone,
+            chat_id,
+            &url_text,
+            pl_id,
+            shared_storage_clone,
+        )
+        .await;
+    });
+    Ok(true)
+}
+
+/// If the user is in vault-setup-input mode, spawn the vault setup input
+/// handler. Returns `true` when handled.
+async fn try_intercept_vault_setup(
+    bot: &Bot,
+    msg: &Message,
+    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
+) -> ResponseResult<bool> {
+    if !crate::telegram::menu::vault::is_waiting_for_vault_setup(shared_storage, msg.chat.id.0).await {
+        return Ok(false);
+    }
+    let bot_clone = bot.clone();
+    let db_pool_clone = db_pool.clone();
+    let shared_storage_clone = shared_storage.clone();
+    let msg_clone = msg.clone();
+    tokio::spawn(async move {
+        crate::telegram::menu::vault::handle_vault_setup_input(
+            &bot_clone,
+            &msg_clone,
+            &db_pool_clone,
+            &shared_storage_clone,
+        )
+        .await;
+    });
+    Ok(true)
+}
+
+/// If the user is in playlist-integrations import-URL mode, spawn the
+/// import-URL handler. Returns `true` when handled.
+async fn try_intercept_playlist_integrations_import(
+    bot: &Bot,
+    msg: &Message,
+    db_pool: &Arc<DbPool>,
+    shared_storage: &Arc<SharedStorage>,
+    text: &str,
+) -> ResponseResult<bool> {
+    if !crate::telegram::menu::playlist_integrations::is_waiting_for_import_url(shared_storage, msg.chat.id.0).await {
+        return Ok(false);
+    }
+    let bot_clone = bot.clone();
+    let db_pool_clone = db_pool.clone();
+    let shared_storage_clone = shared_storage.clone();
+    let url_text = text.trim().to_string();
+    let chat_id = msg.chat.id;
+    tokio::spawn(async move {
+        crate::telegram::menu::playlist_integrations::handle_import_url_input(
+            &bot_clone,
+            chat_id,
+            &url_text,
+            db_pool_clone,
+            shared_storage_clone,
+        )
+        .await;
+    });
+    Ok(true)
+}
+
 /// Handle incoming message and process download requests
 ///
 /// Parses URLs from messages, validates them, checks rate limits, and adds tasks to the download queue.
@@ -469,111 +700,12 @@ pub async fn handle_message(
         }
 
         // Video clip sessions (from /downloads or /cuts -> ✂️ Clip)
-        if !text.trim().starts_with('/') {
-            if let Ok(Some(session)) = shared_storage.get_active_video_clip_session(msg.chat.id.0).await {
-                let trimmed = text.trim();
-                if is_cancel_text(trimmed) {
-                    let _ = shared_storage.delete_video_clip_session_by_user(msg.chat.id.0).await;
-                    let cancel_key = if session.output_kind == OutputKind::Loop {
-                        "loop.cancelled"
-                    } else {
-                        "commands.video_clip_cancelled"
-                    };
-                    bot.send_message(msg.chat.id, i18n::t(&lang, cancel_key)).await.ok();
-                    return Ok(None);
-                }
-
-                // Loop sessions accept ONLY audio uploads (handled earlier in the
-                // intercept above) or cancel. Text is not valid input — re-prompt.
-                if session.output_kind == OutputKind::Loop {
-                    bot.send_message(msg.chat.id, i18n::t(&lang, "loop.send_audio_first"))
-                        .await
-                        .ok();
-                    return Ok(None);
-                }
-
-                let video_duration = match session.source_kind {
-                    SourceKind::Download => shared_storage
-                        .get_download_history_entry(msg.chat.id.0, session.source_id)
-                        .await
-                        .ok()
-                        .flatten()
-                        .and_then(|d| d.duration),
-                    SourceKind::Cut => shared_storage
-                        .get_cut_entry(msg.chat.id.0, session.source_id)
-                        .await
-                        .ok()
-                        .flatten()
-                        .and_then(|c| c.duration),
-                };
-
-                if let Some((segments, segments_text, speed)) = parse_segments_spec(trimmed, video_duration) {
-                    let _ = shared_storage.delete_video_clip_session_by_user(msg.chat.id.0).await;
-
-                    let bot_clone = bot.clone();
-                    let db_pool_clone = db_pool.clone();
-                    let chat_id = msg.chat.id;
-                    tokio::spawn(async move {
-                        if let Err(e) = process_video_clip(
-                            bot_clone,
-                            db_pool_clone,
-                            shared_storage.clone(),
-                            chat_id,
-                            session,
-                            segments,
-                            segments_text,
-                            speed,
-                        )
-                        .await
-                        {
-                            log::warn!("Failed to process video clip: {}", e);
-                        }
-                    });
-
-                    return Ok(None);
-                } else {
-                    let extra_note = if session.output_kind == OutputKind::VideoNote {
-                        "\n\n💡 If duration exceeds 60 seconds \\(Telegram limit for video notes\\), video will be automatically trimmed\\."
-                    } else {
-                        ""
-                    };
-                    bot.send_md(
-                        msg.chat.id,
-                        format!(
-                            "❌ Couldn't parse intervals\\.\n\nSend in format `mm:ss-mm:ss` or `hh:mm:ss-hh:mm:ss`\\.\nMultiple separated by commas\\.\nExample: `00:10-00:25, 01:00-01:10`\n\nOr commands: `full`, `first30`, `last30`, `middle30`\\.\n\n💡 You can add speed: `first30 2x`, `full 1\\.5x`\\.\n\nOr type `cancel`\\.{extra_note}",
-                        ),
-                    )
-                    .await
-                    .ok();
-                    return Ok(None);
-                }
-            }
+        if try_intercept_video_clip_text(&bot, &msg, &db_pool, &shared_storage, &lang, text).await? {
+            return Ok(None);
         }
 
-        // Check if user is waiting to provide feedback
-        if crate::telegram::feedback::is_waiting_for_feedback(&shared_storage, msg.chat.id.0).await {
-            // Get user info for admin notification
-            let username = msg.from.as_ref().and_then(|u| u.username.as_deref());
-            let first_name = msg.from.as_ref().map(|u| u.first_name.as_str()).unwrap_or("Unknown");
-
-            // Send feedback to admin
-            let _ = crate::telegram::feedback::notify_admin_feedback(
-                &bot,
-                msg.chat.id.0,
-                username,
-                first_name,
-                text,
-                &shared_storage,
-            )
-            .await;
-
-            // Send confirmation to user and return to main menu
-            let _ =
-                crate::telegram::feedback::send_feedback_confirmation(&bot, msg.chat.id, &lang, &shared_storage).await;
-            let _ =
-                crate::telegram::show_enhanced_main_menu(&bot, msg.chat.id, db_pool.clone(), shared_storage.clone())
-                    .await;
-
+        // Feedback capture
+        if try_intercept_feedback(&bot, &msg, &db_pool, &shared_storage, &lang, text).await? {
             return Ok(None);
         }
 
@@ -590,69 +722,18 @@ pub async fn handle_message(
             return Ok(None);
         }
 
-        // Check if user is waiting for import URL input
-        if let Some(pl_id) =
-            crate::telegram::menu::playlist::get_import_playlist_id(&shared_storage, msg.chat.id.0).await
-        {
-            let text_lower = text.trim().to_lowercase();
-            if text_lower == "cancel" {
-                crate::telegram::menu::playlist::clear_import_url_session(&shared_storage, msg.chat.id.0).await;
-                let _ = bot.send_message(msg.chat.id, "Cancelled.").await;
-                return Ok(None);
-            }
-            crate::telegram::menu::playlist::clear_import_url_session(&shared_storage, msg.chat.id.0).await;
-            // Handle import in background
-            let bot_clone = bot.clone();
-            let shared_storage_clone = shared_storage.clone();
-            let url_text = text.trim().to_string();
-            tokio::spawn(async move {
-                crate::download::playlist_import::handle_import_url(
-                    &bot_clone,
-                    msg.chat.id,
-                    &url_text,
-                    pl_id,
-                    shared_storage_clone,
-                )
-                .await;
-            });
+        // Playlist import URL session
+        if try_intercept_playlist_import_url(&bot, &msg, &shared_storage, text).await? {
             return Ok(None);
         }
 
-        // Check if user is waiting for vault setup
-        if crate::telegram::menu::vault::is_waiting_for_vault_setup(&shared_storage, msg.chat.id.0).await {
-            let bot_clone = bot.clone();
-            let db_pool_clone = db_pool.clone();
-            let shared_storage_clone = shared_storage.clone();
-            let msg_clone = msg.clone();
-            tokio::spawn(async move {
-                crate::telegram::menu::vault::handle_vault_setup_input(
-                    &bot_clone,
-                    &msg_clone,
-                    &db_pool_clone,
-                    &shared_storage_clone,
-                )
-                .await;
-            });
+        // Vault setup input session
+        if try_intercept_vault_setup(&bot, &msg, &db_pool, &shared_storage).await? {
             return Ok(None);
         }
 
-        // Check if user is waiting for playlist integrations import URL
-        if crate::telegram::menu::playlist_integrations::is_waiting_for_import_url(&shared_storage, msg.chat.id.0).await
-        {
-            let bot_clone = bot.clone();
-            let db_pool_clone = db_pool.clone();
-            let shared_storage_clone = shared_storage.clone();
-            let url_text = text.trim().to_string();
-            tokio::spawn(async move {
-                crate::telegram::menu::playlist_integrations::handle_import_url_input(
-                    &bot_clone,
-                    msg.chat.id,
-                    &url_text,
-                    db_pool_clone,
-                    shared_storage_clone,
-                )
-                .await;
-            });
+        // Playlist integrations import URL session
+        if try_intercept_playlist_integrations_import(&bot, &msg, &db_pool, &shared_storage, text).await? {
             return Ok(None);
         }
 
