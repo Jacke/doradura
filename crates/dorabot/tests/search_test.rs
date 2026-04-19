@@ -90,7 +90,7 @@ fn test_format_duration() {
 
     assert_eq!(format_duration(Some(0)), "0:00");
     assert_eq!(format_duration(Some(65)), "1:05");
-    assert_eq!(format_duration(Some(3661)), "61:01");
+    assert_eq!(format_duration(Some(3661)), "1:01:01");
     assert_eq!(format_duration(None), "?:??");
 }
 
