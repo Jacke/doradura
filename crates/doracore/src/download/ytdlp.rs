@@ -311,7 +311,6 @@ pub async fn print_ytdlp_version() -> Result<(), AppError> {
         )));
     }
 
-    println!("yt-dlp version: {}", version);
     log::info!("yt-dlp version: {}", version);
 
     Ok(())
@@ -325,12 +324,11 @@ pub async fn print_ytdlp_version() -> Result<(), AppError> {
 ///
 /// Returns `Ok(())` on success or an error on failure.
 pub async fn force_update_ytdlp() -> Result<(), AppError> {
-    log::info!("Force updating yt-dlp from nightly builds...");
-    println!("Force updating yt-dlp to the latest nightly version...");
+    log::info!("Force updating yt-dlp to the latest nightly version...");
 
     let (old_version, new_version) = download_nightly_ytdlp().await?;
 
-    println!("✅ yt-dlp updated: {} → {}", old_version, new_version);
+    log::info!("✅ yt-dlp updated: {} → {}", old_version, new_version);
 
     Ok(())
 }

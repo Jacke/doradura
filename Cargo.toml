@@ -2,6 +2,21 @@
 members = ["crates/doracore", "crates/dorabot", "crates/doratui", "crates/health-monitor"]
 resolver = "2"
 
+# Clippy lints inherited by every workspace member via the `[lints]` table
+# in each crate's Cargo.toml. We don't auto-inherit here (that requires
+# per-crate `lints.workspace = true`); instead we list recommended lints
+# below so contributors know which are workspace policy.
+#
+# Currently enforced per-crate via pre-commit hook:
+#   cargo clippy --workspace -- -D warnings
+#
+# Future: move to `[workspace.lints.clippy]` + `lints.workspace = true`
+# in each crate when we're ready for the single-source-of-truth migration.
+[workspace.lints.clippy]
+# Regression-prevent: catch any mutex guard held across an `.await`.
+# Previous audit verified no current violations; this keeps it that way.
+await_holding_lock = "warn"
+
 [workspace.dependencies]
 # Async runtime
 tokio = { version = "1.40", features = ["full"] }

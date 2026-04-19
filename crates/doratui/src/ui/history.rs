@@ -127,7 +127,16 @@ pub fn render_history(f: &mut Frame, area: Rect, app: &mut App) {
         .enumerate()
         .map(|(i, &display_idx)| {
             let abs_idx = skip + i;
-            let entry = app.history.iter().rev().nth(display_idx).unwrap();
+            // display_idx comes from the filtered-indices list built against
+            // the same reversed history view a few lines up, so it is always
+            // in-range. .expect() documents the invariant loudly if it ever
+            // breaks (e.g. history mutated between render passes).
+            let entry = app
+                .history
+                .iter()
+                .rev()
+                .nth(display_idx)
+                .expect("display_idx must index into reversed history");
             let when = entry.finished_at.format("%H:%M %d/%m").to_string();
             let is_highlighted = abs_idx == highlight_idx;
             let is_multi_selected = app.history_selected.contains(&display_idx);

@@ -20,6 +20,14 @@
 //! | `Esc`        | Close popup / clear input        |
 //! | `Ctrl+C`     | Quit                             |
 
+// The settings-menu key dispatcher uses a `match key.code { KeyCode::X => { if kind == ...`
+// pattern that Rust 1.95 clippy wants collapsed to a match guard
+// (`KeyCode::X if kind == ... => { ... }`). The nested style is clearer
+// here because each KeyCode arm branches differently on the settings-item
+// kind — collapsing would produce ~14 duplicate `KeyCode::X` arms with
+// different guards. Suppressed at module scope for the TUI bin only.
+#![allow(clippy::collapsible_match)]
+
 use std::io;
 use std::time::Duration;
 
@@ -443,8 +451,9 @@ fn handle_paste_event(app: &mut App, text: String) {
                 app.url_input.push_str(&clean);
             }
             1 => {
-                // Single URL: open preview like pressing Enter
-                let url = urls.into_iter().next().unwrap();
+                // Single URL: open preview like pressing Enter.
+                // Arm `1 =>` proves `urls.len() == 1`, so .next() yields Some.
+                let url = urls.into_iter().next().expect("match arm guarantees urls.len() == 1");
                 app.preview_url = url.clone();
                 app.preview_format = DownloadFormat::Mp4;
                 app.preview_quality_cursor = 0;

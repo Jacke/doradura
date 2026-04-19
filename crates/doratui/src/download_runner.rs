@@ -565,8 +565,12 @@ fn find_srt_file(dir: &std::path::Path, stem: &str, lang: &str) -> anyhow::Resul
         return Ok(best.clone());
     }
 
-    // Last resort: first available SRT
-    Ok(candidates.into_iter().next().unwrap())
+    // Last resort: first available SRT. `candidates` is non-empty here —
+    // the `if candidates.is_empty()` bail above guarantees it.
+    Ok(candidates
+        .into_iter()
+        .next()
+        .expect("candidates non-empty — checked above"))
 }
 
 #[cfg(test)]
