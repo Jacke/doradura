@@ -507,6 +507,197 @@ async fn send_clip_as_gif(
     }
 }
 
+/// Build the `subtitles=…:force_style=…` filter fragment that burns a circle
+/// video note's subtitles at the final 640x640 canvas size.
+///
+/// Returns `None` when no SRT path is provided. Path separators and `:` / `'`
+/// are escaped for ffmpeg's `filter_complex` mini-language — the four-
+/// backslash form is required because the string is interpreted twice:
+/// once by ffmpeg's option parser and once by the filter graph parser.
+fn build_circle_sub_filter(srt_path: Option<&std::path::Path>) -> Option<String> {
+    let srt_path = srt_path?;
+    let escaped = srt_path
+        .to_string_lossy()
+        .replace('\\', "\\\\\\\\")
+        .replace(':', "\\\\:")
+        .replace('\'', "\\\\'");
+    let style = db::SubtitleStyle::circle_default();
+    let force_style = style.to_force_style();
+    Some(format!("subtitles='{escaped}':force_style='{force_style}'"))
+}
+
+/// Composed ffmpeg filter_complex strings plus the stream labels / encoding
+/// knobs that the outer command builder needs to wire up `-map` / `-crf`.
+///
+/// Returned by [`build_clip_filter_plan`]. The caller uses `filter_av` for the
+/// main pass, `filter_v` for the video-only retry pass, and the label / crf
+/// fields to assemble the rest of the ffmpeg command line.
+struct ClipFilterPlan {
+    /// Full audio+video (or audio-only) `filter_complex` for the main pass.
+    filter_av: String,
+    /// Video-only `filter_complex` used for the retry pass when the main pass
+    /// fails (e.g. audio track missing or misdetected). May be empty when
+    /// there is no video stream.
+    filter_v: String,
+    /// `-map` label for the video output. `"[v]"` or `"[vout]"` when present,
+    /// `""` when the output has no video stream.
+    map_v_label: &'static str,
+    /// `-map` label for the audio output. `"[a]"` or `"[aout]"`.
+    map_a_label: &'static str,
+    /// `-crf` value (as a string so it can be passed straight to ffmpeg).
+    crf: &'static str,
+}
+
+/// Compose the ffmpeg `filter_complex` graph and associated mapping knobs for
+/// a clip job.
+///
+/// Pure computation — no I/O, no allocation beyond the filter strings. The
+/// resulting [`ClipFilterPlan`] captures every branch of the clip pipeline's
+/// filter/map wiring:
+///
+///   * **single circle** (video note, no split) — applies
+///     `scale=640:640,crop=640:640` post-filter plus optional burned-in
+///     subtitles, at CRF 18 for visual quality.
+///   * **multi-circle** (video note, needs split) — plain cut filter at
+///     CRF 23; the circle framing is applied later by
+///     `to_video_notes_split`.
+///   * **ringtone** — audio-only chain with `atempo` speed adjustment.
+///   * **regular cut with speed** — `setpts`/`atempo` on either the a/v or
+///     audio-only chain depending on whether the source has video.
+///   * **regular cut without speed** — bare `build_cut_filter` output.
+///
+/// Previously this logic was inlined inside `process_video_clip` as a ~120-LOC
+/// match ladder; extracting it here leaves the async pipeline easier to read
+/// and lets this pure string composition be reasoned about on its own.
+fn build_clip_filter_plan(
+    seeked_segments: &[CutSegment],
+    has_video: bool,
+    is_ringtone: bool,
+    is_video_note: bool,
+    video_note_needs_split: bool,
+    circle_sub_filter: Option<&str>,
+    speed: Option<f32>,
+) -> ClipFilterPlan {
+    // For ringtones the input is audio-only (MP3); embedded album art must be ignored
+    // so that the filter_complex doesn't produce an unconnected [v] output which
+    // makes ffmpeg exit with code 234 when using -f ipod.
+    let has_video_for_filter = has_video && !is_ringtone;
+    let base_filter_av = build_cut_filter(seeked_segments, has_video_for_filter, true);
+    let base_filter_v = if has_video_for_filter {
+        build_cut_filter(seeked_segments, true, false)
+    } else {
+        String::new()
+    };
+
+    // Apply speed modification if requested
+    // For multi-circle video notes, don't apply circle formatting here - it will be done in split step
+    let (filter_av, filter_v, map_v_label, map_a_label, crf) = if is_video_note && !video_note_needs_split {
+        // Single circle - apply video note formatting in ffmpeg
+        // Subtitles are burned AFTER scale+crop so they render at 640x640 coordinates
+        let video_note_post = if let Some(sub_filter) = circle_sub_filter {
+            format!("scale=640:640:force_original_aspect_ratio=increase,crop=640:640,{sub_filter},format=yuv420p")
+        } else {
+            "scale=640:640:force_original_aspect_ratio=increase,crop=640:640,format=yuv420p".to_string()
+        };
+        let video_note_post = video_note_post.as_str();
+
+        if let Some(spd) = speed {
+            let setpts_factor = 1.0 / spd;
+            let atempo_filter = build_atempo_filter(spd);
+
+            (
+                format!(
+                    "{base_filter_av};[v]setpts={}*PTS,{video_note_post}[vout];[a]{atempo_filter}[aout]",
+                    setpts_factor
+                ),
+                format!(
+                    "{base_filter_v};[v]setpts={}*PTS,{video_note_post}[vout]",
+                    setpts_factor
+                ),
+                "[vout]",
+                "[aout]",
+                "18",
+            )
+        } else {
+            (
+                format!("{base_filter_av};[v]{video_note_post}[vout]"),
+                format!("{base_filter_v};[v]{video_note_post}[vout]"),
+                "[vout]",
+                "[a]",
+                "18",
+            )
+        }
+    } else if is_video_note && video_note_needs_split {
+        // Multi-circle - create regular cut, circle formatting will be done in to_video_notes_split
+        if let Some(spd) = speed {
+            let setpts_factor = 1.0 / spd;
+            let atempo_filter = build_atempo_filter(spd);
+
+            (
+                format!(
+                    "{base_filter_av};[v]setpts={}*PTS[vout];[a]{atempo_filter}[aout]",
+                    setpts_factor
+                ),
+                format!("{base_filter_v};[v]setpts={}*PTS[vout]", setpts_factor),
+                "[vout]",
+                "[aout]",
+                "23",
+            )
+        } else {
+            (base_filter_av, base_filter_v, "[v]", "[a]", "23")
+        }
+    } else if is_ringtone {
+        let atempo_filter = speed
+            .map(build_atempo_filter)
+            .unwrap_or_else(|| "atempo=1.0".to_string());
+        // If !has_video, base_filter_av outputs only [a]. If has_video, [v][a].
+        // Ringtone uses input [a] for atempo.
+        // We need to match output of base_filter
+
+        (
+            format!("{base_filter_av};{}[a]{atempo_filter}[aout]", ""), // standard [a] is output by build_cut_filter
+            String::new(),
+            "[v]",
+            "[aout]",
+            "23",
+        )
+    } else if let Some(spd) = speed {
+        let setpts_factor = 1.0 / spd;
+        let atempo_filter = build_atempo_filter(spd);
+
+        if has_video {
+            (
+                format!(
+                    "{base_filter_av};[v]setpts={}*PTS[vout];[a]{atempo_filter}[aout]",
+                    setpts_factor
+                ),
+                format!("{base_filter_v};[v]setpts={}*PTS[vout]", setpts_factor),
+                "[vout]",
+                "[aout]",
+                "23",
+            )
+        } else {
+            (
+                format!("{base_filter_av};[a]{atempo_filter}[aout]"),
+                String::new(),
+                "",
+                "[aout]",
+                "23",
+            )
+        }
+    } else {
+        (base_filter_av, base_filter_v, "[v]", "[a]", "23")
+    };
+
+    ClipFilterPlan {
+        filter_av,
+        filter_v,
+        map_v_label,
+        map_a_label,
+        crf,
+    }
+}
+
 /// Max output length (secs) for a clip based on its kind. Ringtones, GIFs and
 /// video notes each have their own ceiling; regular cuts cap at 10 minutes.
 fn compute_clip_max_len_secs(
@@ -899,128 +1090,24 @@ pub async fn process_video_clip(
         })
         .collect();
 
-    // For ringtones the input is audio-only (MP3); embedded album art must be ignored
-    // so that the filter_complex doesn't produce an unconnected [v] output which
-    // makes ffmpeg exit with code 234 when using -f ipod.
-    let has_video_for_filter = has_video && !is_ringtone;
-    let base_filter_av = build_cut_filter(&seeked_segments, has_video_for_filter, true);
-    let base_filter_v = if has_video_for_filter {
-        build_cut_filter(&seeked_segments, true, false)
-    } else {
-        String::new()
-    };
-
     // Build subtitle filter fragment for post-crop burning (640x640 coordinates)
-    let circle_sub_filter = circle_srt_path.as_ref().map(|srt_path| {
-        let escaped = srt_path
-            .to_string_lossy()
-            .replace('\\', "\\\\\\\\")
-            .replace(':', "\\\\:")
-            .replace('\'', "\\\\'");
-        let style = db::SubtitleStyle::circle_default();
-        let force_style = style.to_force_style();
-        format!("subtitles='{escaped}':force_style='{force_style}'")
-    });
+    let circle_sub_filter = build_circle_sub_filter(circle_srt_path.as_deref());
 
-    // Apply speed modification if requested
-    // For multi-circle video notes, don't apply circle formatting here - it will be done in split step
-    let (filter_av, filter_v, map_v_label, map_a_label, crf) = if is_video_note && !video_note_needs_split {
-        // Single circle - apply video note formatting in ffmpeg
-        // Subtitles are burned AFTER scale+crop so they render at 640x640 coordinates
-        let video_note_post = if let Some(ref sub_filter) = circle_sub_filter {
-            format!("scale=640:640:force_original_aspect_ratio=increase,crop=640:640,{sub_filter},format=yuv420p")
-        } else {
-            "scale=640:640:force_original_aspect_ratio=increase,crop=640:640,format=yuv420p".to_string()
-        };
-        let video_note_post = video_note_post.as_str();
-
-        if let Some(spd) = speed {
-            let setpts_factor = 1.0 / spd;
-            let atempo_filter = build_atempo_filter(spd);
-
-            (
-                format!(
-                    "{base_filter_av};[v]setpts={}*PTS,{video_note_post}[vout];[a]{atempo_filter}[aout]",
-                    setpts_factor
-                ),
-                format!(
-                    "{base_filter_v};[v]setpts={}*PTS,{video_note_post}[vout]",
-                    setpts_factor
-                ),
-                "[vout]",
-                "[aout]",
-                "18",
-            )
-        } else {
-            (
-                format!("{base_filter_av};[v]{video_note_post}[vout]"),
-                format!("{base_filter_v};[v]{video_note_post}[vout]"),
-                "[vout]",
-                "[a]",
-                "18",
-            )
-        }
-    } else if is_video_note && video_note_needs_split {
-        // Multi-circle - create regular cut, circle formatting will be done in to_video_notes_split
-        if let Some(spd) = speed {
-            let setpts_factor = 1.0 / spd;
-            let atempo_filter = build_atempo_filter(spd);
-
-            (
-                format!(
-                    "{base_filter_av};[v]setpts={}*PTS[vout];[a]{atempo_filter}[aout]",
-                    setpts_factor
-                ),
-                format!("{base_filter_v};[v]setpts={}*PTS[vout]", setpts_factor),
-                "[vout]",
-                "[aout]",
-                "23",
-            )
-        } else {
-            (base_filter_av, base_filter_v, "[v]", "[a]", "23")
-        }
-    } else if is_ringtone {
-        let atempo_filter = speed
-            .map(build_atempo_filter)
-            .unwrap_or_else(|| "atempo=1.0".to_string());
-        // If !has_video, base_filter_av outputs only [a]. If has_video, [v][a].
-        // Ringtone uses input [a] for atempo.
-        // We need to match output of base_filter
-
-        (
-            format!("{base_filter_av};{}[a]{atempo_filter}[aout]", ""), // standard [a] is output by build_cut_filter
-            String::new(),
-            "[v]",
-            "[aout]",
-            "23",
-        )
-    } else if let Some(spd) = speed {
-        let setpts_factor = 1.0 / spd;
-        let atempo_filter = build_atempo_filter(spd);
-
-        if has_video {
-            (
-                format!(
-                    "{base_filter_av};[v]setpts={}*PTS[vout];[a]{atempo_filter}[aout]",
-                    setpts_factor
-                ),
-                format!("{base_filter_v};[v]setpts={}*PTS[vout]", setpts_factor),
-                "[vout]",
-                "[aout]",
-                "23",
-            )
-        } else {
-            (
-                format!("{base_filter_av};[a]{atempo_filter}[aout]"),
-                String::new(),
-                "",
-                "[aout]",
-                "23",
-            )
-        }
-    } else {
-        (base_filter_av, base_filter_v, "[v]", "[a]", "23")
-    };
+    let ClipFilterPlan {
+        filter_av,
+        filter_v,
+        map_v_label,
+        map_a_label,
+        crf,
+    } = build_clip_filter_plan(
+        &seeked_segments,
+        has_video,
+        is_ringtone,
+        is_video_note,
+        video_note_needs_split,
+        circle_sub_filter.as_deref(),
+        speed,
+    );
 
     log::info!("🎬 Starting ffmpeg with filter: {}", filter_av);
     log::info!("🎬 Input: {:?}, Output: {:?}", actual_input_path, output_path);
