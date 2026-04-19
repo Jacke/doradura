@@ -10,12 +10,19 @@ use tokio::process::Command as TokioCommand;
 use tokio::time::timeout;
 use url::Url;
 
-pub(super) const MAX_VIDEO_FORMAT_SIZE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
-
+/// Filter preview video formats so we only show what the Bot API can actually
+/// send. Uses the same dynamic size ceiling as the send path
+/// (`doracore::core::config::validation::max_video_size_bytes`), which returns
+/// 5 GB on a local Bot API server and 50 MB on the standard `api.telegram.org`.
+///
+/// Previously this filter hardcoded a 2 GB cap, which was too tight for local
+/// Bot API (max is 5 GB) and hid 720p/1080p from long videos — user report
+/// 2026-04-20 on a 2h26m Noize MC concert showing only 480p max.
 pub fn filter_video_formats_by_size(formats: &[VideoFormatInfo]) -> Vec<VideoFormatInfo> {
+    let max_bytes = doracore::core::config::validation::max_video_size_bytes();
     formats
         .iter()
-        .filter(|format| format.size_bytes.is_none_or(|size| size <= MAX_VIDEO_FORMAT_SIZE_BYTES))
+        .filter(|format| format.size_bytes.is_none_or(|size| size <= max_bytes))
         .cloned()
         .collect()
 }
@@ -781,15 +788,18 @@ mod tests {
 
     #[test]
     fn test_filter_video_formats_by_size_all_pass() {
+        // Sizes chosen to fit under BOTH the standard 50 MB and the local 5 GB
+        // caps — the test must pass regardless of how BOT_API_URL is (or isn't)
+        // set in the test environment.
         let formats = vec![
             VideoFormatInfo {
                 quality: "1080p".to_string(),
-                size_bytes: Some(500 * 1024 * 1024), // 500MB
+                size_bytes: Some(30 * 1024 * 1024), // 30 MB
                 resolution: Some("1920x1080".to_string()),
             },
             VideoFormatInfo {
                 quality: "720p".to_string(),
-                size_bytes: Some(300 * 1024 * 1024), // 300MB
+                size_bytes: Some(20 * 1024 * 1024), // 20 MB
                 resolution: Some("1280x720".to_string()),
             },
         ];
@@ -799,15 +809,17 @@ mod tests {
 
     #[test]
     fn test_filter_video_formats_by_size_filters_large() {
+        // 6 GB exceeds the 5 GB local-Bot-API ceiling and the 50 MB standard
+        // ceiling, so this format is dropped under both configurations.
         let formats = vec![
             VideoFormatInfo {
                 quality: "1080p".to_string(),
-                size_bytes: Some(3 * 1024 * 1024 * 1024), // 3GB - too large
+                size_bytes: Some(6 * 1024 * 1024 * 1024), // 6 GB - exceeds 5 GB local cap
                 resolution: Some("1920x1080".to_string()),
             },
             VideoFormatInfo {
                 quality: "720p".to_string(),
-                size_bytes: Some(300 * 1024 * 1024), // 300MB
+                size_bytes: Some(30 * 1024 * 1024), // 30 MB - fits both local and standard caps
                 resolution: Some("1280x720".to_string()),
             },
         ];
@@ -825,13 +837,6 @@ mod tests {
         }];
         let filtered = filter_video_formats_by_size(&formats);
         assert_eq!(filtered.len(), 1);
-    }
-
-    // ==================== MAX_VIDEO_FORMAT_SIZE_BYTES constant tests ====================
-
-    #[test]
-    fn test_max_video_format_size() {
-        assert_eq!(MAX_VIDEO_FORMAT_SIZE_BYTES, 2 * 1024 * 1024 * 1024); // 2GB
     }
 
     // ==================== detect_quality_from_text_line tests ====================
