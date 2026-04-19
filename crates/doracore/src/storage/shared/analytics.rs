@@ -102,7 +102,7 @@ impl SharedStorage {
                 }
 
                 let mut top_artists: Vec<(String, i64)> = artist_counts.into_iter().collect();
-                top_artists.sort_by(|a, b| b.1.cmp(&a.1));
+                top_artists.sort_by_key(|b| std::cmp::Reverse(b.1));
                 top_artists.truncate(5);
 
                 let format_rows = sqlx::query(

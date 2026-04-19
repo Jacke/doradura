@@ -75,7 +75,7 @@ fn cleanup_old_backups(backup_dir: &Path) -> Result<()> {
     }
 
     // Sort by time (newest first)
-    backups.sort_by(|a, b| b.1.cmp(&a.1));
+    backups.sort_by_key(|b| std::cmp::Reverse(b.1));
 
     // Delete old backups
     if backups.len() > MAX_BACKUPS {
@@ -113,7 +113,7 @@ pub fn list_backups() -> Result<Vec<(PathBuf, DateTime<Utc>)>> {
     }
 
     // Sort by time (newest first)
-    backups.sort_by(|a, b| b.1.cmp(&a.1));
+    backups.sort_by_key(|b| std::cmp::Reverse(b.1));
 
     Ok(backups)
 }
