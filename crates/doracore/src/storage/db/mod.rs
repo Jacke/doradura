@@ -29,9 +29,16 @@ use r2d2::{Pool, PooledConnection};
 use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::Result;
 
-/// Connection timeout for pool.get() calls - prevents indefinite blocking.
-/// 3s gives enough room for SQLite busy_timeout (5s PRAGMA) while still failing fast
-/// if the pool is genuinely exhausted.
+/// Connection timeout for `pool.get()` calls — prevents indefinite blocking
+/// when the pool (max_size=20) is genuinely exhausted.
+///
+/// NOTE: This is separate from SQLite's `busy_timeout = 30000` set on each
+/// connection (see `pool::create_pool`). `busy_timeout` controls how long an
+/// already-held connection waits on SQLITE_BUSY for the reserved-write lock,
+/// while this value bounds how long we wait to **acquire** a pooled connection
+/// in the first place. A 3s acquire ceiling is fine because with 20 pool
+/// connections, exhaustion only happens if >20 tokio tasks are actively
+/// holding connections — an unlikely sustained state.
 const CONNECTION_TIMEOUT_SECS: u64 = 3;
 
 pub type DbPool = Pool<SqliteConnectionManager>;

@@ -54,8 +54,17 @@ pub fn create_pool(database_path: &str) -> Result<DbPool, r2d2::Error> {
         }
     }
 
+    // `busy_timeout = 30000` (30s): tells SQLite to block and retry on
+    // SQLITE_BUSY for up to 30 seconds before giving up. Default 5s was too
+    // tight during active large-video downloads (1080p, 2-4 min pipeline)
+    // where download-progress / metadata / history-insert / queue-lease /
+    // log_request writers queue up and step over each other's reserved locks.
+    // Symptom in production (2026-04-20): `Failed to claim next queue task:
+    // sqlite claim_next_task` firing every 5s while a long download held the
+    // writer slot, jamming the whole queue until the download finished.
+    // 30s gives honest slack under contention without masking permanent locks.
     let manager = SqliteConnectionManager::file(database_path)
-        .with_init(|conn| conn.execute_batch("PRAGMA busy_timeout = 5000;"));
+        .with_init(|conn| conn.execute_batch("PRAGMA busy_timeout = 30000;"));
     let pool = Pool::builder()
         .max_size(20) // Maximum 20 connections in the pool
         .connection_timeout(Duration::from_secs(CONNECTION_TIMEOUT_SECS)) // Prevent indefinite blocking
